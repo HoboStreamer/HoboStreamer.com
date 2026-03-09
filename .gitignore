@@ -1,0 +1,17 @@
+node_modules/
+data/
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.log
+dist/
+data/vods/
+data/clips/
+.DS_Store
+Thumbs.db
+*.bak
+*.bak2

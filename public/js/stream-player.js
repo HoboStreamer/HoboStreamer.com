@@ -1,0 +1,1216 @@
+/* ═══════════════════════════════════════════════════════════════
+   HoboStreamer — Stream Player (JSMPEG / WebRTC / HLS)
+   ═══════════════════════════════════════════════════════════════ */
+
+let player = null;
+let playerType = null;
+
+// Clip recording state (rolling buffer for live clips)
+let clipRecorder = null;
+let clipHeaderChunk = null;  // First chunk contains the WebM EBML header — must be preserved
+let clipChunks = [];
+let clipStreamId = null;
+let streamRef = null; // current stream object for clip recording
+const CLIP_BUFFER_SECONDS = 30;
+
+// DVR state (live stream seeking via server-side VOD recording)
+let dvrState = {
+    active: false,       // DVR feature is available (live VOD exists)
+    isLive: true,        // Currently showing real-time stream (vs rewound)
+    vodId: null,         // Live VOD ID
+    vodFilename: null,   // Live VOD filename for HTTP src
+    duration: 0,         // Current total duration (seconds) from server
+    seekable: false,     // Seekable copy available
+    pollTimer: null,     // Interval for polling live-info
+    updateTimer: null,   // Interval for UI updates
+    streamStartTime: 0,  // Stream start timestamp (ms)
+    savedSrcObject: null, // WebRTC MediaStream saved when switching to DVR
+    savedLivePlayer: null, // HLS/FLV player saved when switching to DVR
+    seeking: false,      // User is dragging the DVR progress bar
+};
+
+/**
+ * Initialize the appropriate player based on stream protocol.
+ * @param {Object} stream - Stream object with protocol, endpoint info
+ */
+function initPlayer(stream) {
+    destroyPlayer();
+    streamRef = stream; // Store for clip recording across all protocols
+    const proto = stream.protocol || 'jsmpeg';
+    const endpoint = stream.endpoint || {};
+
+    switch (proto) {
+        case 'jsmpeg':
+            initJSMPEG(endpoint, stream);
+            break;
+        case 'webrtc':
+            initWebRTC(stream);
+            break;
+        case 'rtmp':
+            initHLS(endpoint, stream);
+            break;
+        default:
+            console.warn('Unknown protocol:', proto);
+            initJSMPEG(endpoint, stream); // fallback
+    }
+
+    setupVideoControls();
+
+    // Initialize DVR for all protocols — server-side recording handles JSMPEG & RTMP,
+    // client-side chunked upload handles WebRTC
+    initDVR(stream);
+}
+
+/* ── JSMPEG (FFmpeg → HTTP → WebSocket → Canvas) ─────────────── */
+function initJSMPEG(endpoint, stream) {
+    const canvas = document.getElementById('video-canvas');
+    const placeholder = document.querySelector('.video-placeholder');
+
+    // Build WS URL
+    const host = window.location.hostname;
+    const port = endpoint.videoPort || endpoint.video_port || endpoint.wsPort || 9710;
+    const wsUrl = `ws://${host}:${port}`;
+
+    // Check if JSMpeg lib is loaded (from CDN or local)
+    if (typeof JSMpeg === 'undefined') {
+        // Load JSMpeg dynamically
+        const script = document.createElement('script');
+        script.src = 'https://jsmpeg.com/jsmpeg.min.js';
+        script.onload = () => startJSMPEG(wsUrl, canvas, placeholder);
+        script.onerror = () => {
+            console.error('Failed to load JSMpeg library');
+            placeholder.innerHTML = `
+                <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
+                <p>JSMPEG player not available</p>
+                <p class="muted">Ensure jsmpeg.min.js is loaded</p>`;
+        };
+        document.head.appendChild(script);
+    } else {
+        startJSMPEG(wsUrl, canvas, placeholder);
+    }
+
+    playerType = 'jsmpeg';
+}
+
+function startJSMPEG(wsUrl, canvas, placeholder) {
+    try {
+        canvas.style.display = 'block';
+        if (placeholder) placeholder.style.display = 'none';
+
+        player = new JSMpeg.Player(wsUrl, {
+            canvas: canvas,
+            autoplay: true,
+            audio: true,
+            videoBufferSize: 512 * 1024,
+            audioBufferSize: 128 * 1024,
+            preserveDrawingBuffer: true,
+            onSourceEstablished: () => {
+                console.log('[JSMPEG] Source established — waiting for first frames before clip recording');
+                // Delay clip recording start so JSMpeg has time to decode & render
+                // frames. Using an offscreen 2D canvas avoids WebGL captureStream issues.
+                setTimeout(() => {
+                    try {
+                        const offCanvas = document.createElement('canvas');
+                        offCanvas.width = canvas.width || 640;
+                        offCanvas.height = canvas.height || 480;
+                        const offCtx = offCanvas.getContext('2d');
+                        const clipStream = offCanvas.captureStream(30);
+
+                        // Draw JSMpeg's canvas onto our offscreen 2D canvas at ~30fps
+                        const _jsmpegDrawInterval = setInterval(() => {
+                            if (canvas.width && canvas.height) {
+                                if (offCanvas.width !== canvas.width) offCanvas.width = canvas.width;
+                                if (offCanvas.height !== canvas.height) offCanvas.height = canvas.height;
+                            }
+                            offCtx.drawImage(canvas, 0, 0, offCanvas.width, offCanvas.height);
+                        }, 33);
+                        window._jsmpegDrawInterval = _jsmpegDrawInterval;
+
+                        // Try to capture JSMpeg's Web Audio output for clip audio
+                        try {
+                            const audioCtx = player.audioOut?.context || player.audioOut?.destination?.context;
+                            const gainNode = player.audioOut?.gain || player.audioOut;
+                            if (audioCtx && gainNode && gainNode.connect) {
+                                const audioDest = audioCtx.createMediaStreamDestination();
+                                gainNode.connect(audioDest);
+                                for (const track of audioDest.stream.getAudioTracks()) {
+                                    clipStream.addTrack(track);
+                                }
+                                console.log('[JSMPEG] Audio capture attached to clip recorder');
+                            }
+                        } catch (audioErr) {
+                            console.warn('[JSMPEG] Audio capture not available:', audioErr.message);
+                        }
+                        startClipRecording(clipStream, streamRef?.id);
+                    } catch (err) {
+                        console.warn('[JSMPEG] Clip recording setup failed:', err.message);
+                    }
+                }, 2500); // Wait 2.5s for frames to be decoded & rendered
+            },
+            onSourceCompleted: () => {
+                console.log('[JSMPEG] Source completed (stream ended?)');
+                showStreamEnded();
+            },
+        });
+    } catch (e) {
+        console.error('JSMPEG init failed:', e);
+        canvas.style.display = 'none';
+        if (placeholder) {
+            placeholder.style.display = '';
+            placeholder.innerHTML = `
+                <i class="fa-solid fa-exclamation-triangle fa-3x"></i>
+                <p>Failed to connect to stream</p>`;
+        }
+    }
+}
+
+/* ── WebRTC (Browser Broadcast via Signaling Relay) ───────────── */
+async function initWebRTC(stream) {
+    const video = document.getElementById('video-element');
+    const placeholder = document.querySelector('.video-placeholder');
+    streamRef = stream; // set module-level ref for clip recording in handleViewerOffer
+
+    try {
+        video.style.display = 'block';
+        if (placeholder) placeholder.style.display = 'none';
+        playerType = 'webrtc';
+
+        // Connect to the broadcast signaling relay as a viewer
+        const host = window.location.hostname;
+        const port = window.location.port || 3000;
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const token = localStorage.getItem('token') || '';
+        const wsUrl = `${protocol}://${host}:${port}/ws/broadcast?streamId=${streamRef.id}&role=viewer&token=${token}`;
+
+        const ws = new WebSocket(wsUrl);
+        player = { ws, video, pc: null, myPeerId: null, watchSent: false, _wsUrl: wsUrl };
+        let _broadcasterDisconnectTimer = null;
+        let _viewerReconnectTimer = null;
+        let _viewerReconnectDelay = 3000; // exponential backoff: 3s → 30s max
+        let _viewerIntentionalClose = false;
+
+        ws.onopen = () => {
+            console.log('[Player] Broadcast signaling connected');
+            _viewerReconnectDelay = 3000; // reset backoff on successful connect
+        };
+
+        ws.onmessage = async (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                switch (msg.type) {
+                    case 'welcome':
+                        player.myPeerId = msg.peerId;
+                        console.log('[Player] Welcome, peerId:', msg.peerId);
+                        // Don't send watch here — wait for broadcaster-ready
+                        break;
+                    case 'broadcaster-ready':
+                        // Broadcaster connected/reconnected — request to watch
+                        console.log('[Player] Broadcaster ready, requesting watch');
+                        // Cancel any pending "stream ended" from a brief disconnect
+                        if (_broadcasterDisconnectTimer) {
+                            clearTimeout(_broadcasterDisconnectTimer);
+                            _broadcasterDisconnectTimer = null;
+                        }
+                        // Skip re-negotiation if peer connection is still healthy
+                        if (player.pc) {
+                            const state = player.pc.iceConnectionState;
+                            if (state === 'connected' || state === 'completed') {
+                                console.log(`[Player] Peer connection still healthy (ICE: ${state}), skipping re-negotiate`);
+                                break;
+                            }
+                        }
+                        player.watchSent = false; // allow re-watch on reconnect
+                        player.ws.send(JSON.stringify({ type: 'watch' }));
+                        player.watchSent = true;
+                        break;
+                    case 'offer':
+                        // Broadcaster sent us an offer — create answer
+                        console.log('[Player] Received offer from broadcaster');
+                        await handleViewerOffer(msg, player.ws, video);
+                        break;
+                    case 'ice-candidate':
+                        // ICE candidate from broadcaster
+                        if (player.pc && msg.candidate) {
+                            await player.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                        }
+                        break;
+                    case 'broadcaster-disconnected':
+                        console.log('[Player] Broadcaster disconnected — waiting for reconnect...');
+                        // Give the broadcaster a grace period to reconnect before declaring stream ended
+                        if (_broadcasterDisconnectTimer) clearTimeout(_broadcasterDisconnectTimer);
+                        _broadcasterDisconnectTimer = setTimeout(() => {
+                            _broadcasterDisconnectTimer = null;
+                            console.log('[Player] Broadcaster did not reconnect, stream ended');
+                            showStreamEnded();
+                        }, 8000);
+                        break;
+                    case 'stream-ended':
+                        console.log('[Player] Stream ended by server');
+                        if (_broadcasterDisconnectTimer) clearTimeout(_broadcasterDisconnectTimer);
+                        _viewerIntentionalClose = true; // don't reconnect on explicit end
+                        showStreamEnded();
+                        break;
+                    case 'viewer-count':
+                        const vcEl = document.getElementById('vc-viewers');
+                        if (vcEl) vcEl.textContent = msg.count || 0;
+                        break;
+                }
+            } catch (err) {
+                console.error('[Player] Message error:', err);
+            }
+        };
+
+        ws.onerror = () => {
+            console.error('[Player] Broadcast signaling error');
+        };
+
+        ws.onclose = (ev) => {
+            console.log(`[Player] Broadcast signaling closed (code=${ev.code})`);
+            if (_viewerIntentionalClose) return;
+            // Reconnect signaling WS with exponential backoff
+            // The WebRTC peer connection may still be delivering media even without signaling
+            if (player && streamRef) {
+                const delay = _viewerReconnectDelay;
+                _viewerReconnectDelay = Math.min(_viewerReconnectDelay * 1.5, 30000);
+                console.log(`[Player] Reconnecting signaling in ${Math.round(delay)}ms`);
+                _viewerReconnectTimer = setTimeout(() => {
+                    _viewerReconnectTimer = null;
+                    if (!player || _viewerIntentionalClose) return;
+                    try {
+                        const newWs = new WebSocket(wsUrl);
+                        player.ws = newWs;
+                        // Re-attach all handlers to the new WS
+                        newWs.onopen = ws.onopen;
+                        newWs.onmessage = ws.onmessage;
+                        newWs.onerror = ws.onerror;
+                        newWs.onclose = ws.onclose;
+                    } catch (err) {
+                        console.error('[Player] Signaling reconnect failed:', err);
+                    }
+                }, delay);
+            }
+        };
+    } catch (e) {
+        console.error('[Player] WebRTC init failed:', e);
+        showStreamError('WebRTC not available');
+    }
+}
+
+async function handleViewerOffer(msg, ws, video) {
+    // Safety: player must be set by initWebRTC before we get here
+    if (!player) {
+        console.warn('[Player] handleViewerOffer called but player is null');
+        return;
+    }
+    // Close existing PC if re-negotiating
+    if (player.pc) {
+        try { player.pc.close(); } catch (ignored) {}
+    }
+
+    const pc = new RTCPeerConnection({
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+        ],
+    });
+    player.pc = pc;
+
+    pc.ontrack = (e) => {
+        console.log('[Player] Got remote track:', e.track.kind);
+        if (e.streams && e.streams[0]) {
+            video.srcObject = e.streams[0];
+            // Start clip recording for the remote stream
+            startClipRecording(e.streams[0], streamRef?.id);
+        } else {
+            // Fallback: create stream from tracks
+            let mediaStream = video.srcObject;
+            if (!mediaStream) {
+                mediaStream = new MediaStream();
+                video.srcObject = mediaStream;
+            }
+            mediaStream.addTrack(e.track);
+            startClipRecording(mediaStream, streamRef?.id);
+        }
+        video.play().catch(() => {});
+    };
+
+    pc.onicecandidate = (e) => {
+        // Use player.ws (not the passed ws param) so this works after WS reconnection
+        if (e.candidate && player && player.ws && player.ws.readyState === WebSocket.OPEN) {
+            player.ws.send(JSON.stringify({
+                type: 'ice-candidate',
+                candidate: e.candidate,
+            }));
+        }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+        console.log('[Player] ICE state:', pc.iceConnectionState);
+        if (pc.iceConnectionState === 'failed') {
+            // 'failed' is unrecoverable — show error
+            showStreamError('Connection to broadcaster lost');
+        }
+        // 'disconnected' is transient and often recovers on its own — don't show error
+    };
+
+    await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    // Use player.ws (not the passed ws param) so this works after WS reconnection
+    if (player && player.ws && player.ws.readyState === WebSocket.OPEN) {
+        player.ws.send(JSON.stringify({
+            type: 'answer',
+            sdp: answer,
+        }));
+    }
+    console.log('[Player] Sent answer to broadcaster');
+}
+
+/* ── HLS / HTTP-FLV (RTMP transcoded) ──────────────────────────── */
+function initHLS(endpoint, stream) {
+    const video = document.getElementById('video-element');
+    const placeholder = document.querySelector('.video-placeholder');
+
+    const hlsUrl = endpoint.hls_url || endpoint.hlsUrl;
+    const flvUrl = endpoint.flv_url || endpoint.flvUrl;
+
+    if (!hlsUrl && !flvUrl) {
+        showStreamError('RTMP stream endpoint not available. Ensure the RTMP server is running and your streaming software is connected.');
+        return;
+    }
+
+    video.style.display = 'block';
+    if (placeholder) placeholder.style.display = 'none';
+    playerType = 'hls';
+
+    // Start clip recording when video begins playing (for any RTMP sub-method)
+    const _startClipOnPlay = () => {
+        video.removeEventListener('playing', _startClipOnPlay);
+        try {
+            const capturedStream = video.captureStream ? video.captureStream() :
+                                   video.mozCaptureStream ? video.mozCaptureStream() : null;
+            if (capturedStream) {
+                startClipRecording(capturedStream, streamRef?.id);
+            } else {
+                console.warn('[HLS] captureStream() not available — using canvas fallback for clips');
+                // Canvas-based fallback: draw video frames to an offscreen canvas
+                try {
+                    const offCanvas = document.createElement('canvas');
+                    offCanvas.width = video.videoWidth || 1280;
+                    offCanvas.height = video.videoHeight || 720;
+                    const ctx = offCanvas.getContext('2d');
+                    const fallbackStream = offCanvas.captureStream(30);
+
+                    // Try to capture audio via captureStream on AudioContext
+                    try {
+                        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                        const source = audioCtx.createMediaElementSource(video);
+                        const audioDest = audioCtx.createMediaStreamDestination();
+                        source.connect(audioDest);
+                        source.connect(audioCtx.destination); // keep audio audible
+                        for (const track of audioDest.stream.getAudioTracks()) {
+                            fallbackStream.addTrack(track);
+                        }
+                    } catch (audioErr) {
+                        console.warn('[HLS] Audio capture fallback failed:', audioErr.message);
+                    }
+
+                    // Periodically draw video onto the offscreen canvas
+                    let _canvasDrawInterval = setInterval(() => {
+                        if (video.paused || video.ended) return;
+                        if (video.videoWidth && video.videoHeight) {
+                            offCanvas.width = video.videoWidth;
+                            offCanvas.height = video.videoHeight;
+                        }
+                        ctx.drawImage(video, 0, 0, offCanvas.width, offCanvas.height);
+                    }, 33); // ~30fps
+                    // Store cleanup ref
+                    window._rtmpCanvasDrawInterval = _canvasDrawInterval;
+
+                    startClipRecording(fallbackStream, streamRef?.id);
+                } catch (fallbackErr) {
+                    console.warn('[HLS] Canvas fallback also failed:', fallbackErr.message);
+                }
+            }
+        } catch (err) {
+            console.warn('[HLS] Clip recording setup failed:', err.message);
+        }
+    };
+    video.addEventListener('playing', _startClipOnPlay);
+
+    // Try HLS first
+    if (hlsUrl) {
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Native HLS (Safari)
+            video.src = hlsUrl;
+            video.play().catch(() => {});
+            return;
+        }
+
+        if (typeof Hls !== 'undefined') {
+            const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+            hls.loadSource(hlsUrl);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+            hls.on(Hls.Events.ERROR, (event, data) => {
+                if (data.fatal) {
+                    console.warn('[HLS] Fatal error, trying HTTP-FLV fallback');
+                    hls.destroy();
+                    if (flvUrl) tryFlvPlayer(flvUrl, video);
+                    else showStreamError('HLS stream not available yet. Make sure your RTMP software is streaming.');
+                }
+            });
+            player = { hls, video };
+            return;
+        }
+
+        // Load HLS.js dynamically
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+        script.onload = () => {
+            const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+            hls.loadSource(hlsUrl);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+            hls.on(Hls.Events.ERROR, (event, data) => {
+                if (data.fatal) {
+                    hls.destroy();
+                    if (flvUrl) tryFlvPlayer(flvUrl, video);
+                    else showStreamError('HLS stream not ready. Make sure your RTMP software is streaming.');
+                }
+            });
+            player = { hls, video };
+        };
+        script.onerror = () => {
+            if (flvUrl) tryFlvPlayer(flvUrl, video);
+            else showStreamError('HLS.js failed to load');
+        };
+        document.head.appendChild(script);
+    } else if (flvUrl) {
+        tryFlvPlayer(flvUrl, video);
+    }
+}
+
+function tryFlvPlayer(flvUrl, video) {
+    // Attempt to play HTTP-FLV via flv.js if available
+    if (typeof flvjs !== 'undefined' && flvjs.isSupported()) {
+        const flvPlayer = flvjs.createPlayer({ type: 'flv', url: flvUrl, isLive: true });
+        flvPlayer.attachMediaElement(video);
+        flvPlayer.load();
+        flvPlayer.play();
+        player = { flv: flvPlayer, video };
+    } else {
+        // Try loading flv.js
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/flv.js@latest';
+        script.onload = () => {
+            if (flvjs.isSupported()) {
+                const flvPlayer = flvjs.createPlayer({ type: 'flv', url: flvUrl, isLive: true });
+                flvPlayer.attachMediaElement(video);
+                flvPlayer.load();
+                flvPlayer.play();
+                player = { flv: flvPlayer, video };
+            } else {
+                showStreamError('Your browser does not support FLV playback');
+            }
+        };
+        script.onerror = () => showStreamError('Failed to load FLV player');
+        document.head.appendChild(script);
+    }
+}
+
+/* ── DVR (Live Stream Seeking via Server-Side VOD) ───────────── */
+
+/**
+ * Initialize DVR capability for a live stream.
+ * Checks if a server-side VOD recording exists, then enables seeking.
+ */
+async function initDVR(stream) {
+    destroyDVR();
+    const streamId = stream.id;
+
+    // Parse stream start time for elapsed calculation
+    let startedAt = stream.started_at || stream.created_at;
+    if (startedAt) {
+        if (typeof startedAt === 'string' && !startedAt.includes('T')) startedAt = startedAt.replace(' ', 'T') + 'Z';
+        dvrState.streamStartTime = new Date(startedAt).getTime();
+    } else {
+        dvrState.streamStartTime = Date.now();
+    }
+
+    // Delay first check — give the broadcaster time to upload initial chunks
+    dvrState.pollTimer = setTimeout(() => pollDVR(streamId), 5000);
+}
+
+/**
+ * Poll the server for live VOD info and update DVR state.
+ */
+async function pollDVR(streamId) {
+    try {
+        const data = await api(`/vods/stream/${streamId}/live`);
+        if (data && data.vod) {
+            const vod = data.vod;
+            dvrState.vodId = vod.id;
+            if (vod.file_path) {
+                dvrState.vodFilename = vod.file_path.split('/').pop();
+            }
+
+            // Fetch live-info for seekable status and duration
+            try {
+                const info = await api(`/vods/${vod.id}/live-info`);
+                dvrState.duration = info.duration || 0;
+                dvrState.seekable = info.seekable || false;
+            } catch {}
+
+            // Show DVR controls when we have a seekable copy
+            if (dvrState.seekable && dvrState.vodFilename) {
+                dvrState.active = true;
+                showDVRControls();
+            }
+        }
+    } catch {
+        // No live VOD yet — normal for first ~30-60s
+    }
+
+    // Continue polling every 15s
+    dvrState.pollTimer = setTimeout(() => pollDVR(streamId), 15000);
+}
+
+/**
+ * Show the DVR progress bar and related controls.
+ */
+function showDVRControls() {
+    const wrap = document.getElementById('dvr-progress-wrap');
+    const timeEl = document.getElementById('dvr-time-display');
+    const liveBtn = document.getElementById('dvr-live-btn');
+
+    if (wrap) wrap.style.display = '';
+    if (timeEl) timeEl.style.display = '';
+    if (liveBtn) liveBtn.style.display = '';
+
+    // Start UI update loop
+    if (!dvrState.updateTimer) {
+        dvrState.updateTimer = setInterval(updateDVRUI, 1000);
+        updateDVRUI();
+    }
+
+    setupDVRSeek();
+}
+
+function _dvrFmtTime(s) {
+    if (!s || isNaN(s) || !isFinite(s)) return '0:00';
+    s = Math.max(0, Math.floor(s));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return h > 0
+        ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+        : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+/**
+ * Update the DVR progress bar and time display.
+ */
+function updateDVRUI() {
+    if (!dvrState.active) return;
+
+    const fill = document.getElementById('dvr-progress-fill');
+    const timeEl = document.getElementById('dvr-time-display');
+    const container = document.getElementById('video-container');
+
+    if (dvrState.isLive) {
+        // At live edge — progress bar is full (100%)
+        if (fill) fill.style.width = '100%';
+        const elapsed = dvrState.duration > 0
+            ? dvrState.duration
+            : Math.max(0, Math.floor((Date.now() - dvrState.streamStartTime) / 1000));
+        if (timeEl) timeEl.textContent = `${_dvrFmtTime(elapsed)} [LIVE]`;
+        if (container) container.classList.remove('dvr-rewound');
+    } else {
+        // Rewound — show position within the DVR buffer
+        const video = document.getElementById('video-element');
+        if (video && dvrState.duration > 0 && !dvrState.seeking) {
+            const pct = (video.currentTime / dvrState.duration) * 100;
+            if (fill) fill.style.width = Math.min(pct, 100) + '%';
+            if (timeEl) timeEl.textContent = `${_dvrFmtTime(video.currentTime)} / ${_dvrFmtTime(dvrState.duration)}`;
+        }
+        if (container) container.classList.add('dvr-rewound');
+    }
+}
+
+/**
+ * Set up DVR seek bar interaction (click + drag).
+ */
+function setupDVRSeek() {
+    const wrap = document.getElementById('dvr-progress-wrap');
+    const fill = document.getElementById('dvr-progress-fill');
+    const liveBtn = document.getElementById('dvr-live-btn');
+    if (!wrap) return;
+
+    // Prevent duplicate listeners
+    if (wrap._dvrListenersAttached) return;
+    wrap._dvrListenersAttached = true;
+
+    const seekToPercent = (pct) => {
+        if (!dvrState.seekable || dvrState.duration <= 0) return;
+        const targetTime = pct * dvrState.duration;
+        switchToDVR(targetTime);
+    };
+
+    wrap.addEventListener('click', (e) => {
+        if (!dvrState.active || !dvrState.seekable) return;
+        const rect = wrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        seekToPercent(pct);
+    });
+
+    // Drag to seek
+    wrap.addEventListener('mousedown', (e) => {
+        if (!dvrState.active || !dvrState.seekable) return;
+        dvrState.seeking = true;
+        const rect = wrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        if (fill) fill.style.width = pct * 100 + '%';
+    });
+
+    const onMove = (e) => {
+        if (!dvrState.seeking) return;
+        const rect = wrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        if (fill) fill.style.width = pct * 100 + '%';
+    };
+    const onUp = (e) => {
+        if (!dvrState.seeking) return;
+        dvrState.seeking = false;
+        const rect = wrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        seekToPercent(pct);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+
+    // Live button — jump back to real-time stream
+    if (liveBtn) {
+        liveBtn.onclick = () => jumpToLive();
+    }
+}
+
+/**
+ * Switch from real-time stream to server-side VOD for seeking.
+ * Handles all three protocols: WebRTC (save srcObject), JSMPEG (hide canvas),
+ * and HLS/RTMP (detach live player).
+ * @param {number} targetTime - Seek position in seconds
+ */
+function switchToDVR(targetTime) {
+    if (!dvrState.vodFilename || !dvrState.seekable) return;
+
+    const video = document.getElementById('video-element');
+    const canvas = document.getElementById('video-canvas');
+    if (!video) return;
+
+    const liveBtn = document.getElementById('dvr-live-btn');
+
+    // Save the live state for later restoration
+    if (dvrState.isLive) {
+        if (playerType === 'webrtc' && video.srcObject) {
+            dvrState.savedSrcObject = video.srcObject;
+        } else if (playerType === 'jsmpeg') {
+            // Pause JSMPEG player but keep it alive for quick restoration
+            if (player && player.pause) player.pause();
+            if (canvas) canvas.style.display = 'none';
+        } else if (playerType === 'hls') {
+            // Detach the HLS/FLV player from the video element
+            dvrState.savedLivePlayer = player;
+            if (player && player.hls) {
+                try { player.hls.detachMedia(); } catch {}
+            } else if (player && player.flv) {
+                try { player.flv.pause(); player.flv.unload(); player.flv.detachMediaElement(); } catch {}
+            }
+        }
+    }
+
+    dvrState.isLive = false;
+
+    // Show "Jump to Live" button in alert style
+    if (liveBtn) {
+        liveBtn.classList.add('dvr-behind');
+        liveBtn.innerHTML = '<i class="fa-solid fa-forward"></i> Back to LIVE';
+    }
+
+    // Ensure the video element is visible (JSMPEG normally hides it)
+    video.style.display = 'block';
+
+    // Switch video source from live to HTTP VOD file
+    video.srcObject = null;
+    video.src = `/api/vods/file/${dvrState.vodFilename}?t=${Date.now()}`;
+
+    video.addEventListener('loadedmetadata', function _seekOnLoad() {
+        video.removeEventListener('loadedmetadata', _seekOnLoad);
+        // Use server duration or video.duration, whichever is valid
+        const dur = isFinite(video.duration) ? video.duration : dvrState.duration;
+        video.currentTime = Math.min(targetTime, dur);
+        video.play().catch(() => {});
+    });
+
+    console.log(`[DVR] Switched to VOD seeking at ${Math.round(targetTime)}s`);
+}
+
+/**
+ * Jump back to the live (real-time) stream from DVR mode.
+ * Handles all three protocols: WebRTC (restore srcObject),
+ * JSMPEG (show canvas, resume player), HLS/RTMP (re-attach live player).
+ */
+function jumpToLive() {
+    const video = document.getElementById('video-element');
+    const canvas = document.getElementById('video-canvas');
+    if (!video) return;
+
+    const liveBtn = document.getElementById('dvr-live-btn');
+
+    if (playerType === 'webrtc') {
+        // Restore WebRTC MediaStream
+        if (dvrState.savedSrcObject) {
+            video.removeAttribute('src');
+            video.srcObject = dvrState.savedSrcObject;
+            video.play().catch(() => {});
+        }
+    } else if (playerType === 'jsmpeg') {
+        // Switch back to the JSMPEG canvas player
+        video.pause();
+        video.removeAttribute('src');
+        video.srcObject = null;
+        video.style.display = 'none';
+        if (canvas) canvas.style.display = 'block';
+        if (player && player.play) player.play();
+    } else if (playerType === 'hls') {
+        // Re-attach HLS/FLV live player to the video element
+        video.removeAttribute('src');
+        video.srcObject = null;
+        if (dvrState.savedLivePlayer) {
+            if (dvrState.savedLivePlayer.hls) {
+                try {
+                    dvrState.savedLivePlayer.hls.attachMedia(video);
+                    player = dvrState.savedLivePlayer;
+                    video.play().catch(() => {});
+                } catch (err) {
+                    console.warn('[DVR] HLS re-attach failed, re-initializing:', err.message);
+                    if (streamRef) initHLS(streamRef.endpoint || {}, streamRef);
+                }
+            } else if (dvrState.savedLivePlayer.flv) {
+                try {
+                    dvrState.savedLivePlayer.flv.attachMediaElement(video);
+                    dvrState.savedLivePlayer.flv.load();
+                    dvrState.savedLivePlayer.flv.play();
+                    player = dvrState.savedLivePlayer;
+                } catch (err) {
+                    console.warn('[DVR] FLV re-attach failed, re-initializing:', err.message);
+                    if (streamRef) initHLS(streamRef.endpoint || {}, streamRef);
+                }
+            }
+        } else if (streamRef) {
+            // Fallback: re-initialize the live player from scratch
+            initHLS(streamRef.endpoint || {}, streamRef);
+        }
+    }
+
+    dvrState.isLive = true;
+
+    // Reset live button
+    if (liveBtn) {
+        liveBtn.classList.remove('dvr-behind');
+        liveBtn.innerHTML = '<i class="fa-solid fa-tower-broadcast"></i> LIVE';
+    }
+
+    updateDVRUI();
+    console.log('[DVR] Jumped back to live');
+}
+
+/**
+ * Clean up DVR state and timers.
+ */
+function destroyDVR() {
+    if (dvrState.pollTimer) { clearTimeout(dvrState.pollTimer); dvrState.pollTimer = null; }
+    if (dvrState.updateTimer) { clearInterval(dvrState.updateTimer); dvrState.updateTimer = null; }
+    dvrState.active = false;
+    dvrState.isLive = true;
+    dvrState.vodId = null;
+    dvrState.vodFilename = null;
+    dvrState.duration = 0;
+    dvrState.seekable = false;
+    dvrState.streamStartTime = 0;
+    dvrState.savedSrcObject = null;
+    dvrState.savedLivePlayer = null;
+    dvrState.seeking = false;
+
+    // Hide DVR UI elements
+    const wrap = document.getElementById('dvr-progress-wrap');
+    const timeEl = document.getElementById('dvr-time-display');
+    const liveBtn = document.getElementById('dvr-live-btn');
+    if (wrap) { wrap.style.display = 'none'; wrap._dvrListenersAttached = false; }
+    if (timeEl) timeEl.style.display = 'none';
+    if (liveBtn) liveBtn.style.display = 'none';
+}
+
+/* ── Player controls ──────────────────────────────────────────── */
+function setupVideoControls() {
+    const btnPlay = document.getElementById('btn-play-pause');
+    const btnVol = document.getElementById('btn-volume');
+    const volSlider = document.getElementById('volume-slider');
+    const btnFull = document.getElementById('btn-fullscreen');
+
+    let muted = false;
+    let playing = true;
+
+    btnPlay.onclick = () => {
+        playing = !playing;
+        btnPlay.innerHTML = playing
+            ? '<i class="fa-solid fa-pause"></i>'
+            : '<i class="fa-solid fa-play"></i>';
+
+        if (playerType === 'jsmpeg' && player && dvrState.isLive) {
+            playing ? player.play() : player.pause();
+        } else {
+            const vid = document.getElementById('video-element');
+            playing ? vid.play().catch(() => {}) : vid.pause();
+        }
+    };
+    // Start showing pause icon since autoplay
+    btnPlay.innerHTML = '<i class="fa-solid fa-pause"></i>';
+
+    btnVol.onclick = () => {
+        muted = !muted;
+        btnVol.innerHTML = muted
+            ? '<i class="fa-solid fa-volume-xmark"></i>'
+            : '<i class="fa-solid fa-volume-high"></i>';
+        setVolume(muted ? 0 : volSlider.value / 100);
+    };
+
+    volSlider.oninput = () => {
+        const v = volSlider.value / 100;
+        setVolume(v);
+        muted = v === 0;
+        btnVol.innerHTML = muted
+            ? '<i class="fa-solid fa-volume-xmark"></i>'
+            : '<i class="fa-solid fa-volume-high"></i>';
+    };
+
+    btnFull.onclick = () => {
+        const container = document.getElementById('video-container');
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else {
+            container.requestFullscreen().catch(() => {});
+        }
+    };
+
+    // Clip button
+    document.getElementById('btn-clip').onclick = () => {
+        if (!currentUser) return showModal('login');
+        createLiveClip();
+    };
+
+    // Keyboard shortcuts for DVR seeking
+    const container = document.getElementById('video-container');
+    if (container) {
+        container.tabIndex = 0;
+        container.addEventListener('keydown', (e) => {
+            if (!dvrState.active || !dvrState.seekable) return;
+            const video = document.getElementById('video-element');
+            if (!video) return;
+
+            switch (e.key) {
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (dvrState.isLive) {
+                        // First rewind: jump to 10s before live edge
+                        const pos = Math.max(0, dvrState.duration - 10);
+                        switchToDVR(pos);
+                    } else {
+                        // Already in DVR — rewind 5 more seconds
+                        const newTime = Math.max(0, video.currentTime - 5);
+                        video.currentTime = newTime;
+                        updateDVRUI();
+                    }
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (!dvrState.isLive) {
+                        const newTime = video.currentTime + 5;
+                        if (newTime >= dvrState.duration - 2) {
+                            jumpToLive();
+                        } else {
+                            video.currentTime = newTime;
+                            updateDVRUI();
+                        }
+                    }
+                    break;
+            }
+        });
+    }
+}
+
+/* ── Clip Recording (rolling buffer) ────────────────────────── */
+function startClipRecording(stream, streamId) {
+    stopClipRecording();
+    clipStreamId = streamId;
+    clipHeaderChunk = null;
+    clipChunks = [];
+
+    try {
+        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+            ? 'video/webm;codecs=vp9,opus'
+            : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+                ? 'video/webm;codecs=vp8,opus'
+                : 'video/webm';
+
+        clipRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 });
+
+        clipRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+                // The very first chunk contains the WebM EBML header + initialization
+                // segment. We store it separately so the rolling window never discards it.
+                if (!clipHeaderChunk) {
+                    clipHeaderChunk = e.data;
+                    console.log(`[Clip] Header chunk captured (${e.data.size} bytes)`);
+                    return; // don't add to the timed buffer
+                }
+                clipChunks.push({ data: e.data, time: Date.now() });
+                // Keep only last CLIP_BUFFER_SECONDS worth of data chunks
+                const cutoff = Date.now() - (CLIP_BUFFER_SECONDS * 1000);
+                clipChunks = clipChunks.filter(c => c.time >= cutoff);
+            }
+        };
+
+        clipRecorder.onerror = (e) => {
+            console.error('[Clip] MediaRecorder error:', e.error?.message || e);
+        };
+
+        // Record in 1-second intervals to fill the buffer
+        clipRecorder.start(1000);
+        console.log(`[Clip] Rolling buffer recording started (${mimeType}, tracks: ${stream.getTracks().map(t => t.kind).join(', ')})`);
+    } catch (err) {
+        console.warn('[Clip] MediaRecorder not available:', err.message);
+    }
+}
+
+function stopClipRecording() {
+    if (clipRecorder && clipRecorder.state !== 'inactive') {
+        try { clipRecorder.stop(); } catch {}
+    }
+    clipRecorder = null;
+    clipHeaderChunk = null;
+    clipChunks = [];
+    clipStreamId = null;
+}
+
+async function createLiveClip() {
+    if (!clipHeaderChunk || !clipChunks.length || !clipStreamId) {
+        toast('No clip data available yet — wait a moment', 'info');
+        return;
+    }
+
+    toast('Creating clip...', 'info');
+
+    try {
+        // Assemble: header chunk first, then rolling buffer chunks.
+        // The header contains the WebM EBML header + track initialization
+        // which is required for the file to be playable.
+        const blobs = [clipHeaderChunk, ...clipChunks.map(c => c.data)];
+        const clipBlob = new Blob(blobs, { type: clipHeaderChunk.type || 'video/webm' });
+
+        const startTime = clipChunks[0].time / 1000;
+        const endTime = clipChunks[clipChunks.length - 1].time / 1000;
+        const duration = endTime - startTime;
+
+        const formData = new FormData();
+        formData.append('video', clipBlob, `clip-${Date.now()}.webm`);
+        formData.append('stream_id', clipStreamId);
+        formData.append('title', `Clip from stream`);
+        formData.append('start_time', '0');
+        formData.append('end_time', String(Math.round(duration)));
+
+        const token = localStorage.getItem('token');
+        const resp = await fetch('/api/vods/clips', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData,
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.error || 'Upload failed');
+        }
+
+        const data = await resp.json();
+        const clipId = data.clip?.id;
+        toast(`Clip created! (${Math.round(duration)}s) — Give it a title`, 'success');
+
+        // Prompt user to title the clip
+        if (clipId) {
+            promptClipTitle(clipId);
+        }
+    } catch (err) {
+        toast('Failed to create clip: ' + err.message, 'error');
+    }
+}
+
+/**
+ * Show a modal prompt for the user to title their clip after creation.
+ * @param {number} clipId - The newly created clip's ID
+ */
+function promptClipTitle(clipId) {
+    // Exit fullscreen first — the browser top layer hides body-appended overlays
+    const showOverlay = () => {
+        const overlay = document.createElement('div');
+        overlay.id = 'clip-title-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+        _buildClipTitleModal(overlay, clipId);
+    };
+    if (document.fullscreenElement) {
+        document.exitFullscreen().then(showOverlay).catch(showOverlay);
+    } else {
+        showOverlay();
+    }
+}
+
+function _buildClipTitleModal(overlay, clipId) {
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--card-bg, #1a1a2e);border:1px solid var(--border, #333);border-radius:12px;padding:24px;max-width:400px;width:90%;text-align:center;';
+    modal.innerHTML = `
+        <h3 style="margin:0 0 8px 0"><i class="fa-solid fa-scissors"></i> Name Your Clip</h3>
+        <p style="margin:0 0 16px 0;opacity:0.7;font-size:0.9rem">Give your clip a title so others know what it is</p>
+        <input type="text" id="clip-title-input" class="form-input" placeholder="Enter clip title..."
+               maxlength="200" style="width:100%;box-sizing:border-box;margin-bottom:16px;font-size:1rem;padding:10px 12px">
+        <div style="display:flex;gap:8px;justify-content:center">
+            <button id="clip-title-save" class="btn btn-primary" style="flex:1">
+                <i class="fa-solid fa-check"></i> Save Title
+            </button>
+            <button id="clip-title-skip" class="btn" style="flex:0.6;opacity:0.7">
+                Skip
+            </button>
+        </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const input = document.getElementById('clip-title-input');
+    input.focus();
+
+    const saveTitle = async () => {
+        const title = input.value.trim();
+        if (!title) {
+            input.style.borderColor = '#e53e3e';
+            input.placeholder = 'Please enter a title...';
+            input.focus();
+            return;
+        }
+        try {
+            const token = localStorage.getItem('token');
+            const resp = await fetch(`/api/clips/${clipId}/title`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ title }),
+            });
+            if (!resp.ok) throw new Error('Failed to save');
+            toast('Clip titled!', 'success');
+        } catch (err) {
+            toast('Failed to save title: ' + err.message, 'error');
+        }
+        overlay.remove();
+    };
+
+    const skip = () => overlay.remove();
+
+    document.getElementById('clip-title-save').onclick = saveTitle;
+    document.getElementById('clip-title-skip').onclick = skip;
+    input.onkeydown = (e) => { if (e.key === 'Enter') saveTitle(); if (e.key === 'Escape') skip(); };
+    overlay.onclick = (e) => { if (e.target === overlay) skip(); };
+}
+
+function setVolume(v) {
+    if (playerType === 'jsmpeg' && player && player.audioOut && dvrState.isLive) {
+        player.audioOut.gain.value = v;
+    } else {
+        const vid = document.getElementById('video-element');
+        vid.volume = v;
+        vid.muted = v === 0;
+    }
+}
+
+/* ── Cleanup ──────────────────────────────────────────────────── */
+function destroyPlayer() {
+    stopClipRecording();
+    destroyDVR();
+    // Clean up RTMP canvas fallback interval
+    if (window._rtmpCanvasDrawInterval) {
+        clearInterval(window._rtmpCanvasDrawInterval);
+        window._rtmpCanvasDrawInterval = null;
+    }
+    // Clean up JSMPEG offscreen canvas draw interval
+    if (window._jsmpegDrawInterval) {
+        clearInterval(window._jsmpegDrawInterval);
+        window._jsmpegDrawInterval = null;
+    }
+    if (player) {
+        if (playerType === 'jsmpeg' && player.destroy) player.destroy();
+        if (playerType === 'webrtc') {
+            if (player.pc) player.pc.close();
+            if (player.ws) player.ws.close();
+        }
+        if (playerType === 'hls') {
+            if (player.hls) player.hls.destroy();
+            if (player.flv) { player.flv.pause(); player.flv.unload(); player.flv.detachMediaElement(); player.flv.destroy(); }
+        }
+        player = null;
+    }
+    playerType = null;
+    streamRef = null;
+
+    const canvas = document.getElementById('video-canvas');
+    const video = document.getElementById('video-element');
+    if (canvas) canvas.style.display = 'none';
+    if (video) { video.style.display = 'none'; video.srcObject = null; video.src = ''; }
+
+    // Clean up VOD & Clip video elements so they stop playing on navigation
+    for (const id of ['vp-video', 'clp-video']) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.pause();
+            el.removeAttribute('src');
+            el.load(); // forces the browser to release the media resource
+            el.style.display = 'none';
+        }
+    }
+
+    const placeholder = document.querySelector('.video-placeholder');
+    if (placeholder) {
+        placeholder.style.display = '';
+        placeholder.innerHTML = `
+            <i class="fa-solid fa-satellite-dish fa-3x"></i>
+            <p>Connecting to stream...</p>`;
+    }
+}
+
+function showStreamEnded() {
+    const placeholder = document.querySelector('.video-placeholder');
+    if (placeholder) {
+        placeholder.style.display = '';
+        placeholder.innerHTML = `
+            <i class="fa-solid fa-campground fa-3x"></i>
+            <p>Stream has ended</p>
+            <p class="muted">Check back later!</p>`;
+    }
+    document.getElementById('video-canvas').style.display = 'none';
+    document.getElementById('video-element').style.display = 'none';
+}
+
+function showStreamError(msg) {
+    const placeholder = document.querySelector('.video-placeholder');
+    if (placeholder) {
+        placeholder.style.display = '';
+        placeholder.innerHTML = `
+            <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
+            <p>${msg}</p>`;
+    }
+}

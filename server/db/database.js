@@ -1,0 +1,1013 @@
+/**
+ * HoboStreamer — Database Connection & Helpers
+ * SQLite3 via better-sqlite3
+ */
+const Database = require('better-sqlite3');
+const path = require('path');
+const fs = require('fs');
+
+const DB_PATH = process.env.DB_PATH || './data/hobostreamer.db';
+const dbDir = path.dirname(path.resolve(DB_PATH));
+
+// Ensure data directory exists
+if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+}
+
+let db;
+
+function getDb() {
+    if (!db) {
+        db = new Database(path.resolve(DB_PATH));
+        db.pragma('journal_mode = WAL');
+        db.pragma('foreign_keys = ON');
+        db.pragma('busy_timeout = 5000');
+    }
+    return db;
+}
+
+function initDb() {
+    const database = getDb();
+    const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+    database.exec(schema);
+
+    // ── Migrations ────────────────────────────────────────────
+    try {
+        const cols = database.prepare("PRAGMA table_info('channels')").all().map(c => c.name);
+        if (!cols.includes('emote_sources')) {
+            database.exec(`ALTER TABLE channels ADD COLUMN emote_sources TEXT DEFAULT '{"defaults":true,"custom":true,"ffz":true,"bttv":true,"7tv":true}'`);
+            console.log('[DB] Added emote_sources column to channels');
+        }
+    } catch (e) { console.warn('[DB] Migration note:', e.message); }
+
+    // Migrate camp_funds_balance → hobo_bucks_balance (REAL for dollar amounts)
+    try {
+        const userCols = database.prepare("PRAGMA table_info('users')").all().map(c => c.name);
+        if (userCols.includes('camp_funds_balance') && !userCols.includes('hobo_bucks_balance')) {
+            database.exec(`ALTER TABLE users ADD COLUMN hobo_bucks_balance REAL DEFAULT 0.00`);
+            // Convert old bits to dollars (100 bits → $1.00)
+            database.exec(`UPDATE users SET hobo_bucks_balance = camp_funds_balance * 0.01`);
+            console.log('[DB] Migrated camp_funds_balance → hobo_bucks_balance');
+        }
+        if (!userCols.includes('hobo_coins_balance')) {
+            database.exec(`ALTER TABLE users ADD COLUMN hobo_coins_balance INTEGER DEFAULT 0`);
+            console.log('[DB] Added hobo_coins_balance column to users');
+        }
+    } catch (e) { console.warn('[DB] Migration note:', e.message); }
+
+    // Migrate: create site_settings table if missing (old DB)
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS site_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT '',
+            description TEXT DEFAULT '',
+            type TEXT DEFAULT 'string' CHECK(type IN ('string', 'number', 'boolean', 'json')),
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+    } catch (e) { console.warn('[DB] site_settings migration:', e.message); }
+
+    // Migrate: create verification_keys table if missing (old DB)
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS verification_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key TEXT UNIQUE NOT NULL,
+            target_username TEXT NOT NULL,
+            note TEXT DEFAULT '',
+            created_by INTEGER NOT NULL,
+            used_by INTEGER,
+            status TEXT DEFAULT 'active' CHECK(status IN ('active', 'used', 'revoked')),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            used_at DATETIME,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (used_by) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_vkeys_key ON verification_keys(key)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_vkeys_target ON verification_keys(target_username)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_vkeys_status ON verification_keys(status)`);
+    } catch (e) { console.warn('[DB] verification_keys migration:', e.message); }
+
+    // Migrate: make chat_messages.stream_id nullable (was NOT NULL, broke global chat saves)
+    try {
+        const cmCols = database.prepare("PRAGMA table_info('chat_messages')").all();
+        const streamIdCol = cmCols.find(c => c.name === 'stream_id');
+        if (streamIdCol && streamIdCol.notnull === 1) {
+            database.exec(`
+                CREATE TABLE chat_messages_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stream_id INTEGER,
+                    user_id INTEGER,
+                    anon_id TEXT,
+                    username TEXT,
+                    message TEXT NOT NULL,
+                    message_type TEXT DEFAULT 'chat' CHECK(message_type IN ('chat', 'system', 'donation', 'command', 'tts')),
+                    is_global INTEGER DEFAULT 0,
+                    is_deleted INTEGER DEFAULT 0,
+                    is_filtered INTEGER DEFAULT 0,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                );
+                INSERT INTO chat_messages_new SELECT * FROM chat_messages;
+                DROP TABLE chat_messages;
+                ALTER TABLE chat_messages_new RENAME TO chat_messages;
+                CREATE INDEX IF NOT EXISTS idx_chat_stream ON chat_messages(stream_id);
+                CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_messages(user_id);
+                CREATE INDEX IF NOT EXISTS idx_chat_timestamp ON chat_messages(timestamp);
+            `);
+            console.log('[DB] Migrated chat_messages.stream_id to nullable');
+        }
+    } catch (e) { console.warn('[DB] chat_messages migration:', e.message); }
+
+    // Migrate: add default_vod_visibility / default_clip_visibility to channels
+    try {
+        const chanCols = database.prepare("PRAGMA table_info('channels')").all().map(c => c.name);
+        if (!chanCols.includes('default_vod_visibility')) {
+            database.exec(`ALTER TABLE channels ADD COLUMN default_vod_visibility TEXT DEFAULT 'public'`);
+            console.log('[DB] Added default_vod_visibility column to channels');
+        }
+        if (!chanCols.includes('default_clip_visibility')) {
+            database.exec(`ALTER TABLE channels ADD COLUMN default_clip_visibility TEXT DEFAULT 'public'`);
+            console.log('[DB] Added default_clip_visibility column to channels');
+        }
+    } catch (e) { console.warn('[DB] Channel visibility migration:', e.message); }
+
+    // Migrate: create comments table if missing
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_type TEXT NOT NULL CHECK(content_type IN ('vod', 'clip')),
+            content_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            parent_id INTEGER,
+            message TEXT NOT NULL,
+            is_deleted INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_id) REFERENCES comments(id) ON DELETE CASCADE
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_comments_content ON comments(content_type, content_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_comments_user ON comments(user_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_id)`);
+    } catch (e) { console.warn('[DB] Comments migration:', e.message); }
+
+    // Seed default site settings if empty
+    try {
+        const settingsCount = database.prepare("SELECT COUNT(*) as c FROM site_settings").get().c;
+        if (settingsCount === 0) {
+            const defaults = [
+                ['max_video_bitrate', '6000', 'Maximum video bitrate for streamers (kbps)', 'number'],
+                ['max_audio_bitrate', '320', 'Maximum audio bitrate for streamers (kbps)', 'number'],
+                ['max_vod_size_mb', '5120', 'Maximum VOD file size in MB', 'number'],
+                ['max_clip_duration', '60', 'Maximum clip duration in seconds', 'number'],
+                ['registration_open', 'true', 'Whether new user registration is open', 'boolean'],
+                ['require_email', 'false', 'Require email for registration', 'boolean'],
+                ['site_name', 'HoboStreamer', 'Public site name', 'string'],
+                ['site_description', 'Live streaming for camp culture', 'Site description / tagline', 'string'],
+                ['motd', '', 'Message of the day shown on homepage', 'string'],
+                ['min_cashout_amount', '500', 'Minimum Hobo Bucks for cashout', 'number'],
+                ['coins_per_minute', '10', 'Hobo Coins earned per minute watching', 'number'],
+                ['chat_slowmode_seconds', '0', 'Global chat slow mode (0=off)', 'number'],
+                ['max_emotes_per_user', '25', 'Max custom emotes per user', 'number'],
+                ['nsfw_enabled', 'true', 'Allow NSFW streams', 'boolean'],
+            ];
+            const insert = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+            for (const [k, v, d, t] of defaults) insert.run(k, v, d, t);
+            console.log('[DB] Default site settings seeded');
+        }
+    } catch (e) { console.warn('[DB] Settings seed:', e.message); }
+
+    console.log('[DB] Schema initialized');
+    return database;
+}
+
+// ── Generic helpers ──────────────────────────────────────────
+
+function run(sql, params = []) {
+    return getDb().prepare(sql).run(...(Array.isArray(params) ? params : [params]));
+}
+
+function get(sql, params = []) {
+    return getDb().prepare(sql).get(...(Array.isArray(params) ? params : [params]));
+}
+
+function all(sql, params = []) {
+    return getDb().prepare(sql).all(...(Array.isArray(params) ? params : [params]));
+}
+
+// ── User helpers ─────────────────────────────────────────────
+
+function getUserById(id) {
+    return get('SELECT * FROM users WHERE id = ?', [id]);
+}
+
+function getUserByUsername(username) {
+    return get('SELECT * FROM users WHERE username = ? COLLATE NOCASE', [username]);
+}
+
+function getUserByStreamKey(key) {
+    return get('SELECT * FROM users WHERE stream_key = ?', [key]);
+}
+
+function createUser({ username, email, password_hash, display_name, stream_key }) {
+    return run(
+        `INSERT INTO users (username, email, password_hash, display_name, stream_key)
+         VALUES (?, ?, ?, ?, ?)`,
+        [username, email || null, password_hash, display_name || username, stream_key]
+    );
+}
+
+// ── Stream helpers ───────────────────────────────────────────
+
+function getLiveStreams() {
+    return all(`
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color
+        FROM streams s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.is_live = 1
+        ORDER BY s.viewer_count DESC, s.started_at DESC
+    `);
+}
+
+function getRecentStreams(limit = 20) {
+    return all(`
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color
+        FROM streams s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.is_live = 0 AND s.ended_at IS NOT NULL
+        ORDER BY s.ended_at DESC
+        LIMIT ?
+    `, [limit]);
+}
+
+function getStreamById(id) {
+    return get(`
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.stream_key
+        FROM streams s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.id = ?
+    `, [id]);
+}
+
+function getStreamByUserId(userId) {
+    return get(`
+        SELECT * FROM streams WHERE user_id = ? AND is_live = 1
+        ORDER BY started_at DESC LIMIT 1
+    `, [userId]);
+}
+
+function getLiveStreamsByUserId(userId) {
+    return all(`
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.stream_key
+        FROM streams s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.user_id = ? AND s.is_live = 1
+        ORDER BY s.started_at DESC
+    `, [userId]);
+}
+
+function getStreamsByUserId(userId, limit = 50) {
+    return all(`
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color
+        FROM streams s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.user_id = ?
+        ORDER BY s.created_at DESC
+        LIMIT ?
+    `, [userId, limit]);
+}
+
+function createStream({ user_id, channel_id, title, description, category, protocol, is_nsfw, thumbnail_url }) {
+    return run(
+        `INSERT INTO streams (user_id, channel_id, title, description, category, protocol, is_nsfw, thumbnail_url, is_live, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+        [user_id, channel_id || null, title || 'Untitled Stream', description || '', category || 'irl', protocol || 'webrtc', is_nsfw ? 1 : 0, thumbnail_url || null]
+    );
+}
+
+function endStream(streamId) {
+    const stream = get('SELECT started_at FROM streams WHERE id = ?', [streamId]);
+    if (!stream) return null;
+    return run(
+        `UPDATE streams SET is_live = 0, ended_at = CURRENT_TIMESTAMP,
+         duration_seconds = CAST((julianday(CURRENT_TIMESTAMP) - julianday(started_at)) * 86400 AS INTEGER)
+         WHERE id = ?`,
+        [streamId]
+    );
+}
+
+function updateViewerCount(streamId, count) {
+    run(`UPDATE streams SET viewer_count = ?, peak_viewers = MAX(peak_viewers, ?) WHERE id = ?`,
+        [count, count, streamId]);
+}
+
+// ── Channel helpers ──────────────────────────────────────────
+
+function getChannelByUserId(userId) {
+    return get('SELECT * FROM channels WHERE user_id = ?', [userId]);
+}
+
+function getChannelByUsername(username) {
+    return get(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.bio, u.stream_key
+        FROM channels c
+        JOIN users u ON c.user_id = u.id
+        WHERE u.username = ? COLLATE NOCASE
+    `, [username]);
+}
+
+function createChannel({ user_id, title, description, category, protocol }) {
+    return run(
+        `INSERT OR IGNORE INTO channels (user_id, title, description, category, protocol)
+         VALUES (?, ?, ?, ?, ?)`,
+        [user_id, title || 'Untitled Channel', description || '', category || 'irl', protocol || 'webrtc']
+    );
+}
+
+function updateChannel(userId, fields) {
+    const updates = [];
+    const params = [];
+    for (const [key, val] of Object.entries(fields)) {
+        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'auto_record', 'offline_banner_url', 'panels', 'emote_sources'].includes(key)) {
+            updates.push(`${key} = ?`);
+            params.push(['tags', 'panels', 'emote_sources'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
+        }
+    }
+    if (updates.length === 0) return;
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(userId);
+    return run(`UPDATE channels SET ${updates.join(', ')} WHERE user_id = ?`, params);
+}
+
+function ensureChannel(userId) {
+    let ch = getChannelByUserId(userId);
+    if (!ch) {
+        const user = getUserById(userId);
+        createChannel({ user_id: userId, title: `${user?.display_name || user?.username}'s Channel` });
+        ch = getChannelByUserId(userId);
+    }
+    return ch;
+}
+
+// ── Chat helpers ─────────────────────────────────────────────
+
+function saveChatMessage({ stream_id, user_id, anon_id, username, message, message_type, is_global }) {
+    return run(
+        `INSERT INTO chat_messages (stream_id, user_id, anon_id, username, message, message_type, is_global)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0]
+    );
+}
+
+function searchChatMessages({ query, userId, streamId, limit = 50, offset = 0 }) {
+    let sql = `SELECT cm.*, u.display_name, u.role, u.avatar_url, u.profile_color
+               FROM chat_messages cm
+               LEFT JOIN users u ON cm.user_id = u.id
+               WHERE cm.is_deleted = 0`;
+    const params = [];
+
+    if (query) {
+        sql += ` AND cm.message LIKE ?`;
+        params.push(`%${query}%`);
+    }
+    if (userId) {
+        sql += ` AND cm.user_id = ?`;
+        params.push(userId);
+    }
+    if (streamId) {
+        sql += ` AND cm.stream_id = ?`;
+        params.push(streamId);
+    }
+
+    const countSql = sql.replace(/SELECT cm\.\*.*FROM/, 'SELECT COUNT(*) as c FROM');
+    const total = get(countSql, params)?.c || 0;
+
+    sql += ` ORDER BY cm.timestamp DESC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+
+    return { messages: all(sql, params), total };
+}
+
+function getUserChatHistory(userId, limit = 50, offset = 0) {
+    const sql = `SELECT cm.*, s.title as stream_title
+                 FROM chat_messages cm
+                 LEFT JOIN streams s ON cm.stream_id = s.id
+                 WHERE cm.user_id = ? AND cm.is_deleted = 0
+                 ORDER BY cm.timestamp DESC LIMIT ? OFFSET ?`;
+    const messages = all(sql, [userId, limit, offset]);
+    const total = get('SELECT COUNT(*) as c FROM chat_messages WHERE user_id = ? AND is_deleted = 0', [userId])?.c || 0;
+    return { messages, total };
+}
+
+function getUserProfile(userId) {
+    const user = get(`SELECT id, username, display_name, avatar_url, profile_color, role,
+                      hobo_bucks_balance, hobo_coins_balance, created_at, last_seen
+                      FROM users WHERE id = ?`, [userId]);
+    if (!user) return null;
+    user.messageCount = get('SELECT COUNT(*) as c FROM chat_messages WHERE user_id = ? AND is_deleted = 0', [userId])?.c || 0;
+    user.followerCount = get('SELECT COUNT(*) as c FROM follows WHERE streamer_id = ?', [userId])?.c || 0;
+    user.followingCount = get('SELECT COUNT(*) as c FROM follows WHERE follower_id = ?', [userId])?.c || 0;
+    return user;
+}
+
+function updateUserAvatar(userId, avatarUrl) {
+    return run('UPDATE users SET avatar_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [avatarUrl, userId]);
+}
+
+// ── Follow helpers ───────────────────────────────────────────
+
+function followUser(followerId, streamerId) {
+    return run(
+        `INSERT OR IGNORE INTO follows (follower_id, streamer_id) VALUES (?, ?)`,
+        [followerId, streamerId]
+    );
+}
+
+function unfollowUser(followerId, streamerId) {
+    return run(`DELETE FROM follows WHERE follower_id = ? AND streamer_id = ?`,
+        [followerId, streamerId]);
+}
+
+function getFollowerCount(streamerId) {
+    const row = get('SELECT COUNT(*) as count FROM follows WHERE streamer_id = ?', [streamerId]);
+    return row ? row.count : 0;
+}
+
+function isFollowing(followerId, streamerId) {
+    const row = get('SELECT id FROM follows WHERE follower_id = ? AND streamer_id = ?',
+        [followerId, streamerId]);
+    return !!row;
+}
+
+// ── Transaction helpers ──────────────────────────────────────
+
+function createTransaction({ from_user_id, to_user_id, stream_id, amount, type, status, message }) {
+    return run(
+        `INSERT INTO transactions (from_user_id, to_user_id, stream_id, amount, type, status, message)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [from_user_id || null, to_user_id || null, stream_id || null, amount, type, status || 'completed', message || null]
+    );
+}
+
+function addHoboBucks(userId, amount) {
+    return run(`UPDATE users SET hobo_bucks_balance = hobo_bucks_balance + ? WHERE id = ?`,
+        [amount, userId]);
+}
+
+function deductHoboBucks(userId, amount) {
+    const user = getUserById(userId);
+    if (!user || user.hobo_bucks_balance < amount) return false;
+    run(`UPDATE users SET hobo_bucks_balance = hobo_bucks_balance - ? WHERE id = ?`,
+        [amount, userId]);
+    return true;
+}
+
+// ── VOD helpers ──────────────────────────────────────────────
+
+function createVod({ stream_id, user_id, title, description, file_path, file_size, duration_seconds, thumbnail_url }) {
+    return run(
+        `INSERT INTO vods (stream_id, user_id, title, description, file_path, file_size, duration_seconds, thumbnail_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id || null, user_id, title, description || '', file_path, file_size || 0, duration_seconds || 0, thumbnail_url || null]
+    );
+}
+
+function getVodById(id) {
+    return get(`
+        SELECT v.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.protocol AS stream_protocol
+        FROM vods v
+        JOIN users u ON v.user_id = u.id
+        LEFT JOIN streams s ON v.stream_id = s.id
+        WHERE v.id = ?
+    `, [id]);
+}
+
+function getVodsByUser(userId, includePrivate = false) {
+    const clause = includePrivate ? '' : ' AND is_public = 1';
+    return all(`
+        SELECT v.*, u.username, u.display_name, u.avatar_url,
+               s.protocol AS stream_protocol
+        FROM vods v JOIN users u ON v.user_id = u.id
+        LEFT JOIN streams s ON v.stream_id = s.id
+        WHERE v.user_id = ?${clause} AND COALESCE(v.is_recording, 0) = 0
+        ORDER BY v.created_at DESC
+    `, [userId]);
+}
+
+function getPublicVods(limit = 50, offset = 0) {
+    return all(`
+        SELECT v.*, u.username, u.display_name, u.avatar_url,
+               s.protocol AS stream_protocol
+        FROM vods v JOIN users u ON v.user_id = u.id
+        LEFT JOIN streams s ON v.stream_id = s.id
+        WHERE v.is_public = 1 AND COALESCE(v.is_recording, 0) = 0
+        ORDER BY v.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [limit, offset]);
+}
+
+function getActiveVodByStream(streamId) {
+    return get(`
+        SELECT v.*, u.username, u.display_name, u.avatar_url
+        FROM vods v JOIN users u ON v.user_id = u.id
+        WHERE v.stream_id = ? AND v.is_recording = 1
+        ORDER BY v.created_at DESC LIMIT 1
+    `, [streamId]);
+}
+
+function getOrphanedRecordingVods() {
+    return all(`
+        SELECT v.* FROM vods v
+        LEFT JOIN streams s ON v.stream_id = s.id
+        WHERE v.is_recording = 1
+          AND (s.id IS NULL OR s.is_live = 0)
+    `);
+}
+
+// ── Clip helpers ─────────────────────────────────────────────
+
+function createClip({ vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds }) {
+    return run(
+        `INSERT INTO clips (vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds, is_public)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        [vod_id || null, stream_id || null, user_id, title || 'Untitled Clip', description || '', file_path || '', thumbnail_url || null, start_time || 0, end_time || 0, duration_seconds || 0]
+    );
+}
+
+function getClipById(id) {
+    return get(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        LEFT JOIN streams s ON c.stream_id = s.id
+        WHERE c.id = ?
+    `, [id]);
+}
+
+function getClipsByUser(userId, includePrivate = false) {
+    const publicFilter = includePrivate ? '' : 'AND c.is_public = 1';
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        LEFT JOIN streams s ON c.stream_id = s.id
+        WHERE c.user_id = ? ${publicFilter}
+        ORDER BY c.created_at DESC
+    `, [userId]);
+}
+
+function setClipPublic(clipId, isPublic) {
+    return run('UPDATE clips SET is_public = ? WHERE id = ?', [isPublic ? 1 : 0, clipId]);
+}
+
+function getPublicClips(limit = 50, offset = 0) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        LEFT JOIN streams s ON c.stream_id = s.id
+        WHERE c.is_public = 1
+        ORDER BY c.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [limit, offset]);
+}
+
+function getClipsByStream(streamId) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        LEFT JOIN streams s ON c.stream_id = s.id
+        WHERE c.stream_id = ? AND c.is_public = 1
+        ORDER BY c.created_at DESC
+    `, [streamId]);
+}
+
+function getClipsOfUserStreams(userId) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        JOIN streams s ON c.stream_id = s.id
+        WHERE s.user_id = ?
+        ORDER BY c.created_at DESC
+    `, [userId]);
+}
+
+// ── Control helpers ──────────────────────────────────────────
+
+function getStreamControls(streamId) {
+    return all('SELECT * FROM stream_controls WHERE stream_id = ? ORDER BY sort_order', [streamId]);
+}
+
+function createControl({ stream_id, label, command, icon, control_type, key_binding, cooldown_ms }) {
+    return run(
+        `INSERT INTO stream_controls (stream_id, label, command, icon, control_type, key_binding, cooldown_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 500]
+    );
+}
+
+// ── API Key helpers ──────────────────────────────────────────
+
+function createApiKey({ user_id, key_hash, label, permissions }) {
+    return run(
+        `INSERT INTO api_keys (user_id, key_hash, label, permissions)
+         VALUES (?, ?, ?, ?)`,
+        [user_id, key_hash, label || 'Default', JSON.stringify(permissions || ['control', 'stream'])]
+    );
+}
+
+function getApiKeyByHash(hash) {
+    return get('SELECT * FROM api_keys WHERE key_hash = ? AND is_active = 1', [hash]);
+}
+
+// ── Ban helpers ──────────────────────────────────────────────
+
+function isUserBanned(userId, streamId) {
+    const ban = get(`
+        SELECT * FROM bans
+        WHERE (user_id = ? OR stream_id IS NULL)
+        AND (stream_id = ? OR stream_id IS NULL)
+        AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+        LIMIT 1
+    `, [userId, streamId]);
+    return !!ban;
+}
+
+function isIpBanned(ip, streamId) {
+    const ban = get(`
+        SELECT * FROM bans
+        WHERE ip_address = ?
+        AND (stream_id = ? OR stream_id IS NULL)
+        AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+        LIMIT 1
+    `, [ip, streamId]);
+    return !!ban;
+}
+
+// ── Cleanup ──────────────────────────────────────────────────
+
+function close() {
+    if (db) {
+        db.close();
+        db = null;
+    }
+}
+
+// ── Site Settings helpers ────────────────────────────────────
+
+function getSetting(key) {
+    const row = get('SELECT * FROM site_settings WHERE key = ?', [key]);
+    if (!row) return null;
+    switch (row.type) {
+        case 'number': return Number(row.value);
+        case 'boolean': return row.value === 'true';
+        case 'json': try { return JSON.parse(row.value); } catch { return row.value; }
+        default: return row.value;
+    }
+}
+
+function getSettingRow(key) {
+    return get('SELECT * FROM site_settings WHERE key = ?', [key]);
+}
+
+function getAllSettings() {
+    return all('SELECT * FROM site_settings ORDER BY key');
+}
+
+function setSetting(key, value) {
+    const strVal = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    const existing = get('SELECT key FROM site_settings WHERE key = ?', [key]);
+    if (existing) {
+        return run('UPDATE site_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?', [strVal, key]);
+    }
+    return run('INSERT INTO site_settings (key, value) VALUES (?, ?)', [key, strVal]);
+}
+
+function deleteSetting(key) {
+    return run('DELETE FROM site_settings WHERE key = ?', [key]);
+}
+
+// ── Verification Key helpers ─────────────────────────────────
+
+function createVerificationKey({ key, target_username, note, created_by }) {
+    return run(
+        `INSERT INTO verification_keys (key, target_username, note, created_by) VALUES (?, ?, ?, ?)`,
+        [key, target_username, note || '', created_by]
+    );
+}
+
+function getVerificationKeyByKey(key) {
+    return get('SELECT * FROM verification_keys WHERE key = ?', [key]);
+}
+
+function getVerificationKeyByUsername(username) {
+    return get("SELECT * FROM verification_keys WHERE target_username = ? COLLATE NOCASE AND status = 'active'", [username]);
+}
+
+function getAllVerificationKeys() {
+    return all(`
+        SELECT vk.*, u1.username as created_by_name, u2.username as used_by_name
+        FROM verification_keys vk
+        LEFT JOIN users u1 ON vk.created_by = u1.id
+        LEFT JOIN users u2 ON vk.used_by = u2.id
+        ORDER BY vk.created_at DESC
+    `);
+}
+
+function redeemVerificationKey(key, userId) {
+    return run(
+        "UPDATE verification_keys SET status = 'used', used_by = ?, used_at = CURRENT_TIMESTAMP WHERE key = ? AND status = 'active'",
+        [userId, key]
+    );
+}
+
+function revokeVerificationKey(id) {
+    return run("UPDATE verification_keys SET status = 'revoked' WHERE id = ? AND status = 'active'", [id]);
+}
+
+function isUsernameReserved(username) {
+    const vk = get("SELECT id FROM verification_keys WHERE target_username = ? COLLATE NOCASE AND status = 'active'", [username]);
+    return !!vk;
+}
+
+// ── Emote helpers ────────────────────────────────────────────
+
+function createEmote({ user_id, code, url, animated = false, width = 28, height = 28, is_global = false }) {
+    return run(
+        `INSERT INTO emotes (user_id, code, url, animated, width, height, is_global)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [user_id, code, url, animated ? 1 : 0, width, height, is_global ? 1 : 0]
+    );
+}
+
+function getEmoteById(id) {
+    return get('SELECT e.*, u.username FROM emotes e JOIN users u ON e.user_id = u.id WHERE e.id = ?', [id]);
+}
+
+function getEmotesByUser(userId) {
+    return all('SELECT * FROM emotes WHERE user_id = ? ORDER BY code', [userId]);
+}
+
+function getGlobalEmotes() {
+    return all('SELECT e.*, u.username FROM emotes e JOIN users u ON e.user_id = u.id WHERE e.is_global = 1 AND e.is_approved = 1 ORDER BY code');
+}
+
+function getChannelEmotes(userId) {
+    return all('SELECT e.*, u.username FROM emotes e JOIN users u ON e.user_id = u.id WHERE e.user_id = ? AND e.is_approved = 1 ORDER BY code', [userId]);
+}
+
+function deleteEmote(id) {
+    return run('DELETE FROM emotes WHERE id = ?', [id]);
+}
+
+function getEmoteByCode(code, userId) {
+    // Check channel emotes first, then global
+    return get(
+        `SELECT * FROM emotes WHERE code = ? AND (user_id = ? OR is_global = 1) AND is_approved = 1 ORDER BY is_global ASC LIMIT 1`,
+        [code, userId]
+    );
+}
+
+function countUserEmotes(userId) {
+    const row = get('SELECT COUNT(*) as count FROM emotes WHERE user_id = ?', [userId]);
+    return row ? row.count : 0;
+}
+
+// ── Hobo Coins helpers ───────────────────────────────────────
+
+function addHoboCoins(userId, amount) {
+    return run(`UPDATE users SET hobo_coins_balance = hobo_coins_balance + ? WHERE id = ?`,
+        [amount, userId]);
+}
+
+function deductHoboCoins(userId, amount) {
+    const user = getUserById(userId);
+    if (!user || user.hobo_coins_balance < amount) return false;
+    run(`UPDATE users SET hobo_coins_balance = hobo_coins_balance - ? WHERE id = ?`,
+        [amount, userId]);
+    return true;
+}
+
+function createCoinTransaction({ user_id, stream_id, amount, type, reward_id, message }) {
+    return run(
+        `INSERT INTO coin_transactions (user_id, stream_id, amount, type, reward_id, message)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [user_id, stream_id || null, amount, type, reward_id || null, message || null]
+    );
+}
+
+function getCoinTransactions(userId, limit = 50) {
+    return all(`SELECT * FROM coin_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
+        [userId, limit]);
+}
+
+// ── Coin Rewards helpers ─────────────────────────────────────
+
+function createCoinReward({ streamer_id, title, description, cost, icon, color, cooldown_seconds, max_per_stream, requires_input, is_global, sort_order }) {
+    return run(
+        `INSERT INTO coin_rewards (streamer_id, title, description, cost, icon, color, cooldown_seconds, max_per_stream, requires_input, is_global, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [streamer_id, title, description || '', cost || 100, icon || 'fa-star', color || '#c0965c',
+         cooldown_seconds || 0, max_per_stream || 0, requires_input ? 1 : 0, is_global ? 1 : 0, sort_order || 0]
+    );
+}
+
+function getCoinRewardsByStreamer(streamerId) {
+    return all('SELECT * FROM coin_rewards WHERE streamer_id = ? AND is_enabled = 1 ORDER BY sort_order, cost',
+        [streamerId]);
+}
+
+function getCoinRewardById(id) {
+    return get('SELECT * FROM coin_rewards WHERE id = ?', [id]);
+}
+
+function updateCoinReward(id, fields) {
+    const sets = [];
+    const vals = [];
+    for (const [k, v] of Object.entries(fields)) {
+        sets.push(`${k} = ?`);
+        vals.push(v);
+    }
+    vals.push(id);
+    return run(`UPDATE coin_rewards SET ${sets.join(', ')} WHERE id = ?`, vals);
+}
+
+function deleteCoinReward(id) {
+    return run('DELETE FROM coin_rewards WHERE id = ?', [id]);
+}
+
+// ── Coin Redemptions helpers ─────────────────────────────────
+
+function createCoinRedemption({ reward_id, user_id, stream_id, user_input }) {
+    return run(
+        `INSERT INTO coin_redemptions (reward_id, user_id, stream_id, user_input)
+         VALUES (?, ?, ?, ?)`,
+        [reward_id, user_id, stream_id || null, user_input || null]
+    );
+}
+
+function getPendingRedemptions(streamerId) {
+    return all(`
+        SELECT r.*, cr.title as reward_title, cr.cost, cr.icon, cr.color,
+               u.username, u.display_name, u.avatar_url
+        FROM coin_redemptions r
+        JOIN coin_rewards cr ON r.reward_id = cr.id
+        JOIN users u ON r.user_id = u.id
+        WHERE cr.streamer_id = ? AND r.status = 'pending'
+        ORDER BY r.created_at ASC
+    `, [streamerId]);
+}
+
+function resolveRedemption(id, status) {
+    return run(`UPDATE coin_redemptions SET status = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [status, id]);
+}
+
+// ── Watch Time helpers ───────────────────────────────────────
+
+function upsertWatchTime(userId, streamId) {
+    // Create or update watch time record
+    const existing = get('SELECT * FROM watch_time WHERE user_id = ? AND stream_id = ?',
+        [userId, streamId]);
+    if (existing) {
+        return run(
+            `UPDATE watch_time SET minutes_watched = minutes_watched + 1, last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?`,
+            [existing.id]
+        );
+    }
+    return run(
+        'INSERT INTO watch_time (user_id, stream_id, minutes_watched) VALUES (?, ?, 1)',
+        [userId, streamId]
+    );
+}
+
+function getWatchTime(userId, streamId) {
+    return get('SELECT * FROM watch_time WHERE user_id = ? AND stream_id = ?',
+        [userId, streamId]);
+}
+
+function getTotalWatchTime(userId) {
+    const row = get('SELECT SUM(minutes_watched) as total FROM watch_time WHERE user_id = ?', [userId]);
+    return row ? (row.total || 0) : 0;
+}
+
+// ── Comment helpers ──────────────────────────────────────────
+
+function createComment({ content_type, content_id, user_id, parent_id, message }) {
+    return run(
+        `INSERT INTO comments (content_type, content_id, user_id, parent_id, message)
+         VALUES (?, ?, ?, ?, ?)`,
+        [content_type, content_id, user_id, parent_id || null, message]
+    );
+}
+
+function getComments(contentType, contentId, limit = 50, offset = 0) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.role
+        FROM comments c
+        JOIN users u ON c.user_id = u.id
+        WHERE c.content_type = ? AND c.content_id = ? AND c.is_deleted = 0 AND c.parent_id IS NULL
+        ORDER BY c.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [contentType, contentId, limit, offset]);
+}
+
+function getCommentReplies(parentId) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.role
+        FROM comments c
+        JOIN users u ON c.user_id = u.id
+        WHERE c.parent_id = ? AND c.is_deleted = 0
+        ORDER BY c.created_at ASC
+    `, [parentId]);
+}
+
+function getCommentById(id) {
+    return get('SELECT * FROM comments WHERE id = ?', [id]);
+}
+
+function getCommentCount(contentType, contentId) {
+    const row = get('SELECT COUNT(*) as c FROM comments WHERE content_type = ? AND content_id = ? AND is_deleted = 0',
+        [contentType, contentId]);
+    return row ? row.c : 0;
+}
+
+function deleteComment(id) {
+    return run('UPDATE comments SET is_deleted = 1 WHERE id = ?', [id]);
+}
+
+function updateComment(id, message) {
+    return run('UPDATE comments SET message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [message, id]);
+}
+
+// ── Chat replay helpers ──────────────────────────────────────
+
+function getChatReplay(streamId, fromTime, toTime) {
+    let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name
+               FROM chat_messages cm
+               LEFT JOIN users u ON cm.user_id = u.id
+               WHERE cm.stream_id = ? AND cm.is_deleted = 0 AND cm.message_type = 'chat'`;
+    const params = [streamId];
+    if (fromTime) { sql += ` AND cm.timestamp >= ?`; params.push(fromTime); }
+    if (toTime) { sql += ` AND cm.timestamp <= ?`; params.push(toTime); }
+    sql += ` ORDER BY cm.timestamp ASC`;
+    return all(sql, params);
+}
+
+module.exports = {
+    getDb, initDb, run, get, all, close,
+    // Users
+    getUserById, getUserByUsername, getUserByStreamKey, createUser,
+    // Streams
+    getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getStreamsByUserId,
+    createStream, endStream, updateViewerCount,
+    // Channels
+    getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
+    // Chat
+    saveChatMessage, searchChatMessages, getUserChatHistory,
+    // Profiles
+    getUserProfile, updateUserAvatar,
+    // Follows
+    followUser, unfollowUser, getFollowerCount, isFollowing,
+    // Transactions (Hobo Bucks)
+    createTransaction, addHoboBucks, deductHoboBucks,
+    // Hobo Coins
+    addHoboCoins, deductHoboCoins, createCoinTransaction, getCoinTransactions,
+    // Coin Rewards
+    createCoinReward, getCoinRewardsByStreamer, getCoinRewardById, updateCoinReward, deleteCoinReward,
+    // Coin Redemptions
+    createCoinRedemption, getPendingRedemptions, resolveRedemption,
+    // Watch Time
+    upsertWatchTime, getWatchTime, getTotalWatchTime,
+    // VODs
+    createVod, getVodById, getVodsByUser, getPublicVods, getActiveVodByStream, getOrphanedRecordingVods,
+    // Clips
+    createClip, getClipById, getClipsByUser, getPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams,
+    // Controls
+    getStreamControls, createControl,
+    // API Keys
+    createApiKey, getApiKeyByHash,
+    // Bans
+    isUserBanned, isIpBanned,
+    // Emotes
+    createEmote, getEmoteById, getEmotesByUser, getGlobalEmotes, getChannelEmotes,
+    deleteEmote, getEmoteByCode, countUserEmotes,
+    // Site Settings
+    getSetting, getSettingRow, getAllSettings, setSetting, deleteSetting,
+    // Verification Keys
+    createVerificationKey, getVerificationKeyByKey, getVerificationKeyByUsername,
+    getAllVerificationKeys, redeemVerificationKey, revokeVerificationKey, isUsernameReserved,
+    // Comments
+    createComment, getComments, getCommentReplies, getCommentById, getCommentCount,
+    deleteComment, updateComment,
+    // Chat Replay
+    getChatReplay,
+};

@@ -1,0 +1,382 @@
+/**
+ * ╔═══════════════════════════════════════════════════════════╗
+ * ║            HoboStreamer.com — Main Server                 ║
+ * ║  Live streaming platform for stealth campers & nomads     ║
+ * ║  Paired with HoboApp — Open Source & Community Driven     ║
+ * ╚═══════════════════════════════════════════════════════════╝
+ * 
+ * Streaming: JSMPEG + WebRTC (Mediasoup) + RTMP
+ * Chat: WebSocket with anon handling + word filter
+ * Currency: Hobo Bucks (1 HB = $1.00 USD)
+ * Controls: Interactive hardware API (Raspberry Pi)
+ */
+
+// Prevent sub-service port conflicts from crashing the main HTTP server
+process.on('uncaughtException', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.warn(`[Server] Port ${err.port || '?'} already in use — sub-service skipped`);
+    } else {
+        console.error('[Server] Uncaught exception:', err);
+        process.exit(1);
+    }
+});
+
+const path = require('path');
+const fs = require('fs');
+
+// Load env before anything else
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
+const express = require('express');
+const http = require('http');
+const cors = require('cors');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
+const config = require('./config');
+
+// Database
+const db = require('./db/database');
+
+// Streaming
+const jsmpegRelay = require('./streaming/jsmpeg-relay');
+const webrtcSFU = require('./streaming/webrtc-sfu');
+const rtmpServer = require('./streaming/rtmp-server');
+
+// Real-time
+const chatServer = require('./chat/chat-server');
+const controlServer = require('./controls/control-server');
+const broadcastServer = require('./streaming/broadcast-server');
+const callServer = require('./streaming/call-server');
+
+// Routes
+const authRoutes = require('./auth/routes');
+const streamRoutes = require('./streaming/routes');
+const chatRoutes = require('./chat/routes');
+const monetizationRoutes = require('./monetization/routes');
+const coinsRoutes = require('./monetization/coins-routes');
+const cosmeticsRoutes = require('./monetization/cosmetics-routes');
+const cosmeticsModule = require('./monetization/cosmetics');
+const vodRoutes = require('./vod/routes');
+const clipRoutes = require('./vod/clips-routes');
+const commentRoutes = require('./vod/comments-routes');
+const controlRoutes = require('./controls/routes');
+const adminRoutes = require('./admin/routes');
+const thumbnailRoutes = require('./thumbnails/routes');
+const thumbnailService = require('./thumbnails/thumbnail-service');
+const themeRoutes = require('./themes/routes');
+const emoteRoutes = require('./emotes/routes');
+
+// Game
+const gameRoutes = require('./game/routes');
+const gameServer = require('./game/game-server');
+const game = require('./game/game-engine');
+
+// ── Express App ──────────────────────────────────────────────
+const app = express();
+const server = http.createServer(app);
+
+// ── Middleware ────────────────────────────────────────────────
+app.use(helmet({
+    contentSecurityPolicy: false, // Allow inline scripts for dev
+    crossOriginEmbedderPolicy: false,
+}));
+app.use(cors({
+    origin: config.nodeEnv === 'production' ? config.baseUrl : '*',
+    credentials: true,
+}));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// Rate limiting
+const apiLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 120,
+    message: { error: 'Too many requests, slow down partner' },
+});
+app.use('/api/', apiLimiter);
+
+// ── Static Files ─────────────────────────────────────────────
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Ensure data directories exist
+['./data', './data/vods', './data/clips', './data/media', './data/thumbnails', './data/emotes', './data/avatars'].forEach(dir => {
+    const fullPath = path.resolve(dir);
+    if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
+});
+
+// Serve VOD/media files
+app.use('/media', express.static(path.resolve('./data/media')));
+
+// Serve avatar files
+app.use('/data/avatars', express.static(path.resolve('./data/avatars')));
+
+// ── API Routes ───────────────────────────────────────────────
+app.use('/api/auth', authRoutes);
+app.use('/api/streams', streamRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/funds', monetizationRoutes);
+app.use('/api/coins', coinsRoutes);
+app.use('/api/cosmetics', cosmeticsRoutes);
+app.use('/api/vods', vodRoutes);
+app.use('/api/clips', clipRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/controls', controlRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/thumbnails', thumbnailRoutes);
+app.use('/api/themes', themeRoutes);
+app.use('/api/emotes', emoteRoutes);
+app.use('/api/game', gameRoutes);
+
+// ── Health Check ─────────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        name: 'HoboStreamer',
+        version: '1.0.0',
+        uptime: process.uptime(),
+        chat_connections: chatServer.getTotalConnections(),
+    });
+});
+
+// ── SPA Fallback ─────────────────────────────────────────────
+app.get('*', (req, res) => {
+    // Don't serve HTML for API routes
+    if (req.url.startsWith('/api/') || req.url.startsWith('/ws/')) {
+        return res.status(404).json({ error: 'Not found' });
+    }
+    res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+
+// ── WebSocket Upgrade Handler ────────────────────────────────
+server.on('upgrade', (req, socket, head) => {
+    const url = req.url || '';
+
+    if (url.startsWith('/ws/chat')) {
+        chatServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/broadcast')) {
+        broadcastServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/control')) {
+        controlServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/call')) {
+        callServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/game')) {
+        gameServer.handleUpgrade(req, socket, head);
+    } else {
+        socket.destroy();
+    }
+});
+
+// ── Initialize & Start ──────────────────────────────────────
+async function start() {
+    console.log('');
+    console.log('  ╔══════════════════════════════════════╗');
+    console.log('  ║     🏕️  HoboStreamer.com  v1.0.0     ║');
+    console.log('  ║   Live Streaming for Camp Culture    ║');
+    console.log('  ╚══════════════════════════════════════╝');
+    console.log('');
+
+    // 1. Initialize database
+    db.initDb();
+    // Initialize cosmetics tables
+    cosmeticsModule.ensureTables();
+    // Migrate: add last_heartbeat column if missing
+    try { db.run("ALTER TABLE streams ADD COLUMN last_heartbeat DATETIME"); console.log('[DB] Added last_heartbeat column'); } catch { /* already exists */ }
+    // Migrate: add theme_id to users table if missing
+    try { db.run("ALTER TABLE users ADD COLUMN theme_id INTEGER"); console.log('[DB] Added theme_id column'); } catch { /* already exists */ }
+    // Migrate: add is_recording column to vods table for live VOD tracking
+    try { db.run("ALTER TABLE vods ADD COLUMN is_recording INTEGER DEFAULT 0"); console.log('[DB] Added vods.is_recording column'); } catch { /* already exists */ }
+    // Migrate: add call_mode column to streams table for group calls
+    try { db.run("ALTER TABLE streams ADD COLUMN call_mode TEXT DEFAULT NULL"); console.log('[DB] Added streams.call_mode column'); } catch { /* already exists */ }
+    console.log('[Server] Database ready');
+
+    // Seed built-in themes if empty
+    try {
+        const themeCount = db.get("SELECT COUNT(*) as count FROM themes WHERE is_builtin = 1");
+        if (!themeCount || themeCount.count === 0) {
+            const themeService = require('./themes/theme-service');
+            themeService.seedBuiltinThemes();
+            console.log('[Themes] Built-in themes seeded');
+        }
+    } catch (err) {
+        console.warn('[Themes] Seed error:', err.message);
+    }
+
+    // 2. Create admin from .env config if none exists (first-time setup only)
+    const adminExists = db.get("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+    if (!adminExists) {
+        const bcrypt = require('bcryptjs');
+        const { v4: uuidv4 } = require('uuid');
+        const adminUser = config.adminUsername || 'admin';
+        const adminPass = config.adminPassword || 'changeme123';
+        db.createUser({
+            username: adminUser,
+            email: null,
+            password_hash: bcrypt.hashSync(adminPass, 10),
+            display_name: adminUser,
+            stream_key: uuidv4().replace(/-/g, ''),
+        });
+        db.run("UPDATE users SET role = 'admin' WHERE username = ?", [adminUser]);
+        console.log(`[Server] Admin user "${adminUser}" created from ADMIN_USERNAME — change password after first login!`);
+    }
+
+    // 2b. Initialize game database
+    game.initGameDb();
+    console.log('[Server] Game engine ready');
+
+    // 3. Initialize chat server
+    chatServer.init(server);
+
+    // 4. Initialize control server
+    controlServer.init(server);
+
+    // 4b. Initialize broadcast server
+    broadcastServer.init(server);
+
+    // 4c. Initialize game WebSocket server
+    gameServer.init(server);
+
+    // 4d. Initialize group call signaling server
+    callServer.init(server);
+
+    // 5. Initialize WebRTC SFU (may fail if mediasoup not installed)
+    try {
+        await webrtcSFU.init();
+    } catch (err) {
+        console.warn('[Server] WebRTC SFU not available:', err.message);
+    }
+
+    // 6. Start RTMP server (may fail if node-media-server not installed)
+    try {
+        // node-media-server registers process.on('uncaughtException') that calls process.exit()
+        // We need to remove it so port conflicts don't crash the main HTTP server
+        const listenersBefore = process.listeners('uncaughtException').slice();
+        rtmpServer.start();
+        const listenersAfter = process.listeners('uncaughtException');
+        for (const fn of listenersAfter) {
+            if (!listenersBefore.includes(fn)) {
+                process.removeListener('uncaughtException', fn);
+            }
+        }
+    } catch (err) {
+        console.warn('[Server] RTMP server not available:', err.message);
+    }
+
+    // 7. Start HTTP server
+    server.listen(config.port, config.host, () => {
+        console.log('');
+        console.log(`[Server] HTTP server:  http://${config.host}:${config.port}`);
+        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/chat`);
+        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/broadcast`);
+        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/control`);
+        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/call`);
+        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/game`);
+        console.log(`[Server] Environment:  ${config.nodeEnv}`);
+        console.log('');
+        console.log('[Server] Ready. Happy camping! 🏕️');
+        console.log('');
+    });
+
+    // 8. Start stale stream heartbeat cleanup (every 60 seconds)
+    setInterval(() => {
+        try {
+            const staleStreams = db.all(
+                `SELECT id, user_id, protocol FROM streams
+                 WHERE is_live = 1
+                 AND (
+                     (last_heartbeat IS NOT NULL AND last_heartbeat < datetime('now', '-2 minutes'))
+                     OR (last_heartbeat IS NULL AND started_at < datetime('now', '-3 minutes'))
+                 )`
+            );
+            for (const stream of staleStreams) {
+                console.log(`[Heartbeat] Ending stale stream ${stream.id} (no heartbeat for 2+ minutes)`);
+                db.endStream(stream.id);
+                // Auto-finalize any active VOD recording for this stream
+                vodRoutes.finalizeVodRecording(stream.id).catch(err => {
+                    console.warn(`[VOD] Auto-finalize failed for stale stream ${stream.id}:`, err.message);
+                });
+                const user = db.getUserById(stream.user_id);
+                if (stream.protocol === 'jsmpeg' && user) {
+                    jsmpegRelay.destroyChannel(user.stream_key);
+                } else if (stream.protocol === 'webrtc') {
+                    webrtcSFU.closeRoom(`stream-${stream.id}`);
+                }
+            }
+
+            // Also finalize any orphaned VOD recordings where the stream ended but finalize was never called
+            try {
+                const orphaned = db.getOrphanedRecordingVods();
+                for (const vod of orphaned) {
+                    console.log(`[VOD] Finalizing orphaned recording: vod ${vod.id} (stream ${vod.stream_id})`);
+                    vodRoutes.finalizeVodRecording(vod.stream_id).catch(() => {
+                        // If no stream match, just mark it as done
+                        db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vod.id]);
+                    });
+                }
+            } catch (err) {
+                console.warn('[VOD] Orphan cleanup error:', err.message);
+            }
+
+            // Also clean up old live-stream thumbnails (>1 hour)
+            thumbnailService.cleanupOldThumbnails();
+
+            // Generate server-side thumbnails for RTMP streams (no client capture available)
+            const rtmpStreams = db.all(
+                `SELECT s.id, u.stream_key FROM streams s
+                 JOIN users u ON s.user_id = u.id
+                 WHERE s.is_live = 1 AND s.protocol = 'rtmp'`
+            );
+            for (const rs of rtmpStreams) {
+                thumbnailService.generateLiveStreamThumbnail(rs.id, rs.stream_key).catch(() => {});
+            }
+
+            // Generate server-side thumbnails for JSMPEG streams (broadcaster uses FFmpeg, no browser preview)
+            const jsmpegStreams = db.all(
+                `SELECT s.id, u.stream_key FROM streams s
+                 JOIN users u ON s.user_id = u.id
+                 WHERE s.is_live = 1 AND s.protocol = 'jsmpeg'`
+            );
+            for (const js of jsmpegStreams) {
+                const channelInfo = jsmpegRelay.getChannelInfo(js.stream_key);
+                if (channelInfo && channelInfo.videoPort) {
+                    thumbnailService.generateJSMPEGThumbnail(js.id, channelInfo.videoPort).catch(() => {});
+                }
+            }
+        } catch (err) {
+            console.error('[Heartbeat] Cleanup error:', err.message);
+        }
+    }, 60000);
+}
+
+// ── Graceful Shutdown ────────────────────────────────────────
+function shutdown() {
+    console.log('\n[Server] Shutting down...');
+
+    gameServer.close();
+    callServer.close();
+    chatServer.close();
+    controlServer.close();
+    broadcastServer.close();
+    jsmpegRelay.closeAll();
+    webrtcSFU.closeAll();
+    rtmpServer.stop();
+    db.close();
+
+    server.close(() => {
+        console.log('[Server] Goodbye! 🎒');
+        process.exit(0);
+    });
+
+    // Force exit after 5s
+    setTimeout(() => process.exit(1), 5000);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// ── Start Server ─────────────────────────────────────────────
+start().catch(err => {
+    console.error('[Server] Fatal error:', err);
+    process.exit(1);
+});

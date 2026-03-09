@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Campfire glow -->
+  <circle cx="64" cy="72" r="32" fill="#2a200e" opacity="0.5"/>
+  <!-- Tent -->
+  <path d="M64 20 L30 90 H98 Z" fill="#1e1e24" stroke="#c0965c" stroke-width="3" stroke-linejoin="round"/>
+  <line x1="64" y1="20" x2="64" y2="90" stroke="#3a3a44" stroke-width="1.5"/>
+  <!-- Tent opening -->
+  <path d="M54 90 L64 60 L74 90" fill="#0d0d0f"/>
+  <!-- Campfire -->
+  <ellipse cx="64" cy="100" rx="14" ry="3" fill="#8a6a3a" opacity="0.6"/>
+  <!-- Flame outer -->
+  <path d="M64 78 C58 88, 54 94, 58 100 C60 103, 68 103, 70 100 C74 94, 70 88, 64 78Z" fill="#c0965c"/>
+  <!-- Flame inner -->
+  <path d="M64 84 C61 90, 59 94, 61 98 C62 99, 66 99, 67 98 C69 94, 67 90, 64 84Z" fill="#dbb077"/>
+  <!-- Broadcast waves -->
+  <path d="M88 35 C93 30, 98 35, 93 40" stroke="#c0965c" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M93 28 C100 22, 108 30, 100 38" stroke="#c0965c" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+  <!-- Signal dot -->
+  <circle cx="86" cy="37" r="2.5" fill="#e74c3c"/>
+  <!-- Text -->
+  <text x="64" y="120" text-anchor="middle" fill="#c0965c" font-family="sans-serif" font-weight="700" font-size="10">HOBOSTREAMER</text>
+</svg>

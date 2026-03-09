@@ -1,0 +1,253 @@
+/**
+ * HoboStreamer — WebRTC SFU via Mediasoup
+ * 
+ * Provides low-latency WebRTC streaming using Mediasoup as an SFU.
+ * Producers (streamers) send media, consumers (viewers) receive it.
+ */
+const config = require('../config');
+
+let mediasoup;
+try {
+    mediasoup = require('mediasoup');
+} catch {
+    console.warn('[WebRTC] mediasoup not installed — WebRTC streaming disabled');
+    console.warn('[WebRTC] Install with: npm install mediasoup');
+}
+
+class WebRTCSFU {
+    constructor() {
+        /** @type {Map<string, { router: any, producers: Map, consumers: Map, transports: Map }>} */
+        this.rooms = new Map();
+        this.worker = null;
+        this.ready = false;
+    }
+
+    async init() {
+        if (!mediasoup) {
+            console.warn('[WebRTC] Mediasoup not available, SFU disabled');
+            return;
+        }
+
+        try {
+            this.worker = await mediasoup.createWorker({
+                logLevel: 'warn',
+                rtcMinPort: config.mediasoup.minPort,
+                rtcMaxPort: config.mediasoup.maxPort,
+            });
+
+            this.worker.on('died', () => {
+                console.error('[WebRTC] Mediasoup Worker died! Restarting...');
+                setTimeout(() => this.init(), 2000);
+            });
+
+            this.ready = true;
+            console.log('[WebRTC] Mediasoup Worker started (PID:', this.worker.pid, ')');
+        } catch (err) {
+            console.error('[WebRTC] Failed to create Mediasoup worker:', err.message);
+        }
+    }
+
+    /**
+     * Create or get a room for a stream
+     */
+    async getOrCreateRoom(roomId) {
+        if (this.rooms.has(roomId)) return this.rooms.get(roomId);
+
+        if (!this.worker || !this.ready) {
+            throw new Error('WebRTC SFU not initialized');
+        }
+
+        const router = await this.worker.createRouter({
+            mediaCodecs: config.mediasoup.mediaCodecs,
+        });
+
+        const room = {
+            router,
+            producers: new Map(),
+            consumers: new Map(),
+            transports: new Map(),
+        };
+
+        this.rooms.set(roomId, room);
+        console.log(`[WebRTC] Room created: ${roomId}`);
+        return room;
+    }
+
+    /**
+     * Get router RTP capabilities for a room
+     */
+    async getRouterCapabilities(roomId) {
+        const room = await this.getOrCreateRoom(roomId);
+        return room.router.rtpCapabilities;
+    }
+
+    /**
+     * Create a WebRTC transport (for producer or consumer)
+     */
+    async createTransport(roomId, peerId) {
+        const room = await this.getOrCreateRoom(roomId);
+
+        const transport = await room.router.createWebRtcTransport({
+            listenIps: [{
+                ip: config.mediasoup.listenIp,
+                announcedIp: config.mediasoup.announcedIp,
+            }],
+            enableUdp: true,
+            enableTcp: true,
+            preferUdp: true,
+            initialAvailableOutgoingBitrate: 1000000,
+        });
+
+        transport.on('dtlsstatechange', (dtlsState) => {
+            if (dtlsState === 'closed') {
+                transport.close();
+            }
+        });
+
+        room.transports.set(`${peerId}-${transport.id}`, transport);
+
+        return {
+            id: transport.id,
+            iceParameters: transport.iceParameters,
+            iceCandidates: transport.iceCandidates,
+            dtlsParameters: transport.dtlsParameters,
+        };
+    }
+
+    /**
+     * Connect a transport (complete DTLS handshake)
+     */
+    async connectTransport(roomId, peerId, transportId, dtlsParameters) {
+        const room = this.rooms.get(roomId);
+        if (!room) throw new Error('Room not found');
+
+        const transport = room.transports.get(`${peerId}-${transportId}`);
+        if (!transport) throw new Error('Transport not found');
+
+        await transport.connect({ dtlsParameters });
+    }
+
+    /**
+     * Create a producer (streamer sending media)
+     */
+    async produce(roomId, peerId, transportId, kind, rtpParameters) {
+        const room = this.rooms.get(roomId);
+        if (!room) throw new Error('Room not found');
+
+        const transport = room.transports.get(`${peerId}-${transportId}`);
+        if (!transport) throw new Error('Transport not found');
+
+        const producer = await transport.produce({ kind, rtpParameters });
+
+        room.producers.set(producer.id, { producer, peerId });
+        console.log(`[WebRTC] Producer created: ${producer.id} (${kind}) in room ${roomId}`);
+
+        producer.on('transportclose', () => {
+            room.producers.delete(producer.id);
+        });
+
+        return { id: producer.id };
+    }
+
+    /**
+     * Create a consumer (viewer receiving media)
+     */
+    async consume(roomId, peerId, transportId, producerId, rtpCapabilities) {
+        const room = this.rooms.get(roomId);
+        if (!room) throw new Error('Room not found');
+
+        if (!room.router.canConsume({ producerId, rtpCapabilities })) {
+            throw new Error('Cannot consume this producer');
+        }
+
+        const transport = room.transports.get(`${peerId}-${transportId}`);
+        if (!transport) throw new Error('Transport not found');
+
+        const consumer = await transport.consume({
+            producerId,
+            rtpCapabilities,
+            paused: false,
+        });
+
+        room.consumers.set(consumer.id, { consumer, peerId });
+
+        consumer.on('transportclose', () => {
+            room.consumers.delete(consumer.id);
+        });
+
+        return {
+            id: consumer.id,
+            producerId: consumer.producerId,
+            kind: consumer.kind,
+            rtpParameters: consumer.rtpParameters,
+        };
+    }
+
+    /**
+     * Create a Plain RTP transport (for FFmpeg-based streaming)
+     */
+    async createPlainTransport(roomId) {
+        const room = await this.getOrCreateRoom(roomId);
+
+        const transport = await room.router.createPlainTransport({
+            listenIp: { ip: config.mediasoup.listenIp, announcedIp: config.mediasoup.announcedIp },
+            rtcpMux: false,
+            comedia: true,
+        });
+
+        return {
+            id: transport.id,
+            ip: transport.tuple.localIp,
+            port: transport.tuple.localPort,
+            rtcpPort: transport.rtcpTuple ? transport.rtcpTuple.localPort : undefined,
+        };
+    }
+
+    /**
+     * Get all producer IDs in a room
+     */
+    getProducers(roomId) {
+        const room = this.rooms.get(roomId);
+        if (!room) return [];
+        return Array.from(room.producers.entries()).map(([id, { peerId }]) => ({ id, peerId }));
+    }
+
+    /**
+     * Get viewer count for a room
+     */
+    getViewerCount(roomId) {
+        const room = this.rooms.get(roomId);
+        if (!room) return 0;
+        // Count unique consumer peers
+        const peers = new Set();
+        room.consumers.forEach(({ peerId }) => peers.add(peerId));
+        return peers.size;
+    }
+
+    /**
+     * Close a room and all its transports
+     */
+    closeRoom(roomId) {
+        const room = this.rooms.get(roomId);
+        if (!room) return;
+
+        room.transports.forEach(t => t.close());
+        room.router.close();
+        this.rooms.delete(roomId);
+        console.log(`[WebRTC] Room closed: ${roomId}`);
+    }
+
+    /**
+     * Close all rooms
+     */
+    closeAll() {
+        for (const roomId of this.rooms.keys()) {
+            this.closeRoom(roomId);
+        }
+        if (this.worker) {
+            this.worker.close();
+        }
+    }
+}
+
+module.exports = new WebRTCSFU();

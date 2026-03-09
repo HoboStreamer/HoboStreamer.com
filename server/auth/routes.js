@@ -1,0 +1,274 @@
+/**
+ * HoboStreamer — Auth Routes
+ * POST /api/auth/register
+ * POST /api/auth/login
+ * GET  /api/auth/me
+ * PUT  /api/auth/profile
+ * POST /api/auth/avatar
+ */
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const db = require('../db/database');
+const { generateToken, requireAuth } = require('./auth');
+const legacyMigration = require('../game/legacy-migration');
+
+const router = express.Router();
+
+// ── Avatar Upload Config ─────────────────────────────────────
+const avatarDir = path.resolve('./data/avatars');
+if (!fs.existsSync(avatarDir)) fs.mkdirSync(avatarDir, { recursive: true });
+
+const avatarStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, avatarDir),
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname) || '.png';
+        cb(null, `avatar-${req.user.id}-${Date.now()}${ext}`);
+    },
+});
+const avatarUpload = multer({
+    storage: avatarStorage,
+    limits: { fileSize: 512 * 1024 }, // 512KB
+    fileFilter: (req, file, cb) => {
+        const allowed = ['image/png', 'image/gif', 'image/webp', 'image/jpeg', 'image/avif'];
+        cb(null, allowed.includes(file.mimetype));
+    },
+});
+
+// ── Register ─────────────────────────────────────────────────
+router.post('/register', (req, res) => {
+    try {
+        const { username, email, password, display_name, verification_key } = req.body;
+
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password are required' });
+        }
+        if (username.length < 3 || username.length > 24) {
+            return res.status(400).json({ error: 'Username must be 3-24 characters' });
+        }
+        if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+            return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
+        }
+        if (password.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        }
+
+        // Check existing
+        if (db.getUserByUsername(username)) {
+            return res.status(409).json({ error: 'Username already taken' });
+        }
+
+        // Check if username is reserved (has an active verification key)
+        const reserved = db.isUsernameReserved(username);
+        if (reserved) {
+            if (!verification_key) {
+                return res.status(403).json({
+                    error: 'This username is reserved. A verification key is required to claim it.',
+                    reserved: true,
+                });
+            }
+            // Validate the key
+            const vk = db.getVerificationKeyByKey(verification_key);
+            if (!vk || vk.status !== 'active') {
+                return res.status(403).json({ error: 'Invalid or expired verification key' });
+            }
+            if (vk.target_username.toLowerCase() !== username.toLowerCase()) {
+                return res.status(403).json({ error: 'This verification key is for a different username' });
+            }
+        }
+
+        // Check if registration is open
+        const regOpen = db.getSetting('registration_open');
+        if (regOpen === false) {
+            return res.status(403).json({ error: 'Registration is currently closed' });
+        }
+
+        const password_hash = bcrypt.hashSync(password, 10);
+        const stream_key = uuidv4().replace(/-/g, '');
+
+        const result = db.createUser({
+            username,
+            email: email || null,
+            password_hash,
+            display_name: display_name || username,
+            stream_key,
+        });
+
+        let user = db.getUserById(result.lastInsertRowid);
+
+        // If a verification key was used, redeem it and migrate legacy data
+        let migrated = null;
+        if (verification_key && reserved) {
+            db.redeemVerificationKey(verification_key, user.id);
+
+            // Auto-migrate RS-Companion game data for legacy users
+            if (legacyMigration.isAvailable()) {
+                const migration = legacyMigration.migrateUser(db.getDb(), user.id, username);
+                if (migration.success) {
+                    migrated = migration.message;
+                    // Re-fetch user to include migrated coin balance
+                    const updatedUser = db.getUserById(user.id);
+                    if (updatedUser) user = updatedUser;
+                }
+            }
+        }
+
+        const token = generateToken(user);
+
+        res.status(201).json({
+            token,
+            user: sanitizeUser(user),
+            ...(migrated && { migrated }),
+        });
+    } catch (err) {
+        console.error('[Auth] Register error:', err.message);
+        res.status(500).json({ error: 'Registration failed' });
+    }
+});
+
+// ── Login ────────────────────────────────────────────────────
+router.post('/login', (req, res) => {
+    try {
+        const { username, password } = req.body;
+
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password required' });
+        }
+
+        const user = db.getUserByUsername(username);
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        if (!bcrypt.compareSync(password, user.password_hash)) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        if (user.is_banned) {
+            return res.status(403).json({ error: 'Account is banned', reason: user.ban_reason });
+        }
+
+        // Update last seen
+        db.run('UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+
+        const token = generateToken(user);
+        res.json({ token, user: sanitizeUser(user) });
+    } catch (err) {
+        console.error('[Auth] Login error:', err.message);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+// ── Get Current User ─────────────────────────────────────────
+router.get('/me', requireAuth, (req, res) => {
+    res.json({ user: sanitizeUser(req.user) });
+});
+
+// ── Update Profile ───────────────────────────────────────────
+router.put('/profile', requireAuth, (req, res) => {
+    try {
+        const { display_name, bio, avatar_url, email, profile_color } = req.body;
+        const updates = [];
+        const params = [];
+
+        if (display_name !== undefined) { updates.push('display_name = ?'); params.push(display_name); }
+        if (bio !== undefined) { updates.push('bio = ?'); params.push(bio); }
+        if (avatar_url !== undefined) { updates.push('avatar_url = ?'); params.push(avatar_url); }
+        if (email !== undefined) { updates.push('email = ?'); params.push(email); }
+        if (profile_color !== undefined) { updates.push('profile_color = ?'); params.push(profile_color); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(req.user.id);
+
+        db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+        const updated = db.getUserById(req.user.id);
+        res.json({ user: sanitizeUser(updated) });
+    } catch (err) {
+        console.error('[Auth] Profile update error:', err.message);
+        res.status(500).json({ error: 'Profile update failed' });
+    }
+});
+
+// ── Get Stream Key ───────────────────────────────────────────
+router.get('/stream-key', requireAuth, (req, res) => {
+    res.json({ stream_key: req.user.stream_key });
+});
+
+// ── Regenerate Stream Key ────────────────────────────────────
+router.post('/stream-key/regenerate', requireAuth, (req, res) => {
+    const newKey = uuidv4().replace(/-/g, '');
+    db.run('UPDATE users SET stream_key = ? WHERE id = ?', [newKey, req.user.id]);
+    res.json({ stream_key: newKey });
+});
+
+// ── Get User Profile (public) ────────────────────────────────
+router.get('/user/:username', (req, res) => {
+    const user = db.getUserByUsername(req.params.username);
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ user: sanitizeUser(user, true) });
+});
+
+// ── Upload Avatar ────────────────────────────────────────────
+router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No image file uploaded' });
+
+        // Delete old avatar file if it exists
+        const oldUser = db.getUserById(req.user.id);
+        if (oldUser?.avatar_url) {
+            const oldPath = path.resolve('./data/avatars', path.basename(oldUser.avatar_url));
+            if (fs.existsSync(oldPath)) {
+                try { fs.unlinkSync(oldPath); } catch { /* ignore */ }
+            }
+        }
+
+        const avatarUrl = `/data/avatars/${req.file.filename}`;
+        db.updateUserAvatar(req.user.id, avatarUrl);
+
+        const updated = db.getUserById(req.user.id);
+        res.json({ user: sanitizeUser(updated), avatar_url: avatarUrl });
+    } catch (err) {
+        if (req.file) try { fs.unlinkSync(req.file.path); } catch { }
+        console.error('[Auth] Avatar upload error:', err.message);
+        res.status(500).json({ error: 'Avatar upload failed' });
+    }
+});
+
+router.use((err, req, res, next) => {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File too large (max 512KB)' });
+    }
+    res.status(500).json({ error: 'Upload failed' });
+});
+
+// ── Helper ───────────────────────────────────────────────────
+function sanitizeUser(user, publicOnly = false) {
+    const safe = {
+        id: user.id,
+        username: user.username,
+        display_name: user.display_name,
+        avatar_url: user.avatar_url,
+        bio: user.bio,
+        role: user.role,
+        profile_color: user.profile_color,
+        hobo_bucks_balance: user.hobo_bucks_balance,
+        hobo_coins_balance: user.hobo_coins_balance,
+        created_at: user.created_at,
+    };
+    if (!publicOnly) {
+        safe.email = user.email;
+        safe.stream_key = user.stream_key;
+    }
+    return safe;
+}
+
+module.exports = router;

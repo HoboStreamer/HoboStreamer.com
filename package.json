@@ -1,0 +1,44 @@
+{
+  "name": "hobostreamer",
+  "version": "1.0.0",
+  "description": "HoboStreamer.com — Live streaming platform for stealth campers & nomads. Paired with HoboApp.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "NODE_ENV=development node server/index.js",
+    "init-db": "node server/db/init.js",
+    "seed": "node server/db/seed.js"
+  },
+  "keywords": [
+    "streaming",
+    "live",
+    "webrtc",
+    "jsmpeg",
+    "rtmp",
+    "mediasoup",
+    "camping",
+    "nomad",
+    "hobo"
+  ],
+  "author": "HoboStreamer Community",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0",
+    "better-sqlite3": "^11.3.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^10.0.0",
+    "dotenv": "^16.4.5",
+    "multer": "^1.4.5-lts.1",
+    "node-media-server": "^2.7.1",
+    "mediasoup": "^3.14.14",
+    "cors": "^2.8.5",
+    "cookie-parser": "^1.4.6",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

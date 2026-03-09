@@ -1,0 +1,2336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HoboStreamer — Live Streaming for Camp Culture</title>
+    <meta name="description" content="HoboStreamer.com — Open source live streaming platform for stealth campers, nomads, and outdoor enthusiasts. Paired with HoboApp.">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/broadcast.css">
+    <link rel="stylesheet" href="/css/game.css">
+    <link rel="stylesheet" href="/css/cosmetics.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!--  NAVBAR                                                     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<nav class="navbar">
+    <div class="nav-brand" onclick="navigate('/')" data-brand-tooltip="This platform is in early alpha — features may be incomplete, buggy, or change without notice. Thanks for testing!">
+        <i class="fa-solid fa-campground"></i>
+        <span class="brand-text-wrap">
+            <span class="alpha-badge">ALPHA</span>
+            <span class="brand-text">Hobo<strong>Streamer</strong></span>
+        </span>
+    </div>
+    <div class="nav-links">
+        <a href="#" onclick="event.preventDefault();navigate('/')" class="nav-link active" data-page="home" data-tooltip="Live">
+            <i class="fa-solid fa-fire"></i> <span>Live</span>
+        </a>
+        <a href="#" onclick="event.preventDefault();navigate('/vods')" class="nav-link" data-page="vods" data-tooltip="Videos">
+            <i class="fa-solid fa-video"></i> <span>Videos</span>
+        </a>
+        <a href="#" onclick="event.preventDefault();navigate('/clips')" class="nav-link" data-page="clips" data-tooltip="Clips">
+            <i class="fa-solid fa-scissors"></i> <span>Clips</span>
+        </a>
+        <a href="#" onclick="event.preventDefault();navigate('/chat')" class="nav-link" data-page="chat" data-tooltip="Chat">
+            <i class="fa-solid fa-comments"></i> <span>Chat</span>
+        </a>
+        <a href="#" onclick="event.preventDefault();navigate('/game')" class="nav-link" data-page="game" data-tooltip="Game">
+            <i class="fa-solid fa-gamepad"></i> <span>Game</span>
+        </a>
+        <a href="#" onclick="event.preventDefault();navigate('/broadcast')" class="nav-link" data-page="broadcast" id="nav-broadcast" style="display:none" data-tooltip="Go Live">
+            <i class="fa-solid fa-tower-broadcast"></i> <span>Go Live</span><span class="nav-live-dot" id="nav-live-dot" style="display:none"><i class="fa-solid fa-circle"></i></span>
+        </a>
+        <a href="#" onclick="event.preventDefault();navigate('/dashboard')" class="nav-link" data-page="dashboard" id="nav-dashboard" style="display:none" data-tooltip="Dashboard">
+            <i class="fa-solid fa-gauge-high"></i> <span>Dashboard</span>
+        </a>
+        <a href="#" onclick="event.preventDefault();navigate('/admin')" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin">
+            <i class="fa-solid fa-shield-halved"></i> <span>Admin</span>
+        </a>
+    </div>
+    <div class="nav-right">
+        <div id="nav-auth-anon">
+            <button class="btn btn-outline" onclick="showModal('login')">
+                <i class="fa-solid fa-right-to-bracket"></i> Login
+            </button>
+            <button class="btn btn-primary" onclick="showModal('register')">
+                <i class="fa-solid fa-user-plus"></i> Sign Up
+            </button>
+        </div>
+        <div id="nav-auth-user" style="display:none">
+            <span class="nav-balance" id="nav-balance" title="Hobo Bucks balance" onclick="showModal('buy-funds')">
+                <i class="fa-solid fa-wallet"></i> <span id="nav-balance-amount">0</span>
+            </span>
+            <span class="nav-coins" id="nav-coins" title="Hobo Coins — Click to open inventory" onclick="openCosmeticsModal()">
+                <i class="fa-solid fa-coins"></i> <span id="nav-coins-amount">0</span>
+            </span>
+            <div class="nav-avatar-wrap" onclick="toggleUserMenu()">
+                <div class="nav-avatar" id="nav-avatar">?</div>
+                <span id="nav-username"></span>
+                <i class="fa-solid fa-caret-down"></i>
+            </div>
+            <div class="user-dropdown" id="user-dropdown">
+                <a onclick="navigate('/'+currentUser?.username)"><i class="fa-solid fa-user"></i> My Channel</a>
+                <a onclick="navigate('/broadcast')"><i class="fa-solid fa-tower-broadcast"></i> Go Live</a>
+                <a onclick="navigate('/dashboard')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+                <a onclick="navigate('/settings')"><i class="fa-solid fa-gear"></i> Settings</a>
+                <a onclick="showModal('stream-key')"><i class="fa-solid fa-key"></i> Stream Key</a>
+                <a onclick="showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
+                <a onclick="navigate('/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
+                <hr>
+                <a onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
+            </div>
+        </div>
+    </div>
+    <button class="nav-hamburger" onclick="toggleMobileNav()">
+        <i class="fa-solid fa-bars"></i>
+    </button>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!--  MAIN CONTENT AREA (SPA pages rendered here)               -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<main id="app">
+
+    <!-- ── HOME: Stream List ─────────────────────────────── -->
+    <section id="page-home" class="page active">
+        <div class="hero">
+            <div class="hero-content">
+                <h1><i class="fa-solid fa-campground"></i> HoboStreamer</h1>
+                <p>Live streaming for stealth campers, nomads & outdoor culture</p>
+                <div class="hero-cta">
+                    <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
+                        <i class="fa-solid fa-broadcast-tower"></i> Start Streaming
+                    </button>
+                    <a href="https://github.com/user/hobostreamer" target="_blank" class="btn btn-outline btn-lg">
+                        <i class="fa-brands fa-github"></i> Open Source
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- HoboApp Cross-Promo -->
+        <div class="promo-bar">
+            <i class="fa-solid fa-map-location-dot"></i>
+            <a href="#" class="promo-bar-link" onclick="event.preventDefault();toggleHoboAppPopover()">Looking for camping spots? Check out <strong>HoboApp</strong> — 300+ curated stealth camping locations in Washington State <i class="fa-solid fa-chevron-down hoboapp-chevron"></i></a>
+        </div>
+
+        <!-- HoboApp Popover (below promo bar, pushes content down) -->
+        <div class="hoboapp-popover" id="hoboapp-popover">
+            <div class="hoboapp-popover-inner">
+                <button class="hoboapp-popover-close" onclick="toggleHoboAppPopover()" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+
+                <!-- Header -->
+                <div class="hoboapp-header">
+                    <div class="hoboapp-logo">
+                        <i class="fa-solid fa-campground"></i>
+                    </div>
+                    <div>
+                        <h2>HoboApp <span class="hoboapp-version">v2.0</span></h2>
+                        <p class="hoboapp-tagline">Washington State Stealth Camp & Shelter Locator</p>
+                    </div>
+                </div>
+
+                <p class="hoboapp-desc">A free, open-source desktop app that aggregates <strong>18 data sources</strong> into one interactive map — purpose-built for stealth campers, van dwellers, and nomads. <strong>307 hand-curated</strong> Washington State locations with stealth ratings.</p>
+
+                <!-- Feature Grid -->
+                <div class="hoboapp-features">
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-map-location-dot"></i></div>
+                        <div>
+                            <strong>Interactive Map</strong>
+                            <span>Dark/satellite views, marker clusters, heatmaps, GPX export</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-database"></i></div>
+                        <div>
+                            <strong>18 Data Sources</strong>
+                            <span>RIDB, FreeCampsites, iOverlander, USFS, NPS, OSM, Reddit & more</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-bridge"></i></div>
+                        <div>
+                            <strong>Bridge & Shelter Finder</strong>
+                            <span>Federal bridge inventory with clearance data & shelter scoring</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-umbrella"></i></div>
+                        <div>
+                            <strong>Rain Cover Finder</strong>
+                            <span>Awnings, canopies, covered walkways + 45 curated PNW spots</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-cloud-sun"></i></div>
+                        <div>
+                            <strong>Weather & Terrain</strong>
+                            <span>NWS forecasts, weather alerts, elevation analysis, moon phases</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                        <div>
+                            <strong>Crime Intel Heatmap</strong>
+                            <span>Safety scoring from urban grit indicators + 22 curated zones</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-utensils"></i></div>
+                        <div>
+                            <strong>Budget Meal Planner</strong>
+                            <span>Cross-store price comparison, nutrition data, food bank locator</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-bus"></i></div>
+                        <div>
+                            <strong>Transit Directions</strong>
+                            <span>Walking, biking & transit routes with WA agency fares</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-hand-holding-heart"></i></div>
+                        <div>
+                            <strong>Survival Resources</strong>
+                            <span>Showers, laundry, WiFi, shelters, clinics, food banks, water & 30+ types</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-water"></i></div>
+                        <div>
+                            <strong>Waterways & Woods</strong>
+                            <span>Rivers, springs, lakes, fishing spots, dense forest, BLM/USFS land</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-syringe"></i></div>
+                        <div>
+                            <strong>Harm Reduction</strong>
+                            <span>Naloxone, syringe exchanges, addiction counselling, outreach</span>
+                        </div>
+                    </div>
+                    <div class="hoboapp-feat">
+                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-route"></i></div>
+                        <div>
+                            <strong>Trip Planner</strong>
+                            <span>Multi-night itinerary builder with per-night weather & moon phase</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Download CTA -->
+                <div class="hoboapp-cta">
+                    <a href="https://github.com/user/hoboapp" target="_blank" rel="noopener" class="btn btn-primary btn-lg hoboapp-dl-btn">
+                        <i class="fa-brands fa-github"></i> Download on GitHub
+                    </a>
+                    <p class="hoboapp-cta-sub"><i class="fa-solid fa-code-branch"></i> Free & open source &nbsp;·&nbsp; <i class="fa-brands fa-windows"></i> <i class="fa-brands fa-linux"></i> <i class="fa-brands fa-apple"></i> Windows, Linux & macOS</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <!-- Live Streams -->
+            <div class="section-header">
+                <h2><i class="fa-solid fa-circle live-dot"></i> Live Now</h2>
+                <span id="live-count" class="badge">0</span>
+            </div>
+            <div class="stream-grid" id="stream-grid-live">
+                <div class="empty-state" id="no-live-streams">
+                    <i class="fa-solid fa-tent fa-3x"></i>
+                    <p>No one is streaming right now</p>
+                    <p class="muted">Be the first to go live!</p>
+                </div>
+            </div>
+
+            <!-- Recently Online -->
+            <div class="section-header">
+                <h2><i class="fa-solid fa-clock-rotate-left"></i> Recently Online</h2>
+            </div>
+            <div class="stream-grid" id="stream-grid-recent">
+                <div class="empty-state">
+                    <p class="muted">No recent streams</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── STREAM VIEWER (legacy, redirect to channel) ──── -->
+    <section id="page-stream" class="page">
+        <div class="container">
+            <div class="empty-state">
+                <i class="fa-solid fa-spinner fa-spin fa-3x"></i>
+                <p>Redirecting to channel...</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── VIDEOS PAGE ───────────────────────────────────── -->
+    <section id="page-vods" class="page">
+        <div class="container">
+            <div class="section-header">
+                <h2><i class="fa-solid fa-video"></i> Videos</h2>
+            </div>
+            <div class="stream-grid" id="vods-grid-page"></div>
+        </div>
+    </section>
+
+    <!-- ── CLIPS PAGE ─────────────────────────────────────── -->
+    <section id="page-clips" class="page">
+        <div class="container">
+            <div class="section-header">
+                <h2><i class="fa-solid fa-scissors"></i> Clips</h2>
+            </div>
+            <div class="stream-grid" id="clips-grid-page"></div>
+        </div>
+    </section>
+
+    <!-- ── CHANNEL PAGE (/:username) ─────────────────────── -->
+    <section id="page-channel" class="page">
+        <!-- Live Stream Tabs (all live streams on platform) -->
+        <div class="live-stream-tabs" id="live-stream-tabs" style="display:none">
+            <div class="live-tabs-scroll" id="live-tabs-scroll"></div>
+        </div>
+
+        <!-- Live Stream Area (edge-to-edge) -->
+        <div class="ch-live-area" id="ch-live-area" style="display:none">
+            <div class="stream-layout">
+                <div class="stream-main">
+                    <div class="video-container" id="video-container">
+                        <div class="video-placeholder">
+                            <i class="fa-solid fa-satellite-dish fa-3x"></i>
+                            <p>Connecting to stream...</p>
+                        </div>
+                        <canvas id="video-canvas"></canvas>
+                        <video id="video-element" autoplay playsinline></video>
+                        <div class="video-overlay" id="video-overlay">
+                            <!-- DVR Progress Bar (hidden until live VOD available) -->
+                            <div class="dvr-progress-wrap" id="dvr-progress-wrap" style="display:none">
+                                <div class="dvr-progress-bar" id="dvr-progress-bar">
+                                    <div class="dvr-progress-buffer" id="dvr-progress-buffer"></div>
+                                    <div class="dvr-progress-fill" id="dvr-progress-fill"></div>
+                                </div>
+                            </div>
+                            <div class="video-controls">
+                                <button class="vc-btn" id="btn-play-pause" title="Play/Pause">
+                                    <i class="fa-solid fa-play"></i>
+                                </button>
+                                <div class="vc-volume-group">
+                                    <button class="vc-btn" id="btn-volume" title="Mute/Unmute">
+                                        <i class="fa-solid fa-volume-high"></i>
+                                    </button>
+                                    <input type="range" id="volume-slider" min="0" max="100" value="75" class="volume-slider">
+                                </div>
+                                <span class="dvr-time-display" id="dvr-time-display" style="display:none">0:00 / 0:00</span>
+                                <div class="vc-spacer"></div>
+                                <button class="vc-btn dvr-live-btn" id="dvr-live-btn" title="Jump to Live" style="display:none">
+                                    <i class="fa-solid fa-tower-broadcast"></i> LIVE
+                                </button>
+                                <span class="viewer-badge" id="viewer-count-badge">
+                                    <i class="fa-solid fa-eye"></i> <span id="vc-viewers">0</span>
+                                </span>
+                                <span class="uptime-badge" id="uptime-badge">
+                                    <i class="fa-solid fa-clock"></i> <span id="vc-uptime">0:00:00</span>
+                                </span>
+                                <button class="vc-btn" id="btn-clip" title="Create Clip (30s)">
+                                    <i class="fa-solid fa-scissors"></i>
+                                </button>
+                                <button class="vc-btn" id="btn-fullscreen" title="Fullscreen">
+                                    <i class="fa-solid fa-expand"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Streamer Info Bar (below video, Kick/Twitch style) -->
+                    <div class="ch-info-bar" id="ch-info-bar">
+                        <div class="ch-info-bar-left">
+                            <div class="ch-avatar" id="ch-avatar">?</div>
+                            <div class="ch-info-bar-text">
+                                <div class="ch-info-bar-top">
+                                    <h2 id="ch-display-name">Channel</h2>
+                                    <span class="ch-username" id="ch-username">username</span>
+                                    <span class="ch-category-badge badge" id="ch-category-badge">irl</span>
+                                    <span id="ch-protocol-badge"></span>
+                                </div>
+                                <p class="ch-stream-title" id="ch-stream-title">Stream Title</p>
+                                <p class="ch-stream-description muted" id="ch-stream-description" style="display:none"></p>
+                            </div>
+                        </div>
+                        <div class="ch-info-bar-right">
+                            <span class="ch-follower-count" id="ch-follower-count">0 followers</span>
+                            <button class="btn btn-follow" id="ch-btn-follow">
+                                <i class="fa-solid fa-heart"></i> Follow
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Interactive Controls -->
+                    <div class="controls-panel" id="controls-panel" style="display:none">
+                        <div class="controls-header">
+                            <h3><i class="fa-solid fa-gamepad"></i> Controls</h3>
+                        </div>
+                        <div class="controls-grid" id="controls-grid"></div>
+                    </div>
+                    <!-- Group Call Panel (Discord-style voice/video) -->
+                    <div class="call-panel" id="call-panel" style="display:none">
+                        <div class="call-panel-header">
+                            <div class="call-panel-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span id="call-mode-label">Group Call</span>
+                            </div>
+                            <div class="call-panel-header-right">
+                                <span class="call-count-badge" id="call-count-badge">0</span>
+                                <span class="call-connected-badge" id="call-connected-badge" style="display:none">
+                                    <i class="fa-solid fa-circle"></i> Connected
+                                </span>
+                            </div>
+                        </div>
+                        <!-- Join Area (shown when not in call) -->
+                        <div class="call-join-area" id="call-join-area">
+                            <p class="call-join-hint muted" id="call-join-hint">Join the voice chat to talk with the streamer and other viewers</p>
+                            <div class="call-device-selects">
+                                <div class="call-device-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Microphone</label>
+                                    <select id="call-mic-select" class="form-input form-input-sm">
+                                        <option value="default">Default Microphone</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group" id="call-cam-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
+                                    <select id="call-cam-select" class="form-input form-input-sm">
+                                        <option value="default">Default Camera</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="call-input-settings">
+                                <div class="call-device-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
+                                    <select id="call-input-mode" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
+                                        <option value="open">Open Mic</option>
+                                        <option value="ptt">Push to Talk</option>
+                                        <option value="vad">Voice Activation</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group call-ptt-group" id="call-ptt-group" style="display:none">
+                                    <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
+                                    <select id="call-ptt-key" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
+                                        <option value="Space">Space</option>
+                                        <option value="KeyV">V</option>
+                                        <option value="KeyT">T</option>
+                                        <option value="AltLeft">Left Alt</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group call-vad-group" id="call-vad-group" style="display:none">
+                                    <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
+                                    <input id="call-vad-threshold" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
+                                    <span class="call-threshold-value" id="call-vad-threshold-value">32%</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary call-join-btn" onclick="joinCall()">
+                                <i class="fa-solid fa-phone"></i> Join Call
+                            </button>
+                        </div>
+                        <!-- Active Call Area (shown when in call) -->
+                        <div class="call-active-area" id="call-active-area" style="display:none">
+                            <div class="call-participants-grid" id="call-participants-grid"></div>
+                            <div class="call-controls">
+                                <button class="call-ctrl-btn" id="call-btn-mute" onclick="toggleCallMute()" title="Mute">
+                                    <i class="fa-solid fa-microphone"></i>
+                                </button>
+                                <button class="call-ctrl-btn" id="call-btn-camera" onclick="toggleCallCamera()" title="Toggle Camera">
+                                    <i class="fa-solid fa-video"></i>
+                                </button>
+                                <button class="call-ctrl-btn call-ctrl-leave" onclick="leaveCall()" title="Leave Call">
+                                    <i class="fa-solid fa-phone-slash"></i>
+                                </button>
+                                <button class="call-ctrl-btn call-ctrl-end" id="call-btn-end" onclick="endCall()" title="End Call for Everyone" style="display:none">
+                                    <i class="fa-solid fa-xmark"></i> End
+                                </button>
+                            </div>
+                            <!-- Device switcher (visible while in call) -->
+                            <details class="call-device-switcher">
+                                <summary><i class="fa-solid fa-gear"></i> Input Devices</summary>
+                                <div class="call-device-selects call-device-selects-compact">
+                                    <div class="call-device-group">
+                                        <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Mic</label>
+                                        <select id="call-mic-switch" class="form-input form-input-sm" onchange="switchCallMic(this.value)">
+                                            <option value="default">Default Microphone</option>
+                                        </select>
+                                    </div>
+                                    <div class="call-device-group" id="call-cam-switch-group">
+                                        <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
+                                        <select id="call-cam-switch" class="form-input form-input-sm" onchange="switchCallCam(this.value)">
+                                            <option value="default">Default Camera</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="call-input-settings call-input-settings-compact">
+                                    <div class="call-device-group">
+                                        <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
+                                        <select id="call-input-mode-switch" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
+                                            <option value="open">Open Mic</option>
+                                            <option value="ptt">Push to Talk</option>
+                                            <option value="vad">Voice Activation</option>
+                                        </select>
+                                    </div>
+                                    <div class="call-device-group call-ptt-group" id="call-ptt-switch-group" style="display:none">
+                                        <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
+                                        <select id="call-ptt-key-switch" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
+                                            <option value="Space">Space</option>
+                                            <option value="KeyV">V</option>
+                                            <option value="KeyT">T</option>
+                                            <option value="AltLeft">Left Alt</option>
+                                        </select>
+                                    </div>
+                                    <div class="call-device-group call-vad-group" id="call-vad-switch-group" style="display:none">
+                                        <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
+                                        <input id="call-vad-threshold-switch" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
+                                        <span class="call-threshold-value" id="call-vad-threshold-value-switch">32%</span>
+                                    </div>
+                                </div>
+                                <div class="call-ptt-status" id="call-ptt-status" style="display:none">Hold <strong id="call-ptt-status-key">Space</strong> to talk</div>
+                            </details>
+                        </div>
+                        <div class="call-log" id="call-log"></div>
+                    </div>
+                </div>
+                <!-- Chat Sidebar -->
+                <div class="chat-sidebar" id="chat-sidebar">
+                    <div class="chat-header">
+                        <span>STREAM CHAT</span>
+                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                            <i class="fa-solid fa-gear"></i>
+                        </button>
+                    </div>
+                    <div class="chat-messages" id="chat-messages"></div>
+                    <div class="chat-input-area">
+                        <!-- Emote Picker -->
+                        <div id="emote-picker" class="emote-picker" style="display:none">
+                            <div class="emote-picker-header">
+                                <input type="text" id="emote-search" class="emote-search" placeholder="Search emotes..." oninput="onEmoteSearch(this.value)">
+                            </div>
+                            <div class="emote-picker-tabs">
+                                <button class="emote-tab-btn active" data-tab="all" onclick="renderEmotePicker('all')">All</button>
+                                <button class="emote-tab-btn" data-tab="defaults" onclick="renderEmotePicker('defaults')">Popular</button>
+                                <button class="emote-tab-btn" data-tab="channel" onclick="renderEmotePicker('channel')">Channel</button>
+                                <button class="emote-tab-btn" data-tab="global" onclick="renderEmotePicker('global')">Custom</button>
+                                <button class="emote-tab-btn" data-tab="ffz" onclick="renderEmotePicker('ffz')">FFZ</button>
+                                <button class="emote-tab-btn" data-tab="7tv" onclick="renderEmotePicker('7tv')">7TV</button>
+                                <button class="emote-tab-btn" data-tab="bttv" onclick="renderEmotePicker('bttv')">BTTV</button>
+                            </div>
+                            <div class="emote-picker-grid" id="emote-picker-grid"></div>
+                        </div>
+                        <div class="chat-input-row">
+                            <button class="emote-picker-btn" onclick="toggleEmotePicker('chat-input')" title="Emotes">
+                                <i class="fa-solid fa-face-smile"></i>
+                            </button>
+                            <input type="text" id="chat-input" placeholder="Send a message..." maxlength="500"
+                                   onkeydown="if(event.key==='Enter')sendChat()">
+                            <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Coins">
+                                <i class="fa-solid fa-gem"></i>
+                            </button>
+                            <button class="btn btn-hobo-bucks-mini" onclick="showModal('donate')" title="Send Hobo Bucks">
+                                <i class="fa-solid fa-dollar-sign"></i>
+                            </button>
+                            <button class="chat-send-btn" onclick="sendChat()">
+                                <i class="fa-solid fa-paper-plane"></i>
+                            </button>
+                        </div>
+                        <!-- Rewards Panel (Hobo Coins) -->
+                        <div class="rewards-panel" id="ch-rewards-panel" style="display:none">
+                            <div class="rewards-panel-header">
+                                <span><i class="fa-solid fa-gem"></i> Hobo Coins Rewards</span>
+                                <span class="rewards-coin-bal"><i class="fa-solid fa-coins"></i> <span class="rewards-coin-balance">0</span></span>
+                            </div>
+                            <div class="rewards-grid ch-rewards-grid">
+                                <p class="muted">No rewards configured for this channel</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Offline Area -->
+        <div class="ch-offline-area" id="ch-offline-area">
+            <!-- Offline header with streamer info -->
+            <div class="ch-offline-header" id="ch-offline-header">
+                <div class="ch-avatar ch-avatar-lg" id="ch-avatar-offline">?</div>
+                <div class="ch-offline-header-info">
+                    <h1 id="ch-display-name-offline">Channel</h1>
+                    <p class="ch-username" id="ch-username-offline">username</p>
+                    <p class="ch-description" id="ch-description-offline"></p>
+                    <div class="ch-meta">
+                        <span class="ch-follower-count" id="ch-follower-count-offline">0 followers</span>
+                        <span class="ch-category-badge badge" id="ch-category-badge-offline">irl</span>
+                    </div>
+                </div>
+                <div class="ch-actions">
+                    <button class="btn btn-follow" id="ch-btn-follow-offline">
+                        <i class="fa-solid fa-heart"></i> Follow
+                    </button>
+                </div>
+            </div>
+            <div class="ch-offline-banner">
+                <i class="fa-solid fa-campground fa-3x"></i>
+                <p>Channel is offline</p>
+                <p class="muted">Check back later!</p>
+            </div>
+            <!-- Global chat shown when offline -->
+            <div class="offline-global-chat" id="offline-global-chat">
+                <div class="chat-header">
+                    <span><i class="fa-solid fa-globe"></i> GLOBAL CHAT</span>
+                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                </div>
+                <div class="chat-messages" id="offline-chat-messages"></div>
+                <div class="chat-input-area">
+                    <div class="chat-input-row">
+                        <button class="emote-picker-btn" onclick="toggleEmotePicker('offline-chat-input')" title="Emotes">
+                            <i class="fa-solid fa-face-smile"></i>
+                        </button>
+                        <input type="text" id="offline-chat-input" placeholder="Send a message..." maxlength="500"
+                               onkeydown="if(event.key==='Enter')sendChat()">
+                        <button class="chat-send-btn" onclick="sendChat()">
+                            <i class="fa-solid fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Channel Videos (below stream) -->
+        <div class="channel-below-fold">
+            <div class="container">
+                <div class="section-header">
+                    <h2><i class="fa-solid fa-video"></i> Videos</h2>
+                </div>
+                <div class="stream-grid" id="ch-vods-grid">
+                    <p class="muted">No videos yet</p>
+                </div>
+
+                <div class="section-header">
+                    <h2><i class="fa-solid fa-scissors"></i> Clips</h2>
+                </div>
+                <div class="stream-grid" id="ch-clips-grid">
+                    <p class="muted">No clips yet</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── VOD PLAYER ────────────────────────────────────── -->
+    <section id="page-vod-player" class="page">
+        <div class="container">
+            <div class="vod-player-layout">
+                <div class="vod-player-row">
+                    <div class="vod-player-main">
+                        <div class="vod-player-container" id="vp-container">
+                            <video id="vp-video" class="vod-video" style="display:none" playsinline></video>
+                            <div id="vp-private-notice" class="vod-private-notice" style="display:none">
+                                <i class="fa-solid fa-lock" style="font-size:2.5rem;margin-bottom:12px;color:var(--text-muted)"></i>
+                                <p style="font-size:1.1rem;margin:0 0 4px">This video is private</p>
+                                <p class="muted" style="font-size:0.85rem">Only the uploader can watch this video</p>
+                            </div>
+                            <div class="vp-live-indicator" id="vp-live-indicator" style="display:none">
+                                <span class="vp-live-badge"><i class="fa-solid fa-circle"></i> LIVE</span>
+                                <button class="vp-jump-live-btn" id="vp-jump-live" title="Jump to live"><i class="fa-solid fa-forward"></i> Jump to Live</button>
+                            </div>
+                            <div class="video-overlay">
+                                <div class="vc-progress-wrap" id="vp-progress-wrap">
+                                    <div class="vc-progress-bar">
+                                        <div class="vc-progress-buffer" id="vp-progress-buffer"></div>
+                                        <div class="vc-progress-fill" id="vp-progress-fill"></div>
+                                    </div>
+                                </div>
+                                <div class="video-controls">
+                                    <button class="vc-btn" id="vp-btn-play" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
+                                    <div class="vc-volume-group">
+                                        <button class="vc-btn" id="vp-btn-vol" title="Mute"><i class="fa-solid fa-volume-high"></i></button>
+                                        <input type="range" id="vp-vol-slider" min="0" max="100" value="100" class="volume-slider">
+                                    </div>
+                                    <span class="vc-time-display" id="vp-time">0:00 / 0:00</span>
+                                    <div class="vc-spacer"></div>
+                                    <button class="vc-speed-btn" id="vp-btn-speed" title="Playback Speed">1x</button>
+                                    <button class="vc-btn" id="vp-btn-fullscreen" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Chat Replay Sidebar (VOD) -->
+                    <div class="chat-replay-sidebar" id="vp-chat-replay">
+                        <div class="chat-replay-header">
+                            <h4><i class="fa-solid fa-clock-rotate-left"></i> Chat Replay</h4>
+                        </div>
+                        <div class="chat-replay-messages" id="vp-chat-replay-messages">
+                            <div class="chat-replay-empty" id="vp-chat-replay-empty">
+                                <i class="fa-solid fa-comments" style="font-size:1.5rem"></i>
+                                <p>Chat messages will appear here as the video plays</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="vod-player-info">
+                    <h2 id="vp-title">Video</h2>
+                    <div class="vod-player-meta">
+                        <div class="vod-player-streamer" id="vp-streamer-link" style="cursor:pointer">
+                            <span class="stream-card-avatar" id="vp-avatar">?</span>
+                            <span id="vp-streamer">Streamer</span>
+                        </div>
+                        <span class="muted" id="vp-date"></span>
+                        <span class="muted"><i class="fa-solid fa-clock"></i> <span id="vp-duration">0:00</span></span>
+                        <span class="muted"><i class="fa-solid fa-eye"></i> <span id="vp-views">0</span></span>
+                        <span id="vp-protocol"></span>
+                    </div>
+                    <div id="vp-extra-details" class="vod-extra-details" style="display:none"></div>
+                    <p id="vp-description" class="vod-player-description"></p>
+                    <div id="vp-stream-source" class="vod-source-info muted" style="display:none"></div>
+                    <div id="vp-actions" style="margin-top:10px;display:none"></div>
+                </div>
+                <div class="section-header">
+                    <h3><i class="fa-solid fa-scissors"></i> Clips from this stream</h3>
+                </div>
+                <div class="stream-grid" id="vp-clips-grid"></div>
+
+                <!-- Comments Section (VOD) -->
+                <div class="comments-section" id="vp-comments">
+                    <div class="comments-header">
+                        <h3><i class="fa-solid fa-comments"></i> Comments <span class="comments-count" id="vp-comment-count"></span></h3>
+                    </div>
+                    <div class="comment-form" id="vp-comment-form" style="display:none">
+                        <textarea id="vp-comment-input" placeholder="Add a comment..." rows="2" maxlength="2000"></textarea>
+                        <div class="comment-form-actions">
+                            <button class="btn btn-primary btn-small" onclick="postComment('vod', window._vpVodId)">Comment</button>
+                        </div>
+                    </div>
+                    <div class="comments-list" id="vp-comments-list"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── CLIP PLAYER ───────────────────────────────────── -->
+    <section id="page-clip-player" class="page">
+        <div class="container">
+            <div class="vod-player-layout">
+                <div class="vod-player-row">
+                    <div class="vod-player-main">
+                        <div class="vod-player-container" id="clp-container">
+                            <video id="clp-video" class="vod-video" style="display:none" playsinline></video>
+                            <div class="video-overlay">
+                                <div class="vc-progress-wrap" id="clp-progress-wrap">
+                                    <div class="vc-progress-bar">
+                                        <div class="vc-progress-buffer" id="clp-progress-buffer"></div>
+                                        <div class="vc-progress-fill" id="clp-progress-fill"></div>
+                                    </div>
+                                </div>
+                                <div class="video-controls">
+                                    <button class="vc-btn" id="clp-btn-play" title="Play/Pause"><i class="fa-solid fa-play"></i></button>
+                                    <div class="vc-volume-group">
+                                        <button class="vc-btn" id="clp-btn-vol" title="Mute"><i class="fa-solid fa-volume-high"></i></button>
+                                        <input type="range" id="clp-vol-slider" min="0" max="100" value="100" class="volume-slider">
+                                    </div>
+                                    <span class="vc-time-display" id="clp-time">0:00 / 0:00</span>
+                                    <div class="vc-spacer"></div>
+                                    <button class="vc-speed-btn" id="clp-btn-speed" title="Playback Speed">1x</button>
+                                    <button class="vc-btn" id="clp-btn-fullscreen" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Chat Replay Sidebar (Clip) -->
+                    <div class="chat-replay-sidebar" id="clp-chat-replay">
+                        <div class="chat-replay-header">
+                            <h4><i class="fa-solid fa-clock-rotate-left"></i> Chat Replay</h4>
+                        </div>
+                        <div class="chat-replay-messages" id="clp-chat-replay-messages">
+                            <div class="chat-replay-empty" id="clp-chat-replay-empty">
+                                <i class="fa-solid fa-comments" style="font-size:1.5rem"></i>
+                                <p>Chat messages will appear here as the clip plays</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="vod-player-info">
+                    <h2 id="clp-title">Clip Title</h2>
+                    <span id="clp-unlisted-badge" class="badge-unlisted" style="display:none"><i class="fa-solid fa-eye-slash"></i> Unlisted</span>
+                    <div class="vod-player-meta">
+                        <div class="vod-player-streamer" id="clp-streamer-link" style="cursor:pointer">
+                            <span class="stream-card-avatar" id="clp-avatar">?</span>
+                            <span id="clp-streamer">Streamer</span>
+                        </div>
+                        <span class="muted" id="clp-date"></span>
+                        <span class="muted"><i class="fa-solid fa-clock"></i> <span id="clp-duration">0:00</span></span>
+                        <span class="muted"><i class="fa-solid fa-eye"></i> <span id="clp-views">0</span></span>
+                        <span id="clp-protocol"></span>
+                    </div>
+                    <div id="clp-extra-details" class="vod-extra-details" style="display:none"></div>
+                    <p id="clp-description" class="vod-player-description"></p>
+                    <div id="clp-stream-source" class="vod-source-info muted" style="display:none"></div>
+                    <div id="clp-clipped-by" class="muted" style="margin-top:4px"></div>
+                    <div id="clp-actions" style="margin-top:10px;display:none"></div>
+                </div>
+
+                <!-- Comments Section (Clip) -->
+                <div class="comments-section" id="clp-comments">
+                    <div class="comments-header">
+                        <h3><i class="fa-solid fa-comments"></i> Comments <span class="comments-count" id="clp-comment-count"></span></h3>
+                    </div>
+                    <div class="comment-form" id="clp-comment-form" style="display:none">
+                        <textarea id="clp-comment-input" placeholder="Add a comment..." rows="2" maxlength="2000"></textarea>
+                        <div class="comment-form-actions">
+                            <button class="btn btn-primary btn-small" onclick="postComment('clip', window._clpClipId)">Comment</button>
+                        </div>
+                    </div>
+                    <div class="comments-list" id="clp-comments-list"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── DASHBOARD ─────────────────────────────────────── -->
+    <section id="page-dashboard" class="page">
+        <div class="container">
+            <h2><i class="fa-solid fa-gauge-high"></i> Streamer Dashboard</h2>
+
+            <div class="dash-grid">
+                <!-- Stream Control -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-broadcast-tower"></i> Stream</h3>
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" id="dash-title" placeholder="Stream title" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="dash-description" placeholder="Stream description..." class="form-input" rows="3"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Protocol</label>
+                            <select id="dash-protocol" class="form-input">
+                                <option value="jsmpeg">JSMPEG (FFmpeg → WebSocket)</option>
+                                <option value="webrtc">WebRTC (Browser)</option>
+                                <option value="rtmp">RTMP (OBS / FFmpeg)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Category</label>
+                            <select id="dash-category" class="form-input">
+                                <option value="camping">Camping</option>
+                                <option value="outdoors">Outdoors</option>
+                                <option value="travel">Travel</option>
+                                <option value="cooking">Camp Cooking</option>
+                                <option value="building">Building/Craft</option>
+                                <option value="music">Music</option>
+                                <option value="gaming">Gaming</option>
+                                <option value="irl">IRL</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="dash-nsfw"> NSFW</label>
+                    </div>
+                    <button class="btn btn-primary btn-lg" id="dash-go-live" onclick="goLive()">
+                        <i class="fa-solid fa-broadcast-tower"></i> Go Live
+                    </button>
+                    <p class="muted" style="margin-top:8px;font-size:0.8rem"><i class="fa-solid fa-circle-info"></i> You can run multiple streams at once using different protocols.</p>
+                    <div id="dash-active-streams" style="margin-top:12px"></div>
+                </div>
+
+                <!-- Stream Key / Connection Info -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-key"></i> Connection</h3>
+                    <div class="form-group">
+                        <label>Stream Key</label>
+                        <div class="key-display">
+                            <input type="password" id="dash-stream-key" readonly class="form-input">
+                            <button class="btn btn-small" onclick="toggleKeyVisibility()">
+                                <i class="fa-solid fa-eye"></i>
+                            </button>
+                            <button class="btn btn-small" onclick="copyStreamKey()">
+                                <i class="fa-solid fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="dash-endpoint-info" class="endpoint-info" style="display:none"></div>
+                    <button class="btn btn-outline" onclick="regenerateStreamKey()">
+                        <i class="fa-solid fa-rotate"></i> Regenerate Key
+                    </button>
+                </div>
+
+                <!-- Controls Manager -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-gamepad"></i> Interactive Controls</h3>
+                    <div id="dash-controls-list"></div>
+                    <button class="btn btn-outline" onclick="showModal('add-control')">
+                        <i class="fa-solid fa-plus"></i> Add Control Button
+                    </button>
+                </div>
+
+                <!-- Donation Goals -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-bullseye"></i> Donation Goals</h3>
+                    <div id="dash-goals-list"></div>
+                    <button class="btn btn-outline" onclick="showModal('add-goal')">
+                        <i class="fa-solid fa-plus"></i> Add Goal
+                    </button>
+                </div>
+
+                <!-- My Videos -->
+                <div class="dash-card dash-card-wide">
+                    <h3><i class="fa-solid fa-video"></i> My Videos</h3>
+                    <p class="muted">Videos are <strong>private by default</strong> (OpSec). Publish them when you're ready.</p>
+                    <div id="dash-vods-list" class="vod-grid"></div>
+                </div>
+
+                <!-- Emotes -->
+                <div class="dash-card dash-card-wide">
+                    <h3><i class="fa-solid fa-face-smile"></i> My Emotes <span class="muted" id="dash-emote-count"></span></h3>
+                    <p class="muted">Upload custom emotes for your channel. Supported: PNG, GIF (animated), WebP, AVIF. Max 256 KB each.</p>
+
+                    <!-- Emote Source Toggles -->
+                    <div class="dash-emote-sources" id="dash-emote-sources">
+                        <label class="emote-source-toggle">
+                            <input type="checkbox" id="emote-src-defaults" checked onchange="saveEmoteSources()">
+                            <span class="emote-src-label"><i class="fa-solid fa-star"></i> Defaults</span>
+                        </label>
+                        <label class="emote-source-toggle">
+                            <input type="checkbox" id="emote-src-custom" checked onchange="saveEmoteSources()">
+                            <span class="emote-src-label"><i class="fa-solid fa-palette"></i> Custom</span>
+                        </label>
+                        <label class="emote-source-toggle">
+                            <input type="checkbox" id="emote-src-ffz" checked onchange="saveEmoteSources()">
+                            <span class="emote-src-label">FFZ</span>
+                        </label>
+                        <label class="emote-source-toggle">
+                            <input type="checkbox" id="emote-src-bttv" checked onchange="saveEmoteSources()">
+                            <span class="emote-src-label">BTTV</span>
+                        </label>
+                        <label class="emote-source-toggle">
+                            <input type="checkbox" id="emote-src-7tv" checked onchange="saveEmoteSources()">
+                            <span class="emote-src-label">7TV</span>
+                        </label>
+                    </div>
+
+                    <div class="dash-emote-upload">
+                        <input type="text" id="emote-upload-code" class="form-input" placeholder="Emote code (e.g. hoboHype)" maxlength="32">
+                        <input type="file" id="emote-upload-file" accept="image/png,image/gif,image/webp,image/avif,image/jpeg">
+                        <button class="btn btn-primary" onclick="uploadDashEmote()">
+                            <i class="fa-solid fa-upload"></i> Upload
+                        </button>
+                    </div>
+                    <div id="dash-emotes-list" class="dash-emotes-grid"></div>
+                </div>
+
+                <!-- My Clips (clips I created) -->
+                <div class="dash-card dash-card-wide">
+                    <h3><i class="fa-solid fa-scissors"></i> My Clips</h3>
+                    <p class="muted">Clips you've taken from other streams. New clips are <strong>unlisted</strong> until the streamer makes them public.</p>
+                    <div id="dash-my-clips" class="vod-grid"></div>
+                </div>
+
+                <!-- Clips of My Stream -->
+                <div class="dash-card dash-card-wide">
+                    <h3><i class="fa-solid fa-clapperboard"></i> Clips of My Stream</h3>
+                    <p class="muted">Clips viewers have taken from your streams. You can publish or delete them.</p>
+                    <div id="dash-stream-clips" class="vod-grid"></div>
+                </div>
+
+                <!-- Hobo Bucks -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-coins"></i> Hobo Bucks</h3>
+                    <div class="funds-display">
+                        <span class="funds-amount" id="dash-funds-amount">0</span>
+                        <span class="funds-usd" id="dash-funds-usd">($0.00)</span>
+                    </div>
+                    <button class="btn btn-primary" onclick="showModal('cashout')">
+                        <i class="fa-solid fa-money-bill-transfer"></i> Cash Out
+                    </button>
+                    <div id="dash-tx-history"></div>
+                </div>
+
+                <!-- Hobo Coins -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-gem"></i> Hobo Coins</h3>
+                    <div class="funds-display">
+                        <span class="funds-amount coins-color" id="dash-coins-amount">0</span>
+                        <span class="funds-usd" id="dash-coins-info">Free loyalty currency</span>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;margin-bottom:12px">
+                        Viewers earn coins by watching your stream and chatting. They can spend coins on rewards you create below.
+                    </p>
+                </div>
+
+                <!-- Coin Rewards (Streamer Configuration) -->
+                <div class="dash-card dash-card-wide">
+                    <h3><i class="fa-solid fa-gift"></i> Coin Rewards</h3>
+                    <p class="muted">Create rewards your viewers can redeem with Hobo Coins. Think TTS, sound effects, chat highlights, streamer challenges, etc.</p>
+                    <div id="dash-rewards-list" class="dash-rewards-grid"></div>
+                    <button class="btn btn-outline" onclick="showModal('add-reward')" style="margin-top:12px">
+                        <i class="fa-solid fa-plus"></i> Add Reward
+                    </button>
+                </div>
+
+                <!-- Redemption Queue -->
+                <div class="dash-card dash-card-wide">
+                    <h3><i class="fa-solid fa-bell"></i> Redemption Queue</h3>
+                    <p class="muted">Viewers who redeemed rewards. Fulfill or reject them.</p>
+                    <div id="dash-redemptions-list"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── ADMIN PANEL ───────────────────────────────────── -->
+    <section id="page-admin" class="page">
+        <div class="container">
+            <h2><i class="fa-solid fa-shield-halved"></i> Admin Panel</h2>
+
+            <div class="admin-stats" id="admin-stats"></div>
+
+            <div class="admin-tabs">
+                <button class="tab-btn active" onclick="switchAdminTab('users')">Users</button>
+                <button class="tab-btn" onclick="switchAdminTab('moderators')">Moderators</button>
+                <button class="tab-btn" onclick="switchAdminTab('chat-logs')">Chat Logs</button>
+                <button class="tab-btn" onclick="switchAdminTab('settings')">Settings</button>
+                <button class="tab-btn" onclick="switchAdminTab('verification')">Verification Keys</button>
+                <button class="tab-btn" onclick="switchAdminTab('streams')">Streams</button>
+                <button class="tab-btn" onclick="switchAdminTab('cashouts')">Cashouts</button>
+                <button class="tab-btn" onclick="switchAdminTab('bans')">Bans</button>
+                <button class="tab-btn" onclick="switchAdminTab('vpn')">VPN Queue</button>
+            </div>
+            <div class="admin-content" id="admin-content"></div>
+        </div>
+    </section>
+
+    <!-- ── PROFILE PAGE ──────────────────────────────────── -->
+    <section id="page-profile" class="page">
+        <div class="container">
+            <div class="profile-header" id="profile-header"></div>
+        </div>
+    </section>
+
+    <!-- ── BROADCAST (Go Live) ────────────────────────────── -->
+    <section id="page-broadcast" class="page">
+        <div class="broadcast-layout">
+            <div class="broadcast-main">
+
+                <!-- ═══ Broadcast Stream Tabs (shown when 1+ streams active) ═══ -->
+                <div class="bc-tabs-bar" id="bc-tabs-bar" style="display:none">
+                    <div class="bc-tabs-scroll" id="bc-tabs-scroll"></div>
+                    <button class="bc-tab bc-tab-add" onclick="showCreateStreamPanel()" title="Add another stream">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                </div>
+
+                <!-- ═══ STEP 0: Stream Manager (existing streams + create new) ═══ -->
+                <div id="bc-stream-manager">
+                    <h2><i class="fa-solid fa-tower-broadcast"></i> Go Live</h2>
+
+                    <div class="bc-manager-grid">
+                    <!-- Create new stream (left / primary) -->
+                    <div class="bc-create-section" id="bc-create-section">
+                        <h3>Create New Stream</h3>
+                        <div class="form-group">
+                            <label>Stream Title</label>
+                            <input type="text" id="bc-title" class="form-input" placeholder="What are you streaming?">
+                        </div>
+                        <div class="form-group">
+                            <label>Description</label>
+                            <textarea id="bc-description" class="form-input" rows="2" placeholder="Tell viewers what to expect..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Category</label>
+                            <select id="bc-category" class="form-input">
+                                <option value="camping">Camping</option>
+                                <option value="outdoors">Outdoors</option>
+                                <option value="travel">Travel</option>
+                                <option value="cooking">Camp Cooking</option>
+                                <option value="building">Building/Craft</option>
+                                <option value="music">Music</option>
+                                <option value="gaming">Gaming</option>
+                                <option value="irl" selected>IRL</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+
+                        <!-- Method Selection -->
+                        <div class="form-group">
+                            <label>Streaming Method</label>
+                            <div class="bc-method-picker">
+                                <div class="bc-method-card selected" data-method="webrtc" onclick="selectStreamMethod('webrtc')">
+                                    <i class="fa-solid fa-globe"></i>
+                                    <strong>WebRTC</strong>
+                                    <span>Browser or OBS</span>
+                                </div>
+                                <div class="bc-method-card" data-method="rtmp" onclick="selectStreamMethod('rtmp')">
+                                    <i class="fa-solid fa-server"></i>
+                                    <strong>RTMP</strong>
+                                    <span>OBS / Streamlabs</span>
+                                </div>
+                                <div class="bc-method-card" data-method="jsmpeg" onclick="selectStreamMethod('jsmpeg')">
+                                    <i class="fa-solid fa-terminal"></i>
+                                    <strong>JSMPEG</strong>
+                                    <span>FFmpeg / Raspberry Pi</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- WebRTC sub-choice -->
+                        <div class="form-group" id="bc-webrtc-sub" style="display:block">
+                            <label>WebRTC Source</label>
+                            <div class="bc-method-picker bc-method-picker-sm">
+                                <div class="bc-method-card-sm selected" data-sub="browser" onclick="selectWebRTCSub('browser')">
+                                    <i class="fa-solid fa-camera"></i>
+                                    <strong>Browser</strong>
+                                </div>
+                                <div class="bc-method-card-sm" data-sub="obs" onclick="selectWebRTCSub('obs')">
+                                    <i class="fa-solid fa-desktop"></i>
+                                    <strong>OBS (WHIP)</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Device selection for Browser WebRTC (visible when browser sub-method selected) -->
+                        <div class="form-group" id="bc-create-devices" style="display:block">
+                            <label>Camera</label>
+                            <select id="bc-create-camera" class="form-input"><option value="default">Default</option></select>
+                            <label style="margin-top:8px">Microphone</label>
+                            <select id="bc-create-audio" class="form-input"><option value="default">Default</option></select>
+                        </div>
+
+                        <button class="btn btn-primary btn-lg" style="width:100%" id="bc-create-btn" onclick="createNewStream()">
+                            <i class="fa-solid fa-tower-broadcast"></i> Create Stream
+                        </button>
+                    </div>
+
+                    <!-- Existing streams list (right / secondary) -->
+                    <div id="bc-existing-streams">
+                        <h3>Your Streams</h3>
+                        <div id="bc-streams-list" class="bc-streams-list">
+                            <p class="muted">Loading...</p>
+                        </div>
+                    </div>
+                    </div><!-- .bc-manager-grid -->
+                </div>
+
+                <!-- ═══ STEP 1: Method-specific setup (shown after create) ═══ -->
+
+                <!-- RTMP Instructions Panel -->
+                <div id="bc-rtmp-instructions" style="display:none" class="bc-instructions-panel">
+                    <h2><i class="fa-solid fa-server"></i> RTMP Stream Setup</h2>
+                    <p>Use OBS, Streamlabs, or any RTMP-compatible software.</p>
+                    <div class="bc-code-block">
+                        <label>Server URL</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-rtmp-url">rtmp://localhost:1935/live</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-rtmp-url').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-code-block">
+                        <label>Stream Key</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-rtmp-key">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-rtmp-key').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-instructions-steps">
+                        <h3>OBS Setup</h3>
+                        <ol>
+                            <li>Open OBS → Settings → Stream</li>
+                            <li>Set Service to <strong>Custom</strong></li>
+                            <li>Paste the <strong>Server URL</strong> above</li>
+                            <li>Paste the <strong>Stream Key</strong></li>
+                            <li>Click "Start Streaming" in OBS</li>
+                        </ol>
+                    </div>
+
+                    <!-- RTMP Feed Status Indicator -->
+                    <div id="bc-rtmp-status" class="bc-rtmp-status waiting">
+                        <div class="bc-rtmp-status-icon">
+                            <i class="fa-solid fa-circle-notch fa-spin" id="bc-rtmp-status-spinner"></i>
+                            <i class="fa-solid fa-check-circle" id="bc-rtmp-status-ok" style="display:none"></i>
+                        </div>
+                        <div class="bc-rtmp-status-text">
+                            <strong id="bc-rtmp-status-label">Waiting for OBS...</strong>
+                            <span id="bc-rtmp-status-detail">Start streaming in OBS to connect</span>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                    <!-- Call controls for RTMP -->
+                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-rtmp" style="display:none">
+                        <div class="bc-call-header">
+                            <div class="bc-call-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span class="bc-call-status-text" id="bc-call-status-text-rtmp">Voice Chat — Off</span>
+                            </div>
+                            <span class="bc-call-count" id="bc-call-count-rtmp">0 in call</span>
+                        </div>
+                        <div class="bc-call-actions">
+                            <select id="bc-call-mode-select-rtmp" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
+                                <option value="">Disabled</option>
+                                <option value="mic">Voice Chat (mic only)</option>
+                                <option value="mic+cam">Voice + Camera</option>
+                                <option value="cam+mic">Video Call</option>
+                            </select>
+                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-rtmp" onclick="endBroadcastCall()" style="display:none">
+                                <i class="fa-solid fa-phone-slash"></i> End Call
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- JSMPEG Instructions Panel -->
+                <div id="bc-jsmpeg-instructions" style="display:none" class="bc-instructions-panel">
+                    <h2><i class="fa-solid fa-terminal"></i> JSMPEG Stream Setup</h2>
+                    <p>Stream using FFmpeg — ideal for Raspberry Pi, embedded devices, Linux desktops, and headless servers. Supports video + audio.</p>
+
+                    <!-- Quick-copy commands -->
+                    <div class="bc-code-block">
+                        <label><i class="fa-solid fa-video"></i> Video + Audio (recommended)</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-jsmpeg-cmd" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-jsmpeg-cmd').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-code-block">
+                        <label><i class="fa-solid fa-video-slash"></i> Video Only (no microphone)</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-jsmpeg-cmd-videoonly" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-jsmpeg-cmd-videoonly').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-code-block">
+                        <label><i class="fa-solid fa-display"></i> Screen Capture + Audio</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-jsmpeg-cmd-screen" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-jsmpeg-cmd-screen').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-code-block">
+                        <label><i class="fa-solid fa-display"></i> OBS Virtual Camera → JSMPEG</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-jsmpeg-cmd-obs" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-jsmpeg-cmd-obs').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-code-block">
+                        <label><i class="fa-solid fa-microphone"></i> Audio Only (no video)</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-jsmpeg-cmd-audioonly" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-jsmpeg-cmd-audioonly').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-code-block">
+                        <label><i class="fa-solid fa-expand"></i> HD 720p (higher quality)</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-jsmpeg-cmd-hd" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-jsmpeg-cmd-hd').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- Quick Start Guide -->
+                    <div class="bc-instructions-steps">
+                        <h3><i class="fa-solid fa-rocket"></i> Quick Start</h3>
+                        <ol>
+                            <li>Install FFmpeg: <code>sudo apt install ffmpeg</code> (Debian/Ubuntu) or <code>brew install ffmpeg</code> (macOS)</li>
+                            <li>Copy a command above and paste it in your terminal</li>
+                            <li>Adjust the device paths if needed (see device discovery below)</li>
+                            <li>Press Enter — your stream will appear on your channel page</li>
+                        </ol>
+                    </div>
+
+                    <!-- Find Devices -->
+                    <div class="bc-instructions-steps">
+                        <h3><i class="fa-solid fa-magnifying-glass"></i> Finding Your Devices</h3>
+                        <h4>Camera / Video</h4>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>List cameras (Linux)</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">v4l2-ctl --list-devices</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('v4l2-ctl --list-devices')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>List camera formats &amp; resolutions</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">v4l2-ctl -d /dev/video0 --list-formats-ext</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('v4l2-ctl -d /dev/video0 --list-formats-ext')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>List cameras (macOS)</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">ffmpeg -f avfoundation -list_devices true -i ""</code>
+                                <button class="btn btn-small" onclick='copyToClipboard(`ffmpeg -f avfoundation -list_devices true -i ""`)'><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>Test camera snapshot</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">ffmpeg -f v4l2 -i /dev/video0 -frames 1 test.jpg && xdg-open test.jpg</code>
+                                <button class="btn btn-small" onclick='copyToClipboard(`ffmpeg -f v4l2 -i /dev/video0 -frames 1 test.jpg && xdg-open test.jpg`)'><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <h4>Audio / Microphone</h4>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>List audio devices (ALSA)</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">arecord -l</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('arecord -l')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>List audio devices (PulseAudio / PipeWire)</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">pactl list short sources</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('pactl list short sources')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>Test microphone (record 5 seconds)</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">arecord -d 5 -f cd test.wav && aplay test.wav</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('arecord -d 5 -f cd test.wav && aplay test.wav')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>Use PulseAudio instead of ALSA</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">Replace: -f alsa -i default → -f pulse -i default</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('-f pulse -i default')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <h4>Special Inputs</h4>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>OBS Virtual Camera</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">Start OBS → Tools → Start Virtual Camera → use /dev/video2 (or check v4l2-ctl --list-devices)</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('v4l2-ctl --list-devices')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:8px">
+                            <label>Raspberry Pi Camera (libcamera)</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">libcamera-vid -t 0 --inline --codec mjpeg -o - | ffmpeg -i pipe:0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -bf 0 http://SERVER:PORT/KEY/640/480/</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('libcamera-vid -t 0 --inline --codec mjpeg -o -')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- FFmpeg Reference -->
+                    <div class="bc-instructions-steps">
+                        <h3><i class="fa-solid fa-sliders"></i> FFmpeg Tuning Reference</h3>
+                        <table class="bc-ref-table" style="width:100%;font-size:0.85rem;border-collapse:collapse">
+                            <tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">Flag</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">What it does</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">Example</th></tr>
+                            <tr><td style="padding:4px 8px"><code>-s</code></td><td style="padding:4px 8px">Resolution</td><td style="padding:4px 8px"><code>-s 1280x720</code></td></tr>
+                            <tr><td style="padding:4px 8px"><code>-b:v</code></td><td style="padding:4px 8px">Video bitrate</td><td style="padding:4px 8px"><code>-b:v 800k</code></td></tr>
+                            <tr><td style="padding:4px 8px"><code>-r</code></td><td style="padding:4px 8px">Frame rate</td><td style="padding:4px 8px"><code>-r 30</code></td></tr>
+                            <tr><td style="padding:4px 8px"><code>-b:a</code></td><td style="padding:4px 8px">Audio bitrate</td><td style="padding:4px 8px"><code>-b:a 128k</code></td></tr>
+                            <tr><td style="padding:4px 8px"><code>-ar</code></td><td style="padding:4px 8px">Audio sample rate</td><td style="padding:4px 8px"><code>-ar 44100</code></td></tr>
+                            <tr><td style="padding:4px 8px"><code>-ac</code></td><td style="padding:4px 8px">Audio channels (1=mono, 2=stereo)</td><td style="padding:4px 8px"><code>-ac 1</code></td></tr>
+                            <tr><td style="padding:4px 8px"><code>-bf 0</code></td><td style="padding:4px 8px">Disable B-frames (required for JSMPEG)</td><td style="padding:4px 8px"><code>-bf 0</code></td></tr>
+                            <tr><td style="padding:4px 8px"><code>-q:v</code></td><td style="padding:4px 8px">Quality (2=best, 31=worst)</td><td style="padding:4px 8px"><code>-q:v 5</code></td></tr>
+                            <tr><td style="padding:4px 8px"><code>-muxdelay</code></td><td style="padding:4px 8px">Lower = less latency</td><td style="padding:4px 8px"><code>-muxdelay 0.001</code></td></tr>
+                        </table>
+                        <p class="muted" style="margin-top:8px"><i class="fa-solid fa-info-circle"></i> JSMPEG requires <code>mpeg1video</code> codec and <code>mp2</code> audio. H.264/AAC will not work. <code>-bf 0</code> is mandatory.</p>
+                    </div>
+
+                    <!-- Recommended Settings -->
+                    <div class="bc-instructions-steps">
+                        <h3><i class="fa-solid fa-gauge-high"></i> Recommended Presets</h3>
+                        <table class="bc-ref-table" style="width:100%;font-size:0.85rem;border-collapse:collapse">
+                            <tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">Use Case</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">Resolution</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">Video Bitrate</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">Audio</th></tr>
+                            <tr><td style="padding:4px 8px">Raspberry Pi Zero</td><td style="padding:4px 8px">320x240</td><td style="padding:4px 8px">200k</td><td style="padding:4px 8px">64k mono</td></tr>
+                            <tr><td style="padding:4px 8px">Raspberry Pi 3/4</td><td style="padding:4px 8px">640x480</td><td style="padding:4px 8px">350–500k</td><td style="padding:4px 8px">128k mono</td></tr>
+                            <tr><td style="padding:4px 8px">Desktop / Laptop</td><td style="padding:4px 8px">1280x720</td><td style="padding:4px 8px">800k–1.5M</td><td style="padding:4px 8px">128k stereo</td></tr>
+                            <tr><td style="padding:4px 8px">High Quality</td><td style="padding:4px 8px">1920x1080</td><td style="padding:4px 8px">2–4M</td><td style="padding:4px 8px">192k stereo</td></tr>
+                        </table>
+                    </div>
+
+                    <!-- Troubleshooting -->
+                    <div class="bc-instructions-steps">
+                        <h3><i class="fa-solid fa-wrench"></i> Troubleshooting</h3>
+                        <ul style="list-style:none;padding:0">
+                            <li style="margin-bottom:6px"><strong>No video device:</strong> Check <code>ls /dev/video*</code> — if empty, your camera isn't connected or the driver isn't loaded. Try <code>sudo modprobe uvcvideo</code>.</li>
+                            <li style="margin-bottom:6px"><strong>No audio device:</strong> Run <code>arecord -l</code> — if empty, plug in a USB mic or check <code>pulseaudio --check</code>. Use <code>-f pulse -i default</code> if using PipeWire or PulseAudio.</li>
+                            <li style="margin-bottom:6px"><strong>Device busy:</strong> Another app is using the camera. Close OBS, Cheese, or any other camera app and retry.</li>
+                            <li style="margin-bottom:6px"><strong>Connection refused:</strong> Make sure the server is running and the port is reachable. Check firewalls: <code>sudo ufw allow PORT</code>.</li>
+                            <li style="margin-bottom:6px"><strong>High latency:</strong> Lower the resolution, reduce bitrate, and ensure <code>-muxdelay 0.001</code> is set.</li>
+                            <li style="margin-bottom:6px"><strong>Choppy video:</strong> Your upload bandwidth may be too low for the bitrate. Reduce <code>-b:v</code> or resolution.</li>
+                            <li style="margin-bottom:6px"><strong>Permission denied on camera:</strong> Add yourself to the video group: <code>sudo usermod -aG video $USER</code> then log out and back in.</li>
+                            <li style="margin-bottom:6px"><strong>macOS:</strong> Use <code>-f avfoundation -i "0:0"</code> instead of <code>-f v4l2 -i /dev/video0</code>. Device indices from <code>ffmpeg -f avfoundation -list_devices true -i ""</code>.</li>
+                        </ul>
+                    </div>
+
+                    <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                    <!-- Call controls for JSMPEG -->
+                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-jsmpeg" style="display:none">
+                        <div class="bc-call-header">
+                            <div class="bc-call-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span class="bc-call-status-text" id="bc-call-status-text-jsmpeg">Voice Chat — Off</span>
+                            </div>
+                            <span class="bc-call-count" id="bc-call-count-jsmpeg">0 in call</span>
+                        </div>
+                        <div class="bc-call-actions">
+                            <select id="bc-call-mode-select-jsmpeg" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
+                                <option value="">Disabled</option>
+                                <option value="mic">Voice Chat (mic only)</option>
+                                <option value="mic+cam">Voice + Camera</option>
+                                <option value="cam+mic">Video Call</option>
+                            </select>
+                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-jsmpeg" onclick="endBroadcastCall()" style="display:none">
+                                <i class="fa-solid fa-phone-slash"></i> End Call
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- WebRTC OBS (WHIP) Instructions Panel -->
+                <div id="bc-webrtc-obs-instructions" style="display:none" class="bc-instructions-panel">
+                    <h2><i class="fa-solid fa-desktop"></i> WebRTC via OBS (WHIP)</h2>
+                    <p>OBS 30+ supports WebRTC streaming via the WHIP protocol. This provides ultra-low latency.</p>
+                    <div class="bc-code-block">
+                        <label>WHIP Endpoint</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-whip-url">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-whip-url').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-code-block">
+                        <label>Bearer Token</label>
+                        <div class="bc-code-copy">
+                            <code id="bc-whip-token">loading...</code>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-whip-token').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        </div>
+                    </div>
+                    <div class="bc-instructions-steps">
+                        <h3>OBS 30+ Setup</h3>
+                        <ol>
+                            <li>Open OBS → Settings → Stream</li>
+                            <li>Set Service to <strong>WHIP</strong></li>
+                            <li>Paste the <strong>WHIP Endpoint</strong> URL above</li>
+                            <li>Paste the <strong>Bearer Token</strong> as the auth key</li>
+                            <li>Click "Start Streaming" in OBS</li>
+                        </ol>
+                        <p class="muted"><i class="fa-solid fa-info-circle"></i> Requires OBS Studio 30.0 or newer. Older versions do not support WHIP.</p>
+                    </div>
+                    <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                    <!-- Call controls for WHIP -->
+                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-whip" style="display:none">
+                        <div class="bc-call-header">
+                            <div class="bc-call-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span class="bc-call-status-text" id="bc-call-status-text-whip">Voice Chat — Off</span>
+                            </div>
+                            <span class="bc-call-count" id="bc-call-count-whip">0 in call</span>
+                        </div>
+                        <div class="bc-call-actions">
+                            <select id="bc-call-mode-select-whip" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
+                                <option value="">Disabled</option>
+                                <option value="mic">Voice Chat (mic only)</option>
+                                <option value="mic+cam">Voice + Camera</option>
+                                <option value="cam+mic">Video Call</option>
+                            </select>
+                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-whip" onclick="endBroadcastCall()" style="display:none">
+                                <i class="fa-solid fa-phone-slash"></i> End Call
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ WebRTC Browser Broadcast (live controls) ═══ -->
+                <div id="bc-browser-broadcast" style="display:none">
+                    <!-- Video Preview -->
+                    <div class="bc-video-container">
+                        <video id="bc-video-preview" autoplay playsinline muted></video>
+                        <div class="bc-video-placeholder" id="bc-video-placeholder">
+                            <i class="fa-solid fa-video"></i>
+                            <span>Camera preview will appear here</span>
+                        </div>
+                        <!-- Stats overlay (hidden by default) -->
+                        <div class="bc-stats-overlay" id="bc-stats-overlay" style="display:none">
+                            <span><span class="bc-stat-label">Bitrate</span> <span id="bc-stat-bitrate">-- kbps</span></span>
+                            <span><span class="bc-stat-label">FPS</span> <span id="bc-stat-fps">--</span></span>
+                            <span><span class="bc-stat-label">Resolution</span> <span id="bc-stat-resolution">--</span></span>
+                            <span><span class="bc-stat-label">Codec</span> <span id="bc-stat-codec">--</span></span>
+                            <span><span class="bc-stat-label">Status</span> <span id="bc-stat-status">--</span></span>
+                        </div>
+                        <!-- Live badge (hidden until live) -->
+                        <div class="bc-live-badge" id="bc-live-badge" style="display:none">
+                            <i class="fa-solid fa-circle"></i> LIVE
+                        </div>
+                        <!-- Connection status -->
+                        <div class="bc-connection-status" id="bc-connection-status"></div>
+                    </div>
+
+                    <!-- Info bar -->
+                    <div class="bc-info-bar" id="bc-info-bar" style="display:none">
+                        <div class="bc-info-item">
+                            <i class="fa-solid fa-eye"></i> <strong id="bc-viewer-count">0</strong> viewers
+                        </div>
+                        <div class="bc-info-item">
+                            <i class="fa-solid fa-clock"></i> <strong id="bc-uptime">0:00:00</strong>
+                        </div>
+                        <div class="bc-info-item" id="bc-protocol-badge"></div>
+                    </div>
+
+                    <!-- Group Call Controls (shared across all stream methods) -->
+                    <div class="bc-call-controls" id="bc-call-controls" style="display:none">
+                        <div class="bc-call-header">
+                            <div class="bc-call-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span class="bc-call-status-text" id="bc-call-status-text">Voice Chat — Off</span>
+                            </div>
+                            <span class="bc-call-count" id="bc-call-count">0 in call</span>
+                        </div>
+                        <div class="bc-call-actions">
+                            <select id="bc-call-mode-select" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
+                                <option value="">Disabled</option>
+                                <option value="mic">Voice Chat (mic only)</option>
+                                <option value="mic+cam">Voice + Camera</option>
+                                <option value="cam+mic">Video Call</option>
+                            </select>
+                            <button class="btn btn-small btn-danger" id="bc-call-end-btn" onclick="endBroadcastCall()" style="display:none">
+                                <i class="fa-solid fa-phone-slash"></i> End Call
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Broadcast Call Panel (streamer's view of call participants) -->
+                    <div class="bc-call-panel call-panel" id="bc-call-panel" style="display:none">
+                        <div class="call-participants-grid" id="bc-call-participants-grid"></div>
+                        <div class="call-controls">
+                            <button class="call-ctrl-btn" id="bc-call-btn-mute" onclick="toggleCallMute()" title="Mute">
+                                <i class="fa-solid fa-microphone"></i>
+                            </button>
+                            <button class="call-ctrl-btn" id="bc-call-btn-camera" onclick="toggleCallCamera()" title="Toggle Camera">
+                                <i class="fa-solid fa-video"></i>
+                            </button>
+                        </div>
+                        <details class="call-device-switcher">
+                            <summary><i class="fa-solid fa-gear"></i> Input Devices</summary>
+                            <div class="call-device-selects call-device-selects-compact">
+                                <div class="call-device-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Mic</label>
+                                    <select id="bc-call-mic-switch" class="form-input form-input-sm" onchange="switchCallMic(this.value)">
+                                        <option value="default">Default Microphone</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group" id="bc-call-cam-switch-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
+                                    <select id="bc-call-cam-switch" class="form-input form-input-sm" onchange="switchCallCam(this.value)">
+                                        <option value="default">Default Camera</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="call-input-settings call-input-settings-compact">
+                                <div class="call-device-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
+                                    <select id="bc-call-input-mode-switch" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
+                                        <option value="open">Open Mic</option>
+                                        <option value="ptt">Push to Talk</option>
+                                        <option value="vad">Voice Activation</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group call-ptt-group" id="bc-call-ptt-switch-group" style="display:none">
+                                    <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
+                                    <select id="bc-call-ptt-key-switch" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
+                                        <option value="Space">Space</option>
+                                        <option value="KeyV">V</option>
+                                        <option value="KeyT">T</option>
+                                        <option value="AltLeft">Left Alt</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group call-vad-group" id="bc-call-vad-switch-group" style="display:none">
+                                    <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
+                                    <input id="bc-call-vad-threshold-switch" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
+                                    <span class="call-threshold-value" id="bc-call-vad-threshold-value-switch">32%</span>
+                                </div>
+                            </div>
+                            <div class="call-ptt-status" id="bc-call-ptt-status" style="display:none">Hold <strong id="bc-call-ptt-status-key">Space</strong> to talk</div>
+                        </details>
+                        <div class="call-log" id="bc-call-log"></div>
+                    </div>
+
+                    <!-- Live controls (visible when streaming) -->
+                    <div class="bc-controls" id="bc-live-section">
+                        <!-- Quick Action Buttons -->
+                        <div class="bc-ctrl-buttons">
+                            <button class="bc-ctrl-btn bc-ctrl-btn-danger" id="bc-toggle-stream" onclick="stopBroadcast()">
+                                <i class="fa-solid fa-stop"></i> Stop Stream
+                            </button>
+                            <button class="bc-ctrl-btn" onclick="flipCamera()">
+                                <i class="fa-solid fa-camera-rotate"></i> Flip
+                            </button>
+                            <button class="bc-ctrl-btn" onclick="toggleBroadcastStats()">
+                                <i class="fa-solid fa-chart-line"></i> Stats
+                            </button>
+                            <button class="bc-ctrl-btn" onclick="testTTS()">
+                                <i class="fa-solid fa-volume-high"></i> Test TTS
+                            </button>
+                            <button class="bc-ctrl-btn" onclick="cancelTTS()">
+                                <i class="fa-solid fa-ban"></i> Reset TTS
+                            </button>
+                        </div>
+
+                        <!-- TTS Settings -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Volume</span>
+                                <div class="bc-setting-control"><input type="range" id="bc-ttsVolume" min="0" max="1000" step="50"></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Pitch</span>
+                                <div class="bc-setting-control"><input type="range" id="bc-ttsPitch" min="0" max="200" step="10"></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Rate</span>
+                                <div class="bc-setting-control"><input type="range" id="bc-ttsRate" min="1" max="20" step="1"></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Voice</span>
+                                <div class="bc-setting-control"><select id="bc-ttsVoice"></select></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Duration Limit (sec)</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-ttsDuration">
+                                        <option value="0">No limit</option>
+                                        <option value="5">5s</option>
+                                        <option value="10" selected>10s</option>
+                                        <option value="15">15s</option>
+                                        <option value="30">30s</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Read Names</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-ttsNames"><option value="off">Off</option><option value="on">On</option></select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Queue Size</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-ttsQueue">
+                                        <option value="0">Unlimited</option>
+                                        <option value="3">3</option>
+                                        <option value="5" selected>5</option>
+                                        <option value="10">10</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Audio Settings -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-microphone"></i> Audio</div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Microphone</span>
+                                <div class="bc-setting-control"><select id="bc-forceAudio"><option value="default">Default</option></select></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Auto Gain</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-autoGain"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Echo Cancellation</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-echoCancellation"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Noise Suppression</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-noiseSuppression"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Manual Gain</span>
+                                <div class="bc-setting-control">
+                                    <label class="bc-toggle"><input type="checkbox" id="bc-manualGainEnabled"><span class="bc-toggle-slider"></span></label>
+                                    <input type="range" id="bc-manualGain" min="0" max="300" step="10">
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Force 48kHz Sample Rate</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-force48kSampleRate"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Notification Volume</span>
+                                <div class="bc-setting-control"><input type="range" id="bc-notificationVolume" min="0" max="1000" step="50"></div>
+                            </div>
+                        </div>
+
+                        <!-- Video / Broadcast Settings -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-video"></i> Video</div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Camera</span>
+                                <div class="bc-setting-control"><select id="bc-forceCamera"><option value="default">Default</option></select></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Screen Share</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-screenShare"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Resolution</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-broadcastRes">
+                                        <option value="360">360p</option>
+                                        <option value="480">480p</option>
+                                        <option value="720" selected>720p</option>
+                                        <option value="1080">1080p</option>
+                                        <option value="1440">1440p</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">FPS</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-broadcastFps">
+                                        <option value="15">15</option>
+                                        <option value="24">24</option>
+                                        <option value="30" selected>30</option>
+                                        <option value="60">60</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Codec Preference</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-broadcastCodec">
+                                        <option value="auto" selected>Auto</option>
+                                        <option value="vp8">VP8</option>
+                                        <option value="vp9">VP9</option>
+                                        <option value="h264">H.264</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Max Bitrate (kbps)</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-broadcastBps">
+                                        <option value="100">100</option>
+                                        <option value="250">250</option>
+                                        <option value="500">500</option>
+                                        <option value="1000">1000</option>
+                                        <option value="1500">1500</option>
+                                        <option value="2000">2000</option>
+                                        <option value="2500" selected>2500</option>
+                                        <option value="3000">3000</option>
+                                        <option value="4000">4000</option>
+                                        <option value="5000">5000</option>
+                                        <option value="6000">6000</option>
+                                        <option value="8000">8000</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Min Bitrate (kbps)</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-broadcastBpsMin">
+                                        <option value="50">50</option>
+                                        <option value="100">100</option>
+                                        <option value="250">250</option>
+                                        <option value="500" selected>500</option>
+                                        <option value="1000">1000</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">On Disconnect</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-broadcastLimit">
+                                        <option value="restart" selected>Auto Restart</option>
+                                        <option value="stop">Stop Stream</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Allow Sounds</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-allowSounds"><option value="false" selected>Off</option><option value="true">On</option></select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Sound Volume</span>
+                                <div class="bc-setting-control"><input type="range" id="bc-soundVolume" min="0" max="1000" step="50"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat sidebar (reused when live) -->
+            <div class="chat-sidebar" id="bc-chat-sidebar" style="display:none">
+                <div class="chat-header">
+                    <span>STREAM CHAT</span>
+                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                </div>
+                <div class="chat-messages" id="bc-chat-messages"></div>
+                <div class="chat-input-area">
+                    <!-- Emote Picker (broadcast) -->
+                    <div id="bc-emote-picker" class="emote-picker" style="display:none">
+                        <div class="emote-picker-header">
+                            <input type="text" class="emote-search" placeholder="Search emotes..." oninput="onEmoteSearch(this.value)">
+                        </div>
+                        <div class="emote-picker-tabs">
+                            <button class="emote-tab-btn active" data-tab="all" onclick="renderEmotePicker('all')">All</button>
+                            <button class="emote-tab-btn" data-tab="defaults" onclick="renderEmotePicker('defaults')">Popular</button>
+                            <button class="emote-tab-btn" data-tab="channel" onclick="renderEmotePicker('channel')">Channel</button>
+                            <button class="emote-tab-btn" data-tab="global" onclick="renderEmotePicker('global')">Custom</button>
+                            <button class="emote-tab-btn" data-tab="ffz" onclick="renderEmotePicker('ffz')">FFZ</button>
+                            <button class="emote-tab-btn" data-tab="7tv" onclick="renderEmotePicker('7tv')">7TV</button>
+                            <button class="emote-tab-btn" data-tab="bttv" onclick="renderEmotePicker('bttv')">BTTV</button>
+                        </div>
+                        <div class="emote-picker-grid" id="bc-emote-picker-grid"></div>
+                    </div>
+                    <div class="chat-input-row">
+                        <button class="emote-picker-btn" onclick="toggleEmotePicker('bc-chat-input')" title="Emotes">
+                            <i class="fa-solid fa-face-smile"></i>
+                        </button>
+                        <input type="text" id="bc-chat-input" placeholder="Send a message..." maxlength="500"
+                               onkeydown="if(event.key==='Enter')sendChat()">
+                        <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Coins">
+                            <i class="fa-solid fa-gem"></i>
+                        </button>
+                        <button class="btn btn-hobo-bucks-mini" onclick="showModal('donate')" title="Send Hobo Bucks">
+                            <i class="fa-solid fa-dollar-sign"></i>
+                        </button>
+                        <button class="chat-send-btn" onclick="sendChat()">
+                            <i class="fa-solid fa-paper-plane"></i>
+                        </button>
+                    </div>
+                    <!-- Rewards Panel (Hobo Coins) — broadcast page -->
+                    <div class="rewards-panel" id="bc-rewards-panel" style="display:none">
+                        <div class="rewards-panel-header">
+                            <span><i class="fa-solid fa-gem"></i> Hobo Coins Rewards</span>
+                            <span class="rewards-coin-bal"><i class="fa-solid fa-coins"></i> <span class="rewards-coin-balance">0</span></span>
+                        </div>
+                        <div class="rewards-grid bc-rewards-grid">
+                            <p class="muted">No rewards configured for this channel</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── SETTINGS ──────────────────────────────────────── -->
+    <section id="page-settings" class="page">
+        <div class="container">
+            <div class="settings-layout">
+                <!-- Banner -->
+                <div class="settings-banner">
+                    <div class="settings-banner-overlay"></div>
+                    <div class="settings-banner-content">
+                        <div class="settings-banner-avatar" id="settings-banner-initial">?</div>
+                        <div class="settings-banner-name" id="settings-banner-name">User</div>
+                    </div>
+                </div>
+
+                <!-- Tab Nav -->
+                <div class="settings-nav">
+                    <button class="settings-nav-btn active" data-tab="profile" onclick="switchSettingsTab('profile')">
+                        <i class="fa-solid fa-user"></i> Profile
+                    </button>
+                    <button class="settings-nav-btn" data-tab="appearance" onclick="switchSettingsTab('appearance')">
+                        <i class="fa-solid fa-palette"></i> Appearance
+                    </button>
+                    <button class="settings-nav-btn" data-tab="broadcaster" onclick="switchSettingsTab('broadcaster')">
+                        <i class="fa-solid fa-tower-broadcast"></i> Broadcaster
+                    </button>
+                    <button class="settings-nav-btn" data-tab="streams" onclick="switchSettingsTab('streams')">
+                        <i class="fa-solid fa-video"></i> My Streams
+                    </button>
+                </div>
+
+                <!-- Profile Panel -->
+                <div class="settings-panel active" id="settings-profile">
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-id-card"></i> Account Info</h3>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Username</span>
+                            <div class="settings-row-content">
+                                <input type="text" id="set-username" disabled>
+                                <div class="settings-row-hint"><i class="fa-solid fa-lock"></i> Cannot be changed</div>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Display Name</span>
+                            <div class="settings-row-content">
+                                <input type="text" id="set-display-name" placeholder="Display name">
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Email</span>
+                            <div class="settings-row-content">
+                                <input type="email" id="set-email" placeholder="email@example.com">
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Bio</span>
+                            <div class="settings-row-content">
+                                <textarea id="set-bio" rows="3" placeholder="Tell us about yourself..."></textarea>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Profile Color</span>
+                            <div class="settings-row-content">
+                                <input type="color" id="set-profile-color" value="#c0965c" style="width:60px;height:36px;border:1px solid var(--border);background:var(--bg-input);cursor:pointer">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-lock"></i> Change Password</h3>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Current Password</span>
+                            <div class="settings-row-content">
+                                <input type="password" id="set-current-password" placeholder="Current password">
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">New Password</span>
+                            <div class="settings-row-content">
+                                <input type="password" id="set-new-password" placeholder="New password (min 6 chars)">
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Confirm</span>
+                            <div class="settings-row-content">
+                                <input type="password" id="set-confirm-password" placeholder="Confirm new password">
+                            </div>
+                        </div>
+                        <button class="btn btn-outline" onclick="changePassword()" style="margin-top:8px">
+                            <i class="fa-solid fa-key"></i> Update Password
+                        </button>
+                    </div>
+                    <div class="settings-save-bar">
+                        <button class="btn btn-primary" onclick="saveSettingsProfile()">
+                            <i class="fa-solid fa-floppy-disk"></i> Save Profile
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Appearance Panel -->
+                <div class="settings-panel" id="settings-appearance">
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-swatchbook"></i> Theme</h3>
+                        <p class="muted" style="margin-bottom:12px">Choose a built-in theme or create your own.</p>
+                        <div class="theme-mode-toggle">
+                            <button class="btn btn-small theme-mode-btn active" data-mode="" onclick="filterThemes('')">All</button>
+                            <button class="btn btn-small theme-mode-btn" data-mode="dark" onclick="filterThemes('dark')"><i class="fa-solid fa-moon"></i> Dark</button>
+                            <button class="btn btn-small theme-mode-btn" data-mode="light" onclick="filterThemes('light')"><i class="fa-solid fa-sun"></i> Light</button>
+                        </div>
+                        <div id="theme-grid" class="theme-grid">Loading themes...</div>
+                    </div>
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-sliders"></i> Custom Theme Editor</h3>
+                        <p class="muted" style="margin-bottom:12px">Tweak individual colors. Changes preview live.</p>
+                        <div id="theme-editor-groups"></div>
+                        <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+                            <button class="btn btn-primary" onclick="saveCustomTheme();toast('Custom theme saved','success')">
+                                <i class="fa-solid fa-floppy-disk"></i> Save Custom
+                            </button>
+                            <button class="btn btn-outline" onclick="resetTheme();loadSettingsAppearance();toast('Theme reset to Campfire','success')">
+                                <i class="fa-solid fa-rotate-left"></i> Reset
+                            </button>
+                        </div>
+                    </div>
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-upload"></i> Share Your Theme</h3>
+                        <p class="muted" style="margin-bottom:12px">Submit your current colors to the community Theme Directory.</p>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Theme Name</span>
+                            <div class="settings-row-content">
+                                <input type="text" id="submit-theme-name" placeholder="My Awesome Theme" maxlength="50">
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Description</span>
+                            <div class="settings-row-content">
+                                <input type="text" id="submit-theme-desc" placeholder="Describe your theme..." maxlength="200">
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" onclick="submitCurrentTheme()">
+                            <i class="fa-solid fa-paper-plane"></i> Submit to Directory
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Broadcaster Panel -->
+                <div class="settings-panel" id="settings-broadcaster">
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-key"></i> Stream Key</h3>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Key</span>
+                            <div class="settings-row-content">
+                                <div style="display:flex;gap:6px">
+                                    <input type="password" id="set-stream-key" readonly style="flex:1">
+                                    <button class="btn btn-small" onclick="toggleSetKeyVis()"><i class="fa-solid fa-eye"></i></button>
+                                    <button class="btn btn-small" onclick="copySetKey()"><i class="fa-solid fa-copy"></i></button>
+                                </div>
+                                <div class="settings-row-hint"><i class="fa-solid fa-triangle-exclamation"></i> Keep secret! Anyone with this key can stream on your channel.</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-outline" onclick="regenSetKey()" style="margin-top:8px">
+                            <i class="fa-solid fa-rotate"></i> Regenerate Key
+                        </button>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-sliders"></i> Default Broadcast Settings</h3>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Default Resolution</span>
+                            <div class="settings-row-content">
+                                <select id="set-default-res">
+                                    <option value="360">360p</option>
+                                    <option value="480">480p</option>
+                                    <option value="720" selected>720p</option>
+                                    <option value="1080">1080p</option>
+                                    <option value="1440">1440p</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Default FPS</span>
+                            <div class="settings-row-content">
+                                <select id="set-default-fps">
+                                    <option value="15">15</option>
+                                    <option value="24">24</option>
+                                    <option value="30" selected>30</option>
+                                    <option value="60">60</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Codec Preference</span>
+                            <div class="settings-row-content">
+                                <select id="set-default-codec">
+                                    <option value="auto" selected>Auto</option>
+                                    <option value="vp8">VP8</option>
+                                    <option value="vp9">VP9</option>
+                                    <option value="h264">H.264</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Max Bitrate (kbps)</span>
+                            <div class="settings-row-content">
+                                <select id="set-default-bitrate">
+                                    <option value="100">100</option>
+                                    <option value="250">250</option>
+                                    <option value="500">500</option>
+                                    <option value="1000">1000</option>
+                                    <option value="1500">1500</option>
+                                    <option value="2000">2000</option>
+                                    <option value="2500" selected>2500</option>
+                                    <option value="3000">3000</option>
+                                    <option value="4000">4000</option>
+                                    <option value="5000">5000</option>
+                                    <option value="6000">6000</option>
+                                    <option value="8000">8000</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Min Bitrate (kbps)</span>
+                            <div class="settings-row-content">
+                                <select id="set-default-bitrate-min">
+                                    <option value="50">50</option>
+                                    <option value="100">100</option>
+                                    <option value="250">250</option>
+                                    <option value="500" selected>500</option>
+                                    <option value="1000">1000</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">On Disconnect</span>
+                            <div class="settings-row-content">
+                                <select id="set-broadcast-limit">
+                                    <option value="restart" selected>Auto Restart</option>
+                                    <option value="stop">Stop Stream</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-microphone"></i> Default Audio</h3>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Auto Gain</span>
+                            <div class="settings-row-content">
+                                <label class="bc-toggle"><input type="checkbox" id="set-auto-gain"><span class="bc-toggle-slider"></span></label>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Echo Cancellation</span>
+                            <div class="settings-row-content">
+                                <label class="bc-toggle"><input type="checkbox" id="set-echo-cancellation"><span class="bc-toggle-slider"></span></label>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Noise Suppression</span>
+                            <div class="settings-row-content">
+                                <label class="bc-toggle"><input type="checkbox" id="set-noise-suppression"><span class="bc-toggle-slider"></span></label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-video"></i> VOD & Clip Defaults</h3>
+                        <p class="muted" style="margin-bottom:12px">Set the default visibility for new VODs and clips on your channel.</p>
+                        <div class="settings-row">
+                            <span class="settings-row-label">VOD Visibility</span>
+                            <div class="settings-row-content">
+                                <select id="set-default-vod-visibility">
+                                    <option value="public">Public — Anyone can watch</option>
+                                    <option value="unlisted">Unlisted — Only with link</option>
+                                    <option value="private">Private — Only you</option>
+                                </select>
+                                <div class="settings-row-hint">New recordings will default to this visibility</div>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Clip Visibility</span>
+                            <div class="settings-row-content">
+                                <select id="set-default-clip-visibility">
+                                    <option value="public">Public — Anyone can watch</option>
+                                    <option value="unlisted">Unlisted — Only with link</option>
+                                    <option value="private">Private — Only you</option>
+                                </select>
+                                <div class="settings-row-hint">Clips from your streams will default to this visibility</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-save-bar">
+                        <button class="btn btn-primary" onclick="saveSettingsBroadcaster()">
+                            <i class="fa-solid fa-floppy-disk"></i> Save Broadcaster Settings
+                        </button>
+                    </div>
+                </div>
+
+                <!-- My Streams Panel -->
+                <div class="settings-panel" id="settings-streams">
+                    <div id="settings-streams-list">
+                        <div class="empty-state"><p class="muted">Loading streams...</p></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── GLOBAL CHAT PAGE ────────────────────────────── -->
+    <section id="page-chat" class="page">
+        <div class="global-chat-layout">
+            <div class="global-chat-main">
+                <div class="global-chat-header">
+                    <div>
+                        <h2><i class="fa-solid fa-comments"></i> Global Chat</h2>
+                        <p class="muted">Live messages from all streams and the lobby</p>
+                    </div>
+                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                </div>
+                <div class="global-chat-messages" id="global-chat-messages"></div>
+                <div class="chat-input-area">
+                    <div class="chat-input-row">
+                        <button class="emote-picker-btn" onclick="toggleEmotePicker('global-chat-input')" title="Emotes">
+                            <i class="fa-solid fa-face-smile"></i>
+                        </button>
+                        <input type="text" id="global-chat-input" placeholder="Send a message..." maxlength="500"
+                               onkeydown="if(event.key==='Enter')sendChat()">
+                        <button class="chat-send-btn" onclick="sendChat()">
+                            <i class="fa-solid fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── THEME DIRECTORY ───────────────────────────── -->
+    <section id="page-themes" class="page">
+        <div class="container">
+            <div class="page-header">
+                <h2><i class="fa-solid fa-palette"></i> Theme Directory</h2>
+                <p class="muted">Browse and download themes created by the community.</p>
+            </div>
+            <div class="theme-dir-controls">
+                <div class="theme-dir-filters">
+                    <button class="btn btn-small theme-dir-mode active" data-mode="" onclick="filterDirThemes('')">All</button>
+                    <button class="btn btn-small theme-dir-mode" data-mode="dark" onclick="filterDirThemes('dark')"><i class="fa-solid fa-moon"></i> Dark</button>
+                    <button class="btn btn-small theme-dir-mode" data-mode="light" onclick="filterDirThemes('light')"><i class="fa-solid fa-sun"></i> Light</button>
+                </div>
+                <div class="theme-dir-search">
+                    <input type="text" id="theme-dir-search" placeholder="Search themes..." oninput="searchDirThemes()">
+                </div>
+                <div class="theme-dir-sort">
+                    <select id="theme-dir-sort" onchange="sortDirThemes()">
+                        <option value="name">Name</option>
+                        <option value="popular">Most Popular</option>
+                        <option value="newest">Newest</option>
+                    </select>
+                </div>
+            </div>
+            <div id="theme-dir-grid" class="theme-dir-grid">Loading themes...</div>
+        </div>
+    </section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!--  GAME — HoboGame Open-World Survival                       -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+    <section id="page-game" class="page">
+        <div class="game-wrapper">
+            <div class="game-canvas-container">
+                <!-- HUD overlay: status badges + action buttons -->
+                <div class="game-hud-top">
+                    <div class="game-hud-left">
+                        <span class="game-zone-badge" id="game-zone">Outpost</span>
+                        <span class="game-players-badge"><i class="fa-solid fa-users"></i> <span id="game-players">1</span></span>
+                        <span class="game-connection-badge disconnected" id="game-conn-badge">
+                            <span class="game-connection-dot"></span>
+                            <span id="game-conn-text">Offline</span>
+                        </span>
+                    </div>
+                    <div class="game-hud-right">
+                        <button class="game-hud-btn" onclick="togglePanel('inventory')" title="Inventory (I)"><i class="fa-solid fa-box-open"></i></button>
+                        <button class="game-hud-btn" onclick="togglePanel('skills')" title="Skills (K)"><i class="fa-solid fa-chart-bar"></i></button>
+                        <button class="game-hud-btn" onclick="togglePanel('map')" title="Map (M)"><i class="fa-solid fa-map"></i></button>
+                    </div>
+                </div>
+                <canvas id="game-canvas" width="960" height="640"></canvas>
+                <!-- Login overlay (shown when not authenticated) -->
+                <div class="game-login-overlay" id="game-login-overlay">
+                    <div class="game-login-content game-promo">
+                        <div class="game-promo-icon">🏕️⚔️🌍</div>
+                        <h3>HoboGame</h3>
+                        <p class="game-promo-tagline">Open-world survival right here on HoboStreamer</p>
+                        <div class="game-promo-features">
+                            <div class="game-promo-feat"><span class="gpf-icon">⛏️</span><span>Chop trees, mine ores & fish across a massive procedural world</span></div>
+                            <div class="game-promo-feat"><span class="gpf-icon">⚔️</span><span>Craft swords, armor, potions & legendary equipment</span></div>
+                            <div class="game-promo-feat"><span class="gpf-icon">💀</span><span>Open-world PvP — raid other players or get raided</span></div>
+                            <div class="game-promo-feat"><span class="gpf-icon">🏠</span><span>Build bases with walls, furnaces, storage & sleeping bags</span></div>
+                            <div class="game-promo-feat"><span class="gpf-icon">🐉</span><span>Fight dragons & monsters in procedural dungeons</span></div>
+                            <div class="game-promo-feat"><span class="gpf-icon">🏆</span><span>Level 6 skills, compete on global leaderboards</span></div>
+                        </div>
+                        <button class="btn btn-primary btn-lg" onclick="showModal('register')" style="margin-top:16px">
+                            <i class="fa-solid fa-user-plus"></i> Register to Play — It's Free!
+                        </button>
+                        <p class="muted" style="margin-top:8px">
+                            Already have an account? <a href="#" onclick="event.preventDefault();showModal('login')">Log In</a>
+                        </p>
+                    </div>
+                </div>
+                <!-- Loading overlay (shown while connecting/loading) -->
+                <div class="game-loading-overlay" id="game-loading-overlay" style="display:none">
+                    <div class="game-loading-content">
+                        <div class="game-loading-spinner"></div>
+                        <h3 id="game-loading-title">Connecting to HoboGame...</h3>
+                        <p id="game-loading-status">Establishing connection</p>
+                        <div class="game-loading-bar-track">
+                            <div class="game-loading-bar-fill" id="game-loading-bar"></div>
+                        </div>
+                        <div class="game-loading-tips" id="game-loading-tips">
+                            <p>💡 Tip: Bank your loot at the Outpost to keep it safe from PvP death!</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Controls hint hidden — game is fullscreen now -->
+        </div>
+    </section>
+
+</main>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!--  MODALS                                                     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+        <div id="modal-content"></div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!--  TOAST NOTIFICATIONS                                        -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!--  FOOTER                                                     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<footer class="footer">
+    <div class="footer-content">
+        <span class="footer-brand"><i class="fa-solid fa-campground"></i> HoboStreamer</span>
+        <span class="footer-divider">&middot;</span>
+        <a href="https://github.com/user/hobostreamer" target="_blank"><i class="fa-brands fa-github"></i></a>
+        <a href="https://discord.gg/hobostreamer" target="_blank"><i class="fa-brands fa-discord"></i></a>
+        <span class="footer-divider">&middot;</span>
+        <span class="footer-copy">Open Source & Community Driven</span>
+    </div>
+</footer>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!--  COSMETICS INVENTORY MODAL                                  -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="cosmetics-modal-overlay" id="cosmetics-modal">
+    <div class="cosmetics-modal">
+        <div class="cosmetics-header">
+            <h2><i class="fa-solid fa-coins" style="margin-right:6px"></i> Inventory</h2>
+            <button class="cosmetics-close" onclick="closeCosmeticsModal()">&times;</button>
+        </div>
+        <div class="cosmetics-tabs">
+            <button class="cosmetics-tab active" data-cat="name_effect" onclick="switchCosmeticTab('name_effect', this)">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Name FX
+            </button>
+            <button class="cosmetics-tab" data-cat="particle" onclick="switchCosmeticTab('particle', this)">
+                <i class="fa-solid fa-sparkles"></i> Particles
+            </button>
+            <button class="cosmetics-tab" data-cat="hat" onclick="switchCosmeticTab('hat', this)">
+                <i class="fa-solid fa-hat-wizard"></i> Hats
+            </button>
+            <button class="cosmetics-tab" data-cat="voice" onclick="switchCosmeticTab('voice', this)">
+                <i class="fa-solid fa-microphone"></i> Voices
+            </button>
+        </div>
+        <div class="cosmetics-body" id="cosmetics-body">
+            <div class="cosmetics-category active" data-cat="name_effect" id="cosmetics-cat-name_effect"></div>
+            <div class="cosmetics-category" data-cat="particle" id="cosmetics-cat-particle"></div>
+            <div class="cosmetics-category" data-cat="hat" id="cosmetics-cat-hat"></div>
+            <div class="cosmetics-category" data-cat="voice" id="cosmetics-cat-voice"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Scripts -->
+<script src="/js/theme-engine.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/stream-player.js"></script>
+<script src="/js/emotes.js"></script>
+<script src="/js/chat.js"></script>
+<script src="/js/controls.js"></script>
+<script src="/js/dashboard.js"></script>
+<script src="/js/admin.js"></script>
+<script src="/js/hobo-bucks.js"></script>
+<script src="/js/hobo-coins.js"></script>
+<script src="/js/cosmetics-ui.js"></script>
+<script src="/js/broadcast.js"></script>
+<script src="/js/call.js"></script>
+<script src="/js/settings.js"></script>
+<script src="/js/game.js"></script>
+</body>
+</html>
