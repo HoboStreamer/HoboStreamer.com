@@ -250,6 +250,9 @@ async function start() {
     db.initDb();
     // Initialize cosmetics tables
     cosmeticsModule.ensureTables();
+    // Initialize tags tables
+    const tagsModule = require('./game/tags');
+    tagsModule.ensureTagTables();
     // Migrate: add last_heartbeat column if missing
     try { db.run("ALTER TABLE streams ADD COLUMN last_heartbeat DATETIME"); console.log('[DB] Added last_heartbeat column'); } catch { /* already exists */ }
     // Migrate: add theme_id to users table if missing
