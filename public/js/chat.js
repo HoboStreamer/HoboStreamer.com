@@ -319,7 +319,7 @@ function addChatMessage(msg) {
     const particleWrapOpen = hasParticles ? `<span class="chat-particle-wrap ${msg.particleFX.cssClass || ''}">` : '';
     const particleWrapClose = hasParticles ? `</span>` : '';
 
-    el.innerHTML = `${timestamp}${streamBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${nameColor}" data-username="${displayName}" data-user-id="${userId}" ${!isAnon ? 'oncontextmenu="showChatContextMenu(event)"' : ''} onclick="${!isAnon ? `showChatContextMenu(event)` : ''}">${displayName}</span>${particleWrapClose}: ${text}`;
+    el.innerHTML = `${timestamp}${streamBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${nameColor}" data-username="${displayName}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
 
     // Spawn particles if equipped
     if (hasParticles) {
@@ -465,6 +465,7 @@ function showChatContextMenu(event) {
     if (!target) return;
     const username = target.dataset.username;
     const userId = target.dataset.userId;
+    const isAnon = target.dataset.anon === '1';
     if (!username) return;
 
     const menu = document.createElement('div');
@@ -478,8 +479,8 @@ function showChatContextMenu(event) {
     positionContextMenu(menu, event.clientX, event.clientY);
     activeContextMenu = menu;
 
-    // Fetch user profile
-    loadContextMenuProfile(menu, username, userId);
+    // Fetch user profile (or render simplified menu for anon users)
+    loadContextMenuProfile(menu, username, userId, isAnon);
 
     // Click outside to dismiss
     setTimeout(() => {
@@ -512,7 +513,11 @@ function dismissContextMenu() {
     }
 }
 
-async function loadContextMenuProfile(menu, username, userId) {
+async function loadContextMenuProfile(menu, username, userId, isAnon) {
+    if (isAnon) {
+        renderAnonContextMenu(menu, username, userId);
+        return;
+    }
     try {
         const profile = await api(`/chat/user/${encodeURIComponent(username)}/profile`);
         renderContextMenu(menu, profile, username);
@@ -530,6 +535,27 @@ async function loadContextMenuProfile(menu, username, userId) {
             </div>
         `;
     }
+}
+
+function renderAnonContextMenu(menu, username, userId) {
+    const initial = username[0] ? username[0].toUpperCase() : '?';
+    const adminBtns = currentUser && currentUser.role === 'admin'
+        ? `<div class="ctx-divider"></div>
+           <button class="ctx-btn ctx-btn-danger" onclick="ctxBanUser('${esc(username)}', '${esc(userId)}')"><i class="fa-solid fa-ban"></i> Ban</button>`
+        : '';
+    menu.innerHTML = `
+        <div class="ctx-header">
+            <span class="ctx-avatar-letter" style="background:#666">${initial}</span>
+            <div class="ctx-info">
+                <span class="ctx-name">${esc(username)}</span>
+                <span class="ctx-meta">Anonymous user</span>
+            </div>
+        </div>
+        <div class="ctx-actions">
+            <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Whisper</button>
+            ${adminBtns}
+        </div>
+    `;
 }
 
 function renderContextMenu(menu, profile, username) {
