@@ -366,12 +366,12 @@ async function start() {
                 `SELECT id, user_id, protocol FROM streams
                  WHERE is_live = 1
                  AND (
-                     (last_heartbeat IS NOT NULL AND last_heartbeat < datetime('now', '-2 minutes'))
-                     OR (last_heartbeat IS NULL AND started_at < datetime('now', '-3 minutes'))
+                     (last_heartbeat IS NOT NULL AND last_heartbeat < datetime('now', '-5 minutes'))
+                     OR (last_heartbeat IS NULL AND started_at < datetime('now', '-6 minutes'))
                  )`
             );
             for (const stream of staleStreams) {
-                console.log(`[Heartbeat] Ending stale stream ${stream.id} (no heartbeat for 2+ minutes)`);
+                console.log(`[Heartbeat] Ending stale stream ${stream.id} (no heartbeat for 5+ minutes)`);
                 db.endStream(stream.id);
                 // Auto-finalize any active VOD recording for this stream
                 vodRoutes.finalizeVodRecording(stream.id).catch(err => {

@@ -13,6 +13,7 @@ function createStreamState(streamData) {
         localStream: null,
         /** @type {Map<string, RTCPeerConnection>} peerId → PC */
         viewerConnections: new Map(),
+        viewerReconnectTimers: new Map(),
         signalingWs: null,
         heartbeatInterval: null,
         startedAt: streamData?.started_at || null,
@@ -25,10 +26,14 @@ function createStreamState(streamData) {
         vodUploading: false,
         vodFinalized: false,
         vodId: null,
+        vodSegmentId: 0,
         // Per-stream signaling reconnect state
         signalingReconnectTimer: null,
         signalingIntentionalClose: false,
         signalingReconnectDelay: 3000,
+        mediaRecoveryTimer: null,
+        mediaRecoveryAttempts: 0,
+        mediaRecoveryInProgress: false,
         lastThumbnailAt: 0,
         thumbnailCanvas: null,
         thumbnailCtx: null,
@@ -102,6 +107,108 @@ function sendBroadcastSignal(ss, msg) {
     if (ss.signalingWs.bufferedAmount > BROADCAST_SIGNALING_MAX_BUFFERED_AMOUNT) return false;
     ss.signalingWs.send(JSON.stringify(msg));
     return true;
+}
+
+function clearViewerReconnectTimer(ss, viewerPeerId) {
+    const timer = ss?.viewerReconnectTimers?.get(viewerPeerId);
+    if (timer) clearTimeout(timer);
+    ss?.viewerReconnectTimers?.delete(viewerPeerId);
+}
+
+function scheduleViewerReconnect(streamId, viewerPeerId, delay = 2000) {
+    const ss = getStreamState(streamId);
+    if (!ss || !viewerPeerId) return;
+    clearViewerReconnectTimer(ss, viewerPeerId);
+    ss.viewerReconnectTimers.set(viewerPeerId, setTimeout(() => {
+        clearViewerReconnectTimer(ss, viewerPeerId);
+        if (!broadcastState.streams.has(streamId)) return;
+        if (!ss.localStream) return;
+        if (!ss.signalingWs || ss.signalingWs.readyState !== WebSocket.OPEN) return;
+        createViewerConnection(streamId, viewerPeerId).catch((err) => {
+            console.warn(`[Broadcast] Viewer reconnect failed for ${viewerPeerId}:`, err.message);
+        });
+    }, delay));
+}
+
+function attachLocalStreamRecoveryHandlers(streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss?.localStream) return;
+    const currentStream = ss.localStream;
+    const onMediaLost = (reason) => {
+        if (getStreamState(streamId)?.localStream !== currentStream) return;
+        scheduleMediaRecovery(streamId, reason);
+    };
+    currentStream.getTracks().forEach((track) => {
+        track.addEventListener('ended', () => onMediaLost(`${track.kind} track ended`), { once: true });
+    });
+    if (typeof currentStream.addEventListener === 'function') {
+        currentStream.addEventListener('inactive', () => onMediaLost('media stream inactive'), { once: true });
+    }
+}
+
+function scheduleMediaRecovery(streamId, reason = 'media interrupted') {
+    const ss = getStreamState(streamId);
+    if (!ss || ss.mediaRecoveryInProgress || ss.mediaRecoveryTimer || !broadcastState.streams.has(streamId)) return;
+
+    if (broadcastState.settings.broadcastLimit === 'stop') {
+        toast(`Broadcast input lost (${reason}). Stream stopping.`, 'error');
+        api(`/streams/${streamId}`, { method: 'DELETE' }).catch(() => {}).finally(() => cleanupStream(streamId));
+        return;
+    }
+
+    const delay = Math.min(2000 * (ss.mediaRecoveryAttempts + 1), 10000);
+    ss.mediaRecoveryAttempts += 1;
+    if (broadcastState.activeStreamId === streamId) {
+        updateBroadcastStatus('checking');
+        toast(`Broadcast interrupted — attempting recovery (${reason})`, 'warning');
+    }
+    ss.mediaRecoveryTimer = setTimeout(() => {
+        ss.mediaRecoveryTimer = null;
+        recoverStreamMedia(streamId, reason).catch((err) => {
+            console.warn('[Broadcast] Media recovery failed:', err.message);
+            const latest = getStreamState(streamId);
+            if (!latest) return;
+            latest.mediaRecoveryInProgress = false;
+            if (latest.mediaRecoveryAttempts < 4) {
+                scheduleMediaRecovery(streamId, err.message || reason);
+            } else if (broadcastState.activeStreamId === streamId) {
+                updateBroadcastStatus('error');
+                toast('Broadcast recovery failed — please restart the stream', 'error');
+            }
+        });
+    }, delay);
+}
+
+async function recoverStreamMedia(streamId, reason = 'media interrupted') {
+    const ss = getStreamState(streamId);
+    if (!ss || ss.mediaRecoveryInProgress) return;
+    ss.mediaRecoveryInProgress = true;
+
+    const viewerPeerIds = [...ss.viewerConnections.keys()];
+    await uploadVodRecording(streamId, { finalizeStream: false });
+
+    if (ss.localStream) {
+        try { ss.localStream.getTracks().forEach((track) => track.stop()); } catch {}
+        ss.localStream = null;
+    }
+
+    await startMediaCapture(streamId);
+    startVodRecording(streamId);
+
+    if (!ss.signalingWs || ss.signalingWs.readyState !== WebSocket.OPEN) {
+        connectSignaling(streamId);
+    } else {
+        for (const peerId of viewerPeerIds) {
+            await createViewerConnection(streamId, peerId);
+        }
+    }
+
+    ss.mediaRecoveryAttempts = 0;
+    ss.mediaRecoveryInProgress = false;
+    if (broadcastState.activeStreamId === streamId) {
+        updateBroadcastStatusFromConnections(streamId);
+        toast(`Broadcast recovered after ${reason}`, 'success');
+    }
 }
 
 /** Get the active stream's state, or null */
@@ -1062,11 +1169,16 @@ function cleanupStream(streamId) {
     // Close viewer connections
     for (const [, pc] of ss.viewerConnections) { try { pc.close(); } catch {} }
     ss.viewerConnections.clear();
+    for (const [, timer] of ss.viewerReconnectTimers) clearTimeout(timer);
+    ss.viewerReconnectTimers.clear();
 
     // Close signaling WS
     ss.signalingIntentionalClose = true;
     ss.signalingReconnectDelay = 3000;
     if (ss.signalingReconnectTimer) { clearTimeout(ss.signalingReconnectTimer); ss.signalingReconnectTimer = null; }
+    if (ss.mediaRecoveryTimer) { clearTimeout(ss.mediaRecoveryTimer); ss.mediaRecoveryTimer = null; }
+    ss.mediaRecoveryAttempts = 0;
+    ss.mediaRecoveryInProgress = false;
     if (ss.signalingWs) { try { ss.signalingWs.close(); } catch {} ss.signalingWs = null; }
 
     // Close audio context
@@ -1232,13 +1344,15 @@ function captureLiveThumbnail(streamId) {
 function startVodRecording(streamId) {
     const ss = getStreamState(streamId);
     if (!ss || !ss.localStream) return;
+    if (ss.vodRecorder && ss.vodRecorder.state !== 'inactive') return;
     try {
         const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
         if (!mimeType) { console.warn('[VOD] No supported codec'); return; }
 
         ss.vodChunks = [];          // pending chunks queue
         ss.vodUploading = false;    // upload lock
-        ss.vodFinalized = false;    // prevent double finalize
+        ss.vodFinalized = false;    // prevent double finalize on actual stream end
+        ss.vodSegmentId = (ss.vodSegmentId || 0) + 1;
         ss.vodRecorder = new MediaRecorder(ss.localStream, {
             mimeType,
             videoBitsPerSecond: Math.max(600000, Math.round(getTargetVideoBitrate() * 0.85)),
@@ -1254,7 +1368,7 @@ function startVodRecording(streamId) {
 
         // Capture chunks every 30 seconds
         ss.vodRecorder.start(30000);
-        console.log('[VOD] Incremental recording started for stream', streamId);
+        console.log('[VOD] Incremental recording started for stream', streamId, 'segment', ss.vodSegmentId);
     } catch (err) { console.warn('[VOD] Failed to start:', err); }
 }
 
@@ -1274,6 +1388,7 @@ async function uploadVodChunk(streamId) {
 
         const fd = new FormData();
         fd.append('chunk', blob, `chunk-${streamId}-${Date.now()}.webm`);
+        fd.append('segmentId', String(ss.vodSegmentId || 1));
 
         const resp = await fetch(`/api/vods/stream/${ss.streamData.id}/chunk`, {
             method: 'POST',
@@ -1300,7 +1415,7 @@ async function uploadVodChunk(streamId) {
  * Stop recording and finalize the VOD.
  * Flushes remaining chunks and tells the server to remux for seeking.
  */
-async function uploadVodRecording(streamId) {
+async function uploadVodRecording(streamId, { finalizeStream = true } = {}) {
     const ss = getStreamState(streamId);
     if (!ss) return;
 
@@ -1319,7 +1434,7 @@ async function uploadVodRecording(streamId) {
     }
 
     // Tell server to finalize (remux for seeking, update duration)
-    if (ss.streamData && !ss.vodFinalized) {
+    if (finalizeStream && ss.streamData && !ss.vodFinalized) {
         ss.vodFinalized = true;
         try {
             await fetch(`/api/vods/stream/${ss.streamData.id}/finalize`, {
@@ -1337,6 +1452,7 @@ async function uploadVodRecording(streamId) {
 
     ss.vodChunks = [];
     ss.vodRecorder = null;
+    if (finalizeStream) ss.vodSegmentId = 0;
 }
 
 // Upload last chunk on page unload as best-effort
@@ -1349,6 +1465,7 @@ if (typeof window !== 'undefined') {
                 if (blob.size > 100) {
                     const fd = new FormData();
                     fd.append('chunk', blob, `chunk-${streamId}-final.webm`);
+                    fd.append('segmentId', String(ss.vodSegmentId || 1));
                     navigator.sendBeacon(`/api/vods/stream/${ss.streamData.id}/chunk?token=${localStorage.getItem('token')}`, fd);
                 }
             }
@@ -1426,6 +1543,7 @@ async function startMediaCapture(streamId, opts = {}) {
 
     optimizeOutgoingStream(streamId);
     applyManualGain(streamId);
+    attachLocalStreamRecoveryHandlers(streamId);
 
     // Only attach to preview if this is the active stream
     if (broadcastState.activeStreamId === streamId) {
@@ -1574,9 +1692,13 @@ async function createViewerConnection(streamId, viewerPeerId) {
 
     pc.onicecandidate = (e) => { if (e.candidate) sendBroadcastSignal(ss, { type: 'ice-candidate', candidate: e.candidate, targetPeerId: viewerPeerId }); };
     pc.oniceconnectionstatechange = () => {
-        const state = pc.iceConnectionState;
-        console.log(`[Broadcast] Stream ${streamId} viewer ${viewerPeerId} ICE state: ${state}`);
-        if (state === 'failed' || state === 'closed') {
+        const iceState = pc.iceConnectionState;
+        console.log(`[Broadcast] Stream ${streamId} viewer ${viewerPeerId} ICE state: ${iceState}`);
+        if (iceState === 'connected' || iceState === 'completed') clearViewerReconnectTimer(ss, viewerPeerId);
+        if (iceState === 'failed' || iceState === 'disconnected') {
+            scheduleViewerReconnect(streamId, viewerPeerId, iceState === 'failed' ? 1500 : 4000);
+        }
+        if (iceState === 'closed') {
             closeViewerConnection(streamId, viewerPeerId);
         }
         if (broadcastState.activeStreamId === streamId) updateBroadcastStatusFromConnections(streamId);
@@ -1589,6 +1711,7 @@ async function createViewerConnection(streamId, viewerPeerId) {
 function closeViewerConnection(streamId, viewerPeerId) {
     const ss = getStreamState(streamId);
     if (!ss) return;
+    clearViewerReconnectTimer(ss, viewerPeerId);
     const pc = ss.viewerConnections.get(viewerPeerId);
     if (pc) { try { pc.close(); } catch {} ss.viewerConnections.delete(viewerPeerId); }
 }
@@ -1689,7 +1812,9 @@ async function toggleScreenShare() {
     const streamId = broadcastState.activeStreamId;
     if (ss && ss.localStream && streamId) {
         try {
+            await uploadVodRecording(streamId, { finalizeStream: false });
             ss.localStream.getTracks().forEach(t => t.stop()); await startMediaCapture(streamId);
+            startVodRecording(streamId);
             const nvt = ss.localStream.getVideoTracks()[0]; const nat = ss.localStream.getAudioTracks()[0];
             for (const [, pc] of ss.viewerConnections) {
                 const vs = pc.getSenders().find(s => s.track?.kind === 'video'); if (vs && nvt) vs.replaceTrack(nvt);

@@ -15,6 +15,7 @@
 const WebSocket = require('ws');
 const { authenticateWs } = require('../auth/auth');
 const db = require('../db/database');
+const webrtcSFU = require('./webrtc-sfu');
 
 const WS_HEARTBEAT_MS = 30000;
 const MAX_SEND_BACKPRESSURE = 512 * 1024;
@@ -260,7 +261,7 @@ class BroadcastServer {
                 room.broadcaster = null;
                 console.log(`[Broadcast] Broadcaster disconnected: stream ${client.streamId}`);
 
-                // Start a grace timer — if broadcaster doesn't reconnect in 30s, end the stream
+                // Start a grace timer — if broadcaster doesn't reconnect, end the stream cleanly
                 if (room._disconnectTimer) clearTimeout(room._disconnectTimer);
                 room._disconnectTimer = setTimeout(() => {
                     // Check if broadcaster reconnected
@@ -268,8 +269,12 @@ class BroadcastServer {
                     if (currentRoom && !currentRoom.broadcaster) {
                         console.log(`[Broadcast] Broadcaster did not reconnect, ending stream ${client.streamId}`);
                         try {
-                            const db = require('../db/database');
                             db.endStream(client.streamId);
+                            const vodRoutes = require('../vod/routes');
+                            vodRoutes.finalizeVodRecording(client.streamId).catch((err) => {
+                                console.warn(`[Broadcast] Failed to finalize VOD for stale stream ${client.streamId}:`, err.message);
+                            });
+                            webrtcSFU.closeRoom(`stream-${client.streamId}`);
                         } catch (err) {
                             console.error('[Broadcast] Failed to end stale stream:', err.message);
                         }
@@ -278,7 +283,7 @@ class BroadcastServer {
                             this.safeSend(vWs, { type: 'stream-ended' });
                         }
                     }
-                }, 30000);
+                }, 60000);
 
                 // Notify all viewers (they may get a reconnection)
                 for (const [peerId, viewerWs] of room.viewers) {

@@ -362,9 +362,94 @@ const vodUpload = multer({
 
 /**
  * Active VOD recordings tracked in memory.
- * streamId → { vodId, filePath, startTime, chunkCount }
+ * streamId → { vodId, filePath, startTime, chunkCount, currentSegmentId, currentSegmentPath }
  */
 const activeRecordings = new Map();
+
+function makeSegmentPath(filePath, segmentId) {
+    const base = filePath.replace(/\.webm$/, '');
+    return `${base}.seg-${segmentId}-${Date.now()}.webm`;
+}
+
+function getFileSizeSafe(filePath) {
+    try { return filePath && fs.existsSync(filePath) ? fs.statSync(filePath).size : 0; } catch { return 0; }
+}
+
+function getPendingSegmentFiles(filePath) {
+    const dir = path.dirname(filePath);
+    const base = path.basename(filePath).replace(/\.webm$/, '');
+    try {
+        return fs.readdirSync(dir)
+            .filter((name) => name.startsWith(`${base}.seg-`) && name.endsWith('.webm'))
+            .map((name) => path.join(dir, name))
+            .sort((a, b) => {
+                const am = /\.seg-(\d+)-(\d+)\.webm$/.exec(a);
+                const bm = /\.seg-(\d+)-(\d+)\.webm$/.exec(b);
+                const aSeg = parseInt(am?.[1] || '0', 10);
+                const bSeg = parseInt(bm?.[1] || '0', 10);
+                if (aSeg !== bSeg) return aSeg - bSeg;
+                const aTs = parseInt(am?.[2] || '0', 10);
+                const bTs = parseInt(bm?.[2] || '0', 10);
+                return aTs - bTs;
+            });
+    } catch {
+        return [];
+    }
+}
+
+function concatWebmFiles(basePath, appendPath) {
+    if (!appendPath || !fs.existsSync(appendPath)) return Promise.resolve(true);
+    if (!basePath || !fs.existsSync(basePath)) {
+        fs.renameSync(appendPath, basePath);
+        return Promise.resolve(true);
+    }
+
+    const listPath = `${basePath}.concat.${Date.now()}.txt`;
+    const tmpPath = `${basePath}.concat.tmp.webm`;
+    const escapedBase = basePath.replace(/'/g, `'\\''`);
+    const escapedAppend = appendPath.replace(/'/g, `'\\''`);
+    fs.writeFileSync(listPath, `file '${escapedBase}'\nfile '${escapedAppend}'\n`, 'utf8');
+
+    const runConcat = (args) => new Promise((resolve) => {
+        const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        let stderr = '';
+        proc.stderr.on('data', (d) => stderr += d);
+        proc.on('close', (code) => resolve({ code, stderr }));
+        proc.on('error', () => resolve({ code: -1, stderr: 'spawn error' }));
+        setTimeout(() => { try { proc.kill(); } catch {} }, 120000);
+    });
+
+    return (async () => {
+        try {
+            let result = await runConcat(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-fflags', '+genpts', tmpPath]);
+            if (result.code !== 0 || !fs.existsSync(tmpPath)) {
+                result = await runConcat(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c:v', 'libvpx-vp9', '-crf', '32', '-b:v', '0', '-c:a', 'libopus', '-b:a', '128k', tmpPath]);
+            }
+            if (result.code === 0 && fs.existsSync(tmpPath)) {
+                fs.renameSync(tmpPath, basePath);
+                cleanupTempFile(appendPath);
+                cleanupTempFile(listPath);
+                return true;
+            }
+            cleanupTempFile(tmpPath);
+            cleanupTempFile(listPath);
+            return false;
+        } catch {
+            cleanupTempFile(tmpPath);
+            cleanupTempFile(listPath);
+            return false;
+        }
+    })();
+}
+
+async function mergePendingSegments(filePath) {
+    for (const segmentPath of getPendingSegmentFiles(filePath)) {
+        const ok = await concatWebmFiles(filePath, segmentPath);
+        if (!ok) {
+            console.warn(`[VOD] Failed to merge segment into ${path.basename(filePath)}: ${path.basename(segmentPath)}`);
+        }
+    }
+}
 
 /**
  * Upload a VOD chunk for a live stream.
@@ -374,6 +459,7 @@ const activeRecordings = new Map();
 router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), async (req, res) => {
     try {
         const streamId = parseInt(req.params.streamId);
+        const segmentId = Math.max(1, parseInt(req.body?.segmentId || req.query.segmentId || '1', 10) || 1);
         if (!req.file) return res.status(400).json({ error: 'No chunk data' });
 
         const stream = db.getStreamById(streamId);
@@ -394,6 +480,8 @@ router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), a
                     filePath: existingVod.file_path,
                     startTime: new Date(existingVod.created_at + 'Z').getTime(),
                     chunkCount: 0,
+                    currentSegmentId: segmentId,
+                    currentSegmentPath: existingVod.file_path,
                 };
                 activeRecordings.set(streamId, rec);
             }
@@ -425,21 +513,33 @@ router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), a
                 db.run('UPDATE vods SET is_public = 1 WHERE id = ?', [vodId]);
             }
 
-            rec = { vodId, filePath, startTime: Date.now(), chunkCount: 1 };
+            rec = { vodId, filePath, startTime: Date.now(), chunkCount: 1, currentSegmentId: segmentId, currentSegmentPath: filePath };
             activeRecordings.set(streamId, rec);
 
             console.log(`[VOD] Recording started: stream ${streamId} → vod ${vodId}`);
             return res.json({ vodId, chunkIndex: 0, status: 'created' });
         }
 
-        // Append chunk to existing file
-        const chunkData = fs.readFileSync(req.file.path);
-        fs.appendFileSync(rec.filePath, chunkData);
-        cleanupTempFile(req.file.path);
-        rec.chunkCount++;
+        if (rec.currentSegmentId !== segmentId) {
+            if (rec.currentSegmentPath && rec.currentSegmentPath !== rec.filePath) {
+                await concatWebmFiles(rec.filePath, rec.currentSegmentPath);
+            }
+            rec.currentSegmentId = segmentId;
+            rec.currentSegmentPath = makeSegmentPath(rec.filePath, segmentId);
+            fs.copyFileSync(req.file.path, rec.currentSegmentPath);
+            cleanupTempFile(req.file.path);
+            rec.chunkCount++;
+        } else {
+            // Append chunk to existing file/segment
+            const targetPath = rec.currentSegmentPath || rec.filePath;
+            const chunkData = fs.readFileSync(req.file.path);
+            fs.appendFileSync(targetPath, chunkData);
+            cleanupTempFile(req.file.path);
+            rec.chunkCount++;
+        }
 
         // Update file size and duration estimate in DB
-        const stat = fs.statSync(rec.filePath);
+        const stat = { size: getFileSizeSafe(rec.filePath) + (rec.currentSegmentPath && rec.currentSegmentPath !== rec.filePath ? getFileSizeSafe(rec.currentSegmentPath) : 0) };
         const elapsed = Math.round((Date.now() - rec.startTime) / 1000);
         db.run('UPDATE vods SET file_size = ?, duration_seconds = ? WHERE id = ?',
             [stat.size, elapsed, rec.vodId]);
@@ -538,6 +638,11 @@ async function finalizeVodRecording(streamId) {
         db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
         return db.getVodById(vodId);
     }
+
+    if (rec?.currentSegmentPath && rec.currentSegmentPath !== filePath) {
+        await concatWebmFiles(filePath, rec.currentSegmentPath);
+    }
+    await mergePendingSegments(filePath);
 
     // Remux for proper seeking support (fast copy-mode, no re-encode)
     await remuxForSeeking(filePath);

@@ -370,10 +370,27 @@ async function initWebRTC(stream) {
         let _viewerReconnectTimer = null;
         let _viewerReconnectDelay = 3000; // exponential backoff: 3s → 30s max
         let _viewerIntentionalClose = false;
+        let _viewerRewatchTimer = null;
+
+        const scheduleViewerRewatch = (delay = 1500) => {
+            if (_viewerIntentionalClose || !player) return;
+            if (_viewerRewatchTimer) clearTimeout(_viewerRewatchTimer);
+            _viewerRewatchTimer = setTimeout(() => {
+                _viewerRewatchTimer = null;
+                if (!player?.ws || player.ws.readyState !== WebSocket.OPEN) return;
+                player.watchSent = false;
+                sendPlayerSignal({ type: 'watch' });
+                player.watchSent = true;
+            }, delay);
+        };
 
         ws.onopen = () => {
             console.log('[Player] Broadcast signaling connected');
             _viewerReconnectDelay = 3000; // reset backoff on successful connect
+            const pcState = player?.pc?.iceConnectionState;
+            if (!player.watchSent || pcState === 'failed' || pcState === 'disconnected' || pcState === 'closed') {
+                scheduleViewerRewatch(250);
+            }
         };
 
         ws.onmessage = async (e) => {
@@ -424,7 +441,7 @@ async function initWebRTC(stream) {
                             _broadcasterDisconnectTimer = null;
                             console.log('[Player] Broadcaster did not reconnect, stream ended');
                             showStreamEnded();
-                        }, 8000);
+                        }, 25000);
                         break;
                     case 'stream-ended':
                         console.log('[Player] Stream ended by server');
@@ -528,9 +545,25 @@ async function handleViewerOffer(msg, ws, video) {
 
     pc.oniceconnectionstatechange = () => {
         console.log('[Player] ICE state:', pc.iceConnectionState);
-        if (pc.iceConnectionState === 'failed') {
-            // 'failed' is unrecoverable — show error
-            showStreamError('Connection to broadcaster lost');
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+            return;
+        }
+        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+            if (player) player.watchSent = false;
+            sendPlayerSignal({ type: 'watch' });
+            if (player) player.watchSent = true;
+            return;
+        }
+        if (pc.iceConnectionState === 'disconnected') {
+            setTimeout(() => {
+                if (!player?.pc || player.pc !== pc) return;
+                const state = pc.iceConnectionState;
+                if (state === 'disconnected' || state === 'failed') {
+                    player.watchSent = false;
+                    sendPlayerSignal({ type: 'watch' });
+                    player.watchSent = true;
+                }
+            }, 2500);
         }
         // 'disconnected' is transient and often recovers on its own — don't show error
     };
