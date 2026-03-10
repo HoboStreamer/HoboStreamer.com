@@ -166,6 +166,10 @@ app.use('/api/vods/stream/:streamId/chunk', uploadLimiter);
 app.use('/api/vods/stream/:streamId/finalize', uploadLimiter);
 
 // ── Static Files ─────────────────────────────────────────────
+// JS/CSS: no-cache (browser must revalidate with etag on every load)
+// This prevents stale scripts after deploys while still allowing 304s
+app.use('/js', express.static(path.join(__dirname, '../public/js'), { maxAge: 0, etag: true, lastModified: true, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache'); } }));
+app.use('/css', express.static(path.join(__dirname, '../public/css'), { maxAge: 0, etag: true, lastModified: true, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache'); } }));
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Ensure data directories exist
