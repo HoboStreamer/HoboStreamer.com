@@ -810,9 +810,37 @@ function buyItem(userId, itemId, qty = 1) {
     const cost = item.buyCost * qty;
     const user = db.getUserById(userId);
     if (!user || user.hobo_coins_balance < cost) return { error: 'Not enough gold' };
+
+    // Check level requirement before buying equipment
+    const slot = EQUIPMENT_SLOTS[item.category];
+    if (slot && item.levelReq) {
+        const skillName = EQUIP_SKILL_MAP[item.category];
+        if (skillName) {
+            const p = getPlayer(userId);
+            const playerLevel = xpToLevel(p[`${skillName}_xp`]);
+            if (playerLevel < item.levelReq) {
+                return { error: `Need ${skillName.charAt(0).toUpperCase() + skillName.slice(1)} level ${item.levelReq} to use this! (You're level ${playerLevel})` };
+            }
+        }
+    }
+
     if (!db.deductHoboCoins(userId, cost)) return { error: 'Not enough gold' };
     addItem(userId, itemId, qty);
-    return { success: true, item: { id: itemId, ...item }, qty, cost };
+
+    // Auto-equip tools/equipment after buying (if it's equippable and better or slot is empty)
+    let autoEquipped = false;
+    if (slot && qty === 1) {
+        const p = getPlayer(userId);
+        const currentEquip = p[slot];
+        // Auto-equip if the slot is empty or upgrading to a better item
+        if (!currentEquip || isBetterEquipment(currentEquip, itemId, item.category)) {
+            db.run(`UPDATE game_players SET ${slot} = ? WHERE user_id = ?`, [itemId, userId]);
+            recalcCombatStats(userId);
+            autoEquipped = true;
+        }
+    }
+
+    return { success: true, item: { id: itemId, ...item }, qty, cost, autoEquipped, slot: autoEquipped ? item.category : null };
 }
 
 function sellItem(userId, itemId, qty = 1) {
@@ -1577,6 +1605,29 @@ function fightMonster(userId, monster) {
 // ══════════════════════════════════════════════════════════════
 
 const EQUIPMENT_SLOTS = { rods: 'equip_rod', pickaxes: 'equip_pickaxe', axes: 'equip_axe', hats: 'equip_hat', weapons: 'equip_weapon', armor: 'equip_armor' };
+
+/** Check if newItemId is a better equipment than currentItemId in the given category */
+function isBetterEquipment(currentItemId, newItemId, category) {
+    if (!currentItemId) return true;
+    const curItem = ITEMS[currentItemId];
+    const newItem = ITEMS[newItemId];
+    if (!curItem || !newItem) return false;
+    // For tools (pickaxes/axes/rods), compare by buyCost as tier proxy
+    if (['pickaxes', 'axes', 'rods'].includes(category)) {
+        const tierMaps = { pickaxes: PICK_TIERS, axes: AXE_TIERS };
+        const tierMap = tierMaps[category];
+        if (tierMap) {
+            const curTier = tierMap[currentItemId]?.tier ?? -1;
+            const newTier = tierMap[newItemId]?.tier ?? -1;
+            return newTier > curTier;
+        }
+        return (newItem.buyCost || 0) > (curItem.buyCost || 0);
+    }
+    // For weapons/armor, compare by stats
+    if (category === 'weapons') return (WEAPON_STATS[newItemId]?.atk || 0) > (WEAPON_STATS[currentItemId]?.atk || 0);
+    if (category === 'armor') return (ARMOR_STATS[newItemId]?.def || 0) > (ARMOR_STATS[currentItemId]?.def || 0);
+    return false;
+}
 
 function equipItem(userId, itemId) {
     const item = ITEMS[itemId];

@@ -307,6 +307,20 @@ let dodgeAnimTimer = 0;
 let dodgeAnimDx = 0, dodgeAnimDy = 0;
 let dodgeFlashTimer = 0;
 
+// Jump system (visual z-axis — purely client-side cosmetic)
+let jumpHeight = 0;          // Current height above ground (pixels)
+let jumpVelocity = 0;        // Vertical velocity (pixels/frame)
+const JUMP_STRENGTH = 6.8;   // Initial upward velocity
+const JUMP_GRAVITY = 0.38;   // Gravity pull per frame
+let isJumping = false;
+let jumpCooldownUntil = 0;
+const JUMP_COOLDOWN_MS = 350;
+let jumpSquashTimer = 0;     // Landing squash-stretch timer
+let jumpParticles = [];       // Dust particles on land
+
+// Gather/mining particle effects
+let gatherParticles = [];
+
 // Combo tracking (client mirror of server combos)
 let comboCount = 0;
 let comboTimer = 0;
@@ -981,6 +995,54 @@ function update() {
     }
     if (dodgeFlashTimer > 0) dodgeFlashTimer -= 16;
 
+    // Jump physics (visual z-axis)
+    if (isJumping) {
+        jumpVelocity -= JUMP_GRAVITY;
+        jumpHeight += jumpVelocity;
+        if (jumpHeight <= 0) {
+            // Landing
+            jumpHeight = 0;
+            jumpVelocity = 0;
+            isJumping = false;
+            jumpSquashTimer = 8; // frames of squash on land
+            // Spawn dust particles
+            if (myPlayer) {
+                for (let i = 0; i < 6; i++) {
+                    const angle = (Math.PI * 2 / 6) * i + Math.random() * 0.5;
+                    jumpParticles.push({
+                        x: 0, y: 0,
+                        vx: Math.cos(angle) * (1.5 + Math.random() * 1.5),
+                        vy: Math.sin(angle) * (0.5 + Math.random()) - 0.5,
+                        life: 12 + Math.random() * 8,
+                        maxLife: 20,
+                        size: 2 + Math.random() * 2,
+                    });
+                }
+            }
+        }
+    }
+    if (jumpSquashTimer > 0) jumpSquashTimer--;
+    // Update jump dust particles
+    for (let i = jumpParticles.length - 1; i >= 0; i--) {
+        const p = jumpParticles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vx *= 0.92;
+        p.vy *= 0.92;
+        p.life--;
+        if (p.life <= 0) jumpParticles.splice(i, 1);
+    }
+    // Update gather/mining particles
+    for (let i = gatherParticles.length - 1; i >= 0; i--) {
+        const gp = gatherParticles[i];
+        gp.x += gp.vx;
+        gp.y += gp.vy;
+        gp.vy += 0.12; // gravity
+        gp.vx *= 0.96;
+        gp.life--;
+        if (gp.life <= 0) gatherParticles.splice(i, 1);
+    }
+
     // Combo display timer decay
     if (comboTimer > 0) {
         comboTimer -= 16;
@@ -1044,6 +1106,12 @@ function update() {
     } else if (currentBiome === 'snow') {
         maxSpeed *= 0.9;
         drag = 0.84;
+    }
+
+    // Airborne: reduced drag (momentum preservation) + slight speed boost
+    if (isJumping) {
+        drag *= 0.92; // Less friction in the air
+        maxSpeed *= 1.08;
     }
 
     if (inputX || inputY) {
@@ -1218,8 +1286,8 @@ function render() {
             const sx = tx * TILE - camX + TILE / 2;
             const sy = ty * TILE - camY + TILE / 2;
             ctx.globalAlpha = depleted ? 0.25 : 1;
-            if (node.type === 'tree') drawTree(ctx, sx, sy);
-            else if (node.type === 'rock') drawRock(ctx, sx, sy, node.ore);
+            if (node.type === 'tree') drawTree(ctx, sx, sy, tx, ty);
+            else if (node.type === 'rock') drawRock(ctx, sx, sy, node.ore, tx, ty);
             ctx.globalAlpha = 1;
 
             // Hover highlight when mouse is over a non-depleted node
@@ -1843,39 +1911,268 @@ function drawTownDecoration(ctx, deco, dx, dy) {
     }
 }
 
-function drawTree(ctx, cx, cy) {
-    ctx.fillStyle = '#15803d';
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - 12);
-    ctx.lineTo(cx - 9, cy + 6);
-    ctx.lineTo(cx + 9, cy + 6);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#78350f';
-    ctx.fillRect(cx - 2, cy + 6, 4, 6);
+// ── Seeded PRNG for deterministic per-node variation ──
+function nodeRng(tx, ty, i) {
+    let h = (tx * 374761 + ty * 668265 + i * 93481) | 0;
+    h = ((h >> 16) ^ h) * 0x45d9f3b | 0;
+    h = ((h >> 16) ^ h) * 0x45d9f3b | 0;
+    return ((h >> 16) ^ h & 0x7fffffff) / 0x7fffffff;
 }
 
-function drawRock(ctx, cx, cy, oreType) {
+function drawTree(ctx, cx, cy, tx, ty) {
+    tx = tx || 0; ty = ty || 0;
+    const r0 = nodeRng(tx, ty, 0);
+    const r1 = nodeRng(tx, ty, 1);
+    const r2 = nodeRng(tx, ty, 2);
+    const r3 = nodeRng(tx, ty, 3);
+    const r4 = nodeRng(tx, ty, 4);
+    const r5 = nodeRng(tx, ty, 5);
+
+    const trunkH = 7 + r0 * 5;              // 7-12
+    const canopyR = 8 + r1 * 6;             // 8-14
+    const lean = (r2 - 0.5) * 3;             // slight lean
+    const treeHue = 100 + r3 * 35;          // 100-135 (green range)
+    const treeSat = 45 + r4 * 25;
+
+    ctx.save();
+    ctx.translate(cx + lean * 0.3, cy);
+
+    // Shadow on ground
+    ctx.fillStyle = 'rgba(0,0,0,0.13)';
+    ctx.beginPath();
+    ctx.ellipse(0, 8, canopyR * 0.7, 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Trunk
+    const trunkW = 2 + r5 * 1.5;
+    ctx.fillStyle = `hsl(28, 45%, ${22 + r0 * 10}%)`;
+    ctx.beginPath();
+    ctx.moveTo(-trunkW, 6);
+    ctx.lineTo(-trunkW * 0.6 + lean * 0.2, 6 - trunkH);
+    ctx.lineTo(trunkW * 0.6 + lean * 0.2, 6 - trunkH);
+    ctx.lineTo(trunkW, 6);
+    ctx.closePath();
+    ctx.fill();
+
+    // Canopy layers (2-3 overlapping circles for a lush look)
+    const layers = 2 + Math.floor(r2 * 2);
+    for (let i = 0; i < layers; i++) {
+        const ri = nodeRng(tx, ty, 10 + i);
+        const offsetX = (ri - 0.5) * canopyR * 0.5;
+        const offsetY = -trunkH - canopyR * 0.3 + i * 2.5;
+        const layerR = canopyR * (1 - i * 0.15);
+        const lightness = 28 + i * 6 + ri * 8;
+
+        ctx.fillStyle = `hsl(${treeHue}, ${treeSat}%, ${lightness}%)`;
+        ctx.beginPath();
+        ctx.ellipse(offsetX + lean * 0.15, offsetY, layerR, layerR * 0.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Highlight on top canopy
+    ctx.fillStyle = `hsla(${treeHue + 10}, ${treeSat + 10}%, 55%, 0.35)`;
+    ctx.beginPath();
+    ctx.ellipse(lean * 0.15 - 2, -trunkH - canopyR * 0.45, canopyR * 0.4, canopyR * 0.35, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawRock(ctx, cx, cy, oreType, tx, ty) {
+    tx = tx || 0; ty = ty || 0;
     const ore = ORE_NODE_TYPES[oreType] || ORE_NODE_TYPES.stone;
-    ctx.fillStyle = ore.color;
+    const t = Date.now() / 1000;
+
+    // Per-node deterministic random values
+    const r0 = nodeRng(tx, ty, 0);
+    const r1 = nodeRng(tx, ty, 1);
+    const r2 = nodeRng(tx, ty, 2);
+    const r3 = nodeRng(tx, ty, 3);
+    const r4 = nodeRng(tx, ty, 4);
+    const r5 = nodeRng(tx, ty, 5);
+    const r6 = nodeRng(tx, ty, 6);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    const isRare = ['gold', 'mithril', 'titanium', 'platinum', 'dragonite'].includes(oreType);
+    const isLegendary = ['dragonite', 'platinum'].includes(oreType);
+
+    // Outer glow for rare ores
+    if (isRare) {
+        const glowPulse = 0.3 + Math.sin(t * 2.2 + r0 * 6) * 0.15;
+        ctx.shadowColor = ore.highlight;
+        ctx.shadowBlur = isLegendary ? 14 + Math.sin(t * 3) * 4 : 8 + Math.sin(t * 2) * 3;
+        ctx.globalAlpha = glowPulse;
+        ctx.fillStyle = ore.highlight;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 13, 9, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0;
+    }
+
+    // Base rock shape — irregular polygon instead of simple ellipse
+    const rockPoints = [];
+    const numVertices = 6 + Math.floor(r0 * 3); // 6-8 vertices
+    const baseRx = 9 + r1 * 4;   // 9-13
+    const baseRy = 6 + r2 * 3;   // 6-9
+    for (let i = 0; i < numVertices; i++) {
+        const angle = (Math.PI * 2 / numVertices) * i;
+        const wobble = 0.75 + nodeRng(tx, ty, 20 + i) * 0.5;
+        rockPoints.push({
+            x: Math.cos(angle) * baseRx * wobble,
+            y: Math.sin(angle) * baseRy * wobble,
+        });
+    }
+
+    // Rock base gradient
+    const grad = ctx.createRadialGradient(-2, -2, 1, 0, 0, baseRx);
+    grad.addColorStop(0, ore.highlight);
+    grad.addColorStop(0.6, ore.color);
+    grad.addColorStop(1, darkenColor(ore.color, 0.6));
+    ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.ellipse(cx, cy, 10, 7, 0, 0, Math.PI * 2);
+    ctx.moveTo(rockPoints[0].x, rockPoints[0].y);
+    for (let i = 1; i < rockPoints.length; i++) {
+        const prev = rockPoints[i - 1];
+        const curr = rockPoints[i];
+        const cpx = (prev.x + curr.x) / 2 + (nodeRng(tx, ty, 30 + i) - 0.5) * 2;
+        const cpy = (prev.y + curr.y) / 2 + (nodeRng(tx, ty, 40 + i) - 0.5) * 2;
+        ctx.quadraticCurveTo(cpx, cpy, curr.x, curr.y);
+    }
+    ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = ore.highlight;
+
+    // Rock outline / edge shading
+    ctx.strokeStyle = darkenColor(ore.color, 0.45);
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // Inner crack/vein lines for detail
+    ctx.strokeStyle = darkenColor(ore.color, 0.35);
+    ctx.lineWidth = 0.7;
+    const numCracks = 2 + Math.floor(r3 * 2);
+    for (let i = 0; i < numCracks; i++) {
+        const ri = nodeRng(tx, ty, 50 + i);
+        const ri2 = nodeRng(tx, ty, 60 + i);
+        const startAngle = ri * Math.PI * 2;
+        const len = 3 + ri2 * 5;
+        const sx = Math.cos(startAngle) * 2;
+        const sy = Math.sin(startAngle) * 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + Math.cos(startAngle + 0.3) * len, sy + Math.sin(startAngle + 0.3) * len * 0.6);
+        ctx.stroke();
+    }
+
+    // Specular highlight
+    ctx.fillStyle = `rgba(255,255,255,${0.15 + r4 * 0.1})`;
     ctx.beginPath();
-    ctx.ellipse(cx - 3, cy - 2, 4, 3, -0.3, 0, Math.PI * 2);
+    ctx.ellipse(-2 + r5 * 2, -2 + r6 * 2, 3 + r4 * 2, 2 + r5, -0.4, 0, Math.PI * 2);
     ctx.fill();
-    // Ore type label for non-stone ores
+
+    // ── Ore-specific decorations ──
     if (oreType && oreType !== 'stone') {
+        // Crystal/ore vein deposits on the rock face
+        const numCrystals = oreType === 'dragonite' ? 4 : oreType === 'platinum' || oreType === 'mithril' ? 3 : 2;
+        for (let i = 0; i < numCrystals; i++) {
+            const ci = nodeRng(tx, ty, 70 + i);
+            const ci2 = nodeRng(tx, ty, 80 + i);
+            const ci3 = nodeRng(tx, ty, 90 + i);
+            const angle = (Math.PI * 2 / numCrystals) * i + ci * 0.8;
+            const dist = 2 + ci2 * (baseRx * 0.45);
+            const csx = Math.cos(angle) * dist;
+            const csy = Math.sin(angle) * dist * 0.65;
+            const crystalH = 4 + ci3 * 4;
+            const crystalW = 2 + ci * 2;
+
+            // Crystal shape (pointed shard growing out of rock)
+            ctx.save();
+            ctx.translate(csx, csy);
+            ctx.rotate(angle + Math.PI * 0.5 + (ci - 0.5) * 0.5);
+
+            // Crystal body with gradient
+            const crystalGrad = ctx.createLinearGradient(0, 0, 0, -crystalH);
+            crystalGrad.addColorStop(0, ore.color);
+            crystalGrad.addColorStop(0.5, ore.highlight);
+            crystalGrad.addColorStop(1, lightenColor(ore.highlight, 0.3));
+            ctx.fillStyle = crystalGrad;
+            ctx.beginPath();
+            ctx.moveTo(-crystalW, 0);
+            ctx.lineTo(-crystalW * 0.3, -crystalH * 0.7);
+            ctx.lineTo(0, -crystalH);
+            ctx.lineTo(crystalW * 0.3, -crystalH * 0.7);
+            ctx.lineTo(crystalW, 0);
+            ctx.closePath();
+            ctx.fill();
+
+            // Crystal edge highlight
+            ctx.strokeStyle = `rgba(255,255,255,${0.3 + Math.sin(t * 1.5 + i * 2) * 0.15})`;
+            ctx.lineWidth = 0.6;
+            ctx.beginPath();
+            ctx.moveTo(-crystalW * 0.3, -crystalH * 0.7);
+            ctx.lineTo(0, -crystalH);
+            ctx.lineTo(crystalW * 0.3, -crystalH * 0.7);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        // Animated sparkle / shimmer for valuable ores
+        if (isRare) {
+            const sparkleCount = isLegendary ? 4 : 2;
+            for (let i = 0; i < sparkleCount; i++) {
+                const si = nodeRng(tx, ty, 100 + i);
+                const sparklePhase = t * (1.5 + si) + si * 10;
+                const sparkleAlpha = Math.max(0, Math.sin(sparklePhase)) * 0.8;
+                if (sparkleAlpha > 0.1) {
+                    const sx = (si - 0.5) * baseRx * 1.5;
+                    const sy = (nodeRng(tx, ty, 110 + i) - 0.5) * baseRy * 1.2;
+                    const sparkleSize = 1.5 + Math.sin(sparklePhase) * 1;
+                    ctx.fillStyle = `rgba(255,255,255,${sparkleAlpha.toFixed(2)})`;
+                    // Star sparkle shape
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy - sparkleSize);
+                    ctx.lineTo(sx + sparkleSize * 0.3, sy - sparkleSize * 0.3);
+                    ctx.lineTo(sx + sparkleSize, sy);
+                    ctx.lineTo(sx + sparkleSize * 0.3, sy + sparkleSize * 0.3);
+                    ctx.lineTo(sx, sy + sparkleSize);
+                    ctx.lineTo(sx - sparkleSize * 0.3, sy + sparkleSize * 0.3);
+                    ctx.lineTo(sx - sparkleSize, sy);
+                    ctx.lineTo(sx - sparkleSize * 0.3, sy - sparkleSize * 0.3);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+        }
+
+        // Ore type label
         ctx.font = 'bold 7px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillStyle = ore.color;
-        ctx.strokeStyle = '#000';
+        ctx.fillStyle = ore.highlight;
+        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
         ctx.lineWidth = 2;
-        ctx.strokeText(ore.name, cx, cy + 15);
-        ctx.fillText(ore.name, cx, cy + 15);
+        ctx.strokeText(ore.name, 0, baseRy + 8);
+        ctx.fillText(ore.name, 0, baseRy + 8);
         ctx.lineWidth = 1;
     }
+
+    ctx.restore();
+}
+
+// ── Color helper utilities for ore rendering ──
+function darkenColor(hex, amount) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgb(${Math.round(r * amount)},${Math.round(g * amount)},${Math.round(b * amount)})`;
+}
+function lightenColor(hex, amount) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgb(${Math.min(255, Math.round(r + (255 - r) * amount))},${Math.min(255, Math.round(g + (255 - g) * amount))},${Math.min(255, Math.round(b + (255 - b) * amount))})`;
 }
 
 function drawFishSpot(ctx, cx, cy) {
@@ -1925,7 +2222,14 @@ function drawPlayer(ctx, p, px, py, isSelf) {
     const bodyId = isSelf ? `self:${myUserId || 'local'}` : `remote:${p.userId || p.username || p.display_name || `${p.x},${p.y}`}`;
     const bodyState = updateMoveBodyState(bodyId, px, py, frameDeltaMs, { isRemote: !isSelf });
     const drawX = isSelf ? px : bodyState.renderX;
-    const drawY = isSelf ? py : bodyState.renderY;
+    const groundY = isSelf ? py : bodyState.renderY;
+    // Jump offset — sprite rises while shadow stays at ground
+    const jOff = isSelf ? jumpHeight : 0;
+    const drawY = groundY - jOff;
+    // Landing squash-stretch: scaleX widens, scaleY compresses
+    const squashAmt = isSelf ? jumpSquashTimer / 8 : 0;
+    const jumpScaleX = 1 + squashAmt * 0.2;
+    const jumpScaleY = 1 - squashAmt * 0.15;
 
     const ptx = Math.floor((p.x ?? myPlayer?.x ?? 0) / TILE);
     const pty = Math.floor((p.y ?? myPlayer?.y ?? 0) / TILE);
@@ -1977,12 +2281,24 @@ function drawPlayer(ctx, p, px, py, isSelf) {
         lift: Math.max(0, Math.sin(bodyState.stridePhase + Math.PI)) * (2 + moveAmount * 2.5),
     };
 
-    // Shadow
+    // Shadow (stays at ground level, shrinks when airborne)
+    const shadowAlpha = Math.max(0.06, 0.22 - jOff * 0.006);
+    const shadowScale = Math.max(0.5, 1 - jOff * 0.018);
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillStyle = `rgba(0,0,0,${shadowAlpha.toFixed(2)})`;
     ctx.beginPath();
-    ctx.ellipse(drawX, drawY + 13, 10 + moveAmount * 2, 4 + moveAmount, 0, 0, Math.PI * 2);
+    ctx.ellipse(drawX, groundY + 13, (10 + moveAmount * 2) * shadowScale, (4 + moveAmount) * shadowScale, 0, 0, Math.PI * 2);
     ctx.fill();
+    // Jump dust particles (rendered at ground level)
+    if (isSelf && jumpParticles.length > 0) {
+        for (const dp of jumpParticles) {
+            const alpha = (dp.life / dp.maxLife) * 0.6;
+            ctx.fillStyle = `rgba(180,160,130,${alpha.toFixed(2)})`;
+            ctx.beginPath();
+            ctx.arc(drawX + dp.x, groundY + 10 + dp.y, dp.size * (dp.life / dp.maxLife), 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
     ctx.restore();
 
     if (inWater) {
@@ -2018,6 +2334,14 @@ function drawPlayer(ctx, p, px, py, isSelf) {
         ctx.textAlign = 'center';
         ctx.fillText('🏊 Swimming', drawX, drawY + 25);
     } else {
+        // Apply squash-stretch on landing
+        if (squashAmt > 0.01) {
+            ctx.save();
+            ctx.translate(drawX, drawY + 12); // pivot at feet
+            ctx.scale(jumpScaleX, jumpScaleY);
+            ctx.translate(-drawX, -(drawY + 12));
+        }
+
         // Legs and feet
         const drawLeg = (foot, side) => {
             const kneeX = (hipsX + foot.x) * 0.5 + side * rightX * 1.4;
@@ -2094,6 +2418,9 @@ function drawPlayer(ctx, p, px, py, isSelf) {
             ctx.fillText(heldEmoji, rightHandX + forwardX * 2, rightHandY + forwardY * 2 - 2);
         }
         ctx.restore();
+
+        // Close squash-stretch transform
+        if (squashAmt > 0.01) ctx.restore();
     }
 
     // Hat above head
@@ -2237,6 +2564,16 @@ function drawEffects(ctx) {
         ctx.globalAlpha = 1;
         return true;
     });
+    // Draw gather/mining particles (world-space)
+    for (const gp of gatherParticles) {
+        const alpha = (gp.life / gp.maxLife);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = gp.color;
+        ctx.beginPath();
+        ctx.arc(gp.x - camX, gp.y - camY, gp.size * alpha, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
 }
 
 // ── Weather Overlay ──────────────────────────────────────────
@@ -2483,7 +2820,7 @@ function drawHUD(ctx) {
     ctx.textAlign = 'center';
     const hints = chatOpen
         ? 'Type message... [Enter] Send  [Esc] Cancel'
-        : '[Click] Gather/Attack  [E] Pickup/Fish  [B] Build  [C] Craft  [G] Quests  [I] Inv  [K] Skills  [J] Achieve  [M] Map  [Space] Dodge';
+        : '[Click] Gather/Attack  [E] Pickup/Fish  [B] Build  [C] Craft  [G] Quests  [I] Inv  [K] Skills  [J] Achieve  [M] Map  [Space] Jump  [Q] Dodge';
     ctx.fillText(hints, CAM_W / 2, CAM_H - 8);
 
     // Attack cooldown indicator (right of HUD bars)
@@ -3032,17 +3369,20 @@ function drawInventoryPanel(ctx, px, py, pw) {
     // ── Inventory Grid (Minecraft-style) ──
     const gridStartY = eqStartY + 3 * (EQUIP_SLOT + GAP) + 8;
 
-    // ── Coin Display ──
+    // ── Coin Display (dedicated bar above backpack, full width to avoid overlap) ──
     const coinAmount = myPlayer?.hobo_coins || 0;
+    const coinBarY = gridStartY - 16;
+    ctx.fillStyle = 'rgba(255,191,36,0.12)';
+    ctx.fillRect(px + 4, coinBarY, pw - 8, 14);
     ctx.font = 'bold 11px sans-serif';
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#fbbf24';
-    ctx.fillText(`🪙 ${coinAmount.toLocaleString()}`, px + pw - 10, gridStartY - 2);
+    ctx.fillText(`🪙 ${coinAmount.toLocaleString()} Gold`, px + pw / 2, coinBarY + 11);
 
     ctx.fillStyle = theme.accent || '#c0965c';
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(`BACKPACK (${items.length})`, px + 8, gridStartY - 2);
+    ctx.fillText(`BACKPACK (${items.length})`, px + 8, gridStartY + 2);
 
     // Calculate visible rows
     const gridW = COLS * (SLOT + GAP);
@@ -3264,20 +3604,39 @@ function drawNPCShopPanel(ctx, px, py, pw) {
         items.slice(npcShopScroll, npcShopScroll + 13).forEach((item, i) => {
             const y = startY + i * 24;
             if (i % 2 === 0) { ctx.fillStyle = (theme.bgCard || '#1a1a20') + '44'; ctx.fillRect(px + 4, y, pw - 8, 22); }
+
+            // Check level requirement
+            const SKILL_MAP = { pickaxes: 'mining', axes: 'woodcut', rods: 'fishing', weapons: 'combat', armor: 'combat' };
+            const skillNeeded = SKILL_MAP[item.category];
+            const playerLvl = skillNeeded && npcShopData.playerLevels ? (npcShopData.playerLevels[skillNeeded] || 1) : 999;
+            const meetsLevel = !item.levelReq || playerLvl >= item.levelReq;
+
             const rarCol = RARITY_COLORS[item.rarity] || '#aaa';
-            ctx.fillStyle = rarCol;
+            ctx.fillStyle = meetsLevel ? rarCol : '#666';
             ctx.font = '12px sans-serif';
-            ctx.fillText(`${item.emoji || '❓'} ${item.name}`, px + 10, y + 15);
+            const nameText = `${item.emoji || '❓'} ${item.name}`;
+            ctx.fillText(nameText, px + 10, y + 15);
+            // Level requirement tag
+            if (item.levelReq && !meetsLevel) {
+                ctx.fillStyle = '#ef4444';
+                ctx.font = 'bold 8px sans-serif';
+                ctx.fillText(`Lv${item.levelReq}`, px + 10 + ctx.measureText(nameText).width + 4, y + 14);
+            } else if (item.levelReq) {
+                ctx.fillStyle = '#4ade80';
+                ctx.font = '8px sans-serif';
+                ctx.fillText(`Lv${item.levelReq}`, px + 10 + ctx.measureText(nameText).width + 4, y + 14);
+            }
             // Price
             const canAfford = (npcShopData.hobo_coins || 0) >= item.buyCost;
+            const canBuy = canAfford && meetsLevel;
             ctx.fillStyle = canAfford ? '#fbbf24' : '#ef4444';
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'right';
             ctx.fillText(`🪙${item.buyCost}`, px + pw - 48, y + 15);
             // Buy button
-            ctx.fillStyle = canAfford ? (theme.accent || '#c0965c') : (theme.textMuted || '#444');
+            ctx.fillStyle = canBuy ? (theme.accent || '#c0965c') : (theme.textMuted || '#444');
             ctx.fillRect(px + pw - 44, y + 2, 38, 18);
-            ctx.fillStyle = canAfford ? '#000' : '#888';
+            ctx.fillStyle = canBuy ? '#000' : '#888';
             ctx.font = 'bold 9px sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText('BUY', px + pw - 25, y + 14);
@@ -3893,8 +4252,28 @@ function handleGatherResult(msg) {
         addChatMsg(`🎉 Level up! Now level ${msg.xp.newLevel}`);
         addFloatingText(myPlayer.x, myPlayer.y - 40, `⬆️ LEVEL ${msg.xp.newLevel}!`, '#fbbf24');
     }
-    if (msg.toolBroke) addChatMsg(`💥 Your ${msg.toolBroke} broke!`);
+    if (msg.toolBroke) {
+        addChatMsg(`💥 Your ${msg.toolBroke} broke!`);
+        // Clear the broken tool from local player state
+        if (myPlayer) {
+            if (myPlayer.equip_pickaxe === msg.toolBroke) myPlayer.equip_pickaxe = null;
+            if (myPlayer.equip_axe === msg.toolBroke) myPlayer.equip_axe = null;
+            if (myPlayer.equip_rod === msg.toolBroke) myPlayer.equip_rod = null;
+        }
+    }
     if (msg.stamina !== undefined) myPlayer.stamina = msg.stamina;
+
+    // ── Update client-side XP so skills panel reflects changes immediately ──
+    if (msg.xp && myPlayer) {
+        const skillMap = { mine: 'mining', chop: 'woodcut', punch: 'woodcut', fish: 'fishing' };
+        const skill = skillMap[msg.action] || 'mining';
+        const xpKey = `${skill}_xp`;
+        const lvlKey = `${skill}_level`;
+        if (msg.xp.xp !== undefined) myPlayer[xpKey] = msg.xp.xp;
+        if (msg.xp.newLevel) myPlayer[lvlKey] = msg.xp.newLevel;
+        else if (msg.xp.xp !== undefined) myPlayer[lvlKey] = Math.floor(Math.sqrt((msg.xp.xp) / 25)) + 1;
+    }
+
     lastGatherTime = Date.now();
 }
 
@@ -3903,6 +4282,41 @@ function handleGatherEffect(msg) {
     const wy = msg.tileY * TILE + TILE / 2;
     const icon = msg.action === 'punch' ? '👊' : msg.action === 'chop' ? '🪓' : msg.action === 'mine' ? '⛏️' : '🎣';
     addFloatingText(wx, wy, icon, '#fff');
+    // Mining particle burst
+    if (msg.action === 'mine' && msg.tileX !== undefined && msg.tileY !== undefined) {
+        const oreType = getOreNodeType(msg.tileX, msg.tileY, worldSeed,
+            getBiomeAt(msg.tileX, msg.tileY, worldSeed));
+        const ore = ORE_NODE_TYPES[oreType] || ORE_NODE_TYPES.stone;
+        for (let i = 0; i < 8; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 1.5 + Math.random() * 2.5;
+            gatherParticles.push({
+                x: wx, y: wy,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed - 1.5,
+                color: Math.random() > 0.5 ? ore.color : ore.highlight,
+                life: 15 + Math.random() * 10,
+                maxLife: 25,
+                size: 1.5 + Math.random() * 2,
+            });
+        }
+    }
+    // Chopping particle burst
+    if (msg.action === 'chop') {
+        for (let i = 0; i < 5; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 1 + Math.random() * 2;
+            gatherParticles.push({
+                x: wx, y: wy,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed - 1,
+                color: Math.random() > 0.5 ? '#78350f' : '#15803d',
+                life: 12 + Math.random() * 8,
+                maxLife: 20,
+                size: 1.5 + Math.random() * 1.5,
+            });
+        }
+    }
 }
 
 function handleBuildResult(msg) {
@@ -3911,6 +4325,10 @@ function handleBuildResult(msg) {
         refreshDailyQuests();
         addChatMsg(`✅ Built ${msg.structure?.type || 'structure'}!`);
         if (msg.xp?.leveledUp) addChatMsg(`🎉 Crafting level up! ${msg.xp.newLevel}`);
+        if (msg.xp && myPlayer) {
+            if (msg.xp.xp !== undefined) myPlayer.crafting_xp = msg.xp.xp;
+            if (msg.xp.newLevel) myPlayer.crafting_level = msg.xp.newLevel;
+        }
     }
 }
 
@@ -3958,6 +4376,11 @@ function handleMobAttackResult(msg) {
             shakeIntensity = 4;
             comboCount = 0; comboTimer = 0;
             if (myPlayer && msg.gold) myPlayer.hobo_coins = (myPlayer.hobo_coins || 0) + msg.gold;
+            // Update combat XP on client
+            if (msg.xp && myPlayer) {
+                if (msg.xp.xp !== undefined) myPlayer.combat_xp = msg.xp.xp;
+                if (msg.xp.newLevel) myPlayer.combat_level = msg.xp.newLevel;
+            }
         }
     }
 }
@@ -4157,6 +4580,22 @@ function setupGameInput() {
                 break;
             }
             case 'Space': {
+                // Jump (visual z-axis hop)
+                if (FISHING.active || chatOpen || isDead) break;
+                if (isJumping || Date.now() < jumpCooldownUntil) break;
+                const ptxJ = Math.floor(myPlayer.x / TILE);
+                const ptyJ = Math.floor(myPlayer.y / TILE);
+                const jBiome = worldSeed && getBiomeAt(ptxJ, ptyJ, worldSeed);
+                if (jBiome === 'water') break; // Can't jump in water
+                isJumping = true;
+                // Sprint-jump goes higher and farther
+                const sprintJumpBonus = isSprinting ? 1.35 : 1.0;
+                jumpVelocity = JUMP_STRENGTH * sprintJumpBonus;
+                jumpHeight = 0.1;
+                jumpCooldownUntil = Date.now() + JUMP_COOLDOWN_MS;
+                break;
+            }
+            case 'KeyQ': {
                 // Dodge roll
                 if (FISHING.active || chatOpen || isDead) break;
                 if (Date.now() < dodgeCooldownUntil) { addChatMsg('💨 Dodge on cooldown!'); break; }
@@ -4652,9 +5091,22 @@ async function npcBuyItem(itemId) {
     try {
         const res = await api('/game/npc/buy', { method: 'POST', body: JSON.stringify({ npcId: activeNPC, itemId, quantity: 1 }) });
         if (res.error) { addChatMsg(`❌ ${res.error}`); return; }
-        addChatMsg(`🛒 Bought ${res.item?.emoji || ''} ${res.item?.name || itemId}!`);
+        let msg = `🛒 Bought ${res.item?.emoji || ''} ${res.item?.name || itemId}!`;
+        if (res.autoEquipped) msg += ' (Auto-equipped! ✅)';
+        addChatMsg(msg);
         if (npcShopData) npcShopData.hobo_coins = res.hobo_coins;
-        if (myPlayer) myPlayer.hobo_coins = res.hobo_coins;
+        if (myPlayer) {
+            myPlayer.hobo_coins = res.hobo_coins;
+            // Update equip state from server response
+            if (res.equip_pickaxe !== undefined) myPlayer.equip_pickaxe = res.equip_pickaxe;
+            if (res.equip_axe !== undefined) myPlayer.equip_axe = res.equip_axe;
+            if (res.equip_rod !== undefined) myPlayer.equip_rod = res.equip_rod;
+            if (res.equip_weapon !== undefined) myPlayer.equip_weapon = res.equip_weapon;
+            if (res.equip_armor !== undefined) myPlayer.equip_armor = res.equip_armor;
+            if (res.equip_hat !== undefined) myPlayer.equip_hat = res.equip_hat;
+        }
+        // Refresh inventory data so bought items show immediately
+        if (res.inventory) panelData.inventory = res.inventory;
         updateCoinDisplay();
         // Refresh NPC data
         loadNPCData(activeNPC);
