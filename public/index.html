@@ -105,8 +105,11 @@
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
                         <i class="fa-solid fa-broadcast-tower"></i> Start Streaming
                     </button>
+                    <button class="btn btn-outline btn-lg" onclick="navigate('/game')">
+                        <i class="fa-solid fa-gamepad"></i> Play Game
+                    </button>
                     <a href="https://github.com/HoboStreamer/HoboStreamer.com" target="_blank" class="btn btn-outline btn-lg">
-                        <i class="fa-brands fa-github"></i> Open Source
+                        <i class="fa-brands fa-github"></i> GitHub
                     </a>
                     <a href="https://discord.gg/M6MuRUaeJj" target="_blank" class="btn btn-outline btn-lg" rel="noopener noreferrer">
                         <i class="fa-brands fa-discord"></i> Discord
@@ -1235,6 +1238,7 @@
                                 <i class="fa-solid fa-phone-slash"></i> End Call
                             </button>
                         </div>
+                        <p class="bc-call-explainer">This works like a Discord call built right into your stream page — viewers can join the on-page voice chat and talk with you live without leaving HoboStreamer.</p>
                     </div>
                 </div>
 
@@ -1442,6 +1446,7 @@
                                 <i class="fa-solid fa-phone-slash"></i> End Call
                             </button>
                         </div>
+                        <p class="bc-call-explainer">This works like a Discord call built right into your stream page — viewers can join the on-page voice chat and talk with you live without leaving HoboStreamer.</p>
                     </div>
                 </div>
 
@@ -1495,6 +1500,7 @@
                                 <i class="fa-solid fa-phone-slash"></i> End Call
                             </button>
                         </div>
+                        <p class="bc-call-explainer">This works like a Discord call built right into your stream page — viewers can join the on-page voice chat and talk with you live without leaving HoboStreamer.</p>
                     </div>
                 </div>
 
@@ -1554,6 +1560,7 @@
                                 <i class="fa-solid fa-phone-slash"></i> End Call
                             </button>
                         </div>
+                        <p class="bc-call-explainer">This works like a Discord call built right into your stream page — viewers can join the on-page voice chat and talk with you live without leaving HoboStreamer.</p>
                     </div>
 
                     <!-- Broadcast Call Panel (streamer's view of call participants) -->
@@ -1727,6 +1734,52 @@
                                 <span class="bc-setting-label">Notification Volume</span>
                                 <div class="bc-setting-control"><input type="range" id="bc-notificationVolume" min="0" max="1000" step="50"></div>
                             </div>
+                        </div>
+
+                        <!-- RobotStreamer Integration -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-robot"></i> RobotStreamer</div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Enable Restream</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsEnabled"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Mirror RS Chat</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsMirrorChat"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">RS Token</span>
+                                <div class="bc-setting-control">
+                                    <input type="password" id="bc-rsToken" placeholder="Paste your robotstreamer-token cookie or JWT">
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Robot ID / URL</span>
+                                <div class="bc-setting-control">
+                                    <input type="text" id="bc-rsRobotInput" placeholder="1837 or https://robotstreamer.com/robot/1837">
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Detected Robots</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-rsRobotSelect">
+                                        <option value="">Validate to load your RobotStreamer streams</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Actions</span>
+                                <div class="bc-setting-control" style="display:flex;gap:8px;flex-wrap:wrap">
+                                    <button class="bc-ctrl-btn" type="button" onclick="validateRobotStreamerIntegration()">
+                                        <i class="fa-solid fa-plug-circle-check"></i> Validate
+                                    </button>
+                                    <button class="bc-ctrl-btn" type="button" onclick="saveRobotStreamerIntegration()">
+                                        <i class="fa-solid fa-floppy-disk"></i> Save
+                                    </button>
+                                </div>
+                            </div>
+                            <p class="bc-call-explainer" id="bc-rsStatus">RobotStreamer restreaming works with browser WebRTC broadcasting. Paste your RobotStreamer token, validate a robot, then go live.</p>
+                            <p class="bc-call-explainer" id="bc-rsLiveStatus">RobotStreamer restream is idle.</p>
                         </div>
 
                         <!-- Video / Broadcast Settings -->

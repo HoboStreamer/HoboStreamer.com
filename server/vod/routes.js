@@ -30,8 +30,8 @@ const config = require('../config');
 const thumbService = require('../thumbnails/thumbnail-service');
 
 const router = express.Router();
-const CLIP_USER_COOLDOWN_MS = 12000;
-const CLIP_IP_COOLDOWN_MS = 4000;
+const CLIP_USER_COOLDOWN_MS = 2500;
+const CLIP_IP_COOLDOWN_MS = 1200;
 const CLIP_DUPLICATE_START_WINDOW_SEC = 8;
 const CLIP_DUPLICATE_END_WINDOW_SEC = 10;
 const CLIP_DUPLICATE_LOOKBACK_MINUTES = 10;

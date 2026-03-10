@@ -62,11 +62,13 @@ const clipRoutes = require('./vod/clips-routes');
 const commentRoutes = require('./vod/comments-routes');
 const controlRoutes = require('./controls/routes');
 const adminRoutes = require('./admin/routes');
+const robotStreamerRoutes = require('./integrations/routes');
 const thumbnailRoutes = require('./thumbnails/routes');
 const thumbnailService = require('./thumbnails/thumbnail-service');
 const themeRoutes = require('./themes/routes');
 const emoteRoutes = require('./emotes/routes');
 const metaRoutes = require('./meta/routes');
+const robotStreamerService = require('./integrations/robotstreamer-service');
 
 // Game
 const gameRoutes = require('./game/routes');
@@ -190,6 +192,7 @@ app.use('/api/clips', clipRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/controls', controlRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/robotstreamer', robotStreamerRoutes);
 app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
@@ -238,6 +241,8 @@ server.on('upgrade', (req, socket, head) => {
         callServer.handleUpgrade(req, socket, head);
     } else if (url.startsWith('/ws/game')) {
         gameServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/robotstreamer-publish')) {
+        robotStreamerService.handleUpgrade(req, socket, head);
     } else {
         socket.destroy();
     }
@@ -317,6 +322,12 @@ async function start() {
 
     // 4d. Initialize group call signaling server
     callServer.init(server);
+
+    for (const stream of db.getLiveStreams()) {
+        robotStreamerService.startForStream(stream).catch((err) => {
+            console.warn(`[RS] Restore failed for stream ${stream.id}:`, err.message);
+        });
+    }
 
     // 5. Initialize WebRTC SFU (may fail if mediasoup not installed)
     try {

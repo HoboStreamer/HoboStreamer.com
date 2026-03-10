@@ -3460,6 +3460,48 @@ function drawInventoryPanel(ctx, px, py, pw) {
         ctx.globalAlpha = 1;
     }
 
+    // ── Tooltip on hover (equipment slots) ──
+    for (let ei = 0; ei < equipSlots.length; ei++) {
+        const row = ei % 3, col = Math.floor(ei / 3);
+        const sx = eqX + col * (EQUIP_SLOT + GAP);
+        const sy = eqStartY + row * (EQUIP_SLOT + GAP);
+        if (mouseX >= sx && mouseX <= sx + EQUIP_SLOT && mouseY >= sy && mouseY <= sy + EQUIP_SLOT) {
+            const equipped = myPlayer?.[equipSlots[ei].key];
+            if (equipped) {
+                const invItem = items.find(it => it.item_id === equipped);
+                const ttW = 150, ttH = 42;
+                let ttX = mouseX + 14, ttY = mouseY - 8;
+                if (ttX + ttW > px + pw) ttX = mouseX - ttW - 8;
+                ctx.fillStyle = 'rgba(10,10,15,0.95)';
+                ctx.fillRect(ttX, ttY, ttW, ttH);
+                ctx.strokeStyle = RARITY_COLORS[invItem?.rarity] || '#555';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(ttX, ttY, ttW, ttH);
+                ctx.fillStyle = RARITY_COLORS[invItem?.rarity] || '#ddd';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`${invItem?.emoji || ''} ${invItem?.name || equipped}`, ttX + 6, ttY + 14);
+                ctx.fillStyle = '#fbbf24';
+                ctx.font = '9px sans-serif';
+                ctx.fillText('Click to unequip', ttX + 6, ttY + 30);
+            } else {
+                const ttW = 110, ttH = 18;
+                let ttX = mouseX + 14, ttY = mouseY - 8;
+                if (ttX + ttW > px + pw) ttX = mouseX - ttW - 8;
+                ctx.fillStyle = 'rgba(10,10,15,0.95)';
+                ctx.fillRect(ttX, ttY, ttW, ttH);
+                ctx.strokeStyle = '#444';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(ttX, ttY, ttW, ttH);
+                ctx.fillStyle = '#888';
+                ctx.font = '9px sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`${equipSlots[ei].name} — empty`, ttX + 6, ttY + 12);
+            }
+            break;
+        }
+    }
+
     // ── Tooltip on hover ──
     if (mouseX >= gridX && mouseX <= gridX + gridW && mouseY >= gridStartY && mouseY <= gridStartY + ROWS * (SLOT + GAP)) {
         const hCol = Math.floor((mouseX - gridX) / (SLOT + GAP));
@@ -3487,7 +3529,7 @@ function drawInventoryPanel(ctx, px, py, pw) {
             ctx.font = '9px sans-serif';
             const action = (['weapons', 'armor', 'hats', 'pickaxes', 'axes', 'rods'].includes(item.category)) ? 'Drag to equip slot' :
                 (item.category === 'consumable' || item.category === 'potion') ? 'Click to use' :
-                (item.category === 'name_effects' || item.category === 'particles' || item.category === 'voices') ? 'Click to activate globally' :
+                (item.category === 'name_effects' || item.category === 'particles' || item.category === 'voices') ? 'Click to unlock as global cosmetic' :
                 (item.item_id === 'fish_sonar') ? 'Click to ping' : '';
             if (action) ctx.fillText(action, ttX + 6, ttY + 42);
         }
@@ -4750,11 +4792,11 @@ function setupGameInput() {
                                 invGridHeldItem = null;
                             }
                         } else {
-                            // Not holding anything — show equipped item info
+                            // Not holding anything — unequip the item from this slot
                             if (myPlayer?.[equipSlots[i].key]) {
                                 const eqId = myPlayer[equipSlots[i].key];
                                 const eqItem = items.find(it => it.item_id === eqId);
-                                addChatMsg(`⚙️ ${eqItem?.emoji || '❓'} ${eqItem?.name || eqId} equipped`);
+                                handleUnequipSlot(equipSlots[i].cat, eqId, eqItem);
                             }
                         }
                         return;
@@ -5041,6 +5083,20 @@ async function handleEquipDrop(item) {
     } catch (err) { addChatMsg('❌ Equip failed'); }
 }
 
+// ── Unequip handler — remove item from equipment slot ──
+async function handleUnequipSlot(slotCategory, itemId, item) {
+    try {
+        const res = await api('/game/unequip', { method: 'POST', body: JSON.stringify({ slot: slotCategory }) });
+        if (res.error) { addChatMsg(`❌ ${res.error}`); return; }
+        addChatMsg(`🔓 Unequipped ${item?.emoji || ''} ${item?.name || itemId}`);
+        const EQUIP_SLOT_MAP = { weapons: 'equip_weapon', armor: 'equip_armor', hats: 'equip_hat', pickaxes: 'equip_pickaxe', axes: 'equip_axe', rods: 'equip_rod' };
+        const slotKey = EQUIP_SLOT_MAP[slotCategory];
+        if (myPlayer && slotKey) myPlayer[slotKey] = null;
+        if (slotCategory === 'weapons') updateWeaponCooldown();
+        loadPanelData('inventory');
+    } catch (err) { addChatMsg('❌ Unequip failed'); }
+}
+
 async function handleInventoryClick(item) {
     if (!item) return;
     const cat = item.category || '';
@@ -5076,10 +5132,17 @@ async function handleInventoryClick(item) {
         doUseSonar();
     // Cosmetic items (name effects, particles, voices) → activate globally
     } else if (cat === 'name_effects' || cat === 'particles' || cat === 'voices') {
+        // Show confirmation since this converts the game item into a global cosmetic
+        addChatMsg(`🎨 ${item.emoji || ''} ${item.name} — Click again to unlock as global cosmetic`);
+        if (!handleInventoryClick._pendingActivate || handleInventoryClick._pendingActivate.id !== item.item_id || Date.now() - handleInventoryClick._pendingActivate.time > 3000) {
+            handleInventoryClick._pendingActivate = { id: item.item_id, time: Date.now() };
+            return;
+        }
+        handleInventoryClick._pendingActivate = null;
         try {
             const res = await api('/game/cosmetic/activate', { method: 'POST', body: JSON.stringify({ itemId: item.item_id }) });
             if (res.error) { addChatMsg(`❌ ${res.error}`); return; }
-            addChatMsg(`🎨 ${res.message || `Activated ${item.name} globally!`}`);
+            addChatMsg(`✅ ${res.message || `Unlocked ${item.name} as global cosmetic!`}`);
             loadPanelData('inventory');
         } catch (err) { addChatMsg('❌ Activation failed'); }
     } else {

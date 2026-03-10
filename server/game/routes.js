@@ -312,6 +312,30 @@ router.post('/equip', (req, res) => {
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+router.post('/unequip', (req, res) => {
+    try {
+        const result = game.unequipItem(req.user.id, req.body.slot);
+        // Update live player state so other players see the change
+        if (result.success) {
+            const player = game.getPlayer(req.user.id);
+            const existing = game.getLivePlayers()[req.user.id];
+            if (existing) {
+                game.updateLivePlayer(req.user.id, {
+                    ...existing,
+                    equip_weapon: player.equip_weapon,
+                    equip_armor: player.equip_armor,
+                    equip_hat: player.equip_hat,
+                    equip_pickaxe: player.equip_pickaxe,
+                    equip_axe: player.equip_axe,
+                    equip_rod: player.equip_rod,
+                });
+            }
+        }
+        res.json(result);
+    }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/cosmetic/equip', (req, res) => {
     try { res.json(game.equipCosmetic(req.user.id, req.body.itemId)); }
     catch (e) { res.status(500).json({ error: e.message }); }

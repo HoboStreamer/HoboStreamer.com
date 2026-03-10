@@ -38,6 +38,7 @@ function createStreamState(streamData) {
         thumbnailCanvas: null,
         thumbnailCtx: null,
         statsPollPending: false,
+        robotStreamer: null,
     };
 }
 
@@ -95,6 +96,17 @@ let broadcastState = {
         forceCamera: 'default', broadcastRes: '720', broadcastFps: '30', broadcastCodec: 'auto',
         broadcastBps: '2500', broadcastBpsMin: '500', broadcastLimit: 'restart', screenShare: false,
         allowSounds: 'false', soundVolume: 800,
+    },
+    robotStreamer: {
+        loaded: false,
+        enabled: false,
+        mirrorChat: true,
+        hasToken: false,
+        robotId: '',
+        ownerId: '',
+        streamName: '',
+        ownerName: '',
+        availableRobots: [],
     },
 };
 
@@ -193,6 +205,7 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
     }
 
     await startMediaCapture(streamId);
+    await syncRobotStreamerTracks(streamId);
     startVodRecording(streamId);
 
     if (!ss.signalingWs || ss.signalingWs.readyState !== WebSocket.OPEN) {
@@ -237,6 +250,153 @@ function saveBroadcastSettings() {
     try { localStorage.setItem('hobo_broadcast_settings', JSON.stringify(broadcastState.settings)); } catch {}
 }
 
+function setRobotStreamerStatus(message, tone = 'info', targetId = 'bc-rsStatus') {
+    const el = document.getElementById(targetId);
+    if (!el) return;
+    const colors = {
+        success: 'var(--success, #22c55e)',
+        error: 'var(--danger, #ef4444)',
+        warning: 'var(--warning, #f59e0b)',
+        info: 'var(--text-muted, #9ca3af)',
+    };
+    el.textContent = message;
+    el.style.color = colors[tone] || colors.info;
+}
+
+function populateRobotStreamerSelect(robots = [], selectedRobotId = '') {
+    const select = document.getElementById('bc-rsRobotSelect');
+    if (!select) return;
+    const items = Array.isArray(robots) ? robots : [];
+    select.innerHTML = '<option value="">Validate to load your RobotStreamer streams</option>';
+    items.forEach((robot) => {
+        const option = document.createElement('option');
+        option.value = robot.robot_id;
+        const viewers = Number(robot.viewers || 0);
+        option.textContent = `${robot.robot_name || `Robot ${robot.robot_id}`} (${robot.robot_id}) • ${robot.status || 'offline'} • ${viewers} viewer${viewers === 1 ? '' : 's'}`;
+        select.appendChild(option);
+    });
+    if (selectedRobotId) select.value = String(selectedRobotId);
+}
+
+function syncRobotStreamerUI() {
+    const rs = broadcastState.robotStreamer;
+    const setCheck = (id, value) => { const el = document.getElementById(id); if (el) el.checked = !!value; };
+    const setVal = (id, value) => { const el = document.getElementById(id); if (el) el.value = value || ''; };
+
+    setCheck('bc-rsEnabled', rs.enabled);
+    setCheck('bc-rsMirrorChat', rs.mirrorChat);
+    setVal('bc-rsRobotInput', rs.robotId);
+    populateRobotStreamerSelect(rs.availableRobots, rs.robotId);
+
+    const tokenEl = document.getElementById('bc-rsToken');
+    if (tokenEl) tokenEl.placeholder = rs.hasToken
+        ? 'Saved token on file — paste a new one only if you want to replace it'
+        : 'Paste your robotstreamer-token cookie or JWT';
+
+    const summary = rs.ownerName || rs.streamName
+        ? `Configured for ${rs.streamName || `Robot ${rs.robotId}`} as ${rs.ownerName || rs.ownerId || 'unknown owner'}.`
+        : 'RobotStreamer restreaming works with browser WebRTC broadcasting. Paste your RobotStreamer token, validate a robot, then go live.';
+    setRobotStreamerStatus(summary, rs.hasToken ? 'success' : 'info', 'bc-rsStatus');
+}
+
+async function loadRobotStreamerIntegration() {
+    try {
+        const data = await api('/robotstreamer/integration');
+        const integration = data.integration || {};
+        broadcastState.robotStreamer = {
+            loaded: true,
+            enabled: !!integration.enabled,
+            mirrorChat: integration.mirror_chat !== false,
+            hasToken: !!integration.has_token,
+            robotId: integration.robot_id || '',
+            ownerId: integration.owner_id || '',
+            streamName: integration.stream_name || '',
+            ownerName: integration.owner_name || '',
+            availableRobots: integration.available_robots || [],
+        };
+        syncRobotStreamerUI();
+    } catch (err) {
+        setRobotStreamerStatus(err.message || 'Failed to load RobotStreamer settings', 'error');
+    }
+}
+
+function getRobotStreamerFormData() {
+    const selectRobot = document.getElementById('bc-rsRobotSelect')?.value || '';
+    const inputRobot = document.getElementById('bc-rsRobotInput')?.value.trim() || '';
+    return {
+        enabled: !!document.getElementById('bc-rsEnabled')?.checked,
+        mirror_chat: !!document.getElementById('bc-rsMirrorChat')?.checked,
+        token: document.getElementById('bc-rsToken')?.value.trim() || '',
+        robot_input: selectRobot || inputRobot,
+    };
+}
+
+async function validateRobotStreamerIntegration() {
+    const payload = getRobotStreamerFormData();
+    setRobotStreamerStatus('Validating RobotStreamer settings…', 'info');
+    try {
+        const data = await api('/robotstreamer/integration/validate', { method: 'POST', body: payload });
+        const integration = data.integration || {};
+        broadcastState.robotStreamer = {
+            ...broadcastState.robotStreamer,
+            loaded: true,
+            hasToken: !!integration.has_token || !!payload.token,
+            robotId: integration.robot_id || payload.robot_input || '',
+            ownerId: integration.owner_id || '',
+            streamName: integration.stream_name || '',
+            ownerName: integration.owner_name || '',
+            availableRobots: integration.available_robots || [],
+        };
+        syncRobotStreamerUI();
+        setRobotStreamerStatus(`Validated ${integration.stream_name || `robot ${integration.robot_id}`}.`, 'success');
+        toast('RobotStreamer settings validated', 'success');
+    } catch (err) {
+        setRobotStreamerStatus(err.message || 'RobotStreamer validation failed', 'error');
+        toast(err.message || 'RobotStreamer validation failed', 'error');
+    }
+}
+
+async function saveRobotStreamerIntegration() {
+    const payload = getRobotStreamerFormData();
+    setRobotStreamerStatus('Saving RobotStreamer settings…', 'info');
+    try {
+        const data = await api('/robotstreamer/integration', { method: 'PUT', body: payload });
+        const integration = data.integration || {};
+        broadcastState.robotStreamer = {
+            ...broadcastState.robotStreamer,
+            loaded: true,
+            enabled: !!integration.enabled,
+            mirrorChat: integration.mirror_chat !== false,
+            hasToken: !!integration.has_token,
+            robotId: integration.robot_id || '',
+            ownerId: integration.owner_id || '',
+            streamName: integration.stream_name || '',
+            ownerName: integration.owner_name || '',
+            availableRobots: integration.available_robots || broadcastState.robotStreamer.availableRobots || [],
+        };
+        const tokenEl = document.getElementById('bc-rsToken');
+        if (tokenEl) tokenEl.value = '';
+        syncRobotStreamerUI();
+        setRobotStreamerStatus('RobotStreamer settings saved.', 'success');
+        const restreamTargets = [...broadcastState.streams.entries()]
+            .filter(([, state]) => state?.localStream)
+            .map(([streamId]) => streamId);
+        for (const streamId of restreamTargets) {
+            if (broadcastState.robotStreamer.enabled) {
+                stopRobotStreamerRestream(streamId, { quiet: true })
+                    .catch(() => {})
+                    .finally(() => startRobotStreamerRestream(streamId).catch(() => {}));
+            } else {
+                stopRobotStreamerRestream(streamId).catch(() => {});
+            }
+        }
+        toast('RobotStreamer settings saved', 'success');
+    } catch (err) {
+        setRobotStreamerStatus(err.message || 'Failed to save RobotStreamer settings', 'error');
+        toast(err.message || 'Failed to save RobotStreamer settings', 'error');
+    }
+}
+
 /* ── Broadcast Chat Helper ───────────────────────────────────── */
 /**
  * Single entry point for broadcast-page chat. Shows the sidebar and
@@ -252,6 +412,7 @@ function ensureBroadcastChat(streamId) {
 /* ── Initialize Broadcast Page ───────────────────────────────── */
 async function loadBroadcastPage() {
     loadBroadcastSettings();
+    loadRobotStreamerIntegration().catch(() => {});
 
     // If we have active browser WebRTC streams, restore the active one's live UI
     if (broadcastState.streams.size > 0 && broadcastState.activeStreamId != null) {
@@ -370,6 +531,7 @@ async function switchBroadcastTab(streamId) {
         startGlobalDisplayTimers();
         updateBroadcastStatusFromConnections(streamId);
         ensureBroadcastChat(streamId);
+        if (!ss.robotStreamer?.active) startRobotStreamerRestream(streamId).catch(() => {});
         return;
     }
 
@@ -476,6 +638,7 @@ async function switchOrResumeStream(stream) {
         startGlobalDisplayTimers();
         updateBroadcastStatusFromConnections(stream.id);
         ensureBroadcastChat(stream.id);
+        if (!ss.robotStreamer?.active) startRobotStreamerRestream(stream.id).catch(() => {});
     } else {
         await resumeStreamView(stream);
     }
@@ -509,6 +672,7 @@ async function resumeStreamView(stream) {
             if (ph) ph.style.display = 'none';
             ensureBroadcastChat(stream.id);
             startGlobalDisplayTimers();
+            if (!existing.robotStreamer?.active) startRobotStreamerRestream(stream.id).catch(() => {});
             showBroadcastCallControls(); updateBroadcastCallUI();
             return;
         }
@@ -522,7 +686,7 @@ async function resumeStreamView(stream) {
         populateDeviceLists(); populateTTSVoices(); syncSettingsUI();
         ensureBroadcastChat(stream.id);
         startHeartbeat(stream.id);
-        await startMediaCapture(stream.id); connectSignaling(stream.id); startVodRecording(stream.id);
+        await startMediaCapture(stream.id); connectSignaling(stream.id); startRobotStreamerRestream(stream.id).catch(() => {}); startVodRecording(stream.id);
         startGlobalDisplayTimers();
         showBroadcastCallControls(); updateBroadcastCallUI();
     } else if (stream.protocol === 'rtmp') {
@@ -704,6 +868,7 @@ async function createNewStream() {
             ensureBroadcastChat(streamData.id);
             await startMediaCapture(streamData.id, { cameraId: createCamera, audioId: createAudio });
             connectSignaling(streamData.id);
+            startRobotStreamerRestream(streamData.id).catch(() => {});
             startHeartbeat(streamData.id); startVodRecording(streamData.id);
             startGlobalDisplayTimers();
             showBroadcastCallControls(); updateBroadcastCallUI();
@@ -1118,6 +1283,7 @@ function syncSettingsUI() {
     setVal('bc-broadcastBpsMin', s.broadcastBpsMin); setVal('bc-broadcastLimit', s.broadcastLimit);
     setVal('bc-allowSounds', s.allowSounds); setVal('bc-soundVolume', s.soundVolume);
     setCheck('bc-screenShare', s.screenShare);
+    syncRobotStreamerUI();
 }
 
 function updateBroadcastSetting(key, value) {
@@ -1165,6 +1331,7 @@ function cleanupStream(streamId) {
 
     // Stop media tracks
     if (ss.localStream) { ss.localStream.getTracks().forEach(t => t.stop()); ss.localStream = null; }
+    stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
 
     // Close viewer connections
     for (const [, pc] of ss.viewerConnections) { try { pc.close(); } catch {} }
@@ -1576,6 +1743,188 @@ function applyManualGain(streamId) {
     } catch (err) { console.warn('[Broadcast] Manual gain failed:', err); }
 }
 
+/* ── RobotStreamer Restream ─────────────────────────────────── */
+
+let _robotStreamerMediasoupModulePromise = null;
+
+function canUseRobotStreamerRestream() {
+    const rs = broadcastState.robotStreamer;
+    return !!(rs?.enabled && rs?.hasToken && rs?.robotId);
+}
+
+function getRobotStreamerPublishUrl(streamId) {
+    const host = window.location.hostname;
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const portSuffix = window.location.port ? `:${window.location.port}` : '';
+    const token = localStorage.getItem('token');
+    return `${protocol}://${host}${portSuffix}/ws/robotstreamer-publish?token=${encodeURIComponent(token || '')}&streamId=${encodeURIComponent(streamId)}`;
+}
+
+function buildRobotStreamerDeviceDescriptor(device, stream) {
+    return {
+        name: 'HoboStreamer',
+        handlerName: device.handlerName || 'browser',
+        loaded: true,
+        canProduceAudio: !!stream?.getAudioTracks?.().length,
+        canProduceVideo: !!stream?.getVideoTracks?.().length,
+    };
+}
+
+function createRobotStreamerRpc(ws) {
+    let nextId = 1;
+    const pending = new Map();
+
+    ws.addEventListener('message', (event) => {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch { return; }
+        if (!msg?.response || !pending.has(msg.id)) return;
+        const deferred = pending.get(msg.id);
+        pending.delete(msg.id);
+        if (msg.ok === false) deferred.reject(new Error(msg.error || msg.reason || 'RobotStreamer request failed'));
+        else deferred.resolve(msg.data);
+    });
+
+    const rejectAll = (error) => {
+        for (const deferred of pending.values()) deferred.reject(error);
+        pending.clear();
+    };
+
+    ws.addEventListener('close', () => rejectAll(new Error('RobotStreamer publish connection closed')));
+    ws.addEventListener('error', () => rejectAll(new Error('RobotStreamer publish connection failed')));
+
+    return {
+        async request(method, data = {}) {
+            if (ws.readyState !== WebSocket.OPEN) throw new Error('RobotStreamer publish connection is not open');
+            const id = nextId++;
+            const payload = { request: true, id, method, data };
+            return new Promise((resolve, reject) => {
+                pending.set(id, { resolve, reject });
+                ws.send(JSON.stringify(payload));
+            });
+        },
+    };
+}
+
+async function loadRobotStreamerMediasoup() {
+    if (!_robotStreamerMediasoupModulePromise) {
+        _robotStreamerMediasoupModulePromise = import('https://esm.sh/mediasoup-client@3.18.7');
+    }
+    return _robotStreamerMediasoupModulePromise;
+}
+
+async function startRobotStreamerRestream(streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss?.localStream || !canUseRobotStreamerRestream()) return null;
+    if (ss.robotStreamer?.active) return ss.robotStreamer;
+
+    setRobotStreamerStatus('Connecting RobotStreamer restream…', 'info', 'bc-rsLiveStatus');
+
+    try {
+        const mod = await loadRobotStreamerMediasoup();
+        const Device = mod.Device || mod.default?.Device;
+        if (!Device) throw new Error('mediasoup-client failed to load');
+
+        const ws = new WebSocket(getRobotStreamerPublishUrl(streamId));
+        await new Promise((resolve, reject) => {
+            ws.addEventListener('open', resolve, { once: true });
+            ws.addEventListener('error', () => reject(new Error('RobotStreamer publish websocket failed')), { once: true });
+            ws.addEventListener('close', () => reject(new Error('RobotStreamer publish websocket closed')), { once: true });
+        });
+
+        const rpc = createRobotStreamerRpc(ws);
+        const routerRtpCapabilities = await rpc.request('getRouterRtpCapabilities', {});
+        const device = new Device();
+        await device.load({ routerRtpCapabilities });
+
+        const transportInfo = await rpc.request('createWebRtcTransport', { producing: true, consuming: false });
+        await rpc.request('join', {
+            device: buildRobotStreamerDeviceDescriptor(device, ss.localStream),
+            rtpCapabilities: device.rtpCapabilities,
+        });
+
+        const transport = device.createSendTransport(transportInfo);
+        transport.on('connect', ({ dtlsParameters }, callback, errback) => {
+            rpc.request('connectWebRtcTransport', { transportId: transport.id, dtlsParameters })
+                .then(() => callback())
+                .catch(errback);
+        });
+        transport.on('produce', ({ kind, rtpParameters, appData }, callback, errback) => {
+            rpc.request('produce', { transportId: transport.id, kind, rtpParameters, appData })
+                .then((data) => callback({ id: data?.id }))
+                .catch(errback);
+        });
+        transport.on('connectionstatechange', (state) => {
+            if (state === 'connected') setRobotStreamerStatus('RobotStreamer restream is live.', 'success', 'bc-rsLiveStatus');
+            else if (state === 'connecting') setRobotStreamerStatus('RobotStreamer restream is connecting…', 'info', 'bc-rsLiveStatus');
+            else if (state === 'failed') setRobotStreamerStatus('RobotStreamer restream failed.', 'error', 'bc-rsLiveStatus');
+        });
+
+        const session = {
+            active: true,
+            ws,
+            rpc,
+            device,
+            transport,
+            videoProducer: null,
+            audioProducer: null,
+        };
+        ss.robotStreamer = session;
+
+        const videoTrack = ss.localStream.getVideoTracks()[0] || null;
+        const audioTrack = ss.localStream.getAudioTracks()[0] || null;
+        if (videoTrack) session.videoProducer = await transport.produce({ track: videoTrack });
+        if (audioTrack) session.audioProducer = await transport.produce({ track: audioTrack });
+
+        ws.addEventListener('close', () => {
+            if (ss.robotStreamer === session) {
+                session.active = false;
+                setRobotStreamerStatus('RobotStreamer restream disconnected.', 'warning', 'bc-rsLiveStatus');
+            }
+        });
+
+        setRobotStreamerStatus('RobotStreamer restream is live.', 'success', 'bc-rsLiveStatus');
+        return session;
+    } catch (err) {
+        ss.robotStreamer = null;
+        setRobotStreamerStatus(err.message || 'RobotStreamer restream failed', 'error', 'bc-rsLiveStatus');
+        console.warn('[Broadcast] RobotStreamer restream failed:', err.message);
+        return null;
+    }
+}
+
+async function syncRobotStreamerTracks(streamId) {
+    const ss = getStreamState(streamId);
+    const session = ss?.robotStreamer;
+    if (!session?.active || !ss?.localStream) return;
+    const videoTrack = ss.localStream.getVideoTracks()[0] || null;
+    const audioTrack = ss.localStream.getAudioTracks()[0] || null;
+
+    try {
+        if (session.videoProducer && videoTrack) await session.videoProducer.replaceTrack({ track: videoTrack });
+        else if (!session.videoProducer && videoTrack) session.videoProducer = await session.transport.produce({ track: videoTrack });
+
+        if (session.audioProducer && audioTrack) await session.audioProducer.replaceTrack({ track: audioTrack });
+        else if (!session.audioProducer && audioTrack) session.audioProducer = await session.transport.produce({ track: audioTrack });
+    } catch (err) {
+        console.warn('[Broadcast] RobotStreamer track sync failed:', err.message);
+        setRobotStreamerStatus('RobotStreamer track sync failed.', 'warning', 'bc-rsLiveStatus');
+    }
+}
+
+async function stopRobotStreamerRestream(streamId, { quiet = false } = {}) {
+    const ss = getStreamState(streamId);
+    const session = ss?.robotStreamer;
+    if (!session) return;
+
+    try { await session.videoProducer?.close?.(); } catch {}
+    try { await session.audioProducer?.close?.(); } catch {}
+    try { session.transport?.close?.(); } catch {}
+    try { session.ws?.close?.(1000); } catch {}
+    ss.robotStreamer = null;
+
+    if (!quiet) setRobotStreamerStatus('RobotStreamer restream stopped.', 'info', 'bc-rsLiveStatus');
+}
+
 /* ── Per-Stream Signaling ────────────────────────────────────── */
 
 function connectSignaling(streamId) {
@@ -1791,6 +2140,7 @@ async function flipCamera() {
         const newTrack = newStream.getVideoTracks()[0];
         ss.localStream.addTrack(newTrack);
         for (const [, pc] of ss.viewerConnections) { const sender = pc.getSenders().find(s => s.track?.kind === 'video'); if (sender) sender.replaceTrack(newTrack); }
+        syncRobotStreamerTracks(broadcastState.activeStreamId).catch(() => {});
         const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
         toast('Camera flipped', 'success');
     } catch (err) {
@@ -1820,6 +2170,7 @@ async function toggleScreenShare() {
                 const vs = pc.getSenders().find(s => s.track?.kind === 'video'); if (vs && nvt) vs.replaceTrack(nvt);
                 const as = pc.getSenders().find(s => s.track?.kind === 'audio'); if (as && nat) as.replaceTrack(nat);
             }
+            syncRobotStreamerTracks(streamId).catch(() => {});
             toast(broadcastState.settings.screenShare ? 'Screen share on' : 'Camera on', 'success');
         } catch (err) { toast('Failed to switch: ' + err.message, 'error'); broadcastState.settings.screenShare = !broadcastState.settings.screenShare; saveBroadcastSettings(); }
     }
@@ -2059,6 +2410,14 @@ function initBroadcastSettingsListeners() {
 
 document.addEventListener('DOMContentLoaded', () => {
     initBroadcastSettingsListeners();
+
+    const robotSelect = document.getElementById('bc-rsRobotSelect');
+    if (robotSelect) {
+        robotSelect.addEventListener('change', () => {
+            const input = document.getElementById('bc-rsRobotInput');
+            if (input && robotSelect.value) input.value = robotSelect.value;
+        });
+    }
 
     // Programmatic click handler for permission button — more reliable than inline onclick on mobile
     const permBtn = document.getElementById('bc-perm-btn');

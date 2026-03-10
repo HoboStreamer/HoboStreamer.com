@@ -132,6 +132,28 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] Channel visibility migration:', e.message); }
 
+    // Migrate: create RobotStreamer integration table if missing
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS robotstreamer_integrations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            enabled INTEGER DEFAULT 0,
+            mirror_chat INTEGER DEFAULT 1,
+            token TEXT,
+            robot_id TEXT,
+            owner_id TEXT,
+            chat_url TEXT,
+            control_url TEXT,
+            rtc_sfu_url TEXT,
+            stream_name TEXT,
+            owner_name TEXT,
+            last_validated_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+    } catch (e) { console.warn('[DB] RobotStreamer integration migration:', e.message); }
+
     // Migrate: create comments table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS comments (
@@ -400,6 +422,54 @@ function ensureChannel(userId) {
         ch = getChannelByUserId(userId);
     }
     return ch;
+}
+
+// ── RobotStreamer integration helpers ───────────────────────
+
+function getRobotStreamerIntegrationByUserId(userId) {
+    return get('SELECT * FROM robotstreamer_integrations WHERE user_id = ?', [userId]);
+}
+
+function upsertRobotStreamerIntegration(userId, fields) {
+    const allowed = new Set([
+        'enabled',
+        'mirror_chat',
+        'token',
+        'robot_id',
+        'owner_id',
+        'chat_url',
+        'control_url',
+        'rtc_sfu_url',
+        'stream_name',
+        'owner_name',
+        'last_validated_at',
+    ]);
+    const existing = getRobotStreamerIntegrationByUserId(userId);
+    const filtered = Object.entries(fields || {}).filter(([key, val]) => allowed.has(key) && val !== undefined);
+
+    if (!filtered.length) return existing;
+
+    if (existing) {
+        const updates = [];
+        const params = [];
+        for (const [key, val] of filtered) {
+            updates.push(`${key} = ?`);
+            params.push(val);
+        }
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(userId);
+        run(`UPDATE robotstreamer_integrations SET ${updates.join(', ')} WHERE user_id = ?`, params);
+    } else {
+        const keys = ['user_id', ...filtered.map(([key]) => key), 'updated_at'];
+        const placeholders = keys.map(() => '?').join(', ');
+        const params = [userId, ...filtered.map(([, val]) => val), new Date().toISOString()];
+        run(
+            `INSERT INTO robotstreamer_integrations (${keys.join(', ')}) VALUES (${placeholders})`,
+            params,
+        );
+    }
+
+    return getRobotStreamerIntegrationByUserId(userId);
 }
 
 // ── Chat helpers ─────────────────────────────────────────────
@@ -1053,6 +1123,8 @@ module.exports = {
     createStream, endStream, updateViewerCount,
     // Channels
     getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
+    // RobotStreamer integration
+    getRobotStreamerIntegrationByUserId, upsertRobotStreamerIntegration,
     // Chat
     saveChatMessage, searchChatMessages, getUserChatHistory,
     // Profiles

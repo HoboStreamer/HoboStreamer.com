@@ -21,6 +21,7 @@ const { requireAuth, requireStreamer, optionalAuth } = require('../auth/auth');
 const jsmpegRelay = require('./jsmpeg-relay');
 const webrtcSFU = require('./webrtc-sfu');
 const recorder = require('../vod/recorder');
+const robotStreamerService = require('../integrations/robotstreamer-service');
 
 const router = express.Router();
 const ALLOWED_PROTOCOLS = new Set(['jsmpeg', 'webrtc', 'rtmp']);
@@ -359,6 +360,9 @@ router.post('/', requireAuth, (req, res) => {
         );
 
         const stream = db.getStreamById(streamId);
+        robotStreamerService.startForStream(stream).catch((rsErr) => {
+            console.warn(`[RS] Failed to start integration for stream ${streamId}:`, rsErr.message);
+        });
         res.status(201).json({ stream, endpoint });
     } catch (err) {
         console.error('[Streams] Create error:', err.message);
@@ -439,6 +443,8 @@ router.delete('/:id', requireAuth, (req, res) => {
 
         // End any active group call
         callServer.endCall(stream.id);
+
+        robotStreamerService.stopForStream(stream.id);
 
         res.json({ message: 'Stream ended' });
     } catch (err) {

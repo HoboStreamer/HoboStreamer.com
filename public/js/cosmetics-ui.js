@@ -107,16 +107,16 @@ function renderCosmeticsUI() {
                 if (isEquipped) {
                     actionsHtml = `
                         <button class="cosmetic-btn cosmetic-btn-unequip" onclick="cosmeticUnequip('${cat === 'name_effect' ? 'name_effect' : cat}')">Unequip</button>
-                        <button class="cosmetic-btn cosmetic-btn-convert" onclick="cosmeticDeactivate('${item.itemId}')" title="Convert back to game item">→ Game</button>
+                        <button class="cosmetic-btn cosmetic-btn-convert" onclick="cosmeticDeactivate('${item.itemId}')" title="Send back to game inventory">Return to Game</button>
                     `;
                 } else {
                     actionsHtml = `
                         <button class="cosmetic-btn cosmetic-btn-equip" onclick="cosmeticEquip('${item.itemId}')">Equip</button>
-                        <button class="cosmetic-btn cosmetic-btn-convert" onclick="cosmeticDeactivate('${item.itemId}')" title="Convert back to game item">→ Game</button>
+                        <button class="cosmetic-btn cosmetic-btn-convert" onclick="cosmeticDeactivate('${item.itemId}')" title="Send back to game inventory">Return to Game</button>
                     `;
                 }
             } else {
-                actionsHtml = `<span class="cosmetic-desc" style="font-style:italic">Obtain in HoboGame</span>`;
+                actionsHtml = `<span class="cosmetic-desc" style="font-style:italic;opacity:0.7">🎮 Unlock in HoboGame, then activate from your game inventory</span>`;
             }
 
             const badgeHtml = isEquipped

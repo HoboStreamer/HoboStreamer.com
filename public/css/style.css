@@ -3194,6 +3194,12 @@ body.theme-light .user-dropdown {
     flex: 1;
     min-width: 160px;
 }
+.bc-call-explainer {
+    margin: 10px 0 0;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--text-secondary, #a0a0a0);
+}
 .bc-call-controls-method {
     margin-top: 12px;
 }

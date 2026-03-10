@@ -1292,7 +1292,24 @@ function stopClipRecording() {
     _clipPrevSegment = null;
 }
 
+let liveClipRequestInFlight = false;
+
+function setClipButtonBusy(isBusy) {
+    const btn = document.getElementById('btn-clip');
+    if (!btn) return;
+    btn.disabled = !!isBusy;
+    btn.classList.toggle('is-busy', !!isBusy);
+    btn.innerHTML = isBusy
+        ? '<i class="fa-solid fa-spinner fa-spin"></i>'
+        : '<i class="fa-solid fa-scissors"></i>';
+}
+
 async function createLiveClip() {
+    if (liveClipRequestInFlight) {
+        toast('A clip is already being created — please wait a moment', 'info');
+        return;
+    }
+
     // Use current cycle if it has enough data, otherwise fall back to previous
     let header = clipHeaderChunk;
     let chunks = clipChunks;
@@ -1310,6 +1327,8 @@ async function createLiveClip() {
     }
 
     toast('Creating clip...', 'info');
+    liveClipRequestInFlight = true;
+    setClipButtonBusy(true);
 
     try {
         // Assemble: header chunk first, then rolling buffer chunks.
@@ -1353,6 +1372,9 @@ async function createLiveClip() {
         }
     } catch (err) {
         toast('Failed to create clip: ' + err.message, 'error');
+    } finally {
+        liveClipRequestInFlight = false;
+        setClipButtonBusy(false);
     }
 }
 

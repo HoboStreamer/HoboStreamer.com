@@ -43,6 +43,26 @@ CREATE TABLE IF NOT EXISTS channels (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- RobotStreamer integrations (private per-streamer restream/chat bridge config)
+CREATE TABLE IF NOT EXISTS robotstreamer_integrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE,
+    enabled INTEGER DEFAULT 0,
+    mirror_chat INTEGER DEFAULT 1,
+    token TEXT,
+    robot_id TEXT,
+    owner_id TEXT,
+    chat_url TEXT,
+    control_url TEXT,
+    rtc_sfu_url TEXT,
+    stream_name TEXT,
+    owner_name TEXT,
+    last_validated_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Streams (broadcast sessions on a channel)
 CREATE TABLE IF NOT EXISTS streams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

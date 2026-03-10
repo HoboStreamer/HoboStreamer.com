@@ -1653,6 +1653,19 @@ function equipItem(userId, itemId) {
     return { success: true, slot: item.category, item: { id: itemId, ...item } };
 }
 
+function unequipItem(userId, slotCategory) {
+    const SLOT_MAP = { weapons: 'equip_weapon', armor: 'equip_armor', hats: 'equip_hat', pickaxes: 'equip_pickaxe', axes: 'equip_axe', rods: 'equip_rod' };
+    const col = SLOT_MAP[slotCategory];
+    if (!col) return { error: 'Invalid slot.' };
+    const p = getPlayer(userId);
+    if (!p[col]) return { error: 'Nothing equipped there.' };
+    const removedId = p[col];
+    db.run(`UPDATE game_players SET ${col} = NULL WHERE user_id = ?`, [userId]);
+    recalcCombatStats(userId);
+    const item = ITEMS[removedId];
+    return { success: true, slot: slotCategory, item: item ? { id: removedId, ...item } : { id: removedId } };
+}
+
 function recalcCombatStats(userId) {
     const p = db.get('SELECT equip_weapon, equip_armor FROM game_players WHERE user_id = ?', [userId]);
     let atk = 10 + (WEAPON_STATS[p.equip_weapon]?.atk || 0);
@@ -2234,7 +2247,7 @@ module.exports = {
     // Ground Items
     dropGroundItem, pickupGroundItem, getGroundItemStates, cleanupGroundItems,
     // Equipment
-    equipItem, recalcCombatStats,
+    equipItem, unequipItem, recalcCombatStats,
     // Cosmetics
     equipCosmetic, unequipCosmetic,
     // Effects
