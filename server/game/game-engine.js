@@ -93,6 +93,151 @@ const ACHIEVEMENTS = {
 const pendingAchievements = new Map(); // userId → [{ achievementId, ...ACHIEVEMENTS[id] }]
 
 // ══════════════════════════════════════════════════════════════
+//  DAILY QUESTS
+// ══════════════════════════════════════════════════════════════
+
+const DAILY_QUEST_SLOTS = 3;
+const DAILY_QUESTS = [
+    { id: 'forage_run',      pool: 'easy',   stat: 'gather_count',     target: 12,  emoji: '🪓', name: 'Forage Run',      desc: 'Gather 12 resources anywhere in the wild.', reward: { coins: 90, item: 'bait_worm', qty: 5 } },
+    { id: 'pond_hopper',     pool: 'easy',   stat: 'fish_count',       target: 3,   emoji: '🎣', name: 'Pond Hopper',     desc: 'Catch 3 fish today.',                        reward: { coins: 85, item: 'potion_stamina', qty: 1 } },
+    { id: 'road_trip',       pool: 'easy',   stat: 'tiles_traveled',   target: 180, emoji: '🧭', name: 'Road Trip',       desc: 'Travel 180 tiles across the world.',         reward: { coins: 95, item: 'potion_health', qty: 1 } },
+    { id: 'bench_worker',    pool: 'medium', stat: 'craft_count',      target: 3,   emoji: '🔨', name: 'Bench Worker',    desc: 'Craft 3 items.',                            reward: { coins: 135, item: 'potion_stamina', qty: 2 } },
+    { id: 'camp_clearout',   pool: 'medium', stat: 'mob_kills',        target: 5,   emoji: '⚔️', name: 'Camp Clearout',   desc: 'Defeat 5 mobs.',                            reward: { coins: 145, item: 'potion_health', qty: 2 } },
+    { id: 'lockbox_luck',    pool: 'medium', stat: 'chests_opened',    target: 1,   emoji: '📦', name: 'Lockbox Luck',    desc: 'Open 1 treasure chest.',                    reward: { coins: 140, item: 'dungeon_key', qty: 1 } },
+    { id: 'builder_brigade', pool: 'hard',   stat: 'structures_built', target: 2,   emoji: '🏗️', name: 'Builder Brigade', desc: 'Build 2 structures.',                       reward: { coins: 190, item: 'bar_iron', qty: 2 } },
+    { id: 'long_haul',       pool: 'hard',   stat: 'tiles_traveled',   target: 450, emoji: '🗺️', name: 'Long Haul',       desc: 'Travel 450 tiles in one day.',              reward: { coins: 210, item: 'food_fish_stew', qty: 1 } },
+    { id: 'harvest_hustle',  pool: 'hard',   stat: 'gather_count',     target: 30,  emoji: '⛏️', name: 'Harvest Hustle',  desc: 'Gather 30 resources today.',                reward: { coins: 220, item: 'potion_stamina', qty: 3 } },
+];
+
+function getDailyQuestDate(date = new Date()) {
+    return date.toISOString().slice(0, 10);
+}
+
+function getDailyQuestResetAt() {
+    const next = new Date();
+    next.setUTCHours(24, 0, 0, 0);
+    return next.toISOString();
+}
+
+function hashString(input) {
+    let hash = 2166136261;
+    const str = String(input || '');
+    for (let i = 0; i < str.length; i++) {
+        hash ^= str.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+}
+
+function createSeededRng(seed) {
+    let state = seed >>> 0;
+    return () => {
+        state = (state + 0x6D2B79F5) | 0;
+        let t = Math.imul(state ^ (state >>> 15), 1 | state);
+        t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function getDailyQuestTemplates(userId, questDate = getDailyQuestDate()) {
+    const rng = createSeededRng(hashString(`${userId}:${questDate}:daily-quests`));
+    const pools = ['easy', 'medium', 'hard'];
+    const selected = [];
+    for (const pool of pools) {
+        const options = DAILY_QUESTS.filter(q => q.pool === pool);
+        if (!options.length) continue;
+        selected.push(options[Math.floor(rng() * options.length)]);
+    }
+    return selected;
+}
+
+function incrementDailyQuestStat(userId, statKey, amount = 1) {
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value <= 0 || !statKey) return;
+    const questDate = getDailyQuestDate();
+    db.run(`INSERT INTO game_daily_quest_progress (user_id, quest_date, stat_key, value, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, quest_date, stat_key)
+        DO UPDATE SET value = value + excluded.value, updated_at = CURRENT_TIMESTAMP`,
+    [userId, questDate, statKey, value]);
+}
+
+function getDailyQuestProgressMap(userId, questDate = getDailyQuestDate()) {
+    const rows = db.all('SELECT stat_key, value FROM game_daily_quest_progress WHERE user_id = ? AND quest_date = ?', [userId, questDate]);
+    return rows.reduce((acc, row) => {
+        acc[row.stat_key] = Number(row.value) || 0;
+        return acc;
+    }, {});
+}
+
+function getDailyQuestClaimedSet(userId, questDate = getDailyQuestDate()) {
+    const rows = db.all('SELECT quest_id FROM game_daily_quest_claims WHERE user_id = ? AND quest_date = ?', [userId, questDate]);
+    return new Set(rows.map(row => row.quest_id));
+}
+
+function getDailyQuestStreak(userId, questDate = getDailyQuestDate()) {
+    const rows = db.all(`SELECT quest_date, COUNT(*) as claimed
+        FROM game_daily_quest_claims
+        WHERE user_id = ?
+        GROUP BY quest_date
+        HAVING claimed >= ?
+        ORDER BY quest_date DESC`, [userId, DAILY_QUEST_SLOTS]);
+    const completedDays = new Set(rows.map(row => row.quest_date));
+    let streak = 0;
+    const cursor = new Date(`${questDate}T00:00:00.000Z`);
+    while (completedDays.has(cursor.toISOString().slice(0, 10))) {
+        streak++;
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+    return streak;
+}
+
+function getDailyQuests(userId, questDate = getDailyQuestDate()) {
+    const templates = getDailyQuestTemplates(userId, questDate);
+    const progressMap = getDailyQuestProgressMap(userId, questDate);
+    const claimedSet = getDailyQuestClaimedSet(userId, questDate);
+    const quests = templates.map(template => {
+        const progressRaw = progressMap[template.stat] || 0;
+        const progress = Math.min(template.target, Math.floor(progressRaw));
+        return {
+            ...template,
+            progress,
+            completed: progressRaw >= template.target,
+            claimed: claimedSet.has(template.id),
+        };
+    });
+    return {
+        date: questDate,
+        nextResetAt: getDailyQuestResetAt(),
+        streak: getDailyQuestStreak(userId, questDate),
+        claimed: quests.filter(q => q.claimed).length,
+        completed: quests.filter(q => q.completed).length,
+        total: quests.length,
+        quests,
+    };
+}
+
+function claimDailyQuest(userId, questId) {
+    const questDate = getDailyQuestDate();
+    const daily = getDailyQuests(userId, questDate);
+    const quest = daily.quests.find(entry => entry.id === questId);
+    if (!quest) return { error: 'Quest not found.' };
+    if (quest.claimed) return { error: 'Quest already claimed.' };
+    if (!quest.completed) return { error: 'Quest is not complete yet.' };
+
+    db.run('INSERT OR IGNORE INTO game_daily_quest_claims (user_id, quest_date, quest_id) VALUES (?, ?, ?)', [userId, questDate, questId]);
+    if (quest.reward?.coins) db.addHoboCoins(userId, quest.reward.coins);
+    if (quest.reward?.item) addItem(userId, quest.reward.item, quest.reward.qty || 1);
+
+    return {
+        success: true,
+        quest: { ...quest, claimed: true },
+        reward: quest.reward,
+        daily: getDailyQuests(userId, questDate),
+    };
+}
+
+// ══════════════════════════════════════════════════════════════
 //  WEATHER SYSTEM
 // ══════════════════════════════════════════════════════════════
 
@@ -191,6 +336,7 @@ function openChest(userId, chestId) {
     // Track for achievements
     const totalChests = (db.get('SELECT total_chests_opened FROM game_players WHERE user_id = ?', [userId])?.total_chests_opened || 0) + 1;
     db.run('UPDATE game_players SET total_chests_opened = total_chests_opened + 1 WHERE user_id = ?', [userId]);
+    incrementDailyQuestStat(userId, 'chests_opened', 1);
     checkAchievement(userId, 'chest_open_1', totalChests >= 1);
     checkAchievement(userId, 'chest_open_25', totalChests >= 25);
 
@@ -394,6 +540,30 @@ function initGameDb() {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     `);
+
+    db.getDb().exec(`
+        CREATE TABLE IF NOT EXISTS game_daily_quest_progress (
+            user_id INTEGER NOT NULL,
+            quest_date TEXT NOT NULL,
+            stat_key TEXT NOT NULL,
+            value REAL DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, quest_date, stat_key),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+    db.getDb().exec(`
+        CREATE TABLE IF NOT EXISTS game_daily_quest_claims (
+            user_id INTEGER NOT NULL,
+            quest_date TEXT NOT NULL,
+            quest_id TEXT NOT NULL,
+            claimed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, quest_date, quest_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+    try { db.getDb().exec('CREATE INDEX IF NOT EXISTS idx_daily_quest_progress_user_date ON game_daily_quest_progress(user_id, quest_date)'); } catch { }
+    try { db.getDb().exec('CREATE INDEX IF NOT EXISTS idx_daily_quest_claims_user_date ON game_daily_quest_claims(user_id, quest_date)'); } catch { }
 
     worldSeed = getWorldSeed();
     console.log(`[HoboGame] Schema initialized, world seed: ${worldSeed}`);
@@ -723,6 +893,7 @@ function gather(userId, tileX, tileY) {
             depleteNode(tileX, tileY, 12000);
             const xpResult = addXp(userId, 'woodcut', 2);
             db.run('UPDATE game_players SET resources_gathered = resources_gathered + 1 WHERE user_id = ?', [userId]);
+            incrementDailyQuestStat(userId, 'gather_count', 1);
             return {
                 success: true, action: 'punch',
                 loot: { id: 'raw_stick', ...(ITEMS['raw_stick'] || {}) },
@@ -795,6 +966,7 @@ function gather(userId, tileX, tileY) {
     depleteNode(tileX, tileY, cooldown);
 
     db.run('UPDATE game_players SET resources_gathered = resources_gathered + 1 WHERE user_id = ?', [userId]);
+    incrementDailyQuestStat(userId, 'gather_count', 1);
 
     // Achievement checks
     const totalGathered = (db.get('SELECT resources_gathered FROM game_players WHERE user_id = ?', [userId])?.resources_gathered || 0);
@@ -883,6 +1055,7 @@ function fish(userId, tileX, tileY, reelScore) {
     const baseXp = (item?.sellPrice || 5) + Math.floor(weight * 2);
     const xpResult = addXp(userId, 'fishing', baseXp);
     db.run('UPDATE game_players SET resources_gathered = resources_gathered + 1 WHERE user_id = ?', [userId]);
+    incrementDailyQuestStat(userId, 'fish_count', 1);
 
     // Record in fish collection (only real fish, not junk)
     let newSpecies = false;
@@ -1037,6 +1210,7 @@ function placeStructure(userId, structureType, tileX, tileY) {
     }
 
     db.run('UPDATE game_players SET structures_built = structures_built + 1 WHERE user_id = ?', [userId]);
+    incrementDailyQuestStat(userId, 'structures_built', 1);
     const xpResult = addXp(userId, 'crafting', 15);
 
     // Achievement check
@@ -1216,6 +1390,7 @@ function craft(userId, recipeId) {
     for (const [itemId, qty] of Object.entries(recipe.inputs)) removeItem(userId, itemId, qty);
     addItem(userId, recipe.output, recipe.qty);
     db.run('UPDATE game_players SET total_items_crafted = total_items_crafted + 1 WHERE user_id = ?', [userId]);
+    incrementDailyQuestStat(userId, 'craft_count', 1);
 
     // Achievement checks
     const totalCrafted = db.get('SELECT total_items_crafted FROM game_players WHERE user_id = ?', [userId])?.total_items_crafted || 0;
@@ -1857,6 +2032,7 @@ function attackMob(userId, mobId) {
         const xpResult = addXp(userId, 'combat', Math.round(mob.xp * xpMult));
         db.addHoboCoins(userId, mob.gold);
         db.run('UPDATE game_players SET total_monsters_killed = total_monsters_killed + 1 WHERE user_id = ?', [userId]);
+        incrementDailyQuestStat(userId, 'mob_kills', 1);
         let lootDrop = null;
         if (mob.loot?.length) {
             const lootId = rollLoot(mob.loot.map(l => ({ id: l.id, weight: l.w })));
@@ -1947,6 +2123,7 @@ function trackMovement(userId, x, y) {
         prev.accum -= chunks * 10;
         // Update total tiles traveled for achievement tracking
         db.run('UPDATE game_players SET total_tiles_traveled = total_tiles_traveled + ? WHERE user_id = ?', [chunks * 10, userId]);
+        incrementDailyQuestStat(userId, 'tiles_traveled', chunks * 10);
         const ttP = getPlayer(userId);
         if (ttP) {
             checkAchievement(userId, 'explorer_1k', ttP.total_tiles_traveled >= 1000);
@@ -2017,6 +2194,8 @@ module.exports = {
     getAgilityBonuses, getAgilityStats, regenStaminaTick, trackMovement,
     // Leaderboards
     getLeaderboard,
+    // Daily quests
+    getDailyQuests, claimDailyQuest,
     // Multiplayer
     updateLivePlayer, removeLivePlayer, getLivePlayers,
     // Achievements

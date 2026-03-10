@@ -23,6 +23,82 @@ const webrtcSFU = require('./webrtc-sfu');
 const recorder = require('../vod/recorder');
 
 const router = express.Router();
+const ALLOWED_PROTOCOLS = new Set(['jsmpeg', 'webrtc', 'rtmp']);
+const ALLOWED_VISIBILITY = new Set(['public', 'unlisted', 'private']);
+const ALLOWED_CALL_MODES = new Set(['mic', 'mic+cam', 'cam+mic']);
+const MAX_TITLE_LENGTH = 140;
+const MAX_DESCRIPTION_LENGTH = 2000;
+const MAX_CATEGORY_LENGTH = 60;
+const MAX_TAGS = 10;
+const MAX_TAG_LENGTH = 32;
+const MAX_PANELS_LENGTH = 20000;
+
+function hasOwn(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function cleanText(value, { maxLength, allowEmpty = false } = {}) {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string') return null;
+    const cleaned = value.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return allowEmpty ? '' : null;
+    return cleaned.slice(0, maxLength);
+}
+
+function cleanProtocol(value) {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string') return null;
+    const cleaned = value.trim().toLowerCase();
+    return ALLOWED_PROTOCOLS.has(cleaned) ? cleaned : null;
+}
+
+function cleanVisibility(value) {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string') return null;
+    const cleaned = value.trim().toLowerCase();
+    return ALLOWED_VISIBILITY.has(cleaned) ? cleaned : null;
+}
+
+function cleanCallMode(value) {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+    if (typeof value !== 'string') return null;
+    const cleaned = value.trim().toLowerCase();
+    return ALLOWED_CALL_MODES.has(cleaned) ? cleaned : null;
+}
+
+function cleanTags(tags) {
+    if (tags === undefined) return undefined;
+    if (!Array.isArray(tags)) return null;
+    const cleaned = [];
+    const seen = new Set();
+    for (const tag of tags) {
+        if (typeof tag !== 'string') continue;
+        const normalized = tag.replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!normalized || normalized.length > MAX_TAG_LENGTH || seen.has(normalized)) continue;
+        seen.add(normalized);
+        cleaned.push(normalized);
+        if (cleaned.length >= MAX_TAGS) break;
+    }
+    return cleaned;
+}
+
+function cleanPanels(panels) {
+    if (panels === undefined) return undefined;
+    if (typeof panels === 'string') {
+        return panels.length <= MAX_PANELS_LENGTH ? panels : null;
+    }
+    try {
+        const serialized = JSON.stringify(panels ?? []);
+        return serialized.length <= MAX_PANELS_LENGTH ? serialized : null;
+    } catch {
+        return null;
+    }
+}
+
+function cleanBooleanFlag(value) {
+    return value === true || value === 1 || value === '1' || value === 'true';
+}
 
 // ── Get Channel by Username ──────────────────────────────────
 router.get('/channel/:username', optionalAuth, (req, res) => {
@@ -49,6 +125,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                 const user = db.getUserById(liveStream.user_id);
                 const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
                 liveStream.endpoint = {
+                    hlsUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
                     flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
                 };
             }
@@ -91,20 +168,38 @@ router.get('/channel', requireAuth, (req, res) => {
 router.put('/channel', requireAuth, (req, res) => {
     try {
         db.ensureChannel(req.user.id);
-        const { title, description, category, protocol, is_nsfw, auto_record, panels, default_vod_visibility, default_clip_visibility } = req.body;
+        const { is_nsfw, auto_record } = req.body;
+        const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
+        const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
+        const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
+        const protocol = cleanProtocol(req.body.protocol);
+        const panels = cleanPanels(req.body.panels);
+        const defaultVodVisibility = cleanVisibility(req.body.default_vod_visibility);
+        const defaultClipVisibility = cleanVisibility(req.body.default_clip_visibility);
+
+        if ((hasOwn(req.body, 'title') && title === null)
+            || (hasOwn(req.body, 'description') && description === null)
+            || (hasOwn(req.body, 'category') && category === null)
+            || (hasOwn(req.body, 'protocol') && protocol === null)
+            || (hasOwn(req.body, 'panels') && panels === null)
+            || (hasOwn(req.body, 'default_vod_visibility') && defaultVodVisibility === null)
+            || (hasOwn(req.body, 'default_clip_visibility') && defaultClipVisibility === null)) {
+            return res.status(400).json({ error: 'Invalid channel settings' });
+        }
+
         const fields = {};
         if (title !== undefined) fields.title = title;
         if (description !== undefined) fields.description = description;
         if (category !== undefined) fields.category = category;
         if (protocol !== undefined) fields.protocol = protocol;
-        if (is_nsfw !== undefined) fields.is_nsfw = is_nsfw ? 1 : 0;
-        if (auto_record !== undefined) fields.auto_record = auto_record ? 1 : 0;
-        if (panels !== undefined) fields.panels = typeof panels === 'string' ? panels : JSON.stringify(panels);
-        if (default_vod_visibility !== undefined && ['public', 'unlisted', 'private'].includes(default_vod_visibility)) {
-            fields.default_vod_visibility = default_vod_visibility;
+        if (is_nsfw !== undefined) fields.is_nsfw = cleanBooleanFlag(is_nsfw) ? 1 : 0;
+        if (auto_record !== undefined) fields.auto_record = cleanBooleanFlag(auto_record) ? 1 : 0;
+        if (panels !== undefined) fields.panels = panels;
+        if (defaultVodVisibility !== undefined) {
+            fields.default_vod_visibility = defaultVodVisibility;
         }
-        if (default_clip_visibility !== undefined && ['public', 'unlisted', 'private'].includes(default_clip_visibility)) {
-            fields.default_clip_visibility = default_clip_visibility;
+        if (defaultClipVisibility !== undefined) {
+            fields.default_clip_visibility = defaultClipVisibility;
         }
 
         if (Object.keys(fields).length > 0) {
@@ -179,6 +274,7 @@ router.get('/:id', optionalAuth, (req, res) => {
                 const config = require('../config');
                 const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
                 stream.endpoint = {
+                    hlsUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
                     flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
                 };
             }
@@ -201,7 +297,21 @@ router.get('/:id', optionalAuth, (req, res) => {
 // ── Start a New Stream (Go Live) ─────────────────────────────
 router.post('/', requireAuth, (req, res) => {
     try {
-        const { title, description, category, protocol, is_nsfw, tags, call_mode } = req.body;
+        const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
+        const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
+        const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
+        const protocol = cleanProtocol(req.body.protocol);
+        const tags = cleanTags(req.body.tags);
+        const callMode = cleanCallMode(req.body.call_mode);
+
+        if ((hasOwn(req.body, 'title') && title === null)
+            || (hasOwn(req.body, 'description') && description === null)
+            || (hasOwn(req.body, 'category') && category === null)
+            || (hasOwn(req.body, 'protocol') && protocol === null)
+            || (hasOwn(req.body, 'tags') && tags === null)
+            || (hasOwn(req.body, 'call_mode') && callMode === null)) {
+            return res.status(400).json({ error: 'Invalid stream settings' });
+        }
 
         const channel = db.ensureChannel(req.user.id);
 
@@ -209,17 +319,17 @@ router.post('/', requireAuth, (req, res) => {
             db.run('UPDATE users SET role = ? WHERE id = ?', ['streamer', req.user.id]);
         }
 
-        const streamProtocol = protocol || channel.protocol || 'webrtc';
-        const streamCategory = category || channel.category || 'irl';
+        const streamProtocol = protocol || cleanProtocol(channel.protocol) || 'webrtc';
+        const streamCategory = category || cleanText(channel.category, { maxLength: MAX_CATEGORY_LENGTH }) || 'irl';
 
         const result = db.createStream({
             user_id: req.user.id,
             channel_id: channel.id,
-            title: title || channel.title || `${req.user.display_name}'s Stream`,
-            description: description || channel.description || '',
+            title: title || cleanText(channel.title, { maxLength: MAX_TITLE_LENGTH }) || `${req.user.display_name}'s Stream`,
+            description: description ?? cleanText(channel.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true }) ?? '',
             category: streamCategory,
             protocol: streamProtocol,
-            is_nsfw: is_nsfw !== undefined ? is_nsfw : channel.is_nsfw,
+            is_nsfw: hasOwn(req.body, 'is_nsfw') ? cleanBooleanFlag(req.body.is_nsfw) : !!channel.is_nsfw,
         });
 
         const streamId = result.lastInsertRowid;
@@ -227,13 +337,13 @@ router.post('/', requireAuth, (req, res) => {
         // Initialize heartbeat
         db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
 
-        if (tags) {
+        if (tags && tags.length > 0) {
             db.run('UPDATE streams SET tags = ? WHERE id = ?', [JSON.stringify(tags), streamId]);
         }
 
         // Set call mode if provided
-        if (call_mode && ['mic', 'mic+cam', 'cam+mic'].includes(call_mode)) {
-            db.run('UPDATE streams SET call_mode = ? WHERE id = ?', [call_mode, streamId]);
+        if (callMode) {
+            db.run('UPDATE streams SET call_mode = ? WHERE id = ?', [callMode, streamId]);
         }
 
         let endpoint = {};
@@ -265,14 +375,25 @@ router.put('/:id', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not your stream' });
         }
 
-        const { title, description, category, is_nsfw, tags } = req.body;
+        const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
+        const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
+        const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
+        const tags = cleanTags(req.body.tags);
+
+        if ((hasOwn(req.body, 'title') && title === null)
+            || (hasOwn(req.body, 'description') && description === null)
+            || (hasOwn(req.body, 'category') && category === null)
+            || (hasOwn(req.body, 'tags') && tags === null)) {
+            return res.status(400).json({ error: 'Invalid stream update' });
+        }
+
         const updates = [];
         const params = [];
 
         if (title !== undefined) { updates.push('title = ?'); params.push(title); }
         if (description !== undefined) { updates.push('description = ?'); params.push(description); }
         if (category !== undefined) { updates.push('category = ?'); params.push(category); }
-        if (is_nsfw !== undefined) { updates.push('is_nsfw = ?'); params.push(is_nsfw ? 1 : 0); }
+        if (hasOwn(req.body, 'is_nsfw')) { updates.push('is_nsfw = ?'); params.push(cleanBooleanFlag(req.body.is_nsfw) ? 1 : 0); }
         if (tags !== undefined) { updates.push('tags = ?'); params.push(JSON.stringify(tags)); }
 
         if (updates.length > 0) {
@@ -354,12 +475,13 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             const url = `http://${hostname}:${endpoint.videoPort}/${user.stream_key}/640/480/`;
             const urlHD = `http://${hostname}:${endpoint.videoPort}/${user.stream_key}/1280/720/`;
             const audioUrl = `http://${hostname}:${endpoint.audioPort}/${user.stream_key}/`;
-            endpoint.ffmpegCommand = `ffmpeg -f v4l2 -i /dev/video0 -f alsa -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 1 -muxdelay 0.001 ${url}`;
-            endpoint.ffmpegVideoOnly = `ffmpeg -f v4l2 -i /dev/video0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -bf 0 -muxdelay 0.001 ${url}`;
-            endpoint.ffmpegScreen = `ffmpeg -f x11grab -s 1920x1080 -r 24 -i :0.0 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 500k -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 1 -muxdelay 0.001 ${url}`;
-            endpoint.ffmpegOBS = `ffmpeg -f v4l2 -i /dev/video2 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 500k -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 1 -muxdelay 0.001 ${url}`;
-            endpoint.ffmpegAudioOnly = `ffmpeg -f alsa -i default -f mpegts -codec:a mp2 -b:a 128k -ar 44100 -ac 1 ${audioUrl}`;
-            endpoint.ffmpegHD = `ffmpeg -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 -f alsa -i default -f mpegts -codec:v mpeg1video -s 1280x720 -b:v 1200k -r 30 -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 2 -muxdelay 0.001 ${urlHD}`;
+            const lowLatencyFlags = '-fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 -muxdelay 0.001 -flush_packets 1';
+            endpoint.ffmpegCommand = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
+            endpoint.ffmpegVideoOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 ${url}`;
+            endpoint.ffmpegScreen = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f x11grab -s 1920x1080 -r 20 -i :0.0 -thread_queue_size 512 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 450k -maxrate 450k -bufsize 900k -g 10 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
+            endpoint.ffmpegOBS = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video2 -thread_queue_size 512 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 450k -maxrate 450k -bufsize 900k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
+            endpoint.ffmpegAudioOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f alsa -i default -f mpegts -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${audioUrl}`;
+            endpoint.ffmpegHD = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 1280x720 -b:v 1200k -maxrate 1200k -bufsize 2400k -r 30 -g 15 -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 2 ${urlHD}`;
         } else if (stream.protocol === 'webrtc') {
             endpoint = { roomId: `stream-${stream.id}`, signalingUrl: `/ws/broadcast?streamId=${stream.id}` };
         } else if (stream.protocol === 'rtmp') {

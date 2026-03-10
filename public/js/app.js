@@ -42,7 +42,10 @@ function toast(msg, type = 'info') {
     const icons = { success: 'fa-check-circle', error: 'fa-circle-exclamation', info: 'fa-info-circle' };
     const el = document.createElement('div');
     el.className = `toast ${type}`;
-    el.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${msg}`;
+    const icon = document.createElement('i');
+    icon.className = `fa-solid ${icons[type] || icons.info}`;
+    el.appendChild(icon);
+    el.appendChild(document.createTextNode(` ${msg == null ? '' : String(msg)}`));
     c.appendChild(el);
     setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 4000);
 }
@@ -214,6 +217,15 @@ function onAuthChange() {
         admin.style.display = 'none';
     }
     document.getElementById('user-dropdown').classList.remove('show');
+
+    try {
+        window.dispatchEvent(new CustomEvent('hobo-auth-changed', {
+            detail: {
+                user: currentUser || null,
+                token: localStorage.getItem('token') || null,
+            },
+        }));
+    } catch {}
 }
 
 async function loadBalance() {
@@ -238,12 +250,18 @@ function toggleUserMenu() {
     document.getElementById('user-dropdown').classList.toggle('show');
 }
 
+function closeMobileNav() {
+    document.querySelector('.nav-links')?.classList.remove('show');
+}
+
 function toggleMobileNav() {
     document.querySelector('.nav-links').classList.toggle('show');
 }
 
 /* ── SPA Router (URL-based) ───────────────────────────────────── */
 function navigate(urlPath, replace = false) {
+    closeMobileNav();
+
     // Clean up existing page state (destroy player, disconnect chat, etc.)
     if (typeof destroyPlayer === 'function') destroyPlayer();
     if (typeof destroyChat === 'function') destroyChat();
@@ -1943,5 +1961,9 @@ document.addEventListener('click', (e) => {
     // Close user dropdown
     if (!e.target.closest('.nav-avatar-wrap') && !e.target.closest('.user-dropdown')) {
         document.getElementById('user-dropdown')?.classList.remove('show');
+    }
+
+    if (!e.target.closest('.nav-links') && !e.target.closest('.nav-hamburger')) {
+        closeMobileNav();
     }
 });

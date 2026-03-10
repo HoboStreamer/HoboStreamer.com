@@ -181,7 +181,7 @@ function showEndpointInfo(stream) {
 
     let info = '';
     if (proto === 'jsmpeg') {
-        const vp = stream.endpoint?.video_port || 9710;
+            const vp = stream.endpoint?.videoPort || stream.endpoint?.video_port || 9710;
         info = `Protocol: JSMPEG\n\nFFmpeg command:\nffmpeg -i <source> \\\n  -f mpegts \\\n  -codec:v mpeg1video -b:v 800k -r 24 \\\n  -codec:a mp2 -ar 44100 -ac 1 -b:a 64k \\\n  http://${host}:${vp}/stream_key`;
     } else if (proto === 'webrtc') {
         info = `Protocol: WebRTC\n\nUse the browser "Start Broadcasting" feature.\nYour webcam/screen will be shared via Mediasoup SFU.`;

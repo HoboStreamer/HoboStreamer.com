@@ -43,6 +43,8 @@ const { verifyToken } = require('../auth/auth');
 const chatServer = require('../chat/chat-server');
 const cosmetics = require('../monetization/cosmetics');
 
+const WS_HEARTBEAT_MS = 30000;
+
 class CallServer {
     constructor() {
         this.wss = null;
@@ -53,18 +55,35 @@ class CallServer {
         /** @type {Map<number, Set<number>>} */
         this.callBans = new Map(); // streamId → Set<userId>
         this._nextPeerId = 1;
+        this._heartbeatInterval = null;
     }
 
     init(server) {
-        this.wss = new WebSocket.Server({ noServer: true });
+        this.wss = new WebSocket.Server({ noServer: true, maxPayload: 256 * 1024, perMessageDeflate: false });
+
+        if (this._heartbeatInterval) clearInterval(this._heartbeatInterval);
+        this._heartbeatInterval = setInterval(() => {
+            if (!this.wss) return;
+            this.wss.clients.forEach((ws) => {
+                if (ws.isAlive === false) {
+                    try { ws.terminate(); } catch {}
+                    return;
+                }
+                ws.isAlive = false;
+                try { ws.ping(); } catch {}
+            });
+        }, WS_HEARTBEAT_MS);
+
         this.wss.on('connection', (ws, req) => this._handleConnection(ws, req));
         console.log('[CallServer] Initialized');
     }
 
     handleUpgrade(req, socket, head) {
+        if (!req.url.startsWith('/ws/call')) return false;
         this.wss.handleUpgrade(req, socket, head, (ws) => {
             this.wss.emit('connection', ws, req);
         });
+        return true;
     }
 
     _generatePeerId() {
@@ -82,6 +101,7 @@ class CallServer {
         return {
             peerId,
             username: info.user ? info.user.username : null,
+            anonId: info.anonId || null,
             displayName: info.user ? (info.user.display_name || info.user.username) : info.anonId,
             userId: info.user ? info.user.id : null,
             avatarUrl: info.user ? info.user.avatar_url : null,
@@ -102,7 +122,13 @@ class CallServer {
         const url = new URL(req.url, 'http://localhost');
         const streamId = parseInt(url.searchParams.get('streamId'));
         const token = url.searchParams.get('token') || null;
-        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+        const ip = chatServer.normalizeIp(req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress);
+
+        ws.isAlive = true;
+        ws.on('pong', () => {
+            ws.isAlive = true;
+        });
+        try { ws._socket?.setNoDelay(true); } catch {}
 
         if (!streamId) {
             ws.send(JSON.stringify({ type: 'error', message: 'Missing streamId' }));
@@ -150,6 +176,7 @@ class CallServer {
             ws,
             user,
             anonId,
+            ip,
             peerId,
             muted: false,
             cameraOff: true,
@@ -291,6 +318,49 @@ class CallServer {
                         if (pid !== peerId && info.ws.readyState === WebSocket.OPEN) {
                             info.ws.send(speakingMsg);
                         }
+                    }
+                }
+                break;
+            }
+
+            case 'auth-update': {
+                const client = room.get(peerId);
+                if (!client) break;
+
+                let user = null;
+                const token = typeof msg.token === 'string' ? msg.token : null;
+                if (token) {
+                    try {
+                        const decoded = verifyToken(token);
+                        if (decoded?.id) user = db.getUserById(decoded.id);
+                    } catch {}
+                }
+
+                if (user && this.callBans.has(streamId) && this.callBans.get(streamId).has(user.id)) {
+                    if (client.ws.readyState === WebSocket.OPEN) {
+                        client.ws.send(JSON.stringify({ type: 'error', message: 'You are banned from this call' }));
+                        client.ws.close();
+                    }
+                    break;
+                }
+
+                client.user = user;
+                client.anonId = user ? null : chatServer.getAnonIdForConnection(client.ip, streamId);
+                client.isStreamer = !!(user && db.getStreamById(streamId)?.user_id === user.id);
+
+                const participantInfo = this._buildParticipantInfo(peerId, client);
+                if (client.ws.readyState === WebSocket.OPEN) {
+                    client.ws.send(JSON.stringify({
+                        type: 'self-updated',
+                        isStreamer: client.isStreamer,
+                        participant: participantInfo,
+                    }));
+                }
+
+                const updateMsg = JSON.stringify({ type: 'peer-updated', ...participantInfo });
+                for (const [pid, info] of room) {
+                    if (pid !== peerId && info.ws.readyState === WebSocket.OPEN) {
+                        info.ws.send(updateMsg);
                     }
                 }
                 break;
@@ -513,6 +583,10 @@ class CallServer {
         // End all calls
         for (const [streamId] of this.rooms) {
             this.endCall(streamId);
+        }
+        if (this._heartbeatInterval) {
+            clearInterval(this._heartbeatInterval);
+            this._heartbeatInterval = null;
         }
         if (this.wss) {
             this.wss.close();

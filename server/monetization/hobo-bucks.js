@@ -12,6 +12,32 @@
 const db = require('../db/database');
 const config = require('../config');
 
+function normalizeMoneyAmount(amount) {
+    const value = Number(amount);
+    if (!Number.isFinite(value)) throw new Error('Amount must be a valid number');
+    const rounded = Math.round(value * 100) / 100;
+    if (rounded <= 0) throw new Error('Amount must be positive');
+    if (rounded > 10000) throw new Error('Amount exceeds maximum allowed');
+    return rounded;
+}
+
+function normalizeText(value, maxLen = 300) {
+    if (value === undefined || value === null || value === '') return null;
+    const text = String(value).trim();
+    if (!text) return null;
+    if (text.length > maxLen) throw new Error(`Text must be ${maxLen} characters or fewer`);
+    return text;
+}
+
+function validatePaypalEmail(value) {
+    const email = String(value || '').trim();
+    if (!email) throw new Error('PayPal email required');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+        throw new Error('Invalid PayPal email');
+    }
+    return email;
+}
+
 class HoboBucks {
     /**
      * Purchase Hobo Bucks
@@ -20,6 +46,8 @@ class HoboBucks {
      * @param {string} paypalTxId - PayPal transaction ID
      */
     purchase(userId, amount, paypalTxId) {
+        amount = normalizeMoneyAmount(amount);
+        const txId = normalizeText(paypalTxId, 128);
         const tx = db.createTransaction({
             from_user_id: null,
             to_user_id: userId,
@@ -30,9 +58,9 @@ class HoboBucks {
         });
 
         // Update PayPal reference
-        if (paypalTxId) {
+        if (txId) {
             db.run('UPDATE transactions SET paypal_transaction_id = ? WHERE id = ?',
-                [paypalTxId, tx.lastInsertRowid]);
+            [txId, tx.lastInsertRowid]);
         }
 
         db.addHoboBucks(userId, amount);
@@ -48,7 +76,8 @@ class HoboBucks {
      * @param {string} message - Donation message
      */
     donate(fromUserId, toUserId, streamId, amount, message) {
-        if (amount <= 0) throw new Error('Amount must be positive');
+        amount = normalizeMoneyAmount(amount);
+        message = normalizeText(message, 300);
 
         // Deduct from donor
         if (!db.deductHoboBucks(fromUserId, amount)) {
@@ -99,6 +128,8 @@ class HoboBucks {
      * Request cashout (goes to escrow for admin review)
      */
     requestCashout(userId, amount, paypalEmail) {
+        amount = normalizeMoneyAmount(amount);
+        paypalEmail = validatePaypalEmail(paypalEmail);
         if (amount < config.hoboBucks.minCashout) {
             throw new Error(`Minimum cashout is $${config.hoboBucks.minCashout.toFixed(2)}`);
         }
@@ -193,9 +224,12 @@ class HoboBucks {
      * Create a donation goal
      */
     createGoal(userId, title, targetAmount) {
+        const safeTitle = normalizeText(title, 120);
+        const safeAmount = normalizeMoneyAmount(targetAmount);
+        if (!safeTitle) throw new Error('Title is required');
         return db.run(
             'INSERT INTO donation_goals (user_id, title, target_amount) VALUES (?, ?, ?)',
-            [userId, title, targetAmount]
+            [userId, safeTitle, safeAmount]
         );
     }
 }

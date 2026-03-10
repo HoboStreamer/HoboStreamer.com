@@ -27,10 +27,39 @@ const db = require('../db/database');
 const THUMB_DIR = path.resolve(config.thumbnails?.path || './data/thumbnails');
 const THUMB_WIDTH = 640;
 const THUMB_QUALITY = 6; // ffmpeg qscale:v  (2=best, 31=worst, 6 is good balance)
+const LIVE_THUMB_MIN_INTERVAL_MS = 120000;
+const CLIENT_THUMB_WRITE_MIN_INTERVAL_MS = 15000;
+const activeLiveThumbnailJobs = new Set();
 
 // Ensure thumbnail directory exists
 if (!fs.existsSync(THUMB_DIR)) {
     fs.mkdirSync(THUMB_DIR, { recursive: true });
+}
+
+function getStreamThumbnailState(streamId) {
+    const row = db.get('SELECT thumbnail_url FROM streams WHERE id = ?', [streamId]);
+    const thumbUrl = row?.thumbnail_url || null;
+    if (!thumbUrl) return { thumbUrl: null, filePath: null, exists: false, ageMs: Infinity };
+
+    const filePath = path.join(THUMB_DIR, path.basename(thumbUrl));
+    if (!fs.existsSync(filePath)) return { thumbUrl, filePath, exists: false, ageMs: Infinity };
+
+    const stat = fs.statSync(filePath);
+    return {
+        thumbUrl,
+        filePath,
+        exists: true,
+        ageMs: Date.now() - stat.mtimeMs,
+    };
+}
+
+function shouldRefreshLiveThumbnail(streamId, minAgeMs = LIVE_THUMB_MIN_INTERVAL_MS) {
+    const state = getStreamThumbnailState(streamId);
+    return !state.exists || state.ageMs >= minAgeMs;
+}
+
+function getCurrentLiveThumbnailUrl(streamId) {
+    return getStreamThumbnailState(streamId).thumbUrl || null;
 }
 
 // ── Generate Thumbnail from Video File (VODs & Clips) ────────
@@ -145,6 +174,11 @@ async function generateClipThumbnail(clipId, filePath) {
  */
 function saveLiveThumbnail(streamId, imageData) {
     try {
+        const current = getStreamThumbnailState(streamId);
+        if (current.exists && current.ageMs < CLIENT_THUMB_WRITE_MIN_INTERVAL_MS) {
+            return current.thumbUrl;
+        }
+
         let buffer;
         if (Buffer.isBuffer(imageData)) {
             buffer = imageData;
@@ -234,6 +268,17 @@ function serveThumbnail(req, res) {
  */
 function generateLiveStreamThumbnail(streamId, streamKey, opts = {}) {
     return new Promise((resolve) => {
+        const minAgeMs = Number.isFinite(opts.minAgeMs) ? opts.minAgeMs : LIVE_THUMB_MIN_INTERVAL_MS;
+        if (!shouldRefreshLiveThumbnail(streamId, minAgeMs)) {
+            return resolve(getCurrentLiveThumbnailUrl(streamId));
+        }
+
+        const jobKey = `rtmp:${streamId}`;
+        if (activeLiveThumbnailJobs.has(jobKey)) {
+            return resolve(getCurrentLiveThumbnailUrl(streamId));
+        }
+        activeLiveThumbnailJobs.add(jobKey);
+
         const rtmpHttpPort = opts.rtmpHttpPort || ((config.rtmp?.port || 1935) + 8000);
         const flvUrl = `http://127.0.0.1:${rtmpHttpPort}/live/${streamKey}.flv`;
 
@@ -267,6 +312,7 @@ function generateLiveStreamThumbnail(streamId, streamKey, opts = {}) {
         }, 8000);
 
         ff.on('close', (code) => {
+            activeLiveThumbnailJobs.delete(jobKey);
             clearTimeout(killTimer);
             if (code === 0 && fs.existsSync(outPath)) {
                 const thumbUrl = `/api/thumbnails/${filename}`;
@@ -281,6 +327,7 @@ function generateLiveStreamThumbnail(streamId, streamKey, opts = {}) {
             }
         });
         ff.on('error', () => {
+            activeLiveThumbnailJobs.delete(jobKey);
             clearTimeout(killTimer);
             resolve(null);
         });
@@ -299,6 +346,16 @@ function generateLiveStreamThumbnail(streamId, streamKey, opts = {}) {
  */
 function generateJSMPEGThumbnail(streamId, videoPort) {
     return new Promise((resolve) => {
+        if (!shouldRefreshLiveThumbnail(streamId, LIVE_THUMB_MIN_INTERVAL_MS)) {
+            return resolve(getCurrentLiveThumbnailUrl(streamId));
+        }
+
+        const jobKey = `jsmpeg:${streamId}`;
+        if (activeLiveThumbnailJobs.has(jobKey)) {
+            return resolve(getCurrentLiveThumbnailUrl(streamId));
+        }
+        activeLiveThumbnailJobs.add(jobKey);
+
         // Clean up old thumbnail for this stream
         const oldThumb = db.get('SELECT thumbnail_url FROM streams WHERE id = ?', [streamId]);
         if (oldThumb?.thumbnail_url) {
@@ -335,13 +392,17 @@ function generateJSMPEGThumbnail(streamId, videoPort) {
         });
 
         ws.on('error', () => {
+            activeLiveThumbnailJobs.delete(jobKey);
             clearTimeout(killTimer);
             resolve(null);
         });
 
         ws.on('close', () => {
             clearTimeout(killTimer);
-            if (!chunks.length) return resolve(null);
+            if (!chunks.length) {
+                activeLiveThumbnailJobs.delete(jobKey);
+                return resolve(null);
+            }
 
             // Pipe collected MPEG-TS data through ffmpeg stdin
             const ff = spawn('ffmpeg', [
@@ -362,6 +423,7 @@ function generateJSMPEGThumbnail(streamId, videoPort) {
             const ffKill = setTimeout(() => { try { ff.kill('SIGKILL'); } catch {} }, 5000);
 
             ff.on('close', (code) => {
+                activeLiveThumbnailJobs.delete(jobKey);
                 clearTimeout(ffKill);
                 if (code === 0 && fs.existsSync(outPath)) {
                     const thumbUrl = `/api/thumbnails/${filename}`;
@@ -372,7 +434,11 @@ function generateJSMPEGThumbnail(streamId, videoPort) {
                     resolve(null);
                 }
             });
-            ff.on('error', () => { clearTimeout(ffKill); resolve(null); });
+            ff.on('error', () => {
+                activeLiveThumbnailJobs.delete(jobKey);
+                clearTimeout(ffKill);
+                resolve(null);
+            });
         });
     });
 }
@@ -416,6 +482,8 @@ module.exports = {
     generateJSMPEGThumbnail,
     saveLiveThumbnail,
     serveThumbnail,
+    shouldRefreshLiveThumbnail,
+    getCurrentLiveThumbnailUrl,
     cleanupOldThumbnails,
     THUMB_DIR,
 };
