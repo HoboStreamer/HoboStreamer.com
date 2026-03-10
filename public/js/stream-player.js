@@ -359,10 +359,10 @@ async function initWebRTC(stream) {
 
         // Connect to the broadcast signaling relay as a viewer
         const host = window.location.hostname;
-        const port = window.location.port || 3000;
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const portSuffix = window.location.port ? `:${window.location.port}` : '';
         const token = localStorage.getItem('token') || '';
-        const wsUrl = `${protocol}://${host}:${port}/ws/broadcast?streamId=${streamRef.id}&role=viewer&token=${token}`;
+        const wsUrl = `${protocol}://${host}${portSuffix}/ws/broadcast?streamId=${streamRef.id}&role=viewer&token=${token}`;
 
         const ws = new WebSocket(wsUrl);
         player = { ws, video, pc: null, myPeerId: null, watchSent: false, _wsUrl: wsUrl };

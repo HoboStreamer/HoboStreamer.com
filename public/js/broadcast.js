@@ -1295,10 +1295,10 @@ function connectSignaling(streamId) {
     }
 
     const host = window.location.hostname;
-    const port = window.location.port || 3000;
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const portSuffix = window.location.port ? `:${window.location.port}` : '';
     const token = localStorage.getItem('token');
-    const wsUrl = `${protocol}://${host}:${port}/ws/broadcast?token=${token}&streamId=${ss.streamData.id}&role=broadcaster`;
+    const wsUrl = `${protocol}://${host}${portSuffix}/ws/broadcast?token=${token}&streamId=${ss.streamData.id}&role=broadcaster`;
     const ws = new WebSocket(wsUrl);
     ss.signalingWs = ws;
     ss.signalingIntentionalClose = false;
