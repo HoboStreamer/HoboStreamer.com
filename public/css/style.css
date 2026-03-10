@@ -1645,6 +1645,50 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 }
 .admin-table tr:hover { background: var(--bg-hover); }
 
+.admin-sensitive-field {
+    display: grid;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.admin-sensitive-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.admin-secret-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+}
+
+.admin-secret-value {
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    background: var(--bg-input);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.admin-secret-value.is-masked {
+    letter-spacing: 0.08em;
+    user-select: none;
+}
+
+.admin-sensitive-textarea {
+    transition: filter 0.15s ease;
+}
+
+.admin-sensitive-textarea.is-masked {
+    filter: blur(6px);
+    user-select: none;
+    pointer-events: none;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    PROFILE
    ═══════════════════════════════════════════════════════════════ */

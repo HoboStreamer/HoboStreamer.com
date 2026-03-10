@@ -4,6 +4,7 @@
 
 let chatWs = null;
 let chatStreamId = null;
+let chatRenderTargetId = null;
 
 // ── Chat settings (persisted to localStorage) ────────────────
 const CHAT_SETTINGS_KEY = 'hobo_chat_settings';
@@ -128,17 +129,43 @@ function getChatEl() {
     };
 }
 
+function getChatRenderTargetId() {
+    return getChatEl().messages?.id || null;
+}
+
+async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
+    const { messages } = getChatEl();
+    if (!messages) return;
+    if (clear) messages.innerHTML = '';
+
+    if (streamId) await loadChatHistory(streamId);
+    else await loadGlobalChatHistory();
+
+    applyChatSettings();
+}
+
 /**
  * Initialize chat for a stream.
  * Idempotent — if already connected to the same stream, skip reconnection.
  */
 function initChat(streamId) {
+    const nextTargetId = getChatRenderTargetId();
+
     // Already connected to this stream — nothing to do
     if (chatWs && chatWs.readyState === WebSocket.OPEN && chatStreamId === streamId) {
+        const { messages } = getChatEl();
+        const targetChanged = nextTargetId && nextTargetId !== chatRenderTargetId;
+        const needsHydrate = !messages || !messages.children.length;
+        chatRenderTargetId = nextTargetId;
+        if (targetChanged || needsHydrate) {
+            hydrateActiveChatHistory(streamId, { clear: true }).catch(() => {});
+        }
+        applyChatSettings();
         return;
     }
     destroyChat();
     chatStreamId = streamId;
+    chatRenderTargetId = nextTargetId;
 
     const host = window.location.hostname;
     const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
@@ -182,7 +209,7 @@ function initChat(streamId) {
     };
 
     // Load history
-    loadChatHistory(streamId);
+    hydrateActiveChatHistory(streamId).catch(() => {});
 
     // Apply persisted settings to DOM
     applyChatSettings();
@@ -194,6 +221,7 @@ function destroyChat() {
         chatWs = null;
     }
     chatStreamId = null;
+    chatRenderTargetId = null;
     // Clear all chat containers
     for (const id of ['chat-messages', 'bc-chat-messages', 'global-chat-messages', 'offline-chat-messages']) {
         const el = document.getElementById(id);

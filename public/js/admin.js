@@ -3,6 +3,103 @@
    ═══════════════════════════════════════════════════════════════ */
 
 let currentAdminTab = 'users';
+const adminSecretStore = Object.create(null);
+
+function isSensitiveAdminSettingKey(key = '') {
+    return /(password|secret|token|private|credential|api[_-]?key|service[_-]?account|bearer|webhook)/i.test(String(key || ''));
+}
+
+function maskAdminSecret(value) {
+    const str = String(value ?? '');
+    if (!str) return '••••••••';
+    if (str.length <= 8) return '•'.repeat(str.length);
+    return `${str.slice(0, 4)}${'•'.repeat(Math.max(4, str.length - 8))}${str.slice(-4)}`;
+}
+
+function adminCopyText(text, successMessage = 'Copied to clipboard') {
+    const value = String(text ?? '');
+    if (!value) {
+        toast('Nothing to copy', 'error');
+        return Promise.resolve(false);
+    }
+
+    if (navigator.clipboard?.writeText) {
+        return navigator.clipboard.writeText(value)
+            .then(() => {
+                toast(successMessage, 'success');
+                return true;
+            })
+            .catch(() => adminCopyTextFallback(value, successMessage));
+    }
+
+    return adminCopyTextFallback(value, successMessage);
+}
+
+function adminCopyTextFallback(text, successMessage) {
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        toast(successMessage, 'success');
+        return Promise.resolve(true);
+    } catch {
+        toast('Copy failed', 'error');
+        return Promise.resolve(false);
+    }
+}
+
+function copyAdminSecret(secretId) {
+    return adminCopyText(adminSecretStore[secretId], 'Secret copied to clipboard');
+}
+
+function toggleAdminSecret(secretId, button) {
+    const el = document.getElementById(secretId);
+    if (!el) return;
+
+    const visible = el.dataset.visible === 'true';
+    const nextVisible = !visible;
+    el.dataset.visible = nextVisible ? 'true' : 'false';
+    el.textContent = nextVisible ? String(adminSecretStore[secretId] ?? '') : maskAdminSecret(adminSecretStore[secretId]);
+    el.classList.toggle('is-masked', !nextVisible);
+
+    if (button) {
+        button.innerHTML = `<i class="fa-solid ${nextVisible ? 'fa-eye-slash' : 'fa-eye'}"></i>`;
+        button.title = nextVisible ? 'Hide value' : 'Reveal value';
+        button.setAttribute('aria-label', button.title);
+    }
+}
+
+function toggleAdminSensitiveInput(inputId, button) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    const isTextarea = input.tagName === 'TEXTAREA';
+    const masked = isTextarea ? input.dataset.masked !== 'false' : input.type === 'password';
+    const nextMasked = !masked;
+
+    if (isTextarea) {
+        input.dataset.masked = nextMasked ? 'true' : 'false';
+        input.readOnly = nextMasked;
+        input.classList.toggle('is-masked', nextMasked);
+        if (!nextMasked) input.focus();
+    } else {
+        input.type = nextMasked ? 'password' : 'text';
+    }
+
+    if (button) {
+        button.innerHTML = `<i class="fa-solid ${nextMasked ? 'fa-eye' : 'fa-eye-slash'}"></i> ${nextMasked ? 'Reveal' : 'Hide'}`;
+        button.setAttribute('aria-pressed', String(!nextMasked));
+    }
+}
+
+function copyAdminSensitiveInput(inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return Promise.resolve(false);
+    return adminCopyText(input.value, 'Value copied to clipboard');
+}
 
 /**
  * Load admin panel.
@@ -303,9 +400,25 @@ async function loadAdminSettings() {
                                 <strong>${esc(s.key)}</strong>
                                 <br><small class="muted">${esc(s.description || '')}</small>
                             </label>
-                            <input type="text" id="${id}" data-key="${esc(s.key)}" data-type="string"
-                                value="${esc(s.value)}"
-                                style="margin-top:4px;width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                            ${isSensitiveAdminSettingKey(s.key) ? `
+                                <div class="admin-sensitive-field">
+                                    <input type="password" id="${id}" data-key="${esc(s.key)}" data-type="string"
+                                        value="${esc(s.value)}" autocomplete="off" spellcheck="false"
+                                        style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                                    <div class="admin-sensitive-actions">
+                                        <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('${id}', this)">
+                                            <i class="fa-solid fa-eye"></i> Reveal
+                                        </button>
+                                        <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('${id}')">
+                                            <i class="fa-solid fa-copy"></i> Copy
+                                        </button>
+                                    </div>
+                                </div>
+                            ` : `
+                                <input type="text" id="${id}" data-key="${esc(s.key)}" data-type="string"
+                                    value="${esc(s.value)}"
+                                    style="margin-top:4px;width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                            `}
                         </div>`;
                 }).join('')}
                 <button type="submit" class="btn btn-primary" style="justify-self:start;margin-top:8px">
@@ -340,6 +453,9 @@ async function loadAdminVerificationKeys() {
     try {
         const data = await api('/admin/verification-keys');
         const keys = data.keys || [];
+        keys.forEach(k => {
+            adminSecretStore[`verification-key-${k.id}`] = k.key || '';
+        });
         c.innerHTML = `
             <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
                 <input type="text" id="vkey-username-input" placeholder="RS-Companion username to reserve..."
@@ -357,14 +473,21 @@ async function loadAdminVerificationKeys() {
                     </tr></thead>
                     <tbody>${keys.map(k => `
                         <tr>
-                            <td><code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:12px;user-select:all">${esc(k.key)}</code></td>
+                            <td>
+                                <div class="admin-secret-inline">
+                                    <code id="verification-key-${k.id}" class="admin-secret-value is-masked" data-visible="false">${esc(maskAdminSecret(k.key))}</code>
+                                </div>
+                            </td>
                             <td><strong>${esc(k.target_username)}</strong></td>
                             <td><span class="badge badge-${k.status === 'active' ? 'success' : k.status === 'used' ? 'info' : 'danger'}">${esc(k.status)}</span></td>
                             <td>${esc(k.note || '-')}</td>
                             <td>${new Date(k.created_at).toLocaleDateString()}</td>
                             <td>
                                 ${k.status === 'active' ? `
-                                    <button class="btn btn-small btn-outline" onclick="copyVerificationKey('${esc(k.key)}')" title="Copy key">
+                                    <button class="btn btn-small btn-outline" onclick="toggleAdminSecret('verification-key-${k.id}', this)" title="Reveal value" aria-label="Reveal value">
+                                        <i class="fa-solid fa-eye"></i>
+                                    </button>
+                                    <button class="btn btn-small btn-outline" onclick="copyVerificationKey('verification-key-${k.id}')" title="Copy key">
                                         <i class="fa-solid fa-copy"></i>
                                     </button>
                                     <button class="btn btn-small btn-danger" onclick="revokeVerificationKey('${k.id}')" title="Revoke">
@@ -391,27 +514,16 @@ async function generateVerificationKey() {
             body: { target_username, note }
         });
         const key = data.key;
-        toast(`Key generated: ${key.key}`, 'success');
+        if (key?.id && key?.key) adminSecretStore[`verification-key-${key.id}`] = key.key;
+        toast('Verification key generated', 'success');
         usernameInput.value = '';
         noteInput.value = '';
         loadAdminVerificationKeys();
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function copyVerificationKey(key) {
-    try {
-        await navigator.clipboard.writeText(key);
-        toast('Key copied to clipboard', 'success');
-    } catch {
-        // Fallback
-        const ta = document.createElement('textarea');
-        ta.value = key;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        toast('Key copied', 'success');
-    }
+async function copyVerificationKey(secretId) {
+    await copyAdminSecret(secretId);
 }
 
 async function revokeVerificationKey(id) {
@@ -677,13 +789,34 @@ async function loadAdminTTS() {
                     <div style="display:grid;gap:10px">
                         <label>
                             <strong>API Key</strong> <small class="muted">(simple auth — or use service account below)</small>
-                            <input type="password" id="tts-admin-google-api-key" value="${esc(s.googleApiKey || '')}" placeholder="AIza..."
-                                style="width:100%;margin-top:4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                            <div class="admin-sensitive-field">
+                                <input type="password" id="tts-admin-google-api-key" value="${esc(s.googleApiKey || '')}" placeholder="AIza..." autocomplete="off" spellcheck="false"
+                                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                                <div class="admin-sensitive-actions">
+                                    <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('tts-admin-google-api-key', this)">
+                                        <i class="fa-solid fa-eye"></i> Reveal
+                                    </button>
+                                    <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('tts-admin-google-api-key')">
+                                        <i class="fa-solid fa-copy"></i> Copy
+                                    </button>
+                                </div>
+                            </div>
                         </label>
                         <label>
                             <strong>Service Account JSON</strong> <small class="muted">(paste JSON or file path)</small>
-                            <textarea id="tts-admin-google-sa" rows="3" placeholder='{"type":"service_account","project_id":"...","private_key":"..."}'
-                                style="width:100%;margin-top:4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-family:monospace;font-size:12px">${esc(s.googleServiceAccount || '')}</textarea>
+                            <div class="admin-sensitive-field">
+                                <textarea id="tts-admin-google-sa" rows="3" placeholder='{"type":"service_account","project_id":"...","private_key":"..."}' data-masked="true" readonly
+                                    class="admin-sensitive-textarea is-masked"
+                                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-family:monospace;font-size:12px">${esc(s.googleServiceAccount || '')}</textarea>
+                                <div class="admin-sensitive-actions">
+                                    <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('tts-admin-google-sa', this)">
+                                        <i class="fa-solid fa-eye"></i> Reveal
+                                    </button>
+                                    <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('tts-admin-google-sa')">
+                                        <i class="fa-solid fa-copy"></i> Copy
+                                    </button>
+                                </div>
+                            </div>
                         </label>
                     </div>
                 </div>
@@ -693,13 +826,33 @@ async function loadAdminTTS() {
                     <div style="display:grid;gap:10px">
                         <label>
                             <strong>AWS Access Key ID</strong>
-                            <input type="password" id="tts-admin-aws-key" value="${esc(s.awsAccessKeyId || '')}" placeholder="AKIA..."
-                                style="width:100%;margin-top:4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                            <div class="admin-sensitive-field">
+                                <input type="password" id="tts-admin-aws-key" value="${esc(s.awsAccessKeyId || '')}" placeholder="AKIA..." autocomplete="off" spellcheck="false"
+                                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                                <div class="admin-sensitive-actions">
+                                    <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('tts-admin-aws-key', this)">
+                                        <i class="fa-solid fa-eye"></i> Reveal
+                                    </button>
+                                    <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('tts-admin-aws-key')">
+                                        <i class="fa-solid fa-copy"></i> Copy
+                                    </button>
+                                </div>
+                            </div>
                         </label>
                         <label>
                             <strong>AWS Secret Access Key</strong>
-                            <input type="password" id="tts-admin-aws-secret" value="${esc(s.awsSecretAccessKey || '')}" placeholder="wJalr..."
-                                style="width:100%;margin-top:4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                            <div class="admin-sensitive-field">
+                                <input type="password" id="tts-admin-aws-secret" value="${esc(s.awsSecretAccessKey || '')}" placeholder="wJalr..." autocomplete="off" spellcheck="false"
+                                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                                <div class="admin-sensitive-actions">
+                                    <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('tts-admin-aws-secret', this)">
+                                        <i class="fa-solid fa-eye"></i> Reveal
+                                    </button>
+                                    <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('tts-admin-aws-secret')">
+                                        <i class="fa-solid fa-copy"></i> Copy
+                                    </button>
+                                </div>
+                            </div>
                         </label>
                         <label style="display:flex;align-items:center;gap:12px">
                             <strong style="min-width:180px">AWS Region</strong>
