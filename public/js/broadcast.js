@@ -1958,10 +1958,13 @@ function scheduleRobotStreamerReconnect(streamId) {
     const delay = session?.reconnectDelay || RS_RECONNECT_BASE_DELAY;
     const nextDelay = Math.min(delay * 1.5, RS_RECONNECT_MAX_DELAY);
 
-    // Clear any existing timer
-    if (session?.reconnectTimer) clearTimeout(session.reconnectTimer);
+    // Dedup: clear any previously scheduled reconnect for this stream
+    // Check both storage locations to prevent dual-reconnect race
+    if (ss._rsReconnectTimer) { clearTimeout(ss._rsReconnectTimer); ss._rsReconnectTimer = null; }
+    if (session?.reconnectTimer) { clearTimeout(session.reconnectTimer); session.reconnectTimer = null; }
 
     const timer = setTimeout(async () => {
+        ss._rsReconnectTimer = null;
         // Only reconnect if local stream is still live and RS is still enabled
         const currSs = getStreamState(streamId);
         if (!currSs?.localStream || !canUseRobotStreamerRestream()) return;
@@ -1978,13 +1981,11 @@ function scheduleRobotStreamerReconnect(streamId) {
         }
     }, delay);
 
-    // Store timer so we can cancel on intentional stop
+    // Store timer on BOTH stream state and session for reliable dedup
+    ss._rsReconnectTimer = timer;
     if (session) {
         session.reconnectTimer = timer;
         session.reconnectDelay = nextDelay;
-    } else if (ss) {
-        // No session yet (initial connect failed), store on stream state temporarily
-        ss._rsReconnectTimer = timer;
     }
 }
 
