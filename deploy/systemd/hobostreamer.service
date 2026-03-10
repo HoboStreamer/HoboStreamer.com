@@ -1,0 +1,20 @@
+[Unit]
+Description=HoboStreamer
+After=network.target
+
+[Service]
+Type=simple
+User=deck
+WorkingDirectory=/opt/hobostreamer
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/hobostreamer/server/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/hobostreamer/data
+
+[Install]
+WantedBy=multi-user.target
