@@ -283,6 +283,21 @@ node -v
 npm -v
 ```
 
+Verify the binary is visible at `/usr/bin/node`. On some Ubuntu versions the
+NodeSource package installs to `/usr/local/bin` or doesn't create a symlink:
+
+```bash
+which node            # should print /usr/bin/node
+ls -l /usr/bin/node   # should exist
+```
+
+If `which node` returns a different path (e.g. `/usr/local/bin/node`) or is
+missing, create a symlink so `systemd` and `npm` scripts can find it:
+
+```bash
+sudo ln -sf "$(which node)" /usr/bin/node
+```
+
 ---
 
 ## 9. Clone HoboStreamer
@@ -794,6 +809,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/hobostreamer
 Environment=NODE_ENV=production
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5

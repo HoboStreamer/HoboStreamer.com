@@ -367,6 +367,14 @@ X11Forwarding no</code></pre>
 sudo apt install -y nodejs
 node -v
 npm -v</code></pre>
+
+<h3>Verify the node binary is in /usr/bin</h3>
+<p>On some Ubuntu versions the NodeSource package installs to <code>/usr/local/bin</code> or doesn't create a <code>/usr/bin/node</code> symlink. The <code>systemd</code> service and <code>npm</code> scripts need <code>node</code> on the default PATH.</p>
+<pre><code class="language-bash">which node            # should print /usr/bin/node
+ls -l /usr/bin/node   # should exist</code></pre>
+<p>If <code>which node</code> returns a different path or nothing, create a symlink:</p>
+<pre><code class="language-bash">sudo ln -sf "$(which node)" /usr/bin/node</code></pre>
+<div class="card warn"><i class="fa-solid fa-triangle-exclamation"></i> Without this symlink you'll see <code>/usr/bin/env: 'node': No such file or directory</code> when <code>systemd</code> starts the service.</div>
 </section>
 
 <!-- S9: Clone -->
@@ -712,6 +720,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/hobostreamer
 Environment=NODE_ENV=production
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5

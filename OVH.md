@@ -626,3 +626,22 @@ If you want the cheapest plan that is still worth using while you burn the free 
 - **B3-64** = best safer 200-viewer / WebRTC-heavy plan
 - **B2 / C2** = mostly not worth it here
 - **C3** = only worth it if you are unusually CPU-biased and accept weaker overall value for this app
+
+---
+
+## 10. OVH Ubuntu known gotcha — `node` not found
+
+OVH Public Cloud instances running Ubuntu (especially 25.04) may not have `/usr/bin/node` after installing the NodeSource package. The `systemd` service will fail with:
+
+```
+/usr/bin/env: 'node': No such file or directory
+```
+
+After installing Node.js, verify and fix:
+
+```bash
+which node            # should print /usr/bin/node
+sudo ln -sf "$(which node)" /usr/bin/node
+```
+
+See [SETUP.md](SETUP.md) §8 and §20 for the full fix.
