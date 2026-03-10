@@ -820,12 +820,34 @@ async function populateCreateFormDevices() {
 
 /**
  * User clicked "Allow Camera & Mic" — request permissions, then populate lists.
+ * On mobile Android, requesting audio+video together can silently fail,
+ * so we try combined first, then individually.
  */
 async function requestMediaPermissions() {
     const permReq = document.getElementById('bc-perm-request');
     const devSelects = document.getElementById('bc-device-selects');
+    const btn = permReq?.querySelector('button');
+    const btnOrigText = btn?.innerHTML;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Requesting access...';
+    }
     try {
-        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        let tempStream;
+        try {
+            // Try both at once first
+            tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        } catch {
+            // If combined fails, try separately (common on Android)
+            console.warn('[Broadcast] Combined getUserMedia failed, trying separately');
+            let vidStream, audStream;
+            try { vidStream = await navigator.mediaDevices.getUserMedia({ video: true }); } catch (ve) { console.warn('[Broadcast] Video-only getUserMedia failed:', ve.message); }
+            try { audStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (ae) { console.warn('[Broadcast] Audio-only getUserMedia failed:', ae.message); }
+            if (!vidStream && !audStream) throw new Error('No camera or microphone available');
+            tempStream = new MediaStream();
+            if (vidStream) vidStream.getTracks().forEach(t => { tempStream.addTrack(t); });
+            if (audStream) audStream.getTracks().forEach(t => { tempStream.addTrack(t); });
+        }
         tempStream.getTracks().forEach(t => t.stop());
         const devices = await navigator.mediaDevices.enumerateDevices();
         _populateCreateDeviceDropdowns(devices);
@@ -833,11 +855,20 @@ async function requestMediaPermissions() {
         if (devSelects) devSelects.style.display = '';
         toast('Camera & microphone access granted', 'success');
     } catch (err) {
-        console.warn('Permission request failed:', err.message);
+        console.warn('Permission request failed:', err.message, err.name);
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
             toast('Camera/mic permission denied — check your browser settings', 'error');
+        } else if (err.name === 'NotFoundError') {
+            toast('No camera or microphone found on this device', 'error');
+        } else if (err.name === 'NotReadableError') {
+            toast('Camera/mic in use by another app — close other camera apps and try again', 'error');
         } else {
             toast('Could not access camera/mic: ' + err.message, 'error');
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = btnOrigText;
         }
     }
 }
@@ -1284,11 +1315,29 @@ async function startMediaCapture(streamId, opts = {}) {
         try {
             ss.localStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: audioConstraints });
         } catch (firstErr) {
-            // Fallback: drop exact deviceId and max constraints (fixes mobile "Could not start video source")
-            console.warn('[Broadcast] getUserMedia failed, retrying with relaxed constraints:', firstErr.message);
-            const fallbackVideo = { facingMode: 'user', width: { ideal: res.w }, height: { ideal: res.h }, frameRate: { ideal: getBroadcastFrameRate() } };
-            const fallbackAudio = buildAudioConstraints(s, 'default');
-            ss.localStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: fallbackAudio });
+            // Fallback 1: drop exact deviceId, use facingMode (common mobile fix)
+            console.warn('[Broadcast] getUserMedia failed, trying facingMode fallback:', firstErr.message);
+            try {
+                const fallbackVideo = { facingMode: 'user', width: { ideal: res.w }, height: { ideal: res.h } };
+                const fallbackAudio = buildAudioConstraints(s, 'default');
+                ss.localStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: fallbackAudio });
+            } catch (secondErr) {
+                // Fallback 2: bare minimum — just {video: true, audio: true}
+                console.warn('[Broadcast] facingMode fallback failed, trying bare minimum:', secondErr.message);
+                try {
+                    ss.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                } catch (thirdErr) {
+                    // Fallback 3: video and audio separately
+                    console.warn('[Broadcast] Combined bare failed, trying separate:', thirdErr.message);
+                    let vStream, aStream;
+                    try { vStream = await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
+                    try { aStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {}
+                    if (!vStream && !aStream) throw new Error('Could not access any camera or microphone');
+                    ss.localStream = new MediaStream();
+                    if (vStream) vStream.getTracks().forEach(t => ss.localStream.addTrack(t));
+                    if (aStream) aStream.getTracks().forEach(t => ss.localStream.addTrack(t));
+                }
+            }
         }
     }
 
