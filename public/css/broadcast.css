@@ -189,6 +189,12 @@
     margin-right: 4px;
 }
 
+.bc-perm-request button {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+}
+
 /* ── Broadcaster Controls Panel ──────────────────────────────── */
 .bc-controls {
     padding: 16px;

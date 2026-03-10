@@ -1102,9 +1102,10 @@
                         <div class="form-group" id="bc-create-devices" style="display:block">
                             <div id="bc-perm-request" class="bc-perm-request">
                                 <p class="bc-perm-hint"><i class="fa-solid fa-shield-halved"></i> Your browser needs camera &amp; microphone access to list available devices and go live.</p>
-                                <button class="btn btn-outline" type="button" onclick="requestMediaPermissions()">
+                                <button id="bc-perm-btn" class="btn btn-outline" type="button" style="touch-action:manipulation">
                                     <i class="fa-solid fa-video"></i> Allow Camera &amp; Mic
                                 </button>
+                                <p id="bc-perm-debug" style="display:none;font-size:0.75rem;color:var(--text-secondary);margin-top:8px"></p>
                             </div>
                             <div id="bc-device-selects" style="display:none">
                                 <label>Camera</label>
