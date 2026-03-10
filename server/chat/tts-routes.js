@@ -11,7 +11,7 @@
  */
 const express = require('express');
 const router = express.Router();
-const { authenticateToken, requireAdmin } = require('../auth/auth');
+const { requireAuth, requireAdmin } = require('../auth/auth');
 const ttsEngine = require('./tts-engine');
 const db = require('../db/database');
 
@@ -47,7 +47,7 @@ router.get('/settings', (req, res) => {
 });
 
 // ── Admin: Get full TTS config ────────────────────────────────
-router.get('/admin/settings', authenticateToken, requireAdmin, (req, res) => {
+router.get('/admin/settings', requireAuth, requireAdmin, (req, res) => {
     try {
         const settings = ttsEngine.getTTSSettings();
         res.json({ settings });
@@ -57,7 +57,7 @@ router.get('/admin/settings', authenticateToken, requireAdmin, (req, res) => {
 });
 
 // ── Admin: Update TTS config ──────────────────────────────────
-router.put('/admin/settings', authenticateToken, requireAdmin, (req, res) => {
+router.put('/admin/settings', requireAuth, requireAdmin, (req, res) => {
     try {
         const allowed = [
             'tts_enabled', 'tts_provider',
@@ -82,7 +82,7 @@ router.put('/admin/settings', authenticateToken, requireAdmin, (req, res) => {
 });
 
 // ── Admin: Test voice synthesis ───────────────────────────────
-router.post('/admin/test', authenticateToken, requireAdmin, async (req, res) => {
+router.post('/admin/test', requireAuth, requireAdmin, async (req, res) => {
     try {
         const { voiceId, text } = req.body;
         const result = await ttsEngine.synthesize(text || 'This is a TTS test from HoboStreamer', voiceId);
