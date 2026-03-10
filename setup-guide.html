@@ -115,7 +115,7 @@ section.visible{opacity:1;transform:none}
 <a class="nav-link" href="#import-key"><i class="fa-solid fa-upload"></i>Import Key to OVH</a>
 <a class="nav-link" href="#connect"><i class="fa-solid fa-terminal"></i>First Connection</a>
 <a class="nav-link" href="#hardening"><i class="fa-solid fa-shield-halved"></i>System Hardening</a>
-<a class="nav-link" href="#nodejs"><i class="fa-brands fa-node-js"></i>Node.js 20 LTS</a>
+<a class="nav-link" href="#nodejs"><i class="fa-brands fa-node-js"></i>Node.js via nvm</a>
 <a class="nav-link" href="#clone"><i class="fa-brands fa-github"></i>Clone & Install</a>
 <a class="nav-link" href="#env"><i class="fa-solid fa-gear"></i>Configure .env</a>
 <a class="nav-link" href="#dirs"><i class="fa-solid fa-folder-tree"></i>Runtime Dirs</a>
@@ -189,7 +189,7 @@ section.visible{opacity:1;transform:none}
 <li>Nginx on the origin server</li>
 <li>Let's Encrypt certificate on the origin</li>
 <li>Cloudflare SSL/TLS mode set to <strong>Full (strict)</strong></li>
-<li>Node 20 LTS for the application runtime</li>
+<li>Node 20 LTS via <strong>nvm</strong> (Node Version Manager)</li>
 <li><code>systemd</code> for process supervision</li>
 <li><code>ufw</code> on the box</li>
 <li>Only open the extra streaming ports you actively use</li>
@@ -359,22 +359,27 @@ X11Forwarding no</code></pre>
 <div class="card warn">Do not disable password auth until you have confirmed key login works.</div>
 </section>
 
-<!-- S8: Node.js -->
+<!-- S8: Node.js via nvm -->
 <section id="nodejs">
-<h2><i class="fa-brands fa-node-js"></i> 8. Install Node.js 20 LTS</h2>
-<p>Although <code>package.json</code> allows Node 18+, Node 20 LTS is the recommended production baseline.</p>
-<pre><code class="language-bash">curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+<h2><i class="fa-brands fa-node-js"></i> 8. Install Node.js via nvm</h2>
+<p>We use <a href="https://github.com/nvm-sh/nvm" target="_blank">nvm</a> (Node Version Manager) instead of system packages. This avoids the recurring <code>/usr/bin/env: 'node': No such file or directory</code> problem where NodeSource installs <code>node</code> somewhere systemd can't find it.</p>
+
+<h3>Install nvm</h3>
+<pre><code class="language-bash">curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash</code></pre>
+<p>Close and reopen your terminal (or source your profile) so nvm is available:</p>
+<pre><code class="language-bash">source ~/.bashrc
+command -v nvm          # should print "nvm"</code></pre>
+
+<h3>Install Node 20 LTS</h3>
+<pre><code class="language-bash">nvm install 20
+nvm alias default 20    # make it the default for new shells
 node -v
 npm -v</code></pre>
 
-<h3>Verify the node binary is in /usr/bin</h3>
-<p>On some Ubuntu versions the NodeSource package installs to <code>/usr/local/bin</code> or doesn't create a <code>/usr/bin/node</code> symlink. The <code>systemd</code> service and <code>npm</code> scripts need <code>node</code> on the default PATH.</p>
-<pre><code class="language-bash">which node            # should print /usr/bin/node
-ls -l /usr/bin/node   # should exist</code></pre>
-<p>If <code>which node</code> returns a different path or nothing, create a symlink:</p>
-<pre><code class="language-bash">sudo ln -sf "$(which node)" /usr/bin/node</code></pre>
-<div class="card warn"><i class="fa-solid fa-triangle-exclamation"></i> Without this symlink you'll see <code>/usr/bin/env: 'node': No such file or directory</code> when <code>systemd</code> starts the service.</div>
+<h3>Verify</h3>
+<pre><code class="language-bash">which node   # e.g. /home/ubuntu/.nvm/versions/node/v20.x.x/bin/node
+which npm    # same nvm-managed path</code></pre>
+<div class="card warn"><i class="fa-solid fa-triangle-exclamation"></i> nvm installs node per-user under <code>~/.nvm/</code>. It is a shell function, not a binary — systemd can't see it directly. The systemd section below uses a wrapper script that sources nvm before launching the app.</div>
 </section>
 
 <!-- S9: Clone -->
@@ -708,7 +713,23 @@ sudo ufw allow 10000:10100/udp</code></pre>
 <!-- ═══════════════ 20. systemd service ═══════════════ -->
 <section id="systemd" class="fade-in">
 <h2><i class="fa-solid fa-gear"></i> 20. systemd service</h2>
-<p>Create a service unit so the app starts on boot and restarts on crash:</p>
+<p>systemd doesn't run interactive shells, so it can't see the nvm shell function or the node/npm binaries it manages. We use a tiny wrapper script that sources nvm before launching the app.</p>
+
+<h3>Create the wrapper script</h3>
+<pre><code class="language-bash">sudo nano /opt/hobostreamer/start.sh</code></pre>
+<p>Paste:</p>
+<pre><code class="language-bash">#!/usr/bin/env bash
+set -euo pipefail
+
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] &amp;&amp; \. "$NVM_DIR/nvm.sh"
+
+cd /opt/hobostreamer
+exec npm start</code></pre>
+<p>Make it executable:</p>
+<pre><code class="language-bash">sudo chmod +x /opt/hobostreamer/start.sh</code></pre>
+
+<h3>Create the service unit</h3>
 <pre><code class="language-bash">sudo nano /etc/systemd/system/hobostreamer.service</code></pre>
 <p>Paste the following unit file:</p>
 <pre><code class="language-ini">[Unit]
@@ -720,14 +741,14 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/hobostreamer
 Environment=NODE_ENV=production
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/npm start
+ExecStart=/opt/hobostreamer/start.sh
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target</code></pre>
-<div class="card tip">If you created a dedicated <code>hobostreamer</code> user, change <code>User=ubuntu</code> to <code>User=hobostreamer</code> and ensure ownership of <code>/opt/hobostreamer</code> matches.</div>
+<div class="card warn"><i class="fa-solid fa-triangle-exclamation"></i> The <code>User=</code> must match whoever installed nvm. If you installed nvm as <code>ubuntu</code>, use <code>User=ubuntu</code>. The script reads <code>$HOME/.nvm</code> from that user's home directory.</div>
+<div class="card tip">If you created a dedicated <code>hobostreamer</code> user, install nvm under that user, change <code>User=ubuntu</code> to <code>User=hobostreamer</code>, and ensure ownership of <code>/opt/hobostreamer</code> matches.</div>
 <p>Enable and start:</p>
 <pre><code class="language-bash">sudo systemctl daemon-reload
 sudo systemctl enable hobostreamer
@@ -814,7 +835,8 @@ sudo ufw status verbose</code></pre>
 <li>Generate an OVH-compatible SSH key locally</li>
 <li>Create the OVH Ubuntu 25.04 instance with that public key</li>
 <li>SSH into the new instance</li>
-<li>Update packages and install Nginx, Node 20, FFmpeg, <code>ufw</code>, and <code>fail2ban</code></li>
+<li>Update packages and install Nginx, FFmpeg, <code>ufw</code>, and <code>fail2ban</code></li>
+<li>Install nvm and Node 20 LTS</li>
 <li>Clone HoboStreamer into <code>/opt/hobostreamer</code></li>
 <li>Configure <code>.env</code></li>
 <li>Start the app once and verify <code>/api/health</code></li>
@@ -864,7 +886,7 @@ sudo ufw status verbose</code></pre>
 <ul>
 <li>RSA or ECDSA SSH key uploaded to OVH</li>
 <li>Ubuntu 25.04 on OVH Public Cloud</li>
-<li>Node 20 LTS</li>
+<li>Node 20 LTS via nvm</li>
 <li>Nginx reverse proxy on the box</li>
 <li>Let's Encrypt certificate on the origin</li>
 <li>Cloudflare proxy with <strong>Full (strict)</strong></li>
