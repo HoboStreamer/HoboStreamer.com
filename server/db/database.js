@@ -171,11 +171,39 @@ function initDb() {
                 ['chat_slowmode_seconds', '0', 'Global chat slow mode (0=off)', 'number'],
                 ['max_emotes_per_user', '25', 'Max custom emotes per user', 'number'],
                 ['nsfw_enabled', 'true', 'Allow NSFW streams', 'boolean'],
+                // TTS settings
+                ['tts_enabled', 'true', 'Enable site-wide TTS system', 'boolean'],
+                ['tts_provider', 'espeak-ng', 'Default TTS provider (espeak-ng, google-cloud, amazon-polly)', 'string'],
+                ['tts_google_api_key', '', 'Google Cloud TTS API key', 'string'],
+                ['tts_google_service_account', '', 'Google Cloud service account JSON (paste full JSON or file path)', 'string'],
+                ['tts_aws_access_key_id', '', 'Amazon Polly AWS Access Key ID', 'string'],
+                ['tts_aws_secret_access_key', '', 'Amazon Polly AWS Secret Access Key', 'string'],
+                ['tts_aws_region', 'us-east-1', 'Amazon Polly AWS Region', 'string'],
+                ['tts_max_length', '200', 'Maximum TTS message length (characters)', 'number'],
+                ['tts_max_queue_per_user', '3', 'Maximum queued TTS messages per user', 'number'],
+                ['tts_max_queue_global', '20', 'Maximum global TTS queue size', 'number'],
+                ['tts_default_voice', 'gary', 'Default TTS voice ID', 'string'],
             ];
             const insert = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
             for (const [k, v, d, t] of defaults) insert.run(k, v, d, t);
             console.log('[DB] Default site settings seeded');
         }
+        // Always seed any NEW TTS settings that may be missing (for existing databases)
+        const ttsSeeds = [
+            ['tts_enabled', 'true', 'Enable site-wide TTS system', 'boolean'],
+            ['tts_provider', 'espeak-ng', 'Default TTS provider (espeak-ng, google-cloud, amazon-polly)', 'string'],
+            ['tts_google_api_key', '', 'Google Cloud TTS API key', 'string'],
+            ['tts_google_service_account', '', 'Google Cloud service account JSON (paste full JSON or file path)', 'string'],
+            ['tts_aws_access_key_id', '', 'Amazon Polly AWS Access Key ID', 'string'],
+            ['tts_aws_secret_access_key', '', 'Amazon Polly AWS Secret Access Key', 'string'],
+            ['tts_aws_region', 'us-east-1', 'Amazon Polly AWS Region', 'string'],
+            ['tts_max_length', '200', 'Maximum TTS message length (characters)', 'number'],
+            ['tts_max_queue_per_user', '3', 'Maximum queued TTS messages per user', 'number'],
+            ['tts_max_queue_global', '20', 'Maximum global TTS queue size', 'number'],
+            ['tts_default_voice', 'gary', 'Default TTS voice ID', 'string'],
+        ];
+        const seedInsert = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of ttsSeeds) seedInsert.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
 
     console.log('[DB] Schema initialized');

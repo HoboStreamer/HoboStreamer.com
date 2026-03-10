@@ -1143,6 +1143,29 @@ main#app { position: relative; z-index: 1; }
 }
 .chat-send-btn:hover { background: var(--accent); color: #000; }
 
+.chat-tts-toggle {
+    flex-shrink: 0;
+    padding: 6px 8px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    opacity: 0.5;
+}
+.chat-tts-toggle.tts-active {
+    color: var(--accent);
+    border-color: var(--accent-dark);
+    opacity: 1;
+}
+.chat-tts-toggle:hover {
+    background: var(--bg-hover);
+    color: var(--accent);
+    opacity: 1;
+}
+
 .tts-toggle {
     font-size: 0.8rem; color: var(--text-muted);
     margin-bottom: 4px;

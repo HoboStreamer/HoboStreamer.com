@@ -84,7 +84,7 @@ let broadcastState = {
 
     // Settings (persisted to localStorage) — global across all streams
     settings: {
-        ttsVolume: 800, ttsPitch: 100, ttsRate: 10, ttsVoice: '', ttsDuration: 10, ttsNames: 'off', ttsQueue: 5,
+        ttsMode: 'site-wide', ttsVolume: 800, ttsPitch: 100, ttsRate: 10, ttsVoice: '', ttsDuration: 10, ttsNames: 'off', ttsQueue: 5,
         notificationVolume: 800, forceAudio: 'default', autoGain: true, echoCancellation: true, noiseSuppression: true,
         manualGainEnabled: false, manualGain: 100, force48kSampleRate: false,
         forceCamera: 'default', broadcastRes: '720', broadcastFps: '30', broadcastCodec: 'auto',
@@ -130,6 +130,18 @@ function saveBroadcastSettings() {
     try { localStorage.setItem('hobo_broadcast_settings', JSON.stringify(broadcastState.settings)); } catch {}
 }
 
+/* ── Broadcast Chat Helper ───────────────────────────────────── */
+/**
+ * Single entry point for broadcast-page chat. Shows the sidebar and
+ * ensures a chat WebSocket is connected for the given stream.
+ * Idempotent — safe to call multiple times for the same stream.
+ */
+function ensureBroadcastChat(streamId) {
+    const sidebar = document.getElementById('bc-chat-sidebar');
+    if (sidebar) sidebar.style.display = '';
+    if (typeof initChat === 'function' && streamId) initChat(streamId);
+}
+
 /* ── Initialize Broadcast Page ───────────────────────────────── */
 async function loadBroadcastPage() {
     loadBroadcastSettings();
@@ -144,9 +156,7 @@ async function loadBroadcastPage() {
             if (preview) { preview.srcObject = ss.localStream; preview.muted = true; preview.play().catch(() => {}); }
             const ph = document.getElementById('bc-video-placeholder');
             if (ph) ph.style.display = 'none';
-            if (typeof chatWs !== 'undefined' && (!chatWs || chatWs.readyState !== WebSocket.OPEN)) {
-                if (typeof initChat === 'function') initChat(ss.streamData.id);
-            }
+            ensureBroadcastChat(ss.streamData.id);
             startGlobalDisplayTimers();
             return;
         }
@@ -162,7 +172,7 @@ async function loadBroadcastPage() {
             await resumeStreamView(firstLive);
             return;
         }
-    } catch {}
+    } catch (e) { console.warn('Failed to load live streams:', e); }
 
     // No live streams — show the full stream manager
     hideBroadcastTabs();
@@ -252,7 +262,7 @@ async function switchBroadcastTab(streamId) {
         if (ph) ph.style.display = 'none';
         startGlobalDisplayTimers();
         updateBroadcastStatusFromConnections(streamId);
-        if (typeof initChat === 'function') initChat(streamId);
+        ensureBroadcastChat(streamId);
         return;
     }
 
@@ -358,7 +368,7 @@ async function switchOrResumeStream(stream) {
         if (ph) ph.style.display = 'none';
         startGlobalDisplayTimers();
         updateBroadcastStatusFromConnections(stream.id);
-        if (typeof initChat === 'function') initChat(stream.id);
+        ensureBroadcastChat(stream.id);
     } else {
         await resumeStreamView(stream);
     }
@@ -390,6 +400,7 @@ async function resumeStreamView(stream) {
             if (preview) { preview.srcObject = existing.localStream; preview.muted = true; preview.play().catch(() => {}); }
             const ph = document.getElementById('bc-video-placeholder');
             if (ph) ph.style.display = 'none';
+            ensureBroadcastChat(stream.id);
             startGlobalDisplayTimers();
             showBroadcastCallControls(); updateBroadcastCallUI();
             return;
@@ -402,10 +413,10 @@ async function resumeStreamView(stream) {
         setNavLiveIndicator(true);
         showBrowserBroadcast();
         populateDeviceLists(); populateTTSVoices(); syncSettingsUI();
+        ensureBroadcastChat(stream.id);
         startHeartbeat(stream.id);
         await startMediaCapture(stream.id); connectSignaling(stream.id); startVodRecording(stream.id);
         startGlobalDisplayTimers();
-        if (typeof initChat === 'function') initChat(stream.id);
         showBroadcastCallControls(); updateBroadcastCallUI();
     } else if (stream.protocol === 'rtmp') {
         const ss = createStreamState(stream);
@@ -416,7 +427,7 @@ async function resumeStreamView(stream) {
         showRTMPInstructions(stream);
         startHeartbeat(stream.id);
         startGlobalDisplayTimers();
-        if (typeof initChat === 'function') initChat(stream.id);
+        ensureBroadcastChat(stream.id);
         showBroadcastCallControls(); updateBroadcastCallUI();
     } else if (stream.protocol === 'jsmpeg') {
         const ss = createStreamState(stream);
@@ -427,7 +438,7 @@ async function resumeStreamView(stream) {
         showJSMPEGInstructions(stream);
         startHeartbeat(stream.id);
         startGlobalDisplayTimers();
-        if (typeof initChat === 'function') initChat(stream.id);
+        ensureBroadcastChat(stream.id);
         showBroadcastCallControls(); updateBroadcastCallUI();
     }
 }
@@ -583,26 +594,26 @@ async function createNewStream() {
 
         if (method === 'webrtc' && broadcastState.selectedWebRTCSub === 'browser') {
             showBrowserBroadcast(); populateDeviceLists(); populateTTSVoices(); syncSettingsUI();
+            ensureBroadcastChat(streamData.id);
             await startMediaCapture(streamData.id, { cameraId: createCamera, audioId: createAudio });
             connectSignaling(streamData.id);
             startHeartbeat(streamData.id); startVodRecording(streamData.id);
             startGlobalDisplayTimers();
-            if (typeof initChat === 'function') initChat(streamData.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
             toast('You are now LIVE!', 'success');
         } else if (method === 'webrtc' && broadcastState.selectedWebRTCSub === 'obs') {
             showWHIPInstructions(streamData); startHeartbeat(streamData.id);
-            if (typeof initChat === 'function') initChat(streamData.id);
+            ensureBroadcastChat(streamData.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
             toast('Stream created — configure OBS with the details below', 'success');
         } else if (method === 'rtmp') {
             showRTMPInstructions(streamData); startHeartbeat(streamData.id);
-            if (typeof initChat === 'function') initChat(streamData.id);
+            ensureBroadcastChat(streamData.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
             toast('Stream created — configure your streaming software', 'success');
         } else if (method === 'jsmpeg') {
             showJSMPEGInstructions(streamData); startHeartbeat(streamData.id);
-            if (typeof initChat === 'function') initChat(streamData.id);
+            ensureBroadcastChat(streamData.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
             toast('Stream created — start FFmpeg with the command below', 'success');
         }
@@ -1827,15 +1838,64 @@ function copyToClipboard(text) {
 /* ── TTS System ──────────────────────────────────────────────── */
 let ttsQueue = [];
 let ttsSpeaking = false;
-function testTTS() { speakBroadcastTTS('This is a TTS test message from HoboStreamer'); }
-function cancelTTS() { speechSynthesis.cancel(); ttsQueue = []; ttsSpeaking = false; toast('TTS reset', 'info'); }
+let _bcTtsAudioQueue = [];
+let _bcTtsAudioPlaying = false;
+
+function testTTS() {
+    const mode = broadcastState.settings.ttsMode || 'site-wide';
+    if (mode === 'self') {
+        speakBroadcastTTS('This is a TTS test message from HoboStreamer');
+    } else {
+        // For site-wide, play a test via the server
+        speakBroadcastTTS('This is a TTS test message from HoboStreamer');
+    }
+}
+function cancelTTS() {
+    speechSynthesis.cancel(); ttsQueue = []; ttsSpeaking = false;
+    _bcTtsAudioQueue = []; _bcTtsAudioPlaying = false;
+    toast('TTS reset', 'info');
+}
 
 function speakBroadcastTTS(text, username) {
     const s = broadcastState.settings;
+    if (s.ttsMode === 'off') return;
     const maxQueue = parseInt(s.ttsQueue) || 0;
     if (maxQueue > 0 && ttsQueue.length >= maxQueue) return;
     const fullText = s.ttsNames === 'on' && username ? `${username} says: ${text}` : text;
     ttsQueue.push(fullText); processTTSQueue();
+}
+
+/** Play server-synthesized TTS audio on the broadcast page (site-wide mode) */
+function playBroadcastTTSAudio(msg) {
+    const s = broadcastState.settings;
+    if (s.ttsMode !== 'site-wide') return;
+    if (!msg.audio || !msg.mimeType) return;
+    const maxQueue = parseInt(s.ttsQueue) || 0;
+    if (maxQueue > 0 && _bcTtsAudioQueue.length >= maxQueue) return;
+    _bcTtsAudioQueue.push(msg);
+    _processBcTtsAudioQueue();
+}
+
+function _processBcTtsAudioQueue() {
+    if (_bcTtsAudioPlaying || _bcTtsAudioQueue.length === 0) return;
+    _bcTtsAudioPlaying = true;
+    const msg = _bcTtsAudioQueue.shift();
+    try {
+        const binaryStr = atob(msg.audio);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+        const blob = new Blob([bytes], { type: msg.mimeType });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        const s = broadcastState.settings;
+        audio.volume = (s.ttsVolume || 800) / 1000;
+        audio.onended = () => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); };
+        audio.play().catch(() => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); });
+    } catch {
+        _bcTtsAudioPlaying = false;
+        _processBcTtsAudioQueue();
+    }
 }
 
 function processTTSQueue() {
@@ -1861,7 +1921,7 @@ function initBroadcastSettingsListeners() {
         const el = document.getElementById(`bc-${key}`);
         if (el) el.addEventListener('input', () => updateBroadcastSetting(key, parseInt(el.value)));
     });
-    ['ttsDuration', 'ttsNames', 'ttsQueue', 'broadcastLimit', 'broadcastBps', 'broadcastBpsMin',
+    ['ttsDuration', 'ttsNames', 'ttsQueue', 'ttsMode', 'broadcastLimit', 'broadcastBps', 'broadcastBpsMin',
      'broadcastRes', 'broadcastFps', 'broadcastCodec', 'forceCamera', 'forceAudio', 'allowSounds', 'ttsVoice'].forEach(key => {
         const el = document.getElementById(`bc-${key}`);
         if (el) el.addEventListener('change', () => updateBroadcastSetting(key, el.value));

@@ -530,6 +530,9 @@
                             </button>
                             <input type="text" id="chat-input" placeholder="Send a message..." maxlength="500"
                                    onkeydown="if(event.key==='Enter')sendChat()">
+                            <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
+                                <i class="fa-solid fa-volume-high"></i>
+                            </button>
                             <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Coins">
                                 <i class="fa-solid fa-gem"></i>
                             </button>
@@ -1000,6 +1003,7 @@
                 <button class="tab-btn" onclick="switchAdminTab('moderators')">Moderators</button>
                 <button class="tab-btn" onclick="switchAdminTab('chat-logs')">Chat Logs</button>
                 <button class="tab-btn" onclick="switchAdminTab('settings')">Settings</button>
+                <button class="tab-btn" onclick="switchAdminTab('tts')">TTS</button>
                 <button class="tab-btn" onclick="switchAdminTab('verification')">Verification Keys</button>
                 <button class="tab-btn" onclick="switchAdminTab('streams')">Streams</button>
                 <button class="tab-btn" onclick="switchAdminTab('cashouts')">Cashouts</button>
@@ -1599,6 +1603,16 @@
                         <div class="bc-settings-group">
                             <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
                             <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Mode</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-ttsMode">
+                                        <option value="site-wide">Site-Wide TTS (Server Voices)</option>
+                                        <option value="self">Self TTS (Browser Voices)</option>
+                                        <option value="off">Off</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
                                 <span class="bc-setting-label">TTS Volume</span>
                                 <div class="bc-setting-control"><input type="range" id="bc-ttsVolume" min="0" max="1000" step="50"></div>
                             </div>
@@ -1813,6 +1827,9 @@
                         </button>
                         <input type="text" id="bc-chat-input" placeholder="Send a message..." maxlength="500"
                                onkeydown="if(event.key==='Enter')sendChat()">
+                        <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
+                            <i class="fa-solid fa-volume-high"></i>
+                        </button>
                         <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Coins">
                             <i class="fa-solid fa-gem"></i>
                         </button>
