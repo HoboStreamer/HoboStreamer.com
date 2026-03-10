@@ -99,16 +99,19 @@ function getChatEl() {
             isGlobal: true,
         };
     }
-    // Offline channel page with global chat
-    const offlineArea = document.getElementById('ch-offline-area');
-    if (offlineArea && offlineArea.style.display !== 'none') {
-        const offlineChat = document.getElementById('offline-chat-messages');
-        if (offlineChat) {
-            return {
-                input: document.getElementById('offline-chat-input'),
-                messages: offlineChat,
-                isGlobal: true,
-            };
+    // Offline channel page with global chat — only if the channel page is actually active
+    const channelPage = document.getElementById('page-channel');
+    if (channelPage && channelPage.classList.contains('active')) {
+        const offlineArea = document.getElementById('ch-offline-area');
+        if (offlineArea && offlineArea.style.display !== 'none') {
+            const offlineChat = document.getElementById('offline-chat-messages');
+            if (offlineChat) {
+                return {
+                    input: document.getElementById('offline-chat-input'),
+                    messages: offlineChat,
+                    isGlobal: true,
+                };
+            }
         }
     }
     const bcPage = document.getElementById('page-broadcast');
