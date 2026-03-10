@@ -166,11 +166,12 @@ app.use('/api/vods/stream/:streamId/chunk', uploadLimiter);
 app.use('/api/vods/stream/:streamId/finalize', uploadLimiter);
 
 // ── Static Files ─────────────────────────────────────────────
-// JS/CSS: no-cache (browser must revalidate with etag on every load)
-// This prevents stale scripts after deploys while still allowing 304s
-app.use('/js', express.static(path.join(__dirname, '../public/js'), { maxAge: 0, etag: true, lastModified: true, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache'); } }));
-app.use('/css', express.static(path.join(__dirname, '../public/css'), { maxAge: 0, etag: true, lastModified: true, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache'); } }));
-app.use(express.static(path.join(__dirname, '../public')));
+// JS/CSS/HTML: no-cache + tell Cloudflare CDN not to cache at edge
+// Browsers revalidate with etag (304 Not Modified), CDN always fetches fresh from origin
+const noCacheHeaders = (res) => { res.setHeader('Cache-Control', 'no-cache'); res.setHeader('CDN-Cache-Control', 'no-store'); };
+app.use('/js', express.static(path.join(__dirname, '../public/js'), { maxAge: 0, etag: true, lastModified: true, setHeaders: noCacheHeaders }));
+app.use('/css', express.static(path.join(__dirname, '../public/css'), { maxAge: 0, etag: true, lastModified: true, setHeaders: noCacheHeaders }));
+app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, filePath) => { if (filePath.endsWith('.html')) noCacheHeaders(res); } }));
 
 // Ensure data directories exist
 ['./data', './data/vods', './data/clips', './data/media', './data/thumbnails', './data/emotes', './data/avatars'].forEach(dir => {
