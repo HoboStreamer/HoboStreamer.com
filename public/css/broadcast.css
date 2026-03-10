@@ -13,12 +13,12 @@
 
 .broadcast-main {
     flex: 1;
-    overflow-y: auto;
     display: flex;
     flex-direction: column;
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 20px;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     background: rgba(22,22,26,0.72);
     box-shadow: var(--shadow-soft, 0 12px 40px rgba(0,0,0,0.28));
 }
