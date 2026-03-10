@@ -105,13 +105,25 @@ function copyAdminSensitiveInput(inputId) {
  * Load admin panel.
  */
 async function loadAdmin() {
-    if (!currentUser || currentUser.role !== 'admin') {
+    if (!currentUser || !currentUser.capabilities?.admin_panel) {
         toast('Admin access required', 'error');
         return navigate('home');
     }
 
     await loadAdminStats();
-    switchAdminTab('users');
+    // Global mods see only a subset of tabs
+    const isFullAdmin = currentUser.capabilities?.manage_users;
+    document.querySelectorAll('.admin-tabs .tab-btn').forEach(btn => {
+        const tab = btn.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+        // Global mods can see: chat-logs, bans, moderators
+        const modTabs = ['chat-logs', 'bans', 'moderators'];
+        if (!isFullAdmin && tab && !modTabs.includes(tab)) {
+            btn.style.display = 'none';
+        } else {
+            btn.style.display = '';
+        }
+    });
+    switchAdminTab(isFullAdmin ? 'users' : 'chat-logs');
 }
 
 /* ── Stats ─────────────────────────────────────────────────────── */
@@ -269,7 +281,7 @@ async function loadAdminUsers() {
                         <td>${new Date(u.created_at).toLocaleDateString()}</td>
                         <td>
                             <select onchange="changeUserRole('${u.id}', this.value)" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:2px 4px;border-radius:4px">
-                                ${['user','streamer','mod','admin'].map(r =>
+                                ${['user','streamer','global_mod','admin'].map(r =>
                                     `<option value="${r}" ${r===u.role?'selected':''}>${r}</option>`
                                 ).join('')}
                             </select>
@@ -313,7 +325,7 @@ async function loadAdminModerators() {
                 <input type="text" id="mod-username-input" placeholder="Username to promote..."
                     style="flex:1;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:8px 12px;border-radius:6px;font-size:14px">
                 <button class="btn btn-primary" onclick="promoteModerator()">
-                    <i class="fa-solid fa-shield-halved"></i> Promote to Mod
+                    <i class="fa-solid fa-shield-halved"></i> Promote to Global Mod
                 </button>
             </div>
             ${mods.length ? `
@@ -344,13 +356,13 @@ async function promoteModerator() {
     if (!username) return toast('Enter a username', 'error');
     try {
         await api('/admin/moderators', { method: 'POST', body: { username } });
-        toast(`${username} promoted to moderator`, 'success');
+        toast(`${username} promoted to global moderator`, 'success');
         loadAdminModerators();
     } catch (e) { toast(e.message, 'error'); }
 }
 
 async function demoteModerator(id, username) {
-    if (!confirm(`Demote ${username} from moderator?`)) return;
+    if (!confirm(`Demote ${username} from global moderator?`)) return;
     try {
         await api(`/admin/moderators/${id}`, { method: 'DELETE' });
         toast(`${username} demoted`, 'success');

@@ -774,8 +774,8 @@ function renderContextMenu(menu, profile, username) {
         <div class="ctx-actions">
             <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Whisper</button>
             <button class="ctx-btn" onclick="ctxViewChannel('${esc(username)}')"><i class="fa-solid fa-user"></i> Channel</button>
-            <button class="ctx-btn" onclick="ctxViewLogs('${esc(username)}', ${profile.id})"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>
-            ${currentUser && currentUser.role === 'admin' ? `<button class="ctx-btn ctx-btn-danger" onclick="ctxBanUser('${esc(username)}', ${profile.id})"><i class="fa-solid fa-ban"></i> Ban</button>` : ''}
+            ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" onclick="ctxViewLogs('${esc(username)}', ${profile.id})"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
+            ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" onclick="ctxBanUser('${esc(username)}', ${profile.id})"><i class="fa-solid fa-ban"></i> Ban</button>` : ''}
         </div>
     `;
 }
@@ -932,6 +932,8 @@ function getBadgeHTML(role) {
     switch (role) {
         case 'admin': return '<span class="chat-badge chat-badge-admin" title="Admin"><i class="fa-solid fa-shield"></i></span>';
         case 'streamer': return '<span class="chat-badge chat-badge-streamer" title="Streamer"><i class="fa-solid fa-broadcast-tower"></i></span>';
+        case 'global_mod':
+        case 'mod':
         case 'moderator': return '<span class="chat-badge chat-badge-mod" title="Moderator"><i class="fa-solid fa-gavel"></i></span>';
         case 'subscriber': return '<span class="chat-badge chat-badge-sub" title="Subscriber"><i class="fa-solid fa-star"></i></span>';
         default: return '';
@@ -942,6 +944,8 @@ function getRoleColor(role) {
     switch (role) {
         case 'admin': return '#f39c12';
         case 'streamer': return '#e74c3c';
+        case 'global_mod':
+        case 'mod':
         case 'moderator': return '#2ecc71';
         case 'subscriber': return '#3498db';
         default: return '#9a9a9a';

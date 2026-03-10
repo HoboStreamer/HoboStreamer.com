@@ -70,6 +70,7 @@ function optionalAuth(req, res, next) {
 
 /**
  * Express middleware — requires admin role
+ * @deprecated Prefer permissions.requireAdmin which doesn't wrap requireAuth
  */
 function requireAdmin(req, res, next) {
     requireAuth(req, res, () => {
@@ -81,11 +82,12 @@ function requireAdmin(req, res, next) {
 }
 
 /**
- * Express middleware — requires streamer or admin role
+ * Express middleware — requires streamer or above role
+ * Includes streamer, global_mod, admin.
  */
 function requireStreamer(req, res, next) {
     requireAuth(req, res, () => {
-        if (!['streamer', 'admin'].includes(req.user.role)) {
+        if (!['streamer', 'global_mod', 'admin'].includes(req.user.role)) {
             return res.status(403).json({ error: 'Streamer access required' });
         }
         next();

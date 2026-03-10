@@ -296,7 +296,7 @@ function onAuthChange() {
         user.style.display = 'flex';
         dash.style.display = '';
         broadcast.style.display = '';
-        admin.style.display = currentUser.role === 'admin' ? '' : 'none';
+        admin.style.display = currentUser.capabilities?.admin_panel ? '' : 'none';
         document.getElementById('nav-avatar').textContent = currentUser.username[0].toUpperCase();
         document.getElementById('nav-username').textContent = currentUser.username;
         loadBalance();
@@ -1120,7 +1120,7 @@ async function loadVodPlayer(vodId) {
         // Show delete button if user is the VOD owner or admin
         const vpActions = document.getElementById('vp-actions');
         if (vpActions && currentUser) {
-            let canDelete = (v.user_id === currentUser.id) || (currentUser.role === 'admin');
+            let canDelete = (v.user_id === currentUser.id) || currentUser.capabilities?.moderate_global;
             if (canDelete) {
                 vpActions.style.display = '';
                 vpActions.innerHTML = `<button class="btn btn-danger btn-small" onclick="deleteVodFromPlayer(${v.id})"><i class="fa-solid fa-trash"></i> Delete Video</button>`;
@@ -1272,7 +1272,7 @@ async function loadClipPlayer(clipId) {
         // Show delete button if user is clip creator, stream owner, or admin
         const clpActions = document.getElementById('clp-actions');
         if (clpActions && currentUser) {
-            let canDelete = (cl.user_id === currentUser.id) || (currentUser.role === 'admin');
+            let canDelete = (cl.user_id === currentUser.id) || currentUser.capabilities?.moderate_global;
             let isStreamOwner = false;
             // Check if current user owns the stream this clip is from
             if (cl.stream_id) {
@@ -1287,11 +1287,11 @@ async function loadClipPlayer(clipId) {
 
             let actionsHtml = '';
             // Edit title — clip creator or admin
-            if (cl.user_id === currentUser.id || currentUser.role === 'admin') {
+            if (cl.user_id === currentUser.id || currentUser.capabilities?.moderate_global) {
                 actionsHtml += `<button class="btn btn-small" onclick="editClipTitle(${cl.id})"><i class="fa-solid fa-pen"></i> Edit Title</button> `;
             }
             // Publish/unpublish toggle — only for stream owner or admin
-            if (isStreamOwner || currentUser.role === 'admin') {
+            if (isStreamOwner || currentUser.capabilities?.moderate_global) {
                 if (cl.is_public) {
                     actionsHtml += `<button class="btn btn-small" onclick="toggleClipVisibility(${cl.id}, false)"><i class="fa-solid fa-eye-slash"></i> Make Unlisted</button>`;
                 } else {
@@ -1504,7 +1504,7 @@ function renderComment(c, contentType, contentId) {
     const color = c.profile_color || '#c0965c';
     const name = c.display_name || c.username || 'Unknown';
     const isOwn = currentUser && (c.user_id === currentUser.id);
-    const isAdmin = currentUser && (currentUser.role === 'admin');
+    const isAdmin = currentUser && currentUser.capabilities?.moderate_global;
     const edited = c.updated_at && c.updated_at !== c.created_at;
 
     let actionsHtml = '';

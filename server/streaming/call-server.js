@@ -40,6 +40,7 @@
 const WebSocket = require('ws');
 const db = require('../db/database');
 const { verifyToken } = require('../auth/auth');
+const permissions = require('../auth/permissions');
 const chatServer = require('../chat/chat-server');
 const cosmetics = require('../monetization/cosmetics');
 
@@ -366,12 +367,11 @@ class CallServer {
                 break;
             }
 
-            /* ── Streamer moderation commands ─────────────────── */
+            /* ── Moderation commands (stream owner, channel mod, global_mod, admin) ── */
 
             case 'force-mute': {
-                // Streamer forces a peer's mic on/off for everyone
                 const sender = room.get(peerId);
-                if (!sender || !sender.isStreamer) break;
+                if (!sender || !permissions.canModerateCall(sender.user, streamId)) break;
                 const target = room.get(msg.targetPeerId);
                 if (!target || target.isStreamer) break;
                 target.forceMuted = !!msg.forceMuted;
@@ -397,9 +397,8 @@ class CallServer {
             }
 
             case 'force-camera-off': {
-                // Streamer forces a peer's camera off for everyone
                 const sender = room.get(peerId);
-                if (!sender || !sender.isStreamer) break;
+                if (!sender || !permissions.canModerateCall(sender.user, streamId)) break;
                 const target = room.get(msg.targetPeerId);
                 if (!target || target.isStreamer) break;
                 target.forceCameraOff = !!msg.forceCameraOff;
@@ -423,9 +422,8 @@ class CallServer {
             }
 
             case 'kick': {
-                // Streamer kicks a peer from the call
                 const sender = room.get(peerId);
-                if (!sender || !sender.isStreamer) break;
+                if (!sender || !permissions.canModerateCall(sender.user, streamId)) break;
                 const target = room.get(msg.targetPeerId);
                 if (!target || target.isStreamer) break;
                 // Tell the target they were kicked
@@ -447,9 +445,8 @@ class CallServer {
             }
 
             case 'ban': {
-                // Streamer bans a peer from the call (kick + prevent rejoin)
                 const sender = room.get(peerId);
-                if (!sender || !sender.isStreamer) break;
+                if (!sender || !permissions.canModerateCall(sender.user, streamId)) break;
                 const target = room.get(msg.targetPeerId);
                 if (!target || target.isStreamer) break;
                 // Add to bans
@@ -475,9 +472,8 @@ class CallServer {
             }
 
             case 'unban': {
-                // Streamer unbans a user
                 const sender = room.get(peerId);
-                if (!sender || !sender.isStreamer) break;
+                if (!sender || !permissions.canModerateCall(sender.user, streamId)) break;
                 const userId = parseInt(msg.userId);
                 if (userId && this.callBans.has(streamId)) {
                     this.callBans.get(streamId).delete(userId);

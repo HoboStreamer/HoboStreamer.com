@@ -15,6 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db/database');
 const { generateToken, requireAuth } = require('./auth');
+const permissions = require('./permissions');
 const legacyMigration = require('../game/legacy-migration');
 
 const router = express.Router();
@@ -207,7 +208,10 @@ router.post('/login', (req, res) => {
 
 // ── Get Current User ─────────────────────────────────────────
 router.get('/me', requireAuth, (req, res) => {
-    res.json({ user: sanitizeUser(req.user) });
+    res.json({
+        user: sanitizeUser(req.user),
+        capabilities: permissions.getCapabilities(req.user),
+    });
 });
 
 // ── Update Profile ───────────────────────────────────────────
@@ -353,6 +357,7 @@ function sanitizeUser(user, publicOnly = false) {
         hobo_bucks_balance: user.hobo_bucks_balance,
         hobo_coins_balance: user.hobo_coins_balance,
         created_at: user.created_at,
+        capabilities: permissions.getCapabilities(user),
     };
     if (!publicOnly) {
         safe.email = user.email;

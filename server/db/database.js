@@ -228,6 +228,47 @@ function initDb() {
         for (const [k, v, d, t] of ttsSeeds) seedInsert.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
 
+    // Migrate: expand role CHECK to include global_mod, migrate 'mod' → 'global_mod'
+    try {
+        // SQLite cannot ALTER CHECK constraints, but we can migrate data.
+        // The schema.sql already has the new CHECK for fresh DBs.
+        // For existing DBs, just migrate any 'mod' users to 'global_mod'.
+        const modCount = database.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'mod'").get().c;
+        if (modCount > 0) {
+            database.exec("UPDATE users SET role = 'global_mod' WHERE role = 'mod'");
+            console.log(`[DB] Migrated ${modCount} mod(s) → global_mod`);
+        }
+    } catch (e) { console.warn('[DB] Role migration:', e.message); }
+
+    // Migrate: create channel_moderators table if missing
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS channel_moderators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            added_by INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(channel_id, user_id),
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_channel_mods_channel ON channel_moderators(channel_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_channel_mods_user ON channel_moderators(user_id)`);
+    } catch (e) { console.warn('[DB] channel_moderators migration:', e.message); }
+
+    // Migrate: create channel_moderation_settings table if missing
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS channel_moderation_settings (
+            channel_id INTEGER PRIMARY KEY,
+            slow_mode_seconds INTEGER DEFAULT 0,
+            followers_only INTEGER DEFAULT 0,
+            emote_only INTEGER DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+        )`);
+    } catch (e) { console.warn('[DB] channel_moderation_settings migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1114,6 +1155,82 @@ function getChatReplay(streamId, fromTime, toTime) {
     return all(sql, params);
 }
 
+// ── Channel lookup by ID ─────────────────────────────────────
+
+function getChannelById(id) {
+    return get('SELECT * FROM channels WHERE id = ?', [id]);
+}
+
+// ── Channel Moderators ───────────────────────────────────────
+
+function isChannelModerator(userId, channelId) {
+    const row = get('SELECT 1 FROM channel_moderators WHERE user_id = ? AND channel_id = ?', [userId, channelId]);
+    return !!row;
+}
+
+function addChannelModerator(channelId, userId, addedBy) {
+    return run(
+        'INSERT OR IGNORE INTO channel_moderators (channel_id, user_id, added_by) VALUES (?, ?, ?)',
+        [channelId, userId, addedBy]
+    );
+}
+
+function removeChannelModerator(channelId, userId) {
+    return run('DELETE FROM channel_moderators WHERE channel_id = ? AND user_id = ?', [channelId, userId]);
+}
+
+function getChannelModerators(channelId) {
+    return all(`
+        SELECT cm.id, cm.user_id, cm.added_by, cm.created_at,
+               u.username, u.display_name, u.avatar_url,
+               a.username as added_by_username
+        FROM channel_moderators cm
+        JOIN users u ON cm.user_id = u.id
+        LEFT JOIN users a ON cm.added_by = a.id
+        WHERE cm.channel_id = ?
+        ORDER BY cm.created_at ASC
+    `, [channelId]);
+}
+
+function getChannelsByModerator(userId) {
+    return all(`
+        SELECT cm.channel_id, c.title, c.user_id, u.username as owner_username
+        FROM channel_moderators cm
+        JOIN channels c ON cm.channel_id = c.id
+        JOIN users u ON c.user_id = u.id
+        WHERE cm.user_id = ?
+    `, [userId]);
+}
+
+// ── Channel Moderation Settings ──────────────────────────────
+
+function getChannelModerationSettings(channelId) {
+    return get('SELECT * FROM channel_moderation_settings WHERE channel_id = ?', [channelId])
+        || { channel_id: channelId, slow_mode_seconds: 0, followers_only: 0, emote_only: 0 };
+}
+
+function upsertChannelModerationSettings(channelId, fields) {
+    const existing = get('SELECT 1 FROM channel_moderation_settings WHERE channel_id = ?', [channelId]);
+    if (existing) {
+        const updates = [];
+        const params = [];
+        if (fields.slow_mode_seconds !== undefined) { updates.push('slow_mode_seconds = ?'); params.push(fields.slow_mode_seconds); }
+        if (fields.followers_only !== undefined) { updates.push('followers_only = ?'); params.push(fields.followers_only ? 1 : 0); }
+        if (fields.emote_only !== undefined) { updates.push('emote_only = ?'); params.push(fields.emote_only ? 1 : 0); }
+        if (updates.length > 0) {
+            updates.push('updated_at = CURRENT_TIMESTAMP');
+            params.push(channelId);
+            run(`UPDATE channel_moderation_settings SET ${updates.join(', ')} WHERE channel_id = ?`, params);
+        }
+    } else {
+        run(
+            'INSERT INTO channel_moderation_settings (channel_id, slow_mode_seconds, followers_only, emote_only) VALUES (?, ?, ?, ?)',
+            [channelId, fields.slow_mode_seconds || 0, fields.followers_only ? 1 : 0, fields.emote_only ? 1 : 0]
+        );
+    }
+    return getChannelModerationSettings(channelId);
+}
+
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
@@ -1164,4 +1281,11 @@ module.exports = {
     deleteComment, updateComment,
     // Chat Replay
     getChatReplay,
+    // Channel lookup
+    getChannelById,
+    // Channel Moderators
+    isChannelModerator, addChannelModerator, removeChannelModerator,
+    getChannelModerators, getChannelsByModerator,
+    // Channel Moderation Settings
+    getChannelModerationSettings, upsertChannelModerationSettings,
 };

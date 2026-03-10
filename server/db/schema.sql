@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT,
     avatar_url TEXT,
     bio TEXT DEFAULT '',
-    role TEXT DEFAULT 'user' CHECK(role IN ('user', 'streamer', 'mod', 'admin')),
+    role TEXT DEFAULT 'user' CHECK(role IN ('user', 'streamer', 'global_mod', 'admin')),
     stream_key TEXT UNIQUE,
     hobo_bucks_balance REAL DEFAULT 0.00,
     hobo_coins_balance INTEGER DEFAULT 0,
@@ -335,6 +335,31 @@ CREATE INDEX IF NOT EXISTS idx_clips_stream_id ON clips(stream_id);
 CREATE INDEX IF NOT EXISTS idx_clips_user_id ON clips(user_id);
 CREATE INDEX IF NOT EXISTS idx_bans_stream_id ON bans(stream_id);
 CREATE INDEX IF NOT EXISTS idx_cameras_stream_id ON cameras(stream_id);
+
+-- Channel Moderators (per-channel mod assignments)
+CREATE TABLE IF NOT EXISTS channel_moderators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    added_by INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(channel_id, user_id),
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_channel_mods_channel ON channel_moderators(channel_id);
+CREATE INDEX IF NOT EXISTS idx_channel_mods_user ON channel_moderators(user_id);
+
+-- Per-channel moderation settings (slow mode, etc.)
+CREATE TABLE IF NOT EXISTS channel_moderation_settings (
+    channel_id INTEGER PRIMARY KEY,
+    slow_mode_seconds INTEGER DEFAULT 0,
+    followers_only INTEGER DEFAULT 0,
+    emote_only INTEGER DEFAULT 0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+);
 
 -- ═══════════════════════════════════════════════════════════════
 -- Site Settings (key/value store for platform configuration)

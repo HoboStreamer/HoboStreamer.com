@@ -10,6 +10,7 @@
 const express = require('express');
 const db = require('../db/database');
 const { optionalAuth, requireAuth, requireAdmin } = require('../auth/auth');
+const permissions = require('../auth/permissions');
 
 const router = express.Router();
 
@@ -22,8 +23,8 @@ router.get('/search', requireAuth, (req, res) => {
         const userId = req.query.user_id ? parseInt(req.query.user_id) : null;
         const streamId = req.query.stream_id ? parseInt(req.query.stream_id) : null;
 
-        // Non-admins can only search their own messages
-        const effectiveUserId = req.user.role === 'admin' ? userId : req.user.id;
+        // Admin / global_mod can search anyone; others search only their own
+        const effectiveUserId = permissions.canViewOtherUserLogs(req.user) ? userId : req.user.id;
 
         const result = db.searchChatMessages({
             query, userId: effectiveUserId, streamId, limit, offset,
@@ -42,8 +43,8 @@ router.get('/user/:userId/history', requireAuth, (req, res) => {
         const limit = Math.min(parseInt(req.query.limit || '50'), 200);
         const offset = parseInt(req.query.offset || '0');
 
-        // Non-admins can only view their own history
-        if (req.user.role !== 'admin' && req.user.id !== userId) {
+        // Admin / global_mod can view anyone; others view only their own
+        if (!permissions.canViewOtherUserLogs(req.user) && req.user.id !== userId) {
             return res.status(403).json({ error: 'Access denied' });
         }
 

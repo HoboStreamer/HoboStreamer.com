@@ -27,12 +27,13 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db/database');
-const { requireAdmin } = require('../auth/auth');
+const { requireAuth } = require('../auth/auth');
+const permissions = require('../auth/permissions');
 
 const router = express.Router();
 
 // All admin routes require admin role
-router.use(requireAdmin);
+router.use(requireAuth, permissions.requireAdmin);
 
 // ── Dashboard Stats ──────────────────────────────────────────
 router.get('/stats', (req, res) => {
@@ -122,7 +123,13 @@ router.put('/users/:id', (req, res) => {
         const updates = [];
         const params = [];
 
-        if (role) { updates.push('role = ?'); params.push(role); }
+        if (role) {
+            const validRoles = ['user', 'streamer', 'global_mod', 'admin'];
+            if (!validRoles.includes(role)) {
+                return res.status(400).json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` });
+            }
+            updates.push('role = ?'); params.push(role);
+        }
         if (display_name) { updates.push('display_name = ?'); params.push(display_name); }
 
         if (updates.length > 0) {
@@ -312,7 +319,7 @@ router.delete('/settings/:key', (req, res) => {
 router.get('/moderators', (req, res) => {
     try {
         const mods = db.all(
-            "SELECT id, username, display_name, avatar_url, created_at, last_seen FROM users WHERE role = 'mod' ORDER BY username"
+            "SELECT id, username, display_name, avatar_url, created_at, last_seen FROM users WHERE role = 'global_mod' ORDER BY username"
         );
         res.json({ moderators: mods });
     } catch (err) {
@@ -320,7 +327,7 @@ router.get('/moderators', (req, res) => {
     }
 });
 
-// ── Promote to Mod ───────────────────────────────────────────
+// ── Promote to Global Mod ────────────────────────────────────
 router.post('/moderators', (req, res) => {
     try {
         const { username } = req.body;
@@ -329,21 +336,21 @@ router.post('/moderators', (req, res) => {
         const user = db.getUserByUsername(username);
         if (!user) return res.status(404).json({ error: 'User not found' });
         if (user.role === 'admin') return res.status(400).json({ error: 'Cannot change admin role' });
-        if (user.role === 'mod') return res.status(400).json({ error: 'User is already a moderator' });
+        if (user.role === 'global_mod') return res.status(400).json({ error: 'User is already a global moderator' });
 
-        db.run("UPDATE users SET role = 'mod' WHERE id = ?", [user.id]);
-        res.json({ message: `${user.username} promoted to moderator` });
+        db.run("UPDATE users SET role = 'global_mod' WHERE id = ?", [user.id]);
+        res.json({ message: `${user.username} promoted to global moderator` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to promote user' });
     }
 });
 
-// ── Demote Mod ───────────────────────────────────────────────
+// ── Demote Global Mod ────────────────────────────────────────
 router.delete('/moderators/:id', (req, res) => {
     try {
         const user = db.getUserById(req.params.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
-        if (user.role !== 'mod') return res.status(400).json({ error: 'User is not a moderator' });
+        if (user.role !== 'global_mod') return res.status(400).json({ error: 'User is not a global moderator' });
 
         db.run("UPDATE users SET role = 'user' WHERE id = ?", [user.id]);
         res.json({ message: `${user.username} demoted to user` });

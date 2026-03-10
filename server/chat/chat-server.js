@@ -14,6 +14,7 @@ const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 const { authenticateWs } = require('../auth/auth');
+const permissions = require('../auth/permissions');
 const wordFilter = require('./word-filter');
 const cosmetics = require('../monetization/cosmetics');
 const ttsEngine = require('./tts-engine');
@@ -30,9 +31,11 @@ class ChatServer {
         /** @type {Map<string, number>} IP → sequential anon number */
         this.anonMap = new Map();
         this.nextAnonId = 1;
-        /** @type {Map<string, number>} IP → last message time (rate limiting) */
+        /** @type {Map<string, number>} `${ip}:${streamId}` → last message time (rate limiting) */
         this.rateLimits = new Map();
-        this.RATE_LIMIT_MS = 1000; // 1 message per second
+        this.DEFAULT_RATE_LIMIT_MS = 1000; // 1 message per second
+        /** @type {Map<number, number>} streamId → slow mode ms (0 = off, default rate limit applies) */
+        this.slowModeByStream = new Map();
         this.heartbeatInterval = null;
         /** @type {Map<number, number>} streamId → current TTS queue size */
         this.ttsQueueSize = new Map();
@@ -188,12 +191,15 @@ class ChatServer {
         // Rate limiting (only for chat messages, not join/leave)
         if (msg.type === 'chat') {
             const now = Date.now();
-            const lastMsg = this.rateLimits.get(client.ip) || 0;
-            if (now - lastMsg < this.RATE_LIMIT_MS) {
+            const rateKey = `${client.ip}:${client.streamId || 'global'}`;
+            const lastMsg = this.rateLimits.get(rateKey) || 0;
+            const streamSlowMs = this.slowModeByStream.get(client.streamId) || 0;
+            const effectiveLimit = Math.max(this.DEFAULT_RATE_LIMIT_MS, streamSlowMs);
+            if (now - lastMsg < effectiveLimit) {
                 this.sendTo(ws, { type: 'system', message: 'Slow down! You are sending messages too fast.' });
                 return;
             }
-            this.rateLimits.set(client.ip, now);
+            this.rateLimits.set(rateKey, now);
         }
 
         switch (msg.type) {
@@ -219,13 +225,14 @@ class ChatServer {
                 }
                 // Send identity confirmation so the client knows who it is
                 const displayName = client.user ? (client.user.display_name || client.user.username) : client.anonId;
+                const streamSlowSec = client.streamId ? Math.round((this.slowModeByStream.get(client.streamId) || 0) / 1000) : 0;
                 this.sendTo(ws, {
                     type: 'auth',
                     authenticated: !!client.user,
                     username: displayName,
                     role: client.user ? client.user.role : 'anon',
                     user_id: client.user?.id || null,
-                    slowmode_seconds: this.RATE_LIMIT_MS > 1000 ? Math.round(this.RATE_LIMIT_MS / 1000) : 0,
+                    slowmode_seconds: streamSlowSec,
                 });
                 break;
             }
@@ -371,7 +378,7 @@ class ChatServer {
                 this.sendTo(ws, {
                     type: 'system',
                     message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /w <user> <msg>, /me <action>` +
-                        (this.isMod(client)
+                        (this.canModerate(client)
                             ? `\nMod: /ban <user>, /unban <user>, /timeout <user> [seconds], /clear, /slow <seconds>`
                             : ''),
                 });
@@ -507,7 +514,7 @@ class ChatServer {
                 break;
 
             case 'clear':
-                if (this.isMod(client)) {
+                if (this.canModerate(client)) {
                     this.broadcastToStream(client.streamId, { type: 'clear' });
                 } else {
                     this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });
@@ -515,7 +522,7 @@ class ChatServer {
                 break;
 
             case 'slow': {
-                if (this.isMod(client)) {
+                if (this.canModerate(client)) {
                     let seconds;
                     if (args === 'off' || args === 'disable' || args === '0') {
                         seconds = 0;
@@ -523,7 +530,17 @@ class ChatServer {
                         seconds = parseInt(args);
                         if (!Number.isFinite(seconds) || seconds < 0) seconds = 3;
                     }
-                    this.RATE_LIMIT_MS = seconds > 0 ? seconds * 1000 : 1000;
+                    // Per-stream slow mode (not global)
+                    if (client.streamId) {
+                        this.slowModeByStream.set(client.streamId, seconds > 0 ? seconds * 1000 : 0);
+                        // Persist to DB
+                        try {
+                            const stream = db.getStreamById(client.streamId);
+                            if (stream?.channel_id) {
+                                db.upsertChannelModerationSettings(stream.channel_id, { slow_mode_seconds: seconds });
+                            }
+                        } catch { /* non-critical */ }
+                    }
                     // Dedicated slowmode event so clients can show/hide UI
                     this.broadcastToStream(client.streamId, {
                         type: 'slowmode',
@@ -551,7 +568,7 @@ class ChatServer {
      * Handle mod actions (ban, unban, timeout)
      */
     handleModAction(ws, client, action, args) {
-        if (!this.isMod(client)) {
+        if (!this.canModerate(client)) {
             this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });
             return;
         }
@@ -664,8 +681,19 @@ class ChatServer {
             console.error('[TTS] Synthesis broadcast error:', err.message);
         }
     }
+    /**
+     * Can this client moderate their current stream's chat?
+     * Uses the permission layer: admin, global_mod, stream owner, or channel mod.
+     * Streamers do NOT get mod powers in other people's chats.
+     */
+    canModerate(client) {
+        if (!client.user) return false;
+        return permissions.canModerateStream(client.user, client.streamId);
+    }
+
+    /** @deprecated Use canModerate(client) — kept temporarily for any external callers */
     isMod(client) {
-        return client.user && ['admin', 'mod', 'streamer'].includes(client.user.role);
+        return this.canModerate(client);
     }
 
     findClientByAnonId(anonId, streamId) {

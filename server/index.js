@@ -197,6 +197,8 @@ app.use('/api/clips', clipRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/controls', controlRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/mod', require('./admin/mod-routes'));
+app.use('/api/channels', require('./admin/channel-mod-routes'));
 app.use('/api/robotstreamer', robotStreamerRoutes);
 app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
