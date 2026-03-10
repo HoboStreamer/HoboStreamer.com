@@ -483,9 +483,9 @@ async function loadChannelPage(username) {
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
 
-            // Load live stream tabs (all live streams across platform)
+            // Load live stream tabs for this channel
             const targetStream = requestedStream || liveStreams[0];
-            loadLiveStreamTabs(username, targetStream.id);
+            loadLiveStreamTabs(username, targetStream.id, liveStreams);
 
             // Activate the requested stream (or first if none specified)
             activateChannelStream(targetStream);
@@ -507,8 +507,9 @@ async function loadChannelPage(username) {
             initChat(null);
             loadGlobalChatHistory();
 
-            // Still load tabs if other streams are live
-            loadLiveStreamTabs(username, null);
+            // Hide stream tabs on offline channels
+            const tabsC = document.getElementById('live-stream-tabs');
+            if (tabsC) tabsC.style.display = 'none';
         }
 
         // VODs section
@@ -589,43 +590,37 @@ async function loadChannelPage(username) {
 }
 
 /**
- * Load tabs for all live streams across the platform.
- * Highlights the current stream tab.
+ * Load tabs for the current channel's live streams.
+ * Only shows tabs when the channel has multiple concurrent streams (multi-protocol).
+ * @param {string} currentUsername - The channel username being viewed
+ * @param {number|null} activeStreamId - Currently active stream ID
+ * @param {Array} channelStreams - Live streams for this channel (already loaded)
  */
-async function loadLiveStreamTabs(currentUsername, activeStreamId) {
+function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []) {
     const tabsContainer = document.getElementById('live-stream-tabs');
     const tabsScroll = document.getElementById('live-tabs-scroll');
     if (!tabsContainer || !tabsScroll) return;
 
-    try {
-        const data = await api('/streams');
-        const allLive = data.streams || [];
-
-        if (allLive.length === 0) {
-            tabsContainer.style.display = 'none';
-            return;
-        }
-
-        tabsContainer.style.display = '';
-        tabsScroll.innerHTML = allLive.map(s => {
-            const isActive = s.id === activeStreamId;
-            const avatarLetter = (s.username || '?')[0].toUpperCase();
-            const title = esc(s.title || 'Untitled Stream');
-            const truncTitle = title.length > 30 ? title.slice(0, 28) + '…' : title;
-            return `<button class="live-tab ${isActive ? 'active' : ''}"
-                        onclick="switchToLiveStream('${esc(s.username)}', ${s.id}, this)"
-                        data-stream-id="${s.id}" data-username="${esc(s.username)}" title="${title}">
-                <span class="live-tab-dot"></span>
-                <span class="live-tab-avatar">${avatarLetter}</span>
-                <span>${esc(s.username)}: ${truncTitle}</span>
-                ${s.protocol ? protocolBadge(s.protocol) : ''}
-                <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>
-            </button>`;
-        }).join('');
-    } catch (e) {
-        console.error('Failed to load live stream tabs:', e);
+    // Only show tabs if the channel has more than one concurrent live stream
+    if (channelStreams.length <= 1) {
         tabsContainer.style.display = 'none';
+        return;
     }
+
+    tabsContainer.style.display = '';
+    tabsScroll.innerHTML = channelStreams.map(s => {
+        const isActive = s.id === activeStreamId;
+        const title = esc(s.title || 'Untitled Stream');
+        const truncTitle = title.length > 30 ? title.slice(0, 28) + '…' : title;
+        return `<button class="live-tab ${isActive ? 'active' : ''}"
+                    onclick="switchToLiveStream('${esc(currentUsername)}', ${s.id}, this)"
+                    data-stream-id="${s.id}" data-username="${esc(currentUsername)}" title="${title}">
+            <span class="live-tab-dot"></span>
+            <span>${truncTitle}</span>
+            ${s.protocol ? protocolBadge(s.protocol) : ''}
+            <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>
+        </button>`;
+    }).join('');
 }
 
 /**
