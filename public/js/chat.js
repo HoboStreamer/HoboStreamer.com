@@ -27,6 +27,9 @@ const CHAT_SETTINGS_DEFAULTS = {
     // Notifications
     flashOnMention: true,         // Flash browser tab on @mention
     soundOnMention: false,        // Play a sound on @mention
+    // TTS
+    ttsEnabled: true,             // TTS toggle (on by default)
+    ttsVolume: 80,                // TTS volume (0–100)
 };
 let chatSettings = { ...CHAT_SETTINGS_DEFAULTS };
 let chatSettingsPanelOpen = false;
@@ -70,9 +73,11 @@ function syncSettingsPanelUI() {
         panel.querySelectorAll('[data-setting]').forEach(el => {
             const key = el.dataset.setting;
             if (el.type === 'checkbox') el.checked = chatSettings[key];
+            else if (el.type === 'range') el.value = chatSettings[key];
             else if (el.tagName === 'SELECT') el.value = chatSettings[key];
         });
     });
+    syncTTSToggleButtons();
 }
 // Initialize on load
 loadChatSettings();
@@ -122,8 +127,13 @@ function getChatEl() {
 
 /**
  * Initialize chat for a stream.
+ * Idempotent — if already connected to the same stream, skip reconnection.
  */
 function initChat(streamId) {
+    // Already connected to this stream — nothing to do
+    if (chatWs && chatWs.readyState === WebSocket.OPEN && chatStreamId === streamId) {
+        return;
+    }
     destroyChat();
     chatStreamId = streamId;
 
@@ -219,8 +229,24 @@ function handleChatMessage(msg) {
             break;
         }
         case 'tts':
-            if (document.getElementById('tts-checkbox')?.checked) {
+            // Legacy browser-side TTS (Self TTS mode)
+            if (typeof broadcastState !== 'undefined' && broadcastState.settings?.ttsMode === 'self') {
+                // Broadcast page — use broadcast TTS with its volume/pitch/rate settings
+                if (typeof speakBroadcastTTS === 'function') {
+                    speakBroadcastTTS(msg.message || msg.text, msg.username);
+                }
+            } else if (chatSettings.ttsEnabled) {
                 speakTTS(msg.message || msg.text, msg.voiceFX);
+            }
+            break;
+        case 'tts-audio':
+            // Server-synthesized TTS audio (Site-Wide TTS mode)
+            if (typeof playBroadcastTTSAudio === 'function' && typeof broadcastState !== 'undefined') {
+                // Broadcast page — route to broadcast audio queue
+                playBroadcastTTSAudio(msg);
+            } else if (chatSettings.ttsEnabled) {
+                // Regular chat viewer — play through chat TTS queue
+                playTTSAudio(msg);
             }
             break;
         case 'ban':
@@ -854,13 +880,72 @@ function timeAgoShort(dateStr) {
 }
 
 /* ── TTS ──────────────────────────────────────────────────────── */
+
+/** Browser-side TTS using SpeechSynthesis API (Self TTS / legacy fallback) */
 function speakTTS(text, voiceFX) {
     if (!('speechSynthesis' in window)) return;
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = voiceFX?.rate || 1;
     utter.pitch = voiceFX?.pitch || 1;
-    utter.volume = 0.7;
+    utter.volume = (chatSettings.ttsVolume || 80) / 100;
     speechSynthesis.speak(utter);
+}
+
+/** Server-synthesized TTS audio playback queue */
+let _ttsAudioQueue = [];
+let _ttsAudioPlaying = false;
+
+function playTTSAudio(msg) {
+    if (!msg.audio || !msg.mimeType) return;
+    _ttsAudioQueue.push(msg);
+    _processTTSAudioQueue();
+}
+
+function _processTTSAudioQueue() {
+    if (_ttsAudioPlaying || _ttsAudioQueue.length === 0) return;
+    _ttsAudioPlaying = true;
+    const msg = _ttsAudioQueue.shift();
+    try {
+        const binaryStr = atob(msg.audio);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+        const blob = new Blob([bytes], { type: msg.mimeType });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.volume = (chatSettings.ttsVolume || 80) / 100;
+        audio.onended = () => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); };
+        audio.play().catch(() => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); });
+    } catch {
+        _ttsAudioPlaying = false;
+        _processTTSAudioQueue();
+    }
+}
+
+/** Cancel all TTS (both browser and server audio) */
+function cancelAllTTS() {
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    _ttsAudioQueue = [];
+    _ttsAudioPlaying = false;
+}
+
+/** Toggle TTS on/off from the chat input button */
+function toggleChatTTS(btn) {
+    chatSettings.ttsEnabled = !chatSettings.ttsEnabled;
+    saveChatSettings();
+    if (btn) {
+        btn.classList.toggle('tts-active', chatSettings.ttsEnabled);
+        btn.title = chatSettings.ttsEnabled ? 'TTS On (click to mute)' : 'TTS Off (click to enable)';
+    }
+    if (!chatSettings.ttsEnabled) cancelAllTTS();
+}
+
+/** Update TTS toggle button state (called after settings load) */
+function syncTTSToggleButtons() {
+    document.querySelectorAll('.chat-tts-toggle').forEach(btn => {
+        btn.classList.toggle('tts-active', chatSettings.ttsEnabled);
+        btn.title = chatSettings.ttsEnabled ? 'TTS On (click to mute)' : 'TTS Off (click to enable)';
+    });
 }
 
 /* ── Chat settings panel ──────────────────────────────────────── */
@@ -984,6 +1069,17 @@ function buildSettingsPanelHTML() {
                 <input type="checkbox" data-setting="soundOnMention" onchange="onChatSettingChange(this)">
             </label>
         </div>
+        <div class="csp-section">
+            <div class="csp-title"><i class="fa-solid fa-volume-high"></i> Text-to-Speech</div>
+            <label class="csp-row">
+                <span>Enable TTS</span>
+                <input type="checkbox" data-setting="ttsEnabled" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row">
+                <span>TTS Volume</span>
+                <input type="range" min="0" max="100" step="5" data-setting="ttsVolume" onchange="onChatSettingChange(this)" oninput="onChatSettingChange(this)">
+            </label>
+        </div>
         <div class="csp-footer">
             <button class="btn btn-small" onclick="resetChatSettings()">Reset to Defaults</button>
         </div>
@@ -993,8 +1089,11 @@ function buildSettingsPanelHTML() {
 function onChatSettingChange(el) {
     const key = el.dataset.setting;
     if (!key) return;
-    chatSettings[key] = el.type === 'checkbox' ? el.checked : el.value;
+    if (el.type === 'checkbox') chatSettings[key] = el.checked;
+    else if (el.type === 'range') chatSettings[key] = parseInt(el.value, 10);
+    else chatSettings[key] = el.value;
     saveChatSettings();
+    if (key === 'ttsEnabled') syncTTSToggleButtons();
 }
 
 function resetChatSettings() {

@@ -1158,10 +1158,24 @@ function setupVideoControls() {
     }
 }
 
-/* ── Clip Recording (rolling buffer) ────────────────────────── */
+/* ── Clip Recording (rolling buffer with periodic cycling) ──── */
+let _clipCycleTimer = null;
+let _clipPrevSegment = null; // Backup from previous recorder cycle
+
 function startClipRecording(stream, streamId) {
     stopClipRecording();
     clipStreamId = streamId;
+    _startNewRecorderCycle(stream);
+
+    // Cycle the recorder every CLIP_BUFFER_SECONDS to keep WebM cluster
+    // timestamps fresh. Without cycling, a 2-hour stream produces clusters
+    // timestamped at ~7200s — browsers can't play files with no data at t=0.
+    _clipCycleTimer = setInterval(() => {
+        _cycleClipRecorder(stream);
+    }, CLIP_BUFFER_SECONDS * 1000);
+}
+
+function _startNewRecorderCycle(stream) {
     clipHeaderChunk = null;
     clipChunks = [];
     clipRecorderMimeType = null;
@@ -1210,7 +1224,28 @@ function startClipRecording(stream, streamId) {
     }
 }
 
+function _cycleClipRecorder(stream) {
+    // Save current cycle as backup (so clips right after a cycle still have data)
+    if (clipHeaderChunk && clipChunks.length) {
+        _clipPrevSegment = {
+            header: clipHeaderChunk,
+            chunks: [...clipChunks],
+            mimeType: clipRecorderMimeType,
+        };
+    }
+
+    // Stop current recorder (triggers final ondataavailable)
+    if (clipRecorder && clipRecorder.state !== 'inactive') {
+        try { clipRecorder.stop(); } catch {}
+    }
+
+    // Start a fresh recorder with reset timestamps
+    _startNewRecorderCycle(stream);
+    console.log('[Clip] Recorder cycled — timestamps reset');
+}
+
 function stopClipRecording() {
+    if (_clipCycleTimer) { clearInterval(_clipCycleTimer); _clipCycleTimer = null; }
     if (clipRecorder && clipRecorder.state !== 'inactive') {
         try { clipRecorder.stop(); } catch {}
     }
@@ -1221,10 +1256,22 @@ function stopClipRecording() {
     clipStreamId = null;
     clipRecorderMimeType = null;
     clipTimingBaseMs = 0;
+    _clipPrevSegment = null;
 }
 
 async function createLiveClip() {
-    if (!clipHeaderChunk || !clipChunks.length || !clipStreamId) {
+    // Use current cycle if it has enough data, otherwise fall back to previous
+    let header = clipHeaderChunk;
+    let chunks = clipChunks;
+    let mimeType = clipRecorderMimeType;
+
+    if ((!header || chunks.length < 3) && _clipPrevSegment) {
+        header = _clipPrevSegment.header;
+        chunks = _clipPrevSegment.chunks;
+        mimeType = _clipPrevSegment.mimeType;
+    }
+
+    if (!header || !chunks.length || !clipStreamId) {
         toast('No clip data available yet — wait a moment', 'info');
         return;
     }
@@ -1235,13 +1282,13 @@ async function createLiveClip() {
         // Assemble: header chunk first, then rolling buffer chunks.
         // The header contains the WebM EBML header + track initialization
         // which is required for the file to be playable.
-        const blobs = [clipHeaderChunk, ...clipChunks.map(c => c.data)];
-        const clipBlob = new Blob(blobs, { type: clipHeaderChunk.type || clipRecorderMimeType || 'video/webm' });
+        const blobs = [header, ...chunks.map(c => c.data)];
+        const clipBlob = new Blob(blobs, { type: header.type || mimeType || 'video/webm' });
 
-        const firstChunk = clipChunks[0];
-        const lastChunk = clipChunks[clipChunks.length - 1];
+        const firstChunk = chunks[0];
+        const lastChunk = chunks[chunks.length - 1];
         const startTime = Math.max(0, Math.floor(firstChunk.startStreamSeconds || 0));
-        const endTime = Math.max(startTime + 1, Math.ceil(lastChunk.endStreamSeconds || startTime + clipChunks.length));
+        const endTime = Math.max(startTime + 1, Math.ceil(lastChunk.endStreamSeconds || startTime + chunks.length));
         const duration = Math.max(1, endTime - startTime);
 
         const formData = new FormData();

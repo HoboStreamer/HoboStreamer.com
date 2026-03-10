@@ -193,6 +193,8 @@ app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
 app.use('/api/game', gameRoutes);
+const ttsRoutes = require('./chat/tts-routes');
+app.use('/api/tts', ttsRoutes);
 
 // ── Health Check ─────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

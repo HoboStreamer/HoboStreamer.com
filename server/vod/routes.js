@@ -188,6 +188,95 @@ function remuxForSeeking(filePath) {
 }
 
 /**
+ * Probe a media file's start_time using ffprobe.
+ * Returns the start time in seconds, or 0 if probing fails.
+ */
+function probeStartTime(filePath) {
+    return new Promise((resolve) => {
+        const probe = spawn('ffprobe', [
+            '-v', 'quiet', '-print_format', 'json',
+            '-show_entries', 'format=start_time',
+            filePath,
+        ]);
+        let out = '';
+        probe.stdout.on('data', d => out += d);
+        probe.on('close', () => {
+            try {
+                const info = JSON.parse(out);
+                const startTime = parseFloat(info.format?.start_time || '0');
+                resolve(Number.isFinite(startTime) && startTime > 0 ? startTime : 0);
+            } catch { resolve(0); }
+        });
+        probe.on('error', () => resolve(0));
+        setTimeout(() => { try { probe.kill(); } catch {} resolve(0); }, 5000);
+    });
+}
+
+/**
+ * Remux a clip file for playback — handles both seeking support and
+ * timestamp rebasing for clips recorded after a long streaming session.
+ *
+ * MediaRecorder rolling-buffer clips can have cluster timestamps far
+ * from zero (e.g. 7200s if clipped 2 hours into a stream). Browsers
+ * show a black screen because there's no data at timestamp 0.
+ *
+ * Strategy:
+ * 1. Copy-mode remux (fast, adds Cues for seeking)
+ * 2. Probe the result's start_time
+ * 3. If start_time > 5s, re-encode to reset timestamps to start from 0
+ *    (clips are ≤30s so re-encoding is fast and guarantees correctness)
+ */
+async function remuxClipFile(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext !== '.webm') return false;
+
+    // Step 1: Copy-mode remux for Cues/seeking
+    const copyOk = await remuxForSeeking(filePath);
+
+    // Step 2: Probe the first timestamp
+    const startOffset = await probeStartTime(filePath);
+    if (startOffset <= 5) {
+        // Timestamps are fine — copy-mode remux is sufficient
+        return copyOk;
+    }
+
+    // Step 3: Timestamps are offset — re-encode to rebase to 0
+    console.log(`[Clips] Timestamp offset detected (${startOffset.toFixed(1)}s), re-encoding to fix: ${path.basename(filePath)}`);
+    return new Promise((resolve) => {
+        const tmpPath = filePath + '.rebase.webm';
+        const proc = spawn('ffmpeg', [
+            '-y', '-err_detect', 'ignore_err',
+            '-i', filePath,
+            '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0',
+            '-c:a', 'libopus', '-b:a', '128k',
+            tmpPath,
+        ], { stdio: ['ignore', 'ignore', 'pipe'] });
+        let stderr = '';
+        proc.stderr.on('data', d => stderr += d);
+        proc.on('close', (code) => {
+            if (code === 0 && fs.existsSync(tmpPath)) {
+                try {
+                    fs.renameSync(tmpPath, filePath);
+                    console.log(`[Clips] Re-encoded for timestamp fix: ${path.basename(filePath)}`);
+                    resolve(true);
+                } catch (err) {
+                    console.warn(`[Clips] Re-encode rename failed:`, err.message);
+                    try { fs.unlinkSync(tmpPath); } catch {}
+                    resolve(false);
+                }
+            } else {
+                console.warn(`[Clips] Re-encode failed (code ${code}): ${stderr.slice(-300)}`);
+                try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
+                resolve(false);
+            }
+        });
+        proc.on('error', () => resolve(false));
+        // Clips are ≤30s — 90s timeout is generous
+        setTimeout(() => { try { proc.kill(); } catch {} }, 90000);
+    });
+}
+
+/**
  * Create a seekable copy of a live-recording WebM file.
  * Writes to <filename>.seekable.webm WITHOUT touching the original growing file.
  * Debounced per file — only one remux runs at a time per recording.
@@ -914,9 +1003,11 @@ router.post('/clips', requireAuth, vodUpload.single('video'), async (req, res) =
             const clipPath = path.join(clipsDir, req.file.filename);
             fs.renameSync(req.file.path, clipPath);
 
-            // Remux WebM for proper seeking support + validate file is playable
-            const remuxOk = await remuxForSeeking(clipPath);
-            // Quick EBML header validation — first 4 bytes must be 1A 45 DF A3
+            // Remux clip: adds seeking support + rebases timestamps if offset
+            // (clips from long streams have cluster timestamps hours from zero)
+            const remuxOk = await remuxClipFile(clipPath);
+
+            // EBML header validation — first 4 bytes must be 1A 45 DF A3
             try {
                 const fd = fs.openSync(clipPath, 'r');
                 const hdr = Buffer.alloc(4);

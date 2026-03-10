@@ -53,6 +53,7 @@ function switchAdminTab(tab) {
         case 'moderators': loadAdminModerators(); break;
         case 'chat-logs': loadAdminChatLogs(); break;
         case 'settings': loadAdminSettings(); break;
+        case 'tts': loadAdminTTS(); break;
         case 'verification': loadAdminVerificationKeys(); break;
         case 'streams': loadAdminStreams(); break;
         case 'cashouts': loadAdminCashouts(); break;
@@ -603,4 +604,183 @@ async function denyVPN(id) {
         toast('VPN denied', 'info');
         loadAdminVPN();
     } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ── TTS Admin Panel ──────────────────────────────────────────── */
+async function loadAdminTTS() {
+    const c = document.getElementById('admin-content');
+    c.innerHTML = '<p class="muted">Loading TTS settings...</p>';
+    try {
+        const [settingsRes, voicesRes] = await Promise.all([
+            api('/tts/admin/settings'),
+            api('/tts/voices'),
+        ]);
+        const s = settingsRes.settings || {};
+        const voices = voicesRes.voices || [];
+
+        // Build voice options for default voice selector
+        const espeakVoices = voices.filter(v => v.engine === 'espeak-ng');
+        const googleVoices = voices.filter(v => v.engine === 'google-cloud');
+        const pollyVoices = voices.filter(v => v.engine === 'amazon-polly');
+
+        const voiceOptions = (arr) => arr.map(v =>
+            `<option value="${esc(v.id)}" ${v.id === s.defaultVoice ? 'selected' : ''}>${esc(v.name)} (${esc(v.rarity)})${v.available ? '' : ' ⚠️ unavailable'}</option>`
+        ).join('');
+
+        c.innerHTML = `
+            <form id="admin-tts-form" style="display:grid;gap:16px;max-width:700px">
+                <h3 style="margin:0"><i class="fa-solid fa-comment-dots"></i> TTS Configuration</h3>
+
+                <div class="bc-settings-group" style="padding:12px;border:1px solid var(--border);border-radius:8px">
+                    <div class="bc-settings-title" style="margin-bottom:8px"><i class="fa-solid fa-sliders"></i> General</div>
+                    <div style="display:grid;gap:10px">
+                        <label style="display:flex;align-items:center;gap:12px">
+                            <strong style="min-width:180px">TTS Enabled</strong>
+                            <input type="checkbox" id="tts-admin-enabled" ${s.enabled ? 'checked' : ''} style="width:18px;height:18px">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:12px">
+                            <strong style="min-width:180px">Default Provider</strong>
+                            <select id="tts-admin-provider" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                                <option value="espeak-ng" ${s.provider === 'espeak-ng' ? 'selected' : ''}>espeak-ng (Local/Free)</option>
+                                <option value="google-cloud" ${s.provider === 'google-cloud' ? 'selected' : ''}>Google Cloud TTS</option>
+                                <option value="amazon-polly" ${s.provider === 'amazon-polly' ? 'selected' : ''}>Amazon Polly</option>
+                            </select>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:12px">
+                            <strong style="min-width:180px">Default Voice</strong>
+                            <select id="tts-admin-default-voice" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                                <optgroup label="espeak-ng">${voiceOptions(espeakVoices)}</optgroup>
+                                <optgroup label="Google Cloud">${voiceOptions(googleVoices)}</optgroup>
+                                <optgroup label="Amazon Polly">${voiceOptions(pollyVoices)}</optgroup>
+                            </select>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:12px">
+                            <strong style="min-width:180px">Max Message Length</strong>
+                            <input type="number" id="tts-admin-max-length" value="${s.maxLength || 200}" min="10" max="1000"
+                                style="width:100px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:12px">
+                            <strong style="min-width:180px">Max Queue Per User</strong>
+                            <input type="number" id="tts-admin-max-per-user" value="${s.maxQueuePerUser || 3}" min="1" max="50"
+                                style="width:100px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:12px">
+                            <strong style="min-width:180px">Max Queue Global</strong>
+                            <input type="number" id="tts-admin-max-global" value="${s.maxQueueGlobal || 20}" min="1" max="200"
+                                style="width:100px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                        </label>
+                    </div>
+                </div>
+
+                <div class="bc-settings-group" style="padding:12px;border:1px solid var(--border);border-radius:8px">
+                    <div class="bc-settings-title" style="margin-bottom:8px"><i class="fa-brands fa-google"></i> Google Cloud TTS</div>
+                    <div style="display:grid;gap:10px">
+                        <label>
+                            <strong>API Key</strong> <small class="muted">(simple auth — or use service account below)</small>
+                            <input type="password" id="tts-admin-google-api-key" value="${esc(s.googleApiKey || '')}" placeholder="AIza..."
+                                style="width:100%;margin-top:4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                        </label>
+                        <label>
+                            <strong>Service Account JSON</strong> <small class="muted">(paste JSON or file path)</small>
+                            <textarea id="tts-admin-google-sa" rows="3" placeholder='{"type":"service_account","project_id":"...","private_key":"..."}'
+                                style="width:100%;margin-top:4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-family:monospace;font-size:12px">${esc(s.googleServiceAccount || '')}</textarea>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="bc-settings-group" style="padding:12px;border:1px solid var(--border);border-radius:8px">
+                    <div class="bc-settings-title" style="margin-bottom:8px"><i class="fa-brands fa-aws"></i> Amazon Polly</div>
+                    <div style="display:grid;gap:10px">
+                        <label>
+                            <strong>AWS Access Key ID</strong>
+                            <input type="password" id="tts-admin-aws-key" value="${esc(s.awsAccessKeyId || '')}" placeholder="AKIA..."
+                                style="width:100%;margin-top:4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                        </label>
+                        <label>
+                            <strong>AWS Secret Access Key</strong>
+                            <input type="password" id="tts-admin-aws-secret" value="${esc(s.awsSecretAccessKey || '')}" placeholder="wJalr..."
+                                style="width:100%;margin-top:4px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:12px">
+                            <strong style="min-width:180px">AWS Region</strong>
+                            <input type="text" id="tts-admin-aws-region" value="${esc(s.awsRegion || 'us-east-1')}" placeholder="us-east-1"
+                                style="width:200px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                        </label>
+                    </div>
+                </div>
+
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button type="submit" class="btn btn-primary" onclick="saveAdminTTS(event)">
+                        <i class="fa-solid fa-floppy-disk"></i> Save TTS Settings
+                    </button>
+                    <button type="button" class="btn" onclick="testAdminTTSVoice()">
+                        <i class="fa-solid fa-volume-high"></i> Test Voice
+                    </button>
+                </div>
+
+                <div style="margin-top:8px">
+                    <h4><i class="fa-solid fa-microphone"></i> Available Voices (${voices.length})</h4>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:300px;overflow-y:auto;padding:4px">
+                        ${voices.map(v => `
+                            <div style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;opacity:${v.available ? '1' : '0.5'};font-size:13px">
+                                <span>${v.emoji} <strong>${esc(v.name)}</strong></span>
+                                <br><small class="muted">${esc(v.engine)} · ${esc(v.rarity)}</small>
+                                ${!v.available ? '<br><small style="color:var(--warning)">⚠️ Not configured</small>' : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </form>`;
+    } catch (e) {
+        c.innerHTML = `<p class="muted">Error loading TTS settings: ${e.message}</p>`;
+    }
+}
+
+async function saveAdminTTS(e) {
+    if (e) e.preventDefault();
+    try {
+        const settings = {
+            tts_enabled: document.getElementById('tts-admin-enabled').checked,
+            tts_provider: document.getElementById('tts-admin-provider').value,
+            tts_default_voice: document.getElementById('tts-admin-default-voice').value,
+            tts_max_length: parseInt(document.getElementById('tts-admin-max-length').value) || 200,
+            tts_max_queue_per_user: parseInt(document.getElementById('tts-admin-max-per-user').value) || 3,
+            tts_max_queue_global: parseInt(document.getElementById('tts-admin-max-global').value) || 20,
+            tts_google_api_key: document.getElementById('tts-admin-google-api-key').value,
+            tts_google_service_account: document.getElementById('tts-admin-google-sa').value,
+            tts_aws_access_key_id: document.getElementById('tts-admin-aws-key').value,
+            tts_aws_secret_access_key: document.getElementById('tts-admin-aws-secret').value,
+            tts_aws_region: document.getElementById('tts-admin-aws-region').value || 'us-east-1',
+        };
+        await api('/tts/admin/settings', { method: 'PUT', body: { settings } });
+        toast('TTS settings saved', 'success');
+    } catch (e) {
+        toast('Error saving TTS: ' + e.message, 'error');
+    }
+}
+
+async function testAdminTTSVoice() {
+    try {
+        const voiceId = document.getElementById('tts-admin-default-voice').value;
+        const result = await api('/tts/admin/test', {
+            method: 'POST',
+            body: { voiceId, text: 'Hello, this is a TTS voice test from HoboStreamer.' },
+        });
+        if (result.audio && result.mimeType) {
+            const binaryStr = atob(result.audio);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+            const blob = new Blob([bytes], { type: result.mimeType });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.volume = 0.8;
+            audio.onended = () => URL.revokeObjectURL(url);
+            audio.play();
+            toast(`Testing: ${result.voiceName || voiceId} (${result.engine})`, 'info');
+        } else {
+            toast('No audio returned — check provider config', 'warning');
+        }
+    } catch (e) {
+        toast('Test error: ' + e.message, 'error');
+    }
 }

@@ -16,6 +16,7 @@ const db = require('../db/database');
 const { authenticateWs } = require('../auth/auth');
 const wordFilter = require('./word-filter');
 const cosmetics = require('../monetization/cosmetics');
+const ttsEngine = require('./tts-engine');
 
 const WS_HEARTBEAT_MS = 30000;
 const MAX_SEND_BACKPRESSURE = 256 * 1024;
@@ -33,6 +34,10 @@ class ChatServer {
         this.rateLimits = new Map();
         this.RATE_LIMIT_MS = 1000; // 1 message per second
         this.heartbeatInterval = null;
+        /** @type {Map<number, number>} streamId → current TTS queue size */
+        this.ttsQueueSize = new Map();
+        /** @type {Map<string, number>} `${streamId}:${userId}` → user's TTS queue count */
+        this.ttsUserCounts = new Map();
     }
 
     normalizeIp(ip) {
@@ -337,6 +342,14 @@ class ChatServer {
             this.broadcastToStream(client.streamId, chatMsg);
             // Also forward to global chat clients so the global feed sees all activity
             this.forwardToGlobal(client.streamId, chatMsg);
+
+            // Trigger server-side TTS synthesis (async, non-blocking)
+            this.synthesizeAndBroadcastTTS(
+                client.streamId,
+                username,
+                text,
+                chatMsg.voiceFX
+            );
         } else {
             // Global chat
             this.broadcastGlobal(chatMsg);
@@ -376,13 +389,25 @@ class ChatServer {
                         timestamp: new Date().toISOString(),
                     };
                     // Attach voice cosmetic if equipped
+                    let voiceFX = null;
                     if (client.user?.id) {
                         try {
                             const cp = cosmetics.getCosmeticProfile(client.user.id);
-                            if (cp.voiceFX) ttsMsg.voiceFX = cp.voiceFX;
+                            if (cp.voiceFX) {
+                                ttsMsg.voiceFX = cp.voiceFX;
+                                voiceFX = cp.voiceFX;
+                            }
                         } catch { /* non-critical */ }
                     }
                     this.broadcastToStream(client.streamId, ttsMsg);
+
+                    // Also synthesize server-side TTS for site-wide mode
+                    this.synthesizeAndBroadcastTTS(
+                        client.streamId,
+                        ttsMsg.username,
+                        args,
+                        voiceFX
+                    );
                 }
                 break;
 
@@ -570,7 +595,60 @@ class ChatServer {
     }
 
     // ── Helper methods ───────────────────────────────────────
+    /**
+     * Synthesize TTS audio for a chat message and broadcast to stream.
+     * Runs asynchronously — does not block message delivery.
+     */
+    async synthesizeAndBroadcastTTS(streamId, username, text, voiceFX) {
+        try {
+            const settings = ttsEngine.getTTSSettings();
+            if (!settings.enabled) return;
 
+            // Queue limit checks
+            const limits = ttsEngine.getQueueLimits();
+            const globalCount = this.ttsQueueSize.get(streamId) || 0;
+            if (globalCount >= limits.maxGlobal) return;
+
+            // Determine voice ID from equipped cosmetic
+            let voiceId = settings.defaultVoice;
+            if (voiceFX?.itemId) {
+                // Check if this cosmetic voice exists in the TTS engine catalog
+                if (ttsEngine.VOICE_CATALOG[voiceFX.itemId]) {
+                    voiceId = voiceFX.itemId;
+                }
+            }
+
+            // Increment queue counter
+            this.ttsQueueSize.set(streamId, globalCount + 1);
+
+            const result = await ttsEngine.synthesize(text, voiceId);
+
+            // Decrement queue counter
+            const current = this.ttsQueueSize.get(streamId) || 1;
+            this.ttsQueueSize.set(streamId, Math.max(0, current - 1));
+
+            if (!result) return;
+
+            // Broadcast TTS audio to all clients in the stream
+            this.broadcastToStream(streamId, {
+                type: 'tts-audio',
+                username,
+                message: text,
+                audio: result.audio,
+                mimeType: result.mimeType,
+                engine: result.engine,
+                voiceName: result.voiceName,
+                voiceId: result.voiceId,
+                fallback: result.fallback || false,
+                timestamp: new Date().toISOString(),
+            });
+        } catch (err) {
+            // Ensure queue counter is decremented on error
+            const current = this.ttsQueueSize.get(streamId) || 1;
+            this.ttsQueueSize.set(streamId, Math.max(0, current - 1));
+            console.error('[TTS] Synthesis broadcast error:', err.message);
+        }
+    }
     isMod(client) {
         return client.user && ['admin', 'mod', 'streamer'].includes(client.user.role);
     }
