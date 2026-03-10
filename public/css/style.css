@@ -435,6 +435,66 @@ main#app { position: relative; z-index: 1; }
     margin-bottom: 18px; max-width: 700px;
 }
 .hoboapp-desc strong { color: var(--accent); }
+.hoboapp-live-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.hoboapp-meta-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border: 1px solid var(--border);
+}
+.hoboapp-meta-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.hoboapp-meta-card strong {
+    font-size: 1.02rem;
+    color: var(--text-primary);
+}
+.hoboapp-meta-sub {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+.hoboapp-latest-change {
+    margin-bottom: 18px;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+}
+.hoboapp-latest-change-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.hoboapp-latest-change-head strong {
+    color: var(--text-primary);
+    font-size: 0.86rem;
+}
+.hoboapp-latest-change-head a {
+    color: var(--accent);
+    font-size: 0.78rem;
+    text-decoration: none;
+}
+.hoboapp-latest-change-head a:hover { text-decoration: underline; }
+.hoboapp-latest-change p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    font-size: 0.88rem;
+}
 .hoboapp-features {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 10px; margin-bottom: 20px;
@@ -471,8 +531,10 @@ main#app { position: relative; z-index: 1; }
 }
 @media (max-width: 600px) {
     .hoboapp-popover-inner { padding: 20px 16px 18px; }
+    .hoboapp-live-meta { grid-template-columns: 1fr; }
     .hoboapp-features { grid-template-columns: 1fr; }
     .hoboapp-header { flex-direction: column; text-align: center; }
+    .hoboapp-latest-change-head { flex-direction: column; align-items: flex-start; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
