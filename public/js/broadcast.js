@@ -819,43 +819,80 @@ async function populateCreateFormDevices() {
 }
 
 /**
+ * Helper: call getUserMedia with a timeout to avoid indefinite hangs on mobile.
+ */
+function _getUserMediaWithTimeout(constraints, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Camera/mic request timed out — try tapping Allow in the browser prompt')), timeoutMs);
+        navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+            clearTimeout(timer);
+            resolve(stream);
+        }).catch(err => {
+            clearTimeout(timer);
+            reject(err);
+        });
+    });
+}
+
+/**
  * User clicked "Allow Camera & Mic" — request permissions, then populate lists.
  * On mobile Android, requesting audio+video together can silently fail,
  * so we try combined first, then individually.
  */
 async function requestMediaPermissions() {
+    console.log('[Broadcast] requestMediaPermissions() called');
     const permReq = document.getElementById('bc-perm-request');
     const devSelects = document.getElementById('bc-device-selects');
-    const btn = permReq?.querySelector('button');
+    const btn = document.getElementById('bc-perm-btn') || permReq?.querySelector('button');
+    const dbg = document.getElementById('bc-perm-debug');
     const btnOrigText = btn?.innerHTML;
+
+    // Immediate visual feedback — if user doesn't see spinner, the function isn't reached
     if (btn) {
         btn.disabled = true;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Requesting access...';
     }
+    if (dbg) { dbg.style.display = ''; dbg.textContent = 'Requesting permissions...'; }
+
+    // Feature detection
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const msg = 'Camera/mic API not available — make sure you\'re using HTTPS';
+        console.warn('[Broadcast]', msg);
+        if (dbg) dbg.textContent = msg;
+        toast(msg, 'error');
+        if (btn) { btn.disabled = false; btn.innerHTML = btnOrigText; }
+        return;
+    }
+
     try {
         let tempStream;
         try {
-            // Try both at once first
-            tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-        } catch {
+            // Try both at once first (with timeout)
+            if (dbg) dbg.textContent = 'Requesting camera + mic...';
+            tempStream = await _getUserMediaWithTimeout({ audio: true, video: true });
+        } catch (firstErr) {
             // If combined fails, try separately (common on Android)
-            console.warn('[Broadcast] Combined getUserMedia failed, trying separately');
+            console.warn('[Broadcast] Combined getUserMedia failed:', firstErr.message, '— trying separately');
+            if (dbg) dbg.textContent = 'Combined failed, trying separately...';
             let vidStream, audStream;
-            try { vidStream = await navigator.mediaDevices.getUserMedia({ video: true }); } catch (ve) { console.warn('[Broadcast] Video-only getUserMedia failed:', ve.message); }
-            try { audStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (ae) { console.warn('[Broadcast] Audio-only getUserMedia failed:', ae.message); }
+            try { vidStream = await _getUserMediaWithTimeout({ video: true }, 10000); } catch (ve) { console.warn('[Broadcast] Video-only getUserMedia failed:', ve.message); }
+            try { audStream = await _getUserMediaWithTimeout({ audio: true }, 10000); } catch (ae) { console.warn('[Broadcast] Audio-only getUserMedia failed:', ae.message); }
             if (!vidStream && !audStream) throw new Error('No camera or microphone available');
             tempStream = new MediaStream();
             if (vidStream) vidStream.getTracks().forEach(t => { tempStream.addTrack(t); });
             if (audStream) audStream.getTracks().forEach(t => { tempStream.addTrack(t); });
         }
         tempStream.getTracks().forEach(t => t.stop());
+        if (dbg) dbg.textContent = 'Enumerating devices...';
         const devices = await navigator.mediaDevices.enumerateDevices();
         _populateCreateDeviceDropdowns(devices);
         if (permReq) permReq.style.display = 'none';
         if (devSelects) devSelects.style.display = '';
         toast('Camera & microphone access granted', 'success');
     } catch (err) {
-        console.warn('Permission request failed:', err.message, err.name);
+        console.warn('[Broadcast] Permission request failed:', err.message, err.name);
+        const errDetail = `${err.name || 'Error'}: ${err.message}`;
+        if (dbg) dbg.textContent = errDetail;
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
             toast('Camera/mic permission denied — check your browser settings', 'error');
         } else if (err.name === 'NotFoundError') {
@@ -1773,4 +1810,23 @@ function initBroadcastSettingsListeners() {
     });
 }
 
-document.addEventListener('DOMContentLoaded', () => { initBroadcastSettingsListeners(); });
+document.addEventListener('DOMContentLoaded', () => {
+    initBroadcastSettingsListeners();
+
+    // Programmatic click handler for permission button — more reliable than inline onclick on mobile
+    const permBtn = document.getElementById('bc-perm-btn');
+    if (permBtn) {
+        let _permTouchHandled = false;
+        permBtn.addEventListener('click', (e) => {
+            if (_permTouchHandled) { _permTouchHandled = false; return; }
+            e.preventDefault();
+            requestMediaPermissions();
+        });
+        // Belt-and-suspenders: also handle touch directly for mobile browsers
+        permBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            _permTouchHandled = true;
+            requestMediaPermissions();
+        }, { passive: false });
+    }
+});
