@@ -693,7 +693,7 @@ main#app { position: relative; z-index: 1; }
 .video-container {
     position: relative; width: 100%;
     background: #000; aspect-ratio: 16/9;
-    flex-shrink: 0;
+    flex-shrink: 0; max-height: 80vh;
 }
 .video-placeholder {
     position: absolute; inset: 0;

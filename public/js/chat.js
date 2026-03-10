@@ -240,6 +240,12 @@ function handleChatMessage(msg) {
     switch (msg.type) {
         case 'chat':
             addChatMessage(msg);
+            // Self-mode TTS: speak every incoming chat message via browser synthesis
+            if (typeof broadcastState !== 'undefined' && broadcastState.settings?.ttsMode === 'self') {
+                if (typeof speakBroadcastTTS === 'function') {
+                    speakBroadcastTTS(msg.message || msg.text, msg.username);
+                }
+            }
             break;
         case 'system':
             addSystemMessage(msg.message || msg.text);
@@ -250,6 +256,8 @@ function handleChatMessage(msg) {
         case 'user-count':
             updateViewerCount(msg.count);
             updateTabViewerCount(msg.stream_id, msg.count);
+            // Also update broadcast page viewer count element
+            if (typeof updateViewerCountBroadcast === 'function') updateViewerCountBroadcast(msg.count);
             break;
         case 'auth':
             if (msg.authenticated) {
