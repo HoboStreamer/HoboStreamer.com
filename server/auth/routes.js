@@ -4,6 +4,7 @@
  * POST /api/auth/login
  * GET  /api/auth/me
  * PUT  /api/auth/profile
+ * POST /api/auth/change-password
  * POST /api/auth/avatar
  */
 const express = require('express');
@@ -255,6 +256,33 @@ router.put('/profile', requireAuth, (req, res) => {
     } catch (err) {
         console.error('[Auth] Profile update error:', err.message);
         res.status(500).json({ error: 'Profile update failed' });
+    }
+});
+
+// ── Change Password ──────────────────────────────────────────
+router.post('/change-password', requireAuth, (req, res) => {
+    try {
+        const currentPassword = typeof req.body.current_password === 'string' ? req.body.current_password : '';
+        const newPassword = typeof req.body.new_password === 'string' ? req.body.new_password : '';
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ error: 'Current and new password are required' });
+        }
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: 'New password must be at least 6 characters' });
+        }
+
+        const user = db.getUserById(req.user.id);
+        if (!user || !bcrypt.compareSync(currentPassword, user.password_hash)) {
+            return res.status(403).json({ error: 'Current password is incorrect' });
+        }
+
+        const newHash = bcrypt.hashSync(newPassword, 10);
+        db.run('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newHash, user.id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Auth] Change password error:', err.message);
+        res.status(500).json({ error: 'Password change failed' });
     }
 });
 
