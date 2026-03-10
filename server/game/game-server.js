@@ -4,13 +4,16 @@
  */
 
 const { WebSocketServer, WebSocket } = require('ws');
-const jwt = require('jsonwebtoken');
-const config = require('../config');
 const db = require('../db/database');
 const game = require('./game-engine');
-
-const JWT_SECRET = config.jwt.secret;
+const { resolveGameIdentity, getRequestIp } = require('./game-auth');
 const TICK_RATE = 100; // ms (10 Hz)
+const HEARTBEAT_TICKS = 30;
+const MAX_SOCKET_BACKPRESSURE = 512 * 1024;
+const PLAYER_VIEW_RADIUS = 42 * game.TILE;
+const MOB_VIEW_RADIUS = 34 * game.TILE;
+const ITEM_VIEW_RADIUS = 28 * game.TILE;
+const CHEST_VIEW_RADIUS = 30 * game.TILE;
 
 class GameServer {
     constructor() {
@@ -19,10 +22,12 @@ class GameServer {
         this.tickInterval = null;
         this._mobSpawnCounter = 0;
         this._regenCounter = 0;
+        this._heartbeatCounter = 0;
+        this._stateSeq = 0;
     }
 
     init(server) {
-        this.wss = new WebSocketServer({ noServer: true });
+        this.wss = new WebSocketServer({ noServer: true, maxPayload: 128 * 1024, perMessageDeflate: false });
         this.wss.on('connection', (ws, req) => this._onConnection(ws, req));
         this.tickInterval = setInterval(() => this._tick(), TICK_RATE);
         console.log('[HoboGame WS] Game server initialized');
@@ -32,12 +37,17 @@ class GameServer {
         const url = new URL(request.url, `http://${request.headers.host}`);
         if (url.pathname !== '/ws/game') return false;
         const token = url.searchParams.get('token');
-        if (!token) { socket.destroy(); return true; }
         try {
-            const decoded = jwt.verify(token, JWT_SECRET);
+            const identity = resolveGameIdentity({ req: request, token, ip: getRequestIp(request) });
+            if (!identity?.user || identity.user.is_banned) {
+                socket.destroy();
+                return true;
+            }
             this.wss.handleUpgrade(request, socket, head, (ws) => {
-                ws.userId = decoded.id;
-                ws.username = decoded.username;
+                ws.userId = identity.user.id;
+                ws.username = identity.user.display_name || identity.anonId || identity.user.username;
+                ws.anonId = identity.anonId || null;
+                ws.isAnon = !!identity.isAnon;
                 this.wss.emit('connection', ws, request);
             });
         } catch { socket.destroy(); }
@@ -92,6 +102,10 @@ class GameServer {
         this._send(ws, {
             type: 'init',
             player,
+            identity: {
+                isAnon: !!ws.isAnon,
+                anonId: ws.anonId || null,
+            },
             agilityBonuses: game.getAgilityBonuses(player.agility_level),
             worldSeed: game.getWorldSeed(),
             mapW: game.MAP_W,
@@ -104,6 +118,7 @@ class GameServer {
             chests: game.getChestStates(),
             weather: game.getWeather(),
             achievements: game.getAchievements(userId),
+            dailyQuests: game.getDailyQuests(userId),
             npcs: NPC_LIST,
             townDeco: TOWN_DECO,
             townPaths: [...TOWN_PATHS],
@@ -120,6 +135,7 @@ class GameServer {
         });
 
         ws.isAlive = true;
+        ws._lastMoveAt = Date.now();
         ws.on('pong', () => { ws.isAlive = true; });
         ws.on('message', (data) => this._onMessage(ws, data));
         ws.on('close', () => this._onDisconnect(ws));
@@ -151,7 +167,7 @@ class GameServer {
             case 'pickup': this._handlePickup(ws, msg); break;
             case 'open_chest': this._handleOpenChest(ws, msg); break;
             case 'chat': this._handleChat(ws, msg); break;
-            case 'ping': this._send(ws, { type: 'pong', t: Date.now() }); break;
+            case 'ping': this._send(ws, { type: 'pong', echo: msg.t || null, serverTime: Date.now() }); break;
         }
     }
 
@@ -160,8 +176,25 @@ class GameServer {
     _handleMove(ws, msg) {
         const { x, y, animation, sprinting } = msg;
         if (typeof x !== 'number' || typeof y !== 'number') return;
-        const clampX = Math.max(0, Math.min(game.MAP_W * game.TILE, x));
-        const clampY = Math.max(0, Math.min(game.MAP_H * game.TILE, y));
+        const now = Date.now();
+        const elapsed = Math.max(TICK_RATE, now - (ws._lastMoveAt || now));
+        ws._lastMoveAt = now;
+        const current = game.getPlayer(ws.userId);
+        const fromX = Number.isFinite(current?.x) ? current.x : x;
+        const fromY = Number.isFinite(current?.y) ? current.y : y;
+        const maxDistance = Math.max(game.TILE * 2.25, elapsed * 0.20);
+        let nextX = x;
+        let nextY = y;
+        const deltaX = x - fromX;
+        const deltaY = y - fromY;
+        const distance = Math.hypot(deltaX, deltaY);
+        if (distance > maxDistance) {
+            const scale = maxDistance / Math.max(distance, 1);
+            nextX = fromX + deltaX * scale;
+            nextY = fromY + deltaY * scale;
+        }
+        const clampX = Math.max(0, Math.min(game.MAP_W * game.TILE, nextX));
+        const clampY = Math.max(0, Math.min(game.MAP_H * game.TILE, nextY));
         game.updatePlayerPosition(ws.userId, clampX, clampY);
         // Track movement for agility XP (swimming, distance)
         game.trackMovement(ws.userId, clampX, clampY);
@@ -447,11 +480,12 @@ class GameServer {
         const groundItems = game.getGroundItemStates();
         const chests = game.getChestStates();
         const weather = game.getWeather();
-        const stateMsg = JSON.stringify({ type: 'state', players, mobs, groundItems, chests, weather });
+        const stateSeq = ++this._stateSeq;
 
         for (const [uid, ws] of this.clients) {
             if (ws.readyState === WebSocket.OPEN) {
-                try { ws.send(stateMsg); } catch {}
+                const state = this._buildStateForUser(uid, players, mobs, groundItems, chests, weather, stateSeq);
+                this._send(ws, state);
             }
         }
 
@@ -464,8 +498,9 @@ class GameServer {
             }
         }
 
-        // Heartbeat every ~30 ticks (3s)
-        if (Math.random() < 0.033) {
+        // Heartbeat every 3s
+        if (++this._heartbeatCounter >= HEARTBEAT_TICKS) {
+            this._heartbeatCounter = 0;
             for (const [uid, ws] of this.clients) {
                 if (!ws.isAlive) { ws.terminate(); this._onDisconnect(ws); continue; }
                 ws.isAlive = false;
@@ -474,11 +509,54 @@ class GameServer {
         }
     }
 
+    _buildStateForUser(userId, players, mobs, groundItems, chests, weather, seq) {
+        const self = players[userId] || game.getPlayer(userId);
+        const cx = Number(self?.x) || 0;
+        const cy = Number(self?.y) || 0;
+        const within = (obj, radius) => {
+            const dx = (Number(obj?.x) || 0) - cx;
+            const dy = (Number(obj?.y) || 0) - cy;
+            return (dx * dx + dy * dy) <= radius * radius;
+        };
+
+        const nearbyPlayers = {};
+        for (const [id, player] of Object.entries(players)) {
+            if (String(id) === String(userId) || within(player, PLAYER_VIEW_RADIUS)) nearbyPlayers[id] = player;
+        }
+
+        const nearbyMobs = {};
+        for (const [id, mob] of Object.entries(mobs)) {
+            if (within(mob, MOB_VIEW_RADIUS)) nearbyMobs[id] = mob;
+        }
+
+        const nearbyItems = {};
+        for (const [id, item] of Object.entries(groundItems)) {
+            if (within(item, ITEM_VIEW_RADIUS)) nearbyItems[id] = item;
+        }
+
+        const nearbyChests = {};
+        for (const [id, chest] of Object.entries(chests)) {
+            if (within(chest, CHEST_VIEW_RADIUS)) nearbyChests[id] = chest;
+        }
+
+        return {
+            type: 'state',
+            seq,
+            serverTime: Date.now(),
+            players: nearbyPlayers,
+            mobs: nearbyMobs,
+            groundItems: nearbyItems,
+            chests: nearbyChests,
+            weather,
+        };
+    }
+
     // ── Transport helpers ───────────────────────────────────────
 
     _send(ws, data) {
         if (ws.readyState === WebSocket.OPEN) {
-            try { ws.send(JSON.stringify(data)); } catch {}
+            if (ws.bufferedAmount > MAX_SOCKET_BACKPRESSURE) return;
+            try { ws.send(typeof data === 'string' ? data : JSON.stringify(data)); } catch {}
         }
     }
 
@@ -486,6 +564,7 @@ class GameServer {
         const msg = JSON.stringify(data);
         for (const [uid, ws] of this.clients) {
             if (ws.readyState === WebSocket.OPEN) {
+                if (ws.bufferedAmount > MAX_SOCKET_BACKPRESSURE) continue;
                 try { ws.send(msg); } catch {}
             }
         }
@@ -495,6 +574,7 @@ class GameServer {
         const msg = JSON.stringify(data);
         for (const [uid, ws] of this.clients) {
             if (uid !== excludeId && ws.readyState === WebSocket.OPEN) {
+                if (ws.bufferedAmount > MAX_SOCKET_BACKPRESSURE) continue;
                 try { ws.send(msg); } catch {}
             }
         }

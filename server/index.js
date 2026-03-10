@@ -76,26 +76,89 @@ const game = require('./game/game-engine');
 const app = express();
 const server = http.createServer(app);
 
+function normalizeOrigin(origin) {
+    if (!origin || typeof origin !== 'string') return null;
+    try {
+        return new URL(origin).origin;
+    } catch {
+        return null;
+    }
+}
+
+function getAllowedOrigins() {
+    const allowed = new Set();
+    const baseOrigin = normalizeOrigin(config.baseUrl);
+    if (baseOrigin) allowed.add(baseOrigin);
+
+    if (config.nodeEnv !== 'production') {
+        [
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'http://localhost:5173',
+            'http://127.0.0.1:5173',
+        ].forEach(origin => allowed.add(origin));
+    }
+
+    return allowed;
+}
+
+const allowedOrigins = getAllowedOrigins();
+
 // ── Middleware ────────────────────────────────────────────────
+app.set('trust proxy', 1);
+
 app.use(helmet({
     contentSecurityPolicy: false, // Allow inline scripts for dev
     crossOriginEmbedderPolicy: false,
 }));
 app.use(cors({
-    origin: config.nodeEnv === 'production' ? config.baseUrl : '*',
+    origin(origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.has(origin)) return callback(null, true);
+        return callback(new Error('Origin not allowed by CORS'));
+    },
     credentials: true,
 }));
 app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '256kb' }));
 app.use(cookieParser());
+app.use((err, req, res, next) => {
+    if (err && err.message === 'Origin not allowed by CORS') {
+        return res.status(403).json({ error: 'Origin not allowed' });
+    }
+    next(err);
+});
 
 // Rate limiting
 const apiLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
     message: { error: 'Too many requests, slow down partner' },
 });
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: 'Too many auth attempts, please try again later' },
+});
+const uploadLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many upload requests, please slow down' },
+});
 app.use('/api/', apiLimiter);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/avatar', uploadLimiter);
+app.use('/api/thumbnails/live', uploadLimiter);
+app.use('/api/vods/upload', uploadLimiter);
+app.use('/api/vods/stream', uploadLimiter);
 
 // ── Static Files ─────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '../public')));
@@ -152,6 +215,12 @@ app.get('*', (req, res) => {
 // ── WebSocket Upgrade Handler ────────────────────────────────
 server.on('upgrade', (req, socket, head) => {
     const url = req.url || '';
+    const origin = normalizeOrigin(req.headers.origin);
+
+    if (origin && !allowedOrigins.has(origin)) {
+        socket.destroy();
+        return;
+    }
 
     if (url.startsWith('/ws/chat')) {
         chatServer.handleUpgrade(req, socket, head);
@@ -279,7 +348,10 @@ async function start() {
     });
 
     // 8. Start stale stream heartbeat cleanup (every 60 seconds)
-    setInterval(() => {
+    let heartbeatCleanupRunning = false;
+    const maintenanceInterval = setInterval(() => {
+        if (heartbeatCleanupRunning) return;
+        heartbeatCleanupRunning = true;
         try {
             const staleStreams = db.all(
                 `SELECT id, user_id, protocol FROM streams
@@ -328,7 +400,9 @@ async function start() {
                  WHERE s.is_live = 1 AND s.protocol = 'rtmp'`
             );
             for (const rs of rtmpStreams) {
-                thumbnailService.generateLiveStreamThumbnail(rs.id, rs.stream_key).catch(() => {});
+                if (!rtmpServer.isReceiving(rs.stream_key)) continue;
+                if (!thumbnailService.shouldRefreshLiveThumbnail(rs.id, 120000)) continue;
+                thumbnailService.generateLiveStreamThumbnail(rs.id, rs.stream_key, { minAgeMs: 120000 }).catch(() => {});
             }
 
             // Generate server-side thumbnails for JSMPEG streams (broadcaster uses FFmpeg, no browser preview)
@@ -338,6 +412,7 @@ async function start() {
                  WHERE s.is_live = 1 AND s.protocol = 'jsmpeg'`
             );
             for (const js of jsmpegStreams) {
+                if (!thumbnailService.shouldRefreshLiveThumbnail(js.id, 120000)) continue;
                 const channelInfo = jsmpegRelay.getChannelInfo(js.stream_key);
                 if (channelInfo && channelInfo.videoPort) {
                     thumbnailService.generateJSMPEGThumbnail(js.id, channelInfo.videoPort).catch(() => {});
@@ -345,8 +420,11 @@ async function start() {
             }
         } catch (err) {
             console.error('[Heartbeat] Cleanup error:', err.message);
+        } finally {
+            heartbeatCleanupRunning = false;
         }
     }, 60000);
+    if (typeof maintenanceInterval.unref === 'function') maintenanceInterval.unref();
 }
 
 // ── Graceful Shutdown ────────────────────────────────────────

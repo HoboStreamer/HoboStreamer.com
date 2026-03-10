@@ -7,9 +7,9 @@ const express = require('express');
 const router = express.Router();
 const game = require('./game-engine');
 const db = require('../db/database');
-const { requireAuth } = require('../auth/auth');
+const { requireGameAuth } = require('./game-auth');
 
-router.use(requireAuth);
+router.use(requireGameAuth);
 
 // ══════════════════════════════════════════════════════════════
 //  PLAYER
@@ -363,6 +363,20 @@ router.get('/achievements', (req, res) => {
         const data = game.getAchievements(req.user.id);
         res.json({ success: true, ...data });
     }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  DAILY QUESTS
+// ══════════════════════════════════════════════════════════════
+
+router.get('/daily-quests', (req, res) => {
+    try { res.json({ success: true, ...game.getDailyQuests(req.user.id) }); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/daily-quests/claim', (req, res) => {
+    try { res.json(game.claimDailyQuest(req.user.id, req.body.questId)); }
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 

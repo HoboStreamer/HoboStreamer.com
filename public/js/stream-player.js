@@ -11,7 +11,13 @@ let clipHeaderChunk = null;  // First chunk contains the WebM EBML header — mu
 let clipChunks = [];
 let clipStreamId = null;
 let streamRef = null; // current stream object for clip recording
+let clipSourceStream = null;
+let clipRecorderMimeType = null;
+let clipTimingBaseMs = 0;
+let _jsmpegClipSetupTimer = null;
 const CLIP_BUFFER_SECONDS = 30;
+const externalScriptPromises = new Map();
+const PLAYER_SIGNALING_MAX_BUFFERED_AMOUNT = 256 * 1024;
 
 // DVR state (live stream seeking via server-side VOD recording)
 let dvrState = {
@@ -28,6 +34,174 @@ let dvrState = {
     savedLivePlayer: null, // HLS/FLV player saved when switching to DVR
     seeking: false,      // User is dragging the DVR progress bar
 };
+
+function loadExternalScriptOnce(src) {
+    if (!src) return Promise.reject(new Error('Missing script URL'));
+    if (externalScriptPromises.has(src)) return externalScriptPromises.get(src);
+
+    const promise = new Promise((resolve, reject) => {
+        const key = encodeURIComponent(src);
+        const existing = document.querySelector(`script[data-external-src="${key}"]`);
+        if (existing) {
+            if (existing.dataset.loaded === 'true') {
+                resolve();
+                return;
+            }
+            existing.addEventListener('load', () => resolve(), { once: true });
+            existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.dataset.externalSrc = key;
+        script.onload = () => {
+            script.dataset.loaded = 'true';
+            resolve();
+        };
+        script.onerror = () => reject(new Error(`Failed to load ${src}`));
+        document.head.appendChild(script);
+    }).catch((err) => {
+        externalScriptPromises.delete(src);
+        throw err;
+    });
+
+    externalScriptPromises.set(src, promise);
+    return promise;
+}
+
+function getJsmpegBufferProfile() {
+    const connectionType = navigator.connection?.effectiveType || '';
+    if (connectionType === 'slow-2g' || connectionType === '2g') {
+        return { videoBufferSize: 256 * 1024, audioBufferSize: 64 * 1024 };
+    }
+    return { videoBufferSize: 512 * 1024, audioBufferSize: 128 * 1024 };
+}
+
+function sendPlayerSignal(msg) {
+    if (!player?.ws || player.ws.readyState !== WebSocket.OPEN) return false;
+    if (player.ws.bufferedAmount > PLAYER_SIGNALING_MAX_BUFFERED_AMOUNT) return false;
+    player.ws.send(JSON.stringify(msg));
+    return true;
+}
+
+function isMediaRecorderSupported() {
+    return typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function';
+}
+
+function getLiveStreamElapsedSeconds() {
+    if (dvrState.streamStartTime && Number.isFinite(dvrState.streamStartTime) && dvrState.streamStartTime > 0) {
+        return Math.max(0, (Date.now() - dvrState.streamStartTime) / 1000);
+    }
+
+    const startedAt = streamRef?.started_at || streamRef?.created_at;
+    if (startedAt) {
+        const normalized = typeof startedAt === 'string' && !startedAt.includes('T')
+            ? `${startedAt.replace(' ', 'T')}Z`
+            : startedAt;
+        const ts = new Date(normalized).getTime();
+        if (Number.isFinite(ts) && ts > 0) {
+            return Math.max(0, (Date.now() - ts) / 1000);
+        }
+    }
+
+    return Math.max(0, CLIP_BUFFER_SECONDS);
+}
+
+function buildClipRecorderCandidates(stream) {
+    const hasVideo = !!stream?.getVideoTracks?.().length;
+    const hasAudio = !!stream?.getAudioTracks?.().length;
+    const candidates = [];
+
+    if (!hasVideo) return candidates;
+
+    const pushCandidate = (mimeType, options = {}) => {
+        candidates.push({ mimeType, options });
+    };
+
+    const canUse = (mimeType) => !mimeType || !isMediaRecorderSupported() || MediaRecorder.isTypeSupported(mimeType);
+
+    if (hasAudio) {
+        [
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp8,opus',
+            'video/webm;codecs=vp8',
+            'video/webm',
+        ].forEach((mimeType) => {
+            if (canUse(mimeType)) {
+                pushCandidate(mimeType, { videoBitsPerSecond: 2500000, audioBitsPerSecond: 128000 });
+            }
+        });
+    }
+
+    [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+        '',
+    ].forEach((mimeType) => {
+        if (canUse(mimeType)) {
+            pushCandidate(mimeType, { videoBitsPerSecond: 2200000 });
+        }
+    });
+
+    return candidates;
+}
+
+function createClipRecorder(stream) {
+    if (typeof MediaRecorder === 'undefined') {
+        throw new Error('MediaRecorder is not available in this browser');
+    }
+
+    const candidates = buildClipRecorderCandidates(stream);
+    if (!candidates.length) {
+        throw new Error('No supported recording codecs for this media stream');
+    }
+
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            const opts = { ...candidate.options };
+            if (candidate.mimeType) opts.mimeType = candidate.mimeType;
+            const recorder = new MediaRecorder(stream, opts);
+            return { recorder, mimeType: candidate.mimeType || recorder.mimeType || 'video/webm', sourceStream: stream };
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    const videoTracks = stream?.getVideoTracks?.() || [];
+    const audioTracks = stream?.getAudioTracks?.() || [];
+    if (videoTracks.length && audioTracks.length && typeof MediaStream !== 'undefined') {
+        try {
+            const videoOnlyStream = new MediaStream(videoTracks);
+            const videoOnlyCandidates = buildClipRecorderCandidates(videoOnlyStream);
+            for (const candidate of videoOnlyCandidates) {
+                try {
+                    const opts = { ...candidate.options };
+                    if (candidate.mimeType) opts.mimeType = candidate.mimeType;
+                    const recorder = new MediaRecorder(videoOnlyStream, opts);
+                    console.warn('[Clip] Falling back to video-only recording for compatibility');
+                    return { recorder, mimeType: candidate.mimeType || recorder.mimeType || 'video/webm', sourceStream: videoOnlyStream };
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    throw lastError || new Error('Unable to initialize MediaRecorder');
+}
+
+function startClipRecordingIfNeeded(stream, streamId) {
+    if (!stream) return;
+    if (clipRecorder && clipSourceStream === stream && clipStreamId === streamId) return;
+    clipSourceStream = stream;
+    startClipRecording(stream, streamId);
+}
 
 /**
  * Initialize the appropriate player based on stream protocol.
@@ -69,51 +243,57 @@ function initJSMPEG(endpoint, stream) {
     // Build WS URL
     const host = window.location.hostname;
     const port = endpoint.videoPort || endpoint.video_port || endpoint.wsPort || 9710;
-    const wsUrl = `ws://${host}:${port}`;
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${wsProtocol}://${host}:${port}`;
+    const bufferProfile = getJsmpegBufferProfile();
 
     // Check if JSMpeg lib is loaded (from CDN or local)
     if (typeof JSMpeg === 'undefined') {
-        // Load JSMpeg dynamically
-        const script = document.createElement('script');
-        script.src = 'https://jsmpeg.com/jsmpeg.min.js';
-        script.onload = () => startJSMPEG(wsUrl, canvas, placeholder);
-        script.onerror = () => {
+        loadExternalScriptOnce('https://jsmpeg.com/jsmpeg.min.js').then(() => {
+            startJSMPEG(wsUrl, canvas, placeholder, bufferProfile);
+        }).catch(() => {
             console.error('Failed to load JSMpeg library');
             placeholder.innerHTML = `
                 <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
                 <p>JSMPEG player not available</p>
                 <p class="muted">Ensure jsmpeg.min.js is loaded</p>`;
-        };
-        document.head.appendChild(script);
+        });
     } else {
-        startJSMPEG(wsUrl, canvas, placeholder);
+        startJSMPEG(wsUrl, canvas, placeholder, bufferProfile);
     }
 
     playerType = 'jsmpeg';
 }
 
-function startJSMPEG(wsUrl, canvas, placeholder) {
+function startJSMPEG(wsUrl, canvas, placeholder, bufferProfile = getJsmpegBufferProfile()) {
     try {
         canvas.style.display = 'block';
         if (placeholder) placeholder.style.display = 'none';
+
+        if (_jsmpegClipSetupTimer) {
+            clearTimeout(_jsmpegClipSetupTimer);
+            _jsmpegClipSetupTimer = null;
+        }
 
         player = new JSMpeg.Player(wsUrl, {
             canvas: canvas,
             autoplay: true,
             audio: true,
-            videoBufferSize: 512 * 1024,
-            audioBufferSize: 128 * 1024,
+            videoBufferSize: bufferProfile.videoBufferSize,
+            audioBufferSize: bufferProfile.audioBufferSize,
             preserveDrawingBuffer: true,
             onSourceEstablished: () => {
                 console.log('[JSMPEG] Source established — waiting for first frames before clip recording');
                 // Delay clip recording start so JSMpeg has time to decode & render
                 // frames. Using an offscreen 2D canvas avoids WebGL captureStream issues.
-                setTimeout(() => {
+                _jsmpegClipSetupTimer = setTimeout(() => {
+                    _jsmpegClipSetupTimer = null;
                     try {
                         const offCanvas = document.createElement('canvas');
                         offCanvas.width = canvas.width || 640;
                         offCanvas.height = canvas.height || 480;
                         const offCtx = offCanvas.getContext('2d');
+                        if (!offCtx) throw new Error('Unable to create canvas context');
                         const clipStream = offCanvas.captureStream(30);
 
                         // Draw JSMpeg's canvas onto our offscreen 2D canvas at ~30fps
@@ -141,7 +321,7 @@ function startJSMPEG(wsUrl, canvas, placeholder) {
                         } catch (audioErr) {
                             console.warn('[JSMPEG] Audio capture not available:', audioErr.message);
                         }
-                        startClipRecording(clipStream, streamRef?.id);
+                        startClipRecordingIfNeeded(clipStream, streamRef?.id);
                     } catch (err) {
                         console.warn('[JSMPEG] Clip recording setup failed:', err.message);
                     }
@@ -172,6 +352,8 @@ async function initWebRTC(stream) {
 
     try {
         video.style.display = 'block';
+        video.playsInline = true;
+        video.preload = 'auto';
         if (placeholder) placeholder.style.display = 'none';
         playerType = 'webrtc';
 
@@ -220,7 +402,7 @@ async function initWebRTC(stream) {
                             }
                         }
                         player.watchSent = false; // allow re-watch on reconnect
-                        player.ws.send(JSON.stringify({ type: 'watch' }));
+                        sendPlayerSignal({ type: 'watch' });
                         player.watchSent = true;
                         break;
                     case 'offer':
@@ -320,7 +502,7 @@ async function handleViewerOffer(msg, ws, video) {
         if (e.streams && e.streams[0]) {
             video.srcObject = e.streams[0];
             // Start clip recording for the remote stream
-            startClipRecording(e.streams[0], streamRef?.id);
+            startClipRecordingIfNeeded(e.streams[0], streamRef?.id);
         } else {
             // Fallback: create stream from tracks
             let mediaStream = video.srcObject;
@@ -329,18 +511,18 @@ async function handleViewerOffer(msg, ws, video) {
                 video.srcObject = mediaStream;
             }
             mediaStream.addTrack(e.track);
-            startClipRecording(mediaStream, streamRef?.id);
+            startClipRecordingIfNeeded(mediaStream, streamRef?.id);
         }
         video.play().catch(() => {});
     };
 
     pc.onicecandidate = (e) => {
         // Use player.ws (not the passed ws param) so this works after WS reconnection
-        if (e.candidate && player && player.ws && player.ws.readyState === WebSocket.OPEN) {
-            player.ws.send(JSON.stringify({
+        if (e.candidate) {
+            sendPlayerSignal({
                 type: 'ice-candidate',
                 candidate: e.candidate,
-            }));
+            });
         }
     };
 
@@ -358,12 +540,10 @@ async function handleViewerOffer(msg, ws, video) {
     await pc.setLocalDescription(answer);
 
     // Use player.ws (not the passed ws param) so this works after WS reconnection
-    if (player && player.ws && player.ws.readyState === WebSocket.OPEN) {
-        player.ws.send(JSON.stringify({
-            type: 'answer',
-            sdp: answer,
-        }));
-    }
+    sendPlayerSignal({
+        type: 'answer',
+        sdp: answer,
+    });
     console.log('[Player] Sent answer to broadcaster');
 }
 
@@ -381,6 +561,8 @@ function initHLS(endpoint, stream) {
     }
 
     video.style.display = 'block';
+    video.playsInline = true;
+    video.preload = 'auto';
     if (placeholder) placeholder.style.display = 'none';
     playerType = 'hls';
 
@@ -391,7 +573,7 @@ function initHLS(endpoint, stream) {
             const capturedStream = video.captureStream ? video.captureStream() :
                                    video.mozCaptureStream ? video.mozCaptureStream() : null;
             if (capturedStream) {
-                startClipRecording(capturedStream, streamRef?.id);
+                startClipRecordingIfNeeded(capturedStream, streamRef?.id);
             } else {
                 console.warn('[HLS] captureStream() not available — using canvas fallback for clips');
                 // Canvas-based fallback: draw video frames to an offscreen canvas
@@ -400,6 +582,7 @@ function initHLS(endpoint, stream) {
                     offCanvas.width = video.videoWidth || 1280;
                     offCanvas.height = video.videoHeight || 720;
                     const ctx = offCanvas.getContext('2d');
+                    if (!ctx) throw new Error('Unable to create fallback canvas context');
                     const fallbackStream = offCanvas.captureStream(30);
 
                     // Try to capture audio via captureStream on AudioContext
@@ -428,7 +611,7 @@ function initHLS(endpoint, stream) {
                     // Store cleanup ref
                     window._rtmpCanvasDrawInterval = _canvasDrawInterval;
 
-                    startClipRecording(fallbackStream, streamRef?.id);
+                    startClipRecordingIfNeeded(fallbackStream, streamRef?.id);
                 } catch (fallbackErr) {
                     console.warn('[HLS] Canvas fallback also failed:', fallbackErr.message);
                 }
@@ -449,7 +632,14 @@ function initHLS(endpoint, stream) {
         }
 
         if (typeof Hls !== 'undefined') {
-            const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+            const hls = new Hls({
+                enableWorker: true,
+                lowLatencyMode: true,
+                backBufferLength: 30,
+                liveSyncDurationCount: 2,
+                liveMaxLatencyDurationCount: 4,
+                maxLiveSyncPlaybackRate: 1.5,
+            });
             hls.loadSource(hlsUrl);
             hls.attachMedia(video);
             hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
@@ -466,10 +656,15 @@ function initHLS(endpoint, stream) {
         }
 
         // Load HLS.js dynamically
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
-        script.onload = () => {
-            const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+        loadExternalScriptOnce('https://cdn.jsdelivr.net/npm/hls.js@latest').then(() => {
+            const hls = new Hls({
+                enableWorker: true,
+                lowLatencyMode: true,
+                backBufferLength: 30,
+                liveSyncDurationCount: 2,
+                liveMaxLatencyDurationCount: 4,
+                maxLiveSyncPlaybackRate: 1.5,
+            });
             hls.loadSource(hlsUrl);
             hls.attachMedia(video);
             hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
@@ -481,12 +676,10 @@ function initHLS(endpoint, stream) {
                 }
             });
             player = { hls, video };
-        };
-        script.onerror = () => {
+        }).catch(() => {
             if (flvUrl) tryFlvPlayer(flvUrl, video);
             else showStreamError('HLS.js failed to load');
-        };
-        document.head.appendChild(script);
+        });
     } else if (flvUrl) {
         tryFlvPlayer(flvUrl, video);
     }
@@ -495,18 +688,35 @@ function initHLS(endpoint, stream) {
 function tryFlvPlayer(flvUrl, video) {
     // Attempt to play HTTP-FLV via flv.js if available
     if (typeof flvjs !== 'undefined' && flvjs.isSupported()) {
-        const flvPlayer = flvjs.createPlayer({ type: 'flv', url: flvUrl, isLive: true });
+        const flvPlayer = flvjs.createPlayer(
+            { type: 'flv', url: flvUrl, isLive: true },
+            {
+                enableStashBuffer: false,
+                stashInitialSize: 128,
+                lazyLoad: false,
+                autoCleanupSourceBuffer: true,
+                autoCleanupMaxBackwardDuration: 30,
+                autoCleanupMinBackwardDuration: 10,
+            }
+        );
         flvPlayer.attachMediaElement(video);
         flvPlayer.load();
         flvPlayer.play();
         player = { flv: flvPlayer, video };
     } else {
-        // Try loading flv.js
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/flv.js@latest';
-        script.onload = () => {
+        loadExternalScriptOnce('https://cdn.jsdelivr.net/npm/flv.js@latest').then(() => {
             if (flvjs.isSupported()) {
-                const flvPlayer = flvjs.createPlayer({ type: 'flv', url: flvUrl, isLive: true });
+                const flvPlayer = flvjs.createPlayer(
+                    { type: 'flv', url: flvUrl, isLive: true },
+                    {
+                        enableStashBuffer: false,
+                        stashInitialSize: 128,
+                        lazyLoad: false,
+                        autoCleanupSourceBuffer: true,
+                        autoCleanupMaxBackwardDuration: 30,
+                        autoCleanupMinBackwardDuration: 10,
+                    }
+                );
                 flvPlayer.attachMediaElement(video);
                 flvPlayer.load();
                 flvPlayer.play();
@@ -514,9 +724,7 @@ function tryFlvPlayer(flvUrl, video) {
             } else {
                 showStreamError('Your browser does not support FLV playback');
             }
-        };
-        script.onerror = () => showStreamError('Failed to load FLV player');
-        document.head.appendChild(script);
+        }).catch(() => showStreamError('Failed to load FLV player'));
     }
 }
 
@@ -573,8 +781,8 @@ async function pollDVR(streamId) {
         // No live VOD yet — normal for first ~30-60s
     }
 
-    // Continue polling every 15s
-    dvrState.pollTimer = setTimeout(() => pollDVR(streamId), 15000);
+    // Continue polling every 20s
+    dvrState.pollTimer = setTimeout(() => pollDVR(streamId), 20000);
 }
 
 /**
@@ -956,18 +1164,21 @@ function startClipRecording(stream, streamId) {
     clipStreamId = streamId;
     clipHeaderChunk = null;
     clipChunks = [];
+    clipRecorderMimeType = null;
+    clipTimingBaseMs = Date.now();
 
     try {
-        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-            ? 'video/webm;codecs=vp9,opus'
-            : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-                ? 'video/webm;codecs=vp8,opus'
-                : 'video/webm';
-
-        clipRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 });
+        const { recorder, mimeType } = createClipRecorder(stream);
+        clipRecorder = recorder;
+        clipRecorderMimeType = mimeType;
+        const initialElapsedSeconds = getLiveStreamElapsedSeconds();
+        clipTimingBaseMs = Date.now() - Math.round(initialElapsedSeconds * 1000);
 
         clipRecorder.ondataavailable = (e) => {
             if (e.data && e.data.size > 0) {
+                const capturedAt = Date.now();
+                const approxEndSeconds = Math.max(0, (capturedAt - clipTimingBaseMs) / 1000);
+                const approxStartSeconds = Math.max(0, approxEndSeconds - 1);
                 // The very first chunk contains the WebM EBML header + initialization
                 // segment. We store it separately so the rolling window never discards it.
                 if (!clipHeaderChunk) {
@@ -975,9 +1186,14 @@ function startClipRecording(stream, streamId) {
                     console.log(`[Clip] Header chunk captured (${e.data.size} bytes)`);
                     return; // don't add to the timed buffer
                 }
-                clipChunks.push({ data: e.data, time: Date.now() });
+                clipChunks.push({
+                    data: e.data,
+                    time: capturedAt,
+                    startStreamSeconds: approxStartSeconds,
+                    endStreamSeconds: approxEndSeconds,
+                });
                 // Keep only last CLIP_BUFFER_SECONDS worth of data chunks
-                const cutoff = Date.now() - (CLIP_BUFFER_SECONDS * 1000);
+                const cutoff = capturedAt - (CLIP_BUFFER_SECONDS * 1000);
                 clipChunks = clipChunks.filter(c => c.time >= cutoff);
             }
         };
@@ -999,9 +1215,12 @@ function stopClipRecording() {
         try { clipRecorder.stop(); } catch {}
     }
     clipRecorder = null;
+    clipSourceStream = null;
     clipHeaderChunk = null;
     clipChunks = [];
     clipStreamId = null;
+    clipRecorderMimeType = null;
+    clipTimingBaseMs = 0;
 }
 
 async function createLiveClip() {
@@ -1017,18 +1236,20 @@ async function createLiveClip() {
         // The header contains the WebM EBML header + track initialization
         // which is required for the file to be playable.
         const blobs = [clipHeaderChunk, ...clipChunks.map(c => c.data)];
-        const clipBlob = new Blob(blobs, { type: clipHeaderChunk.type || 'video/webm' });
+        const clipBlob = new Blob(blobs, { type: clipHeaderChunk.type || clipRecorderMimeType || 'video/webm' });
 
-        const startTime = clipChunks[0].time / 1000;
-        const endTime = clipChunks[clipChunks.length - 1].time / 1000;
-        const duration = endTime - startTime;
+        const firstChunk = clipChunks[0];
+        const lastChunk = clipChunks[clipChunks.length - 1];
+        const startTime = Math.max(0, Math.floor(firstChunk.startStreamSeconds || 0));
+        const endTime = Math.max(startTime + 1, Math.ceil(lastChunk.endStreamSeconds || startTime + clipChunks.length));
+        const duration = Math.max(1, endTime - startTime);
 
         const formData = new FormData();
         formData.append('video', clipBlob, `clip-${Date.now()}.webm`);
         formData.append('stream_id', clipStreamId);
         formData.append('title', `Clip from stream`);
-        formData.append('start_time', '0');
-        formData.append('end_time', String(Math.round(duration)));
+        formData.append('start_time', String(startTime));
+        formData.append('end_time', String(endTime));
 
         const token = localStorage.getItem('token');
         const resp = await fetch('/api/vods/clips', {
@@ -1142,6 +1363,10 @@ function setVolume(v) {
 function destroyPlayer() {
     stopClipRecording();
     destroyDVR();
+    if (_jsmpegClipSetupTimer) {
+        clearTimeout(_jsmpegClipSetupTimer);
+        _jsmpegClipSetupTimer = null;
+    }
     // Clean up RTMP canvas fallback interval
     if (window._rtmpCanvasDrawInterval) {
         clearInterval(window._rtmpCanvasDrawInterval);

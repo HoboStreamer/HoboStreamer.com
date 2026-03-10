@@ -17,6 +17,10 @@ const { authenticateWs } = require('../auth/auth');
 const wordFilter = require('./word-filter');
 const cosmetics = require('../monetization/cosmetics');
 
+const WS_HEARTBEAT_MS = 30000;
+const MAX_SEND_BACKPRESSURE = 256 * 1024;
+const RATE_LIMIT_CACHE_TTL_MS = 10 * 60 * 1000;
+
 class ChatServer {
     constructor() {
         this.wss = null;
@@ -28,10 +32,19 @@ class ChatServer {
         /** @type {Map<string, number>} IP → last message time (rate limiting) */
         this.rateLimits = new Map();
         this.RATE_LIMIT_MS = 1000; // 1 message per second
+        this.heartbeatInterval = null;
+    }
+
+    normalizeIp(ip) {
+        let normalized = String(ip || 'unknown').trim();
+        if (!normalized) normalized = 'unknown';
+        if (normalized === '::1') return '127.0.0.1';
+        if (normalized.startsWith('::ffff:')) return normalized.slice(7);
+        return normalized;
     }
 
     getAnonIdForIp(ip) {
-        const anonKey = ip || 'unknown';
+        const anonKey = this.normalizeIp(ip);
         if (!this.anonMap.has(anonKey)) {
             this.anonMap.set(anonKey, this.nextAnonId++);
         }
@@ -39,7 +52,7 @@ class ChatServer {
     }
 
     getAnonIdForConnection(ip, streamId = null) {
-        const anonKey = ip || 'unknown';
+        const anonKey = this.normalizeIp(ip);
         for (const [, info] of this.clients) {
             if (info.ip !== anonKey || !info.anonId) continue;
             if (streamId == null || info.streamId === streamId) {
@@ -53,10 +66,31 @@ class ChatServer {
      * Attach to an existing HTTP server for WebSocket upgrade
      */
     init(server) {
-        this.wss = new WebSocket.Server({ noServer: true });
+        this.wss = new WebSocket.Server({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
 
         // Word filter
         wordFilter.load();
+
+        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = setInterval(() => {
+            if (!this.wss) return;
+
+            const now = Date.now();
+            for (const [ip, lastSeen] of this.rateLimits.entries()) {
+                if ((now - lastSeen) > RATE_LIMIT_CACHE_TTL_MS) {
+                    this.rateLimits.delete(ip);
+                }
+            }
+
+            this.wss.clients.forEach((ws) => {
+                if (ws.isAlive === false) {
+                    try { ws.terminate(); } catch {}
+                    return;
+                }
+                ws.isAlive = false;
+                try { ws.ping(); } catch {}
+            });
+        }, WS_HEARTBEAT_MS);
 
         this.wss.on('connection', (ws, req) => {
             this.handleConnection(ws, req);
@@ -83,10 +117,16 @@ class ChatServer {
      * Handle a new chat connection
      */
     handleConnection(ws, req) {
-        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+        const ip = this.normalizeIp(req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress);
         const urlParams = new URL(req.url, 'http://localhost').searchParams;
         const token = urlParams.get('token');
         const streamId = parseInt(urlParams.get('stream')) || null;
+
+        ws.isAlive = true;
+        ws.on('pong', () => {
+            ws.isAlive = true;
+        });
+        try { ws._socket?.setNoDelay(true); } catch {}
 
         // Authenticate (optional — anon if no token)
         const user = authenticateWs(token);
@@ -548,7 +588,7 @@ class ChatServer {
     }
 
     sendTo(ws, data) {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
             ws.send(JSON.stringify(data));
         }
     }
@@ -556,7 +596,7 @@ class ChatServer {
     broadcastToStream(streamId, data) {
         const msg = JSON.stringify(data);
         for (const [ws, client] of this.clients) {
-            if (client.streamId === streamId && ws.readyState === WebSocket.OPEN) {
+            if (client.streamId === streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
                 ws.send(msg);
             }
         }
@@ -565,7 +605,7 @@ class ChatServer {
     broadcastGlobal(data) {
         const msg = JSON.stringify(data);
         for (const [ws, client] of this.clients) {
-            if (!client.streamId && ws.readyState === WebSocket.OPEN) {
+            if (!client.streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
                 ws.send(msg);
             }
         }
@@ -592,7 +632,7 @@ class ChatServer {
         }
         const globalMsg = JSON.stringify({ ...data, stream_channel: streamUsername });
         for (const [ws, client] of this.clients) {
-            if (!client.streamId && ws.readyState === WebSocket.OPEN) {
+            if (!client.streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
                 ws.send(globalMsg);
             }
         }
@@ -632,6 +672,10 @@ class ChatServer {
 
     close() {
         if (this.wss) {
+            if (this.heartbeatInterval) {
+                clearInterval(this.heartbeatInterval);
+                this.heartbeatInterval = null;
+            }
             this.wss.clients.forEach(ws => ws.close());
             this.wss.close();
         }

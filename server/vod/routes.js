@@ -30,6 +30,67 @@ const config = require('../config');
 const thumbService = require('../thumbnails/thumbnail-service');
 
 const router = express.Router();
+const CLIP_USER_COOLDOWN_MS = 12000;
+const CLIP_IP_COOLDOWN_MS = 4000;
+const CLIP_DUPLICATE_START_WINDOW_SEC = 8;
+const CLIP_DUPLICATE_END_WINDOW_SEC = 10;
+const CLIP_DUPLICATE_LOOKBACK_MINUTES = 10;
+const recentClipAttemptsByUser = new Map();
+const recentClipAttemptsByIp = new Map();
+
+function getRequesterIp(req) {
+    return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+function pruneRecentAttempts(now = Date.now()) {
+    const cutoff = now - Math.max(CLIP_USER_COOLDOWN_MS, CLIP_IP_COOLDOWN_MS) - 5000;
+    for (const [key, ts] of recentClipAttemptsByUser) {
+        if (ts < cutoff) recentClipAttemptsByUser.delete(key);
+    }
+    for (const [key, ts] of recentClipAttemptsByIp) {
+        if (ts < cutoff) recentClipAttemptsByIp.delete(key);
+    }
+}
+
+function parseClipWindow(body) {
+    const startTime = Number.parseFloat(body?.start_time);
+    const endTime = Number.parseFloat(body?.end_time);
+    return {
+        startTime: Number.isFinite(startTime) ? startTime : 0,
+        endTime: Number.isFinite(endTime) ? endTime : 0,
+    };
+}
+
+function findExistingDuplicateClip({ streamId, vodId, startTime, endTime }) {
+    if ((!streamId && !vodId) || !Number.isFinite(startTime) || !Number.isFinite(endTime)) return null;
+    return db.findDuplicateClip({
+        streamId: streamId || null,
+        vodId: vodId || null,
+        startTime,
+        endTime,
+        startWindow: CLIP_DUPLICATE_START_WINDOW_SEC,
+        endWindow: CLIP_DUPLICATE_END_WINDOW_SEC,
+        createdSinceMinutes: CLIP_DUPLICATE_LOOKBACK_MINUTES,
+    });
+}
+
+function shouldThrottleClipRequest(req) {
+    const now = Date.now();
+    pruneRecentAttempts(now);
+
+    const userKey = req.user?.id ? `user:${req.user.id}` : null;
+    const ipKey = `ip:${getRequesterIp(req)}`;
+    const userLast = userKey ? recentClipAttemptsByUser.get(userKey) || 0 : 0;
+    const ipLast = recentClipAttemptsByIp.get(ipKey) || 0;
+
+    if ((userKey && (now - userLast) < CLIP_USER_COOLDOWN_MS) || (now - ipLast) < CLIP_IP_COOLDOWN_MS) {
+        return true;
+    }
+
+    if (userKey) recentClipAttemptsByUser.set(userKey, now);
+    recentClipAttemptsByIp.set(ipKey, now);
+    return false;
+}
 
 /**
  * Remux all existing WebM files that lack proper duration metadata.
@@ -626,14 +687,47 @@ router.post('/:id/publish', requireAuth, (req, res) => {
 router.get('/file/:filename', optionalAuth, (req, res) => {
     try {
         const filename = path.basename(req.params.filename); // Prevent directory traversal
-        let filePath = path.resolve(config.vod.path, filename);
+        const vodPath = path.resolve(config.vod.path, filename);
+        const clipPath = path.resolve(config.vod.clipsPath, filename);
+        let filePath = vodPath;
+        let mediaRecord = null;
+        let mediaType = null;
 
-        if (!fs.existsSync(filePath)) {
-            filePath = path.resolve(config.vod.clipsPath, filename);
+        if (fs.existsSync(vodPath)) {
+            mediaType = 'vod';
+            mediaRecord = db.get('SELECT id, user_id, is_public, is_recording, file_path FROM vods WHERE file_path = ?', [vodPath]);
+        } else if (fs.existsSync(clipPath)) {
+            filePath = clipPath;
+            mediaType = 'clip';
+            mediaRecord = db.get(
+                `SELECT c.id, c.user_id, c.is_public, c.file_path, s.user_id AS stream_owner_id, v.user_id AS vod_owner_id
+                 FROM clips c
+                 LEFT JOIN streams s ON c.stream_id = s.id
+                 LEFT JOIN vods v ON c.vod_id = v.id
+                 WHERE c.file_path = ?`,
+                [clipPath]
+            );
         }
 
         if (!fs.existsSync(filePath)) {
             return res.status(404).json({ error: 'File not found' });
+        }
+
+        if (!mediaRecord) {
+            return res.status(404).json({ error: 'Media record not found' });
+        }
+
+        const isAdmin = req.user?.role === 'admin';
+        const isOwner = req.user && req.user.id === mediaRecord.user_id;
+        const canAccess = mediaType === 'vod'
+            ? !!mediaRecord.is_public || isOwner || isAdmin
+            : !!mediaRecord.is_public
+                || isOwner
+                || isAdmin
+                || (req.user && (req.user.id === mediaRecord.stream_owner_id || req.user.id === mediaRecord.vod_owner_id));
+
+        if (!canAccess) {
+            return res.status(403).json({ error: 'This media is private' });
         }
 
         // For live recordings, serve the seekable copy if it exists
@@ -788,6 +882,29 @@ router.post('/upload', requireAuth, vodUpload.single('video'), async (req, res) 
 router.post('/clips', requireAuth, vodUpload.single('video'), async (req, res) => {
     try {
         const { vod_id, stream_id, start_time, end_time, title } = req.body;
+        const parsedStreamId = stream_id ? parseInt(stream_id, 10) : null;
+        const parsedVodId = vod_id ? parseInt(vod_id, 10) : null;
+        const { startTime, endTime } = parseClipWindow(req.body);
+
+        const duplicateClip = findExistingDuplicateClip({
+            streamId: parsedStreamId,
+            vodId: parsedVodId,
+            startTime,
+            endTime,
+        });
+        if (duplicateClip) {
+            if (req.file) cleanupTempFile(req.file.path);
+            return res.status(200).json({
+                clip: duplicateClip,
+                deduplicated: true,
+                message: 'A clip for that moment already exists. Reusing the existing clip.',
+            });
+        }
+
+        if (shouldThrottleClipRequest(req)) {
+            if (req.file) cleanupTempFile(req.file.path);
+            return res.status(429).json({ error: 'You are clipping too fast. Please wait a few seconds before making another clip.' });
+        }
 
         // Direct clip upload from browser (MediaRecorder clip)
         if (req.file) {
@@ -840,22 +957,22 @@ router.post('/clips', requireAuth, vodUpload.single('video'), async (req, res) =
             }
             const stat = fs.statSync(clipPath);
 
-            const duration = parseFloat(end_time || 0) - parseFloat(start_time || 0);
+            const duration = endTime - startTime;
             const result = db.createClip({
-                stream_id: stream_id ? parseInt(stream_id) : null,
+                stream_id: parsedStreamId,
                 user_id: req.user.id,
                 title: title || 'Untitled Clip',
                 file_path: clipPath,
-                start_time: parseFloat(start_time || 0),
-                end_time: parseFloat(end_time || 0),
+                start_time: startTime,
+                end_time: endTime,
                 duration_seconds: duration > 0 ? duration : 0,
                 description: '',
             });
 
             // Apply streamer's default clip visibility (streamer = stream owner)
             const clipId = result.lastInsertRowid;
-            if (stream_id) {
-                const clipStream = db.getStreamById(parseInt(stream_id));
+            if (parsedStreamId) {
+                const clipStream = db.getStreamById(parsedStreamId);
                 if (clipStream) {
                     const streamerChannel = db.getChannelByUserId(clipStream.user_id);
                     if (streamerChannel && streamerChannel.default_clip_visibility === 'public') {
@@ -880,14 +997,14 @@ router.post('/clips', requireAuth, vodUpload.single('video'), async (req, res) =
             return res.status(400).json({ error: 'start_time and end_time required' });
         }
 
-        const duration = end_time - start_time;
+        const duration = endTime - startTime;
         if (duration <= 0 || duration > 60) {
             return res.status(400).json({ error: 'Clip must be 1-60 seconds' });
         }
 
         // If from VOD, extract the clip
-        if (vod_id) {
-            const vod = db.get('SELECT * FROM vods WHERE id = ?', [vod_id]);
+        if (parsedVodId) {
+            const vod = db.get('SELECT * FROM vods WHERE id = ?', [parsedVodId]);
             if (!vod || !vod.file_path || !fs.existsSync(vod.file_path)) {
                 return res.status(404).json({ error: 'VOD not found or file missing' });
             }
@@ -902,7 +1019,7 @@ router.post('/clips', requireAuth, vodUpload.single('video'), async (req, res) =
             let ffStderr = '';
             const ffmpeg = spawn('ffmpeg', [
                 '-y',
-                '-ss', String(start_time),
+                '-ss', String(startTime),
                 '-i', vod.file_path,
                 '-t', String(duration),
                 '-c', 'copy',
@@ -923,13 +1040,13 @@ router.post('/clips', requireAuth, vodUpload.single('video'), async (req, res) =
                 }
 
                 const result = db.createClip({
-                    vod_id,
-                    stream_id: stream_id || vod.stream_id,
+                    vod_id: parsedVodId,
+                    stream_id: parsedStreamId || vod.stream_id,
                     user_id: req.user.id,
                     title: title || 'Untitled Clip',
                     file_path: clipPath,
-                    start_time,
-                    end_time,
+                    start_time: startTime,
+                    end_time: endTime,
                     duration_seconds: duration,
                     description: '',
                 });

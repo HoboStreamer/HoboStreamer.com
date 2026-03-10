@@ -5,6 +5,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const DB_PATH = process.env.DB_PATH || './data/hobostreamer.db';
 const dbDir = path.dirname(path.resolve(DB_PATH));
@@ -215,6 +216,30 @@ function createUser({ username, email, password_hash, display_name, stream_key }
          VALUES (?, ?, ?, ?, ?)`,
         [username, email || null, password_hash, display_name || username, stream_key]
     );
+}
+
+function getOrCreateAnonGameUser(anonId) {
+    const normalizedAnonId = String(anonId || 'anon0').trim().toLowerCase();
+    const safeAnonKey = normalizedAnonId.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'anon0';
+    const username = `__game_${safeAnonKey}`;
+
+    let user = getUserByUsername(username);
+    if (user) {
+        if (user.display_name !== normalizedAnonId) {
+            run('UPDATE users SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [normalizedAnonId, user.id]);
+            user = getUserById(user.id);
+        }
+        return user;
+    }
+
+    const passwordHash = `!anon-game:${safeAnonKey}:${crypto.randomBytes(12).toString('hex')}`;
+    run(
+        `INSERT OR IGNORE INTO users (username, password_hash, display_name, role)
+         VALUES (?, ?, ?, 'user')`,
+        [username, passwordHash, normalizedAnonId]
+    );
+
+    return getUserByUsername(username);
 }
 
 // ── Stream helpers ───────────────────────────────────────────
@@ -600,6 +625,35 @@ function getClipsOfUserStreams(userId) {
     `, [userId]);
 }
 
+function findDuplicateClip({ streamId = null, vodId = null, startTime = 0, endTime = 0, startWindow = 8, endWindow = 10, createdSinceMinutes = 10 }) {
+    const filters = [];
+    const params = [];
+
+    if (streamId) {
+        filters.push('c.stream_id = ?');
+        params.push(streamId);
+    }
+    if (vodId) {
+        filters.push('c.vod_id = ?');
+        params.push(vodId);
+    }
+    if (!filters.length) return null;
+
+    return get(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        LEFT JOIN streams s ON c.stream_id = s.id
+        WHERE (${filters.join(' OR ')})
+          AND ABS(COALESCE(c.start_time, 0) - ?) <= ?
+          AND ABS(COALESCE(c.end_time, 0) - ?) <= ?
+          AND c.created_at >= datetime('now', ?)
+        ORDER BY c.created_at DESC
+        LIMIT 1
+    `, [...params, startTime || 0, startWindow, endTime || 0, endWindow, `-${Math.max(1, createdSinceMinutes)} minutes`]);
+}
+
 // ── Control helpers ──────────────────────────────────────────
 
 function getStreamControls(streamId) {
@@ -965,7 +1019,7 @@ function getChatReplay(streamId, fromTime, toTime) {
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
-    getUserById, getUserByUsername, getUserByStreamKey, createUser,
+    getUserById, getUserByUsername, getUserByStreamKey, createUser, getOrCreateAnonGameUser,
     // Streams
     getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getStreamsByUserId,
     createStream, endStream, updateViewerCount,
@@ -990,7 +1044,7 @@ module.exports = {
     // VODs
     createVod, getVodById, getVodsByUser, getPublicVods, getActiveVodByStream, getOrphanedRecordingVods,
     // Clips
-    createClip, getClipById, getClipsByUser, getPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams,
+    createClip, getClipById, getClipsByUser, getPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
     // Controls
     getStreamControls, createControl,
     // API Keys

@@ -187,3 +187,25 @@ CREATE TABLE IF NOT EXISTS game_fish_collection (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_fish_coll_user ON game_fish_collection(user_id);
+
+-- Daily quest progress and claims
+CREATE TABLE IF NOT EXISTS game_daily_quest_progress (
+    user_id INTEGER NOT NULL,
+    quest_date TEXT NOT NULL,
+    stat_key TEXT NOT NULL,
+    value REAL DEFAULT 0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, quest_date, stat_key),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_daily_quest_progress_user_date ON game_daily_quest_progress(user_id, quest_date);
+
+CREATE TABLE IF NOT EXISTS game_daily_quest_claims (
+    user_id INTEGER NOT NULL,
+    quest_date TEXT NOT NULL,
+    quest_id TEXT NOT NULL,
+    claimed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, quest_date, quest_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_daily_quest_claims_user_date ON game_daily_quest_claims(user_id, quest_date);

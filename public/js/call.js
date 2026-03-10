@@ -31,9 +31,12 @@ const callState = {
     openContextMenu: null,     // currently open peer context menu peerId
     openContextMenuRect: null,
     localUsername: null,
+    localAnonId: null,
     localDisplayName: null,
     localUserId: null,
     localNameFX: null,
+    localAvatarUrl: null,
+    localProfileColor: null,
     localSpeaking: false,
     localSpeechDetected: false,
     inputMode: 'open',
@@ -56,6 +59,10 @@ const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
 ];
+const CALL_WS_MAX_BUFFERED_AMOUNT = 256 * 1024;
+const CALL_AUDIO_MAX_BITRATE = 32000;
+const CALL_VIDEO_MAX_BITRATE = 350000;
+const CALL_VIDEO_MAX_FRAMERATE = 15;
 
 _loadCallUserSettings();
 
@@ -135,6 +142,69 @@ function _syncCallSettingsUI() {
 function _formatCallKey(code) {
     const map = { Space: 'Space', KeyV: 'V', KeyT: 'T', AltLeft: 'Left Alt' };
     return map[code] || code;
+}
+
+function _resolveParticipantDisplayName(info) {
+    if (!info) return 'Unknown';
+    if (info.userId || info.username) return info.displayName || info.username || 'Unknown';
+    if (info.anonId) return info.anonId;
+    if (typeof info.displayName === 'string' && /^anon\d+$/i.test(info.displayName)) return info.displayName;
+    return info.displayName || 'Unknown';
+}
+
+function _applyLocalParticipantInfo(info) {
+    callState.localUsername = info?.username || currentUser?.username || null;
+    callState.localAnonId = info?.anonId || null;
+    callState.localDisplayName = _resolveParticipantDisplayName(info) || currentUser?.display_name || currentUser?.username || 'You';
+    callState.localUserId = info?.userId || currentUser?.id || null;
+    callState.localNameFX = info?.nameFX || null;
+    callState.localAvatarUrl = info?.avatarUrl || currentUser?.avatar_url || null;
+    callState.localProfileColor = info?.profileColor || currentUser?.profile_color || null;
+}
+
+function _mergePeerParticipantInfo(peer, info) {
+    if (!peer || !info) return;
+    peer.username = info.username || null;
+    peer.anonId = info.anonId || null;
+    peer.displayName = _resolveParticipantDisplayName(info);
+    peer.userId = info.userId || null;
+    peer.isStreamer = !!info.isStreamer;
+    peer.muted = !!info.muted;
+    peer.cameraOff = info.cameraOff !== false;
+    peer.forceMuted = !!info.forceMuted;
+    peer.forceCameraOff = !!info.forceCameraOff;
+    peer.speaking = !!info.speaking;
+    peer.nameFX = info.nameFX || null;
+    peer.avatarUrl = info.avatarUrl || null;
+    peer.profileColor = info.profileColor || null;
+}
+
+function _optimizeCallSender(sender, track) {
+    if (!sender || !track) return;
+
+    try {
+        if (track.kind === 'audio') track.contentHint = 'speech';
+        if (track.kind === 'video') track.contentHint = 'motion';
+    } catch {}
+
+    if (typeof sender.getParameters !== 'function' || typeof sender.setParameters !== 'function') return;
+
+    try {
+        const params = sender.getParameters() || {};
+        if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+        if (track.kind === 'audio') {
+            params.encodings[0].maxBitrate = CALL_AUDIO_MAX_BITRATE;
+        } else if (track.kind === 'video') {
+            params.encodings[0].maxBitrate = CALL_VIDEO_MAX_BITRATE;
+            params.encodings[0].maxFramerate = CALL_VIDEO_MAX_FRAMERATE;
+        }
+        sender.setParameters(params).catch(() => {});
+    } catch {}
+}
+
+function _syncCallAuthState() {
+    if (!callState.ws || callState.ws.readyState !== WebSocket.OPEN || !callState.streamId) return;
+    _sendCallMsg({ type: 'auth-update', token: _getAuthToken() || null });
 }
 
 /* ── Render Scheduling (coalesce rapid updates) ────────────── */
@@ -417,9 +487,12 @@ function _cleanupCall() {
     callState.connecting = false;
     _closePeerContextMenu();
     callState.localUsername = null;
+    callState.localAnonId = null;
     callState.localDisplayName = null;
     callState.localUserId = null;
     callState.localNameFX = null;
+    callState.localAvatarUrl = null;
+    callState.localProfileColor = null;
     callState.localSpeaking = false;
     callState.localSpeechDetected = false;
     callState.pttPressed = false;
@@ -467,7 +540,8 @@ async function toggleCallCamera() {
 
             // Add video track to all existing peer connections
             for (const [peerId, peer] of callState.peers) {
-                peer.pc.addTrack(camTrack, callState.localStream);
+                const sender = peer.pc.addTrack(camTrack, callState.localStream);
+                _optimizeCallSender(sender, camTrack);
             }
         } catch (err) {
             console.warn('[Call] Camera enable failed:', err);
@@ -588,10 +662,7 @@ function _handleCallMessage(msg) {
 
             {
                 const me = (msg.participants || []).find(p => p.peerId === msg.peerId);
-                callState.localUsername = me?.username || currentUser?.username || null;
-                callState.localDisplayName = me?.displayName || currentUser?.display_name || currentUser?.username || 'You';
-                callState.localUserId = me?.userId || currentUser?.id || null;
-                callState.localNameFX = me?.nameFX || null;
+                _applyLocalParticipantInfo(me);
             }
 
             // Create peer connections to all existing participants
@@ -607,7 +678,23 @@ function _handleCallMessage(msg) {
         case 'peer-joined': {
             _createPeerConnection(msg.peerId, true, msg);
             _renderCallUI();
-            _callSystemMessage(`${msg.displayName || msg.username || 'Someone'} joined the call`);
+            _callSystemMessage(`${_resolveParticipantDisplayName(msg)} joined the call`);
+            break;
+        }
+
+        case 'peer-updated': {
+            const peer = callState.peers.get(msg.peerId);
+            if (peer) {
+                _mergePeerParticipantInfo(peer, msg);
+                _scheduleRender();
+            }
+            break;
+        }
+
+        case 'self-updated': {
+            callState.isStreamer = !!msg.isStreamer;
+            _applyLocalParticipantInfo(msg.participant);
+            _scheduleRender();
             break;
         }
 
@@ -785,7 +872,8 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
     const peer = {
         pc,
         username: peerInfo?.username || null,
-        displayName: peerInfo?.displayName || peerInfo?.username || 'Unknown',
+        anonId: peerInfo?.anonId || null,
+        displayName: _resolveParticipantDisplayName(peerInfo),
         userId: peerInfo?.userId || null,
         isStreamer: peerInfo?.isStreamer || false,
         muted: peerInfo?.muted || false,
@@ -809,18 +897,19 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
     // Add local tracks to the connection
     if (callState.localStream) {
         callState.localStream.getTracks().forEach(track => {
-            pc.addTrack(track, callState.localStream);
+            const sender = pc.addTrack(track, callState.localStream);
+            _optimizeCallSender(sender, track);
         });
     }
 
     // ICE candidates
     pc.onicecandidate = (e) => {
-        if (e.candidate && callState.ws && callState.ws.readyState === WebSocket.OPEN) {
-            callState.ws.send(JSON.stringify({
+        if (e.candidate) {
+            _sendCallMsg({
                 type: 'ice-candidate',
                 targetPeerId: peerId,
                 candidate: e.candidate,
-            }));
+            });
         }
     };
 
@@ -850,13 +939,11 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
             try {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
-                if (callState.ws && callState.ws.readyState === WebSocket.OPEN) {
-                    callState.ws.send(JSON.stringify({
-                        type: 'offer',
-                        targetPeerId: peerId,
-                        sdp: pc.localDescription,
-                    }));
-                }
+                _sendCallMsg({
+                    type: 'offer',
+                    targetPeerId: peerId,
+                    sdp: pc.localDescription,
+                });
             } catch (err) {
                 console.error('[Call] Offer creation failed:', err);
             }
@@ -876,13 +963,11 @@ async function _handleOffer(msg) {
         await peer.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         const answer = await peer.pc.createAnswer();
         await peer.pc.setLocalDescription(answer);
-        if (callState.ws && callState.ws.readyState === WebSocket.OPEN) {
-            callState.ws.send(JSON.stringify({
-                type: 'answer',
-                targetPeerId: peerId,
-                sdp: peer.pc.localDescription,
-            }));
-        }
+        _sendCallMsg({
+            type: 'answer',
+            targetPeerId: peerId,
+            sdp: peer.pc.localDescription,
+        });
     } catch (err) {
         console.error('[Call] Handle offer failed:', err);
     }
@@ -1016,7 +1101,7 @@ function _openCallVideoPopout(peerId) {
     const opts = peerId === callState.myPeerId
         ? {
             peerId,
-            displayName: callState.localDisplayName || 'You',
+            displayName: callState.localDisplayName || callState.localAnonId || 'You',
             isLocal: true,
             videoStream: callState.localStream,
         }
@@ -1169,6 +1254,7 @@ function _renderCallUI() {
         peerId: callState.myPeerId,
         username: callState.localUsername,
         displayName: callState.localDisplayName || (currentUser ? (currentUser.display_name || currentUser.username) : 'You'),
+        anonId: callState.localAnonId,
         userId: callState.localUserId || currentUser?.id || null,
         isStreamer: callState.isStreamer,
         muted: callState.muted || callState.forceMuted,
@@ -1177,6 +1263,8 @@ function _renderCallUI() {
         forceMuted: callState.forceMuted,
         forceCameraOff: callState.forceCameraOff,
         nameFX: callState.localNameFX,
+        avatarUrl: callState.localAvatarUrl || currentUser?.avatar_url || null,
+        profileColor: callState.localProfileColor || currentUser?.profile_color || null,
         isLocal: true,
     }));
 
@@ -1185,6 +1273,7 @@ function _renderCallUI() {
         grid.appendChild(_createParticipantTile({
             peerId,
             username: peer.username,
+            anonId: peer.anonId,
             displayName: peer.displayName,
             userId: peer.userId,
             isStreamer: peer.isStreamer,
@@ -1234,7 +1323,7 @@ function _createParticipantTile(opts) {
     } else {
         const avatar = document.createElement('div');
         avatar.className = 'call-avatar';
-        const initial = (opts.username || '?')[0].toUpperCase();
+        const initial = (opts.displayName || opts.username || opts.anonId || '?')[0].toUpperCase();
         if (opts.avatarUrl) {
             avatar.style.backgroundImage = `url(${opts.avatarUrl})`;
             avatar.style.backgroundSize = 'cover';
@@ -1264,7 +1353,7 @@ function _createParticipantTile(opts) {
     label.className = 'call-participant-label';
     const nameEl = document.createElement('span');
     nameEl.className = `call-name${opts.nameFX?.cssClass ? ` ${opts.nameFX.cssClass}` : ''}${opts.username ? ' call-name-clickable' : ''}`;
-    nameEl.textContent = opts.displayName || opts.username || 'Unknown';
+    nameEl.textContent = opts.displayName || opts.anonId || opts.username || 'Unknown';
     if (!opts.nameFX?.cssClass && opts.profileColor) {
         nameEl.style.color = opts.profileColor;
     }
@@ -1340,6 +1429,7 @@ function _getPeerContextMenuOpts(peerId) {
     return {
         peerId,
         username: peer.username,
+        anonId: peer.anonId,
         displayName: peer.displayName,
         userId: peer.userId,
         isStreamer: peer.isStreamer,
@@ -1562,7 +1652,7 @@ function _openCallUserContextMenu(opts, anchorEl, x, y) {
 }
 
 function _sendCallMsg(msg) {
-    if (callState.ws && callState.ws.readyState === WebSocket.OPEN) {
+    if (callState.ws && callState.ws.readyState === WebSocket.OPEN && callState.ws.bufferedAmount <= CALL_WS_MAX_BUFFERED_AMOUNT) {
         callState.ws.send(JSON.stringify(msg));
     }
 }
@@ -1597,7 +1687,7 @@ function _startViewerCallStatusSync(streamId) {
     };
 
     poll();
-    callState.statusPollTimer = setInterval(poll, 3000);
+    callState.statusPollTimer = setInterval(poll, 5000);
 }
 
 function _stopViewerCallStatusSync() {
@@ -1918,6 +2008,13 @@ document.addEventListener('keyup', (e) => {
     }
     _applyLocalAudioGate();
     _renderCallUI();
+});
+
+window.addEventListener('hobo-auth-changed', () => {
+    if (callState.joined || callState.connecting) {
+        _syncCallAuthState();
+        _scheduleRender();
+    }
 });
 
 function _getAuthToken() {

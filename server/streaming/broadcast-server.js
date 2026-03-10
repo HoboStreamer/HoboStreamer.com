@@ -16,6 +16,9 @@ const WebSocket = require('ws');
 const { authenticateWs } = require('../auth/auth');
 const db = require('../db/database');
 
+const WS_HEARTBEAT_MS = 30000;
+const MAX_SEND_BACKPRESSURE = 512 * 1024;
+
 class BroadcastServer {
     constructor() {
         this.wss = null;
@@ -24,10 +27,24 @@ class BroadcastServer {
         /** @type {Map<WebSocket, { user: object|null, streamId: number, role: string, peerId: string }>} */
         this.clients = new Map();
         this.nextPeerId = 1;
+        this.heartbeatInterval = null;
     }
 
     init(server) {
-        this.wss = new WebSocket.Server({ noServer: true });
+        this.wss = new WebSocket.Server({ noServer: true, maxPayload: 256 * 1024, perMessageDeflate: false });
+
+        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = setInterval(() => {
+            if (!this.wss) return;
+            this.wss.clients.forEach((ws) => {
+                if (ws.isAlive === false) {
+                    try { ws.terminate(); } catch {}
+                    return;
+                }
+                ws.isAlive = false;
+                try { ws.ping(); } catch {}
+            });
+        }, WS_HEARTBEAT_MS);
 
         this.wss.on('connection', (ws, req) => {
             this.handleConnection(ws, req);
@@ -53,10 +70,21 @@ class BroadcastServer {
         const streamId = parseInt(url.searchParams.get('streamId'));
         const role = url.searchParams.get('role') || 'viewer'; // 'broadcaster' or 'viewer'
 
+        if (role !== 'broadcaster' && role !== 'viewer') {
+            ws.close(4004, 'Invalid role');
+            return;
+        }
+
         if (!streamId || isNaN(streamId)) {
             ws.close(4001, 'Missing streamId');
             return;
         }
+
+        ws.isAlive = true;
+        ws.on('pong', () => {
+            ws.isAlive = true;
+        });
+        try { ws._socket?.setNoDelay(true); } catch {}
 
         // Authenticate
         const user = authenticateWs(token);
@@ -299,7 +327,7 @@ class BroadcastServer {
 
     safeSend(ws, data) {
         try {
-            if (ws.readyState === WebSocket.OPEN) {
+            if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
                 ws.send(JSON.stringify(data));
             }
         } catch {}
@@ -316,6 +344,10 @@ class BroadcastServer {
 
     close() {
         if (this.wss) {
+            if (this.heartbeatInterval) {
+                clearInterval(this.heartbeatInterval);
+                this.heartbeatInterval = null;
+            }
             for (const ws of this.clients.keys()) {
                 try { ws.close(); } catch {}
             }

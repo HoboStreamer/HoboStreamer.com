@@ -38,7 +38,7 @@ class RTMPServer {
             },
             http: {
                 port: config.rtmp.port + 8000, // HTTP-FLV port (9935 by default)
-                allow_origin: '*',
+                allow_origin: config.nodeEnv === 'production' ? config.baseUrl : '*',
                 mediaroot: './data/media',
             },
             // NOTE: trans (HLS transcoding) disabled due to node-media-server
@@ -65,6 +65,21 @@ class RTMPServer {
             // Stream path format: /live/STREAM_KEY
             const parts = streamPath.split('/');
             const streamKey = parts[parts.length - 1];
+
+            if (!streamPath.startsWith('/live/') || !/^[a-zA-Z0-9_-]{8,128}$/.test(streamKey)) {
+                console.log(`[RTMP] Rejected malformed publish path: ${streamPath}`);
+                const session = this.nms.getSession(id);
+                if (session) session.reject();
+                return;
+            }
+
+            const existingActive = this.activeStreams.get(streamKey);
+            if (existingActive && existingActive.sessionId !== id) {
+                console.log(`[RTMP] Rejected duplicate publisher for stream key ${streamKey}`);
+                const session = this.nms.getSession(id);
+                if (session) session.reject();
+                return;
+            }
 
             const user = db.getUserByStreamKey(streamKey);
             if (!user) {
@@ -129,13 +144,8 @@ class RTMPServer {
             }
         });
 
-        this.nms.on('prePlay', (id, streamPath, args) => {
-            console.log(`[RTMP] Viewer connected: ${streamPath}`);
-        });
-
-        this.nms.on('donePlay', (id, streamPath, args) => {
-            console.log(`[RTMP] Viewer disconnected: ${streamPath}`);
-        });
+        this.nms.on('prePlay', () => {});
+        this.nms.on('donePlay', () => {});
 
         this.nms.run();
         console.log(`[RTMP] Server started on port ${config.rtmp.port}`);

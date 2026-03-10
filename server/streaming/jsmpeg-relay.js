@@ -10,6 +10,18 @@
 const http = require('http');
 const WebSocket = require('ws');
 
+const MAX_WS_BACKPRESSURE = 512 * 1024;
+
+function matchesStreamPath(url, streamKey) {
+    try {
+        const pathname = new URL(url || '/', 'http://localhost').pathname;
+        const parts = pathname.split('/').filter(Boolean);
+        return parts[0] === streamKey;
+    } catch {
+        return false;
+    }
+}
+
 class JSMPEGRelay {
     constructor() {
         /** @type {Map<string, { videoWss: WebSocket.Server, audioWss: WebSocket.Server, videoServer: http.Server, audioServer: http.Server }>} */
@@ -35,15 +47,17 @@ class JSMPEGRelay {
         this.nextAudioPort += 2;
 
         // ── Video relay ──────────────────────────────────────
-        const videoWss = new WebSocket.Server({ noServer: true });
+        const videoWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false, maxPayload: 64 * 1024 });
         const videoServer = http.createServer((req, res) => {
             // FFmpeg sends MPEG1 data via HTTP POST
-            if (req.method === 'POST' || req.url.includes(streamKey)) {
+            req.socket.setNoDelay(true);
+            if (req.method === 'POST' && matchesStreamPath(req.url, streamKey)) {
                 req.on('data', (chunk) => {
+                    if (videoWss.clients.size === 0) return;
                     videoWss.clients.forEach(client => {
-                        if (client.readyState === WebSocket.OPEN) {
-                            client.send(chunk);
-                        }
+                        if (client.readyState !== WebSocket.OPEN) return;
+                        if (client.bufferedAmount > MAX_WS_BACKPRESSURE) return;
+                        client.send(chunk, { binary: true, compress: false }, () => {});
                     });
                 });
                 req.on('end', () => {
@@ -71,14 +85,16 @@ class JSMPEGRelay {
         });
 
         // ── Audio relay ──────────────────────────────────────
-        const audioWss = new WebSocket.Server({ noServer: true });
+        const audioWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false, maxPayload: 64 * 1024 });
         const audioServer = http.createServer((req, res) => {
-            if (req.method === 'POST' || req.url.includes(streamKey)) {
+            req.socket.setNoDelay(true);
+            if (req.method === 'POST' && matchesStreamPath(req.url, streamKey)) {
                 req.on('data', (chunk) => {
+                    if (audioWss.clients.size === 0) return;
                     audioWss.clients.forEach(client => {
-                        if (client.readyState === WebSocket.OPEN) {
-                            client.send(chunk);
-                        }
+                        if (client.readyState !== WebSocket.OPEN) return;
+                        if (client.bufferedAmount > MAX_WS_BACKPRESSURE) return;
+                        client.send(chunk, { binary: true, compress: false }, () => {});
                     });
                 });
                 req.on('end', () => {
