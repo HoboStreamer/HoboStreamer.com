@@ -6,9 +6,22 @@ const robotStreamerService = require('./robotstreamer-service');
 
 const router = express.Router();
 
-router.get('/integration', requireAuth, (req, res) => {
+router.get('/integration', requireAuth, async (req, res) => {
     try {
-        res.json({ integration: robotStreamerService.getClientIntegration(req.user.id) });
+        const row = db.getRobotStreamerIntegrationByUserId(req.user.id);
+        let availableRobots = [];
+
+        // If user has a saved token + robot, re-fetch available robots so the dropdown populates on reload
+        if (row?.token && row?.robot_id) {
+            try {
+                const pageData = await robotStreamerService.robotPageLoad(row.token, row.robot_id);
+                availableRobots = robotStreamerService.extractAvailableRobots(pageData);
+            } catch {
+                // Non-fatal — dropdown just stays empty, user can re-validate
+            }
+        }
+
+        res.json({ integration: robotStreamerService.sanitizeIntegration(row, { available_robots: availableRobots }) });
     } catch (err) {
         res.status(500).json({ error: 'Failed to load RobotStreamer settings' });
     }

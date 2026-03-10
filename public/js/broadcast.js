@@ -297,27 +297,50 @@ function syncRobotStreamerUI() {
         ? `Configured for ${rs.streamName || `Robot ${rs.robotId}`} as ${rs.ownerName || rs.ownerId || 'unknown owner'}.`
         : 'RobotStreamer restreaming works with browser WebRTC broadcasting. Paste your RobotStreamer token, validate a robot, then go live.';
     setRobotStreamerStatus(summary, rs.hasToken ? 'success' : 'info', 'bc-rsStatus');
+
+    // Update live status based on current state
+    const liveStatusEl = document.getElementById('bc-rsLiveStatus');
+    if (liveStatusEl) {
+        // Don't overwrite active status messages from ongoing restream
+        const currentText = liveStatusEl.textContent;
+        const isActiveStatus = currentText.includes('live') || currentText.includes('connecting') || currentText.includes('reconnect');
+        if (!isActiveStatus) {
+            if (rs.enabled && rs.hasToken && rs.robotId) {
+                setRobotStreamerStatus('RobotStreamer restream ready — will start when you go live.', 'info', 'bc-rsLiveStatus');
+            } else if (!rs.enabled) {
+                setRobotStreamerStatus('RobotStreamer restream is disabled.', 'info', 'bc-rsLiveStatus');
+            } else {
+                setRobotStreamerStatus('RobotStreamer needs configuration — validate settings above.', 'info', 'bc-rsLiveStatus');
+            }
+        }
+    }
 }
 
 async function loadRobotStreamerIntegration() {
-    try {
-        const data = await api('/robotstreamer/integration');
-        const integration = data.integration || {};
-        broadcastState.robotStreamer = {
-            loaded: true,
-            enabled: !!integration.enabled,
-            mirrorChat: integration.mirror_chat !== false,
-            hasToken: !!integration.has_token,
-            robotId: integration.robot_id || '',
-            ownerId: integration.owner_id || '',
-            streamName: integration.stream_name || '',
-            ownerName: integration.owner_name || '',
-            availableRobots: integration.available_robots || [],
-        };
-        syncRobotStreamerUI();
-    } catch (err) {
-        setRobotStreamerStatus(err.message || 'Failed to load RobotStreamer settings', 'error');
-    }
+    const doLoad = async () => {
+        try {
+            const data = await api('/robotstreamer/integration');
+            const integration = data.integration || {};
+            broadcastState.robotStreamer = {
+                loaded: true,
+                enabled: !!integration.enabled,
+                mirrorChat: integration.mirror_chat !== false,
+                hasToken: !!integration.has_token,
+                robotId: integration.robot_id || '',
+                ownerId: integration.owner_id || '',
+                streamName: integration.stream_name || '',
+                ownerName: integration.owner_name || '',
+                availableRobots: integration.available_robots || [],
+            };
+            console.log('[Broadcast] RS integration loaded:', { enabled: integration.enabled, hasToken: !!integration.has_token, robotId: integration.robot_id });
+            syncRobotStreamerUI();
+        } catch (err) {
+            broadcastState.robotStreamer.loaded = true; // Mark loaded even on error so we don't block forever
+            setRobotStreamerStatus(err.message || 'Failed to load RobotStreamer settings', 'error');
+        }
+    };
+    _robotStreamerIntegrationPromise = doLoad();
+    return _robotStreamerIntegrationPromise;
 }
 
 function getRobotStreamerFormData() {
@@ -1746,10 +1769,21 @@ function applyManualGain(streamId) {
 /* ── RobotStreamer Restream ─────────────────────────────────── */
 
 let _robotStreamerMediasoupModulePromise = null;
+let _robotStreamerIntegrationPromise = null;
+const RS_RECONNECT_BASE_DELAY = 3000;
+const RS_RECONNECT_MAX_DELAY = 30000;
 
 function canUseRobotStreamerRestream() {
     const rs = broadcastState.robotStreamer;
     return !!(rs?.enabled && rs?.hasToken && rs?.robotId);
+}
+
+/** Wait for the RS integration to finish loading (resolves immediately if already loaded). */
+async function ensureRobotStreamerLoaded() {
+    if (broadcastState.robotStreamer.loaded) return;
+    if (_robotStreamerIntegrationPromise) {
+        await _robotStreamerIntegrationPromise;
+    }
 }
 
 function getRobotStreamerPublishUrl(streamId) {
@@ -1814,10 +1848,21 @@ async function loadRobotStreamerMediasoup() {
 
 async function startRobotStreamerRestream(streamId) {
     const ss = getStreamState(streamId);
-    if (!ss?.localStream || !canUseRobotStreamerRestream()) return null;
+    if (!ss?.localStream) { console.log('[RS Restream] No localStream, skipping'); return null; }
+
+    // Wait for integration settings to load first (fixes race condition on page load)
+    await ensureRobotStreamerLoaded();
+
+    if (!canUseRobotStreamerRestream()) {
+        const rs = broadcastState.robotStreamer;
+        console.log('[RS Restream] Cannot start — enabled:', rs.enabled, 'hasToken:', rs.hasToken, 'robotId:', rs.robotId);
+        if (!rs.enabled) setRobotStreamerStatus('RobotStreamer restream is disabled.', 'info', 'bc-rsLiveStatus');
+        return null;
+    }
     if (ss.robotStreamer?.active) return ss.robotStreamer;
 
     setRobotStreamerStatus('Connecting RobotStreamer restream…', 'info', 'bc-rsLiveStatus');
+    console.log('[RS Restream] Starting for stream', streamId);
 
     try {
         const mod = await loadRobotStreamerMediasoup();
@@ -1854,9 +1899,13 @@ async function startRobotStreamerRestream(streamId) {
                 .catch(errback);
         });
         transport.on('connectionstatechange', (state) => {
+            console.log('[RS Restream] Transport state:', state);
             if (state === 'connected') setRobotStreamerStatus('RobotStreamer restream is live.', 'success', 'bc-rsLiveStatus');
             else if (state === 'connecting') setRobotStreamerStatus('RobotStreamer restream is connecting…', 'info', 'bc-rsLiveStatus');
-            else if (state === 'failed') setRobotStreamerStatus('RobotStreamer restream failed.', 'error', 'bc-rsLiveStatus');
+            else if (state === 'failed') {
+                setRobotStreamerStatus('RobotStreamer restream connection failed — will retry.', 'error', 'bc-rsLiveStatus');
+                scheduleRobotStreamerReconnect(streamId);
+            }
         });
 
         const session = {
@@ -1867,6 +1916,9 @@ async function startRobotStreamerRestream(streamId) {
             transport,
             videoProducer: null,
             audioProducer: null,
+            reconnectDelay: RS_RECONNECT_BASE_DELAY,
+            reconnectTimer: null,
+            intentionalClose: false,
         };
         ss.robotStreamer = session;
 
@@ -1878,17 +1930,61 @@ async function startRobotStreamerRestream(streamId) {
         ws.addEventListener('close', () => {
             if (ss.robotStreamer === session) {
                 session.active = false;
-                setRobotStreamerStatus('RobotStreamer restream disconnected.', 'warning', 'bc-rsLiveStatus');
+                if (!session.intentionalClose) {
+                    console.warn('[RS Restream] WebSocket closed unexpectedly');
+                    setRobotStreamerStatus('RobotStreamer restream disconnected — reconnecting…', 'warning', 'bc-rsLiveStatus');
+                    scheduleRobotStreamerReconnect(streamId);
+                }
             }
         });
 
+        console.log('[RS Restream] Live! stream:', streamId);
         setRobotStreamerStatus('RobotStreamer restream is live.', 'success', 'bc-rsLiveStatus');
         return session;
     } catch (err) {
         ss.robotStreamer = null;
-        setRobotStreamerStatus(err.message || 'RobotStreamer restream failed', 'error', 'bc-rsLiveStatus');
-        console.warn('[Broadcast] RobotStreamer restream failed:', err.message);
+        setRobotStreamerStatus(err.message || 'RobotStreamer restream failed — will retry.', 'error', 'bc-rsLiveStatus');
+        console.warn('[RS Restream] Failed:', err.message);
+        scheduleRobotStreamerReconnect(streamId);
         return null;
+    }
+}
+
+function scheduleRobotStreamerReconnect(streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss?.localStream || !canUseRobotStreamerRestream()) return;
+
+    const session = ss.robotStreamer;
+    const delay = session?.reconnectDelay || RS_RECONNECT_BASE_DELAY;
+    const nextDelay = Math.min(delay * 1.5, RS_RECONNECT_MAX_DELAY);
+
+    // Clear any existing timer
+    if (session?.reconnectTimer) clearTimeout(session.reconnectTimer);
+
+    const timer = setTimeout(async () => {
+        // Only reconnect if local stream is still live and RS is still enabled
+        const currSs = getStreamState(streamId);
+        if (!currSs?.localStream || !canUseRobotStreamerRestream()) return;
+        console.log('[RS Restream] Attempting reconnect for stream', streamId);
+
+        // Clean up old session
+        await stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
+
+        // Start fresh
+        const newSession = await startRobotStreamerRestream(streamId);
+        // Carry over escalated delay if it failed again
+        if (!newSession && currSs.robotStreamer) {
+            currSs.robotStreamer.reconnectDelay = nextDelay;
+        }
+    }, delay);
+
+    // Store timer so we can cancel on intentional stop
+    if (session) {
+        session.reconnectTimer = timer;
+        session.reconnectDelay = nextDelay;
+    } else if (ss) {
+        // No session yet (initial connect failed), store on stream state temporarily
+        ss._rsReconnectTimer = timer;
     }
 }
 
@@ -1914,10 +2010,16 @@ async function syncRobotStreamerTracks(streamId) {
 async function stopRobotStreamerRestream(streamId, { quiet = false } = {}) {
     const ss = getStreamState(streamId);
     const session = ss?.robotStreamer;
+
+    // Cancel any pending reconnect timer
+    if (session?.reconnectTimer) { clearTimeout(session.reconnectTimer); session.reconnectTimer = null; }
+    if (ss?._rsReconnectTimer) { clearTimeout(ss._rsReconnectTimer); ss._rsReconnectTimer = null; }
+
     if (!session) return;
 
-    try { await session.videoProducer?.close?.(); } catch {}
-    try { await session.audioProducer?.close?.(); } catch {}
+    session.intentionalClose = true;
+    try { session.videoProducer?.close?.(); } catch {}
+    try { session.audioProducer?.close?.(); } catch {}
     try { session.transport?.close?.(); } catch {}
     try { session.ws?.close?.(1000); } catch {}
     ss.robotStreamer = null;
