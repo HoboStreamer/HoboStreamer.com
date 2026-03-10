@@ -143,6 +143,16 @@ router.post('/register', (req, res) => {
                     // Re-fetch user to include migrated coin balance
                     const updatedUser = db.getUserById(user.id);
                     if (updatedUser) user = updatedUser;
+
+                    // Grant tags for legacy migrated users
+                    try {
+                        const tags = require('../game/tags');
+                        tags.grantTag(user.id, 'legacy', 'migration');
+                        // Grant CFO tag specifically to Patrick
+                        if (username.toLowerCase() === 'patrick') {
+                            tags.grantTag(user.id, 'cfo', 'migration');
+                        }
+                    } catch { /* non-critical — tags table may not exist yet */ }
                 }
             }
         }

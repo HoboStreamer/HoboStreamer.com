@@ -749,6 +749,7 @@ const NPCS = {
     gemtrader:   { id: 'gemtrader',   name: 'Gem Trader',    emoji: '💎', tileX: OX + 7, tileY: OY + 1, doorTile: [OX + 7, OY + 2],   buildTiles: makeBuildTiles(OX + 7, OY + 1),   roofColor: '#4a3a6a', categories: ['ores', 'gems', 'bars'] },
     cosmetics:   { id: 'cosmetics',   name: 'Cosmetics',     emoji: '🎩', tileX: OX,     tileY: OY + 4, doorTile: [OX, OY + 5],       buildTiles: makeBuildTiles(OX, OY + 4),       roofColor: '#8a5a8a', categories: ['hats', 'name_effects', 'particles', 'voices'] },
     cook:        { id: 'cook',        name: 'Camp Chef',     emoji: '👨‍🍳', tileX: OX - 11,tileY: OY - 2, doorTile: [OX - 11, OY - 1], buildTiles: makeBuildTiles(OX - 11, OY - 2), roofColor: '#7a5a3a', categories: ['food', 'consumable'] },
+    tagmaster:   { id: 'tagmaster',   name: 'Tag Master',    emoji: '🏷️', tileX: OX + 11,tileY: OY - 2, doorTile: [OX + 11, OY - 1], buildTiles: makeBuildTiles(OX + 11, OY - 2), roofColor: '#4a5a7a', categories: ['tags'], guardedBy: 'tag_guardian' },
 };
 
 // Village NPC generation — each village gets 2 shopkeepers
@@ -814,6 +815,9 @@ const TOWN_DECO = [
     { type: 'crate', tileX: OX + 9, tileY: OY - 6 },  { type: 'crate', tileX: OX + 5, tileY: OY - 6 },
     { type: 'barrel', tileX: OX - 9, tileY: OY + 2 }, { type: 'crate', tileX: OX + 9, tileY: OY + 2 },
     { type: 'well', tileX: OX - 2, tileY: OY - 7 },
+    // Tag Master building — guardian stands outside
+    { type: 'lamp', tileX: OX + 9, tileY: OY },
+    { type: 'sign', tileX: OX + 11, tileY: OY, text: 'Tag Master' },
 ];
 // Add village decorations
 for (const v of VILLAGES) {
@@ -875,6 +879,8 @@ function generateTownPaths() {
     for (let y = cy + 2; y <= cy + 6; y++) { addPath(cx - 1, y); addPath(cx, y); addPath(cx + 1, y); }
     // W cook
     for (let x = cx - OUTPOST_RADIUS + 2; x <= cx - 2; x++) { addPath(x, cy - 1); addPath(x, cy); }
+    // E tag master
+    for (let x = cx + 2; x <= cx + OUTPOST_RADIUS - 2; x++) { addPath(x, cy - 1); addPath(x, cy); }
 
     // ─ Village internal paths ─
     for (const v of VILLAGES) {

@@ -293,6 +293,13 @@ class ChatServer {
                 if (cosmeticProfile.hatFX) chatMsg.hatFX = cosmeticProfile.hatFX;
                 if (cosmeticProfile.voiceFX) chatMsg.voiceFX = cosmeticProfile.voiceFX;
             } catch { /* non-critical */ }
+
+            // Attach equipped tag for chat rendering
+            try {
+                const tags = require('../game/tags');
+                const tagProfile = tags.getTagProfile(client.user.id);
+                if (tagProfile) chatMsg.tag = tagProfile;
+            } catch { /* non-critical */ }
         }
 
         // Save to database
