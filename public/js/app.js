@@ -8,6 +8,8 @@ let currentUser = null;
 let currentPage = 'home';
 let currentStreamId = null;
 let currentStreamData = null;
+let hoboAppMetaData = null;
+let hoboAppMetaPromise = null;
 
 // Reserved paths (not usernames)
 const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media']);
@@ -57,6 +59,7 @@ function toggleHoboAppPopover() {
     if (!popover) return;
     const isOpen = popover.classList.toggle('open');
     if (link) link.classList.toggle('open', isOpen);
+    if (isOpen) void loadHoboAppMeta();
 }
 // Close popover when clicking outside
 document.addEventListener('click', (e) => {
@@ -67,6 +70,94 @@ document.addEventListener('click', (e) => {
     const link = document.querySelector('.promo-bar-link');
     if (link) link.classList.remove('open');
 });
+
+function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+}
+
+function renderHoboAppMeta(data) {
+    if (!data) return;
+
+    const version = data.displayVersion || data.packageVersion || 'Unknown';
+    const latestRelease = data.latestRelease;
+    const latestCommit = data.latestCommit || {};
+    const repo = data.repo || {};
+
+    setText('hoboapp-version', version);
+    setText('hoboapp-meta-version', version);
+    setText(
+        'hoboapp-meta-version-sub',
+        latestRelease?.publishedAt
+            ? `Released ${timeAgo(latestRelease.publishedAt)} · ${formatDateTime(latestRelease.publishedAt)}`
+            : data.packageVersion
+                ? `Package version on ${repo.defaultBranch || 'main'}`
+                : 'No tagged release yet'
+    );
+
+    setText('hoboapp-meta-commit', latestCommit.shortSha || 'Unknown');
+    setText(
+        'hoboapp-meta-commit-sub',
+        latestCommit.committedAt
+            ? `Committed ${timeAgo(latestCommit.committedAt)} · ${formatDateTime(latestCommit.committedAt)}`
+            : 'Latest commit time unavailable'
+    );
+
+    setText('hoboapp-meta-pushed', repo.pushedAt ? timeAgo(repo.pushedAt) : 'Unknown');
+    setText(
+        'hoboapp-meta-pushed-sub',
+        repo.pushedAt ? formatDateTime(repo.pushedAt) : 'Repository push time unavailable'
+    );
+
+    setText('hoboapp-meta-stars', Number(repo.stars || 0).toLocaleString());
+    setText('hoboapp-meta-stars-sub', `${Number(repo.forks || 0).toLocaleString()} forks · ${Number(repo.openIssues || 0).toLocaleString()} open issues`);
+    setText('hoboapp-commit-message', latestCommit.message || 'Latest commit message unavailable');
+
+    const commitLink = document.getElementById('hoboapp-commit-link');
+    if (commitLink) commitLink.href = latestCommit.htmlUrl || repo.htmlUrl || 'https://github.com/HoboStreamer/HoboApp';
+
+    const ctaSub = document.getElementById('hoboapp-cta-sub');
+    if (ctaSub) {
+        ctaSub.innerHTML = `<i class="fa-solid fa-code-branch"></i> Latest push ${esc(repo.pushedAt ? timeAgo(repo.pushedAt) : 'unknown')} &nbsp;·&nbsp; <i class="fa-solid fa-code-commit"></i> ${esc(latestCommit.shortSha || 'n/a')} &nbsp;·&nbsp; <i class="fa-brands fa-windows"></i> <i class="fa-brands fa-linux"></i> <i class="fa-brands fa-apple"></i> Windows, Linux & macOS`;
+    }
+}
+
+function renderHoboAppMetaError(message = 'Unable to load HoboApp GitHub data right now') {
+    setText('hoboapp-version', 'GitHub offline');
+    setText('hoboapp-meta-version', 'Unavailable');
+    setText('hoboapp-meta-version-sub', message);
+    setText('hoboapp-meta-commit', 'Unavailable');
+    setText('hoboapp-meta-commit-sub', 'Could not fetch latest commit');
+    setText('hoboapp-meta-pushed', 'Unavailable');
+    setText('hoboapp-meta-pushed-sub', 'Could not fetch repository activity');
+    setText('hoboapp-meta-stars', '—');
+    setText('hoboapp-meta-stars-sub', 'GitHub metadata unavailable');
+    setText('hoboapp-commit-message', message);
+}
+
+async function loadHoboAppMeta(force = false) {
+    if (!force && hoboAppMetaData) {
+        renderHoboAppMeta(hoboAppMetaData);
+        return hoboAppMetaData;
+    }
+    if (!force && hoboAppMetaPromise) return hoboAppMetaPromise;
+
+    hoboAppMetaPromise = api('/meta/hoboapp')
+        .then((data) => {
+            hoboAppMetaData = data;
+            renderHoboAppMeta(data);
+            return data;
+        })
+        .catch((error) => {
+            renderHoboAppMetaError(error?.message || 'Failed to load latest HoboApp GitHub info');
+            throw error;
+        })
+        .finally(() => {
+            hoboAppMetaPromise = null;
+        });
+
+    return hoboAppMetaPromise;
+}
 
 /* ── Modal ────────────────────────────────────────────────────── */
 function showModal(id) {
@@ -386,6 +477,8 @@ function showPage(page) {
 
 /* ── Home Page ────────────────────────────────────────────────── */
 async function loadHome() {
+    void loadHoboAppMeta();
+
     try {
         const liveData = await api('/streams');
         const streams = liveData.streams || [];

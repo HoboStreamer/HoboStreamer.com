@@ -66,6 +66,7 @@ const thumbnailRoutes = require('./thumbnails/routes');
 const thumbnailService = require('./thumbnails/thumbnail-service');
 const themeRoutes = require('./themes/routes');
 const emoteRoutes = require('./emotes/routes');
+const metaRoutes = require('./meta/routes');
 
 // Game
 const gameRoutes = require('./game/routes');
@@ -193,6 +194,7 @@ app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
 app.use('/api/game', gameRoutes);
+app.use('/api/meta', metaRoutes);
 const ttsRoutes = require('./chat/tts-routes');
 app.use('/api/tts', ttsRoutes);
 

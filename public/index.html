@@ -129,12 +129,43 @@
                         <i class="fa-solid fa-campground"></i>
                     </div>
                     <div>
-                        <h2>HoboApp <span class="hoboapp-version">v2.0</span></h2>
+                        <h2>HoboApp <span class="hoboapp-version" id="hoboapp-version">Loading…</span></h2>
                         <p class="hoboapp-tagline">Washington State Stealth Camp & Shelter Locator</p>
                     </div>
                 </div>
 
                 <p class="hoboapp-desc">A free, open-source desktop app that aggregates <strong>18 data sources</strong> into one interactive map — purpose-built for stealth campers, van dwellers, and nomads. <strong>307 hand-curated</strong> Washington State locations with stealth ratings.</p>
+
+                <div class="hoboapp-live-meta" id="hoboapp-live-meta">
+                    <div class="hoboapp-meta-card">
+                        <span class="hoboapp-meta-label">Latest version</span>
+                        <strong id="hoboapp-meta-version">Loading…</strong>
+                        <span class="hoboapp-meta-sub" id="hoboapp-meta-version-sub">Checking GitHub release/package data…</span>
+                    </div>
+                    <div class="hoboapp-meta-card">
+                        <span class="hoboapp-meta-label">Latest commit</span>
+                        <strong id="hoboapp-meta-commit">Loading…</strong>
+                        <span class="hoboapp-meta-sub" id="hoboapp-meta-commit-sub">Fetching latest commit…</span>
+                    </div>
+                    <div class="hoboapp-meta-card">
+                        <span class="hoboapp-meta-label">Last pushed</span>
+                        <strong id="hoboapp-meta-pushed">Loading…</strong>
+                        <span class="hoboapp-meta-sub" id="hoboapp-meta-pushed-sub">Syncing repository activity…</span>
+                    </div>
+                    <div class="hoboapp-meta-card">
+                        <span class="hoboapp-meta-label">GitHub stars</span>
+                        <strong id="hoboapp-meta-stars">—</strong>
+                        <span class="hoboapp-meta-sub" id="hoboapp-meta-stars-sub">Live from github.com/HoboStreamer/HoboApp</span>
+                    </div>
+                </div>
+
+                <div class="hoboapp-latest-change">
+                    <div class="hoboapp-latest-change-head">
+                        <strong>Latest change</strong>
+                        <a id="hoboapp-commit-link" href="https://github.com/HoboStreamer/HoboApp" target="_blank" rel="noopener">View on GitHub</a>
+                    </div>
+                    <p id="hoboapp-commit-message">Fetching latest HoboApp changes from GitHub…</p>
+                </div>
 
                 <!-- Feature Grid -->
                 <div class="hoboapp-features">
@@ -229,7 +260,7 @@
                     <a href="https://github.com/HoboStreamer/HoboApp" target="_blank" rel="noopener" class="btn btn-primary btn-lg hoboapp-dl-btn">
                         <i class="fa-brands fa-github"></i> Download on GitHub
                     </a>
-                    <p class="hoboapp-cta-sub"><i class="fa-solid fa-code-branch"></i> Free & open source &nbsp;·&nbsp; <i class="fa-brands fa-windows"></i> <i class="fa-brands fa-linux"></i> <i class="fa-brands fa-apple"></i> Windows, Linux & macOS</p>
+                    <p class="hoboapp-cta-sub" id="hoboapp-cta-sub"><i class="fa-solid fa-code-branch"></i> Free & open source &nbsp;·&nbsp; <i class="fa-brands fa-windows"></i> <i class="fa-brands fa-linux"></i> <i class="fa-brands fa-apple"></i> Windows, Linux & macOS</p>
                 </div>
             </div>
         </div>
