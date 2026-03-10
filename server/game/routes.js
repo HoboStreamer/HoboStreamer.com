@@ -92,7 +92,11 @@ router.post('/npc/interact', (req, res) => {
             });
         }
         const items = game.getShopItemsForNPC(npcId);
-        return res.json({ success: true, npcId, type: 'shop', items, inventory: inv, hobo_coins: user?.hobo_coins_balance || 0 });
+        const player = game.getPlayer(req.user.id);
+        return res.json({ success: true, npcId, type: 'shop', items, inventory: inv, hobo_coins: user?.hobo_coins_balance || 0, playerLevels: {
+            mining: player.mining_level, fishing: player.fishing_level, woodcut: player.woodcut_level,
+            combat: player.combat_level, crafting: player.crafting_level,
+        }});
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -103,7 +107,14 @@ router.post('/npc/buy', (req, res) => {
         const result = game.buyItem(req.user.id, itemId, quantity || 1);
         if (result.error) return res.json(result);
         const user = require('../db/database').getUserById(req.user.id);
-        res.json({ ...result, hobo_coins: user?.hobo_coins_balance || 0 });
+        // Include inventory refresh and equip state for client update
+        const inventory = game.getInventory(req.user.id);
+        const player = game.getPlayer(req.user.id);
+        res.json({ ...result, hobo_coins: user?.hobo_coins_balance || 0, inventory,
+            equip_pickaxe: player.equip_pickaxe, equip_axe: player.equip_axe,
+            equip_rod: player.equip_rod, equip_weapon: player.equip_weapon,
+            equip_armor: player.equip_armor, equip_hat: player.equip_hat,
+        });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

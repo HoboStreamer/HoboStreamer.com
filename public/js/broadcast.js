@@ -775,7 +775,21 @@ async function endSetupStream() {
 /* ── Device Enumeration ──────────────────────────────────────── */
 async function populateDeviceLists() {
     try {
-        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true }).catch(() => null);
+        // Try to get a temp stream for permission/label enumeration.
+        // On Android, combined audio+video can fail — fall back to separate requests.
+        let tempStream = null;
+        try {
+            tempStream = await _getUserMediaWithTimeout({ audio: true, video: true }, 8000);
+        } catch {
+            // Separate fallback for Android
+            try {
+                tempStream = new MediaStream();
+                const vs = await _getUserMediaWithTimeout({ video: true }, 6000).catch(() => null);
+                const as = await _getUserMediaWithTimeout({ audio: true }, 6000).catch(() => null);
+                if (vs) vs.getTracks().forEach(t => tempStream.addTrack(t));
+                if (as) as.getTracks().forEach(t => tempStream.addTrack(t));
+            } catch {}
+        }
         const devices = await navigator.mediaDevices.enumerateDevices();
         const camSelect = document.getElementById('bc-forceCamera');
         const audioSelect = document.getElementById('bc-forceAudio');
@@ -820,6 +834,9 @@ async function populateCreateFormDevices() {
 
 /**
  * Helper: call getUserMedia with a timeout to avoid indefinite hangs on mobile.
+ * Also handles Android-specific quirks:
+ *  - Some Android devices need the previous track fully stopped before re-acquiring
+ *  - OverconstrainedError gets retried with relaxed constraints
  */
 function _getUserMediaWithTimeout(constraints, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
@@ -829,6 +846,15 @@ function _getUserMediaWithTimeout(constraints, timeoutMs = 15000) {
             resolve(stream);
         }).catch(err => {
             clearTimeout(timer);
+            // On OverconstrainedError, retry with relaxed constraints
+            if (err.name === 'OverconstrainedError') {
+                const relaxed = {};
+                if (constraints.video) relaxed.video = typeof constraints.video === 'object' ? { facingMode: constraints.video.facingMode || 'user' } : true;
+                if (constraints.audio) relaxed.audio = typeof constraints.audio === 'object' ? { echoCancellation: true } : true;
+                console.warn('[Broadcast] OverconstrainedError, retrying with relaxed constraints:', relaxed);
+                navigator.mediaDevices.getUserMedia(relaxed).then(resolve).catch(reject);
+                return;
+            }
             reject(err);
         });
     });
@@ -866,16 +892,22 @@ async function requestMediaPermissions() {
 
     try {
         let tempStream;
+        // Strategy 1: combined audio+video
         try {
-            // Try both at once first (with timeout)
             if (dbg) dbg.textContent = 'Requesting camera + mic...';
             tempStream = await _getUserMediaWithTimeout({ audio: true, video: true });
         } catch (firstErr) {
-            // If combined fails, try separately (common on Android)
             console.warn('[Broadcast] Combined getUserMedia failed:', firstErr.message, '— trying separately');
+            // Strategy 2: separate requests (common on Android)
             if (dbg) dbg.textContent = 'Combined failed, trying separately...';
             let vidStream, audStream;
-            try { vidStream = await _getUserMediaWithTimeout({ video: true }, 10000); } catch (ve) { console.warn('[Broadcast] Video-only getUserMedia failed:', ve.message); }
+            try { vidStream = await _getUserMediaWithTimeout({ video: { facingMode: 'user' } }, 10000); } catch (ve) {
+                console.warn('[Broadcast] Video facingMode failed:', ve.message);
+                // Strategy 2b: bare minimum video
+                try { vidStream = await _getUserMediaWithTimeout({ video: true }, 10000); } catch (ve2) {
+                    console.warn('[Broadcast] Video-only getUserMedia failed:', ve2.message);
+                }
+            }
             try { audStream = await _getUserMediaWithTimeout({ audio: true }, 10000); } catch (ae) { console.warn('[Broadcast] Audio-only getUserMedia failed:', ae.message); }
             if (!vidStream && !audStream) throw new Error('No camera or microphone available');
             tempStream = new MediaStream();
@@ -892,13 +924,15 @@ async function requestMediaPermissions() {
     } catch (err) {
         console.warn('[Broadcast] Permission request failed:', err.message, err.name);
         const errDetail = `${err.name || 'Error'}: ${err.message}`;
-        if (dbg) dbg.textContent = errDetail;
+        if (dbg) { dbg.style.display = ''; dbg.textContent = errDetail; }
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            toast('Camera/mic permission denied — check your browser settings', 'error');
+            toast('Camera/mic permission denied — check your browser settings or tap the lock icon in the address bar', 'error');
         } else if (err.name === 'NotFoundError') {
             toast('No camera or microphone found on this device', 'error');
         } else if (err.name === 'NotReadableError') {
-            toast('Camera/mic in use by another app — close other camera apps and try again', 'error');
+            toast('Camera/mic in use by another app — close other camera/video apps and try again', 'error');
+        } else if (err.name === 'OverconstrainedError') {
+            toast('Camera does not support the requested settings — try a different camera', 'error');
         } else {
             toast('Could not access camera/mic: ' + err.message, 'error');
         }
@@ -1335,7 +1369,7 @@ async function startMediaCapture(streamId, opts = {}) {
         videoConstraints = null;
         audioConstraints = buildAudioConstraints(s, forceAudio);
         let audioStream;
-        try { audioStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false }); } catch { audioStream = null; }
+        try { audioStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false }); } catch { audioStream = null; }
         const combined = new MediaStream();
         screenStream.getVideoTracks().forEach(t => combined.addTrack(t));
         if (audioStream) audioStream.getAudioTracks().forEach(t => combined.addTrack(t));
@@ -1347,28 +1381,29 @@ async function startMediaCapture(streamId, opts = {}) {
             height: { ideal: res.h },
             frameRate: { ideal: getBroadcastFrameRate() },
         };
-        if (forceCamera && forceCamera !== 'default') videoConstraints.deviceId = { exact: forceCamera };
+        // Use soft deviceId (not exact) — Android often invalidates device IDs between sessions
+        if (forceCamera && forceCamera !== 'default') videoConstraints.deviceId = forceCamera;
         audioConstraints = buildAudioConstraints(s, forceAudio);
         try {
-            ss.localStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: audioConstraints });
+            ss.localStream = await _getUserMediaWithTimeout({ video: videoConstraints, audio: audioConstraints });
         } catch (firstErr) {
-            // Fallback 1: drop exact deviceId, use facingMode (common mobile fix)
+            // Fallback 1: drop deviceId, use facingMode (common mobile fix)
             console.warn('[Broadcast] getUserMedia failed, trying facingMode fallback:', firstErr.message);
             try {
                 const fallbackVideo = { facingMode: 'user', width: { ideal: res.w }, height: { ideal: res.h } };
                 const fallbackAudio = buildAudioConstraints(s, 'default');
-                ss.localStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: fallbackAudio });
+                ss.localStream = await _getUserMediaWithTimeout({ video: fallbackVideo, audio: fallbackAudio });
             } catch (secondErr) {
                 // Fallback 2: bare minimum — just {video: true, audio: true}
                 console.warn('[Broadcast] facingMode fallback failed, trying bare minimum:', secondErr.message);
                 try {
-                    ss.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    ss.localStream = await _getUserMediaWithTimeout({ video: true, audio: true });
                 } catch (thirdErr) {
                     // Fallback 3: video and audio separately
                     console.warn('[Broadcast] Combined bare failed, trying separate:', thirdErr.message);
                     let vStream, aStream;
-                    try { vStream = await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
-                    try { aStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {}
+                    try { vStream = await _getUserMediaWithTimeout({ video: true }); } catch {}
+                    try { aStream = await _getUserMediaWithTimeout({ audio: true }); } catch {}
                     if (!vStream && !aStream) throw new Error('Could not access any camera or microphone');
                     ss.localStream = new MediaStream();
                     if (vStream) vStream.getTracks().forEach(t => ss.localStream.addTrack(t));
@@ -1392,7 +1427,8 @@ async function startMediaCapture(streamId, opts = {}) {
 function buildAudioConstraints(s, forceAudio) {
     const audio = {};
     const audioDevice = forceAudio || s.forceAudio;
-    if (audioDevice && audioDevice !== 'default') audio.deviceId = { exact: audioDevice };
+    // Use soft deviceId (not exact) — Android often invalidates device IDs between sessions
+    if (audioDevice && audioDevice !== 'default') audio.deviceId = audioDevice;
     audio.autoGainControl = !!s.autoGain; audio.echoCancellation = !!s.echoCancellation; audio.noiseSuppression = !!s.noiseSuppression;
     if (s.force48kSampleRate) audio.sampleRate = 48000;
     return audio;
@@ -1594,19 +1630,45 @@ function updateBroadcastStatus(state) {
 function updateViewerCountBroadcast(count) { const el = document.getElementById('bc-viewer-count'); if (el) el.textContent = count || 0; }
 
 /* ── Broadcaster Controls ─────────────────────────────────────── */
-function flipCamera() {
+async function flipCamera() {
     const ss = getActiveStreamState();
     if (!ss || !ss.localStream) return;
     const videoTrack = ss.localStream.getVideoTracks()[0]; if (!videoTrack) return;
     const facingMode = videoTrack.getSettings().facingMode;
     const newFacing = (facingMode === 'user') ? 'environment' : 'user';
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: newFacing } } }).then(newStream => {
+    // Android requires stopping the old camera BEFORE acquiring the new one
+    // (concurrent camera access is often blocked on mobile)
+    const oldSettings = videoTrack.getSettings();
+    videoTrack.stop();
+    ss.localStream.removeTrack(videoTrack);
+    try {
+        let newStream;
+        try {
+            // Try with ideal resolution matching the old track
+            newStream = await _getUserMediaWithTimeout({ video: {
+                facingMode: { ideal: newFacing },
+                width: { ideal: oldSettings.width || 1280 },
+                height: { ideal: oldSettings.height || 720 }
+            } });
+        } catch {
+            // Bare minimum fallback
+            newStream = await _getUserMediaWithTimeout({ video: { facingMode: newFacing } });
+        }
         const newTrack = newStream.getVideoTracks()[0];
-        ss.localStream.removeTrack(videoTrack); ss.localStream.addTrack(newTrack); videoTrack.stop();
+        ss.localStream.addTrack(newTrack);
         for (const [, pc] of ss.viewerConnections) { const sender = pc.getSenders().find(s => s.track?.kind === 'video'); if (sender) sender.replaceTrack(newTrack); }
         const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
         toast('Camera flipped', 'success');
-    }).catch(err => toast('Could not flip camera: ' + err.message, 'error'));
+    } catch (err) {
+        // Failed to get new camera — try to re-acquire the original
+        console.error('[Broadcast] flipCamera failed:', err);
+        try {
+            const recovery = await _getUserMediaWithTimeout({ video: { facingMode: { ideal: facingMode || 'user' } } });
+            ss.localStream.addTrack(recovery.getVideoTracks()[0]);
+            const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
+        } catch { /* truly stuck — no video track */ }
+        toast('Could not flip camera: ' + err.message, 'error');
+    }
 }
 
 async function toggleScreenShare() {

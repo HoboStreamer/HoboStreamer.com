@@ -607,16 +607,27 @@ function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []
         return;
     }
 
+    // Filter to only show streams belonging to this channel (safety check)
+    const filtered = channelStreams.filter(s =>
+        !s.username || s.username.toLowerCase() === currentUsername.toLowerCase()
+    );
+    if (filtered.length <= 1) {
+        tabsContainer.style.display = 'none';
+        return;
+    }
+
     tabsContainer.style.display = '';
-    tabsScroll.innerHTML = channelStreams.map(s => {
+    tabsScroll.innerHTML = filtered.map((s, idx) => {
         const isActive = s.id === activeStreamId;
+        // Use protocol-based label for clarity instead of raw stream title
+        const protoLabel = s.protocol ? s.protocol.toUpperCase() : `Stream ${idx + 1}`;
+        const tabLabel = `${esc(currentUsername)} (${protoLabel})`;
         const title = esc(s.title || 'Untitled Stream');
-        const truncTitle = title.length > 30 ? title.slice(0, 28) + '…' : title;
         return `<button class="live-tab ${isActive ? 'active' : ''}"
                     onclick="switchToLiveStream('${esc(currentUsername)}', ${s.id}, this)"
                     data-stream-id="${s.id}" data-username="${esc(currentUsername)}" title="${title}">
             <span class="live-tab-dot"></span>
-            <span>${truncTitle}</span>
+            <span>${tabLabel}</span>
             ${s.protocol ? protocolBadge(s.protocol) : ''}
             <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>
         </button>`;

@@ -158,7 +158,9 @@ app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/avatar', uploadLimiter);
 app.use('/api/thumbnails/live', uploadLimiter);
 app.use('/api/vods/upload', uploadLimiter);
-app.use('/api/vods/stream', uploadLimiter);
+// Only rate-limit VOD upload chunk endpoint, not the read-only /live poll
+app.use('/api/vods/stream/:streamId/chunk', uploadLimiter);
+app.use('/api/vods/stream/:streamId/finalize', uploadLimiter);
 
 // ── Static Files ─────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '../public')));
