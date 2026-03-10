@@ -1179,6 +1179,64 @@ main#app { position: relative; z-index: 1; }
     border-top: 1px solid var(--border);
     padding: 8px;
 }
+
+/* ── Slow Mode Indicator ──────────────────────────────────── */
+.chat-slowmode-banner {
+    display: none;
+    margin-bottom: 6px;
+    padding: 5px 8px;
+    background: color-mix(in srgb, var(--warning) 12%, var(--bg-card));
+    border: 1px solid color-mix(in srgb, var(--warning) 25%, var(--border));
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    position: relative;
+}
+.chat-slowmode-info {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    position: relative;
+    z-index: 1;
+}
+.chat-slowmode-info i {
+    color: var(--warning);
+    font-size: 0.7rem;
+}
+.chat-slowmode-label {
+    font-weight: 600;
+    color: var(--text-secondary, var(--text-muted));
+}
+.chat-slowmode-duration {
+    color: var(--warning);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+.chat-slowmode-bar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 3px;
+    background: transparent;
+}
+.chat-slowmode-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--warning);
+    border-radius: 0 0 var(--radius) var(--radius);
+    opacity: 0.5;
+}
+.chat-slowmode-banner.cooldown .chat-slowmode-info i {
+    animation: slowmode-pulse 1s ease-in-out infinite;
+}
+.chat-send-btn.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+@keyframes slowmode-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
 .donation-quick { margin-bottom: 6px; }
 .chat-input-row {
     display: flex; gap: 4px; align-items: center;

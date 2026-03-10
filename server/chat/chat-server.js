@@ -225,6 +225,7 @@ class ChatServer {
                     username: displayName,
                     role: client.user ? client.user.role : 'anon',
                     user_id: client.user?.id || null,
+                    slowmode_seconds: this.RATE_LIMIT_MS > 1000 ? Math.round(this.RATE_LIMIT_MS / 1000) : 0,
                 });
                 break;
             }
@@ -515,11 +516,25 @@ class ChatServer {
 
             case 'slow': {
                 if (this.isMod(client)) {
-                    const seconds = parseInt(args) || 3;
-                    this.RATE_LIMIT_MS = seconds * 1000;
+                    let seconds;
+                    if (args === 'off' || args === 'disable' || args === '0') {
+                        seconds = 0;
+                    } else {
+                        seconds = parseInt(args);
+                        if (!Number.isFinite(seconds) || seconds < 0) seconds = 3;
+                    }
+                    this.RATE_LIMIT_MS = seconds > 0 ? seconds * 1000 : 1000;
+                    // Dedicated slowmode event so clients can show/hide UI
+                    this.broadcastToStream(client.streamId, {
+                        type: 'slowmode',
+                        seconds,
+                    });
+                    const msg = seconds > 0
+                        ? `Slow mode enabled: ${seconds}s between messages`
+                        : 'Slow mode disabled.';
                     this.broadcastToStream(client.streamId, {
                         type: 'system',
-                        message: `Slow mode: ${seconds}s between messages`,
+                        message: msg,
                     });
                 } else {
                     this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });

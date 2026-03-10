@@ -6,6 +6,11 @@ let chatWs = null;
 let chatStreamId = null;
 let chatRenderTargetId = null;
 
+// ── Slow mode state ─────────────────────────────────────────
+let chatSlowModeSeconds = 0;
+let chatSlowModeCooldownTimer = null;
+let chatSlowModeCooldownEnd = 0;
+
 // ── Chat settings (persisted to localStorage) ────────────────
 const CHAT_SETTINGS_KEY = 'hobo_chat_settings';
 const CHAT_SETTINGS_DEFAULTS = {
@@ -252,6 +257,15 @@ function handleChatMessage(msg) {
             } else {
                 addSystemMessage(`Chatting as ${msg.username}`);
             }
+            // Sync slow mode state from server on join
+            if (typeof msg.slowmode_seconds === 'number') {
+                chatSlowModeSeconds = msg.slowmode_seconds;
+                updateSlowModeIndicator();
+            }
+            break;
+        case 'slowmode':
+            chatSlowModeSeconds = msg.seconds || 0;
+            updateSlowModeIndicator();
             break;
         case 'clear': {
             const { messages: clearTarget } = getChatEl();
@@ -451,12 +465,106 @@ function addDonationMessage(msg) {
     }
 }
 
+/* ── Slow Mode Indicator ───────────────────────────────────── */
+function getOrCreateSlowModeBanner(inputArea) {
+    let banner = inputArea.querySelector('.chat-slowmode-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.className = 'chat-slowmode-banner';
+        banner.innerHTML = `
+            <div class="chat-slowmode-info">
+                <i class="fa-solid fa-clock"></i>
+                <span class="chat-slowmode-label">Slow mode</span>
+                <span class="chat-slowmode-duration"></span>
+            </div>
+            <div class="chat-slowmode-bar"><div class="chat-slowmode-fill"></div></div>
+        `;
+        // Insert before the input row
+        const row = inputArea.querySelector('.chat-input-row');
+        if (row) inputArea.insertBefore(banner, row);
+        else inputArea.prepend(banner);
+    }
+    return banner;
+}
+
+function updateSlowModeIndicator() {
+    document.querySelectorAll('.chat-input-area').forEach(area => {
+        const banner = getOrCreateSlowModeBanner(area);
+        if (chatSlowModeSeconds > 0) {
+            banner.style.display = '';
+            banner.querySelector('.chat-slowmode-duration').textContent = `${chatSlowModeSeconds}s`;
+        } else {
+            banner.style.display = 'none';
+            // Clear any active cooldown
+            clearSlowModeCooldown();
+        }
+    });
+}
+
+function startSlowModeCooldown() {
+    if (chatSlowModeSeconds <= 0) return;
+    chatSlowModeCooldownEnd = Date.now() + chatSlowModeSeconds * 1000;
+
+    // Disable send buttons and update all banners
+    document.querySelectorAll('.chat-input-area').forEach(area => {
+        const banner = getOrCreateSlowModeBanner(area);
+        banner.classList.add('cooldown');
+        const fill = banner.querySelector('.chat-slowmode-fill');
+        if (fill) {
+            fill.style.transition = 'none';
+            fill.style.width = '100%';
+            // Force reflow then animate
+            fill.offsetHeight; // eslint-disable-line no-unused-expressions
+            fill.style.transition = `width ${chatSlowModeSeconds}s linear`;
+            fill.style.width = '0%';
+        }
+        const sendBtn = area.querySelector('.chat-send-btn');
+        if (sendBtn) sendBtn.classList.add('disabled');
+    });
+
+    // Countdown tick
+    if (chatSlowModeCooldownTimer) clearInterval(chatSlowModeCooldownTimer);
+    chatSlowModeCooldownTimer = setInterval(() => {
+        const remaining = Math.max(0, Math.ceil((chatSlowModeCooldownEnd - Date.now()) / 1000));
+        document.querySelectorAll('.chat-slowmode-banner.cooldown .chat-slowmode-duration').forEach(el => {
+            el.textContent = remaining > 0 ? `${remaining}s` : `${chatSlowModeSeconds}s`;
+        });
+        if (remaining <= 0) {
+            clearSlowModeCooldown();
+        }
+    }, 250);
+}
+
+function clearSlowModeCooldown() {
+    if (chatSlowModeCooldownTimer) { clearInterval(chatSlowModeCooldownTimer); chatSlowModeCooldownTimer = null; }
+    chatSlowModeCooldownEnd = 0;
+    document.querySelectorAll('.chat-input-area').forEach(area => {
+        const banner = area.querySelector('.chat-slowmode-banner');
+        if (banner) {
+            banner.classList.remove('cooldown');
+            const dur = banner.querySelector('.chat-slowmode-duration');
+            if (dur && chatSlowModeSeconds > 0) dur.textContent = `${chatSlowModeSeconds}s`;
+            const fill = banner.querySelector('.chat-slowmode-fill');
+            if (fill) { fill.style.transition = 'none'; fill.style.width = '0%'; }
+        }
+        const sendBtn = area.querySelector('.chat-send-btn');
+        if (sendBtn) sendBtn.classList.remove('disabled');
+    });
+}
+
 /* ── Send ──────────────────────────────────────────────────────── */
 function sendChat() {
     const { input } = getChatEl();
     if (!input) return;
     const text = input.value.trim();
     if (!text || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+
+    // Client-side cooldown enforcement
+    if (chatSlowModeCooldownEnd > Date.now()) {
+        const remaining = Math.ceil((chatSlowModeCooldownEnd - Date.now()) / 1000);
+        addSystemMessage(`Slow mode: wait ${remaining}s`);
+        return;
+    }
 
     chatWs.send(JSON.stringify({
         type: 'chat',
@@ -466,6 +574,7 @@ function sendChat() {
 
     input.value = '';
     input.focus();
+    startSlowModeCooldown();
 }
 
 /* ── History ──────────────────────────────────────────────────── */
