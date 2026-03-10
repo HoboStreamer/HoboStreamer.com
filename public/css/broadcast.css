@@ -167,6 +167,28 @@
     gap: 8px;
 }
 
+/* ── Permission Request Button ───────────────────────────────── */
+.bc-perm-request {
+    text-align: center;
+    padding: 16px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: rgba(255,255,255,0.02);
+    margin-bottom: 8px;
+}
+
+.bc-perm-hint {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    line-height: 1.5;
+}
+
+.bc-perm-hint i {
+    color: var(--accent);
+    margin-right: 4px;
+}
+
 /* ── Broadcaster Controls Panel ──────────────────────────────── */
 .bc-controls {
     padding: 16px;

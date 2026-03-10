@@ -1100,10 +1100,21 @@
 
                         <!-- Device selection for Browser WebRTC (visible when browser sub-method selected) -->
                         <div class="form-group" id="bc-create-devices" style="display:block">
-                            <label>Camera</label>
-                            <select id="bc-create-camera" class="form-input"><option value="default">Default</option></select>
-                            <label style="margin-top:8px">Microphone</label>
-                            <select id="bc-create-audio" class="form-input"><option value="default">Default</option></select>
+                            <div id="bc-perm-request" class="bc-perm-request">
+                                <p class="bc-perm-hint"><i class="fa-solid fa-shield-halved"></i> Your browser needs camera &amp; microphone access to list available devices and go live.</p>
+                                <button class="btn btn-outline" type="button" onclick="requestMediaPermissions()">
+                                    <i class="fa-solid fa-video"></i> Allow Camera &amp; Mic
+                                </button>
+                            </div>
+                            <div id="bc-device-selects" style="display:none">
+                                <label>Camera</label>
+                                <select id="bc-create-camera" class="form-input"><option value="default">Default</option></select>
+                                <label style="margin-top:8px">Microphone</label>
+                                <select id="bc-create-audio" class="form-input"><option value="default">Default</option></select>
+                                <button class="btn btn-small btn-outline" type="button" onclick="requestMediaPermissions()" style="margin-top:8px" title="Refresh device list">
+                                    <i class="fa-solid fa-arrows-rotate"></i> Refresh Devices
+                                </button>
+                            </div>
                         </div>
 
                         <button class="btn btn-primary btn-lg" style="width:100%" id="bc-create-btn" onclick="createNewStream()">

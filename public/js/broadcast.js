@@ -796,34 +796,73 @@ async function populateDeviceLists() {
 }
 
 /**
- * Populate camera/mic dropdowns in the create-stream form.
+ * Check if we already have media permissions (devices have labels).
+ * If so, show the device selects. Otherwise show the Request Permissions button.
  */
 async function populateCreateFormDevices() {
     try {
-        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true }).catch(() => null);
         const devices = await navigator.mediaDevices.enumerateDevices();
-        const camSelect = document.getElementById('bc-create-camera');
-        const audioSelect = document.getElementById('bc-create-audio');
-        if (camSelect) {
-            camSelect.innerHTML = '<option value="default">Default</option>';
-            devices.filter(d => d.kind === 'videoinput').forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId;
-                opt.textContent = d.label || `Device ${d.deviceId.slice(0, 8)}`;
-                camSelect.appendChild(opt);
-            });
+        const hasLabels = devices.some(d => d.label);
+        const permReq = document.getElementById('bc-perm-request');
+        const devSelects = document.getElementById('bc-device-selects');
+        if (hasLabels) {
+            // Already have permissions — show dropdowns directly
+            if (permReq) permReq.style.display = 'none';
+            if (devSelects) devSelects.style.display = '';
+            _populateCreateDeviceDropdowns(devices);
+        } else {
+            // No permissions yet — show the request button
+            if (permReq) permReq.style.display = '';
+            if (devSelects) devSelects.style.display = 'none';
         }
-        if (audioSelect) {
-            audioSelect.innerHTML = '<option value="default">Default</option>';
-            devices.filter(d => d.kind === 'audioinput').forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId;
-                opt.textContent = d.label || `Device ${d.deviceId.slice(0, 8)}`;
-                audioSelect.appendChild(opt);
-            });
-        }
-        if (tempStream) tempStream.getTracks().forEach(t => t.stop());
     } catch (err) { console.warn('Could not enumerate devices for create form:', err.message); }
+}
+
+/**
+ * User clicked "Allow Camera & Mic" — request permissions, then populate lists.
+ */
+async function requestMediaPermissions() {
+    const permReq = document.getElementById('bc-perm-request');
+    const devSelects = document.getElementById('bc-device-selects');
+    try {
+        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        tempStream.getTracks().forEach(t => t.stop());
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        _populateCreateDeviceDropdowns(devices);
+        if (permReq) permReq.style.display = 'none';
+        if (devSelects) devSelects.style.display = '';
+        toast('Camera & microphone access granted', 'success');
+    } catch (err) {
+        console.warn('Permission request failed:', err.message);
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            toast('Camera/mic permission denied — check your browser settings', 'error');
+        } else {
+            toast('Could not access camera/mic: ' + err.message, 'error');
+        }
+    }
+}
+
+function _populateCreateDeviceDropdowns(devices) {
+    const camSelect = document.getElementById('bc-create-camera');
+    const audioSelect = document.getElementById('bc-create-audio');
+    if (camSelect) {
+        camSelect.innerHTML = '<option value="default">Default</option>';
+        devices.filter(d => d.kind === 'videoinput').forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.deviceId;
+            opt.textContent = d.label || `Camera ${d.deviceId.slice(0, 8)}`;
+            camSelect.appendChild(opt);
+        });
+    }
+    if (audioSelect) {
+        audioSelect.innerHTML = '<option value="default">Default</option>';
+        devices.filter(d => d.kind === 'audioinput').forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.deviceId;
+            opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
+            audioSelect.appendChild(opt);
+        });
+    }
 }
 
 /* ── TTS Voice Population ─────────────────────────────────────── */
@@ -1236,13 +1275,21 @@ async function startMediaCapture(streamId, opts = {}) {
         ss.localStream = combined;
     } else {
         videoConstraints = {
-            width: { ideal: res.w, max: res.w },
-            height: { ideal: res.h, max: res.h },
-            frameRate: { ideal: getBroadcastFrameRate(), max: getBroadcastFrameRate() },
+            width: { ideal: res.w },
+            height: { ideal: res.h },
+            frameRate: { ideal: getBroadcastFrameRate() },
         };
         if (forceCamera && forceCamera !== 'default') videoConstraints.deviceId = { exact: forceCamera };
         audioConstraints = buildAudioConstraints(s, forceAudio);
-        ss.localStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: audioConstraints });
+        try {
+            ss.localStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: audioConstraints });
+        } catch (firstErr) {
+            // Fallback: drop exact deviceId and max constraints (fixes mobile "Could not start video source")
+            console.warn('[Broadcast] getUserMedia failed, retrying with relaxed constraints:', firstErr.message);
+            const fallbackVideo = { facingMode: 'user', width: { ideal: res.w }, height: { ideal: res.h }, frameRate: { ideal: getBroadcastFrameRate() } };
+            const fallbackAudio = buildAudioConstraints(s, 'default');
+            ss.localStream = await navigator.mediaDevices.getUserMedia({ video: fallbackVideo, audio: fallbackAudio });
+        }
     }
 
     optimizeOutgoingStream(streamId);
