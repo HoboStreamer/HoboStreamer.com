@@ -1410,10 +1410,10 @@ function incrementPasteCopies(slug) {
 
 function countUserPastesToday(userId, ip) {
     if (userId) {
-        return get('SELECT COUNT(*) as c FROM pastes WHERE user_id = ? AND created_at > datetime("now", "-1 day")', [userId])?.c || 0;
+        return get("SELECT COUNT(*) as c FROM pastes WHERE user_id = ? AND created_at > datetime('now', '-1 day')", [userId])?.c || 0;
     }
     if (ip) {
-        return get('SELECT COUNT(*) as c FROM pastes WHERE ip_address = ? AND created_at > datetime("now", "-1 day")', [ip])?.c || 0;
+        return get("SELECT COUNT(*) as c FROM pastes WHERE ip_address = ? AND created_at > datetime('now', '-1 day')", [ip])?.c || 0;
     }
     return 0;
 }
