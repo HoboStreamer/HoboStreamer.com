@@ -1669,7 +1669,7 @@ function timeAgo(dateStr) {
 function esc(str) {
     const d = document.createElement('div');
     d.textContent = str;
-    return d.innerHTML;
+    return d.innerHTML.replace(/'/g, '&#39;');
 }
 
 /**
