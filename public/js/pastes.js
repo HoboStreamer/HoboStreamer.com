@@ -399,37 +399,28 @@ async function submitPaste() {
     }
 }
 
-// ── Screenshot capture ──────────────────────────────────────
+// ── Image upload (from pastes page button) ──────────────────
+function openImageUpload() {
+    _openScreenshotUploadDialog(null, { mode: 'upload' });
+}
+
+// ── Screenshot capture (from navbar button) ─────────────────
 let _screenshotPending = false;
 
 async function captureScreenshot() {
     if (_screenshotPending) return;
     _screenshotPending = true;
 
-    const btn = document.getElementById('screenshot-capture-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Capturing…'; }
-
     try {
-        // Use html2canvas-style approach: capture via Canvas API
-        // We'll use the browser's native approach: create a canvas from the viewport
-        let blob;
-
-        // Method 1: Try the Screen Capture API (requires user gesture, HTTPS)
-        // Method 2: Use a simpler canvas-based DOM renderer
-        // For reliability, we'll use a canvas snapshot approach
-        blob = await _captureViewportToBlob();
-
+        const blob = await _captureViewportToBlob();
         if (!blob) throw new Error('Capture failed');
-
-        // Open upload dialog
-        _openScreenshotUploadDialog(blob);
+        _openScreenshotUploadDialog(blob, { mode: 'screenshot' });
     } catch (err) {
         console.error('[Screenshot] Capture error:', err);
         // Fallback: let user pick a file
-        _openScreenshotUploadDialog(null);
+        _openScreenshotUploadDialog(null, { mode: 'screenshot' });
     } finally {
         _screenshotPending = false;
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-camera"></i> Screenshot'; }
     }
 }
 
@@ -474,12 +465,25 @@ async function _captureViewportToBlob() {
     return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
 }
 
-function _openScreenshotUploadDialog(blob) {
+function _openScreenshotUploadDialog(blob, opts = {}) {
     const modal = document.getElementById('screenshot-upload-modal');
     if (!modal) return;
 
+    const isScreenshot = opts.mode === 'screenshot';
     const preview = document.getElementById('screenshot-preview');
     const fileInput = document.getElementById('screenshot-file-input');
+    const titleEl = document.getElementById('image-upload-modal-title');
+    const pageUrlGroup = document.getElementById('screenshot-page-url-group');
+
+    // Set modal title & icon based on mode
+    if (titleEl) {
+        titleEl.innerHTML = isScreenshot
+            ? '<i class="fa-solid fa-camera"></i> Upload Screenshot'
+            : '<i class="fa-solid fa-cloud-arrow-up"></i> Upload Image';
+    }
+
+    // Show/hide page URL field (only relevant for screenshots)
+    if (pageUrlGroup) pageUrlGroup.style.display = isScreenshot ? '' : 'none';
 
     if (blob) {
         const url = URL.createObjectURL(blob);
@@ -494,9 +498,9 @@ function _openScreenshotUploadDialog(blob) {
         preview._fromCapture = false;
     }
 
-    // Pre-fill page URL
-    document.getElementById('screenshot-page-url').value = window.location.href;
-    document.getElementById('screenshot-title').value = `Screenshot — ${document.title}`;
+    // Pre-fill fields
+    document.getElementById('screenshot-page-url').value = isScreenshot ? window.location.href : '';
+    document.getElementById('screenshot-title').value = isScreenshot ? `Screenshot — ${document.title}` : '';
     document.getElementById('screenshot-desc').value = '';
     document.getElementById('screenshot-visibility').value = 'public';
     if (fileInput) fileInput.value = '';

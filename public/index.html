@@ -2404,12 +2404,12 @@
         <div class="content-container">
             <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
                 <div>
-                    <h1><i class="fa-solid fa-paste"></i> Pastes &amp; Screenshots</h1>
-                    <p class="page-subtitle">Share code, notes, prompts, and screenshots with the community. <span id="pastes-count"></span></p>
+                    <h1><i class="fa-solid fa-paste"></i> Pastes &amp; Images</h1>
+                    <p class="page-subtitle">Share code, notes, prompts, and images with the community. <span id="pastes-count"></span></p>
                 </div>
                 <div style="display:flex;gap:8px;">
                     <button class="btn btn-primary" onclick="openNewPasteModal()"><i class="fa-solid fa-plus"></i> New Paste</button>
-                    <button class="btn btn-outline" id="screenshot-capture-btn" onclick="captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</button>
+                    <button class="btn btn-outline" onclick="openImageUpload()"><i class="fa-solid fa-cloud-arrow-up"></i> Upload Image</button>
                 </div>
             </div>
 
@@ -2417,7 +2417,7 @@
                 <div class="pastes-filters">
                     <button class="btn btn-sm pastes-filter-btn active" data-filter="all" onclick="filterPastes('all')">All</button>
                     <button class="btn btn-sm pastes-filter-btn" data-filter="paste" onclick="filterPastes('paste')"><i class="fa-solid fa-code"></i> Pastes</button>
-                    <button class="btn btn-sm pastes-filter-btn" data-filter="screenshot" onclick="filterPastes('screenshot')"><i class="fa-solid fa-image"></i> Screenshots</button>
+                    <button class="btn btn-sm pastes-filter-btn" data-filter="screenshot" onclick="filterPastes('screenshot')"><i class="fa-solid fa-image"></i> Images</button>
                 </div>
                 <div class="pastes-search">
                     <input type="text" id="pastes-search-input" placeholder="Search pastes…" onkeydown="if(event.key==='Enter')searchPastes()">
@@ -2503,32 +2503,32 @@
         </div>
     </div>
 
-    <!-- Screenshot Upload Modal -->
+    <!-- Image / Screenshot Upload Modal -->
     <div id="screenshot-upload-modal" class="paste-modal-overlay" style="display:none" onclick="if(event.target===this)closeScreenshotModal()">
         <div class="paste-modal" onclick="event.stopPropagation()">
             <div class="paste-modal-header">
-                <h2><i class="fa-solid fa-camera"></i> Upload Screenshot</h2>
+                <h2 id="image-upload-modal-title"><i class="fa-solid fa-cloud-arrow-up"></i> Upload Image</h2>
                 <button class="paste-modal-close" onclick="closeScreenshotModal()">&times;</button>
             </div>
             <div class="paste-modal-body">
                 <div class="screenshot-preview-area">
-                    <img id="screenshot-preview" style="display:none;max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Screenshot preview">
+                    <img id="screenshot-preview" style="display:none;max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Preview">
                     <div class="screenshot-upload-zone" id="screenshot-upload-zone">
                         <label for="screenshot-file-input" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;padding:32px;">
                             <i class="fa-solid fa-cloud-arrow-up" style="font-size:2rem;opacity:0.5;"></i>
                             <span>Click to upload or drag an image</span>
-                            <span style="font-size:0.75rem;opacity:0.5;">PNG, JPEG, WebP, or GIF</span>
+                            <span style="font-size:0.75rem;opacity:0.5;">PNG, JPEG, WebP, or GIF — max 8 MB</span>
                         </label>
                         <input type="file" id="screenshot-file-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none" onchange="onScreenshotFileSelect(this)">
                     </div>
                 </div>
                 <div class="form-group" style="margin-top:12px;">
                     <label>Title</label>
-                    <input type="text" id="screenshot-title" placeholder="Screenshot title" class="form-input" maxlength="200">
+                    <input type="text" id="screenshot-title" placeholder="Image title" class="form-input" maxlength="200">
                 </div>
                 <div class="form-group">
                     <label>Description (optional)</label>
-                    <textarea id="screenshot-desc" class="form-input" rows="2" placeholder="What does this show? Any bugs?"></textarea>
+                    <textarea id="screenshot-desc" class="form-input" rows="2" placeholder="What does this show?"></textarea>
                 </div>
                 <div class="form-row">
                     <div class="form-group" style="flex:1">
@@ -2538,7 +2538,7 @@
                             <option value="unlisted">Unlisted</option>
                         </select>
                     </div>
-                    <div class="form-group" style="flex:1">
+                    <div class="form-group" style="flex:1" id="screenshot-page-url-group">
                         <label>Page URL</label>
                         <input type="text" id="screenshot-page-url" class="form-input" readonly>
                     </div>
