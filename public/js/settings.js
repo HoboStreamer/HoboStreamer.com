@@ -75,7 +75,9 @@ async function changePassword() {
     if (newPass !== confirm) return toast('Passwords do not match', 'error');
 
     try {
-        await api('/auth/change-password', { method: 'POST', body: { current_password: current, new_password: newPass } });
+        const data = await api('/auth/change-password', { method: 'POST', body: { current_password: current, new_password: newPass } });
+        // Server returns a fresh token — store it so the current session stays authenticated
+        if (data.token) localStorage.setItem('token', data.token);
         toast('Password changed', 'success');
         document.getElementById('set-current-password').value = '';
         document.getElementById('set-new-password').value = '';

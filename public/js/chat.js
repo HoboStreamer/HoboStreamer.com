@@ -382,9 +382,9 @@ function addChatMessage(msg) {
     // Stream source badge for global chat
     let streamBadge = '';
     if (isGlobal && msg.stream_channel) {
-        streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_channel)}'s stream" onclick="navigate('/${esc(msg.stream_channel)}')">${esc(msg.stream_channel)}</span> `;
+        streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_channel)}'s stream" data-channel="${esc(msg.stream_channel)}" onclick="navigate('/' + this.dataset.channel)">${esc(msg.stream_channel)}</span> `;
     } else if (isGlobal && msg.stream_username) {
-        streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_username)}'s stream" onclick="navigate('/${esc(msg.stream_username)}')">${esc(msg.stream_username)}</span> `;
+        streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_username)}'s stream" data-channel="${esc(msg.stream_username)}" onclick="navigate('/' + this.dataset.channel)">${esc(msg.stream_username)}</span> `;
     }
 
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
@@ -736,8 +736,8 @@ async function loadContextMenuProfile(menu, username, userId, isAnon) {
                 </div>
             </div>
             <div class="ctx-actions">
-                <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Message</button>
-                <button class="ctx-btn" onclick="ctxViewChannel('${esc(username)}')"><i class="fa-solid fa-user"></i> Channel</button>
+                <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
+                <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
             </div>
         `;
     }
@@ -747,7 +747,7 @@ function renderAnonContextMenu(menu, username, userId) {
     const initial = username[0] ? username[0].toUpperCase() : '?';
     const adminBtns = currentUser && currentUser.role === 'admin'
         ? `<div class="ctx-divider"></div>
-           <button class="ctx-btn ctx-btn-danger" onclick="ctxBanUser('${esc(username)}', '${esc(userId)}')"><i class="fa-solid fa-ban"></i> Ban</button>`
+           <button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxBanUser(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban</button>`
         : '';
     menu.innerHTML = `
         <div class="ctx-header">
@@ -758,7 +758,7 @@ function renderAnonContextMenu(menu, username, userId) {
             </div>
         </div>
         <div class="ctx-actions">
-            <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Message</button>
+            <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
             ${adminBtns}
         </div>
     `;
@@ -812,10 +812,10 @@ function renderContextMenu(menu, profile, username) {
         ${gameHtml}
         <div class="ctx-divider"></div>
         <div class="ctx-actions">
-            <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Message</button>
-            <button class="ctx-btn" onclick="ctxViewChannel('${esc(username)}')"><i class="fa-solid fa-user"></i> Channel</button>
-            ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" onclick="ctxViewLogs('${esc(username)}', ${profile.id})"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
-            ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" onclick="ctxBanUser('${esc(username)}', ${profile.id})"><i class="fa-solid fa-ban"></i> Ban</button>` : ''}
+            <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
+            <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
+            ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
+            ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxBanUser(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban</button>` : ''}
         </div>
     `;
 }

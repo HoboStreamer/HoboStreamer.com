@@ -88,7 +88,9 @@ router.post('/register', (req, res) => {
         if (password.length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
-        if (display_name) display_name = stripHtml(display_name);
+        if (display_name) {
+            display_name = stripHtml(display_name).replace(/[\\`]/g, '');
+        }
         if (display_name && display_name.length > 60) {
             return res.status(400).json({ error: 'Display name must be 1-60 characters' });
         }
@@ -233,7 +235,7 @@ router.put('/profile', requireAuth, (req, res) => {
         const params = [];
 
         // Strip HTML tags from free-text fields
-        if (display_name !== undefined) display_name = stripHtml(display_name);
+        if (display_name !== undefined) display_name = stripHtml(display_name).replace(/[\\`]/g, '');
         if (bio !== undefined) bio = stripHtml(bio);
 
         if (display_name !== undefined && (display_name.length < 1 || display_name.length > 60)) {
@@ -293,8 +295,11 @@ router.post('/change-password', requireAuth, (req, res) => {
         }
 
         const newHash = bcrypt.hashSync(newPassword, 10);
-        db.run('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newHash, user.id]);
-        res.json({ success: true });
+        db.run('UPDATE users SET password_hash = ?, token_valid_after = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newHash, user.id]);
+        // Issue a fresh token so the current session stays logged in
+        const { generateToken } = require('./auth');
+        const token = generateToken(user);
+        res.json({ success: true, token });
     } catch (err) {
         console.error('[Auth] Change password error:', err.message);
         res.status(500).json({ error: 'Password change failed' });

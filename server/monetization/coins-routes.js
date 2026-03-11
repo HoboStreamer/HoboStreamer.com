@@ -66,12 +66,14 @@ router.get('/rewards/:userId', (req, res) => {
 // ── Create Reward (Streamer) ─────────────────────────────────
 router.post('/rewards', requireAuth, (req, res) => {
     try {
-        const { title, description, cost, icon, color, cooldown_seconds, max_per_stream, requires_input } = req.body;
+        const { title, description, icon, color, cooldown_seconds, max_per_stream } = req.body;
+        const cost = parseInt(req.body.cost, 10);
+        const requires_input = !!req.body.requires_input;
         if (!title || !cost) {
             return res.status(400).json({ error: 'Title and cost required' });
         }
-        if (cost < 1) {
-            return res.status(400).json({ error: 'Cost must be at least 1' });
+        if (!Number.isFinite(cost) || cost < 1) {
+            return res.status(400).json({ error: 'Cost must be an integer ≥ 1' });
         }
         if (icon && !/^fa-[a-z0-9-]+$/.test(icon)) {
             return res.status(400).json({ error: 'Invalid icon class' });
@@ -107,11 +109,21 @@ router.put('/rewards/:id', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not your reward' });
         }
 
-        const allowed = ['title', 'description', 'cost', 'icon', 'color',
-                         'cooldown_seconds', 'max_per_stream', 'requires_input', 'is_enabled', 'sort_order'];
+        const allowed = ['title', 'description', 'icon', 'color',
+                         'cooldown_seconds', 'max_per_stream', 'is_enabled', 'sort_order'];
         const fields = {};
         for (const key of allowed) {
             if (req.body[key] !== undefined) fields[key] = req.body[key];
+        }
+        // Type-coerce numeric/boolean fields to prevent injection
+        if (req.body.cost !== undefined) {
+            fields.cost = parseInt(req.body.cost, 10);
+            if (!Number.isFinite(fields.cost) || fields.cost < 1) {
+                return res.status(400).json({ error: 'Cost must be an integer ≥ 1' });
+            }
+        }
+        if (req.body.requires_input !== undefined) {
+            fields.requires_input = req.body.requires_input ? 1 : 0;
         }
         if (fields.icon && !/^fa-[a-z0-9-]+$/.test(fields.icon)) {
             return res.status(400).json({ error: 'Invalid icon class' });

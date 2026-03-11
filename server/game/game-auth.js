@@ -4,7 +4,7 @@
  */
 const db = require('../db/database');
 const chatServer = require('../chat/chat-server');
-const { extractToken, authenticateWs } = require('../auth/auth');
+const { extractWsToken, authenticateWs } = require('../auth/auth');
 
 function getRequestIp(req) {
     const rawIp = req?.headers?.['x-forwarded-for']?.split(',')[0]?.trim() || req?.socket?.remoteAddress || req?.connection?.remoteAddress || 'unknown';
@@ -26,7 +26,7 @@ function getAnonGameIdentityFromIp(ip) {
 }
 
 function resolveGameIdentity({ req, token, ip }) {
-    const authToken = token ?? (req ? extractToken(req) : null);
+    const authToken = token ?? (req ? extractWsToken(req) : null);
     const user = authenticateWs(authToken);
     if (user) {
         return {

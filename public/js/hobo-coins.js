@@ -74,14 +74,19 @@ async function loadRewardsPanel() {
 
         const html = !rewards.length
             ? '<p class="muted" style="padding:8px">No rewards configured for this channel</p>'
-            : rewards.map(r => `
-                <button class="reward-btn" onclick="rewardClick(${r.id}, ${JSON.stringify(r.title).replace(/"/g, '&quot;')}, ${r.cost}, ${r.requires_input})"
+            : rewards.map(r => {
+                const safeId = parseInt(r.id) || 0;
+                const safeCost = parseInt(r.cost) || 0;
+                const safeInput = r.requires_input ? 1 : 0;
+                return `
+                <button class="reward-btn" data-rid="${safeId}" data-title="${esc(r.title)}" data-cost="${safeCost}" data-input="${safeInput}"
+                        onclick="rewardClick(+this.dataset.rid, this.dataset.title, +this.dataset.cost, +this.dataset.input)"
                         style="--reward-color:${esc(r.color || '#c0965c')}" title="${esc(r.description || r.title)}">
                     <i class="fa-solid ${esc(r.icon || 'fa-star')}"></i>
                     <span class="reward-title">${esc(r.title)}</span>
-                    <span class="reward-cost"><i class="fa-solid fa-coins"></i> ${r.cost.toLocaleString()}</span>
+                    <span class="reward-cost"><i class="fa-solid fa-coins"></i> ${safeCost.toLocaleString()}</span>
                 </button>
-            `).join('');
+            `; }).join('');
 
         grids.forEach(g => { g.innerHTML = html; });
     } catch {
