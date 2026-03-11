@@ -1069,8 +1069,11 @@ main#app { position: relative; z-index: 1; }
     font-size: 0.85rem; font-weight: 700; color: var(--text-secondary);
     text-transform: uppercase; letter-spacing: 0.5px;
 }
+.chat-header-actions { display: flex; align-items: center; gap: 2px; }
 .chat-settings-btn { background: none; border: none; color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 4px 6px; border-radius: var(--radius-sm); transition: all 0.15s; }
 .chat-settings-btn:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+.mobile-chat-close { display: none; background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); transition: all 0.15s; }
+.mobile-chat-close:hover { color: var(--text-primary); background: var(--bg-tertiary); }
 
 /* ── Chat Settings Panel ─────────────────────────────────── */
 .chat-settings-panel {
@@ -2045,6 +2048,17 @@ textarea.form-input { resize: vertical; min-height: 60px; }
         border-radius: 2px;
         margin: 0 auto 6px;
     }
+
+    /* Mobile close button in chat header */
+    .mobile-chat-close { display: inline-flex; align-items: center; justify-content: center; }
+
+    /* Hide FAB when chat bottom sheet is open */
+    body.mobile-chat-visible .mobile-chat-toggle { display: none !important; }
+
+    /* Hide TTS / Coins / Bucks buttons on mobile to reduce clutter */
+    .chat-input-row .chat-tts-toggle,
+    .chat-input-row .btn-hobo-coins-mini,
+    .chat-input-row .btn-hobo-bucks-mini { display: none; }
 
     /* Mobile chat toggle FAB */
     .mobile-chat-toggle {

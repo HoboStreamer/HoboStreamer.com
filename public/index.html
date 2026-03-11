@@ -543,9 +543,14 @@
                 <div class="chat-sidebar" id="chat-sidebar">
                     <div class="chat-header">
                         <span>STREAM CHAT</span>
-                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
-                            <i class="fa-solid fa-gear"></i>
-                        </button>
+                        <div class="chat-header-actions">
+                            <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                                <i class="fa-solid fa-gear"></i>
+                            </button>
+                            <button class="mobile-chat-close" onclick="toggleMobileChat()" title="Close Chat">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="chat-messages" id="chat-messages"></div>
                     <div class="chat-input-area">
@@ -570,7 +575,7 @@
                                 <i class="fa-solid fa-face-smile"></i>
                             </button>
                             <input type="text" id="chat-input" placeholder="Send a message..." maxlength="500"
-                                   onkeydown="if(event.key==='Enter')sendChat()">
+                                   enterkeyhint="send" onkeydown="if(event.key==='Enter')sendChat()">
                             <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                                 <i class="fa-solid fa-volume-high"></i>
                             </button>
@@ -633,9 +638,14 @@
             <div class="offline-global-chat" id="offline-global-chat">
                 <div class="chat-header">
                     <span><i class="fa-solid fa-globe"></i> GLOBAL CHAT</span>
-                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
-                        <i class="fa-solid fa-gear"></i>
-                    </button>
+                    <div class="chat-header-actions">
+                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                            <i class="fa-solid fa-gear"></i>
+                        </button>
+                        <button class="mobile-chat-close" onclick="toggleMobileChat()" title="Close Chat">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="chat-messages" id="offline-chat-messages"></div>
                 <div class="chat-input-area">
@@ -644,7 +654,7 @@
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
                         <input type="text" id="offline-chat-input" placeholder="Send a message..." maxlength="500"
-                               onkeydown="if(event.key==='Enter')sendChat()">
+                               enterkeyhint="send" onkeydown="if(event.key==='Enter')sendChat()">
                         <button class="chat-send-btn" onclick="sendChat()">
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
@@ -1895,9 +1905,14 @@
             <div class="chat-sidebar" id="bc-chat-sidebar" style="display:none">
                 <div class="chat-header">
                     <span>STREAM CHAT</span>
-                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
-                        <i class="fa-solid fa-gear"></i>
-                    </button>
+                    <div class="chat-header-actions">
+                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                            <i class="fa-solid fa-gear"></i>
+                        </button>
+                        <button class="mobile-chat-close" onclick="toggleMobileChat()" title="Close Chat">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="chat-messages" id="bc-chat-messages"></div>
                 <div class="chat-input-area">
@@ -1922,7 +1937,7 @@
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
                         <input type="text" id="bc-chat-input" placeholder="Send a message..." maxlength="500"
-                               onkeydown="if(event.key==='Enter')sendChat()">
+                               enterkeyhint="send" onkeydown="if(event.key==='Enter')sendChat()">
                         <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                             <i class="fa-solid fa-volume-high"></i>
                         </button>
@@ -2276,7 +2291,7 @@
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
                         <input type="text" id="global-chat-input" placeholder="Send a message..." maxlength="500"
-                               onkeydown="if(event.key==='Enter')sendChat()">
+                               enterkeyhint="send" onkeydown="if(event.key==='Enter')sendChat()">
                         <button class="chat-send-btn" onclick="sendChat()">
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
