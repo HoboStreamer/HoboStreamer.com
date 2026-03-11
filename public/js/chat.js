@@ -1331,3 +1331,122 @@ document.addEventListener('keydown', (e) => {
 
 /* ── Apply settings on initial page load ──────────────────────── */
 applyChatSettings();
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE CHAT — Bottom Sheet Toggle
+   ═══════════════════════════════════════════════════════════════ */
+let _mobileChatOpen = false;
+let _mobileChatUnread = 0;
+
+function isMobileChatLayout() {
+    return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function toggleMobileChat() {
+    const sidebar = document.getElementById('chat-sidebar');
+    const fab = document.getElementById('mobile-chat-toggle');
+    if (!sidebar) return;
+
+    _mobileChatOpen = !_mobileChatOpen;
+    sidebar.classList.toggle('mobile-chat-open', _mobileChatOpen);
+    document.body.classList.toggle('mobile-chat-visible', _mobileChatOpen);
+
+    if (fab) {
+        const icon = fab.querySelector('i');
+        if (icon) icon.className = _mobileChatOpen ? 'fa-solid fa-xmark' : 'fa-solid fa-comment';
+    }
+
+    if (_mobileChatOpen) {
+        _mobileChatUnread = 0;
+        const badge = document.getElementById('mobile-chat-badge');
+        if (badge) { badge.style.display = 'none'; badge.textContent = '0'; }
+        scrollChat();
+    }
+}
+
+function incrementMobileChatUnread() {
+    if (!isMobileChatLayout() || _mobileChatOpen) return;
+    _mobileChatUnread++;
+    const badge = document.getElementById('mobile-chat-badge');
+    if (badge) {
+        badge.textContent = _mobileChatUnread > 99 ? '99+' : _mobileChatUnread;
+        badge.style.display = '';
+    }
+}
+
+// Hook into addChatMessage to count unread on mobile
+const _origAddChatMessage = typeof addChatMessage === 'function' ? addChatMessage : null;
+// We can't easily wrap addChatMessage since it's already defined, so we use MutationObserver
+(function() {
+    const observer = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+            if (m.addedNodes.length > 0) {
+                incrementMobileChatUnread();
+            }
+        }
+    });
+    // Start observing when chat panel exists
+    function _tryObserve() {
+        const container = document.getElementById('chat-messages');
+        if (container) {
+            observer.observe(container, { childList: true });
+        } else {
+            setTimeout(_tryObserve, 1000);
+        }
+    }
+    _tryObserve();
+
+    // Close mobile chat on Escape
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && _mobileChatOpen) toggleMobileChat();
+    });
+
+    // Close mobile chat when navigating away from channel page
+    window.addEventListener('popstate', () => {
+        if (_mobileChatOpen) toggleMobileChat();
+    });
+
+    // Close mobile chat when tapping the backdrop scrim
+    document.addEventListener('click', (e) => {
+        if (!_mobileChatOpen || !isMobileChatLayout()) return;
+        // Check if click is on the scrim (the ::after pseudo-element area above chat)
+        const sidebar = document.getElementById('chat-sidebar');
+        const fab = document.getElementById('mobile-chat-toggle');
+        if (sidebar && !sidebar.contains(e.target) && fab && !fab.contains(e.target)) {
+            toggleMobileChat();
+        }
+    });
+
+    // Reset state on resize crossing the breakpoint
+    let _wasMobile = isMobileChatLayout();
+    window.addEventListener('resize', () => {
+        const nowMobile = isMobileChatLayout();
+        if (_wasMobile && !nowMobile && _mobileChatOpen) {
+            // Went from mobile → desktop while chat was open: reset
+            _mobileChatOpen = false;
+            const sidebar = document.getElementById('chat-sidebar');
+            if (sidebar) sidebar.classList.remove('mobile-chat-open');
+            document.body.classList.remove('mobile-chat-visible');
+            const fab = document.getElementById('mobile-chat-toggle');
+            if (fab) {
+                const icon = fab.querySelector('i');
+                if (icon) icon.className = 'fa-solid fa-comment';
+            }
+        }
+        _wasMobile = nowMobile;
+    });
+
+    // Touch swipe-down on chat header to close bottom sheet
+    let _touchStartY = 0;
+    document.addEventListener('touchstart', (e) => {
+        if (!_mobileChatOpen) return;
+        const header = e.target.closest('.chat-header');
+        if (header) _touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+        if (!_mobileChatOpen || !_touchStartY) return;
+        const dy = e.changedTouches[0].clientY - _touchStartY;
+        _touchStartY = 0;
+        if (dy > 60) toggleMobileChat(); // swipe down > 60px = close
+    }, { passive: true });
+})();

@@ -1901,7 +1901,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     }
 }
 
-/* 768px: Hamburger menu */
+/* 768px: Hamburger menu + Mobile stream layout */
 @media (max-width: 768px) {
     .navbar { gap: 8px; padding: 0 8px; }
     .nav-links { display: none; }
@@ -1944,15 +1944,80 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .comment-item { gap: 10px; }
     .comment-meta { flex-wrap: wrap; }
 
-    .stream-layout { flex-direction: column; height: auto; }
-    #page-channel .stream-layout { height: auto; }
-    .chat-sidebar {
-        width: 100%; height: 400px;
-        border-left: none; border-top: 1px solid var(--border);
+    /* ─── Mobile Stream Layout ─────────────────────────────── */
+    .stream-layout {
+        flex-direction: column;
+        height: calc(100vh - var(--navbar-h));
+        height: calc(100dvh - var(--navbar-h)); /* dvh = dynamic viewport height, excludes mobile browser chrome */
+        overflow: hidden;
+        position: relative;
     }
-    .video-container { max-height: 50vh; }
-    .ch-info-bar { flex-wrap: wrap; gap: 10px; }
+    #page-channel .stream-layout {
+        height: calc(100vh - var(--navbar-h) - 40px);
+        height: calc(100dvh - var(--navbar-h) - 40px);
+    }
+    .stream-main {
+        flex: 1;
+        overflow-y: auto;
+        min-height: 0; /* allow shrink in flex column */
+    }
+    .video-container {
+        max-height: none; /* remove 80vh/50vh cap — let video fill available space */
+        aspect-ratio: unset; /* allow video to size naturally */
+        width: 100%;
+        flex-shrink: 0;
+    }
+    /* For horizontal video, limit height so info bar is visible */
+    #video-element,
+    #video-canvas {
+        max-height: calc(100vh - var(--navbar-h) - 100px);
+        max-height: calc(100dvh - var(--navbar-h) - 100px);
+    }
+
+    /* ─── Chat as hidden bottom sheet ──────────────────────── */
+    .chat-sidebar {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        width: 100%; height: 55vh;
+        max-height: 420px;
+        border-left: none;
+        border-top: 1px solid var(--border);
+        background: var(--bg-secondary);
+        z-index: 900;
+        transform: translateY(100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
+    }
+    .chat-sidebar.mobile-chat-open {
+        transform: translateY(0);
+    }
+    .chat-header {
+        padding: 8px 14px;
+        /* Add a drag handle visual */
+        position: relative;
+    }
+    .chat-sidebar .chat-header::before {
+        content: '';
+        display: block;
+        width: 36px; height: 4px;
+        background: var(--border-light);
+        border-radius: 2px;
+        margin: 0 auto 6px;
+    }
+
+    /* Mobile chat toggle FAB */
+    .mobile-chat-toggle {
+        display: flex;
+    }
+
+    /* Info bar compact */
+    .ch-info-bar { flex-wrap: wrap; gap: 10px; padding: 8px 12px; }
+    .ch-info-bar .ch-avatar { width: 36px; height: 36px; font-size: 0.95rem; }
     .ch-info-bar-right { width: 100%; justify-content: space-between; }
+    .ch-info-bar-top h2 { font-size: 0.95rem; }
+    .ch-stream-title { font-size: 0.8rem; }
+
     .live-stream-tabs { height: auto; padding: 4px 8px; }
     .live-tab { padding: 4px 10px; font-size: 0.78rem; }
     .ch-offline-header { flex-wrap: wrap; gap: 12px; padding: 16px; }
@@ -1963,9 +2028,56 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
     .dash-grid { grid-template-columns: 1fr; }
     .form-row { flex-direction: column; }
-
     .stream-grid { grid-template-columns: 1fr; }
     .admin-stats { grid-template-columns: repeat(2, 1fr); }
+
+    /* Video controls compact for mobile */
+    .video-controls { padding: 4px 8px; gap: 3px; }
+    .vc-btn { min-width: 28px; min-height: 28px; padding: 4px 5px; font-size: 0.9rem; }
+    .viewer-badge, .uptime-badge { font-size: 0.68rem; padding: 2px 5px; }
+
+    /* Controls panel compact */
+    .controls-panel { padding: 8px; }
+    .controls-header h3 { font-size: 0.9rem; }
+
+    /* Backdrop scrim when chat is open (tint the video area) */
+    body.mobile-chat-visible .ch-live-area::after {
+        content: '';
+        position: fixed;
+        inset: 0; bottom: 55vh;
+        background: rgba(0,0,0,0.4);
+        z-index: 899;
+        pointer-events: auto;
+    }
+}
+
+/* ─── Mobile FAB (Floating Action Button) for chat ─────────── */
+.mobile-chat-toggle {
+    display: none; /* hidden on desktop */
+    position: fixed;
+    bottom: 20px; right: 16px;
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background: var(--accent-dark);
+    color: #fff;
+    border: none;
+    font-size: 1.3rem;
+    align-items: center; justify-content: center;
+    z-index: 901;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    cursor: pointer;
+    transition: background 0.2s, transform 0.2s;
+}
+.mobile-chat-toggle:hover { background: var(--accent); }
+.mobile-chat-toggle:active { transform: scale(0.92); }
+.mobile-chat-badge {
+    position: absolute; top: -4px; right: -4px;
+    min-width: 20px; height: 20px;
+    background: var(--live-red); color: #fff;
+    font-size: 0.65rem; font-weight: 700;
+    border-radius: 10px; padding: 0 5px;
+    display: flex; align-items: center; justify-content: center;
+    line-height: 1;
 }
 
 @media (max-width: 480px) {
@@ -1979,6 +2091,67 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .section-header { align-items: flex-start; }
     .reply-form button,
     .comment-form-actions .btn { width: 100%; justify-content: center; }
+
+    /* Even tighter video controls on small phones */
+    .vc-btn { min-width: 26px; min-height: 26px; padding: 3px 4px; font-size: 0.82rem; }
+    #btn-clip { display: none; } /* hide clip button on tiny screens to save space */
+    .viewer-badge, .uptime-badge { font-size: 0.62rem; padding: 1px 4px; }
+
+    .ch-info-bar { padding: 6px 10px; gap: 8px; }
+    .ch-info-bar .ch-avatar { width: 32px; height: 32px; font-size: 0.85rem; }
+    .ch-info-bar-top h2 { font-size: 0.88rem; }
+
+    .mobile-chat-toggle { width: 48px; height: 48px; font-size: 1.1rem; bottom: 16px; right: 12px; }
+}
+
+/* ─── Portrait-specific: mobile phone streaming vertically ──── */
+@media (max-width: 768px) and (orientation: portrait) {
+    /* Video fills width — no forced aspect ratio, let object-fit handle it */
+    .video-container {
+        aspect-ratio: unset;
+        max-height: 65vh;
+        max-height: 65dvh;
+    }
+    #video-element {
+        object-fit: contain;
+        max-height: 65vh;
+        max-height: 65dvh;
+    }
+    #video-canvas {
+        max-height: 65vh;
+        max-height: 65dvh;
+    }
+
+    /* If the stream IS vertical (9:16), give it more room */
+    #video-element[style*="object-fit: cover"],
+    .video-container.is-vertical {
+        aspect-ratio: unset;
+        max-height: 75vh;
+        max-height: 75dvh;
+    }
+
+    /* Chat bottom sheet takes more room in portrait */
+    .chat-sidebar {
+        height: 50vh;
+        max-height: 50vh;
+    }
+    body.mobile-chat-visible .ch-live-area::after {
+        bottom: 50vh;
+    }
+
+    /* Compact info bar even more in portrait — minimal vertical footprint */
+    .ch-info-bar {
+        padding: 6px 10px; gap: 6px;
+    }
+    .ch-info-bar .ch-avatar { width: 30px; height: 30px; font-size: 0.8rem; }
+    .ch-info-bar-top h2 { font-size: 0.88rem; }
+    .ch-stream-title { font-size: 0.75rem; }
+    .ch-info-bar-right { gap: 8px; }
+    .ch-follower-count { font-size: 0.75rem; }
+    .btn-follow { font-size: 0.78rem; padding: 4px 10px; }
+
+    /* Hide live stream tabs in portrait if only one stream */
+    .live-stream-tabs:has(.live-tab:only-child) { display: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════════

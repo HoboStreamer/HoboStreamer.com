@@ -1235,6 +1235,23 @@ function setupVideoControls() {
     let muted = false;
     let playing = true;
 
+    // Detect vertical (portrait) video and add CSS class for responsive layout
+    const _detectVerticalVideo = () => {
+        const vid = document.getElementById('video-element');
+        const container = document.getElementById('video-container');
+        if (!vid || !container) return;
+        const w = vid.videoWidth;
+        const h = vid.videoHeight;
+        if (w > 0 && h > 0) {
+            container.classList.toggle('is-vertical', h > w);
+        }
+    };
+    const vid = document.getElementById('video-element');
+    if (vid) {
+        vid.addEventListener('loadedmetadata', _detectVerticalVideo);
+        vid.addEventListener('resize', _detectVerticalVideo);
+    }
+
     btnPlay.onclick = () => {
         playing = !playing;
         btnPlay.innerHTML = playing
