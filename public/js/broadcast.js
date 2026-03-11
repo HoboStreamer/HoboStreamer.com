@@ -2725,9 +2725,10 @@ function _updateTabViewerCount(streamId, count) {
 function _updateTotalViewerCount() {
     let total = 0;
     for (const [, c] of _perStreamViewerCounts) total += c;
+    total += _rsViewerCount;
     const el = document.getElementById('bc-viewer-count');
     if (el) el.textContent = total;
-    // RS viewer count
+    // RS viewer count badge (show breakdown when RS viewers exist)
     const rsEl = document.getElementById('bc-rs-viewer-count');
     if (rsEl) {
         if (_rsViewerCount > 0) { rsEl.style.display = ''; rsEl.querySelector('strong').textContent = _rsViewerCount; }
