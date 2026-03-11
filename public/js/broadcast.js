@@ -199,13 +199,17 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
     const viewerPeerIds = [...ss.viewerConnections.keys()];
     await uploadVodRecording(streamId, { finalizeStream: false });
 
+    // Stop the RS restream BEFORE nulling localStream — prevents the
+    // "localStream lost before join" race if an RS start is in-flight.
+    const hadRsRestream = !!ss.robotStreamer?.active;
+    await stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
+
     if (ss.localStream) {
         try { ss.localStream.getTracks().forEach((track) => track.stop()); } catch {}
         ss.localStream = null;
     }
 
     await startMediaCapture(streamId);
-    await syncRobotStreamerTracks(streamId);
     startVodRecording(streamId);
 
     if (!ss.signalingWs || ss.signalingWs.readyState !== WebSocket.OPEN) {
@@ -214,6 +218,14 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
         for (const peerId of viewerPeerIds) {
             await createViewerConnection(streamId, peerId);
         }
+    }
+
+    // Full RS restart after new media is acquired — old producers are dead
+    // after a track-ended event so replaceTrack won't work.
+    if (hadRsRestream || canUseRobotStreamerRestream()) {
+        startRobotStreamerRestream(streamId).catch((err) => {
+            console.warn('[RS Restream] Restart after media recovery failed:', err.message);
+        });
     }
 
     ss.mediaRecoveryAttempts = 0;
@@ -1879,9 +1891,30 @@ async function startRobotStreamerRestream(streamId) {
     }
     if (ss.robotStreamer?.active) return ss.robotStreamer;
 
+    // Guard against concurrent startRobotStreamerRestream calls
+    if (ss._rsRestreamStarting) {
+        console.log('[RS Restream] Already starting for stream', streamId, '— skipping duplicate');
+        return null;
+    }
+    ss._rsRestreamStarting = true;
+
+    /** Check localStream availability — if media recovery is in progress, abort gracefully
+     *  (recovery flow will restart RS restream when done). */
+    const requireLocalStream = (step) => {
+        if (!getStreamState(streamId)) throw new _RSAbortError('stream state gone');
+        if (ss.localStream) return true;
+        if (ss.mediaRecoveryInProgress || ss.mediaRecoveryTimer) {
+            console.log(`[RS Restream] localStream null at ${step} — media recovery active, aborting gracefully`);
+            throw new _RSAbortError('media recovery in progress');
+        }
+        console.log(`[RS Restream] localStream null at ${step} — no recovery active, will retry`);
+        return false;
+    };
+
     setRobotStreamerStatus('Connecting RobotStreamer restream…', 'info', 'bc-rsLiveStatus');
     console.log('[RS Restream] Starting for stream', streamId);
 
+    let ws = null;
     try {
         console.log('[RS Restream] Step 1/7: Loading mediasoup-client…');
         setRobotStreamerStatus('Loading mediasoup library…', 'info', 'bc-rsLiveStatus');
@@ -1894,7 +1927,7 @@ async function startRobotStreamerRestream(streamId) {
         setRobotStreamerStatus('Connecting to RobotStreamer proxy…', 'info', 'bc-rsLiveStatus');
         const wsUrl = getRobotStreamerPublishUrl(streamId);
         console.log('[RS Restream] WS URL:', wsUrl.replace(/token=[^&]+/, 'token=***'));
-        const ws = new WebSocket(wsUrl);
+        ws = new WebSocket(wsUrl);
         await new Promise((resolve, reject) => {
             ws.addEventListener('open', resolve, { once: true });
             ws.addEventListener('error', () => reject(new Error('RobotStreamer publish websocket failed')), { once: true });
@@ -1920,7 +1953,7 @@ async function startRobotStreamerRestream(streamId) {
 
         console.log('[RS Restream] Step 5/7: Joining room…');
         setRobotStreamerStatus('Joining RobotStreamer room…', 'info', 'bc-rsLiveStatus');
-        if (!ss.localStream) throw new Error('localStream lost before join');
+        if (!requireLocalStream('join')) throw new Error('localStream unavailable for join');
         await rpc.request('join', {
             device: buildRobotStreamerDeviceDescriptor(device, ss.localStream),
             rtpCapabilities: device.rtpCapabilities,
@@ -1965,7 +1998,13 @@ async function startRobotStreamerRestream(streamId) {
 
         console.log('[RS Restream] Step 7/7: Producing tracks…');
         setRobotStreamerStatus('Sending media to RobotStreamer…', 'info', 'bc-rsLiveStatus');
-        if (!ss.localStream) throw new Error('localStream lost before produce');
+        if (!requireLocalStream('produce')) {
+            // Clean up partially-built session
+            try { transport.close(); } catch {}
+            try { ws.close(1000); } catch {}
+            ss.robotStreamer = null;
+            throw new Error('localStream unavailable for produce');
+        }
         const videoTrack = ss.localStream.getVideoTracks()[0] || null;
         const audioTrack = ss.localStream.getAudioTracks()[0] || null;
         console.log('[RS Restream] Tracks — video:', !!videoTrack, 'audio:', !!audioTrack);
@@ -1992,8 +2031,19 @@ async function startRobotStreamerRestream(streamId) {
 
         console.log('[RS Restream] Live! stream:', streamId);
         setRobotStreamerStatus('RobotStreamer restream is live.', 'success', 'bc-rsLiveStatus');
+        ss._rsRestreamStarting = false;
         return session;
     } catch (err) {
+        ss._rsRestreamStarting = false;
+        // If this was a graceful abort (media recovery active), don't schedule reconnect —
+        // the recovery flow will restart RS restream when it's done.
+        if (err instanceof _RSAbortError) {
+            console.log('[RS Restream] Gracefully aborted:', err.message);
+            // Clean up WS if it was opened
+            if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(1000); } catch {} }
+            ss.robotStreamer = null;
+            return null;
+        }
         ss.robotStreamer = null;
         setRobotStreamerStatus(err.message || 'RobotStreamer restream failed — will retry.', 'error', 'bc-rsLiveStatus');
         console.warn('[RS Restream] Failed:', err.message);
@@ -2001,6 +2051,9 @@ async function startRobotStreamerRestream(streamId) {
         return null;
     }
 }
+
+/** Sentinel error class for graceful RS restream aborts (no reconnect needed) */
+class _RSAbortError extends Error { constructor(msg) { super(msg); this.name = '_RSAbortError'; } }
 
 function scheduleRobotStreamerReconnect(streamId) {
     const ss = getStreamState(streamId);
@@ -2048,6 +2101,22 @@ async function syncRobotStreamerTracks(streamId) {
     const videoTrack = ss.localStream.getVideoTracks()[0] || null;
     const audioTrack = ss.localStream.getAudioTracks()[0] || null;
 
+    // Check if producers are still usable — when a track ends, mediasoup closes
+    // the producer and replaceTrack() will fail. Detect this and do a full restart.
+    const isProducerDead = (p) => {
+        if (!p) return false;
+        try { return p.closed || p.track?.readyState === 'ended'; } catch { return true; }
+    };
+
+    if (isProducerDead(session.videoProducer) || isProducerDead(session.audioProducer)) {
+        console.warn('[RS Restream] Producer(s) dead after track change — full restart needed');
+        setRobotStreamerStatus('RobotStreamer restream restarting after track change…', 'warning', 'bc-rsLiveStatus');
+        stopRobotStreamerRestream(streamId, { quiet: true })
+            .catch(() => {})
+            .then(() => startRobotStreamerRestream(streamId).catch(() => {}));
+        return;
+    }
+
     try {
         if (session.videoProducer && videoTrack) await session.videoProducer.replaceTrack({ track: videoTrack });
         else if (!session.videoProducer && videoTrack) session.videoProducer = await session.transport.produce({ track: videoTrack });
@@ -2055,8 +2124,11 @@ async function syncRobotStreamerTracks(streamId) {
         if (session.audioProducer && audioTrack) await session.audioProducer.replaceTrack({ track: audioTrack });
         else if (!session.audioProducer && audioTrack) session.audioProducer = await session.transport.produce({ track: audioTrack });
     } catch (err) {
-        console.warn('[Broadcast] RobotStreamer track sync failed:', err.message);
-        setRobotStreamerStatus('RobotStreamer track sync failed.', 'warning', 'bc-rsLiveStatus');
+        console.warn('[RS Restream] Track sync failed:', err.message, '— restarting');
+        setRobotStreamerStatus('RobotStreamer restream restarting…', 'warning', 'bc-rsLiveStatus');
+        stopRobotStreamerRestream(streamId, { quiet: true })
+            .catch(() => {})
+            .then(() => startRobotStreamerRestream(streamId).catch(() => {}));
     }
 }
 
@@ -2067,6 +2139,9 @@ async function stopRobotStreamerRestream(streamId, { quiet = false } = {}) {
     // Cancel any pending reconnect timer
     if (session?.reconnectTimer) { clearTimeout(session.reconnectTimer); session.reconnectTimer = null; }
     if (ss?._rsReconnectTimer) { clearTimeout(ss._rsReconnectTimer); ss._rsReconnectTimer = null; }
+
+    // Clear the "starting" guard so a fresh start can proceed
+    if (ss) ss._rsRestreamStarting = false;
 
     if (!session) return;
 
