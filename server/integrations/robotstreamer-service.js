@@ -425,11 +425,66 @@ class RobotStreamerService {
         return true;
     }
 
+
     async _handlePublishConnection(ws, req, ctx) {
         let integration = ctx.integration;
 
-        // Always refresh to register session with RS backend and get fresh SFU endpoints.
-        // The RS SFU rejects connections that don't have an active robot_page_load session.
+        // ── Buffer client messages IMMEDIATELY ──────────────────────
+        // Client sends RPC requests as soon as its WS opens, but we need
+        // to do async work (refreshIntegration + upstream WS connect)
+        // before we can relay. Buffer everything now, flush later.
+        const earlyMessages = [];
+        let hasUpstream = false;
+        let upstream = null;
+        let upstreamReady = false;
+        const outboundQueue = [];
+
+        const processAndRelay = (raw) => {
+            const msg = safeJsonParse(raw);
+            let outgoing = raw;
+
+            if (msg?.request && typeof msg.method === 'string') {
+                if (msg.method === 'createWebRtcTransport') {
+                    msg.data = {
+                        producing: true,
+                        consuming: false,
+                        streamkey: integration.token,
+                    };
+                    outgoing = JSON.stringify(msg);
+                } else if (msg.method === 'join') {
+                    msg.data = {
+                        ...(msg.data || {}),
+                        token: integration.token,
+                    };
+                    outgoing = JSON.stringify(msg);
+                }
+                console.log(`[RS Publish] Client → SFU: ${msg.method} (id=${msg.id}) | upstream ready: ${upstreamReady} | queued: ${outboundQueue.length}`);
+            }
+
+            if (!upstreamReady) outboundQueue.push(outgoing);
+            else if (upstream) upstream.send(outgoing);
+        };
+
+        ws.on('message', (payload) => {
+            const raw = payload.toString();
+            if (!hasUpstream) {
+                earlyMessages.push(raw);
+                console.log('[RS Publish] Buffered early message (upstream not created yet), count:', earlyMessages.length);
+            } else {
+                processAndRelay(raw);
+            }
+        });
+
+        ws.on('close', () => {
+            if (upstream) { try { upstream.close(1000); } catch {} }
+        });
+
+        ws.on('error', () => {
+            if (upstream) { try { upstream.close(1011); } catch {} }
+        });
+
+        // ── Refresh integration (registers session with RS API) ─────
+        console.log('[RS Publish] Refreshing integration for user', ctx.user.id);
         try {
             integration = await this.refreshIntegration(ctx.user.id);
             console.log('[RS Publish] Refreshed integration:', {
@@ -441,7 +496,6 @@ class RobotStreamerService {
             });
         } catch (err) {
             console.warn('[RS Publish] Refresh failed:', err.message);
-            // Fall back to cached integration if rtc_sfu_url exists
             if (!integration?.rtc_sfu_url) {
                 ws.close(1011, `refresh failed: ${err.message}`);
                 return;
@@ -451,6 +505,11 @@ class RobotStreamerService {
         if (!integration?.rtc_sfu_url) {
             console.warn('[RS Publish] No SFU URL available after refresh');
             ws.close(1011, 'no SFU URL available');
+            return;
+        }
+
+        if (ws.readyState !== WebSocket.OPEN) {
+            console.warn('[RS Publish] Client disconnected during refresh');
             return;
         }
 
@@ -466,31 +525,35 @@ class RobotStreamerService {
             return;
         }
 
-        console.log('[RS Publish] Connecting upstream:', upstreamUrl, '| robot_id:', integration.robot_id, '| sfu_base:', integration.rtc_sfu_url);
+        console.log('[RS Publish] Connecting upstream:', upstreamUrl);
+        console.log('[RS Publish] Early messages buffered:', earlyMessages.length);
 
         const upstreamConnectStart = Date.now();
-        const upstream = new WebSocket(upstreamUrl, ['protoo'], {
+        upstream = new WebSocket(upstreamUrl, ['protoo'], {
             headers: {
                 Origin: RS_ORIGIN,
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             },
             maxPayload: 512 * 1024,
-            rejectUnauthorized: false, // RS SFU uses untrusted/self-signed cert
+            rejectUnauthorized: false,
             handshakeTimeout: 15000,
         });
-        const outboundQueue = [];
-        let upstreamReady = false;
 
-        const flushQueue = () => {
-            while (upstreamReady && outboundQueue.length) {
-                upstream.send(outboundQueue.shift());
-            }
-        };
+        // Now that upstream exists, drain buffered messages through processAndRelay
+        hasUpstream = true;
+        console.log('[RS Publish] Draining', earlyMessages.length, 'early messages into outbound queue');
+        while (earlyMessages.length) {
+            processAndRelay(earlyMessages.shift());
+        }
 
+        // ── Upstream event handlers ─────────────────────────────────
         upstream.on('open', () => {
             console.log('[RS Publish] Upstream connected in', Date.now() - upstreamConnectStart, 'ms | subprotocol:', upstream.protocol || '(none)');
             upstreamReady = true;
-            flushQueue();
+            console.log('[RS Publish] Flushing', outboundQueue.length, 'queued messages to SFU');
+            while (outboundQueue.length) {
+                upstream.send(outboundQueue.shift());
+            }
         });
 
         upstream.on('message', (payload) => {
@@ -498,7 +561,6 @@ class RobotStreamerService {
             if (ws.readyState === WebSocket.OPEN) {
                 ws.send(raw);
             }
-            // Log all messages from SFU for diagnostics
             const parsed = safeJsonParse(raw);
             if (parsed?.response) {
                 const status = parsed.ok === false ? 'ERROR' : 'OK';
@@ -525,7 +587,6 @@ class RobotStreamerService {
             }
         });
 
-        // Capture HTTP-level rejection details (403, 401, etc.) before ws fires 'error'
         upstream.on('unexpected-response', (req, res) => {
             let body = '';
             res.on('data', (chunk) => { body += chunk; });
@@ -536,41 +597,6 @@ class RobotStreamerService {
                     ws.close(1011, `upstream rejected: HTTP ${res.statusCode}`);
                 }
             });
-        });
-
-        ws.on('message', (payload) => {
-            const raw = payload.toString();
-            const msg = safeJsonParse(raw);
-            let outgoing = raw;
-
-            if (msg?.request && typeof msg.method === 'string') {
-                if (msg.method === 'createWebRtcTransport') {
-                    msg.data = {
-                        producing: true,
-                        consuming: false,
-                        streamkey: integration.token,
-                    };
-                    outgoing = JSON.stringify(msg);
-                } else if (msg.method === 'join') {
-                    msg.data = {
-                        ...(msg.data || {}),
-                        token: integration.token,
-                    };
-                    outgoing = JSON.stringify(msg);
-                }
-                console.log(`[RS Publish] Client → SFU: ${msg.method} (id=${msg.id}) | upstream ready: ${upstreamReady} | upstream state: ${upstream.readyState} | queued: ${outboundQueue.length}`);
-            }
-
-            if (!upstreamReady) outboundQueue.push(outgoing);
-            else upstream.send(outgoing);
-        });
-
-        ws.on('close', () => {
-            try { upstream.close(1000); } catch {}
-        });
-
-        ws.on('error', () => {
-            try { upstream.close(1011); } catch {}
         });
     }
 }
