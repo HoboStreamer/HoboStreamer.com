@@ -432,6 +432,13 @@ class RobotStreamerService {
         // The RS SFU rejects connections that don't have an active robot_page_load session.
         try {
             integration = await this.refreshIntegration(ctx.user.id);
+            console.log('[RS Publish] Refreshed integration:', {
+                robot_id: integration.robot_id,
+                rtc_sfu_url: integration.rtc_sfu_url,
+                owner_id: integration.owner_id,
+                hasToken: !!integration.token,
+                tokenLen: integration.token?.length,
+            });
         } catch (err) {
             console.warn('[RS Publish] Refresh failed:', err.message);
             // Fall back to cached integration if rtc_sfu_url exists
@@ -459,10 +466,13 @@ class RobotStreamerService {
             return;
         }
 
-        console.log('[RS Publish] Connecting upstream:', upstreamUrl);
+        console.log('[RS Publish] Connecting upstream:', upstreamUrl, '| robot_id:', integration.robot_id, '| sfu_base:', integration.rtc_sfu_url);
 
-        const upstream = new WebSocket(upstreamUrl, {
-            headers: { Origin: RS_ORIGIN },
+        const upstream = new WebSocket(upstreamUrl, ['protoo'], {
+            headers: {
+                Origin: RS_ORIGIN,
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            },
             maxPayload: 512 * 1024,
             rejectUnauthorized: false, // RS SFU uses untrusted/self-signed cert
         });
@@ -476,7 +486,7 @@ class RobotStreamerService {
         };
 
         upstream.on('open', () => {
-            console.log('[RS Publish] Upstream connected');
+            console.log('[RS Publish] Upstream connected, subprotocol:', upstream.protocol || '(none)');
             upstreamReady = true;
             flushQueue();
         });
@@ -489,7 +499,7 @@ class RobotStreamerService {
             // Log errors from SFU for diagnostics
             const parsed = safeJsonParse(raw);
             if (parsed?.response && parsed.ok === false) {
-                console.warn('[RS Publish] SFU error response:', parsed.error || parsed.reason || 'unknown');
+                console.warn('[RS Publish] SFU error response for method id', parsed.id, ':', JSON.stringify({ error: parsed.error, reason: parsed.reason, data: parsed.data }));
             }
         });
 
@@ -506,6 +516,19 @@ class RobotStreamerService {
             if (ws.readyState === WebSocket.OPEN) {
                 ws.close(1011, `upstream error: ${err.message}`);
             }
+        });
+
+        // Capture HTTP-level rejection details (403, 401, etc.) before ws fires 'error'
+        upstream.on('unexpected-response', (req, res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                console.error(`[RS Publish] Upstream rejected: HTTP ${res.statusCode} ${res.statusMessage} | body: ${body.slice(0, 500)}`);
+                console.error('[RS Publish] Response headers:', JSON.stringify(res.headers));
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.close(1011, `upstream rejected: HTTP ${res.statusCode}`);
+                }
+            });
         });
 
         ws.on('message', (payload) => {
