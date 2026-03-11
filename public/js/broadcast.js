@@ -46,6 +46,48 @@ function createStreamState(streamData) {
     const BROADCAST_SIGNALING_MAX_BUFFERED_AMOUNT = 512 * 1024;
     const BROADCAST_THUMBNAIL_INTERVAL_MS = 115000;
 
+/* ── Wake Lock ─────────────────────────────────────────────────
+   Prevents the OS/browser from suspending media tracks when the
+   tab is backgrounded or the device enters power-saving mode.
+   ─────────────────────────────────────────────────────────────── */
+let _wakeLockSentinel = null;
+
+async function acquireWakeLock() {
+    if (_wakeLockSentinel) return; // already held
+    if (!('wakeLock' in navigator)) {
+        console.log('[Broadcast] Wake Lock API not supported');
+        return;
+    }
+    try {
+        _wakeLockSentinel = await navigator.wakeLock.request('screen');
+        console.log('[Broadcast] Wake Lock acquired');
+        _wakeLockSentinel.addEventListener('release', () => {
+            console.log('[Broadcast] Wake Lock released by system');
+            _wakeLockSentinel = null;
+            // Re-acquire if still broadcasting
+            if (isStreaming()) acquireWakeLock();
+        });
+    } catch (err) {
+        console.warn('[Broadcast] Wake Lock request failed:', err.message);
+        _wakeLockSentinel = null;
+    }
+}
+
+function releaseWakeLock() {
+    if (_wakeLockSentinel) {
+        _wakeLockSentinel.release().catch(() => {});
+        _wakeLockSentinel = null;
+        console.log('[Broadcast] Wake Lock released');
+    }
+}
+
+// Re-acquire wake lock when the tab becomes visible again
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && isStreaming() && !_wakeLockSentinel) {
+        acquireWakeLock();
+    }
+});
+
 function getBroadcastFrameRate() {
     const fps = parseInt(broadcastState.settings.broadcastFps, 10);
     return Number.isFinite(fps) && fps > 0 ? fps : 30;
@@ -148,9 +190,23 @@ function attachLocalStreamRecoveryHandlers(streamId) {
     if (!ss?.localStream) return;
     const currentStream = ss.localStream;
     let _trackEndedFired = false;
-    const onMediaLost = (reason) => {
+    let _pendingRecoveryTimer = null;
+
+    const isStillCurrent = () => {
         const latest = getStreamState(streamId);
-        if (!latest || latest.localStream !== currentStream) return;
+        return latest && latest.localStream === currentStream;
+    };
+
+    const cancelPendingRecovery = () => {
+        if (_pendingRecoveryTimer) {
+            clearTimeout(_pendingRecoveryTimer);
+            _pendingRecoveryTimer = null;
+        }
+    };
+
+    const onMediaLost = (reason) => {
+        if (!isStillCurrent()) return;
+        const latest = getStreamState(streamId);
         // Ignore track-ended events caused by intentional operations
         // (camera flip, screen share toggle, settings changes, cleanup)
         if (latest._suppressRecovery) {
@@ -158,35 +214,83 @@ function attachLocalStreamRecoveryHandlers(streamId) {
             return;
         }
         _trackEndedFired = true;
+        cancelPendingRecovery();
         scheduleMediaRecovery(streamId, reason);
     };
+
     currentStream.getTracks().forEach((track) => {
-        track.addEventListener('ended', () => onMediaLost(`${track.kind} track ended`), { once: true });
+        // Track 'ended' — the definitive signal that a track is gone.
+        // But on Linux (PipeWire/PulseAudio) tracks can briefly end during
+        // session renegotiations, so defer slightly and verify.
+        track.addEventListener('ended', () => {
+            console.log(`[Broadcast] Track '${track.kind}' ended event (readyState: ${track.readyState})`);
+            // If any sibling track is still live, wait a beat before recovering
+            const siblingAlive = currentStream.getTracks().some(
+                t => t !== track && t.readyState === 'live'
+            );
+            if (siblingAlive) {
+                console.log('[Broadcast] Sibling tracks still live, deferring recovery 5s');
+                _pendingRecoveryTimer = setTimeout(() => {
+                    _pendingRecoveryTimer = null;
+                    if (!isStillCurrent()) return;
+                    // Re-check: are ALL tracks now dead?
+                    const allDead = currentStream.getTracks().every(
+                        t => t.readyState === 'ended'
+                    );
+                    if (allDead) {
+                        onMediaLost(`${track.kind} track ended`);
+                    } else {
+                        console.log('[Broadcast] Tracks recovered — skipping recovery');
+                    }
+                }, 5000);
+            } else {
+                onMediaLost(`${track.kind} track ended`);
+            }
+        }, { once: true });
+
+        // Track 'mute'/'unmute' — Linux audio/video drivers can temporarily
+        // mute tracks during power transitions or session changes without
+        // ending them. Log for diagnostics but don't trigger recovery.
+        track.addEventListener('mute', () => {
+            console.log(`[Broadcast] Track '${track.kind}' muted (readyState: ${track.readyState})`);
+        });
+        track.addEventListener('unmute', () => {
+            console.log(`[Broadcast] Track '${track.kind}' unmuted (readyState: ${track.readyState})`);
+            // Cancel any pending recovery — the track came back
+            if (_pendingRecoveryTimer) {
+                console.log('[Broadcast] Track unmuted — cancelling pending recovery');
+                cancelPendingRecovery();
+            }
+        });
     });
+
     // The 'inactive' event fires when ALL tracks end, but also fires spuriously
     // on some browsers during GPU resets, screen share renegotiation, tab
-    // backgrounding, etc. Only treat it as a real failure if:
-    //   1) A track 'ended' event hasn't already triggered recovery, AND
-    //   2) After a 3s grace period, the tracks are genuinely dead
+    // backgrounding, power management, PipeWire restarts, etc.
+    // Only treat it as a real failure after an 8s grace period with multiple checks.
     if (typeof currentStream.addEventListener === 'function') {
         currentStream.addEventListener('inactive', () => {
+            if (!isStillCurrent()) return;
             const latest = getStreamState(streamId);
-            if (!latest || latest.localStream !== currentStream) return;
             if (_trackEndedFired || latest._suppressRecovery) return;
+            console.log('[Broadcast] MediaStream inactive event fired — starting 8s grace period');
             // Grace period — check if tracks are truly dead
             setTimeout(() => {
+                if (!isStillCurrent()) return;
                 const s2 = getStreamState(streamId);
-                if (!s2 || s2.localStream !== currentStream) return;
                 if (_trackEndedFired || s2._suppressRecovery) return;
-                const allDead = currentStream.getTracks().every(
-                    t => t.readyState === 'ended' || !t.enabled
+                const tracks = currentStream.getTracks();
+                const allDead = tracks.every(
+                    t => t.readyState === 'ended'
                 );
                 if (allDead) {
+                    console.log(`[Broadcast] All ${tracks.length} tracks confirmed dead after grace period`);
                     onMediaLost('media stream inactive');
                 } else {
-                    console.log('[Broadcast] Ignored spurious inactive event — tracks still alive');
+                    const summary = tracks.map(t => `${t.kind}:${t.readyState}/${t.muted?'muted':'unmuted'}`).join(', ');
+                    console.log(`[Broadcast] Ignored spurious inactive event — tracks: ${summary}`);
                 }
-            }, 3000);
+            }, 8000);
         }, { once: true });
     }
 }
@@ -762,6 +866,7 @@ async function resumeStreamView(stream) {
         startHeartbeat(stream.id);
         await startMediaCapture(stream.id); connectSignaling(stream.id); startRobotStreamerRestream(stream.id).catch(() => {}); startVodRecording(stream.id);
         startGlobalDisplayTimers();
+        acquireWakeLock();
         showBroadcastCallControls(); updateBroadcastCallUI();
     } else if (stream.protocol === 'rtmp') {
         const ss = createStreamState(stream);
@@ -945,6 +1050,7 @@ async function createNewStream() {
             startRobotStreamerRestream(streamData.id).catch(() => {});
             startHeartbeat(streamData.id); startVodRecording(streamData.id);
             startGlobalDisplayTimers();
+            acquireWakeLock();
             showBroadcastCallControls(); updateBroadcastCallUI();
             toast('You are now LIVE!', 'success');
         } else if (method === 'webrtc' && broadcastState.selectedWebRTCSub === 'obs') {
@@ -1455,6 +1561,7 @@ function cleanupStream(streamId) {
     if (!isStreaming()) {
         setNavLiveIndicator(false);
         clearGlobalDisplayTimers();
+        releaseWakeLock();
     }
 }
 
