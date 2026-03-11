@@ -418,128 +418,6 @@
                         </div>
                         <div class="controls-grid" id="controls-grid"></div>
                     </div>
-                    <!-- Group Call Panel (Discord-style voice/video) -->
-                    <div class="call-panel" id="call-panel" style="display:none">
-                        <div class="call-panel-header">
-                            <div class="call-panel-header-left">
-                                <i class="fa-solid fa-headset"></i>
-                                <span id="call-mode-label">Group Call</span>
-                            </div>
-                            <div class="call-panel-header-right">
-                                <span class="call-count-badge" id="call-count-badge">0</span>
-                                <span class="call-connected-badge" id="call-connected-badge" style="display:none">
-                                    <i class="fa-solid fa-circle"></i> Connected
-                                </span>
-                            </div>
-                        </div>
-                        <!-- Join Area (shown when not in call) -->
-                        <div class="call-join-area" id="call-join-area">
-                            <p class="call-join-hint muted" id="call-join-hint">Join the voice chat to talk with the streamer and other viewers</p>
-                            <div class="call-device-selects">
-                                <div class="call-device-group">
-                                    <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Microphone</label>
-                                    <select id="call-mic-select" class="form-input form-input-sm">
-                                        <option value="default">Default Microphone</option>
-                                    </select>
-                                </div>
-                                <div class="call-device-group" id="call-cam-group">
-                                    <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
-                                    <select id="call-cam-select" class="form-input form-input-sm">
-                                        <option value="default">Default Camera</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="call-input-settings">
-                                <div class="call-device-group">
-                                    <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
-                                    <select id="call-input-mode" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
-                                        <option value="open">Open Mic</option>
-                                        <option value="ptt">Push to Talk</option>
-                                        <option value="vad">Voice Activation</option>
-                                    </select>
-                                </div>
-                                <div class="call-device-group call-ptt-group" id="call-ptt-group" style="display:none">
-                                    <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
-                                    <select id="call-ptt-key" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
-                                        <option value="Space">Space</option>
-                                        <option value="KeyV">V</option>
-                                        <option value="KeyT">T</option>
-                                        <option value="AltLeft">Left Alt</option>
-                                    </select>
-                                </div>
-                                <div class="call-device-group call-vad-group" id="call-vad-group" style="display:none">
-                                    <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
-                                    <input id="call-vad-threshold" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
-                                    <span class="call-threshold-value" id="call-vad-threshold-value">32%</span>
-                                </div>
-                            </div>
-                            <button class="btn btn-primary call-join-btn" onclick="joinCall()">
-                                <i class="fa-solid fa-phone"></i> Join Call
-                            </button>
-                        </div>
-                        <!-- Active Call Area (shown when in call) -->
-                        <div class="call-active-area" id="call-active-area" style="display:none">
-                            <div class="call-participants-grid" id="call-participants-grid"></div>
-                            <div class="call-controls">
-                                <button class="call-ctrl-btn" id="call-btn-mute" onclick="toggleCallMute()" title="Mute">
-                                    <i class="fa-solid fa-microphone"></i>
-                                </button>
-                                <button class="call-ctrl-btn" id="call-btn-camera" onclick="toggleCallCamera()" title="Toggle Camera">
-                                    <i class="fa-solid fa-video"></i>
-                                </button>
-                                <button class="call-ctrl-btn call-ctrl-leave" onclick="leaveCall()" title="Leave Call">
-                                    <i class="fa-solid fa-phone-slash"></i>
-                                </button>
-                                <button class="call-ctrl-btn call-ctrl-end" id="call-btn-end" onclick="endCall()" title="End Call for Everyone" style="display:none">
-                                    <i class="fa-solid fa-xmark"></i> End
-                                </button>
-                            </div>
-                            <!-- Device switcher (visible while in call) -->
-                            <details class="call-device-switcher">
-                                <summary><i class="fa-solid fa-gear"></i> Call Settings & Devices</summary>
-                                <div class="call-device-selects call-device-selects-compact">
-                                    <div class="call-device-group">
-                                        <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Mic</label>
-                                        <select id="call-mic-switch" class="form-input form-input-sm" onchange="switchCallMic(this.value)">
-                                            <option value="default">Default Microphone</option>
-                                        </select>
-                                    </div>
-                                    <div class="call-device-group" id="call-cam-switch-group">
-                                        <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
-                                        <select id="call-cam-switch" class="form-input form-input-sm" onchange="switchCallCam(this.value)">
-                                            <option value="default">Default Camera</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="call-input-settings call-input-settings-compact">
-                                    <div class="call-device-group">
-                                        <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
-                                        <select id="call-input-mode-switch" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
-                                            <option value="open">Open Mic</option>
-                                            <option value="ptt">Push to Talk</option>
-                                            <option value="vad">Voice Activation</option>
-                                        </select>
-                                    </div>
-                                    <div class="call-device-group call-ptt-group" id="call-ptt-switch-group" style="display:none">
-                                        <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
-                                        <select id="call-ptt-key-switch" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
-                                            <option value="Space">Space</option>
-                                            <option value="KeyV">V</option>
-                                            <option value="KeyT">T</option>
-                                            <option value="AltLeft">Left Alt</option>
-                                        </select>
-                                    </div>
-                                    <div class="call-device-group call-vad-group" id="call-vad-switch-group" style="display:none">
-                                        <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
-                                        <input id="call-vad-threshold-switch" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
-                                        <span class="call-threshold-value" id="call-vad-threshold-value-switch">32%</span>
-                                    </div>
-                                </div>
-                                <div class="call-ptt-status" id="call-ptt-status" style="display:none">Hold <strong id="call-ptt-status-key">Space</strong> to talk</div>
-                            </details>
-                        </div>
-                        <div class="call-log" id="call-log"></div>
-                    </div>
                 </div>
                 <!-- Chat Sidebar -->
                 <div class="chat-sidebar" id="chat-sidebar">
@@ -2276,9 +2154,151 @@
         </div>
     </section>
 
-    <!-- ── GLOBAL CHAT PAGE ────────────────────────────── -->
+    <!-- ── GLOBAL CHAT + VOICE CHANNELS PAGE ──────────────── -->
     <section id="page-chat" class="page">
-        <div class="global-chat-layout">
+        <div class="chat-voice-layout">
+            <!-- ── Left: Voice Channels ── -->
+            <div class="vc-sidebar">
+                <div class="vc-sidebar-header">
+                    <h3><i class="fa-solid fa-headset"></i> Voice Channels</h3>
+                    <button class="vc-create-btn" onclick="vcShowCreateModal()" title="Create Channel">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                </div>
+                <div class="vc-channel-list" id="vc-channel-list">
+                    <!-- Populated by voice-channels.js -->
+                </div>
+
+                <!-- ── Device Setup Panel (shown before joining) ── -->
+                <div class="vc-setup-panel" id="vc-setup-panel" style="display:none">
+                    <div class="vc-setup-header">
+                        <span class="vc-setup-title" id="vc-setup-title">Setup Audio</span>
+                        <button class="vc-setup-close" onclick="vcCancelSetup()" title="Cancel"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <div class="vc-setup-preview">
+                        <div class="vc-setup-avatar" id="vc-setup-avatar">
+                            <div class="vc-mic-level" id="vc-mic-level"></div>
+                        </div>
+                        <div class="vc-setup-meter">
+                            <div class="vc-meter-bar" id="vc-meter-bar"></div>
+                        </div>
+                    </div>
+                    <div class="vc-setup-devices">
+                        <div class="vc-device-group">
+                            <label><i class="fa-solid fa-microphone"></i> Microphone</label>
+                            <select id="vc-mic-select" class="form-input form-input-sm">
+                                <option value="default">Default Microphone</option>
+                            </select>
+                        </div>
+                        <div class="vc-device-group" id="vc-cam-group">
+                            <label><i class="fa-solid fa-video"></i> Camera</label>
+                            <select id="vc-cam-select" class="form-input form-input-sm">
+                                <option value="default">Default Camera</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="vc-setup-input-mode">
+                        <div class="vc-device-group">
+                            <label><i class="fa-solid fa-wave-square"></i> Input Mode</label>
+                            <select id="vc-input-mode" class="form-input form-input-sm" onchange="vcOnInputModeChange(this.value)">
+                                <option value="open">Open Mic</option>
+                                <option value="ptt">Push to Talk</option>
+                                <option value="vad">Voice Activation</option>
+                            </select>
+                        </div>
+                        <div class="vc-device-group vc-ptt-group" id="vc-ptt-group" style="display:none">
+                            <label><i class="fa-solid fa-keyboard"></i> Push Key</label>
+                            <select id="vc-ptt-key" class="form-input form-input-sm" onchange="vcOnPttKeyChange(this.value)">
+                                <option value="Space">Space</option>
+                                <option value="KeyV">V</option>
+                                <option value="KeyT">T</option>
+                                <option value="AltLeft">Left Alt</option>
+                            </select>
+                        </div>
+                        <div class="vc-device-group vc-vad-group" id="vc-vad-group" style="display:none">
+                            <label><i class="fa-solid fa-sliders"></i> Sensitivity</label>
+                            <input id="vc-vad-threshold" class="vc-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="vcOnVadChange(this.value)">
+                            <span id="vc-vad-value">32%</span>
+                        </div>
+                    </div>
+                    <div class="vc-setup-actions">
+                        <button class="btn btn-secondary vc-test-btn" id="vc-test-btn" onclick="vcToggleTest()">
+                            <i class="fa-solid fa-play"></i> Test Mic
+                        </button>
+                        <button class="btn btn-primary vc-join-btn" onclick="vcJoinFromSetup()">
+                            <i class="fa-solid fa-headset"></i> Join Channel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ── Connected Panel (shown when in a voice channel) ── -->
+                <div class="vc-connected-panel" id="vc-connected-panel" style="display:none">
+                    <div class="vc-connected-header">
+                        <div class="vc-connected-info">
+                            <span class="vc-connected-badge"><i class="fa-solid fa-circle"></i> Voice Connected</span>
+                            <span class="vc-connected-channel" id="vc-connected-channel">Public</span>
+                        </div>
+                    </div>
+                    <div class="vc-participants-grid" id="vc-participants-grid"></div>
+                    <div class="vc-controls">
+                        <button class="vc-ctrl-btn" id="vc-btn-mute" onclick="vcToggleMute()" title="Mute">
+                            <i class="fa-solid fa-microphone"></i>
+                        </button>
+                        <button class="vc-ctrl-btn" id="vc-btn-camera" onclick="vcToggleCamera()" title="Toggle Camera">
+                            <i class="fa-solid fa-video"></i>
+                        </button>
+                        <button class="vc-ctrl-btn" id="vc-btn-screen" onclick="vcToggleScreenShare()" title="Share Screen" style="display:none">
+                            <i class="fa-solid fa-display"></i>
+                        </button>
+                        <button class="vc-ctrl-btn vc-ctrl-settings" id="vc-btn-settings" onclick="vcToggleSettings()" title="Settings">
+                            <i class="fa-solid fa-gear"></i>
+                        </button>
+                        <button class="vc-ctrl-btn vc-ctrl-leave" onclick="vcLeave()" title="Disconnect">
+                            <i class="fa-solid fa-phone-slash"></i>
+                        </button>
+                    </div>
+                    <!-- In-call settings (toggled) -->
+                    <div class="vc-incall-settings" id="vc-incall-settings" style="display:none">
+                        <div class="vc-device-group">
+                            <label><i class="fa-solid fa-microphone"></i> Mic</label>
+                            <select id="vc-mic-switch" class="form-input form-input-sm" onchange="vcSwitchMic(this.value)">
+                                <option value="default">Default</option>
+                            </select>
+                        </div>
+                        <div class="vc-device-group" id="vc-cam-switch-group">
+                            <label><i class="fa-solid fa-video"></i> Camera</label>
+                            <select id="vc-cam-switch" class="form-input form-input-sm" onchange="vcSwitchCam(this.value)">
+                                <option value="default">Default</option>
+                            </select>
+                        </div>
+                        <div class="vc-device-group">
+                            <label><i class="fa-solid fa-wave-square"></i> Input Mode</label>
+                            <select id="vc-input-mode-switch" class="form-input form-input-sm" onchange="vcOnInputModeChange(this.value)">
+                                <option value="open">Open Mic</option>
+                                <option value="ptt">Push to Talk</option>
+                                <option value="vad">Voice Activation</option>
+                            </select>
+                        </div>
+                        <div class="vc-device-group vc-ptt-group" id="vc-ptt-switch-group" style="display:none">
+                            <label><i class="fa-solid fa-keyboard"></i> Push Key</label>
+                            <select id="vc-ptt-key-switch" class="form-input form-input-sm" onchange="vcOnPttKeyChange(this.value)">
+                                <option value="Space">Space</option>
+                                <option value="KeyV">V</option>
+                                <option value="KeyT">T</option>
+                                <option value="AltLeft">Left Alt</option>
+                            </select>
+                        </div>
+                        <div class="vc-device-group vc-vad-group" id="vc-vad-switch-group" style="display:none">
+                            <label><i class="fa-solid fa-sliders"></i> Sensitivity</label>
+                            <input id="vc-vad-threshold-switch" class="vc-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="vcOnVadChange(this.value)">
+                            <span id="vc-vad-switch-value">32%</span>
+                        </div>
+                        <div class="vc-ptt-status" id="vc-ptt-status" style="display:none">Hold <strong id="vc-ptt-status-key">Space</strong> to talk</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Right: Global Chat ── -->
             <div class="global-chat-main">
                 <div class="global-chat-header">
                     <div>
@@ -2301,6 +2321,38 @@
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Channel Modal -->
+        <div class="modal-overlay" id="vc-create-modal" style="display:none" onclick="if(event.target===this)vcHideCreateModal()">
+            <div class="modal-box">
+                <div class="modal-header">
+                    <h3>Create Voice Channel</h3>
+                    <button class="modal-close" onclick="vcHideCreateModal()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Channel Name</label>
+                        <input type="text" id="vc-create-name" class="form-input" placeholder="e.g. Chill Zone" maxlength="40">
+                    </div>
+                    <div class="form-group">
+                        <label>Mode</label>
+                        <select id="vc-create-mode" class="form-input">
+                            <option value="mic">Voice Only</option>
+                            <option value="mic+cam" selected>Voice + Camera</option>
+                            <option value="cam+mic">Video Call</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Max Participants</label>
+                        <input type="number" id="vc-create-max" class="form-input" value="15" min="2" max="15">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="vcHideCreateModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="vcCreateChannel()">Create</button>
                 </div>
             </div>
         </div>
@@ -2643,7 +2695,8 @@
 <script src="/js/hobo-coins.js?v=2"></script>
 <script src="/js/cosmetics-ui.js?v=2"></script>
 <script src="/js/broadcast.js?v=8"></script>
-<script src="/js/call.js?v=2"></script>
+<script src="/js/call.js?v=3"></script>
+<script src="/js/voice-channels.js?v=1"></script>
 <script src="/js/settings.js?v=2"></script>
 <script src="/js/game.js?v=2"></script>
 <script src="/js/pastes.js?v=1"></script>

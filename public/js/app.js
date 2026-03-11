@@ -356,7 +356,6 @@ function navigate(urlPath, replace = false) {
     // Clean up existing page state (destroy player, disconnect chat, etc.)
     if (typeof destroyPlayer === 'function') destroyPlayer();
     if (typeof destroyChat === 'function') destroyChat();
-    if (typeof destroyCall === 'function') destroyCall();
     if (typeof stopCoinHeartbeat === 'function') stopCoinHeartbeat();
     if (typeof stopStreamStatusPoll === 'function') stopStreamStatusPoll();
     clearInterval(uptimeInterval);
@@ -796,7 +795,6 @@ function activateChannelStream(stream) {
     if (typeof initChat === 'function') initChat(stream.id);
     if (typeof loadStreamControls === 'function') loadStreamControls(stream.id);
     if (typeof startCoinHeartbeat === 'function') startCoinHeartbeat(stream.id);
-    if (typeof initCallPanel === 'function') initCallPanel(stream);
     startUptime(stream.started_at);
 
     // Start polling for stream status changes

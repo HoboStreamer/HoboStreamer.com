@@ -342,9 +342,10 @@ router.post('/', requireAuth, (req, res) => {
             db.run('UPDATE streams SET tags = ? WHERE id = ?', [JSON.stringify(tags), streamId]);
         }
 
-        // Set call mode if provided
+        // Set call mode if provided — create a stream voice channel
         if (callMode) {
             db.run('UPDATE streams SET call_mode = ? WHERE id = ?', [callMode, streamId]);
+            callServer.createStreamChannel(streamId, callMode, req.user.id);
         }
 
         let endpoint = {};
@@ -441,8 +442,8 @@ router.delete('/:id', requireAuth, (req, res) => {
             webrtcSFU.closeRoom(`stream-${stream.id}`);
         }
 
-        // End any active group call
-        callServer.endCall(stream.id);
+        // End any active group call / remove stream voice channel
+        callServer.removeStreamChannel(stream.id);
 
         robotStreamerService.stopForStream(stream.id);
 
@@ -607,18 +608,21 @@ router.put('/:id/call', requireAuth, (req, res) => {
             return res.status(400).json({ error: 'Invalid call mode. Use: mic, mic+cam, cam+mic, or null to disable' });
         }
 
-        const previousMode = stream.call_mode || null;
         db.run('UPDATE streams SET call_mode = ? WHERE id = ?', [call_mode, stream.id]);
 
-        // Any mode change resets the active room so everyone resyncs to the new settings.
-        if (previousMode !== call_mode) {
-            callServer.endCall(stream.id);
+        // Create or remove stream voice channel
+        const channelId = `stream-${stream.id}`;
+        if (call_mode) {
+            callServer.createStreamChannel(stream.id, call_mode, stream.user_id);
+        } else {
+            callServer.removeStreamChannel(stream.id);
         }
 
         res.json({
             call_mode,
-            participants: callServer.getParticipants(stream.id),
-            participant_count: callServer.getParticipantCount(stream.id),
+            channelId: call_mode ? channelId : null,
+            participants: callServer.getParticipants(channelId),
+            participant_count: callServer.getParticipantCount(channelId),
         });
     } catch (err) {
         console.error('[Streams] Call mode error:', err.message);
@@ -630,14 +634,56 @@ router.get('/:id/call', optionalAuth, (req, res) => {
     try {
         const stream = db.getStreamById(req.params.id);
         if (!stream) return res.status(404).json({ error: 'Stream not found' });
+        const channelId = `stream-${stream.id}`;
 
         res.json({
             call_mode: stream.call_mode || null,
-            participants: callServer.getParticipants(stream.id),
-            participant_count: callServer.getParticipantCount(stream.id),
+            channelId: stream.call_mode ? channelId : null,
+            participants: callServer.getParticipants(channelId),
+            participant_count: callServer.getParticipantCount(channelId),
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get call status' });
+    }
+});
+
+/* ── Voice Channels (global, non-stream) ───────────────────── */
+
+router.get('/voice-channels', (req, res) => {
+    try {
+        res.json({ channels: callServer.listChannels() });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to list voice channels' });
+    }
+});
+
+router.get('/voice-channels/:channelId', (req, res) => {
+    try {
+        const ch = callServer.getChannel(req.params.channelId);
+        if (!ch) return res.status(404).json({ error: 'Channel not found' });
+        res.json({ channel: ch });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get voice channel' });
+    }
+});
+
+router.post('/voice-channels', requireAuth, (req, res) => {
+    try {
+        const { name, mode, maxParticipants } = req.body;
+        const ch = callServer.createChannel({ name, mode, createdBy: req.user.id, maxParticipants });
+        res.status(201).json({ channel: ch });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to create voice channel' });
+    }
+});
+
+router.delete('/voice-channels/:channelId', requireAuth, (req, res) => {
+    try {
+        const ok = callServer.deleteChannel(req.params.channelId, req.user.id);
+        if (!ok) return res.status(403).json({ error: 'Cannot delete this channel' });
+        res.json({ deleted: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to delete voice channel' });
     }
 });
 

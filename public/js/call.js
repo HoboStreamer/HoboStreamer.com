@@ -10,6 +10,8 @@
 const callState = {
     ws: null,
     streamId: null,
+    channelId: null,     // voice channel ID (e.g. 'public', 'stream-5', 'user-123-...')
+    vcMode: false,       // true when connected via voice-channels.js Chat tab
     myPeerId: null,
     callMode: null,     // 'mic', 'mic+cam', 'cam+mic'
     isStreamer: false,
@@ -102,38 +104,44 @@ function _syncCallSettingsUI() {
         ['call-input-mode', callState.inputMode],
         ['call-input-mode-switch', callState.inputMode],
         ['bc-call-input-mode-switch', callState.inputMode],
+        ['vc-input-mode', callState.inputMode],
+        ['vc-input-mode-switch', callState.inputMode],
         ['call-ptt-key', callState.pttKey],
         ['call-ptt-key-switch', callState.pttKey],
         ['bc-call-ptt-key-switch', callState.pttKey],
+        ['vc-ptt-key', callState.pttKey],
+        ['vc-ptt-key-switch', callState.pttKey],
         ['call-vad-threshold', String(callState.vadThreshold)],
         ['call-vad-threshold-switch', String(callState.vadThreshold)],
         ['bc-call-vad-threshold-switch', String(callState.vadThreshold)],
+        ['vc-vad-threshold', String(callState.vadThreshold)],
+        ['vc-vad-threshold-switch', String(callState.vadThreshold)],
     ];
     mappings.forEach(([id, value]) => {
         const el = document.getElementById(id);
         if (el) el.value = value;
     });
 
-    ['call-vad-threshold-value', 'call-vad-threshold-value-switch', 'bc-call-vad-threshold-value-switch'].forEach(id => {
+    ['call-vad-threshold-value', 'call-vad-threshold-value-switch', 'bc-call-vad-threshold-value-switch', 'vc-vad-value', 'vc-vad-switch-value'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.textContent = `${callState.vadThreshold}%`;
     });
 
     const showPtt = callState.inputMode === 'ptt';
     const showVad = callState.inputMode === 'vad';
-    ['call-ptt-group', 'call-ptt-switch-group', 'bc-call-ptt-switch-group'].forEach(id => {
+    ['call-ptt-group', 'call-ptt-switch-group', 'bc-call-ptt-switch-group', 'vc-ptt-group', 'vc-ptt-switch-group'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = showPtt ? '' : 'none';
     });
-    ['call-vad-group', 'call-vad-switch-group', 'bc-call-vad-switch-group'].forEach(id => {
+    ['call-vad-group', 'call-vad-switch-group', 'bc-call-vad-switch-group', 'vc-vad-group', 'vc-vad-switch-group'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = showVad ? '' : 'none';
     });
-    ['call-ptt-status', 'bc-call-ptt-status'].forEach(id => {
+    ['call-ptt-status', 'bc-call-ptt-status', 'vc-ptt-status'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = showPtt && callState.joined ? '' : 'none';
     });
-    ['call-ptt-status-key', 'bc-call-ptt-status-key'].forEach(id => {
+    ['call-ptt-status-key', 'bc-call-ptt-status-key', 'vc-ptt-status-key'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.textContent = _formatCallKey(callState.pttKey);
     });
@@ -203,7 +211,7 @@ function _optimizeCallSender(sender, track) {
 }
 
 function _syncCallAuthState() {
-    if (!callState.ws || callState.ws.readyState !== WebSocket.OPEN || !callState.streamId) return;
+    if (!callState.ws || callState.ws.readyState !== WebSocket.OPEN || !(callState.channelId || callState.streamId)) return;
     _sendCallMsg({ type: 'auth-update', token: _getAuthToken() || null });
 }
 
@@ -232,7 +240,7 @@ function _scheduleRender() {
  * Returns true if the tile was found and updated in-place.
  */
 function _updateTileSpeaking(peerId, speaking, muted, forceMuted) {
-    const gridId = callState.broadcastMode ? 'bc-call-participants-grid' : 'call-participants-grid';
+    const gridId = callState.vcMode ? 'vc-participants-grid' : (callState.broadcastMode ? 'bc-call-participants-grid' : 'call-participants-grid');
     const grid = document.getElementById(gridId);
     if (!grid) return false;
 
@@ -377,7 +385,7 @@ function leaveBroadcastCall() {
 
 /** Join the group call */
 async function joinCall() {
-    if (callState.joined || callState.connecting || !callState.streamId) return;
+    if (callState.joined || callState.connecting || !(callState.channelId || callState.streamId)) return;
 
     callState.connecting = true;
 
@@ -589,6 +597,8 @@ function destroyCall() {
     leaveCall();
     _stopViewerCallStatusSync();
     callState.streamId = null;
+    callState.channelId = null;
+    callState.vcMode = false;
     callState.callMode = null;
     callState.isStreamer = false;
     callState.broadcastMode = false;
@@ -600,7 +610,8 @@ function destroyCall() {
 function _connectCallWs() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = _getAuthToken();
-    let url = `${proto}//${location.host}/ws/call?streamId=${callState.streamId}`;
+    const channelParam = callState.channelId || callState.streamId;
+    let url = `${proto}//${location.host}/ws/call?channelId=${encodeURIComponent(channelParam)}`;
     if (token) url += `&token=${token}`;
 
     if (callState.reconnectTimer) {
@@ -634,12 +645,12 @@ function _connectCallWs() {
     };
 
     callState.ws.onclose = () => {
-        const shouldReconnect = !callState.intentionalDisconnect && (callState.joined || callState.connecting) && callState.streamId;
+        const shouldReconnect = !callState.intentionalDisconnect && (callState.joined || callState.connecting) && (callState.channelId || callState.streamId);
         callState.ws = null;
         if (shouldReconnect) {
             // Reconnect
             callState.reconnectTimer = setTimeout(() => {
-                if (!callState.intentionalDisconnect && (callState.joined || callState.connecting) && callState.streamId) {
+                if (!callState.intentionalDisconnect && (callState.joined || callState.connecting) && (callState.channelId || callState.streamId)) {
                     _connectCallWs();
                 }
             }, callState.reconnectDelay);
@@ -845,6 +856,10 @@ function _handleCallMessage(msg) {
                 const el = document.getElementById(`bc-call-count${suffix}`);
                 if (el) el.textContent = `${msg.count} in call`;
             });
+            // Voice channel mode — update channel list counts
+            if (callState.vcMode && typeof vcUpdateParticipantCount === 'function') {
+                vcUpdateParticipantCount(msg.count);
+            }
             break;
         }
 
@@ -1184,6 +1199,12 @@ function _closeCallVideoPopout() {
 
 function _renderCallUI() {
     _syncCallSettingsUI();
+
+    // Voice channel mode — delegate rendering to voice-channels.js
+    if (callState.vcMode && typeof vcRenderUI === 'function') {
+        vcRenderUI();
+        return;
+    }
 
     const isBroadcast = callState.broadcastMode;
     const panel = isBroadcast ? document.getElementById('bc-call-panel') : document.getElementById('call-panel');
@@ -1663,6 +1684,11 @@ function _updateLocalPreview() {
 }
 
 function _callSystemMessage(text) {
+    // In VC mode, log to console (no call-log element in the chat tab)
+    if (callState.vcMode) {
+        console.log('[VC]', text);
+        return;
+    }
     const log = _cid('call-log');
     if (log) {
         const el = document.createElement('div');
