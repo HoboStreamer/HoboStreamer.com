@@ -358,6 +358,7 @@ function navigate(urlPath, replace = false) {
     if (typeof destroyChat === 'function') destroyChat();
     if (typeof destroyCall === 'function') destroyCall();
     if (typeof stopCoinHeartbeat === 'function') stopCoinHeartbeat();
+    if (typeof stopStreamStatusPoll === 'function') stopStreamStatusPoll();
     clearInterval(uptimeInterval);
 
     // Clean up live VOD poll timer
@@ -520,7 +521,7 @@ function renderStreamGrid(containerId, streams, isLive) {
         return;
     }
     c.innerHTML = streams.map(s => `
-        <div class="stream-card" onclick="navigate('/${esc(s.username)}${isLive && s.id ? '?stream=' + s.id : ''}')">
+        <div class="stream-card" onclick="navigate('/${esc(s.username)}')">
             <div class="stream-card-thumb">
                 ${thumbImg(s.thumbnail_url, 'fa-campground', s.title)}
                 ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
@@ -561,12 +562,6 @@ async function loadChannelPage(username) {
         const clips = data.clips || [];
         const liveStreams = streams.filter(s => s && s.is_live);
 
-        // Check if a specific stream was requested via ?stream= query param
-        const urlStreamId = new URLSearchParams(window.location.search).get('stream');
-        const requestedStream = urlStreamId
-            ? liveStreams.find(s => String(s.id) === urlStreamId)
-            : null;
-
         // Follow button helper
         const setupFollowBtn = (btn) => {
             if (!btn) return;
@@ -595,8 +590,10 @@ async function loadChannelPage(username) {
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
 
-            // Load live stream tabs for this channel
-            const targetStream = requestedStream || liveStreams[0];
+            // Auto-select the stream with the most viewers
+            const targetStream = liveStreams.reduce((best, s) =>
+                (s.viewer_count || 0) > (best.viewer_count || 0) ? s : best
+            , liveStreams[0]);
             loadLiveStreamTabs(username, targetStream.id, liveStreams);
 
             // Activate the requested stream (or first if none specified)
@@ -622,6 +619,9 @@ async function loadChannelPage(username) {
             // Hide stream tabs on offline channels
             const tabsC = document.getElementById('live-stream-tabs');
             if (tabsC) tabsC.style.display = 'none';
+
+            // Poll for when streamer comes online
+            startOfflineStatusPoll(username);
         }
 
         // VODs section
@@ -711,11 +711,13 @@ async function loadChannelPage(username) {
 function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []) {
     const tabsContainer = document.getElementById('live-stream-tabs');
     const tabsScroll = document.getElementById('live-tabs-scroll');
+    const pageEl = document.getElementById('page-channel');
     if (!tabsContainer || !tabsScroll) return;
 
     // Only show tabs if the channel has more than one concurrent live stream
     if (channelStreams.length <= 1) {
         tabsContainer.style.display = 'none';
+        if (pageEl) pageEl.classList.remove('has-live-tabs');
         return;
     }
 
@@ -725,10 +727,12 @@ function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []
     );
     if (filtered.length <= 1) {
         tabsContainer.style.display = 'none';
+        if (pageEl) pageEl.classList.remove('has-live-tabs');
         return;
     }
 
     tabsContainer.style.display = '';
+    if (pageEl) pageEl.classList.add('has-live-tabs');
     tabsScroll.innerHTML = filtered.map((s, idx) => {
         const isActive = s.id === activeStreamId;
         // Use protocol-based label for clarity instead of raw stream title
@@ -751,9 +755,9 @@ function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []
  * Navigates to that user's channel page and activates their stream.
  */
 function switchToLiveStream(username, streamId, btn) {
-    // If switching to a different channel, navigate there with the specific stream
+    // If switching to a different channel, navigate there
     if (username !== currentChannelUsername) {
-        navigate('/' + username + '?stream=' + streamId);
+        navigate('/' + username);
         return;
     }
 
@@ -791,6 +795,93 @@ function activateChannelStream(stream) {
     if (typeof startCoinHeartbeat === 'function') startCoinHeartbeat(stream.id);
     if (typeof initCallPanel === 'function') initCallPanel(stream);
     startUptime(stream.started_at);
+
+    // Start polling for stream status changes
+    startStreamStatusPoll(stream);
+}
+
+/* ── Stream Status Polling — auto-detect online/offline ──────── */
+let _streamPollTimer = null;
+const STREAM_POLL_INTERVAL = 15000; // 15 seconds
+
+function stopStreamStatusPoll() {
+    if (_streamPollTimer) { clearInterval(_streamPollTimer); _streamPollTimer = null; }
+}
+
+function startStreamStatusPoll(stream) {
+    stopStreamStatusPoll();
+    if (!currentChannelUsername) return;
+    const username = currentChannelUsername;
+
+    _streamPollTimer = setInterval(async () => {
+        // Stop polling if user navigated away from the channel page
+        if (currentChannelUsername !== username) { stopStreamStatusPoll(); return; }
+        try {
+            const data = await api(`/streams/channel/${username}`);
+            const streams = data.streams || (data.stream ? [data.stream] : []);
+            const liveStreams = streams.filter(s => s && s.is_live);
+
+            if (liveStreams.length === 0 && currentStreamId) {
+                // Stream went offline — show offline state
+                stopStreamStatusPoll();
+                loadChannelPage(username);
+                return;
+            }
+
+            if (liveStreams.length > 0 && !currentStreamId) {
+                // Stream came online — switch to live state
+                stopStreamStatusPoll();
+                loadChannelPage(username);
+                return;
+            }
+
+            // Check if current stream is still live
+            const current = liveStreams.find(s => s.id === currentStreamId);
+            if (!current && liveStreams.length > 0) {
+                // Current stream ended, but others are live — switch to best
+                const best = liveStreams.reduce((b, s) =>
+                    (s.viewer_count || 0) > (b.viewer_count || 0) ? s : b
+                , liveStreams[0]);
+                loadLiveStreamTabs(username, best.id, liveStreams);
+                activateChannelStream(best);
+                toast('Stream ended — switching to another live stream', 'info');
+                return;
+            }
+
+            // Update tabs with fresh viewer counts
+            if (liveStreams.length > 1) {
+                loadLiveStreamTabs(username, currentStreamId, liveStreams);
+            } else {
+                // Single stream — ensure tabs are hidden
+                const tabsC = document.getElementById('live-stream-tabs');
+                if (tabsC) tabsC.style.display = 'none';
+            }
+
+            // Update viewer count in the active stream's tab
+            if (current) {
+                const badge = document.querySelector(`.live-tab[data-stream-id="${current.id}"] .live-tab-viewers`);
+                if (badge) badge.innerHTML = `<i class="fa-solid fa-eye"></i> ${current.viewer_count || 0}`;
+            }
+        } catch { /* silent — network error, retry next interval */ }
+    }, STREAM_POLL_INTERVAL);
+}
+
+// Start offline poll — detects when a channel comes online
+function startOfflineStatusPoll(username) {
+    stopStreamStatusPoll();
+    _streamPollTimer = setInterval(async () => {
+        if (currentChannelUsername !== username) { stopStreamStatusPoll(); return; }
+        try {
+            const data = await api(`/streams/channel/${username}`);
+            const streams = data.streams || (data.stream ? [data.stream] : []);
+            const liveStreams = streams.filter(s => s && s.is_live);
+            if (liveStreams.length > 0) {
+                stopStreamStatusPoll();
+                loadChannelPage(username);
+                toast(`${username} is now live!`, 'success');
+            }
+        } catch { /* silent */ }
+    }, STREAM_POLL_INTERVAL);
 }
 
 async function toggleChannelFollow(username) {

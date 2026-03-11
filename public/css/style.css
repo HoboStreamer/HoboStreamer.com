@@ -682,7 +682,10 @@ main#app { position: relative; z-index: 1; }
     display: flex; height: calc(100vh - var(--navbar-h));
 }
 #page-channel .stream-layout {
-    height: calc(100vh - var(--navbar-h) - 40px); /* account for live tabs bar */
+    height: calc(100vh - var(--navbar-h)); /* dynamic: no tabs bar deduction when tabs hidden */
+}
+#page-channel.has-live-tabs .stream-layout {
+    height: calc(100vh - var(--navbar-h) - 40px); /* account for live tabs bar when visible */
 }
 .stream-main {
     flex: 1; overflow-y: auto;
@@ -1983,6 +1986,10 @@ textarea.form-input { resize: vertical; min-height: 60px; }
         position: relative;
     }
     #page-channel .stream-layout {
+        height: calc(100vh - var(--navbar-h));
+        height: calc(100dvh - var(--navbar-h));
+    }
+    #page-channel.has-live-tabs .stream-layout {
         height: calc(100vh - var(--navbar-h) - 40px);
         height: calc(100dvh - var(--navbar-h) - 40px);
     }
