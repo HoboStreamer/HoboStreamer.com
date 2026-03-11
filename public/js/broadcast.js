@@ -2735,8 +2735,12 @@ function _updateTotalViewerCount() {
     }
 }
 
-function _startRsViewerPoll() {
+async function _startRsViewerPoll() {
     _stopRsViewerPoll();
+    // Wait for RS integration to load before checking enabled/robotId
+    if (_robotStreamerIntegrationPromise) {
+        try { await _robotStreamerIntegrationPromise; } catch {}
+    }
     const rs = broadcastState.robotStreamer;
     if (!rs?.enabled || !rs?.robotId) return;
     const poll = async () => {
