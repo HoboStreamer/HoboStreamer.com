@@ -168,6 +168,7 @@ function switchAdminTab(tab) {
         case 'cashouts': loadAdminCashouts(); break;
         case 'bans': loadAdminBans(); break;
         case 'vpn': loadAdminVPN(); break;
+        case 'pastes': loadAdminPastes(); break;
     }
 }
 
@@ -269,14 +270,20 @@ async function loadAdminUsers() {
         const data = await api('/admin/users');
         const users = data.users || [];
         c.innerHTML = `
+            <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem;color:var(--text-secondary)">
+                    <input type="checkbox" id="admin-show-emails" onchange="toggleAdminEmails(this.checked)" style="width:16px;height:16px;cursor:pointer">
+                    Show emails
+                </label>
+            </div>
             <table class="admin-table">
                 <thead><tr>
-                    <th>Username</th><th>Email</th><th>Role</th><th>Created</th><th>Actions</th>
+                    <th>Username</th><th class="admin-email-col" style="display:none">Email</th><th>Role</th><th>Created</th><th>Actions</th>
                 </tr></thead>
                 <tbody>${users.map(u => `
                     <tr>
                         <td>${esc(u.username)}</td>
-                        <td>${esc(u.email || '-')}</td>
+                        <td class="admin-email-col" style="display:none">${esc(u.email || '-')}</td>
                         <td>${esc(u.role)}</td>
                         <td>${new Date(u.created_at).toLocaleDateString()}</td>
                         <td>
@@ -293,6 +300,12 @@ async function loadAdminUsers() {
                 `).join('')}</tbody>
             </table>`;
     } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
+}
+
+function toggleAdminEmails(show) {
+    document.querySelectorAll('.admin-email-col').forEach(el => {
+        el.style.display = show ? '' : 'none';
+    });
 }
 
 async function changeUserRole(userId, role) {
@@ -947,5 +960,52 @@ async function testAdminTTSVoice() {
         }
     } catch (e) {
         toast('Test error: ' + e.message, 'error');
+    }
+}
+
+/* ── Pastes Admin Tab ──────────────────────────────────────────── */
+async function loadAdminPastes() {
+    const c = document.getElementById('admin-content');
+    c.innerHTML = '<p class="muted">Loading paste stats...</p>';
+    try {
+        const data = await api('/pastes/admin/stats');
+        const s = data.stats || {};
+        c.innerHTML = `
+            <div class="admin-stats" style="margin-bottom:24px">
+                ${[
+                    { label: 'Total Pastes', value: s.total || 0, icon: 'fa-paste' },
+                    { label: 'Text Pastes', value: s.textPastes || 0, icon: 'fa-code' },
+                    { label: 'Screenshots', value: s.screenshots || 0, icon: 'fa-image' },
+                    { label: 'Forks', value: s.forks || 0, icon: 'fa-code-fork' },
+                    { label: 'Total Views', value: s.totalViews || 0, icon: 'fa-eye' },
+                    { label: 'Total Copies', value: s.totalCopies || 0, icon: 'fa-copy' },
+                    { label: 'Total Likes', value: s.totalLikes || 0, icon: 'fa-thumbs-up' },
+                ].map(stat => `
+                    <div class="admin-stat">
+                        <div class="admin-stat-value">${typeof stat.value === 'number' ? stat.value.toLocaleString() : stat.value}</div>
+                        <div class="admin-stat-label"><i class="fa-solid ${stat.icon}"></i> ${stat.label}</div>
+                    </div>
+                `).join('')}
+            </div>
+            <h3 style="margin-bottom:12px;">Actions</h3>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                <button class="btn btn-danger" onclick="adminDeleteAllForks()">
+                    <i class="fa-solid fa-code-fork"></i> Delete All Forks (${s.forks || 0})
+                </button>
+            </div>
+        `;
+    } catch (e) {
+        c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+}
+
+async function adminDeleteAllForks() {
+    if (!confirm('Delete ALL forked pastes? This cannot be undone.')) return;
+    try {
+        const data = await api('/pastes/admin/forks', { method: 'DELETE' });
+        toast(`Deleted ${data.deleted || 0} forked paste(s)`, 'success');
+        loadAdminPastes(); // Refresh stats
+    } catch (e) {
+        toast(e.message || 'Failed to delete forks', 'error');
     }
 }

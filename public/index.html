@@ -85,6 +85,9 @@
                 <a onclick="showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
                 <a onclick="navigate('/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
                 <hr>
+                <a onclick="captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
+                <a onclick="navigate('/pastes')"><i class="fa-solid fa-paste"></i> Pastes</a>
+                <hr>
                 <a onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
             </div>
         </div>
@@ -1065,6 +1068,7 @@
                 <button class="tab-btn" onclick="switchAdminTab('cashouts')">Cashouts</button>
                 <button class="tab-btn" onclick="switchAdminTab('bans')">Bans</button>
                 <button class="tab-btn" onclick="switchAdminTab('vpn')">VPN Queue</button>
+                <button class="tab-btn" onclick="switchAdminTab('pastes')">Pastes</button>
             </div>
             <div class="admin-content" id="admin-content"></div>
         </div>
@@ -2513,9 +2517,9 @@
                         <label for="screenshot-file-input" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;padding:32px;">
                             <i class="fa-solid fa-cloud-arrow-up" style="font-size:2rem;opacity:0.5;"></i>
                             <span>Click to upload or drag an image</span>
-                            <span style="font-size:0.75rem;opacity:0.5;">PNG, JPEG, or WebP — max 8 MB</span>
+                            <span style="font-size:0.75rem;opacity:0.5;">PNG, JPEG, WebP, or GIF</span>
                         </label>
-                        <input type="file" id="screenshot-file-input" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="onScreenshotFileSelect(this)">
+                        <input type="file" id="screenshot-file-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none" onchange="onScreenshotFileSelect(this)">
                     </div>
                 </div>
                 <div class="form-group" style="margin-top:12px;">
