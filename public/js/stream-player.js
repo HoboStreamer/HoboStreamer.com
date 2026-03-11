@@ -79,6 +79,22 @@ function getJsmpegBufferProfile() {
     return { videoBufferSize: 512 * 1024, audioBufferSize: 128 * 1024 };
 }
 
+/* ── Reconnecting indicator (overlay on video) ────────────────── */
+function _showReconnectingIndicator() {
+    if (document.getElementById('reconnecting-indicator')) return;
+    const container = document.getElementById('video-container');
+    if (!container) return;
+    const el = document.createElement('div');
+    el.id = 'reconnecting-indicator';
+    el.style.cssText = 'position:absolute;top:12px;right:12px;z-index:25;background:rgba(0,0,0,0.7);color:#fbbf24;padding:6px 14px;border-radius:8px;font-size:0.85rem;display:flex;align-items:center;gap:8px;pointer-events:none;';
+    el.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:0.9rem"></i> Reconnecting...';
+    container.appendChild(el);
+}
+
+function _hideReconnectingIndicator() {
+    document.getElementById('reconnecting-indicator')?.remove();
+}
+
 function sendPlayerSignal(msg) {
     if (!player?.ws || player.ws.readyState !== WebSocket.OPEN) return false;
     if (player.ws.bufferedAmount > PLAYER_SIGNALING_MAX_BUFFERED_AMOUNT) return false;
@@ -374,7 +390,7 @@ async function initWebRTC(stream) {
         let _viewerRewatchTimer = null;
         let _watchOfferTimer = null; // timeout: sent 'watch' but never got 'offer'
         let _rewatchCount = 0;
-        const MAX_REWATCH_ATTEMPTS = 8;
+        const MAX_REWATCH_ATTEMPTS = 12;
 
         // Start a timer when 'watch' is sent — if no 'offer' arrives within 12s, re-watch
         const startWatchOfferTimeout = () => {
@@ -438,11 +454,15 @@ async function initWebRTC(stream) {
                         console.log('[Player] Broadcaster ready, requesting watch');
                         // Cancel any pending rewatch timer (prevents double-watch race)
                         if (_viewerRewatchTimer) { clearTimeout(_viewerRewatchTimer); _viewerRewatchTimer = null; }
-                        // Cancel any pending "stream ended" from a brief disconnect
+                        // Cancel any pending disconnect grace timer
                         if (_broadcasterDisconnectTimer) {
                             clearTimeout(_broadcasterDisconnectTimer);
                             _broadcasterDisconnectTimer = null;
                         }
+                        // Reset retry count — broadcaster is back
+                        _rewatchCount = 0;
+                        // Hide reconnecting indicator if shown
+                        _hideReconnectingIndicator();
                         // Skip re-negotiation if peer connection is still healthy
                         if (player.pc) {
                             const state = player.pc.iceConnectionState;
@@ -463,6 +483,7 @@ async function initWebRTC(stream) {
                         // Clear the watch-to-offer timeout — offer received successfully
                         if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
                         _rewatchCount = 0; // reset retry count on successful offer
+                        _hideReconnectingIndicator();
                         await handleViewerOffer(msg, player.ws, video);
                         break;
                     case 'ice-candidate':
@@ -472,18 +493,31 @@ async function initWebRTC(stream) {
                         }
                         break;
                     case 'broadcaster-disconnected':
-                        console.log('[Player] Broadcaster disconnected — waiting for reconnect...');
-                        // Give the broadcaster a grace period to reconnect before declaring stream ended
+                        console.log('[Player] Broadcaster signaling disconnected — media may still be active');
+                        // Show a subtle indicator — the WebRTC PeerConnection is independent
+                        // of the signaling WS so video likely still works
+                        _showReconnectingIndicator();
+                        // Start a grace timer matching the server's 60s disconnect window.
+                        // Only show "ended" if both the signaling AND PeerConnection are dead.
                         if (_broadcasterDisconnectTimer) clearTimeout(_broadcasterDisconnectTimer);
                         _broadcasterDisconnectTimer = setTimeout(() => {
                             _broadcasterDisconnectTimer = null;
-                            console.log('[Player] Broadcaster did not reconnect, stream ended');
+                            // Check if PeerConnection is still delivering media
+                            const pcState = player?.pc?.iceConnectionState;
+                            if (pcState === 'connected' || pcState === 'completed') {
+                                // PC still working — don't show "ended", just log
+                                console.log('[Player] Broadcaster signaling gone but PC still connected, waiting...');
+                                return;
+                            }
+                            console.log('[Player] Broadcaster did not reconnect and PC is dead, stream ended');
+                            _hideReconnectingIndicator();
                             showStreamEnded();
-                        }, 25000);
+                        }, 60000);
                         break;
                     case 'stream-ended':
                         console.log('[Player] Stream ended by server');
                         if (_broadcasterDisconnectTimer) clearTimeout(_broadcasterDisconnectTimer);
+                        _hideReconnectingIndicator();
                         _viewerIntentionalClose = true; // don't reconnect on explicit end
                         showStreamEnded();
                         break;
@@ -1682,6 +1716,7 @@ function getSavedVolume() {
 function destroyPlayer() {
     stopClipRecording();
     destroyDVR();
+    _hideReconnectingIndicator();
     if (_jsmpegClipSetupTimer) {
         clearTimeout(_jsmpegClipSetupTimer);
         _jsmpegClipSetupTimer = null;
@@ -1738,6 +1773,7 @@ function destroyPlayer() {
 }
 
 function showStreamEnded() {
+    _hideReconnectingIndicator();
     const placeholder = document.querySelector('.video-placeholder');
     if (placeholder) {
         placeholder.style.display = '';
