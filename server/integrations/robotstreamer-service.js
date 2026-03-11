@@ -464,6 +464,7 @@ class RobotStreamerService {
         const upstream = new WebSocket(upstreamUrl, {
             headers: { Origin: RS_ORIGIN },
             maxPayload: 512 * 1024,
+            rejectUnauthorized: false, // RS SFU uses untrusted/self-signed cert
         });
         const outboundQueue = [];
         let upstreamReady = false;
