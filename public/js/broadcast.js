@@ -850,20 +850,20 @@ async function showCreateStreamPanel() {
 async function endBroadcastTab(streamId) {
     if (!confirm('End this stream?')) return;
     try {
-        // Clean up this stream's state if we have it
+        // Detach VOD state and clean up immediately — VOD finalize + DELETE happen in background
         const ss = getStreamState(streamId);
+        let bgCtx = null;
         if (ss) {
-            await uploadVodRecording(streamId);
+            bgCtx = _detachVodForBackground(streamId);
             cleanupStream(streamId);
         }
-        await api(`/streams/${streamId}`, { method: 'DELETE' });
         toast('Stream ended', 'info');
+        _backgroundStreamEnd(streamId, bgCtx);
 
-        // Rebuild tabs — if other streams exist, show the first one
+        // Rebuild tabs (exclude stopped stream — DELETE hasn't fired yet)
         const data = await api('/streams/mine');
-        const remaining = (data.streams || []).filter(s => s.is_live);
+        const remaining = (data.streams || []).filter(s => s.is_live && s.id !== streamId);
         if (remaining.length > 0) {
-            // Prefer a stream we have active state for
             const withState = remaining.find(s => broadcastState.streams.has(s.id));
             const nextStream = withState || remaining[0];
             await buildBroadcastTabs(nextStream.id);
@@ -1060,14 +1060,15 @@ async function resumeStream(streamId) {
 async function endExistingStream(streamId) {
     try {
         const ss = getStreamState(streamId);
+        let bgCtx = null;
         if (ss) {
-            await uploadVodRecording(streamId);
+            bgCtx = _detachVodForBackground(streamId);
             cleanupStream(streamId);
         }
-        await api(`/streams/${streamId}`, { method: 'DELETE' });
         toast('Stream ended', 'info');
         if (!isStreaming()) setNavLiveIndicator(false);
         loadExistingStreams();
+        _backgroundStreamEnd(streamId, bgCtx);
     } catch (e) { toast(e.message || 'Failed to end stream', 'error'); }
 }
 
@@ -1549,23 +1550,106 @@ function updateBroadcastSetting(key, value) {
     broadcastState.settings[key] = value; saveBroadcastSettings();
 }
 
+/**
+ * Detach VOD recording state from a stream so it can be finalized in the background.
+ * Redirects the recorder's ondataavailable to a standalone array, then nulls the
+ * stream state's recorder reference so cleanupStream() won't touch it.
+ */
+function _detachVodForBackground(streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss) return null;
+
+    const recorder = ss.vodRecorder;
+    const streamDataId = ss.streamData?.id;
+    const finalized = ss.vodFinalized;
+    const segmentId = ss.vodSegmentId || 0;
+    const chunks = ss.vodChunks ? ss.vodChunks.splice(0) : [];
+
+    // Redirect any final ondataavailable events to our standalone array
+    if (recorder) {
+        recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) chunks.push(e.data);
+        };
+    }
+
+    // Prevent cleanupStream from stopping the recorder or clearing chunks
+    ss.vodRecorder = null;
+    ss.vodChunks = [];
+
+    return { recorder, chunks, streamDataId, finalized, segmentId };
+}
+
+/**
+ * Background: stop recorder, upload remaining VOD chunks, finalize, and delete stream.
+ * Fire-and-forget — errors are logged but never surface to the UI.
+ */
+function _backgroundStreamEnd(streamId, vodCtx) {
+    (async () => {
+        if (vodCtx) {
+            try {
+                // Stop recorder — triggers final ondataavailable into vodCtx.chunks
+                if (vodCtx.recorder && vodCtx.recorder.state !== 'inactive') {
+                    try { vodCtx.recorder.stop(); } catch {}
+                    await new Promise(r => setTimeout(r, 600));
+                }
+
+                // Upload remaining chunks
+                if (vodCtx.chunks.length > 0 && vodCtx.streamDataId) {
+                    const blob = new Blob(vodCtx.chunks, { type: 'video/webm' });
+                    if (blob.size >= 100) {
+                        const fd = new FormData();
+                        fd.append('chunk', blob, `chunk-${streamId}-final.webm`);
+                        fd.append('segmentId', String(vodCtx.segmentId || 1));
+                        await fetch(`/api/vods/stream/${vodCtx.streamDataId}/chunk`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+                            body: fd,
+                        });
+                    }
+                }
+
+                // Tell server to remux for seeking
+                if (vodCtx.streamDataId && !vodCtx.finalized) {
+                    await fetch(`/api/vods/stream/${vodCtx.streamDataId}/finalize`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                            'Content-Type': 'application/json',
+                        },
+                    });
+                    console.log('[VOD] Background finalize complete for stream', streamId);
+                }
+            } catch (err) {
+                console.warn('[VOD] Background finalization error:', err.message);
+            }
+        }
+
+        // Delete stream on server
+        try { await api(`/streams/${streamId}`, { method: 'DELETE' }); } catch {}
+    })();
+}
+
 /* ── Stop Broadcasting ───────────────────────────────────────── */
 async function stopBroadcast() {
     const activeId = broadcastState.activeStreamId;
-    if (activeId) await uploadVodRecording(activeId);
-    try { if (activeId) await api(`/streams/${activeId}`, { method: 'DELETE' }); } catch {}
-    if (activeId) cleanupStream(activeId);
+    let bgCtx = null;
 
-    // Check if other streams are still live
+    if (activeId) {
+        bgCtx = _detachVodForBackground(activeId);
+        cleanupStream(activeId);
+    }
+
+    // Check if other streams are still live (exclude the stopped stream — DELETE hasn't fired yet)
     try {
         const data = await api('/streams/mine');
-        const remaining = (data.streams || []).filter(s => s.is_live);
+        const remaining = (data.streams || []).filter(s => s.is_live && s.id !== activeId);
         if (remaining.length > 0) {
             const withState = remaining.find(s => broadcastState.streams.has(s.id));
             const nextStream = withState || remaining[0];
             await buildBroadcastTabs(nextStream.id);
             await switchOrResumeStream(nextStream);
             toast('Stream ended', 'info');
+            if (activeId) _backgroundStreamEnd(activeId, bgCtx);
             return;
         }
     } catch {}
@@ -1574,6 +1658,7 @@ async function stopBroadcast() {
     clearGlobalDisplayTimers();
     if (!isStreaming()) setNavLiveIndicator(false);
     showStreamManager(); loadExistingStreams(); toast('Stream ended', 'info');
+    if (activeId) _backgroundStreamEnd(activeId, bgCtx);
 }
 
 /**
