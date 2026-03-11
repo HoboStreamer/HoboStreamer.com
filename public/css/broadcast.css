@@ -732,22 +732,6 @@
     animation: pulse-live 1.2s infinite;
 }
 
-.bc-tab .bc-tab-protocol {
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 4px;
-    background: rgba(255,255,255,0.1);
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-}
-
-.bc-tab.active .bc-tab-protocol {
-    background: rgba(255,255,255,0.18);
-    color: rgba(255,255,255,0.85);
-}
-
 .bc-tab .bc-tab-viewers {
     font-size: 0.75rem;
     font-weight: 700;

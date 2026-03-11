@@ -745,17 +745,16 @@ async function buildBroadcastTabs(activeStreamId) {
         const isActive = s.id === activeStreamId;
         const title = esc(s.title || 'Untitled');
         const truncTitle = title.length > 25 ? title.slice(0, 23) + '…' : title;
-        const proto = (s.protocol || 'webrtc').toUpperCase();
         // Show a broadcasting indicator if this stream has active media state
         const hasBrowserState = broadcastState.streams.has(s.id) && broadcastState.streams.get(s.id).localStream;
         const dotClass = hasBrowserState ? 'bc-tab-dot bc-tab-dot-broadcasting' : 'bc-tab-dot';
+        const vc = s.viewer_count || 0;
         return `<button class="bc-tab ${isActive ? 'active' : ''}"
                     onclick="switchBroadcastTab(${s.id})"
                     data-stream-id="${s.id}" title="${title}">
             <span class="${dotClass}"></span>
             <span>${truncTitle}</span>
-            <span class="bc-tab-protocol">${proto}</span>
-            <span class="bc-tab-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>
+            <span class="bc-tab-viewers" data-stream-id="${s.id}"><i class="fa-solid fa-eye"></i> ${vc}</span>
             <span class="bc-tab-close" onclick="event.stopPropagation();endBroadcastTab(${s.id})" title="End stream"><i class="fa-solid fa-xmark"></i></span>
         </button>`;
     }).join('');
@@ -1164,11 +1163,7 @@ function showBrowserBroadcast() {
     document.getElementById('bc-chat-sidebar').style.display = '';
     const lb = document.getElementById('bc-live-badge'); if (lb) lb.style.display = '';
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
-    // Set protocol badge from active stream
-    const ss = getActiveStreamState();
-    const proto = ss && ss.streamData && ss.streamData.protocol ? ss.streamData.protocol : 'webrtc';
-    const pb = document.getElementById('bc-protocol-badge');
-    if (pb && typeof protocolBadge === 'function') pb.innerHTML = protocolBadge(proto);
+    _startRsViewerPoll();
 }
 
 let _rtmpStatusPollTimer = null;
@@ -1181,8 +1176,7 @@ async function showRTMPInstructions(stream) {
     document.getElementById('bc-webrtc-obs-instructions').style.display = 'none';
     document.getElementById('bc-chat-sidebar').style.display = '';
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
-    const pb = document.getElementById('bc-protocol-badge');
-    if (pb && typeof protocolBadge === 'function') pb.innerHTML = protocolBadge('rtmp');
+    _startRsViewerPoll();
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
@@ -1243,8 +1237,7 @@ async function showJSMPEGInstructions(stream) {
     document.getElementById('bc-webrtc-obs-instructions').style.display = 'none';
     document.getElementById('bc-chat-sidebar').style.display = '';
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
-    const pb = document.getElementById('bc-protocol-badge');
-    if (pb && typeof protocolBadge === 'function') pb.innerHTML = protocolBadge('jsmpeg');
+    _startRsViewerPoll();
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
@@ -1281,8 +1274,7 @@ async function showWHIPInstructions(stream) {
     document.getElementById('bc-webrtc-obs-instructions').style.display = '';
     document.getElementById('bc-chat-sidebar').style.display = '';
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
-    const pb = document.getElementById('bc-protocol-badge');
-    if (pb && typeof protocolBadge === 'function') pb.innerHTML = protocolBadge('webrtc');
+    _startRsViewerPoll();
     document.getElementById('bc-whip-url').textContent = `${location.origin}/whip/${stream.id}`;
     document.getElementById('bc-whip-token').textContent = localStorage.getItem('token') || 'N/A';
 }
@@ -1707,6 +1699,11 @@ function cleanupStream(streamId) {
 
     // Remove from map
     broadcastState.streams.delete(streamId);
+    _perStreamViewerCounts.delete(streamId);
+    _updateTotalViewerCount();
+
+    // Stop RS viewer polling if no streams left
+    if (broadcastState.streams.size === 0) _stopRsViewerPoll();
 
     // If this was the active stream, clear the preview and switch to another if possible
     if (broadcastState.activeStreamId === streamId) {
@@ -1814,6 +1811,7 @@ function startGlobalDisplayTimers() {
 function clearGlobalDisplayTimers() {
     clearInterval(_globalStatsInterval); _globalStatsInterval = null;
     clearInterval(_globalUptimeInterval); _globalUptimeInterval = null;
+    _stopRsViewerPoll();
 }
 
 /* ── Per-Stream Heartbeat ────────────────────────────────────── */
@@ -2684,21 +2682,80 @@ async function handleSignalingMessage(streamId, msg) {
         case 'viewer-left': if (msg.peerId) closeViewerConnection(streamId, msg.peerId); break;
         case 'answer': { const pc = ss.viewerConnections.get(msg.fromPeerId); if (pc && msg.sdp) await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)); break; }
         case 'ice-candidate': { const pc = ss.viewerConnections.get(msg.fromPeerId); if (pc && msg.candidate) await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); break; }
-        case 'viewer-count': if (broadcastState.activeStreamId === streamId) updateViewerCountBroadcast(msg.count); break;
+        case 'viewer-count':
+            _perStreamViewerCounts.set(streamId, msg.count || 0);
+            _updateTabViewerCount(streamId, msg.count || 0);
+            _updateTotalViewerCount();
+            break;
         case 'welcome': console.log(`[Broadcast] Stream ${streamId} welcome:`, msg); break;
         case 'error': toast(msg.message || 'Broadcast error', 'error'); break;
     }
 }
 
 /* ── UI Updates ──────────────────────────────────────────────── */
+
+/** Per-stream viewer counts from signaling, keyed by streamId */
+const _perStreamViewerCounts = new Map();
+let _rsViewerCount = 0;
+let _rsViewerPollTimer = null;
+
 function updateBroadcastStatus(state) {
     const el = document.getElementById('bc-connection-status'); if (!el) return;
-    const map = { connected: { text: 'Connected', cls: 'bc-status-good' }, checking: { text: 'Connecting...', cls: 'bc-status-warn' }, completed: { text: 'Connected', cls: 'bc-status-good' }, disconnected: { text: 'Disconnected', cls: 'bc-status-bad' }, failed: { text: 'Failed', cls: 'bc-status-bad' }, error: { text: 'Error', cls: 'bc-status-bad' }, new: { text: 'Starting...', cls: 'bc-status-warn' } };
+    // Determine streaming method label from active stream
+    const ss = getActiveStreamState();
+    const proto = (ss?.streamData?.protocol || 'webrtc').toUpperCase();
+    const map = {
+        connected:    { text: proto,            cls: 'bc-status-good' },
+        checking:     { text: 'Connecting…',    cls: 'bc-status-warn' },
+        completed:    { text: proto,            cls: 'bc-status-good' },
+        disconnected: { text: 'Disconnected',   cls: 'bc-status-bad'  },
+        failed:       { text: 'Failed',          cls: 'bc-status-bad'  },
+        error:        { text: 'Error',           cls: 'bc-status-bad'  },
+        new:          { text: 'Starting…',       cls: 'bc-status-warn' },
+    };
     const s = map[state] || { text: state, cls: '' };
     el.textContent = s.text; el.className = 'bc-connection-status ' + s.cls;
 }
 
-function updateViewerCountBroadcast(count) { const el = document.getElementById('bc-viewer-count'); if (el) el.textContent = count || 0; }
+function _updateTabViewerCount(streamId, count) {
+    const badge = document.querySelector(`.bc-tab-viewers[data-stream-id="${streamId}"]`);
+    if (badge) badge.innerHTML = `<i class="fa-solid fa-eye"></i> ${count}`;
+}
+
+function _updateTotalViewerCount() {
+    let total = 0;
+    for (const [, c] of _perStreamViewerCounts) total += c;
+    const el = document.getElementById('bc-viewer-count');
+    if (el) el.textContent = total;
+    // RS viewer count
+    const rsEl = document.getElementById('bc-rs-viewer-count');
+    if (rsEl) {
+        if (_rsViewerCount > 0) { rsEl.style.display = ''; rsEl.querySelector('strong').textContent = _rsViewerCount; }
+        else rsEl.style.display = 'none';
+    }
+}
+
+function _startRsViewerPoll() {
+    _stopRsViewerPoll();
+    const rs = broadcastState.robotStreamer;
+    if (!rs?.enabled || !rs?.robotId) return;
+    const poll = async () => {
+        try {
+            const data = await api('/robotstreamer/integration/validate', { method: 'POST', body: { robot_input: rs.robotId } });
+            const robots = data.integration?.available_robots || [];
+            const robot = robots.find(r => String(r.robot_id) === String(rs.robotId));
+            _rsViewerCount = robot ? Number(robot.viewers || 0) : 0;
+        } catch { _rsViewerCount = 0; }
+        _updateTotalViewerCount();
+    };
+    poll();
+    _rsViewerPollTimer = setInterval(poll, 60000);
+}
+
+function _stopRsViewerPoll() {
+    if (_rsViewerPollTimer) { clearInterval(_rsViewerPollTimer); _rsViewerPollTimer = null; }
+    _rsViewerCount = 0;
+}
 
 /* ── Broadcaster Controls ─────────────────────────────────────── */
 async function flipCamera() {
