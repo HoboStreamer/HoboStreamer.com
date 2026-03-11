@@ -879,6 +879,19 @@ class ChatServer {
         }
     }
 
+    /**
+     * Broadcast a message to ALL connected chat clients (every stream + global).
+     * Used for server-wide announcements (restarts, updates).
+     */
+    broadcastAll(data) {
+        const msg = JSON.stringify(data);
+        for (const [ws] of this.clients) {
+            if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+                ws.send(msg);
+            }
+        }
+    }
+
     close() {
         if (this.wss) {
             if (this.heartbeatInterval) {

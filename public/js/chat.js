@@ -12,6 +12,13 @@ let chatRenderTargetId = null;
 let _bgBroadcastWs = null;
 let _bgBroadcastStreamId = null;
 
+// ── Chat auto-reconnect state ────────────────────────────────
+let _chatReconnectTimer = null;
+let _chatReconnectDelay = 2000;
+const CHAT_RECONNECT_BASE = 2000;
+const CHAT_RECONNECT_MAX = 30000;
+let _chatIntentionalClose = false;
+
 // ── Slow mode state ─────────────────────────────────────────
 let chatSlowModeSeconds = 0;
 let chatSlowModeCooldownTimer = null;
@@ -217,6 +224,10 @@ function initChat(streamId) {
 
     chatWs = new WebSocket(wsUrl);
 
+    _chatIntentionalClose = false;
+    _chatReconnectDelay = CHAT_RECONNECT_BASE;
+    if (_chatReconnectTimer) { clearTimeout(_chatReconnectTimer); _chatReconnectTimer = null; }
+
     chatWs.onopen = () => {
         // Also send a join message (belt-and-suspenders auth + room join)
         chatWs.send(JSON.stringify({
@@ -224,6 +235,7 @@ function initChat(streamId) {
             streamId: streamId,
             token: token || undefined
         }));
+        _chatReconnectDelay = CHAT_RECONNECT_BASE; // reset backoff on success
         addSystemMessage('Connected to chat');
     };
 
@@ -243,6 +255,10 @@ function initChat(streamId) {
 
     chatWs.onclose = () => {
         addSystemMessage('Chat disconnected');
+        // Auto-reconnect unless intentionally closed (navigation/destroy)
+        if (!_chatIntentionalClose && chatStreamId) {
+            _scheduleChatReconnect(chatStreamId);
+        }
     };
 
     // Load history
@@ -268,7 +284,30 @@ function initChat(streamId) {
     }
 }
 
+/**
+ * Schedule a chat reconnect with exponential backoff.
+ */
+function _scheduleChatReconnect(streamId) {
+    if (_chatReconnectTimer) return; // already scheduled
+    const delay = _chatReconnectDelay;
+    _chatReconnectDelay = Math.min(_chatReconnectDelay * 1.5, CHAT_RECONNECT_MAX);
+    addSystemMessage(`Reconnecting in ${Math.round(delay / 1000)}s…`);
+    _chatReconnectTimer = setTimeout(() => {
+        _chatReconnectTimer = null;
+        if (_chatIntentionalClose) return;
+        // Only reconnect if we still have a target stream
+        if (!chatStreamId && !streamId) return;
+        const targetStream = chatStreamId || streamId;
+        console.log('[Chat] Auto-reconnecting to stream', targetStream);
+        chatWs = null; // clear stale ref before reconnecting
+        chatStreamId = targetStream;
+        initChat(targetStream);
+    }, delay);
+}
+
 function destroyChat() {
+    _chatIntentionalClose = true;
+    if (_chatReconnectTimer) { clearTimeout(_chatReconnectTimer); _chatReconnectTimer = null; }
     // When broadcasting, keep the chat WS alive in the background so TTS
     // messages continue to play while the user browses other pages.
     const isBroadcasting = typeof isStreaming === 'function' && isStreaming();
@@ -437,6 +476,18 @@ function handleChatMessage(msg) {
         case 'error':
             addSystemMessage(msg.message, true);
             break;
+        case 'server_restart':
+            // Server is about to restart — show prominent notice
+            addRichSystemMessage(msg.message || 'Server restarting — chat will reconnect automatically.', 'warning');
+            break;
+        case 'update': {
+            // Platform update notification with commit logs + link
+            const summary = esc(msg.summary || 'New update deployed!');
+            const linkUrl = msg.url ? esc(msg.url) : null;
+            const linkHtml = linkUrl ? ` <a href="${linkUrl}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">View full patch notes →</a>` : '';
+            addRichSystemMessage(`🚀 ${summary}${linkHtml}`, 'update');
+            break;
+        }
         case 'coin_earned':
             if (typeof handleCoinEarned === 'function') handleCoinEarned(msg);
             break;
@@ -586,6 +637,24 @@ function addSystemMessage(text, isError = false) {
     el.className = 'chat-msg system';
     if (isError) el.style.color = 'var(--danger)';
     el.textContent = text;
+    container.appendChild(el);
+    scrollChat();
+    if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
+}
+
+/**
+ * Add a rich system message that supports HTML (links, formatting).
+ * @param {string} html - Pre-escaped HTML content
+ * @param {'warning'|'update'|'info'} style - Visual style variant
+ */
+function addRichSystemMessage(html, style = 'info') {
+    const { messages: container } = getChatEl();
+    if (!container) return;
+    const el = document.createElement('div');
+    el.className = 'chat-msg system';
+    if (style === 'warning') el.style.color = 'var(--warning, #f59e0b)';
+    else if (style === 'update') el.style.color = 'var(--accent)';
+    el.innerHTML = html;
     container.appendChild(el);
     scrollChat();
     if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
