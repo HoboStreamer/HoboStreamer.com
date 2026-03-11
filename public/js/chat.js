@@ -745,10 +745,15 @@ async function loadContextMenuProfile(menu, username, userId, isAnon) {
 
 function renderAnonContextMenu(menu, username, userId) {
     const initial = username[0] ? username[0].toUpperCase() : '?';
-    const adminBtns = currentUser && currentUser.role === 'admin'
-        ? `<div class="ctx-divider"></div>
-           <button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxBanUser(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban</button>`
-        : '';
+    let banBtns = '';
+    if (canModerateCurrentStream()) {
+        banBtns += `<div class="ctx-divider"></div>
+           <button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxStreamBan(this.dataset.username, null, this.dataset.username)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>`;
+    }
+    if (currentUser?.capabilities?.manage_site_bans) {
+        if (!canModerateCurrentStream()) banBtns += '<div class="ctx-divider"></div>';
+        banBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxGlobalBanAnon(this.dataset.username)"><i class="fa-solid fa-ban"></i> Ban from site</button>`;
+    }
     menu.innerHTML = `
         <div class="ctx-header">
             <span class="ctx-avatar-letter" style="background:#666">${initial}</span>
@@ -759,7 +764,7 @@ function renderAnonContextMenu(menu, username, userId) {
         </div>
         <div class="ctx-actions">
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
-            ${adminBtns}
+            ${banBtns}
         </div>
     `;
 }
@@ -815,7 +820,8 @@ function renderContextMenu(menu, profile, username) {
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
-            ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxBanUser(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban</button>` : ''}
+            ${canModerateCurrentStream() ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxStreamBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>` : ''}
+            ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxGlobalBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban from site</button>` : ''}
         </div>
     `;
 }
@@ -841,12 +847,43 @@ function ctxViewLogs(username, userId) {
     openChatLogsModal(username, userId);
 }
 
-function ctxBanUser(username, userId) {
+/**
+ * Can the current user moderate the chat stream they're viewing?
+ * Checks global mod capability OR stream ownership.
+ */
+function canModerateCurrentStream() {
+    if (!currentUser) return false;
+    if (currentUser.capabilities?.moderate_global) return true;
+    // Stream owner can moderate their own stream
+    if (currentStreamData && currentStreamData.user_id === currentUser.id) return true;
+    // Channel mods — if the server told us we can moderate, the chatStreamId will match
+    // For now, channel mods use /ban command in chat. Context menu covers global mods + owners.
+    return false;
+}
+
+function ctxStreamBan(username, userId, anonId) {
     dismissContextMenu();
-    if (!confirm(`Ban ${username}?`)) return;
-    api(`/admin/users/${userId}/ban`, { method: 'POST', body: JSON.stringify({ reason: 'Banned via chat' }) })
-        .then(() => toast(`${username} banned`, 'success'))
-        .catch(() => toast('Ban failed', 'error'));
+    if (!chatStreamId) return toast('Not in a stream chat', 'error');
+    if (!confirm(`Ban ${username} from this stream?`)) return;
+    const body = { stream_id: chatStreamId, reason: 'Banned via chat' };
+    if (userId) body.user_id = userId;
+    if (anonId) body.anon_id = anonId;
+    api('/mod/stream-ban', { method: 'POST', body })
+        .then(() => toast(`${username} banned from stream`, 'success'))
+        .catch(e => toast(e.message || 'Ban failed', 'error'));
+}
+
+function ctxGlobalBan(username, userId) {
+    dismissContextMenu();
+    if (!confirm(`⚠️ GLOBAL BAN: Ban ${username} from the entire site? This also IP-bans them.`)) return;
+    api('/mod/global-ban', { method: 'POST', body: { user_id: userId, reason: 'Banned via chat' } })
+        .then(() => toast(`${username} globally banned`, 'success'))
+        .catch(e => toast(e.message || 'Ban failed', 'error'));
+}
+
+function ctxGlobalBanAnon(anonName) {
+    dismissContextMenu();
+    toast('Anonymous users can only be stream-banned. Use /ban in chat for IP bans.', 'info');
 }
 
 /* ═══════════════════════════════════════════════════════════════

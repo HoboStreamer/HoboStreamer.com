@@ -109,7 +109,7 @@ function getAllowedOrigins() {
 const allowedOrigins = getAllowedOrigins();
 
 // ── Middleware ────────────────────────────────────────────────
-app.set('trust proxy', 1);
+app.set('trust proxy', 2); // Two hops: Cloudflare → nginx → Node
 
 app.use(helmet({
     contentSecurityPolicy: false, // Allow inline scripts for dev

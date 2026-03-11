@@ -893,7 +893,7 @@ function getApiKeyByHash(hash) {
 function isUserBanned(userId, streamId) {
     const ban = get(`
         SELECT * FROM bans
-        WHERE (user_id = ? OR stream_id IS NULL)
+        WHERE user_id = ?
         AND (stream_id = ? OR stream_id IS NULL)
         AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
         LIMIT 1

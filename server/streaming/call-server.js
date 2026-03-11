@@ -123,7 +123,7 @@ class CallServer {
         const url = new URL(req.url, 'http://localhost');
         const streamId = parseInt(url.searchParams.get('streamId'));
         const token = url.searchParams.get('token') || null;
-        const ip = chatServer.normalizeIp(req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress);
+        const ip = chatServer.normalizeIp(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress);
 
         ws.isAlive = true;
         ws.on('pong', () => {

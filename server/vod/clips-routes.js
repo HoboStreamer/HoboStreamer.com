@@ -57,7 +57,7 @@ router.get('/:id', optionalAuth, (req, res) => {
         if (!clip) return res.status(404).json({ error: 'Clip not found' });
 
         // Track unique view by IP
-        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
+        const ip = req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
         const inserted = db.run(
             'INSERT OR IGNORE INTO content_views (content_type, content_id, ip) VALUES (?, ?, ?)',
             ['clip', clip.id, ip]

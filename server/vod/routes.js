@@ -39,7 +39,7 @@ const recentClipAttemptsByUser = new Map();
 const recentClipAttemptsByIp = new Map();
 
 function getRequesterIp(req) {
-    return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
+    return req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
 function pruneRecentAttempts(now = Date.now()) {
@@ -782,7 +782,7 @@ router.get('/:id', optionalAuth, (req, res) => {
         }
 
         // Track unique view by IP
-        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
+        const ip = req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
         const inserted = db.run(
             'INSERT OR IGNORE INTO content_views (content_type, content_id, ip) VALUES (?, ?, ?)',
             ['vod', vod.id, ip]

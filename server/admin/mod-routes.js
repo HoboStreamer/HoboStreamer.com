@@ -5,6 +5,9 @@
  * These are moderator-specific tools that don't belong in the admin panel.
  *
  * GET    /api/mod/bans                    - List stream-scoped bans
+ * POST   /api/mod/global-ban              - Global ban (admin + global_mod): site-wide + IP
+ * POST   /api/mod/stream-ban              - Local ban (any mod with stream powers)
+ * DELETE /api/mod/ban/:id                 - Unban (removes ban entry + clears is_banned if global)
  * GET    /api/mod/chat/search             - Search all chat logs
  * GET    /api/mod/chat/user/:userId       - View a user's chat history
  */
@@ -12,16 +15,20 @@ const express = require('express');
 const db = require('../db/database');
 const { requireAuth } = require('../auth/auth');
 const permissions = require('../auth/permissions');
+const chatServer = require('../chat/chat-server');
 
 const router = express.Router();
 
-// All mod routes require global_mod or admin
-router.use(requireAuth, permissions.requireGlobalMod);
+// All mod routes require auth (individual routes check specific permissions)
+router.use(requireAuth);
 
-// ── List stream-scoped bans (not site bans) ──────────────────
-router.get('/bans', (req, res) => {
+// ── List bans ────────────────────────────────────────────────
+router.get('/bans', permissions.requireGlobalMod, (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit || '100'), 500);
+        const streamId = req.query.stream_id ? parseInt(req.query.stream_id) : null;
+        const where = streamId ? 'WHERE b.stream_id = ?' : '';
+        const params = streamId ? [streamId, limit] : [limit];
         const bans = db.all(`
             SELECT b.*, u.username as banned_username, m.username as banned_by_username,
                    s.title as stream_title
@@ -29,12 +36,147 @@ router.get('/bans', (req, res) => {
             LEFT JOIN users u ON b.user_id = u.id
             LEFT JOIN users m ON b.banned_by = m.id
             LEFT JOIN streams s ON b.stream_id = s.id
-            WHERE b.stream_id IS NOT NULL
+            ${where}
             ORDER BY b.created_at DESC LIMIT ?
-        `, [limit]);
+        `, params);
         res.json({ bans });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list bans' });
+    }
+});
+
+// ── Global Ban (admin + global_mod) ──────────────────────────
+// Site-wide ban: sets is_banned flag, creates bans entry with no stream_id, adds IP ban
+router.post('/global-ban', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const { user_id, reason, duration_hours, ip_address } = req.body;
+        if (!user_id) return res.status(400).json({ error: 'user_id required' });
+
+        const targetUser = db.getUserById(parseInt(user_id));
+        if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+        const banReason = reason || 'Banned by moderator';
+        const expires = duration_hours
+            ? new Date(Date.now() + parseInt(duration_hours) * 3600000).toISOString()
+            : null;
+
+        // Auto-detect IP from connected WebSocket clients if not provided
+        const resolvedIp = ip_address || chatServer.getConnectedUserIp(targetUser.id);
+
+        // Set the site-wide is_banned flag
+        db.run('UPDATE users SET is_banned = 1, ban_reason = ? WHERE id = ?',
+            [banReason, targetUser.id]);
+
+        // Create user-based global ban
+        db.run(
+            `INSERT INTO bans (user_id, ip_address, reason, banned_by, expires_at) VALUES (?, ?, ?, ?, ?)`,
+            [targetUser.id, resolvedIp, banReason, req.user.id, expires]
+        );
+
+        // Also create standalone IP ban for the IP (catches alt accounts)
+        if (resolvedIp) {
+            db.run(
+                `INSERT INTO bans (ip_address, reason, banned_by, expires_at) VALUES (?, ?, ?, ?)`,
+                [resolvedIp, banReason + ` (IP of ${targetUser.username})`, req.user.id, expires]
+            );
+        }
+
+        // Immediately disconnect the user from chat
+        chatServer.disconnectUser({ userId: targetUser.id, ip: resolvedIp });
+
+        res.json({ message: `${targetUser.username} globally banned` });
+    } catch (err) {
+        console.error('[Mod] Global ban error:', err.message);
+        res.status(500).json({ error: 'Failed to ban user' });
+    }
+});
+
+// ── Stream Ban (any mod with stream moderation powers) ───────
+// Local ban: creates bans entry scoped to a specific stream
+router.post('/stream-ban', (req, res) => {
+    try {
+        const { user_id, anon_id, stream_id, reason, duration_hours, ip_address } = req.body;
+        const streamId = parseInt(stream_id);
+        if (!streamId) return res.status(400).json({ error: 'stream_id required' });
+        if (!user_id && !anon_id) return res.status(400).json({ error: 'user_id or anon_id required' });
+
+        // Check moderation permission for this stream
+        if (!permissions.canModerateStream(req.user, streamId)) {
+            return res.status(403).json({ error: 'You cannot moderate this stream' });
+        }
+
+        const banReason = reason || 'Banned by moderator';
+        const expires = duration_hours
+            ? new Date(Date.now() + parseInt(duration_hours) * 3600000).toISOString()
+            : null;
+
+        if (user_id) {
+            const targetUser = db.getUserById(parseInt(user_id));
+            if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+            // Auto-detect IP from connected clients if not provided
+            const resolvedIp = ip_address || chatServer.getConnectedUserIp(targetUser.id);
+
+            db.run(
+                `INSERT INTO bans (stream_id, user_id, ip_address, reason, banned_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+                [streamId, targetUser.id, resolvedIp, banReason, req.user.id, expires]
+            );
+
+            // Disconnect from this stream's chat
+            chatServer.disconnectUser({ userId: targetUser.id, ip: resolvedIp, streamId });
+
+            res.json({ message: `${targetUser.username} banned from stream` });
+        } else {
+            // Anon ban — look up IP from connected anon client
+            const anonClient = chatServer.findClientByAnonId(anon_id, streamId);
+            const resolvedIp = ip_address || anonClient?.ip || null;
+
+            db.run(
+                `INSERT INTO bans (stream_id, ip_address, anon_id, reason, banned_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+                [streamId, resolvedIp, anon_id, banReason, req.user.id, expires]
+            );
+
+            // Disconnect the anon user
+            if (resolvedIp) chatServer.disconnectUser({ ip: resolvedIp, streamId });
+
+            res.json({ message: `${anon_id} banned from stream` });
+        }
+    } catch (err) {
+        console.error('[Mod] Stream ban error:', err.message);
+        res.status(500).json({ error: 'Failed to ban user' });
+    }
+});
+
+// ── Unban ────────────────────────────────────────────────────
+router.delete('/ban/:id', (req, res) => {
+    try {
+        const ban = db.get('SELECT * FROM bans WHERE id = ?', [req.params.id]);
+        if (!ban) return res.status(404).json({ error: 'Ban not found' });
+
+        // Permission check: global bans require global_mod+, stream bans require stream mod
+        if (!ban.stream_id) {
+            if (!permissions.isGlobalModOrAbove(req.user)) {
+                return res.status(403).json({ error: 'Only global mods can remove global bans' });
+            }
+            // Clear is_banned flag if this was a global user ban
+            if (ban.user_id) {
+                db.run('UPDATE users SET is_banned = 0, ban_reason = NULL WHERE id = ?', [ban.user_id]);
+                // Remove ALL global bans for this user (user + IP entries)
+                db.run('DELETE FROM bans WHERE user_id = ? AND stream_id IS NULL', [ban.user_id]);
+                db.run('DELETE FROM bans WHERE ip_address IS NOT NULL AND banned_by = ? AND stream_id IS NULL AND reason LIKE ?',
+                    [ban.banned_by, '%' + (ban.reason || '') + '%']);
+            }
+        } else {
+            if (!permissions.canModerateStream(req.user, ban.stream_id)) {
+                return res.status(403).json({ error: 'You cannot moderate this stream' });
+            }
+        }
+
+        db.run('DELETE FROM bans WHERE id = ?', [req.params.id]);
+        res.json({ message: 'Ban removed' });
+    } catch (err) {
+        console.error('[Mod] Unban error:', err.message);
+        res.status(500).json({ error: 'Failed to unban' });
     }
 });
 

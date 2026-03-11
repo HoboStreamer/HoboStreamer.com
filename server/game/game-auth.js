@@ -7,7 +7,9 @@ const chatServer = require('../chat/chat-server');
 const { extractWsToken, authenticateWs } = require('../auth/auth');
 
 function getRequestIp(req) {
-    const rawIp = req?.headers?.['x-forwarded-for']?.split(',')[0]?.trim() || req?.socket?.remoteAddress || req?.connection?.remoteAddress || 'unknown';
+    const rawIp = req?.headers?.['cf-connecting-ip']
+        || req?.headers?.['x-forwarded-for']?.split(',')[0]?.trim()
+        || req?.socket?.remoteAddress || req?.connection?.remoteAddress || 'unknown';
     return chatServer.normalizeIp(rawIp);
 }
 

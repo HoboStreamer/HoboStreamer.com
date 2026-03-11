@@ -51,6 +51,20 @@ class ChatServer {
         return normalized;
     }
 
+    /**
+     * Extract the real client IP from Express/WS request.
+     * Prefers CF-Connecting-IP (set by Cloudflare, unforgeable through proxy),
+     * then X-Forwarded-For first entry, then socket remote address.
+     */
+    getClientIp(req) {
+        const raw = req.headers?.['cf-connecting-ip']
+            || req.headers?.['x-forwarded-for']?.split(',')[0]?.trim()
+            || req.socket?.remoteAddress
+            || req.connection?.remoteAddress
+            || 'unknown';
+        return this.normalizeIp(raw);
+    }
+
     getAnonIdForIp(ip) {
         const anonKey = this.normalizeIp(ip);
         if (!this.anonMap.has(anonKey)) {
@@ -125,7 +139,7 @@ class ChatServer {
      * Handle a new chat connection
      */
     handleConnection(ws, req) {
-        const ip = this.normalizeIp(req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress);
+        const ip = this.getClientIp(req);
         const urlParams = new URL(req.url, 'http://localhost').searchParams;
         const token = urlParams.get('token');
         const streamId = parseInt(urlParams.get('stream')) || null;
@@ -726,6 +740,33 @@ class ChatServer {
             }
         }
         return null;
+    }
+
+    /**
+     * Find the IP address of a connected user by user ID.
+     * Returns the IP from their most recent connection, or null if not connected.
+     */
+    getConnectedUserIp(userId) {
+        for (const [, info] of this.clients) {
+            if (info.user?.id === userId) return info.ip;
+        }
+        return null;
+    }
+
+    /**
+     * Disconnect all WebSocket clients for a given user ID or IP.
+     * Used after banning to immediately kick them.
+     */
+    disconnectUser({ userId, ip, streamId } = {}) {
+        for (const [ws, info] of this.clients) {
+            const matchUser = userId && info.user?.id === userId;
+            const matchIp = ip && info.ip === ip;
+            const matchStream = streamId ? info.streamId === streamId : true;
+            if ((matchUser || matchIp) && matchStream) {
+                this.sendTo(ws, { type: 'system', message: 'You have been banned.' });
+                try { ws.close(1000, 'banned'); } catch {}
+            }
+        }
     }
 
     findWsByUsername(name, streamId) {
