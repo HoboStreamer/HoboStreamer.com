@@ -1823,7 +1823,10 @@ function createRobotStreamerRpc(ws) {
         pending.clear();
     };
 
-    ws.addEventListener('close', () => rejectAll(new Error('RobotStreamer publish connection closed')));
+    ws.addEventListener('close', (ev) => {
+        const detail = ev.reason ? ` (${ev.code}: ${ev.reason})` : ev.code ? ` (code ${ev.code})` : '';
+        rejectAll(new Error(`RobotStreamer publish connection closed${detail}`));
+    });
     ws.addEventListener('error', () => rejectAll(new Error('RobotStreamer publish connection failed')));
 
     return {
@@ -1927,12 +1930,13 @@ async function startRobotStreamerRestream(streamId) {
         if (videoTrack) session.videoProducer = await transport.produce({ track: videoTrack });
         if (audioTrack) session.audioProducer = await transport.produce({ track: audioTrack });
 
-        ws.addEventListener('close', () => {
+        ws.addEventListener('close', (ev) => {
             if (ss.robotStreamer === session) {
                 session.active = false;
                 if (!session.intentionalClose) {
-                    console.warn('[RS Restream] WebSocket closed unexpectedly');
-                    setRobotStreamerStatus('RobotStreamer restream disconnected — reconnecting…', 'warning', 'bc-rsLiveStatus');
+                    console.warn('[RS Restream] WebSocket closed unexpectedly — code:', ev.code, 'reason:', ev.reason || '(none)');
+                    const detail = ev.reason ? ` — ${ev.reason}` : '';
+                    setRobotStreamerStatus(`RobotStreamer restream disconnected${detail} — reconnecting…`, 'warning', 'bc-rsLiveStatus');
                     scheduleRobotStreamerReconnect(streamId);
                 }
             }

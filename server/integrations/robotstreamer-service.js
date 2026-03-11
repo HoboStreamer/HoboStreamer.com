@@ -427,13 +427,24 @@ class RobotStreamerService {
 
     async _handlePublishConnection(ws, req, ctx) {
         let integration = ctx.integration;
-        if (!integration.rtc_sfu_url) {
-            try {
-                integration = await this.refreshIntegration(ctx.user.id);
-            } catch (err) {
+
+        // Always refresh to register session with RS backend and get fresh SFU endpoints.
+        // The RS SFU rejects connections that don't have an active robot_page_load session.
+        try {
+            integration = await this.refreshIntegration(ctx.user.id);
+        } catch (err) {
+            console.warn('[RS Publish] Refresh failed:', err.message);
+            // Fall back to cached integration if rtc_sfu_url exists
+            if (!integration?.rtc_sfu_url) {
                 ws.close(1011, `refresh failed: ${err.message}`);
                 return;
             }
+        }
+
+        if (!integration?.rtc_sfu_url) {
+            console.warn('[RS Publish] No SFU URL available after refresh');
+            ws.close(1011, 'no SFU URL available');
+            return;
         }
 
         let upstreamUrl;
@@ -447,6 +458,8 @@ class RobotStreamerService {
             ws.close(1011, 'invalid rtc url');
             return;
         }
+
+        console.log('[RS Publish] Connecting upstream:', upstreamUrl);
 
         const upstream = new WebSocket(upstreamUrl, {
             headers: { Origin: RS_ORIGIN },
@@ -462,25 +475,35 @@ class RobotStreamerService {
         };
 
         upstream.on('open', () => {
+            console.log('[RS Publish] Upstream connected');
             upstreamReady = true;
             flushQueue();
         });
 
         upstream.on('message', (payload) => {
+            const raw = payload.toString();
             if (ws.readyState === WebSocket.OPEN) {
-                ws.send(payload.toString());
+                ws.send(raw);
+            }
+            // Log errors from SFU for diagnostics
+            const parsed = safeJsonParse(raw);
+            if (parsed?.response && parsed.ok === false) {
+                console.warn('[RS Publish] SFU error response:', parsed.error || parsed.reason || 'unknown');
             }
         });
 
         upstream.on('close', (code, reason) => {
+            const reasonStr = reason?.toString() || 'upstream closed';
+            console.warn(`[RS Publish] Upstream closed: code=${code} reason=${reasonStr}`);
             if (ws.readyState === WebSocket.OPEN) {
-                ws.close(code || 1000, reason?.toString() || 'upstream closed');
+                ws.close(code || 1006, reasonStr);
             }
         });
 
         upstream.on('error', (err) => {
+            console.error('[RS Publish] Upstream error:', err.message);
             if (ws.readyState === WebSocket.OPEN) {
-                ws.close(1011, err.message);
+                ws.close(1011, `upstream error: ${err.message}`);
             }
         });
 
@@ -504,6 +527,7 @@ class RobotStreamerService {
                     };
                     outgoing = JSON.stringify(msg);
                 }
+                console.log('[RS Publish] Relaying:', msg.method);
             }
 
             if (!upstreamReady) outboundQueue.push(outgoing);
