@@ -6,6 +6,12 @@ let chatWs = null;
 let chatStreamId = null;
 let chatRenderTargetId = null;
 
+// ── Background broadcast chat ────────────────────────────────
+// When the user is broadcasting and navigates away, the chat WS
+// is kept alive in the background so TTS messages still play.
+let _bgBroadcastWs = null;
+let _bgBroadcastStreamId = null;
+
 // ── Slow mode state ─────────────────────────────────────────
 let chatSlowModeSeconds = 0;
 let chatSlowModeCooldownTimer = null;
@@ -170,6 +176,30 @@ function initChat(streamId) {
         applyChatSettings();
         return;
     }
+
+    // Reclaim background broadcast WS if it's connected to the same stream
+    if (_bgBroadcastWs && _bgBroadcastWs.readyState === WebSocket.OPEN && _bgBroadcastStreamId === streamId) {
+        destroyChat(); // close any existing foreground chat
+        chatWs = _bgBroadcastWs;
+        chatStreamId = _bgBroadcastStreamId;
+        chatRenderTargetId = nextTargetId;
+        _bgBroadcastWs = null;
+        _bgBroadcastStreamId = null;
+        // Reattach full message handler
+        chatWs.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                handleChatMessage(msg);
+            } catch { /* ignore */ }
+        };
+        chatWs.onclose = () => { addSystemMessage('Chat disconnected'); };
+        chatWs.onerror = () => { addSystemMessage('Chat connection error'); };
+        // Load history and apply settings
+        hydrateActiveChatHistory(streamId, { clear: true }).catch(() => {});
+        applyChatSettings();
+        return;
+    }
+
     destroyChat();
     chatStreamId = streamId;
     chatRenderTargetId = nextTargetId;
@@ -239,11 +269,34 @@ function initChat(streamId) {
 }
 
 function destroyChat() {
-    if (chatWs) {
-        chatWs.close();
+    // When broadcasting, keep the chat WS alive in the background so TTS
+    // messages continue to play while the user browses other pages.
+    const isBroadcasting = typeof isStreaming === 'function' && isStreaming();
+    if (isBroadcasting && chatWs && chatWs.readyState === WebSocket.OPEN && chatStreamId) {
+        // Transfer to background — only process TTS/audio, skip rendering
+        _bgBroadcastWs = chatWs;
+        _bgBroadcastStreamId = chatStreamId;
+        // Replace the message handler with a TTS-only handler
+        _bgBroadcastWs.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                _handleBgBroadcastMessage(msg);
+            } catch { /* ignore */ }
+        };
+        _bgBroadcastWs.onclose = () => {
+            _bgBroadcastWs = null;
+            _bgBroadcastStreamId = null;
+        };
+        _bgBroadcastWs.onerror = () => {};
         chatWs = null;
+        chatStreamId = null;
+    } else {
+        if (chatWs) {
+            chatWs.close();
+            chatWs = null;
+        }
+        chatStreamId = null;
     }
-    chatStreamId = null;
     chatRenderTargetId = null;
     // Clear all chat containers
     for (const id of ['chat-messages', 'bc-chat-messages', 'global-chat-messages', 'offline-chat-messages']) {
@@ -251,6 +304,38 @@ function destroyChat() {
         if (el) el.innerHTML = '';
     }
     dismissContextMenu();
+}
+
+/**
+ * Background broadcast message handler — only processes TTS messages
+ * so they continue playing while the broadcaster navigates other pages.
+ */
+function _handleBgBroadcastMessage(msg) {
+    switch (msg.type) {
+        case 'tts':
+            if (typeof broadcastState !== 'undefined' && broadcastState.settings?.ttsMode === 'self') {
+                if (typeof speakBroadcastTTS === 'function') {
+                    speakBroadcastTTS(msg.message || msg.text, msg.username);
+                }
+            }
+            break;
+        case 'tts-audio':
+            if (typeof playBroadcastTTSAudio === 'function' && typeof broadcastState !== 'undefined') {
+                playBroadcastTTSAudio(msg);
+            }
+            break;
+    }
+}
+
+/**
+ * Close the background broadcast chat WS (call when broadcast ends).
+ */
+function destroyBgBroadcastChat() {
+    if (_bgBroadcastWs) {
+        try { _bgBroadcastWs.close(); } catch {}
+        _bgBroadcastWs = null;
+        _bgBroadcastStreamId = null;
+    }
 }
 
 /* ── Message handling ─────────────────────────────────────────── */

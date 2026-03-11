@@ -1880,30 +1880,45 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     #nav-auth-anon, #nav-auth-user { gap: 8px; }
 }
 
-/* 1024px: Icon-only nav links with tooltips */
+/* 1024px: Hamburger menu + hide nav links (catches Steam Deck & small laptops) */
 @media (max-width: 1024px) {
     .nav-link span { display: none; }
     .nav-link { padding: 8px 10px; position: relative; }
-    .navbar { gap: 10px; padding: 0 10px; }
+    .navbar { gap: 8px; padding: 0 8px; }
     .nav-brand { font-size: 1.1rem; }
     .nav-brand i { font-size: 1.2rem; }
 
-    /* Tooltip for icon-only nav links */
-    .nav-link[data-tooltip]::after {
-        content: attr(data-tooltip);
-        position: absolute;
-        top: 100%; left: 50%; transform: translateX(-50%);
-        margin-top: 6px;
-        padding: 4px 10px; border-radius: 6px;
-        background: var(--bg-tertiary); color: var(--text-primary);
-        border: 1px solid var(--border);
-        font-size: 0.75rem; font-weight: 500;
-        white-space: nowrap;
-        opacity: 0; pointer-events: none;
-        transition: opacity 0.15s;
-        z-index: 1002;
+    .nav-links { display: none; }
+    .nav-hamburger { display: flex; order: 10; }
+    .nav-links.show {
+        display: flex; flex-direction: column;
+        position: absolute; top: var(--navbar-h); left: 0; right: 0;
+        background: var(--glass-strong); border-bottom: 1px solid var(--border);
+        padding: 12px; z-index: 1001;
+        overflow-y: auto;
+        max-height: calc(100vh - var(--navbar-h));
+        gap: 8px;
+        box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+        backdrop-filter: blur(18px);
     }
-    .nav-link[data-tooltip]:hover::after { opacity: 1; }
+    /* Restore labels & lay out vertically in dropdown */
+    .nav-links.show .nav-link {
+        flex-shrink: 1;
+        justify-content: flex-start;
+        padding: 12px 14px;
+        border-color: rgba(255,255,255,0.05);
+        background: rgba(255,255,255,0.03);
+    }
+    .nav-links.show .nav-link span { display: inline; }
+    .nav-links.show .nav-link[data-tooltip]::after { display: none; }
+    /* Nav-right stays visible, pushed to end before hamburger */
+    .nav-right { order: 9; margin-left: auto; gap: 6px; }
+    /* Compact currency badges */
+    .nav-balance, .nav-coins { padding: 4px 7px; font-size: 0.72rem; gap: 3px; border-radius: 10px; }
+    /* Smaller avatar, hide caret */
+    .nav-avatar-wrap { gap: 0; padding: 2px; }
+    .nav-avatar-wrap > .fa-caret-down { display: none; }
+    .nav-avatar { width: 28px; height: 28px; font-size: 0.75rem; }
 }
 
 /* 900px: Compact currency, hide brand text (keep "Hobo" on mobile) */
@@ -1954,41 +1969,8 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     line-height: 1;
 }
 
-/* 768px: Hamburger menu + Mobile stream layout */
+/* 768px: Mobile stream layout + compact content */
 @media (max-width: 768px) {
-    .navbar { gap: 8px; padding: 0 8px; }
-    .nav-links { display: none; }
-    .nav-hamburger { display: flex; order: 10; }
-    .nav-links.show {
-        display: flex; flex-direction: column;
-        position: absolute; top: var(--navbar-h); left: 0; right: 0;
-        background: var(--glass-strong); border-bottom: 1px solid var(--border);
-        padding: 12px; z-index: 1001;
-        overflow-y: auto;
-        max-height: calc(100vh - var(--navbar-h));
-        gap: 8px;
-        box-shadow: 0 18px 40px rgba(0,0,0,0.35);
-        backdrop-filter: blur(18px);
-    }
-    /* Restore labels & lay out vertically in mobile dropdown */
-    .nav-links.show .nav-link {
-        flex-shrink: 1;
-        justify-content: flex-start;
-        padding: 12px 14px;
-        border-color: rgba(255,255,255,0.05);
-        background: rgba(255,255,255,0.03);
-    }
-    .nav-links.show .nav-link span { display: inline; }
-    .nav-links.show .nav-link[data-tooltip]::after { display: none; }
-    /* Nav-right stays visible, pushed to end before hamburger */
-    .nav-right { order: 9; margin-left: auto; gap: 6px; }
-    /* Compact currency badges — keep amounts visible */
-    .nav-balance, .nav-coins { padding: 4px 7px; font-size: 0.72rem; gap: 3px; border-radius: 10px; }
-    /* Smaller avatar, hide caret */
-    .nav-avatar-wrap { gap: 0; padding: 2px; }
-    .nav-avatar-wrap > .fa-caret-down { display: none; }
-    .nav-avatar { width: 28px; height: 28px; font-size: 0.75rem; }
-
     .hero h1 { font-size: 1.6rem; }
     .hero { padding-left: 16px; padding-right: 16px; }
     .promo-bar { justify-content: flex-start; text-align: left; }
