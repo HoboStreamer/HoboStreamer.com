@@ -184,6 +184,39 @@ router.get('/config', (req, res) => {
 });
 
 // ── Paste stats (admin) — must be before /:slug ─────────────
+// ── Debug: test paste creation steps (temporary) ────────────
+router.get('/debug-create', (req, res) => {
+    const steps = [];
+    try {
+        steps.push('config');
+        const config = getPasteConfig();
+        steps.push('slug');
+        const slug = generateSlug();
+        steps.push('sanitize');
+        const title = sanitizeTitle(undefined);
+        steps.push('detect');
+        const lang = detectLanguage('test', undefined);
+        steps.push('lastPasteTime');
+        const lastTime = db.getLastPasteTime(null, req.ip);
+        steps.push('countToday');
+        const todayCount = db.countUserPastesToday(null, req.ip);
+        steps.push('insert');
+        db.run(
+            `INSERT INTO pastes (slug, user_id, type, title, content, language, visibility, stream_id, burn_after_read, ip_address)
+             VALUES (?, ?, 'paste', ?, ?, ?, ?, ?, ?, ?)`,
+            [slug, null, title, 'debug test', lang, 'unlisted', null, 0, req.ip]
+        );
+        steps.push('select');
+        const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [slug]);
+        steps.push('cleanup');
+        db.run('DELETE FROM pastes WHERE slug = ?', [slug]);
+        steps.push('done');
+        res.json({ ok: true, steps, config, slug, lang, lastTime, todayCount });
+    } catch (err) {
+        res.json({ ok: false, steps, failedAt: steps[steps.length - 1], error: err.message, stack: err.stack?.split('\n').slice(0, 5) });
+    }
+});
+
 router.get('/admin/stats', requireAuth, (req, res) => {
     if (req.user.role !== 'admin' && req.user.role !== 'global_mod') {
         return res.status(403).json({ error: 'Admin access required' });
@@ -302,7 +335,7 @@ router.post('/', optionalAuth, (req, res) => {
         res.status(201).json({ paste, url: `/p/${slug}` });
     } catch (err) {
         console.error('[Pastes] Create error:', err);
-        res.status(500).json({ error: 'Failed to create paste' });
+        res.status(500).json({ error: 'Failed to create paste', detail: err.message });
     }
 });
 
