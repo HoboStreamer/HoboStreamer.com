@@ -62,6 +62,8 @@ const clipRoutes = require('./vod/clips-routes');
 const commentRoutes = require('./vod/comments-routes');
 const controlRoutes = require('./controls/routes');
 const adminRoutes = require('./admin/routes');
+const { requireAuth } = require('./auth/auth');
+const permissions = require('./auth/permissions');
 const robotStreamerRoutes = require('./integrations/routes');
 const thumbnailRoutes = require('./thumbnails/routes');
 const thumbnailService = require('./thumbnails/thumbnail-service');
@@ -241,6 +243,53 @@ app.get('/api/health', (req, res) => {
         uptime: process.uptime(),
         chat_connections: chatServer.getTotalConnections(),
     });
+});
+
+// ── Updates / Changelog ──────────────────────────────────────
+const { execSync } = require('child_process');
+const REPO_DIR = path.resolve(__dirname, '..');
+
+/**
+ * GET /api/updates — returns recent git commit history for the updates page.
+ * Query params: ?limit=30 (default 30, max 100)
+ */
+app.get('/api/updates', (req, res) => {
+    try {
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 30, 1), 100);
+        const raw = execSync(
+            `git --no-pager log --pretty=format:'%H||%h||%s||%an||%aI' -${limit}`,
+            { cwd: REPO_DIR, encoding: 'utf8', timeout: 5000 }
+        );
+        const commits = raw.trim().split('\n').filter(Boolean).map(line => {
+            const [hash, short, subject, author, date] = line.split('||');
+            return { hash, short, subject, author, date };
+        });
+        res.json({ commits });
+    } catch (err) {
+        console.error('[Updates] git log error:', err.message);
+        res.status(500).json({ error: 'Failed to read update history' });
+    }
+});
+
+/**
+ * POST /api/admin/broadcast — admin sends a message to all chat clients.
+ * Body: { type: 'system'|'server_restart'|'update', message, summary, url }
+ */
+app.post('/api/admin/broadcast', requireAuth, permissions.requireAdmin, (req, res) => {
+    try {
+        const { type = 'system', message, summary, url } = req.body;
+        if (!message && !summary) return res.status(400).json({ error: 'message or summary required' });
+        chatServer.broadcastAll({
+            type,
+            message: message || summary,
+            summary,
+            url,
+            timestamp: new Date().toISOString(),
+        });
+        res.json({ ok: true, clients: chatServer.getTotalConnections() });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ── SPA Fallback ─────────────────────────────────────────────
@@ -485,23 +534,35 @@ async function start() {
 function shutdown() {
     console.log('\n[Server] Shutting down...');
 
-    gameServer.close();
-    callServer.close();
-    chatServer.close();
-    controlServer.close();
-    broadcastServer.close();
-    jsmpegRelay.closeAll();
-    webrtcSFU.closeAll();
-    rtmpServer.stop();
-    db.close();
+    // Notify all chat clients before closing connections
+    try {
+        chatServer.broadcastAll({
+            type: 'server_restart',
+            message: '⚙️ Chat server restarting — you will be reconnected automatically.',
+            timestamp: new Date().toISOString(),
+        });
+    } catch { /* non-critical */ }
 
-    server.close(() => {
-        console.log('[Server] Goodbye! 🎒');
-        process.exit(0);
-    });
+    // Small delay to let the message reach clients before closing sockets
+    setTimeout(() => {
+        gameServer.close();
+        callServer.close();
+        chatServer.close();
+        controlServer.close();
+        broadcastServer.close();
+        jsmpegRelay.closeAll();
+        webrtcSFU.closeAll();
+        rtmpServer.stop();
+        db.close();
 
-    // Force exit after 5s
-    setTimeout(() => process.exit(1), 5000);
+        server.close(() => {
+            console.log('[Server] Goodbye! 🎒');
+            process.exit(0);
+        });
+
+        // Force exit after 5s
+        setTimeout(() => process.exit(1), 5000);
+    }, 300);
 }
 
 process.on('SIGTERM', shutdown);

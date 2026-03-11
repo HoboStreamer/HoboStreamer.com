@@ -12,7 +12,7 @@ let hoboAppMetaData = null;
 let hoboAppMetaPromise = null;
 
 // Reserved paths (not usernames)
-const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media', 'pastes', 'p']);
+const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media', 'pastes', 'p', 'updates']);
 
 /* ── API helpers ──────────────────────────────────────────────── */
 function authHeaders() {
@@ -451,6 +451,9 @@ function routeFromURL() {
                 });
             }).catch(() => {});
         }
+    } else if (segments[0] === 'updates') {
+        showPage('updates');
+        loadUpdatesPage();
     } else if (segments[0] === 'p' && segments[1]) {
         showPage('paste-viewer');
         loadPasteViewer(segments[1]);
@@ -2163,6 +2166,48 @@ function setupCustomVideoControls(prefix) {
 }
 
 let _userLoaded = false;
+
+/* ── Updates / Changelog Page ─────────────────────────────────── */
+async function loadUpdatesPage() {
+    const container = document.getElementById('updates-list');
+    if (!container) return;
+    container.innerHTML = '<div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
+
+    try {
+        const data = await api('/api/updates?limit=50');
+        if (!data.commits || data.commits.length === 0) {
+            container.innerHTML = '<p style="opacity:0.6;text-align:center;padding:32px 0;">No updates found.</p>';
+            return;
+        }
+
+        // Group commits by date
+        const groups = {};
+        for (const c of data.commits) {
+            const day = new Date(c.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+            if (!groups[day]) groups[day] = [];
+            groups[day].push(c);
+        }
+
+        let html = '';
+        for (const [day, commits] of Object.entries(groups)) {
+            html += `<div class="updates-day">
+                <h3 class="updates-day-header">${esc(day)}</h3>
+                <div class="updates-day-commits">`;
+            for (const c of commits) {
+                const time = new Date(c.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                html += `<div class="update-entry">
+                    <a class="update-hash" href="https://github.com/HoboStreamer/HoboStreamer.com/commit/${c.hash}" target="_blank" title="View on GitHub">${esc(c.short)}</a>
+                    <span class="update-subject">${esc(c.subject)}</span>
+                    <span class="update-meta">${esc(c.author)} &middot; ${esc(time)}</span>
+                </div>`;
+            }
+            html += '</div></div>';
+        }
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<p style="color:var(--error);text-align:center;padding:32px 0;">Failed to load updates.</p>`;
+    }
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadUser();
