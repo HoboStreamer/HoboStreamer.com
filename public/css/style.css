@@ -1889,9 +1889,12 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .nav-link[data-tooltip]:hover::after { opacity: 1; }
 }
 
-/* 900px: Compact currency, hide brand text */
+/* 900px: Compact currency, hide brand text (keep "Hobo" on mobile) */
 @media (max-width: 900px) {
-    .brand-text-wrap { display: none; }
+    .brand-text-wrap .alpha-badge { display: none; }
+    .brand-text-wrap .brand-streamer { display: none; }
+    .brand-text-wrap { flex-direction: row; align-items: center; }
+    .brand-text { font-size: 1rem; font-weight: 700; }
     .nav-balance, .nav-coins { padding: 4px 8px; min-width: 0; font-size: 0.78rem; }
     .nav-right .btn span { display: none; }
     .nav-right .btn { padding: 6px 10px; font-size: 0.85rem; gap: 0; }
