@@ -302,6 +302,16 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
+// ── Global Error Handler ─────────────────────────────────────
+app.use((err, req, res, _next) => {
+    // Multer file-filter / size-limit errors → 400
+    if (err.name === 'MulterError' || (err.message && err.message.includes('file'))) {
+        return res.status(400).json({ error: err.message || 'File upload error' });
+    }
+    console.error('[Server] Unhandled route error:', err.message || err);
+    if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+});
+
 // ── WebSocket Upgrade Handler ────────────────────────────────
 server.on('upgrade', (req, socket, head) => {
     const url = req.url || '';
