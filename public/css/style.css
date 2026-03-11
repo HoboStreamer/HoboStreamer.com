@@ -188,14 +188,27 @@ main#app { position: relative; z-index: 1; }
     color: var(--accent-light);
 }
 
-/* Live indicator dot on Go Live nav link */
+/* Live indicator on Go Live nav link */
 .nav-live-dot {
-    font-size: 0.5rem; color: #e74c3c; margin-left: 2px;
+    font-size: 0.45rem; color: #e74c3c; margin-left: 4px;
     animation: nav-live-pulse 1.5s ease-in-out infinite;
+    vertical-align: middle;
 }
 @keyframes nav-live-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.85); }
+}
+.nav-link.nav-live {
+    background: linear-gradient(180deg, rgba(231,76,60,0.18), rgba(231,76,60,0.08));
+    border-color: rgba(231,76,60,0.35);
+    color: #f1948a;
+    box-shadow: 0 0 8px rgba(231,76,60,0.15);
+}
+.nav-link.nav-live:hover {
+    background: linear-gradient(180deg, rgba(231,76,60,0.25), rgba(231,76,60,0.12));
+    border-color: rgba(231,76,60,0.45);
+    color: #f5b7b1;
+    box-shadow: 0 0 12px rgba(231,76,60,0.25);
 }
 
 .nav-right {
