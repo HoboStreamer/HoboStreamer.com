@@ -468,6 +468,7 @@ class RobotStreamerService {
 
         console.log('[RS Publish] Connecting upstream:', upstreamUrl, '| robot_id:', integration.robot_id, '| sfu_base:', integration.rtc_sfu_url);
 
+        const upstreamConnectStart = Date.now();
         const upstream = new WebSocket(upstreamUrl, ['protoo'], {
             headers: {
                 Origin: RS_ORIGIN,
@@ -475,6 +476,7 @@ class RobotStreamerService {
             },
             maxPayload: 512 * 1024,
             rejectUnauthorized: false, // RS SFU uses untrusted/self-signed cert
+            handshakeTimeout: 15000,
         });
         const outboundQueue = [];
         let upstreamReady = false;
@@ -486,7 +488,7 @@ class RobotStreamerService {
         };
 
         upstream.on('open', () => {
-            console.log('[RS Publish] Upstream connected, subprotocol:', upstream.protocol || '(none)');
+            console.log('[RS Publish] Upstream connected in', Date.now() - upstreamConnectStart, 'ms | subprotocol:', upstream.protocol || '(none)');
             upstreamReady = true;
             flushQueue();
         });
@@ -496,10 +498,15 @@ class RobotStreamerService {
             if (ws.readyState === WebSocket.OPEN) {
                 ws.send(raw);
             }
-            // Log errors from SFU for diagnostics
+            // Log all messages from SFU for diagnostics
             const parsed = safeJsonParse(raw);
-            if (parsed?.response && parsed.ok === false) {
-                console.warn('[RS Publish] SFU error response for method id', parsed.id, ':', JSON.stringify({ error: parsed.error, reason: parsed.reason, data: parsed.data }));
+            if (parsed?.response) {
+                const status = parsed.ok === false ? 'ERROR' : 'OK';
+                console.log(`[RS Publish] SFU → client: response id=${parsed.id} ${status}`, parsed.ok === false ? JSON.stringify({ error: parsed.error, reason: parsed.reason }) : '');
+            } else if (parsed?.request) {
+                console.log(`[RS Publish] SFU → client: request method=${parsed.method}`);
+            } else if (parsed?.notification) {
+                console.log(`[RS Publish] SFU → client: notification method=${parsed.method}`);
             }
         });
 
@@ -551,7 +558,7 @@ class RobotStreamerService {
                     };
                     outgoing = JSON.stringify(msg);
                 }
-                console.log('[RS Publish] Relaying:', msg.method);
+                console.log(`[RS Publish] Client → SFU: ${msg.method} (id=${msg.id}) | upstream ready: ${upstreamReady} | upstream state: ${upstream.readyState} | queued: ${outboundQueue.length}`);
             }
 
             if (!upstreamReady) outboundQueue.push(outgoing);
