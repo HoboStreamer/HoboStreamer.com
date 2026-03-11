@@ -167,6 +167,7 @@ app.use('/api/vods/upload', uploadLimiter);
 // Only rate-limit VOD upload chunk endpoint, not the read-only /live poll
 app.use('/api/vods/stream/:streamId/chunk', uploadLimiter);
 app.use('/api/vods/stream/:streamId/finalize', uploadLimiter);
+app.use('/api/vods/clips', uploadLimiter);
 
 // ── Static Files ─────────────────────────────────────────────
 // JS/CSS/HTML: no-cache + tell Cloudflare CDN not to cache at edge

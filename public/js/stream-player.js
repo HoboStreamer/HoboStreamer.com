@@ -1565,8 +1565,9 @@ async function createLiveClip() {
         });
 
         if (!resp.ok) {
-            const err = await resp.json();
-            throw new Error(err.error || 'Upload failed');
+            let errMsg = 'Upload failed';
+            try { const err = await resp.json(); errMsg = err.error || errMsg; } catch { errMsg = `Server error (${resp.status})`; }
+            throw new Error(errMsg);
         }
 
         const data = await resp.json();
