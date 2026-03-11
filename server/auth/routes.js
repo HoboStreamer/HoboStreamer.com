@@ -25,6 +25,11 @@ function cleanOptionalString(value) {
     return String(value).trim();
 }
 
+/** Strip HTML tags from a string */
+function stripHtml(str) {
+    return str.replace(/<[^>]*>/g, '');
+}
+
 function isValidEmail(value) {
     if (!value) return true;
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -68,7 +73,7 @@ router.post('/register', (req, res) => {
         const username = cleanOptionalString(req.body.username);
         const email = cleanOptionalString(req.body.email);
         const password = typeof req.body.password === 'string' ? req.body.password : '';
-        const display_name = cleanOptionalString(req.body.display_name);
+        let display_name = cleanOptionalString(req.body.display_name);
         const verification_key = cleanOptionalString(req.body.verification_key);
 
         if (!username || !password) {
@@ -83,6 +88,7 @@ router.post('/register', (req, res) => {
         if (password.length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
+        if (display_name) display_name = stripHtml(display_name);
         if (display_name && display_name.length > 60) {
             return res.status(400).json({ error: 'Display name must be 1-60 characters' });
         }
@@ -218,13 +224,17 @@ router.get('/me', requireAuth, (req, res) => {
 // ── Update Profile ───────────────────────────────────────────
 router.put('/profile', requireAuth, (req, res) => {
     try {
-        const display_name = cleanOptionalString(req.body.display_name);
-        const bio = cleanOptionalString(req.body.bio);
+        let display_name = cleanOptionalString(req.body.display_name);
+        let bio = cleanOptionalString(req.body.bio);
         const avatar_url = cleanOptionalString(req.body.avatar_url);
         const email = cleanOptionalString(req.body.email);
         const profile_color = cleanOptionalString(req.body.profile_color);
         const updates = [];
         const params = [];
+
+        // Strip HTML tags from free-text fields
+        if (display_name !== undefined) display_name = stripHtml(display_name);
+        if (bio !== undefined) bio = stripHtml(bio);
 
         if (display_name !== undefined && (display_name.length < 1 || display_name.length > 60)) {
             return res.status(400).json({ error: 'Display name must be 1-60 characters' });

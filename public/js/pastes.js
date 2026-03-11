@@ -104,18 +104,18 @@ function renderPasteCard(p) {
     const timeAgo = formatTimeAgo(p.created_at);
     const author = p.username || 'Anonymous';
     const avatar = p.avatar_url
-        ? `<img src="${p.avatar_url}" class="paste-card-avatar" alt="">`
+        ? `<img src="${escapeHtml(p.avatar_url)}" class="paste-card-avatar" alt="">`
         : `<div class="paste-card-avatar paste-card-avatar-letter">${author[0].toUpperCase()}</div>`;
 
     const langBadge = !isScreenshot && p.language && p.language !== 'text'
-        ? `<span class="paste-card-lang">${p.language}</span>` : '';
+        ? `<span class="paste-card-lang">${escapeHtml(p.language)}</span>` : '';
     const pinBadge = p.pinned ? `<span class="paste-card-pin" title="Pinned"><i class="fa-solid fa-thumbtack"></i></span>` : '';
     const burnBadge = p.burn_after_read ? `<span class="paste-card-burn" title="Burns after reading"><i class="fa-solid fa-fire"></i></span>` : '';
     const viewsBadge = `<span class="paste-card-views"><i class="fa-solid fa-eye"></i> ${p.views || 0}</span>`;
 
     let thumb = '';
     if (isScreenshot && p.screenshot_url) {
-        thumb = `<div class="paste-card-thumb"><img src="${p.screenshot_url}" alt="Screenshot" loading="lazy"></div>`;
+        thumb = `<div class="paste-card-thumb"><img src="${escapeHtml(p.screenshot_url)}" alt="Screenshot" loading="lazy"></div>`;
     } else {
         // Code preview
         const preview = (p.content || '').slice(0, 200).replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -194,10 +194,10 @@ async function loadPasteViewer(slug) {
             const screenshotUrl = p.screenshot_url || `/data/pastes/screenshots/${p.screenshot_path?.split('/').pop()}`;
             contentHtml = `
                 <div class="paste-screenshot-view">
-                    <img src="${screenshotUrl}" alt="Screenshot" class="paste-screenshot-img"
+                    <img src="${escapeHtml(screenshotUrl)}" alt="Screenshot" class="paste-screenshot-img"
                          onclick="window.open(this.src, '_blank')">
                     ${p.content ? `<div class="paste-screenshot-desc">${escapeHtml(p.content)}</div>` : ''}
-                    ${meta.page_url ? `<div class="paste-screenshot-url"><i class="fa-solid fa-link"></i> <a href="${escapeHtml(meta.page_url)}" target="_blank" rel="noopener">${escapeHtml(meta.page_url)}</a></div>` : ''}
+                    ${meta.page_url && /^https?:\/\//i.test(meta.page_url) ? `<div class="paste-screenshot-url"><i class="fa-solid fa-link"></i> <a href="${escapeHtml(meta.page_url)}" target="_blank" rel="noopener">${escapeHtml(meta.page_url)}</a></div>` : ''}
                 </div>`;
         } else {
             const lines = (p.content || '').split('\n');
@@ -206,7 +206,7 @@ async function loadPasteViewer(slug) {
             contentHtml = `
                 <div class="paste-code-view">
                     <div class="paste-code-header">
-                        <span class="paste-code-lang"><i class="fa-solid fa-code"></i> ${p.language || 'text'}</span>
+                        <span class="paste-code-lang"><i class="fa-solid fa-code"></i> ${escapeHtml(p.language || 'text')}</span>
                         <span class="paste-code-lines">${lines.length} line${lines.length !== 1 ? 's' : ''}</span>
                         <div class="paste-code-actions">
                             <button class="btn btn-outline btn-sm" onclick="copyPasteContent()" title="Copy"><i class="fa-solid fa-copy"></i> Copy</button>

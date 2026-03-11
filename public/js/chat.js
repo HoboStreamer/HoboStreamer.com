@@ -380,25 +380,25 @@ function addChatMessage(msg) {
           + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`
         : `<span class="chat-avatar-letter" style="background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`;
 
-    const userId = msg.user_id || '';
+    const userId = esc(String(msg.user_id || ''));
 
     // ── Cosmetic rendering ───────────────────────────────
     // Hat emoji before name
     let hatHtml = '';
     if (msg.hatFX && msg.hatFX.hatChar) {
-        const animClass = msg.hatFX.animated ? ` hat-${msg.hatFX.animated}` : '';
-        hatHtml = `<span class="chat-hat${animClass}">${msg.hatFX.hatChar}</span>`;
+        const animClass = msg.hatFX.animated ? ` hat-${esc(msg.hatFX.animated)}` : '';
+        hatHtml = `<span class="chat-hat${animClass}">${esc(msg.hatFX.hatChar)}</span>`;
     }
 
     // Name effect CSS class on username
-    const nameFXClass = msg.nameFX?.cssClass ? ` ${msg.nameFX.cssClass}` : '';
+    const nameFXClass = msg.nameFX?.cssClass ? ` ${esc(msg.nameFX.cssClass)}` : '';
 
     // Particle wrapper
     const hasParticles = msg.particleFX?.chars;
-    const particleWrapOpen = hasParticles ? `<span class="chat-particle-wrap ${msg.particleFX.cssClass || ''}">` : '';
+    const particleWrapOpen = hasParticles ? `<span class="chat-particle-wrap ${esc(msg.particleFX.cssClass || '')}">` : '';
     const particleWrapClose = hasParticles ? `</span>` : '';
 
-    el.innerHTML = `${timestamp}${streamBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${nameColor}" data-username="${displayName}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
+    el.innerHTML = `${timestamp}${streamBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
 
     // Spawn particles if equipped
     if (hasParticles) {
@@ -889,7 +889,7 @@ async function loadChatLogs() {
                 const stream = m.stream_title ? ` <span class="log-stream">${esc(m.stream_title)}</span>` : '';
                 return `<div class="log-entry">
                     <span class="log-time">${ts}</span>${stream}
-                    <span class="log-user" style="color:${m.profile_color || '#999'}">${name}</span>:
+                    <span class="log-user" style="color:${esc(m.profile_color || '#999')}">${name}</span>:
                     <span class="log-text">${esc(m.message)}</span>
                 </div>`;
             }).join('');

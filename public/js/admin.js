@@ -237,7 +237,7 @@ async function fetchAdminLogs() {
                     return `<tr>
                         <td style="white-space:nowrap;font-size:0.8rem">${ts}</td>
                         <td style="white-space:nowrap">
-                            <span style="color:${m.profile_color || '#999'};cursor:pointer" onclick="showChatContextMenu(event)" data-username="${esc(m.display_name || m.username || 'anon')}" data-user-id="${m.user_id || ''}">${esc(m.display_name || m.username || 'anon')}</span>
+                            <span style="color:${esc(m.profile_color || '#999')};cursor:pointer" onclick="showChatContextMenu(event)" data-username="${esc(m.display_name || m.username || 'anon')}" data-user-id="${esc(String(m.user_id || ''))}">${esc(m.display_name || m.username || 'anon')}</span>
                         </td>
                         <td style="word-break:break-word">${esc(m.message)}</td>
                         <td style="font-size:0.8rem">${m.stream_id || '-'}</td>
@@ -256,7 +256,7 @@ async function fetchAdminLogs() {
             ` : `<span class="muted" style="font-size:0.85rem">${total} results</span>`;
         }
     } catch (e) {
-        results.innerHTML = `<p class="muted">Error: ${e.message}</p>`;
+        results.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
         if (pager) pager.innerHTML = '';
     }
 }
@@ -292,7 +292,7 @@ async function loadAdminUsers() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
 }
 
 async function changeUserRole(userId, role) {
@@ -347,7 +347,7 @@ async function loadAdminModerators() {
                     `).join('')}</tbody>
                 </table>
             ` : '<p class="muted">No global moderators yet</p>'}`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
 }
 
 async function promoteModerator() {
@@ -437,7 +437,7 @@ async function loadAdminSettings() {
                     <i class="fa-solid fa-floppy-disk"></i> Save Settings
                 </button>
             </form>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
 }
 
 async function saveAdminSettings(e) {
@@ -511,7 +511,7 @@ async function loadAdminVerificationKeys() {
                     `).join('')}</tbody>
                 </table>
             ` : '<p class="muted">No verification keys generated yet</p>'}`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
 }
 
 async function generateVerificationKey() {
@@ -575,7 +575,7 @@ async function loadAdminStreams() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
 }
 
 async function forceEndStream(streamId) {
@@ -619,7 +619,7 @@ async function loadAdminCashouts() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
 }
 
 async function approveCashout(cashoutId) {
@@ -667,7 +667,7 @@ async function loadAdminBans() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
 }
 
 async function unbanUser(userId) {
@@ -711,7 +711,7 @@ async function loadAdminVPN() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
 }
 
 async function approveVPN(id) {
@@ -897,7 +897,7 @@ async function loadAdminTTS() {
                 </div>
             </form>`;
     } catch (e) {
-        c.innerHTML = `<p class="muted">Error loading TTS settings: ${e.message}</p>`;
+        c.innerHTML = `<p class="muted">Error loading TTS settings: ${esc(e.message)}</p>`;
     }
 }
 

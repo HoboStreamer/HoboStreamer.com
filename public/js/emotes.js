@@ -56,7 +56,7 @@ function parseEmotes(text) {
         const emote = emoteMap.get(token);
         if (emote) {
             const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
-            return `<img class="${cls}" src="${emote.url}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
+            return `<img class="${cls}" src="${_escEmote(emote.url)}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
         }
         return _escEmote(token);
     }).join('');

@@ -73,6 +73,12 @@ router.post('/rewards', requireAuth, (req, res) => {
         if (cost < 1) {
             return res.status(400).json({ error: 'Cost must be at least 1' });
         }
+        if (icon && !/^fa-[a-z0-9-]+$/.test(icon)) {
+            return res.status(400).json({ error: 'Invalid icon class' });
+        }
+        if (color && !/^#[0-9a-fA-F]{6}$/.test(color)) {
+            return res.status(400).json({ error: 'Color must be a 6-digit hex color' });
+        }
 
         db.createCoinReward({
             streamer_id: req.user.id,
@@ -106,6 +112,12 @@ router.put('/rewards/:id', requireAuth, (req, res) => {
         const fields = {};
         for (const key of allowed) {
             if (req.body[key] !== undefined) fields[key] = req.body[key];
+        }
+        if (fields.icon && !/^fa-[a-z0-9-]+$/.test(fields.icon)) {
+            return res.status(400).json({ error: 'Invalid icon class' });
+        }
+        if (fields.color && !/^#[0-9a-fA-F]{6}$/.test(fields.color)) {
+            return res.status(400).json({ error: 'Color must be a 6-digit hex color' });
         }
 
         db.updateCoinReward(req.params.id, fields);
