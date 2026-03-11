@@ -35,6 +35,8 @@ function createStreamState(streamData) {
         mediaRecoveryAttempts: 0,
         mediaRecoveryInProgress: false,
         _suppressRecovery: false, // set true during intentional track stops (flip cam, screen share toggle)
+        _trackKeepaliveInterval: null,
+        _recoveryStartedAt: 0,
         lastThumbnailAt: 0,
         thumbnailCanvas: null,
         thumbnailCtx: null,
@@ -45,6 +47,39 @@ function createStreamState(streamData) {
 
     const BROADCAST_SIGNALING_MAX_BUFFERED_AMOUNT = 512 * 1024;
     const BROADCAST_THUMBNAIL_INTERVAL_MS = 115000;
+
+/**
+ * Keep the PipeWire / v4l2loopback / xdg-desktop-portal capture pipeline
+ * active by periodically consuming a video frame.  On Linux (Steam Deck,
+ * PipeWire) the capture source can be dropped if no consumer reads frames
+ * for several seconds — this heartbeat prevents that idle-timeout.
+ */
+function startTrackKeepalive(streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss?.localStream) return;
+    stopTrackKeepalive(streamId);
+    const videoTrack = ss.localStream.getVideoTracks()[0];
+    if (!videoTrack || typeof ImageCapture === 'undefined') return;
+    let capture;
+    try { capture = new ImageCapture(videoTrack); } catch { return; }
+    ss._trackKeepaliveInterval = setInterval(() => {
+        if (!getStreamState(streamId)?.localStream || videoTrack.readyState !== 'live') {
+            stopTrackKeepalive(streamId);
+            return;
+        }
+        capture.grabFrame().then(bmp => bmp.close()).catch(() => {});
+    }, 4000);
+    console.log('[Broadcast] Track keepalive started (4 s interval)');
+}
+
+function stopTrackKeepalive(streamId) {
+    const ss = getStreamState(streamId);
+    if (ss?._trackKeepaliveInterval) {
+        clearInterval(ss._trackKeepaliveInterval);
+        ss._trackKeepaliveInterval = null;
+        console.log('[Broadcast] Track keepalive stopped');
+    }
+}
 
 /* ── Wake Lock ─────────────────────────────────────────────────
    Prevents the OS/browser from suspending media tracks when the
@@ -266,31 +301,62 @@ function attachLocalStreamRecoveryHandlers(streamId) {
 
     // The 'inactive' event fires when ALL tracks end, but also fires spuriously
     // on some browsers during GPU resets, screen share renegotiation, tab
-    // backgrounding, power management, PipeWire restarts, etc.
-    // Only treat it as a real failure after an 8s grace period with multiple checks.
+    // backgrounding, power management, PipeWire restarts, Gamescope compositing, etc.
+    // Use an active ImageCapture probe to verify the stream is truly dead before
+    // triggering recovery — this eliminates false positives on Steam Deck / PipeWire.
     if (typeof currentStream.addEventListener === 'function') {
         currentStream.addEventListener('inactive', () => {
             if (!isStillCurrent()) return;
             const latest = getStreamState(streamId);
             if (_trackEndedFired || latest._suppressRecovery) return;
-            console.log('[Broadcast] MediaStream inactive event fired — starting 8s grace period');
-            // Grace period — check if tracks are truly dead
-            setTimeout(() => {
-                if (!isStillCurrent()) return;
-                const s2 = getStreamState(streamId);
-                if (_trackEndedFired || s2._suppressRecovery) return;
-                const tracks = currentStream.getTracks();
-                const allDead = tracks.every(
-                    t => t.readyState === 'ended'
-                );
-                if (allDead) {
-                    console.log(`[Broadcast] All ${tracks.length} tracks confirmed dead after grace period`);
-                    onMediaLost('media stream inactive');
-                } else {
-                    const summary = tracks.map(t => `${t.kind}:${t.readyState}/${t.muted?'muted':'unmuted'}`).join(', ');
-                    console.log(`[Broadcast] Ignored spurious inactive event — tracks: ${summary}`);
+            console.log('[Broadcast] MediaStream inactive event fired — probing liveness');
+
+            // Active probe: grab a video frame. If it works, the capture source is alive.
+            const vt = currentStream.getVideoTracks()[0];
+            const probeLive = () => {
+                if (!vt || typeof ImageCapture === 'undefined' || vt.readyState !== 'live')
+                    return Promise.resolve(false);
+                return new ImageCapture(vt).grabFrame()
+                    .then(bmp => { bmp.close(); return true; })
+                    .catch(() => false);
+            };
+
+            probeLive().then(alive => {
+                if (alive) {
+                    console.log('[Broadcast] Frame probe succeeded — stream alive, ignoring inactive event');
+                    return;
                 }
-            }, 8000);
+                console.log('[Broadcast] Frame probe failed — starting 12 s grace period');
+                setTimeout(() => {
+                    if (!isStillCurrent()) return;
+                    const s2 = getStreamState(streamId);
+                    if (_trackEndedFired || s2?._suppressRecovery) return;
+
+                    probeLive().then(recovered => {
+                        if (recovered) {
+                            console.log('[Broadcast] Stream recovered during grace period — no action needed');
+                            return;
+                        }
+                        const tracks = currentStream.getTracks();
+                        const allDead = tracks.every(t => t.readyState === 'ended');
+                        if (allDead) {
+                            console.log(`[Broadcast] All ${tracks.length} tracks confirmed dead after grace period`);
+                            onMediaLost('media stream inactive');
+                        } else {
+                            const summary = tracks.map(t => `${t.kind}:${t.readyState}/${t.muted?'muted':'unmuted'}`).join(', ');
+                            console.log(`[Broadcast] Tracks partially alive — ${summary}, extending grace 15 s`);
+                            setTimeout(() => {
+                                if (!isStillCurrent() || _trackEndedFired || getStreamState(streamId)?._suppressRecovery) return;
+                                if (currentStream.getTracks().every(t => t.readyState === 'ended')) {
+                                    onMediaLost('media stream inactive');
+                                } else {
+                                    console.log('[Broadcast] Tracks self-healed after extended grace — no recovery needed');
+                                }
+                            }, 15000);
+                        }
+                    });
+                }, 12000);
+            });
         }, { once: true });
     }
 }
@@ -307,9 +373,15 @@ function scheduleMediaRecovery(streamId, reason = 'media interrupted') {
 
     const delay = Math.min(2000 * (ss.mediaRecoveryAttempts + 1), 10000);
     ss.mediaRecoveryAttempts += 1;
+    ss._recoveryStartedAt = Date.now();
     if (broadcastState.activeStreamId === streamId) {
         updateBroadcastStatus('checking');
-        toast(`Broadcast interrupted — attempting recovery (${reason})`, 'warning');
+        // Only show warning toast on first attempt — subsequent retries log silently
+        if (ss.mediaRecoveryAttempts <= 1) {
+            toast(`Broadcast interrupted — attempting recovery (${reason})`, 'warning');
+        } else {
+            console.warn(`[Broadcast] Media recovery retry ${ss.mediaRecoveryAttempts} (${reason})`);
+        }
     }
     ss.mediaRecoveryTimer = setTimeout(() => {
         ss.mediaRecoveryTimer = null;
@@ -344,6 +416,7 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
     // Suppress recovery and null-out localStream BEFORE stopping tracks.
     // This ensures the ended/inactive handlers see a different localStream
     // reference and bail out, preventing re-entrant recovery loops.
+    stopTrackKeepalive(streamId);
     ss._suppressRecovery = true;
     if (ss.localStream) {
         const oldStream = ss.localStream;
@@ -375,7 +448,13 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
     ss.mediaRecoveryInProgress = false;
     if (broadcastState.activeStreamId === streamId) {
         updateBroadcastStatusFromConnections(streamId);
-        toast(`Broadcast recovered after ${reason}`, 'success');
+        // Only show success toast if recovery was slow enough for the user to notice
+        const elapsed = Date.now() - (ss._recoveryStartedAt || 0);
+        if (elapsed > 5000) {
+            toast(`Broadcast recovered after ${reason}`, 'success');
+        } else {
+            console.log(`[Broadcast] Silent recovery succeeded in ${elapsed}ms (${reason})`);
+        }
     }
 }
 
@@ -1510,6 +1589,7 @@ function cleanupStream(streamId) {
     }
 
     // Stop media tracks (suppress recovery so ended events don't trigger it)
+    stopTrackKeepalive(streamId);
     ss._suppressRecovery = true;
     if (ss.localStream) { ss.localStream.getTracks().forEach(t => t.stop()); ss.localStream = null; }
     stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
@@ -1895,6 +1975,7 @@ async function startMediaCapture(streamId, opts = {}) {
     optimizeOutgoingStream(streamId);
     applyManualGain(streamId);
     attachLocalStreamRecoveryHandlers(streamId);
+    startTrackKeepalive(streamId);
 
     // Only attach to preview if this is the active stream
     if (broadcastState.activeStreamId === streamId) {
