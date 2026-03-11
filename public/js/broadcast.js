@@ -146,15 +146,38 @@ function attachLocalStreamRecoveryHandlers(streamId) {
     const ss = getStreamState(streamId);
     if (!ss?.localStream) return;
     const currentStream = ss.localStream;
+    let _trackEndedFired = false;
     const onMediaLost = (reason) => {
         if (getStreamState(streamId)?.localStream !== currentStream) return;
+        _trackEndedFired = true;
         scheduleMediaRecovery(streamId, reason);
     };
     currentStream.getTracks().forEach((track) => {
         track.addEventListener('ended', () => onMediaLost(`${track.kind} track ended`), { once: true });
     });
+    // The 'inactive' event fires when ALL tracks end, but also fires spuriously
+    // on some browsers during GPU resets, screen share renegotiation, tab
+    // backgrounding, etc. Only treat it as a real failure if:
+    //   1) A track 'ended' event hasn't already triggered recovery, AND
+    //   2) After a 3s grace period, the tracks are genuinely dead
     if (typeof currentStream.addEventListener === 'function') {
-        currentStream.addEventListener('inactive', () => onMediaLost('media stream inactive'), { once: true });
+        currentStream.addEventListener('inactive', () => {
+            if (getStreamState(streamId)?.localStream !== currentStream) return;
+            if (_trackEndedFired) return; // track handler already handling it
+            // Grace period — check if tracks are truly dead
+            setTimeout(() => {
+                if (getStreamState(streamId)?.localStream !== currentStream) return;
+                if (_trackEndedFired) return;
+                const allDead = currentStream.getTracks().every(
+                    t => t.readyState === 'ended' || !t.enabled
+                );
+                if (allDead) {
+                    onMediaLost('media stream inactive');
+                } else {
+                    console.log('[Broadcast] Ignored spurious inactive event — tracks still alive');
+                }
+            }, 3000);
+        }, { once: true });
     }
 }
 
