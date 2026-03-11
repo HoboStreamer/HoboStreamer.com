@@ -147,6 +147,8 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
     else await loadGlobalChatHistory();
 
     applyChatSettings();
+    // Always scroll to the bottom after loading history
+    scrollChatToBottom();
 }
 
 /**
@@ -218,6 +220,22 @@ function initChat(streamId) {
 
     // Apply persisted settings to DOM
     applyChatSettings();
+
+    // Track user scroll position — clear indicator when user scrolls to bottom
+    const { messages: chatContainer } = getChatEl();
+    if (chatContainer && !chatContainer._scrollListenerAttached) {
+        chatContainer._scrollListenerAttached = true;
+        chatContainer.addEventListener('scroll', () => {
+            const nearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+            if (nearBottom) {
+                _chatUserScrolledUp = false;
+                _chatUnreadCount = 0;
+                _hideChatNewMessagesIndicator();
+            } else {
+                _chatUserScrolledUp = true;
+            }
+        }, { passive: true });
+    }
 }
 
 function destroyChat() {
@@ -446,7 +464,11 @@ function addChatMessage(msg) {
     }
 
     container.appendChild(el);
-    if (chatSettings.autoScroll) scrollChat();
+    if (chatSettings.autoScroll) {
+        scrollChat();
+        // If user is scrolled up, show the new-messages indicator instead
+        if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
+    }
 }
 
 /**
@@ -481,6 +503,7 @@ function addSystemMessage(text, isError = false) {
     el.textContent = text;
     container.appendChild(el);
     scrollChat();
+    if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
 }
 
 function addDonationMessage(msg) {
@@ -498,6 +521,7 @@ function addDonationMessage(msg) {
 
     container.appendChild(el);
     scrollChat();
+    if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
 
     // TTS for donations
     if (document.getElementById('tts-checkbox')?.checked) {
@@ -1030,6 +1054,9 @@ function getRoleColor(role) {
     }
 }
 
+let _chatUserScrolledUp = false;
+let _chatUnreadCount = 0;
+
 function scrollChat() {
     const { messages: container } = getChatEl();
     if (!container) return;
@@ -1037,7 +1064,49 @@ function scrollChat() {
     const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
     if (nearBottom) {
         container.scrollTop = container.scrollHeight;
+        _chatUserScrolledUp = false;
+        _chatUnreadCount = 0;
+        _hideChatNewMessagesIndicator();
+    } else {
+        _chatUserScrolledUp = true;
     }
+}
+
+/** Force-scroll chat to the very bottom (ignoring nearBottom guard). Used after loading history. */
+function scrollChatToBottom() {
+    const { messages: container } = getChatEl();
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    _chatUserScrolledUp = false;
+    _chatUnreadCount = 0;
+    _hideChatNewMessagesIndicator();
+}
+
+function _showChatNewMessagesIndicator() {
+    const { messages: container } = getChatEl();
+    if (!container) return;
+    let indicator = container.parentElement?.querySelector('.chat-new-msgs-indicator');
+    if (!indicator) {
+        indicator = document.createElement('button');
+        indicator.className = 'chat-new-msgs-indicator';
+        indicator.onclick = () => scrollChatToBottom();
+        container.parentElement.style.position = 'relative';
+        container.parentElement.appendChild(indicator);
+    }
+    indicator.innerHTML = `<i class="fa-solid fa-arrow-down"></i> ${_chatUnreadCount} new message${_chatUnreadCount !== 1 ? 's' : ''}`;
+    indicator.style.display = 'flex';
+}
+
+function _hideChatNewMessagesIndicator() {
+    const { messages: container } = getChatEl();
+    if (!container) return;
+    const indicator = container.parentElement?.querySelector('.chat-new-msgs-indicator');
+    if (indicator) indicator.style.display = 'none';
+}
+
+function _onNewChatMessageWhileScrolledUp() {
+    _chatUnreadCount++;
+    _showChatNewMessagesIndicator();
 }
 
 /**

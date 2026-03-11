@@ -1171,6 +1171,20 @@ main#app { position: relative; z-index: 1; }
     padding: 6px 8px; border-radius: var(--radius-sm);
     border-left: 3px solid var(--accent);
 }
+
+/* ── New messages indicator (shown when user scrolls up) ──── */
+.chat-new-msgs-indicator {
+    display: none; position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+    z-index: 10; padding: 6px 14px; border-radius: 20px;
+    background: var(--accent, #c0965c); color: #fff; font-size: 0.78rem; font-weight: 600;
+    border: none; cursor: pointer; gap: 6px; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    transition: opacity 0.2s;
+    white-space: nowrap;
+}
+.chat-new-msgs-indicator:hover { opacity: 0.85; }
+.chat-new-msgs-indicator i { font-size: 0.7rem; }
+
 .chat-msg .chat-badge {
     display: inline-flex; align-items: center;
     margin-right: 4px;
