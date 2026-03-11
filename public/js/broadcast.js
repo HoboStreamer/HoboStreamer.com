@@ -34,6 +34,7 @@ function createStreamState(streamData) {
         mediaRecoveryTimer: null,
         mediaRecoveryAttempts: 0,
         mediaRecoveryInProgress: false,
+        _suppressRecovery: false, // set true during intentional track stops (flip cam, screen share toggle)
         lastThumbnailAt: 0,
         thumbnailCanvas: null,
         thumbnailCtx: null,
@@ -148,7 +149,14 @@ function attachLocalStreamRecoveryHandlers(streamId) {
     const currentStream = ss.localStream;
     let _trackEndedFired = false;
     const onMediaLost = (reason) => {
-        if (getStreamState(streamId)?.localStream !== currentStream) return;
+        const latest = getStreamState(streamId);
+        if (!latest || latest.localStream !== currentStream) return;
+        // Ignore track-ended events caused by intentional operations
+        // (camera flip, screen share toggle, settings changes, cleanup)
+        if (latest._suppressRecovery) {
+            console.log(`[Broadcast] Ignored track event during intentional operation: ${reason}`);
+            return;
+        }
         _trackEndedFired = true;
         scheduleMediaRecovery(streamId, reason);
     };
@@ -162,12 +170,14 @@ function attachLocalStreamRecoveryHandlers(streamId) {
     //   2) After a 3s grace period, the tracks are genuinely dead
     if (typeof currentStream.addEventListener === 'function') {
         currentStream.addEventListener('inactive', () => {
-            if (getStreamState(streamId)?.localStream !== currentStream) return;
-            if (_trackEndedFired) return; // track handler already handling it
+            const latest = getStreamState(streamId);
+            if (!latest || latest.localStream !== currentStream) return;
+            if (_trackEndedFired || latest._suppressRecovery) return;
             // Grace period — check if tracks are truly dead
             setTimeout(() => {
-                if (getStreamState(streamId)?.localStream !== currentStream) return;
-                if (_trackEndedFired) return;
+                const s2 = getStreamState(streamId);
+                if (!s2 || s2.localStream !== currentStream) return;
+                if (_trackEndedFired || s2._suppressRecovery) return;
                 const allDead = currentStream.getTracks().every(
                     t => t.readyState === 'ended' || !t.enabled
                 );
@@ -227,12 +237,18 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
     const hadRsRestream = !!ss.robotStreamer?.active;
     await stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
 
+    // Suppress recovery and null-out localStream BEFORE stopping tracks.
+    // This ensures the ended/inactive handlers see a different localStream
+    // reference and bail out, preventing re-entrant recovery loops.
+    ss._suppressRecovery = true;
     if (ss.localStream) {
-        try { ss.localStream.getTracks().forEach((track) => track.stop()); } catch {}
+        const oldStream = ss.localStream;
         ss.localStream = null;
+        try { oldStream.getTracks().forEach((track) => track.stop()); } catch {}
     }
 
     await startMediaCapture(streamId);
+    ss._suppressRecovery = false; // new stream handlers are now attached
     startVodRecording(streamId);
 
     if (!ss.signalingWs || ss.signalingWs.readyState !== WebSocket.OPEN) {
@@ -1387,7 +1403,8 @@ function cleanupStream(streamId) {
         leaveBroadcastCall();
     }
 
-    // Stop media tracks
+    // Stop media tracks (suppress recovery so ended events don't trigger it)
+    ss._suppressRecovery = true;
     if (ss.localStream) { ss.localStream.getTracks().forEach(t => t.stop()); ss.localStream = null; }
     stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
 
@@ -2375,6 +2392,7 @@ async function flipCamera() {
     // Android requires stopping the old camera BEFORE acquiring the new one
     // (concurrent camera access is often blocked on mobile)
     const oldSettings = videoTrack.getSettings();
+    ss._suppressRecovery = true; // prevent track.ended from triggering recovery
     videoTrack.stop();
     ss.localStream.removeTrack(videoTrack);
     try {
@@ -2395,6 +2413,8 @@ async function flipCamera() {
         for (const [, pc] of ss.viewerConnections) { const sender = pc.getSenders().find(s => s.track?.kind === 'video'); if (sender) sender.replaceTrack(newTrack); }
         syncRobotStreamerTracks(broadcastState.activeStreamId).catch(() => {});
         const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
+        ss._suppressRecovery = false;
+        attachLocalStreamRecoveryHandlers(broadcastState.activeStreamId);
         toast('Camera flipped', 'success');
     } catch (err) {
         // Failed to get new camera — try to re-acquire the original
@@ -2404,6 +2424,8 @@ async function flipCamera() {
             ss.localStream.addTrack(recovery.getVideoTracks()[0]);
             const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
         } catch { /* truly stuck — no video track */ }
+        ss._suppressRecovery = false;
+        attachLocalStreamRecoveryHandlers(broadcastState.activeStreamId);
         toast('Could not flip camera: ' + err.message, 'error');
     }
 }
@@ -2416,6 +2438,7 @@ async function toggleScreenShare() {
     if (ss && ss.localStream && streamId) {
         try {
             await uploadVodRecording(streamId, { finalizeStream: false });
+            ss._suppressRecovery = true; // prevent track.ended from triggering recovery
             ss.localStream.getTracks().forEach(t => t.stop()); await startMediaCapture(streamId);
             startVodRecording(streamId);
             const nvt = ss.localStream.getVideoTracks()[0]; const nat = ss.localStream.getAudioTracks()[0];
@@ -2424,8 +2447,9 @@ async function toggleScreenShare() {
                 const as = pc.getSenders().find(s => s.track?.kind === 'audio'); if (as && nat) as.replaceTrack(nat);
             }
             syncRobotStreamerTracks(streamId).catch(() => {});
+            ss._suppressRecovery = false;
             toast(broadcastState.settings.screenShare ? 'Screen share on' : 'Camera on', 'success');
-        } catch (err) { toast('Failed to switch: ' + err.message, 'error'); broadcastState.settings.screenShare = !broadcastState.settings.screenShare; saveBroadcastSettings(); }
+        } catch (err) { ss._suppressRecovery = false; toast('Failed to switch: ' + err.message, 'error'); broadcastState.settings.screenShare = !broadcastState.settings.screenShare; saveBroadcastSettings(); }
     }
 }
 
