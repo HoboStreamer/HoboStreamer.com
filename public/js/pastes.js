@@ -62,7 +62,7 @@ async function fetchPastes() {
     if (!grid) return;
 
     try {
-        let url = `/api/pastes?limit=${PASTES_PER_PAGE}&offset=${_pastesOffset}`;
+        let url = `/pastes?limit=${PASTES_PER_PAGE}&offset=${_pastesOffset}`;
         if (_pastesFilter !== 'all') url += `&type=${_pastesFilter}`;
         if (_pastesSearch) url += `&search=${encodeURIComponent(_pastesSearch)}`;
 
@@ -165,7 +165,7 @@ async function loadPasteViewer(slug) {
     container.innerHTML = '<div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
 
     try {
-        const data = await api(`/api/pastes/${slug}`);
+        const data = await api(`/pastes/${slug}`);
         const p = data.paste;
         if (!p) throw new Error('Not found');
 
@@ -267,7 +267,7 @@ function copyPasteContent() {
 
 async function forkPaste(slug) {
     try {
-        const data = await api(`/api/pastes/${slug}/fork`, { method: 'POST' });
+        const data = await api(`/pastes/${slug}/fork`, { method: 'POST' });
         toast('Paste forked!', 'success');
         navigate(`/p/${data.paste.slug}`);
     } catch (err) {
@@ -278,7 +278,7 @@ async function forkPaste(slug) {
 async function deletePaste(slug) {
     if (!confirm('Delete this paste permanently?')) return;
     try {
-        await api(`/api/pastes/${slug}`, { method: 'DELETE' });
+        await api(`/pastes/${slug}`, { method: 'DELETE' });
         toast('Paste deleted', 'success');
         navigate('/pastes');
     } catch (err) {
@@ -338,13 +338,13 @@ async function submitPaste() {
     try {
         let data;
         if (editSlug) {
-            data = await api(`/api/pastes/${editSlug}`, {
+            data = await api(`/pastes/${editSlug}`, {
                 method: 'PUT',
                 body: { title, content, language, visibility },
             });
             toast('Paste updated!', 'success');
         } else {
-            data = await api('/api/pastes', {
+            data = await api('/pastes', {
                 method: 'POST',
                 body: { title: title || 'Untitled', content, language, visibility, burn_after_read: burn },
             });
@@ -528,7 +528,7 @@ async function submitScreenshot() {
 // ── Chat integration: /paste command creates a quick paste from chat ──
 function handlePasteFromChat(content, streamId) {
     // This creates a paste programmatically from a chat message
-    return api('/api/pastes', {
+    return api('/pastes', {
         method: 'POST',
         body: {
             title: `Chat paste — ${new Date().toLocaleString()}`,
