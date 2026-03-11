@@ -1807,6 +1807,7 @@ function buildRobotStreamerDeviceDescriptor(device, stream) {
 function createRobotStreamerRpc(ws) {
     let nextId = 1;
     const pending = new Map();
+    const RPC_TIMEOUT_MS = 15000;
 
     ws.addEventListener('message', (event) => {
         let msg;
@@ -1814,12 +1815,18 @@ function createRobotStreamerRpc(ws) {
         if (!msg?.response || !pending.has(msg.id)) return;
         const deferred = pending.get(msg.id);
         pending.delete(msg.id);
-        if (msg.ok === false) deferred.reject(new Error(msg.error || msg.reason || 'RobotStreamer request failed'));
-        else deferred.resolve(msg.data);
+        clearTimeout(deferred.timer);
+        if (msg.ok === false) {
+            console.warn('[RS RPC] Error response for', deferred.method, ':', msg.error || msg.reason);
+            deferred.reject(new Error(msg.error || msg.reason || 'RobotStreamer request failed'));
+        } else {
+            console.log('[RS RPC] Response OK for', deferred.method);
+            deferred.resolve(msg.data);
+        }
     });
 
     const rejectAll = (error) => {
-        for (const deferred of pending.values()) deferred.reject(error);
+        for (const deferred of pending.values()) { clearTimeout(deferred.timer); deferred.reject(error); }
         pending.clear();
     };
 
@@ -1834,8 +1841,16 @@ function createRobotStreamerRpc(ws) {
             if (ws.readyState !== WebSocket.OPEN) throw new Error('RobotStreamer publish connection is not open');
             const id = nextId++;
             const payload = { request: true, id, method, data };
+            console.log('[RS RPC] Sending:', method, '(id:', id + ')');
             return new Promise((resolve, reject) => {
-                pending.set(id, { resolve, reject });
+                const timer = setTimeout(() => {
+                    if (pending.has(id)) {
+                        pending.delete(id);
+                        console.error('[RS RPC] Timeout after', RPC_TIMEOUT_MS, 'ms for', method, '(id:', id + ')');
+                        reject(new Error(`RobotStreamer RPC timeout: ${method} (no response in ${RPC_TIMEOUT_MS / 1000}s)`));
+                    }
+                }, RPC_TIMEOUT_MS);
+                pending.set(id, { resolve, reject, timer, method });
                 ws.send(JSON.stringify(payload));
             });
         },
@@ -1868,28 +1883,50 @@ async function startRobotStreamerRestream(streamId) {
     console.log('[RS Restream] Starting for stream', streamId);
 
     try {
+        console.log('[RS Restream] Step 1/7: Loading mediasoup-client…');
+        setRobotStreamerStatus('Loading mediasoup library…', 'info', 'bc-rsLiveStatus');
         const mod = await loadRobotStreamerMediasoup();
         const Device = mod.Device || mod.default?.Device;
         if (!Device) throw new Error('mediasoup-client failed to load');
+        console.log('[RS Restream] Step 1/7 done: mediasoup-client loaded');
 
-        const ws = new WebSocket(getRobotStreamerPublishUrl(streamId));
+        console.log('[RS Restream] Step 2/7: Opening WebSocket to proxy…');
+        setRobotStreamerStatus('Connecting to RobotStreamer proxy…', 'info', 'bc-rsLiveStatus');
+        const wsUrl = getRobotStreamerPublishUrl(streamId);
+        console.log('[RS Restream] WS URL:', wsUrl.replace(/token=[^&]+/, 'token=***'));
+        const ws = new WebSocket(wsUrl);
         await new Promise((resolve, reject) => {
             ws.addEventListener('open', resolve, { once: true });
             ws.addEventListener('error', () => reject(new Error('RobotStreamer publish websocket failed')), { once: true });
-            ws.addEventListener('close', () => reject(new Error('RobotStreamer publish websocket closed')), { once: true });
+            ws.addEventListener('close', (ev) => reject(new Error(`RobotStreamer publish websocket closed (${ev.code})`)), { once: true });
         });
+        console.log('[RS Restream] Step 2/7 done: WebSocket open');
 
         const rpc = createRobotStreamerRpc(ws);
+
+        console.log('[RS Restream] Step 3/7: Getting router RTP capabilities…');
+        setRobotStreamerStatus('Negotiating RobotStreamer capabilities…', 'info', 'bc-rsLiveStatus');
         const routerRtpCapabilities = await rpc.request('getRouterRtpCapabilities', {});
+        console.log('[RS Restream] Step 3/7 done: Got', routerRtpCapabilities?.codecs?.length || 0, 'codecs');
+
         const device = new Device();
         await device.load({ routerRtpCapabilities });
+        console.log('[RS Restream] Device loaded, handler:', device.handlerName);
 
+        console.log('[RS Restream] Step 4/7: Creating WebRTC transport…');
+        setRobotStreamerStatus('Creating RobotStreamer transport…', 'info', 'bc-rsLiveStatus');
         const transportInfo = await rpc.request('createWebRtcTransport', { producing: true, consuming: false });
+        console.log('[RS Restream] Step 4/7 done: Transport ID:', transportInfo?.id);
+
+        console.log('[RS Restream] Step 5/7: Joining room…');
+        setRobotStreamerStatus('Joining RobotStreamer room…', 'info', 'bc-rsLiveStatus');
         await rpc.request('join', {
             device: buildRobotStreamerDeviceDescriptor(device, ss.localStream),
             rtpCapabilities: device.rtpCapabilities,
         });
+        console.log('[RS Restream] Step 5/7 done: Joined');
 
+        console.log('[RS Restream] Step 6/7: Creating send transport…');
         const transport = device.createSendTransport(transportInfo);
         transport.on('connect', ({ dtlsParameters }, callback, errback) => {
             rpc.request('connectWebRtcTransport', { transportId: transport.id, dtlsParameters })
@@ -1925,10 +1962,19 @@ async function startRobotStreamerRestream(streamId) {
         };
         ss.robotStreamer = session;
 
+        console.log('[RS Restream] Step 7/7: Producing tracks…');
+        setRobotStreamerStatus('Sending media to RobotStreamer…', 'info', 'bc-rsLiveStatus');
         const videoTrack = ss.localStream.getVideoTracks()[0] || null;
         const audioTrack = ss.localStream.getAudioTracks()[0] || null;
-        if (videoTrack) session.videoProducer = await transport.produce({ track: videoTrack });
-        if (audioTrack) session.audioProducer = await transport.produce({ track: audioTrack });
+        console.log('[RS Restream] Tracks — video:', !!videoTrack, 'audio:', !!audioTrack);
+        if (videoTrack) {
+            session.videoProducer = await transport.produce({ track: videoTrack });
+            console.log('[RS Restream] Video producer ID:', session.videoProducer.id);
+        }
+        if (audioTrack) {
+            session.audioProducer = await transport.produce({ track: audioTrack });
+            console.log('[RS Restream] Audio producer ID:', session.audioProducer.id);
+        }
 
         ws.addEventListener('close', (ev) => {
             if (ss.robotStreamer === session) {
