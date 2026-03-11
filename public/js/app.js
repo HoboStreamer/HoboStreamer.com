@@ -2147,8 +2147,11 @@ function setupCustomVideoControls(prefix) {
     video.addEventListener('timeupdate', updateProgress);
 }
 
+let _userLoaded = false;
+
 document.addEventListener('DOMContentLoaded', async () => {
     await loadUser();
+    _userLoaded = true;
     onAuthChange();
 
     // Load theme from server if logged in (localStorage already applied instantly)
@@ -2160,9 +2163,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     routeFromURL();
 });
 
-// Handle browser back/forward
+// Handle browser back/forward — wait for auth to be resolved first
 window.addEventListener('popstate', () => {
-    routeFromURL();
+    if (_userLoaded) {
+        routeFromURL();
+    }
+    // If auth hasn't loaded yet, DOMContentLoaded handler will call routeFromURL()
 });
 
 // Intercept link clicks to use SPA navigation

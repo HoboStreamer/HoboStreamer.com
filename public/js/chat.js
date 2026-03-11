@@ -263,7 +263,32 @@ function handleChatMessage(msg) {
             if (msg.authenticated) {
                 addSystemMessage(`Chatting as ${msg.username}`);
             } else {
-                addSystemMessage(`Chatting as ${msg.username}`);
+                // Server didn't authenticate us — show as anon
+                const hasToken = !!localStorage.getItem('token');
+                if (hasToken) {
+                    // We think we're logged in but the server rejected the token —
+                    // token may be expired/invalid. Reconnect chat after loadUser refreshes auth.
+                    addSystemMessage(`Chatting as ${msg.username} (not logged in)`);
+                    console.warn('[Chat] Token rejected by server — will attempt re-auth');
+                    // Re-validate token; if still valid, reconnect chat with fresh state
+                    if (typeof loadUser === 'function') {
+                        loadUser().then(() => {
+                            if (typeof currentUser !== 'undefined' && currentUser) {
+                                // Token was actually valid (race condition) — reconnect chat
+                                console.log('[Chat] Re-auth succeeded, reconnecting chat');
+                                const sid = chatStreamId;
+                                destroyChat();
+                                if (sid) initChat(sid);
+                            } else {
+                                // Token truly expired — clear it and update UI
+                                addSystemMessage('Session expired. Please log in again.');
+                                if (typeof onAuthChange === 'function') onAuthChange();
+                            }
+                        }).catch(() => {});
+                    }
+                } else {
+                    addSystemMessage(`Chatting as ${msg.username}`);
+                }
             }
             // Sync slow mode state from server on join
             if (typeof msg.slowmode_seconds === 'number') {
