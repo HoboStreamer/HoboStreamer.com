@@ -1562,6 +1562,8 @@ function cleanupStream(streamId) {
         setNavLiveIndicator(false);
         clearGlobalDisplayTimers();
         releaseWakeLock();
+        // Close any background broadcast chat WS now that we're no longer live
+        if (typeof destroyBgBroadcastChat === 'function') destroyBgBroadcastChat();
     }
 }
 
@@ -2119,11 +2121,28 @@ async function startRobotStreamerRestream(streamId) {
                 .then((data) => callback({ id: data?.id }))
                 .catch(errback);
         });
+        let _rsDisconnectTimer = null;
         transport.on('connectionstatechange', (state) => {
             console.log('[RS Restream] Transport state:', state);
-            if (state === 'connected') setRobotStreamerStatus('RobotStreamer restream is live.', 'success', 'bc-rsLiveStatus');
-            else if (state === 'connecting') setRobotStreamerStatus('RobotStreamer restream is connecting…', 'info', 'bc-rsLiveStatus');
-            else if (state === 'failed') {
+            // Clear any pending disconnect timer on any state change
+            if (_rsDisconnectTimer) { clearTimeout(_rsDisconnectTimer); _rsDisconnectTimer = null; }
+            if (state === 'connected') {
+                setRobotStreamerStatus('RobotStreamer restream is live.', 'success', 'bc-rsLiveStatus');
+            } else if (state === 'connecting') {
+                setRobotStreamerStatus('RobotStreamer restream is connecting…', 'info', 'bc-rsLiveStatus');
+            } else if (state === 'disconnected') {
+                // ICE disconnected — may recover on its own, but if it stays
+                // disconnected for 15s, treat it as a failure and reconnect.
+                setRobotStreamerStatus('RobotStreamer restream disconnected — waiting for recovery…', 'warning', 'bc-rsLiveStatus');
+                _rsDisconnectTimer = setTimeout(() => {
+                    _rsDisconnectTimer = null;
+                    if (ss.robotStreamer === session && session.active) {
+                        console.warn('[RS Restream] Transport stuck in disconnected state for 15s — reconnecting');
+                        setRobotStreamerStatus('RobotStreamer restream timed out — will retry.', 'error', 'bc-rsLiveStatus');
+                        scheduleRobotStreamerReconnect(streamId);
+                    }
+                }, 15000);
+            } else if (state === 'failed' || state === 'closed') {
                 setRobotStreamerStatus('RobotStreamer restream connection failed — will retry.', 'error', 'bc-rsLiveStatus');
                 scheduleRobotStreamerReconnect(streamId);
             }
@@ -2162,6 +2181,27 @@ async function startRobotStreamerRestream(streamId) {
         if (audioTrack) {
             session.audioProducer = await transport.produce({ track: audioTrack });
             console.log('[RS Restream] Audio producer ID:', session.audioProducer.id);
+        }
+
+        // Monitor producer track-ended events — when the underlying MediaStreamTrack
+        // ends (e.g., PipeWire restart, device disconnect), the mediasoup producer
+        // becomes dead. Detect this and trigger a full RS restream restart.
+        const onProducerTrackEnded = (kind) => {
+            if (ss.robotStreamer !== session || !session.active) return;
+            // If media recovery is already in progress, it will restart RS when done
+            if (ss.mediaRecoveryInProgress || ss.mediaRecoveryTimer) {
+                console.log(`[RS Restream] ${kind} producer trackended — media recovery active, will restart after`);
+                return;
+            }
+            console.warn(`[RS Restream] ${kind} producer trackended — scheduling reconnect`);
+            setRobotStreamerStatus(`RobotStreamer ${kind} track ended — restarting…`, 'warning', 'bc-rsLiveStatus');
+            scheduleRobotStreamerReconnect(streamId);
+        };
+        if (session.videoProducer) {
+            session.videoProducer.on('trackended', () => onProducerTrackEnded('video'));
+        }
+        if (session.audioProducer) {
+            session.audioProducer.on('trackended', () => onProducerTrackEnded('audio'));
         }
 
         ws.addEventListener('close', (ev) => {
