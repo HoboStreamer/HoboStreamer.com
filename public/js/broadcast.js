@@ -1745,8 +1745,13 @@ function cleanupAllStreams() {
 }
 
 function setNavLiveIndicator(isLive) {
-    const el = document.getElementById('nav-live-indicator');
-    if (el) el.style.display = isLive ? '' : 'none';
+    const dot = document.getElementById('nav-live-dot');
+    if (dot) dot.style.display = isLive ? '' : 'none';
+    const link = document.getElementById('nav-broadcast');
+    if (link) {
+        link.classList.toggle('nav-live', isLive);
+        link.dataset.tooltip = isLive ? 'LIVE' : 'Go Live';
+    }
 }
 
 /* ── Global Display Timers (Stats + Uptime) ──────────────────── */
