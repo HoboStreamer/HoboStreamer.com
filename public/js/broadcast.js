@@ -1920,6 +1920,7 @@ async function startRobotStreamerRestream(streamId) {
 
         console.log('[RS Restream] Step 5/7: Joining room…');
         setRobotStreamerStatus('Joining RobotStreamer room…', 'info', 'bc-rsLiveStatus');
+        if (!ss.localStream) throw new Error('localStream lost before join');
         await rpc.request('join', {
             device: buildRobotStreamerDeviceDescriptor(device, ss.localStream),
             rtpCapabilities: device.rtpCapabilities,
@@ -1964,6 +1965,7 @@ async function startRobotStreamerRestream(streamId) {
 
         console.log('[RS Restream] Step 7/7: Producing tracks…');
         setRobotStreamerStatus('Sending media to RobotStreamer…', 'info', 'bc-rsLiveStatus');
+        if (!ss.localStream) throw new Error('localStream lost before produce');
         const videoTrack = ss.localStream.getVideoTracks()[0] || null;
         const audioTrack = ss.localStream.getAudioTracks()[0] || null;
         console.log('[RS Restream] Tracks — video:', !!videoTrack, 'audio:', !!audioTrack);
