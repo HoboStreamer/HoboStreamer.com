@@ -302,6 +302,36 @@ function initDb() {
         database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_pinned ON pastes(pinned)`);
     } catch (e) { console.warn('[DB] pastes migration:', e.message); }
 
+    // Migrate: add copies + likes columns to pastes, create paste_likes table
+    try {
+        const cols = database.prepare("PRAGMA table_info(pastes)").all().map(c => c.name);
+        if (!cols.includes('copies'))  database.exec("ALTER TABLE pastes ADD COLUMN copies INTEGER DEFAULT 0");
+        if (!cols.includes('likes'))   database.exec("ALTER TABLE pastes ADD COLUMN likes INTEGER DEFAULT 0");
+
+        database.exec(`CREATE TABLE IF NOT EXISTS paste_likes (
+            paste_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (paste_id, user_id),
+            FOREIGN KEY (paste_id) REFERENCES pastes(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+    } catch (e) { console.warn('[DB] paste_likes migration:', e.message); }
+
+    // Seed paste-related site settings
+    try {
+        const pasteSettings = [
+            ['paste_max_size_kb', '512', 'Maximum paste content size in KB', 'number'],
+            ['paste_screenshot_max_size_mb', '8', 'Maximum screenshot upload size in MB', 'number'],
+            ['paste_cooldown_seconds', '30', 'Cooldown between paste submissions in seconds', 'number'],
+            ['paste_max_per_user_per_day', '50', 'Maximum pastes per user per day (0 = unlimited)', 'number'],
+            ['paste_anon_allowed', 'true', 'Allow anonymous paste creation', 'boolean'],
+            ['paste_image_upload_enabled', 'true', 'Allow image uploads in pastes', 'boolean'],
+        ];
+        const seedPaste = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of pasteSettings) seedPaste.run(k, v, d, t);
+    } catch (e) { console.warn('[DB] paste settings seed:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1310,7 +1340,7 @@ function listPastes({ visibility = 'public', type, search, limit = 30, offset = 
     const total = get(`SELECT COUNT(*) as c FROM pastes p ${where}`, params).c;
     const pastes = all(`
         SELECT p.id, p.slug, p.user_id, p.type, p.title, p.language, p.visibility,
-               p.screenshot_path, p.burn_after_read, p.pinned, p.views, p.created_at,
+               p.screenshot_path, p.burn_after_read, p.pinned, p.views, p.copies, p.likes, p.created_at,
                u.username, u.avatar_url, u.display_name,
                SUBSTR(p.content, 1, 220) as content
         FROM pastes p
@@ -1348,9 +1378,67 @@ function deletePaste(slug) {
 
 function getUserPastes(userId, limit = 50) {
     return all(`
-        SELECT id, slug, type, title, language, visibility, burn_after_read, pinned, views, created_at
+        SELECT id, slug, type, title, language, visibility, burn_after_read, pinned, views, copies, likes, created_at
         FROM pastes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
     `, [userId, limit]);
+}
+
+function likePaste(pasteId, userId) {
+    run('INSERT OR IGNORE INTO paste_likes (paste_id, user_id) VALUES (?, ?)', [pasteId, userId]);
+    run('UPDATE pastes SET likes = (SELECT COUNT(*) FROM paste_likes WHERE paste_id = ?) WHERE id = ?', [pasteId, pasteId]);
+    return get('SELECT likes FROM pastes WHERE id = ?', [pasteId]);
+}
+
+function unlikePaste(pasteId, userId) {
+    run('DELETE FROM paste_likes WHERE paste_id = ? AND user_id = ?', [pasteId, userId]);
+    run('UPDATE pastes SET likes = (SELECT COUNT(*) FROM paste_likes WHERE paste_id = ?) WHERE id = ?', [pasteId, pasteId]);
+    return get('SELECT likes FROM pastes WHERE id = ?', [pasteId]);
+}
+
+function hasUserLikedPaste(pasteId, userId) {
+    const row = get('SELECT 1 FROM paste_likes WHERE paste_id = ? AND user_id = ?', [pasteId, userId]);
+    return !!row;
+}
+
+function incrementPasteCopies(slug) {
+    return run('UPDATE pastes SET copies = copies + 1 WHERE slug = ?', [slug]);
+}
+
+function countUserPastesToday(userId, ip) {
+    if (userId) {
+        return get('SELECT COUNT(*) as c FROM pastes WHERE user_id = ? AND created_at > datetime("now", "-1 day")', [userId])?.c || 0;
+    }
+    if (ip) {
+        return get('SELECT COUNT(*) as c FROM pastes WHERE ip_address = ? AND created_at > datetime("now", "-1 day")', [ip])?.c || 0;
+    }
+    return 0;
+}
+
+function getLastPasteTime(userId, ip) {
+    let row;
+    if (userId) {
+        row = get('SELECT created_at FROM pastes WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
+    } else if (ip) {
+        row = get('SELECT created_at FROM pastes WHERE ip_address = ? ORDER BY created_at DESC LIMIT 1', [ip]);
+    }
+    return row ? new Date(row.created_at + (row.created_at.includes('Z') ? '' : 'Z')).getTime() : 0;
+}
+
+function deleteAllForks() {
+    const forks = all('SELECT id, screenshot_path FROM pastes WHERE forked_from IS NOT NULL');
+    run('DELETE FROM pastes WHERE forked_from IS NOT NULL');
+    return forks.length;
+}
+
+function getPasteStats() {
+    const total = get('SELECT COUNT(*) as c FROM pastes')?.c || 0;
+    const textPastes = get("SELECT COUNT(*) as c FROM pastes WHERE type = 'paste'")?.c || 0;
+    const screenshots = get("SELECT COUNT(*) as c FROM pastes WHERE type = 'screenshot'")?.c || 0;
+    const forks = get('SELECT COUNT(*) as c FROM pastes WHERE forked_from IS NOT NULL')?.c || 0;
+    const totalViews = get('SELECT SUM(views) as s FROM pastes')?.s || 0;
+    const totalCopies = get('SELECT SUM(copies) as s FROM pastes')?.s || 0;
+    const totalLikes = get('SELECT SUM(likes) as s FROM pastes')?.s || 0;
+    return { total, textPastes, screenshots, forks, totalViews, totalCopies, totalLikes };
 }
 
 module.exports = {
@@ -1413,4 +1501,6 @@ module.exports = {
     // Pastes
     createPaste, getPasteBySlug, getPasteById, listPastes,
     incrementPasteViews, updatePaste, deletePaste, getUserPastes,
+    likePaste, unlikePaste, hasUserLikedPaste, incrementPasteCopies,
+    countUserPastesToday, getLastPasteTime, deleteAllForks, getPasteStats,
 };

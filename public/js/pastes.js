@@ -10,6 +10,7 @@ let _pastesOffset = 0;
 let _pastesFilter = 'all'; // 'all' | 'paste' | 'screenshot'
 let _pastesSearch = '';
 let _pastesTotal = 0;
+let _pastesCooldownUntil = 0; // timestamp (ms) until next paste allowed
 const PASTES_PER_PAGE = 30;
 
 // ── Syntax highlighting (lightweight, no lib needed) ────────
@@ -112,6 +113,7 @@ function renderPasteCard(p) {
     const pinBadge = p.pinned ? `<span class="paste-card-pin" title="Pinned"><i class="fa-solid fa-thumbtack"></i></span>` : '';
     const burnBadge = p.burn_after_read ? `<span class="paste-card-burn" title="Burns after reading"><i class="fa-solid fa-fire"></i></span>` : '';
     const viewsBadge = `<span class="paste-card-views"><i class="fa-solid fa-eye"></i> ${p.views || 0}</span>`;
+    const likesBadge = `<span class="paste-card-likes"><i class="fa-solid fa-thumbs-up"></i> ${p.likes || 0}</span>`;
 
     let thumb = '';
     if (isScreenshot && p.screenshot_url) {
@@ -130,7 +132,7 @@ function renderPasteCard(p) {
                 <div class="paste-card-meta">
                     <div class="paste-card-author">${avatar}<span>${escapeHtml(author)}</span></div>
                     <div class="paste-card-right">
-                        ${langBadge}${viewsBadge}
+                        ${langBadge}${likesBadge}${viewsBadge}
                         <span class="paste-card-time">${timeAgo}</span>
                     </div>
                 </div>
@@ -185,6 +187,8 @@ async function loadPasteViewer(slug) {
         const author = p.username || 'Anonymous';
         const isOwner = typeof currentUser !== 'undefined' && currentUser && p.user_id === currentUser.id;
         const isAdmin = typeof currentUser !== 'undefined' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'global_mod');
+        const isLoggedIn = typeof currentUser !== 'undefined' && !!currentUser;
+        const userLiked = !!p.liked;
 
         let meta;
         try { meta = JSON.parse(p.metadata); } catch { meta = {}; }
@@ -235,6 +239,11 @@ async function loadPasteViewer(slug) {
                     <span><i class="fa-solid fa-user"></i> ${escapeHtml(author)}</span>
                     <span><i class="fa-solid fa-clock"></i> ${formatTimeAgo(p.created_at)}</span>
                     <span><i class="fa-solid fa-eye"></i> ${p.views} view${p.views !== 1 ? 's' : ''}</span>
+                    <span><i class="fa-solid fa-copy"></i> ${p.copies || 0} cop${(p.copies || 0) !== 1 ? 'ies' : 'y'}</span>
+                    <button class="paste-like-btn ${userLiked ? 'liked' : ''}" id="paste-like-btn"
+                        onclick="togglePasteLike('${p.slug}')" title="${isLoggedIn ? (userLiked ? 'Unlike' : 'Like') : 'Log in to like'}">
+                        <i class="fa-solid fa-thumbs-up"></i> <span id="paste-like-count">${p.likes || 0}</span>
+                    </button>
                     ${isOwner || isAdmin ? `
                         <div class="paste-view-owner-actions">
                             <button class="btn btn-outline btn-sm" onclick="editPaste('${p.slug}')"><i class="fa-solid fa-pen"></i> Edit</button>
@@ -248,6 +257,7 @@ async function loadPasteViewer(slug) {
 
         // Store content for clipboard
         container._pasteContent = p.content || '';
+        container._pasteSlug = p.slug;
     } catch (err) {
         container.innerHTML = `
             <div class="empty-state" style="text-align:center; padding:48px;">
@@ -262,7 +272,29 @@ async function loadPasteViewer(slug) {
 function copyPasteContent() {
     const container = document.getElementById('paste-viewer-content');
     const text = container?._pasteContent || '';
-    navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!', 'success')).catch(() => toast('Failed to copy', 'error'));
+    const slug = container?._pasteSlug || '';
+    navigator.clipboard.writeText(text).then(() => {
+        toast('Copied to clipboard!', 'success');
+        // Track copy on server
+        if (slug) {
+            api(`/pastes/${slug}/copy`, { method: 'POST' }).catch(() => {});
+        }
+    }).catch(() => toast('Failed to copy', 'error'));
+}
+
+async function togglePasteLike(slug) {
+    if (typeof currentUser === 'undefined' || !currentUser) {
+        return toast('Log in to like pastes', 'error');
+    }
+    try {
+        const data = await api(`/pastes/${slug}/like`, { method: 'POST' });
+        const btn = document.getElementById('paste-like-btn');
+        const countEl = document.getElementById('paste-like-count');
+        if (btn) btn.classList.toggle('liked', data.liked);
+        if (countEl) countEl.textContent = data.likes;
+    } catch (err) {
+        toast(err.message || 'Failed to like', 'error');
+    }
 }
 
 async function forkPaste(slug) {
@@ -335,6 +367,12 @@ async function submitPaste() {
 
     if (!content.trim()) return toast('Content is required', 'error');
 
+    // Client-side cooldown check
+    if (!editSlug && _pastesCooldownUntil > Date.now()) {
+        const wait = Math.ceil((_pastesCooldownUntil - Date.now()) / 1000);
+        return toast(`Please wait ${wait}s before creating another paste`, 'error');
+    }
+
     try {
         let data;
         if (editSlug) {
@@ -349,10 +387,14 @@ async function submitPaste() {
                 body: { title: title || 'Untitled', content, language, visibility, burn_after_read: burn },
             });
             toast('Paste created!', 'success');
+            // Set cooldown
+            _pastesCooldownUntil = Date.now() + 30000; // 30s default; will be overridden by server response
         }
         closePasteModal();
         navigate(`/p/${data.paste.slug}`);
     } catch (err) {
+        // If server returns cooldown, use it
+        if (err.cooldown) _pastesCooldownUntil = Date.now() + err.cooldown * 1000;
         toast(err.message || 'Failed to save paste', 'error');
     }
 }
@@ -494,6 +536,12 @@ async function submitScreenshot() {
     if (!blob && fileInput?.files?.[0]) blob = fileInput.files[0];
     if (!blob) return toast('No screenshot to upload', 'error');
 
+    // Client-side cooldown check
+    if (_pastesCooldownUntil > Date.now()) {
+        const wait = Math.ceil((_pastesCooldownUntil - Date.now()) / 1000);
+        return toast(`Please wait ${wait}s before uploading`, 'error');
+    }
+
     const formData = new FormData();
     formData.append('screenshot', blob instanceof Blob ? blob : blob, blob.name || 'screenshot.png');
     formData.append('title', title || 'Screenshot');
@@ -517,6 +565,7 @@ async function submitScreenshot() {
 
         toast('Screenshot uploaded!', 'success');
         closeScreenshotModal();
+        _pastesCooldownUntil = Date.now() + 30000;
         navigate(`/p/${data.paste.slug}`);
     } catch (err) {
         toast(err.message || 'Failed to upload screenshot', 'error');

@@ -62,7 +62,19 @@ function detectLanguage(content, hint) {
     return 'text';
 }
 
-const MAX_PASTE_SIZE = 512 * 1024; // 512 KB text limit
+const MAX_PASTE_SIZE = 512 * 1024; // 512 KB text limit (fallback; overridden by site setting)
+
+// Helper: get configurable limits from site settings
+function getPasteConfig() {
+    return {
+        maxSizeKb: Number(db.getSetting('paste_max_size_kb')) || 512,
+        screenshotMaxSizeMb: Number(db.getSetting('paste_screenshot_max_size_mb')) || 8,
+        cooldownSeconds: Number(db.getSetting('paste_cooldown_seconds')) || 30,
+        maxPerUserPerDay: Number(db.getSetting('paste_max_per_user_per_day')) || 50,
+        anonAllowed: db.getSetting('paste_anon_allowed') !== false,
+        imageUploadEnabled: db.getSetting('paste_image_upload_enabled') !== false,
+    };
+}
 
 // ── List pastes (public index) ──────────────────────────────
 router.get('/', optionalAuth, (req, res) => {
@@ -94,6 +106,8 @@ router.get('/', optionalAuth, (req, res) => {
             ...p,
             content: p.type === 'paste' ? (p.content || '').slice(0, 300) : null, // Preview only in list
             screenshot_url: p.screenshot_path ? `/data/pastes/screenshots/${path.basename(p.screenshot_path)}` : null,
+            copies: p.copies || 0,
+            likes: p.likes || 0,
         }));
 
         const countSql = `SELECT COUNT(*) as total FROM pastes WHERE visibility = 'public'`
@@ -104,6 +118,50 @@ router.get('/', optionalAuth, (req, res) => {
     } catch (err) {
         console.error('[Pastes] List error:', err);
         res.status(500).json({ error: 'Failed to list pastes' });
+    }
+});
+
+// ── Get paste config (public) — must be before /:slug ───────
+router.get('/config', (req, res) => {
+    try {
+        const config = getPasteConfig();
+        res.json({
+            maxSizeKb: config.maxSizeKb,
+            screenshotMaxSizeMb: config.screenshotMaxSizeMb,
+            cooldownSeconds: config.cooldownSeconds,
+            maxPerUserPerDay: config.maxPerUserPerDay,
+            anonAllowed: config.anonAllowed,
+            imageUploadEnabled: config.imageUploadEnabled,
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get config' });
+    }
+});
+
+// ── Paste stats (admin) — must be before /:slug ─────────────
+router.get('/admin/stats', requireAuth, (req, res) => {
+    if (req.user.role !== 'admin' && req.user.role !== 'global_mod') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    try {
+        const stats = db.getPasteStats();
+        res.json({ stats });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get paste stats' });
+    }
+});
+
+// ── Delete all forks (admin) — must be before /:slug ────────
+router.delete('/admin/forks', requireAuth, (req, res) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    try {
+        const count = db.deleteAllForks();
+        res.json({ success: true, deleted: count });
+    } catch (err) {
+        console.error('[Pastes] Delete forks error:', err);
+        res.status(500).json({ error: 'Failed to delete forks' });
     }
 });
 
@@ -132,6 +190,11 @@ router.get('/:slug', optionalAuth, (req, res) => {
             ? `/data/pastes/screenshots/${path.basename(paste.screenshot_path)}`
             : null;
 
+        // Include like status for logged-in user
+        paste.liked = req.user ? db.hasUserLikedPaste(paste.id, req.user.id) : false;
+        paste.copies = paste.copies || 0;
+        paste.likes = paste.likes || 0;
+
         res.json({ paste });
     } catch (err) {
         console.error('[Pastes] Get error:', err);
@@ -146,8 +209,36 @@ router.post('/', optionalAuth, (req, res) => {
         if (!content || typeof content !== 'string' || content.trim().length === 0) {
             return res.status(400).json({ error: 'Content is required' });
         }
-        if (content.length > MAX_PASTE_SIZE) {
-            return res.status(400).json({ error: `Paste too large (max ${MAX_PASTE_SIZE / 1024} KB)` });
+
+        const config = getPasteConfig();
+
+        // Anonymous check
+        if (!req.user && !config.anonAllowed) {
+            return res.status(403).json({ error: 'Anonymous pastes are disabled. Please log in.' });
+        }
+
+        // Size limit
+        const maxBytes = config.maxSizeKb * 1024;
+        if (content.length > maxBytes) {
+            return res.status(400).json({ error: `Paste too large (max ${config.maxSizeKb} KB)` });
+        }
+
+        // Cooldown check
+        if (config.cooldownSeconds > 0) {
+            const lastTime = db.getLastPasteTime(req.user?.id, req.ip);
+            const elapsed = (Date.now() - lastTime) / 1000;
+            if (elapsed < config.cooldownSeconds) {
+                const wait = Math.ceil(config.cooldownSeconds - elapsed);
+                return res.status(429).json({ error: `Please wait ${wait}s before creating another paste`, cooldown: wait });
+            }
+        }
+
+        // Daily limit check
+        if (config.maxPerUserPerDay > 0) {
+            const todayCount = db.countUserPastesToday(req.user?.id, req.ip);
+            if (todayCount >= config.maxPerUserPerDay) {
+                return res.status(429).json({ error: `Daily paste limit reached (${config.maxPerUserPerDay}/day)` });
+            }
         }
 
         const slug = generateSlug();
@@ -171,7 +262,58 @@ router.post('/', optionalAuth, (req, res) => {
 });
 
 // ── Upload screenshot ───────────────────────────────────────
-router.post('/screenshot', optionalAuth, screenshotUpload.single('screenshot'), (req, res) => {
+router.post('/screenshot', optionalAuth, (req, res, next) => {
+    const config = getPasteConfig();
+
+    if (!config.imageUploadEnabled) {
+        return res.status(403).json({ error: 'Image uploads are currently disabled' });
+    }
+
+    // Anonymous check
+    if (!req.user && !config.anonAllowed) {
+        return res.status(403).json({ error: 'Anonymous uploads are disabled. Please log in.' });
+    }
+
+    // Cooldown check
+    if (config.cooldownSeconds > 0) {
+        const lastTime = db.getLastPasteTime(req.user?.id, req.ip);
+        const elapsed = (Date.now() - lastTime) / 1000;
+        if (elapsed < config.cooldownSeconds) {
+            const wait = Math.ceil(config.cooldownSeconds - elapsed);
+            return res.status(429).json({ error: `Please wait ${wait}s before uploading`, cooldown: wait });
+        }
+    }
+
+    // Daily limit check
+    if (config.maxPerUserPerDay > 0) {
+        const todayCount = db.countUserPastesToday(req.user?.id, req.ip);
+        if (todayCount >= config.maxPerUserPerDay) {
+            return res.status(429).json({ error: `Daily upload limit reached (${config.maxPerUserPerDay}/day)` });
+        }
+    }
+
+    // Dynamic file-size limit from settings
+    const dynamicUpload = multer({
+        storage: screenshotStorage,
+        limits: { fileSize: config.screenshotMaxSizeMb * 1024 * 1024 },
+        fileFilter: (_req, file, cb) => {
+            if (/^image\/(png|jpeg|webp|gif)$/.test(file.mimetype)) cb(null, true);
+            else cb(new Error('Only PNG, JPEG, WebP, or GIF images allowed'));
+        },
+    }).single('screenshot');
+
+    dynamicUpload(req, res, (err) => {
+        if (err) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({ error: `File too large (max ${config.screenshotMaxSizeMb} MB)` });
+            }
+            return res.status(400).json({ error: err.message || 'Upload failed' });
+        }
+        _handleScreenshotUpload(req, res);
+    });
+});
+
+function _handleScreenshotUpload(req, res) {
     try {
         if (!req.file) return res.status(400).json({ error: 'Screenshot image is required' });
 
@@ -204,7 +346,7 @@ router.post('/screenshot', optionalAuth, screenshotUpload.single('screenshot'), 
         if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch {}
         res.status(500).json({ error: 'Failed to upload screenshot' });
     }
-});
+}
 
 // ── Update paste ────────────────────────────────────────────
 router.put('/:slug', requireAuth, (req, res) => {
@@ -278,6 +420,18 @@ router.post('/:slug/fork', optionalAuth, (req, res) => {
             return res.status(404).json({ error: 'Paste not found' });
         }
 
+        const config = getPasteConfig();
+
+        // Cooldown check
+        if (config.cooldownSeconds > 0) {
+            const lastTime = db.getLastPasteTime(req.user?.id, req.ip);
+            const elapsed = (Date.now() - lastTime) / 1000;
+            if (elapsed < config.cooldownSeconds) {
+                const wait = Math.ceil(config.cooldownSeconds - elapsed);
+                return res.status(429).json({ error: `Please wait ${wait}s before forking`, cooldown: wait });
+            }
+        }
+
         const slug = generateSlug();
         db.run(
             `INSERT INTO pastes (slug, user_id, type, title, content, language, visibility, forked_from, ip_address)
@@ -310,6 +464,39 @@ router.get('/:slug/raw', (req, res) => {
         res.type('text/plain').send(paste.content);
     } catch {
         res.status(500).send('Error');
+    }
+});
+
+// ── Like / Unlike a paste ───────────────────────────────────
+router.post('/:slug/like', requireAuth, (req, res) => {
+    try {
+        const paste = db.get('SELECT id FROM pastes WHERE slug = ?', [req.params.slug]);
+        if (!paste) return res.status(404).json({ error: 'Paste not found' });
+
+        const alreadyLiked = db.hasUserLikedPaste(paste.id, req.user.id);
+        let result;
+        if (alreadyLiked) {
+            result = db.unlikePaste(paste.id, req.user.id);
+        } else {
+            result = db.likePaste(paste.id, req.user.id);
+        }
+        res.json({ liked: !alreadyLiked, likes: result?.likes || 0 });
+    } catch (err) {
+        console.error('[Pastes] Like error:', err);
+        res.status(500).json({ error: 'Failed to toggle like' });
+    }
+});
+
+// ── Track a copy event ──────────────────────────────────────
+router.post('/:slug/copy', optionalAuth, (req, res) => {
+    try {
+        const paste = db.get('SELECT id, copies FROM pastes WHERE slug = ?', [req.params.slug]);
+        if (!paste) return res.status(404).json({ error: 'Paste not found' });
+        db.incrementPasteCopies(req.params.slug);
+        res.json({ copies: (paste.copies || 0) + 1 });
+    } catch (err) {
+        console.error('[Pastes] Copy track error:', err);
+        res.status(500).json({ error: 'Failed to track copy' });
     }
 });
 
