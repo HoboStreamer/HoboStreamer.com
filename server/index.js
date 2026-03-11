@@ -222,6 +222,8 @@ app.use('/api/meta', metaRoutes);
 app.use('/api/pastes', pasteRoutes);
 const ttsRoutes = require('./chat/tts-routes');
 app.use('/api/tts', ttsRoutes);
+const dmRoutes = require('./chat/dm-routes');
+app.use('/api/dm', dmRoutes);
 
 // ── Health Check ─────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
@@ -286,6 +288,9 @@ async function start() {
     // Initialize tags tables
     const tagsModule = require('./game/tags');
     tagsModule.ensureTagTables();
+    // Initialize DM tables
+    const dm = require('./chat/dm');
+    dm.ensureTables();
     // Migrate: add last_heartbeat column if missing
     try { db.run("ALTER TABLE streams ADD COLUMN last_heartbeat DATETIME"); console.log('[DB] Added last_heartbeat column'); } catch { /* already exists */ }
     // Migrate: add theme_id to users table if missing

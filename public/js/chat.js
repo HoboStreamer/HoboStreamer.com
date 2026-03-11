@@ -317,6 +317,13 @@ function handleChatMessage(msg) {
             if (rContainer && typeof renderRedemption === 'function') renderRedemption(msg, rContainer);
             break;
         }
+        case 'dm':
+        case 'dm-participant-added':
+            // Route DM events to the messenger widget
+            if (typeof window._messengerHandleDm === 'function') {
+                window._messengerHandleDm(msg);
+            }
+            break;
     }
 }
 
@@ -704,7 +711,7 @@ async function loadContextMenuProfile(menu, username, userId, isAnon) {
                 </div>
             </div>
             <div class="ctx-actions">
-                <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Whisper</button>
+                <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Message</button>
                 <button class="ctx-btn" onclick="ctxViewChannel('${esc(username)}')"><i class="fa-solid fa-user"></i> Channel</button>
             </div>
         `;
@@ -726,7 +733,7 @@ function renderAnonContextMenu(menu, username, userId) {
             </div>
         </div>
         <div class="ctx-actions">
-            <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Whisper</button>
+            <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Message</button>
             ${adminBtns}
         </div>
     `;
@@ -780,7 +787,7 @@ function renderContextMenu(menu, profile, username) {
         ${gameHtml}
         <div class="ctx-divider"></div>
         <div class="ctx-actions">
-            <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Whisper</button>
+            <button class="ctx-btn" onclick="ctxWhisper('${esc(username)}')"><i class="fa-solid fa-comment"></i> Message</button>
             <button class="ctx-btn" onclick="ctxViewChannel('${esc(username)}')"><i class="fa-solid fa-user"></i> Channel</button>
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" onclick="ctxViewLogs('${esc(username)}', ${profile.id})"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
             ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" onclick="ctxBanUser('${esc(username)}', ${profile.id})"><i class="fa-solid fa-ban"></i> Ban</button>` : ''}
@@ -791,10 +798,11 @@ function renderContextMenu(menu, profile, username) {
 /* ── Context menu actions ─────────────────────────────────────── */
 function ctxWhisper(username) {
     dismissContextMenu();
-    const { input } = getChatEl();
-    if (input) {
-        input.value = `/w ${username} `;
-        input.focus();
+    // Route to the DM messenger widget instead of the old whisper command
+    if (typeof window.openMessengerDm === 'function') {
+        window.openMessengerDm(username);
+    } else {
+        toast('Messenger not available', 'error');
     }
 }
 

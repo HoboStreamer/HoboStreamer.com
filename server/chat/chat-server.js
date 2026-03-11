@@ -377,7 +377,7 @@ class ChatServer {
             case 'help':
                 this.sendTo(ws, {
                     type: 'system',
-                    message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /w <user> <msg>, /me <action>, /paste <content>` +
+                    message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /me <action>, /paste <content>` +
                         (this.canModerate(client)
                             ? `\nMod: /ban <user>, /unban <user>, /timeout <user> [seconds], /clear, /slow <seconds>`
                             : ''),
@@ -467,20 +467,7 @@ class ChatServer {
             case 'w':
             case 'whisper':
             case 'msg': {
-                const targetName = argParts[0];
-                const whisperMsg = argParts.slice(1).join(' ');
-                if (!targetName || !whisperMsg) {
-                    this.sendTo(ws, { type: 'system', message: 'Usage: /w <username> <message>' });
-                    break;
-                }
-                const targetWs = this.findWsByUsername(targetName, client.streamId);
-                if (targetWs) {
-                    const senderName = client.user?.display_name || client.anonId;
-                    this.sendTo(targetWs, { type: 'system', message: `[Whisper from ${senderName}]: ${whisperMsg}` });
-                    this.sendTo(ws, { type: 'system', message: `[Whisper to ${targetName}]: ${whisperMsg}` });
-                } else {
-                    this.sendTo(ws, { type: 'system', message: `User "${targetName}" not found in chat.` });
-                }
+                this.sendTo(ws, { type: 'system', message: 'Whispers have been replaced by DMs! Click the message icon in the navbar to open Messenger.' });
                 break;
             }
 
@@ -832,6 +819,23 @@ class ChatServer {
 
     getTotalConnections() {
         return this.clients.size;
+    }
+
+    /**
+     * Send a DM payload to all WebSocket connections belonging to a given user ID.
+     * Used by the DM REST API for real-time delivery.
+     */
+    sendDm(userId, data) {
+        const payload = JSON.stringify(data);
+        for (const [ws, client] of this.clients) {
+            if (client.user?.id === userId && ws.readyState === WebSocket.OPEN) {
+                try {
+                    if (ws.bufferedAmount < MAX_SEND_BACKPRESSURE) {
+                        ws.send(payload);
+                    }
+                } catch { /* non-critical */ }
+            }
+        }
     }
 
     close() {
