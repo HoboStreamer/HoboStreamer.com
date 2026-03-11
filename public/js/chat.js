@@ -383,7 +383,7 @@ function handleChatMessage(msg) {
         case 'chat':
             addChatMessage(msg);
             // Self-mode TTS: speak every incoming chat message via browser synthesis
-            if (typeof broadcastState !== 'undefined' && broadcastState.settings?.ttsMode === 'self') {
+            if (typeof isStreaming === 'function' && isStreaming() && broadcastState?.settings?.ttsMode === 'self') {
                 if (typeof speakBroadcastTTS === 'function') {
                     speakBroadcastTTS(msg.message || msg.text, msg.username);
                 }
@@ -450,8 +450,8 @@ function handleChatMessage(msg) {
         }
         case 'tts':
             // Legacy browser-side TTS (Self TTS mode)
-            if (typeof broadcastState !== 'undefined' && broadcastState.settings?.ttsMode === 'self') {
-                // Broadcast page — use broadcast TTS with its volume/pitch/rate settings
+            if (typeof isStreaming === 'function' && isStreaming() && broadcastState?.settings?.ttsMode === 'self') {
+                // Broadcaster is live — use broadcast TTS with its volume/pitch/rate settings
                 if (typeof speakBroadcastTTS === 'function') {
                     speakBroadcastTTS(msg.message || msg.text, msg.username);
                 }
@@ -461,8 +461,8 @@ function handleChatMessage(msg) {
             break;
         case 'tts-audio':
             // Server-synthesized TTS audio (Site-Wide TTS mode)
-            if (typeof playBroadcastTTSAudio === 'function' && typeof broadcastState !== 'undefined') {
-                // Broadcast page — route to broadcast audio queue
+            if (typeof isStreaming === 'function' && isStreaming() && typeof playBroadcastTTSAudio === 'function') {
+                // Broadcaster is live — route to broadcast audio queue
                 playBroadcastTTSAudio(msg);
             } else if (chatSettings.ttsEnabled) {
                 // Regular chat viewer — play through chat TTS queue

@@ -1269,8 +1269,18 @@ function setupVideoControls() {
     const volSlider = document.getElementById('volume-slider');
     const btnFull = document.getElementById('btn-fullscreen');
 
-    let muted = false;
+    // Restore persisted volume (or default 75)
+    const savedVol = getSavedVolume();
+    volSlider.value = savedVol;
+    setVolume(savedVol / 100);
+
+    let muted = savedVol === 0;
     let playing = true;
+
+    // Sync mute button icon to initial state
+    btnVol.innerHTML = muted
+        ? '<i class="fa-solid fa-volume-xmark"></i>'
+        : '<i class="fa-solid fa-volume-high"></i>';
 
     // Detect vertical (portrait) video and add CSS class for responsive layout
     const _detectVerticalVideo = () => {
@@ -1287,6 +1297,17 @@ function setupVideoControls() {
     if (vid) {
         vid.addEventListener('loadedmetadata', _detectVerticalVideo);
         vid.addEventListener('resize', _detectVerticalVideo);
+
+        // Sync local muted state when the browser auto-mutes for autoplay policy
+        vid.addEventListener('volumechange', () => {
+            const actuallyMuted = vid.muted || vid.volume === 0;
+            if (actuallyMuted !== muted) {
+                muted = actuallyMuted;
+                btnVol.innerHTML = muted
+                    ? '<i class="fa-solid fa-volume-xmark"></i>'
+                    : '<i class="fa-solid fa-volume-high"></i>';
+            }
+        });
     }
 
     btnPlay.onclick = () => {
@@ -1645,6 +1666,15 @@ function setVolume(v) {
         vid.volume = v;
         vid.muted = v === 0;
     }
+    // Persist volume so it survives page navigation / refresh
+    try { localStorage.setItem('hobo_player_volume', String(Math.round(v * 100))); } catch {}
+}
+
+function getSavedVolume() {
+    try {
+        const v = parseInt(localStorage.getItem('hobo_player_volume'), 10);
+        return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 75;
+    } catch { return 75; }
 }
 
 /* ── Cleanup ──────────────────────────────────────────────────── */
@@ -1744,10 +1774,16 @@ function showUnmuteOverlay(video) {
     overlay.innerHTML = '<div style="background:rgba(0,0,0,0.7);padding:14px 28px;border-radius:10px;color:#fff;font-size:1.1rem;display:flex;align-items:center;gap:10px;"><i class="fa-solid fa-volume-xmark" style="font-size:1.4rem"></i> Tap to unmute</div>';
     overlay.addEventListener('click', () => {
         video.muted = false;
+        // Restore volume from slider (in case autoplay set it to 0)
+        const slider = document.getElementById('volume-slider');
+        const vol = slider ? slider.value / 100 : 0.75;
+        video.volume = vol;
         overlay.remove();
-        // Sync the volume slider UI
+        // Sync the volume button + slider UI
         const volBtn = document.getElementById('btn-volume');
-        if (volBtn) volBtn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
+        if (volBtn) volBtn.innerHTML = vol === 0
+            ? '<i class="fa-solid fa-volume-xmark"></i>'
+            : '<i class="fa-solid fa-volume-high"></i>';
     }, { once: true });
     container.appendChild(overlay);
 }
