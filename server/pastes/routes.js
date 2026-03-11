@@ -18,10 +18,11 @@ const { requireAuth, optionalAuth } = require('../auth/auth');
 const SCREENSHOTS_DIR = path.resolve('./data/pastes/screenshots');
 if (!fs.existsSync(SCREENSHOTS_DIR)) fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
 
+const MIME_TO_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp' };
 const screenshotStorage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, SCREENSHOTS_DIR),
     filename: (_req, file, cb) => {
-        const ext = path.extname(file.originalname) || '.png';
+        const ext = MIME_TO_EXT[file.mimetype] || '.png';
         cb(null, `ss-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`);
     },
 });
