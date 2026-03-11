@@ -340,6 +340,7 @@ function cleanupSeekableFile(filePath) {
 }
 
 // Multer storage for VOD uploads
+const VOD_MIME_TO_EXT = { 'video/webm': '.webm', 'video/mp4': '.mp4', 'video/x-matroska': '.mkv', 'video/ogg': '.ogg' };
 const vodStorage = multer.diskStorage({
     destination: (req, file, cb) => {
         const vodDir = path.resolve(config.vod.path);
@@ -347,13 +348,17 @@ const vodStorage = multer.diskStorage({
         cb(null, vodDir);
     },
     filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname) || '.webm';
+        const ext = VOD_MIME_TO_EXT[file.mimetype] || '.webm';
         cb(null, `vod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
 });
 const vodUpload = multer({
     storage: vodStorage,
     limits: { fileSize: config.vod.maxSizeMb * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (VOD_MIME_TO_EXT[file.mimetype]) cb(null, true);
+        else cb(new Error('Only WebM, MP4, MKV, and OGG video files are allowed'));
+    },
 });
 
 // ══════════════════════════════════════════════════════════════

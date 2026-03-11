@@ -183,11 +183,21 @@ app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, fi
 // Serve VOD/media files
 app.use('/media', express.static(path.resolve('./data/media')));
 
-// Serve avatar files
-app.use('/data/avatars', express.static(path.resolve('./data/avatars')));
+// Serve avatar files (force image Content-Type, prevent XSS via spoofed extensions)
+app.use('/data/avatars', express.static(path.resolve('./data/avatars'), {
+    setHeaders: (res) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Disposition', 'inline');
+    },
+}));
 
-// Serve paste screenshots
-app.use('/data/pastes/screenshots', express.static(path.resolve('./data/pastes/screenshots')));
+// Serve paste screenshots (force image Content-Type, prevent XSS via spoofed extensions)
+app.use('/data/pastes/screenshots', express.static(path.resolve('./data/pastes/screenshots'), {
+    setHeaders: (res) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Disposition', 'inline');
+    },
+}));
 
 // ── API Routes ───────────────────────────────────────────────
 app.use('/api/auth', authRoutes);

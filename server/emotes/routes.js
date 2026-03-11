@@ -23,6 +23,7 @@ const config = require('../config');
 const router = express.Router();
 
 // ── Emote file upload via multer ─────────────────────────────
+const MIME_TO_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/avif': '.avif' };
 const emoteStorage = multer.diskStorage({
     destination: (req, file, cb) => {
         const emoteDir = path.resolve(config.emotes.path);
@@ -30,7 +31,7 @@ const emoteStorage = multer.diskStorage({
         cb(null, emoteDir);
     },
     filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname) || '.png';
+        const ext = MIME_TO_EXT[file.mimetype] || '.png';
         cb(null, `emote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
 });

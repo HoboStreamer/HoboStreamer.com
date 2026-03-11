@@ -45,10 +45,11 @@ function isAllowedAvatarUrl(value) {
 const avatarDir = path.resolve('./data/avatars');
 if (!fs.existsSync(avatarDir)) fs.mkdirSync(avatarDir, { recursive: true });
 
+const MIME_TO_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/avif': '.avif' };
 const avatarStorage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, avatarDir),
     filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname) || '.png';
+        const ext = MIME_TO_EXT[file.mimetype] || '.png';
         cb(null, `avatar-${req.user.id}-${Date.now()}${ext}`);
     },
 });
