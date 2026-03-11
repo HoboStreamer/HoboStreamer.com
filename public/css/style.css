@@ -1901,6 +1901,35 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     }
 }
 
+/* ─── Mobile FAB (Floating Action Button) for chat ─────────── */
+.mobile-chat-toggle {
+    display: none; /* hidden on desktop */
+    position: fixed;
+    bottom: 20px; right: 16px;
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background: var(--accent-dark);
+    color: #fff;
+    border: none;
+    font-size: 1.3rem;
+    align-items: center; justify-content: center;
+    z-index: 901;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    cursor: pointer;
+    transition: background 0.2s, transform 0.2s;
+}
+.mobile-chat-toggle:hover { background: var(--accent); }
+.mobile-chat-toggle:active { transform: scale(0.92); }
+.mobile-chat-badge {
+    position: absolute; top: -4px; right: -4px;
+    min-width: 20px; height: 20px;
+    background: var(--live-red); color: #fff;
+    font-size: 0.65rem; font-weight: 700;
+    border-radius: 10px; padding: 0 5px;
+    display: flex; align-items: center; justify-content: center;
+    line-height: 1;
+}
+
 /* 768px: Hamburger menu + Mobile stream layout */
 @media (max-width: 768px) {
     .navbar { gap: 8px; padding: 0 8px; }
@@ -2049,35 +2078,6 @@ textarea.form-input { resize: vertical; min-height: 60px; }
         z-index: 899;
         pointer-events: auto;
     }
-}
-
-/* ─── Mobile FAB (Floating Action Button) for chat ─────────── */
-.mobile-chat-toggle {
-    display: none; /* hidden on desktop */
-    position: fixed;
-    bottom: 20px; right: 16px;
-    width: 52px; height: 52px;
-    border-radius: 50%;
-    background: var(--accent-dark);
-    color: #fff;
-    border: none;
-    font-size: 1.3rem;
-    align-items: center; justify-content: center;
-    z-index: 901;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-    cursor: pointer;
-    transition: background 0.2s, transform 0.2s;
-}
-.mobile-chat-toggle:hover { background: var(--accent); }
-.mobile-chat-toggle:active { transform: scale(0.92); }
-.mobile-chat-badge {
-    position: absolute; top: -4px; right: -4px;
-    min-width: 20px; height: 20px;
-    background: var(--live-red); color: #fff;
-    font-size: 0.65rem; font-weight: 700;
-    border-radius: 10px; padding: 0 5px;
-    display: flex; align-items: center; justify-content: center;
-    line-height: 1;
 }
 
 @media (max-width: 480px) {
