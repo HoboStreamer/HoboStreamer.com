@@ -372,18 +372,48 @@ async function initWebRTC(stream) {
         let _viewerReconnectDelay = 3000; // exponential backoff: 3s → 30s max
         let _viewerIntentionalClose = false;
         let _viewerRewatchTimer = null;
+        let _watchOfferTimer = null; // timeout: sent 'watch' but never got 'offer'
+        let _rewatchCount = 0;
+        const MAX_REWATCH_ATTEMPTS = 8;
+
+        // Start a timer when 'watch' is sent — if no 'offer' arrives within 12s, re-watch
+        const startWatchOfferTimeout = () => {
+            if (_watchOfferTimer) clearTimeout(_watchOfferTimer);
+            _watchOfferTimer = setTimeout(() => {
+                _watchOfferTimer = null;
+                if (!player || _viewerIntentionalClose) return;
+                // No offer received — broadcaster may be unresponsive
+                if (_rewatchCount < MAX_REWATCH_ATTEMPTS) {
+                    console.warn(`[Player] No offer received within 12s (attempt ${_rewatchCount + 1}/${MAX_REWATCH_ATTEMPTS})`);
+                    scheduleViewerRewatch(500);
+                } else {
+                    console.error('[Player] Max rewatch attempts reached — stream may be unavailable');
+                    showStreamError('Stream is not responding. Try refreshing the page.');
+                }
+            }, 12000);
+        };
 
         const scheduleViewerRewatch = (delay = 1500) => {
             if (_viewerIntentionalClose || !player) return;
+            if (_rewatchCount >= MAX_REWATCH_ATTEMPTS) {
+                console.error('[Player] Max rewatch attempts reached, giving up');
+                showStreamError('Could not connect to stream. Try refreshing the page.');
+                return;
+            }
             if (_viewerRewatchTimer) clearTimeout(_viewerRewatchTimer);
             _viewerRewatchTimer = setTimeout(() => {
                 _viewerRewatchTimer = null;
                 if (!player?.ws || player.ws.readyState !== WebSocket.OPEN) return;
+                _rewatchCount++;
                 player.watchSent = false;
                 sendPlayerSignal({ type: 'watch' });
                 player.watchSent = true;
+                startWatchOfferTimeout();
             }, delay);
         };
+
+        // Expose startWatchOfferTimeout on player so handleViewerOffer's triggerRewatch can use it
+        player._startWatchOfferTimeout = startWatchOfferTimeout;
 
         ws.onopen = () => {
             console.log('[Player] Broadcast signaling connected');
@@ -422,12 +452,17 @@ async function initWebRTC(stream) {
                             }
                         }
                         player.watchSent = false; // allow re-watch on reconnect
+                        _rewatchCount++;
                         sendPlayerSignal({ type: 'watch' });
                         player.watchSent = true;
+                        startWatchOfferTimeout();
                         break;
                     case 'offer':
                         // Broadcaster sent us an offer — create answer
                         console.log('[Player] Received offer from broadcaster');
+                        // Clear the watch-to-offer timeout — offer received successfully
+                        if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
+                        _rewatchCount = 0; // reset retry count on successful offer
                         await handleViewerOffer(msg, player.ws, video);
                         break;
                     case 'ice-candidate':
@@ -536,6 +571,8 @@ async function handleViewerOffer(msg, ws, video) {
         player.watchSent = false;
         sendPlayerSignal({ type: 'watch' });
         player.watchSent = true;
+        // Start watch-to-offer timeout for this re-watch too
+        if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
     };
 
     // Debounced play() — coalesces multiple ontrack calls
