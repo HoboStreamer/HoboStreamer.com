@@ -54,6 +54,10 @@ function initDb() {
             database.exec(`ALTER TABLE users ADD COLUMN hobo_coins_balance INTEGER DEFAULT 0`);
             console.log('[DB] Added hobo_coins_balance column to users');
         }
+        if (!userCols.includes('token_valid_after')) {
+            database.exec(`ALTER TABLE users ADD COLUMN token_valid_after TEXT DEFAULT NULL`);
+            console.log('[DB] Added token_valid_after column to users');
+        }
     } catch (e) { console.warn('[DB] Migration note:', e.message); }
 
     // Migrate: create site_settings table if missing (old DB)

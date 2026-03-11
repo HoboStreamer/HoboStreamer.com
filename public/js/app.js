@@ -1764,6 +1764,21 @@ function esc(str) {
 }
 
 /**
+ * Escape a string for safe interpolation inside a JS string literal
+ * within an HTML attribute (e.g. onclick="fn('${escJs(val)}')" ).
+ * Escapes backslash, single/double quotes, backticks, and angle brackets.
+ */
+function escJs(str) {
+    return String(str ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")  
+        .replace(/"/g, '\\"')
+        .replace(/`/g, '\\`')
+        .replace(/</g, '\\x3c')
+        .replace(/>/g, '\\x3e');
+}
+
+/**
  * Universal thumbnail HTML helper.
  * Returns an <img> tag if a thumbnail URL exists, or a fallback icon.
  * @param {string|null} thumbnailUrl - the thumbnail_url from the DB record

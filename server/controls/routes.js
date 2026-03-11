@@ -84,11 +84,12 @@ router.post('/:streamId', requireAuth, (req, res) => {
             return res.status(400).json({ error: 'Invalid icon class' });
         }
         const cleanLabel = String(label).replace(/<[^>]*>/g, '').slice(0, 50);
+        const cleanCommand = String(command).replace(/[<>"'`\\]/g, '').slice(0, 100);
 
         db.createControl({
             stream_id: parseInt(req.params.streamId),
             label: cleanLabel,
-            command,
+            command: cleanCommand,
             icon: cleanIcon,
             control_type: control_type || 'button',
             key_binding,
@@ -115,7 +116,7 @@ router.put('/:streamId/:id', requireAuth, (req, res) => {
         const params = [];
 
         if (label !== undefined) { updates.push('label = ?'); params.push(String(label).replace(/<[^>]*>/g, '').slice(0, 50)); }
-        if (command !== undefined) { updates.push('command = ?'); params.push(command); }
+        if (command !== undefined) { updates.push('command = ?'); params.push(String(command).replace(/[<>"'`\\]/g, '').slice(0, 100)); }
         if (icon !== undefined) {
             if (!/^fa-[a-z0-9-]+$/.test(icon)) {
                 return res.status(400).json({ error: 'Invalid icon class' });

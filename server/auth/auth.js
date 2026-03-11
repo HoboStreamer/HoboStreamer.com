@@ -49,6 +49,10 @@ function requireAuth(req, res, next) {
     if (user.is_banned) {
         return res.status(403).json({ error: 'Account is banned', reason: user.ban_reason });
     }
+    // Reject tokens issued before a password change
+    if (user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
+        return res.status(401).json({ error: 'Token revoked — please log in again' });
+    }
 
     req.user = user;
     next();
@@ -62,7 +66,10 @@ function optionalAuth(req, res, next) {
     if (token) {
         const decoded = verifyToken(token);
         if (decoded) {
-            req.user = db.getUserById(decoded.id);
+            const user = db.getUserById(decoded.id);
+            if (user && !(user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000))) {
+                req.user = user;
+            }
         }
     }
     next();
@@ -95,7 +102,7 @@ function requireStreamer(req, res, next) {
 }
 
 /**
- * Extract JWT from Authorization header or cookie
+ * Extract JWT from Authorization header or cookie (HTTP requests only — no query param)
  */
 function extractToken(req) {
     // Check Authorization header: Bearer <token>
@@ -107,11 +114,14 @@ function extractToken(req) {
     if (req.cookies && req.cookies.token) {
         return req.cookies.token;
     }
-    // Check query param (for WebSocket upgrades)
-    if (req.query && req.query.token) {
-        return req.query.token;
-    }
     return null;
+}
+
+/**
+ * Extract JWT from query parameter (WebSocket upgrade requests only)
+ */
+function extractWsToken(req) {
+    return extractToken(req) || (req.query && req.query.token) || null;
 }
 
 /**
@@ -121,7 +131,13 @@ function authenticateWs(token) {
     if (!token) return null;
     const decoded = verifyToken(token);
     if (!decoded) return null;
-    return db.getUserById(decoded.id);
+    const user = db.getUserById(decoded.id);
+    if (!user) return null;
+    // Reject tokens issued before a password change
+    if (user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
+        return null;
+    }
+    return user;
 }
 
 module.exports = {
@@ -132,5 +148,6 @@ module.exports = {
     requireAdmin,
     requireStreamer,
     extractToken,
+    extractWsToken,
     authenticateWs,
 };

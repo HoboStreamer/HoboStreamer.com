@@ -183,19 +183,26 @@ app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, fi
 // Serve VOD/media files
 app.use('/media', express.static(path.resolve('./data/media')));
 
+// Map file extensions to forced image MIME types
+const IMAGE_EXT_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.svg': 'image/svg+xml' };
+
 // Serve avatar files (force image Content-Type, prevent XSS via spoofed extensions)
 app.use('/data/avatars', express.static(path.resolve('./data/avatars'), {
-    setHeaders: (res) => {
+    setHeaders: (res, filePath) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Content-Disposition', 'inline');
+        const ext = path.extname(filePath).toLowerCase();
+        if (IMAGE_EXT_MIME[ext]) res.setHeader('Content-Type', IMAGE_EXT_MIME[ext]);
     },
 }));
 
 // Serve paste screenshots (force image Content-Type, prevent XSS via spoofed extensions)
 app.use('/data/pastes/screenshots', express.static(path.resolve('./data/pastes/screenshots'), {
-    setHeaders: (res) => {
+    setHeaders: (res, filePath) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Content-Disposition', 'inline');
+        const ext = path.extname(filePath).toLowerCase();
+        if (IMAGE_EXT_MIME[ext]) res.setHeader('Content-Type', IMAGE_EXT_MIME[ext]);
     },
 }));
 
