@@ -968,8 +968,12 @@ async function loadAdminPastes() {
     const c = document.getElementById('admin-content');
     c.innerHTML = '<p class="muted">Loading paste stats...</p>';
     try {
-        const data = await api('/pastes/admin/stats');
-        const s = data.stats || {};
+        const [statsData, configData] = await Promise.all([
+            api('/pastes/admin/stats'),
+            api('/pastes/config'),
+        ]);
+        const s = statsData.stats || {};
+        const cfg = configData || {};
         c.innerHTML = `
             <div class="admin-stats" style="margin-bottom:24px">
                 ${[
@@ -987,7 +991,63 @@ async function loadAdminPastes() {
                     </div>
                 `).join('')}
             </div>
-            <h3 style="margin-bottom:12px;">Actions</h3>
+
+            <h3 style="margin-bottom:12px;"><i class="fa-solid fa-sliders"></i> Paste Limits</h3>
+            <form id="admin-paste-config-form" onsubmit="saveAdminPasteConfig(event)" style="display:grid;gap:10px;max-width:600px;margin-bottom:28px;">
+                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
+                    <label style="flex:1" for="pcfg-max-size-kb">
+                        <strong>Max paste size (KB)</strong>
+                        <br><small class="muted">Maximum text content size for pastes</small>
+                    </label>
+                    <input type="number" id="pcfg-max-size-kb" value="${cfg.maxSizeKb || 512}" min="1" max="102400"
+                        style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                </div>
+                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
+                    <label style="flex:1" for="pcfg-screenshot-max-mb">
+                        <strong>Max image size (MB)</strong>
+                        <br><small class="muted">Maximum upload size for screenshots / images</small>
+                    </label>
+                    <input type="number" id="pcfg-screenshot-max-mb" value="${cfg.screenshotMaxSizeMb || 8}" min="1" max="100"
+                        style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                </div>
+                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
+                    <label style="flex:1" for="pcfg-cooldown">
+                        <strong>Cooldown (seconds)</strong>
+                        <br><small class="muted">Minimum seconds between submissions</small>
+                    </label>
+                    <input type="number" id="pcfg-cooldown" value="${cfg.cooldownSeconds || 30}" min="0" max="3600"
+                        style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                </div>
+                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
+                    <label style="flex:1" for="pcfg-max-per-day">
+                        <strong>Max per user per day</strong>
+                        <br><small class="muted">0 = unlimited</small>
+                    </label>
+                    <input type="number" id="pcfg-max-per-day" value="${cfg.maxPerUserPerDay || 50}" min="0" max="10000"
+                        style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
+                </div>
+                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
+                    <label style="flex:1;cursor:pointer" for="pcfg-anon">
+                        <strong>Allow anonymous pastes</strong>
+                        <br><small class="muted">Let unauthenticated users create pastes</small>
+                    </label>
+                    <input type="checkbox" id="pcfg-anon" ${cfg.anonAllowed !== false ? 'checked' : ''}
+                        style="width:18px;height:18px;cursor:pointer">
+                </div>
+                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
+                    <label style="flex:1;cursor:pointer" for="pcfg-image-upload">
+                        <strong>Allow image uploads</strong>
+                        <br><small class="muted">Enable screenshot & image upload feature</small>
+                    </label>
+                    <input type="checkbox" id="pcfg-image-upload" ${cfg.imageUploadEnabled !== false ? 'checked' : ''}
+                        style="width:18px;height:18px;cursor:pointer">
+                </div>
+                <button type="submit" class="btn btn-primary" style="justify-self:start;margin-top:4px">
+                    <i class="fa-solid fa-floppy-disk"></i> Save Paste Settings
+                </button>
+            </form>
+
+            <h3 style="margin-bottom:12px;"><i class="fa-solid fa-toolbox"></i> Actions</h3>
             <div style="display:flex;gap:12px;flex-wrap:wrap;">
                 <button class="btn btn-danger" onclick="adminDeleteAllForks()">
                     <i class="fa-solid fa-code-fork"></i> Delete All Forks (${s.forks || 0})
@@ -996,6 +1056,24 @@ async function loadAdminPastes() {
         `;
     } catch (e) {
         c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+}
+
+async function saveAdminPasteConfig(e) {
+    e.preventDefault();
+    const settings = {
+        paste_max_size_kb: document.getElementById('pcfg-max-size-kb').value,
+        paste_screenshot_max_size_mb: document.getElementById('pcfg-screenshot-max-mb').value,
+        paste_cooldown_seconds: document.getElementById('pcfg-cooldown').value,
+        paste_max_per_user_per_day: document.getElementById('pcfg-max-per-day').value,
+        paste_anon_allowed: document.getElementById('pcfg-anon').checked ? 'true' : 'false',
+        paste_image_upload_enabled: document.getElementById('pcfg-image-upload').checked ? 'true' : 'false',
+    };
+    try {
+        await api('/admin/settings', { method: 'PUT', body: { settings } });
+        toast('Paste settings saved', 'success');
+    } catch (err) {
+        toast(err.message || 'Failed to save paste settings', 'error');
     }
 }
 
