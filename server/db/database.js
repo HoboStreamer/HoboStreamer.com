@@ -269,6 +269,39 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] channel_moderation_settings migration:', e.message); }
 
+    // Migrate: create pastes table if missing
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS pastes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT UNIQUE NOT NULL,
+            user_id INTEGER,
+            type TEXT DEFAULT 'paste' CHECK(type IN ('paste', 'screenshot')),
+            title TEXT NOT NULL DEFAULT 'Untitled',
+            content TEXT,
+            language TEXT DEFAULT 'text',
+            visibility TEXT DEFAULT 'public' CHECK(visibility IN ('public', 'unlisted')),
+            stream_id INTEGER,
+            screenshot_path TEXT,
+            metadata TEXT,
+            burn_after_read INTEGER DEFAULT 0,
+            forked_from INTEGER,
+            pinned INTEGER DEFAULT 0,
+            views INTEGER DEFAULT 0,
+            ip_address TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE SET NULL,
+            FOREIGN KEY (forked_from) REFERENCES pastes(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_slug ON pastes(slug)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_user ON pastes(user_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_visibility ON pastes(visibility)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_type ON pastes(type)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_created ON pastes(created_at)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_pinned ON pastes(pinned)`);
+    } catch (e) { console.warn('[DB] pastes migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1231,6 +1264,95 @@ function upsertChannelModerationSettings(channelId, fields) {
     return getChannelModerationSettings(channelId);
 }
 
+// ── Paste helpers ────────────────────────────────────────────
+
+function createPaste({ slug, userId, type, title, content, language, visibility, streamId, screenshotPath, metadata, burnAfterRead, forkedFrom, ipAddress }) {
+    return run(
+        `INSERT INTO pastes (slug, user_id, type, title, content, language, visibility, stream_id, screenshot_path, metadata, burn_after_read, forked_from, ip_address)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [slug, userId || null, type || 'paste', title || 'Untitled', content || '', language || 'text',
+         visibility || 'public', streamId || null, screenshotPath || null, metadata || null,
+         burnAfterRead ? 1 : 0, forkedFrom || null, ipAddress || null]
+    );
+}
+
+function getPasteBySlug(slug) {
+    return get(`
+        SELECT p.*, u.username, u.avatar_url, u.display_name
+        FROM pastes p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.slug = ?
+    `, [slug]);
+}
+
+function getPasteById(id) {
+    return get(`
+        SELECT p.*, u.username, u.avatar_url, u.display_name
+        FROM pastes p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.id = ?
+    `, [id]);
+}
+
+function listPastes({ visibility = 'public', type, search, limit = 30, offset = 0 } = {}) {
+    let where = 'WHERE p.visibility = ?';
+    const params = [visibility];
+
+    if (type && type !== 'all') {
+        where += ' AND p.type = ?';
+        params.push(type);
+    }
+    if (search) {
+        where += ' AND (p.title LIKE ? OR p.content LIKE ?)';
+        params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const total = get(`SELECT COUNT(*) as c FROM pastes p ${where}`, params).c;
+    const pastes = all(`
+        SELECT p.id, p.slug, p.user_id, p.type, p.title, p.language, p.visibility,
+               p.screenshot_path, p.burn_after_read, p.pinned, p.views, p.created_at,
+               u.username, u.avatar_url, u.display_name,
+               SUBSTR(p.content, 1, 220) as content
+        FROM pastes p
+        LEFT JOIN users u ON p.user_id = u.id
+        ${where}
+        ORDER BY p.pinned DESC, p.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+
+    return { pastes, total };
+}
+
+function incrementPasteViews(slug) {
+    return run('UPDATE pastes SET views = views + 1 WHERE slug = ?', [slug]);
+}
+
+function updatePaste(slug, fields) {
+    const updates = [];
+    const params = [];
+    for (const [key, val] of Object.entries(fields)) {
+        if (['title', 'content', 'language', 'visibility', 'pinned', 'metadata'].includes(key)) {
+            updates.push(`${key} = ?`);
+            params.push(val);
+        }
+    }
+    if (updates.length === 0) return;
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(slug);
+    return run(`UPDATE pastes SET ${updates.join(', ')} WHERE slug = ?`, params);
+}
+
+function deletePaste(slug) {
+    return run('DELETE FROM pastes WHERE slug = ?', [slug]);
+}
+
+function getUserPastes(userId, limit = 50) {
+    return all(`
+        SELECT id, slug, type, title, language, visibility, burn_after_read, pinned, views, created_at
+        FROM pastes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
+    `, [userId, limit]);
+}
+
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
@@ -1288,4 +1410,7 @@ module.exports = {
     getChannelModerators, getChannelsByModerator,
     // Channel Moderation Settings
     getChannelModerationSettings, upsertChannelModerationSettings,
+    // Pastes
+    createPaste, getPasteBySlug, getPasteById, listPastes,
+    incrementPasteViews, updatePaste, deletePaste, getUserPastes,
 };

@@ -12,7 +12,7 @@ let hoboAppMetaData = null;
 let hoboAppMetaPromise = null;
 
 // Reserved paths (not usernames)
-const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media']);
+const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media', 'pastes', 'p']);
 
 /* ── API helpers ──────────────────────────────────────────────── */
 function authHeaders() {
@@ -434,6 +434,25 @@ function routeFromURL() {
     } else if (segments[0] === 'game') {
         showPage('game');
         loadGamePage();
+    } else if (segments[0] === 'pastes') {
+        showPage('pastes');
+        loadPastesPage();
+        // Handle ?edit=slug
+        const editSlug = new URLSearchParams(window.location.search).get('edit');
+        if (editSlug) {
+            api(`/api/pastes/${editSlug}`).then(data => {
+                if (data.paste) openNewPasteModal({
+                    title: data.paste.title,
+                    content: data.paste.content,
+                    language: data.paste.language,
+                    visibility: data.paste.visibility,
+                    slug: editSlug,
+                });
+            }).catch(() => {});
+        }
+    } else if (segments[0] === 'p' && segments[1]) {
+        showPage('paste-viewer');
+        loadPasteViewer(segments[1]);
     } else if (segments[0] === 'stream' && segments[1]) {
         // Legacy stream URL: /stream/:id
         showPage('stream');
@@ -467,7 +486,7 @@ function showPage(page) {
     }
 
     // Highlight nav link
-    const pageToNav = { home: 'home', vods: 'vods', clips: 'clips', broadcast: 'broadcast', dashboard: 'dashboard', admin: 'admin', chat: 'chat', game: 'game' };
+    const pageToNav = { home: 'home', vods: 'vods', clips: 'clips', broadcast: 'broadcast', dashboard: 'dashboard', admin: 'admin', chat: 'chat', game: 'game', pastes: 'pastes', 'paste-viewer': 'pastes' };
     const navPage = pageToNav[page];
     if (navPage) {
         const link = document.querySelector(`.nav-link[data-page="${navPage}"]`);

@@ -377,7 +377,7 @@ class ChatServer {
             case 'help':
                 this.sendTo(ws, {
                     type: 'system',
-                    message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /w <user> <msg>, /me <action>` +
+                    message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /w <user> <msg>, /me <action>, /paste <content>` +
                         (this.canModerate(client)
                             ? `\nMod: /ban <user>, /unban <user>, /timeout <user> [seconds], /clear, /slow <seconds>`
                             : ''),
@@ -555,6 +555,42 @@ class ChatServer {
                     });
                 } else {
                     this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });
+                }
+                break;
+            }
+
+            case 'paste': {
+                // /paste <content> — create a quick paste from chat
+                if (!args.trim()) {
+                    this.sendTo(ws, { type: 'system', message: 'Usage: /paste <content to share>' });
+                    break;
+                }
+                try {
+                    const crypto = require('crypto');
+                    const slug = crypto.randomBytes(6).toString('base64url').slice(0, 8);
+                    const title = `Chat paste by ${client.username || client.displayName || 'anon'}`;
+                    const userId = client.userId || null;
+                    db.createPaste({
+                        slug,
+                        userId,
+                        type: 'paste',
+                        title,
+                        content: args.trim(),
+                        language: 'auto',
+                        visibility: 'public',
+                        streamId: client.streamId || null,
+                        ipAddress: client.ip || null,
+                    });
+                    const siteUrl = process.env.SITE_URL || '';
+                    const pasteUrl = `${siteUrl}/p/${slug}`;
+                    // Show link to everyone in stream
+                    this.broadcastToStream(client.streamId, {
+                        type: 'system',
+                        message: `📋 ${client.displayName || client.username || 'Anonymous'} shared a paste: ${pasteUrl}`,
+                    });
+                } catch (err) {
+                    console.error('[Chat] /paste error:', err);
+                    this.sendTo(ws, { type: 'system', message: 'Failed to create paste.' });
                 }
                 break;
             }

@@ -68,6 +68,7 @@ const thumbnailService = require('./thumbnails/thumbnail-service');
 const themeRoutes = require('./themes/routes');
 const emoteRoutes = require('./emotes/routes');
 const metaRoutes = require('./meta/routes');
+const pasteRoutes = require('./pastes/routes');
 const robotStreamerService = require('./integrations/robotstreamer-service');
 
 // Game
@@ -174,7 +175,7 @@ app.use('/css', express.static(path.join(__dirname, '../public/css'), { maxAge: 
 app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, filePath) => { if (filePath.endsWith('.html')) noCacheHeaders(res); } }));
 
 // Ensure data directories exist
-['./data', './data/vods', './data/clips', './data/media', './data/thumbnails', './data/emotes', './data/avatars'].forEach(dir => {
+['./data', './data/vods', './data/clips', './data/media', './data/thumbnails', './data/emotes', './data/avatars', './data/pastes', './data/pastes/screenshots'].forEach(dir => {
     const fullPath = path.resolve(dir);
     if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
 });
@@ -184,6 +185,9 @@ app.use('/media', express.static(path.resolve('./data/media')));
 
 // Serve avatar files
 app.use('/data/avatars', express.static(path.resolve('./data/avatars')));
+
+// Serve paste screenshots
+app.use('/data/pastes/screenshots', express.static(path.resolve('./data/pastes/screenshots')));
 
 // ── API Routes ───────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
@@ -205,6 +209,7 @@ app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
 app.use('/api/game', gameRoutes);
 app.use('/api/meta', metaRoutes);
+app.use('/api/pastes', pasteRoutes);
 const ttsRoutes = require('./chat/tts-routes');
 app.use('/api/tts', ttsRoutes);
 

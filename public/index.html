@@ -35,6 +35,9 @@
         <a href="#" onclick="event.preventDefault();navigate('/clips')" class="nav-link" data-page="clips" data-tooltip="Clips">
             <i class="fa-solid fa-scissors"></i> <span>Clips</span>
         </a>
+        <a href="#" onclick="event.preventDefault();navigate('/pastes')" class="nav-link" data-page="pastes" data-tooltip="Pastes">
+            <i class="fa-solid fa-paste"></i> <span>Pastes</span>
+        </a>
         <a href="#" onclick="event.preventDefault();navigate('/chat')" class="nav-link" data-page="chat" data-tooltip="Chat">
             <i class="fa-solid fa-comments"></i> <span>Chat</span>
         </a>
@@ -2374,6 +2377,160 @@
         </div>
     </section>
 
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!--  PASTES INDEX                                               -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <section id="page-pastes" class="page">
+        <div class="content-container">
+            <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                <div>
+                    <h1><i class="fa-solid fa-paste"></i> Pastes &amp; Screenshots</h1>
+                    <p class="page-subtitle">Share code, notes, prompts, and screenshots with the community. <span id="pastes-count"></span></p>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" onclick="openNewPasteModal()"><i class="fa-solid fa-plus"></i> New Paste</button>
+                    <button class="btn btn-outline" id="screenshot-capture-btn" onclick="captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</button>
+                </div>
+            </div>
+
+            <div class="pastes-toolbar">
+                <div class="pastes-filters">
+                    <button class="btn btn-sm pastes-filter-btn active" data-filter="all" onclick="filterPastes('all')">All</button>
+                    <button class="btn btn-sm pastes-filter-btn" data-filter="paste" onclick="filterPastes('paste')"><i class="fa-solid fa-code"></i> Pastes</button>
+                    <button class="btn btn-sm pastes-filter-btn" data-filter="screenshot" onclick="filterPastes('screenshot')"><i class="fa-solid fa-image"></i> Screenshots</button>
+                </div>
+                <div class="pastes-search">
+                    <input type="text" id="pastes-search-input" placeholder="Search pastes…" onkeydown="if(event.key==='Enter')searchPastes()">
+                    <button class="btn btn-sm btn-outline" onclick="searchPastes()"><i class="fa-solid fa-search"></i></button>
+                </div>
+            </div>
+
+            <div class="pastes-grid" id="pastes-grid">
+                <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
+            </div>
+            <div id="pastes-pagination" class="pastes-pagination"></div>
+        </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <!--  PASTE VIEWER                                               -->
+    <!-- ═══════════════════════════════════════════════════════════ -->
+    <section id="page-paste-viewer" class="page">
+        <div class="content-container">
+            <div class="paste-viewer-nav">
+                <button class="btn btn-outline btn-sm" onclick="navigate('/pastes')"><i class="fa-solid fa-arrow-left"></i> All Pastes</button>
+            </div>
+            <div id="paste-viewer-content">
+                <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Paste Create Modal -->
+    <div id="paste-create-modal" class="paste-modal-overlay" style="display:none" onclick="if(event.target===this)closePasteModal()">
+        <div class="paste-modal" onclick="event.stopPropagation()">
+            <div class="paste-modal-header">
+                <h2><i class="fa-solid fa-paste"></i> New Paste</h2>
+                <button class="paste-modal-close" onclick="closePasteModal()">&times;</button>
+            </div>
+            <div class="paste-modal-body">
+                <input type="hidden" id="paste-create-slug" value="">
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" id="paste-create-title" placeholder="Untitled" class="form-input" maxlength="200">
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label>Language</label>
+                        <select id="paste-create-lang" class="form-input">
+                            <option value="auto">Auto-detect</option>
+                            <option value="text">Plain Text</option>
+                            <option value="javascript">JavaScript</option>
+                            <option value="python">Python</option>
+                            <option value="html">HTML</option>
+                            <option value="css">CSS</option>
+                            <option value="sql">SQL</option>
+                            <option value="bash">Bash</option>
+                            <option value="json">JSON</option>
+                            <option value="markdown">Markdown</option>
+                            <option value="rust">Rust</option>
+                            <option value="go">Go</option>
+                            <option value="php">PHP</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Visibility</label>
+                        <select id="paste-create-visibility" class="form-input">
+                            <option value="public">Public</option>
+                            <option value="unlisted">Unlisted</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="display:flex;align-items:flex-end;gap:6px;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="paste-create-burn"> Burn after read
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Content <span id="paste-line-count" style="opacity:0.5;font-weight:normal;margin-left:8px;"></span></label>
+                    <textarea id="paste-create-content" class="form-input paste-textarea" placeholder="Paste your content here…" oninput="_updatePasteLineCount()" spellcheck="false"></textarea>
+                </div>
+            </div>
+            <div class="paste-modal-footer">
+                <button class="btn btn-outline" onclick="closePasteModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitPaste()"><i class="fa-solid fa-paper-plane"></i> Create Paste</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Screenshot Upload Modal -->
+    <div id="screenshot-upload-modal" class="paste-modal-overlay" style="display:none" onclick="if(event.target===this)closeScreenshotModal()">
+        <div class="paste-modal" onclick="event.stopPropagation()">
+            <div class="paste-modal-header">
+                <h2><i class="fa-solid fa-camera"></i> Upload Screenshot</h2>
+                <button class="paste-modal-close" onclick="closeScreenshotModal()">&times;</button>
+            </div>
+            <div class="paste-modal-body">
+                <div class="screenshot-preview-area">
+                    <img id="screenshot-preview" style="display:none;max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Screenshot preview">
+                    <div class="screenshot-upload-zone" id="screenshot-upload-zone">
+                        <label for="screenshot-file-input" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;padding:32px;">
+                            <i class="fa-solid fa-cloud-arrow-up" style="font-size:2rem;opacity:0.5;"></i>
+                            <span>Click to upload or drag an image</span>
+                            <span style="font-size:0.75rem;opacity:0.5;">PNG, JPEG, or WebP — max 8 MB</span>
+                        </label>
+                        <input type="file" id="screenshot-file-input" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="onScreenshotFileSelect(this)">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top:12px;">
+                    <label>Title</label>
+                    <input type="text" id="screenshot-title" placeholder="Screenshot title" class="form-input" maxlength="200">
+                </div>
+                <div class="form-group">
+                    <label>Description (optional)</label>
+                    <textarea id="screenshot-desc" class="form-input" rows="2" placeholder="What does this show? Any bugs?"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label>Visibility</label>
+                        <select id="screenshot-visibility" class="form-input">
+                            <option value="public">Public</option>
+                            <option value="unlisted">Unlisted</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Page URL</label>
+                        <input type="text" id="screenshot-page-url" class="form-input" readonly>
+                    </div>
+                </div>
+            </div>
+            <div class="paste-modal-footer">
+                <button class="btn btn-outline" onclick="closeScreenshotModal()">Cancel</button>
+                <button class="btn btn-primary" id="screenshot-submit-btn" onclick="submitScreenshot()"><i class="fa-solid fa-upload"></i> Upload</button>
+            </div>
+        </div>
+    </div>
+
 </main>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
@@ -2453,5 +2610,6 @@
 <script src="/js/call.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>
 <script src="/js/game.js?v=2"></script>
+<script src="/js/pastes.js?v=1"></script>
 </body>
 </html>
