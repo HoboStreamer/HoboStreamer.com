@@ -351,10 +351,11 @@ async function initWebRTC(stream) {
     streamRef = stream; // set module-level ref for clip recording in handleViewerOffer
 
     try {
-        video.style.display = 'block';
         video.playsInline = true;
         video.preload = 'auto';
-        if (placeholder) placeholder.style.display = 'none';
+        // Keep placeholder visible ("Connecting to stream...") until video actually plays
+        // The video element stays hidden until ontrack + playing event
+        video.style.display = 'none';
         playerType = 'webrtc';
 
         // Connect to the broadcast signaling relay as a viewer
@@ -405,6 +406,8 @@ async function initWebRTC(stream) {
                     case 'broadcaster-ready':
                         // Broadcaster connected/reconnected — request to watch
                         console.log('[Player] Broadcaster ready, requesting watch');
+                        // Cancel any pending rewatch timer (prevents double-watch race)
+                        if (_viewerRewatchTimer) { clearTimeout(_viewerRewatchTimer); _viewerRewatchTimer = null; }
                         // Cancel any pending "stream ended" from a brief disconnect
                         if (_broadcasterDisconnectTimer) {
                             clearTimeout(_broadcasterDisconnectTimer);
@@ -518,10 +521,8 @@ async function handleViewerOffer(msg, ws, video) {
         console.log('[Player] Got remote track:', e.track.kind);
         if (e.streams && e.streams[0]) {
             video.srcObject = e.streams[0];
-            // Start clip recording for the remote stream
             startClipRecordingIfNeeded(e.streams[0], streamRef?.id);
         } else {
-            // Fallback: create stream from tracks
             let mediaStream = video.srcObject;
             if (!mediaStream) {
                 mediaStream = new MediaStream();
@@ -530,7 +531,38 @@ async function handleViewerOffer(msg, ws, video) {
             mediaStream.addTrack(e.track);
             startClipRecordingIfNeeded(mediaStream, streamRef?.id);
         }
-        video.play().catch(() => {});
+
+        // Show the video element now that we have tracks
+        video.style.display = 'block';
+
+        // Hide the placeholder once video actually renders frames
+        const onPlaying = () => {
+            video.removeEventListener('playing', onPlaying);
+            const ph = document.querySelector('.video-placeholder');
+            if (ph) ph.style.display = 'none';
+            // Remove the unmute overlay if somehow it lingered
+            document.getElementById('unmute-overlay')?.remove();
+        };
+        video.addEventListener('playing', onPlaying);
+
+        // Try playing — handle autoplay policy failure
+        video.play().then(() => {
+            console.log('[Player] Playback started');
+        }).catch((err) => {
+            if (err.name === 'NotAllowedError') {
+                // Browser blocked autoplay of unmuted video — mute and retry
+                console.warn('[Player] Autoplay blocked, muting and retrying');
+                video.muted = true;
+                video.play().then(() => {
+                    // Show a click-to-unmute overlay
+                    showUnmuteOverlay(video);
+                }).catch(() => {
+                    console.error('[Player] Playback failed even muted');
+                });
+            } else {
+                console.error('[Player] Play failed:', err);
+            }
+        });
     };
 
     pc.onicecandidate = (e) => {
@@ -1497,7 +1529,8 @@ function destroyPlayer() {
     const canvas = document.getElementById('video-canvas');
     const video = document.getElementById('video-element');
     if (canvas) canvas.style.display = 'none';
-    if (video) { video.style.display = 'none'; video.srcObject = null; video.src = ''; }
+    if (video) { video.style.display = 'none'; video.muted = false; video.srcObject = null; video.src = ''; }
+    document.getElementById('unmute-overlay')?.remove();
 
     // Clean up VOD & Clip video elements so they stop playing on navigation
     for (const id of ['vp-video', 'clp-video']) {
@@ -1540,4 +1573,27 @@ function showStreamError(msg) {
             <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
             <p>${msg}</p>`;
     }
+}
+
+/**
+ * Show a click-to-unmute overlay when autoplay policy forced muted playback.
+ * One tap unmutes and removes the overlay.
+ */
+function showUnmuteOverlay(video) {
+    // Don't duplicate
+    if (document.getElementById('unmute-overlay')) return;
+    const container = document.getElementById('video-container');
+    if (!container) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'unmute-overlay';
+    overlay.style.cssText = 'position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(0,0,0,0.35);';
+    overlay.innerHTML = '<div style="background:rgba(0,0,0,0.7);padding:14px 28px;border-radius:10px;color:#fff;font-size:1.1rem;display:flex;align-items:center;gap:10px;"><i class="fa-solid fa-volume-xmark" style="font-size:1.4rem"></i> Tap to unmute</div>';
+    overlay.addEventListener('click', () => {
+        video.muted = false;
+        overlay.remove();
+        // Sync the volume slider UI
+        const volBtn = document.getElementById('btn-volume');
+        if (volBtn) volBtn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
+    }, { once: true });
+    container.appendChild(overlay);
 }
