@@ -504,10 +504,19 @@ async function handleViewerOffer(msg, ws, video) {
         console.warn('[Player] handleViewerOffer called but player is null');
         return;
     }
-    // Close existing PC if re-negotiating
+    // Close existing PC if re-negotiating — detach handlers first to prevent
+    // the old PC's 'closed' state from triggering a cascading re-watch loop
     if (player.pc) {
-        try { player.pc.close(); } catch (ignored) {}
+        const oldPc = player.pc;
+        oldPc.oniceconnectionstatechange = null;
+        oldPc.ontrack = null;
+        oldPc.onicecandidate = null;
+        try { oldPc.close(); } catch (ignored) {}
     }
+    // Clear any pending stall/ICE timers from the previous connection
+    if (player._iceTimeout) { clearTimeout(player._iceTimeout); player._iceTimeout = null; }
+    if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
+    if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
 
     const pc = new RTCPeerConnection({
         iceServers: [
@@ -516,6 +525,57 @@ async function handleViewerOffer(msg, ws, video) {
         ],
     });
     player.pc = pc;
+    let _iceConnected = false;
+    let _hasVideoFrames = false;
+    let _playPending = false; // debounce play() across multiple ontrack events
+
+    // Schedules a re-watch if the current PC is still ours
+    const triggerRewatch = (reason) => {
+        if (!player || player.pc !== pc) return;
+        console.log(`[Player] Re-watching: ${reason}`);
+        player.watchSent = false;
+        sendPlayerSignal({ type: 'watch' });
+        player.watchSent = true;
+    };
+
+    // Debounced play() — coalesces multiple ontrack calls
+    const tryPlay = () => {
+        if (_playPending || !player || player.pc !== pc) return;
+        _playPending = true;
+        if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
+        video.play().then(() => {
+            _playPending = false;
+            console.log('[Player] Playback started');
+        }).catch((err) => {
+            _playPending = false;
+            if (err.name === 'NotAllowedError') {
+                // Browser blocked autoplay — mute and retry
+                console.warn('[Player] Autoplay blocked, muting and retrying');
+                video.muted = true;
+                video.play().then(() => {
+                    showUnmuteOverlay(video);
+                }).catch(() => {
+                    console.error('[Player] Playback failed even muted');
+                });
+            } else if (err.name === 'AbortError') {
+                // play() was interrupted by another call — retry after a tick
+                console.log('[Player] play() interrupted, retrying in 200ms');
+                player._playRetryTimer = setTimeout(() => {
+                    player._playRetryTimer = null;
+                    _playPending = false;
+                    tryPlay();
+                }, 200);
+            } else {
+                console.error('[Player] Play failed:', err);
+                // Retry once after a short delay for transient errors
+                player._playRetryTimer = setTimeout(() => {
+                    player._playRetryTimer = null;
+                    _playPending = false;
+                    video.play().catch(() => {});
+                }, 1000);
+            }
+        });
+    };
 
     pc.ontrack = (e) => {
         console.log('[Player] Got remote track:', e.track.kind);
@@ -532,12 +592,31 @@ async function handleViewerOffer(msg, ws, video) {
             startClipRecordingIfNeeded(mediaStream, streamRef?.id);
         }
 
+        // Monitor remote track health — if it ends or mutes, trigger re-watch
+        const track = e.track;
+        track.addEventListener('ended', () => {
+            if (player?.pc !== pc) return;
+            console.warn(`[Player] Remote ${track.kind} track ended`);
+            triggerRewatch(`remote ${track.kind} track ended`);
+        }, { once: true });
+        track.addEventListener('mute', () => {
+            if (player?.pc !== pc) return;
+            console.warn(`[Player] Remote ${track.kind} track muted`);
+            // Give muted tracks a grace period — they may unmute on their own (e.g. track replacement)
+            setTimeout(() => {
+                if (player?.pc !== pc || !track.muted) return;
+                triggerRewatch(`remote ${track.kind} track stayed muted`);
+            }, 5000);
+        }, { once: true });
+
         // Show the video element now that we have tracks
         video.style.display = 'block';
 
         // Hide the placeholder once video actually renders frames
         const onPlaying = () => {
             video.removeEventListener('playing', onPlaying);
+            _hasVideoFrames = true;
+            if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
             const ph = document.querySelector('.video-placeholder');
             if (ph) ph.style.display = 'none';
             // Remove the unmute overlay if somehow it lingered
@@ -545,24 +624,20 @@ async function handleViewerOffer(msg, ws, video) {
         };
         video.addEventListener('playing', onPlaying);
 
-        // Try playing — handle autoplay policy failure
-        video.play().then(() => {
-            console.log('[Player] Playback started');
-        }).catch((err) => {
-            if (err.name === 'NotAllowedError') {
-                // Browser blocked autoplay of unmuted video — mute and retry
-                console.warn('[Player] Autoplay blocked, muting and retrying');
-                video.muted = true;
-                video.play().then(() => {
-                    // Show a click-to-unmute overlay
-                    showUnmuteOverlay(video);
-                }).catch(() => {
-                    console.error('[Player] Playback failed even muted');
-                });
-            } else {
-                console.error('[Player] Play failed:', err);
-            }
-        });
+        // Video stall detection — if no frames render within 8s of getting tracks, re-watch
+        if (!player._stallTimer && !_hasVideoFrames) {
+            player._stallTimer = setTimeout(() => {
+                player._stallTimer = null;
+                if (player?.pc !== pc || _hasVideoFrames) return;
+                // Check if video element is actually rendering
+                if (video.videoWidth === 0 || video.paused || video.readyState < 2) {
+                    console.warn('[Player] Video stall detected — no frames after 8s');
+                    triggerRewatch('video stall — no frames rendered');
+                }
+            }, 8000);
+        }
+
+        tryPlay();
     };
 
     pc.onicecandidate = (e) => {
@@ -576,14 +651,17 @@ async function handleViewerOffer(msg, ws, video) {
     };
 
     pc.oniceconnectionstatechange = () => {
+        // Ignore state changes from a stale (replaced) PC
+        if (!player || player.pc !== pc) return;
         console.log('[Player] ICE state:', pc.iceConnectionState);
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+            _iceConnected = true;
+            if (player._iceTimeout) { clearTimeout(player._iceTimeout); player._iceTimeout = null; }
             return;
         }
-        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
-            if (player) player.watchSent = false;
-            sendPlayerSignal({ type: 'watch' });
-            if (player) player.watchSent = true;
+        if (pc.iceConnectionState === 'failed') {
+            if (player._iceTimeout) { clearTimeout(player._iceTimeout); player._iceTimeout = null; }
+            triggerRewatch('ICE failed');
             return;
         }
         if (pc.iceConnectionState === 'disconnected') {
@@ -591,25 +669,47 @@ async function handleViewerOffer(msg, ws, video) {
                 if (!player?.pc || player.pc !== pc) return;
                 const state = pc.iceConnectionState;
                 if (state === 'disconnected' || state === 'failed') {
-                    player.watchSent = false;
-                    sendPlayerSignal({ type: 'watch' });
-                    player.watchSent = true;
+                    triggerRewatch('ICE disconnected/failed after grace period');
                 }
             }, 2500);
         }
         // 'disconnected' is transient and often recovers on its own — don't show error
+        // 'closed' is handled by detaching handlers before close — no cascading re-watch
     };
 
-    await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
+    // Wrap SDP operations in try/catch — retry on failure instead of silent black screen
+    try {
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
 
-    // Use player.ws (not the passed ws param) so this works after WS reconnection
-    sendPlayerSignal({
-        type: 'answer',
-        sdp: answer,
-    });
-    console.log('[Player] Sent answer to broadcaster');
+        // Use player.ws (not the passed ws param) so this works after WS reconnection
+        sendPlayerSignal({
+            type: 'answer',
+            sdp: answer,
+        });
+        console.log('[Player] Sent answer to broadcaster');
+    } catch (sdpErr) {
+        console.error('[Player] SDP negotiation failed:', sdpErr);
+        // Close the failed PC and retry after a short delay
+        pc.oniceconnectionstatechange = null;
+        pc.ontrack = null;
+        try { pc.close(); } catch {}
+        if (player.pc === pc) player.pc = null;
+        setTimeout(() => triggerRewatch('SDP negotiation failed'), 2000);
+        return;
+    }
+
+    // ICE connection timeout — if not connected within 15s, something is stuck
+    player._iceTimeout = setTimeout(() => {
+        player._iceTimeout = null;
+        if (!player || player.pc !== pc || _iceConnected) return;
+        const state = pc.iceConnectionState;
+        if (state !== 'connected' && state !== 'completed') {
+            console.warn(`[Player] ICE timeout after 15s (state: ${state})`);
+            triggerRewatch('ICE connection timeout');
+        }
+    }, 15000);
 }
 
 /* ── HLS / HTTP-FLV (RTMP transcoded) ──────────────────────────── */

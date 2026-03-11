@@ -133,6 +133,17 @@ class BroadcastServer {
             for (const [viewerPeerId, viewerWs] of room.viewers) {
                 this.safeSend(viewerWs, { type: 'broadcaster-ready', peerId: viewerPeerId });
             }
+
+            // Drain any pending watchers that sent 'watch' while broadcaster was disconnected
+            if (room._pendingWatchers && room._pendingWatchers.size > 0) {
+                for (const pendingPeerId of room._pendingWatchers) {
+                    if (room.viewers.has(pendingPeerId)) {
+                        const viewerWs = room.viewers.get(pendingPeerId);
+                        this.safeSend(viewerWs, { type: 'broadcaster-ready', peerId: pendingPeerId });
+                    }
+                }
+                room._pendingWatchers.clear();
+            }
         } else {
             room.viewers.set(peerId, ws);
             console.log(`[Broadcast] Viewer connected: stream ${streamId} (${peerId})`);
@@ -192,11 +203,18 @@ class BroadcastServer {
 
             case 'watch':
                 // Viewer requests to watch — tell broadcaster to create offer for this viewer
-                if (client.role === 'viewer' && room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
-                    this.safeSend(room.broadcaster, {
-                        type: 'viewer-joined',
-                        peerId: client.peerId,
-                    });
+                if (client.role === 'viewer') {
+                    if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                        this.safeSend(room.broadcaster, {
+                            type: 'viewer-joined',
+                            peerId: client.peerId,
+                        });
+                    } else {
+                        // Broadcaster not connected — mark viewer as pending so they get
+                        // broadcaster-ready as soon as the broadcaster reconnects
+                        if (!room._pendingWatchers) room._pendingWatchers = new Set();
+                        room._pendingWatchers.add(client.peerId);
+                    }
                 }
                 break;
 
@@ -291,6 +309,7 @@ class BroadcastServer {
                 }
             } else {
                 room.viewers.delete(client.peerId);
+                if (room._pendingWatchers) room._pendingWatchers.delete(client.peerId);
                 console.log(`[Broadcast] Viewer disconnected: stream ${client.streamId} (${client.peerId})`);
 
                 // Notify broadcaster
