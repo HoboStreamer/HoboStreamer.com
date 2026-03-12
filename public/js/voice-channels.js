@@ -124,23 +124,24 @@ function vcRenderChannelList() {
 }
 
 function vcSelectChannel(channelId) {
-    // If already connected to a different channel, leave first
-    if (callState.joined && callState.channelId && callState.channelId !== channelId) {
-        vcLeave();
-    }
-
     // If already connected to this channel, just toggle highlight
     if (callState.joined && callState.channelId === channelId) {
         return;
     }
 
+    // Validate the target channel exists before disconnecting from current
+    const ch = vcState.channels.find(c => c.id === channelId);
+    if (!ch) { vcFetchChannels(); return; }
+
+    // If already connected to a different channel, leave first
+    if (callState.joined && callState.channelId && callState.channelId !== channelId) {
+        vcLeave();
+    }
+
     vcState.selectedChannelId = channelId;
     vcRenderChannelList();
 
-    const ch = vcState.channels.find(c => c.id === channelId);
-    if (ch) {
-        vcShowSetup(ch);
-    }
+    vcShowSetup(ch);
 }
 
 /* ── Device Setup Panel ────────────────────────────────────── */
@@ -778,9 +779,12 @@ function vcStopPolling() {
 /* ── Participant Count Update (called from call.js) ────────── */
 
 function vcUpdateParticipantCount(count) {
-    // We don't have a separate badge; the channel list shows counts.
-    // Trigger a channel list refresh for live count.
-    vcFetchChannels();
+    // Update count in-place instead of triggering a full HTTP fetch per WS event
+    const ch = vcState.channels.find(c => c.id === callState.channelId);
+    if (ch) {
+        ch.participantCount = count;
+        vcRenderChannelList();
+    }
 }
 
 /* ── Initialization ────────────────────────────────────────── */

@@ -280,7 +280,9 @@ function _optimizeCallSender(sender, track) {
             params.encodings[0].maxBitrate = CALL_VIDEO_MAX_BITRATE;
             params.encodings[0].maxFramerate = CALL_VIDEO_MAX_FRAMERATE;
         }
-        sender.setParameters(params).catch(() => {});
+        sender.setParameters(params).catch(err => {
+            console.warn(`[Call] setParameters failed for ${track.kind}:`, err.message);
+        });
     } catch {}
 }
 
@@ -304,13 +306,11 @@ const _MIN_RENDER_INTERVAL = 100; // ms — no more than ~10 full rebuilds/sec
 function _scheduleRender() {
     if (_renderDirty) return;
     _renderDirty = true;
+    if (_renderRAF) { cancelAnimationFrame(_renderRAF); _renderRAF = null; }
     _renderRAF = requestAnimationFrame(() => {
-        _renderDirty = false;
-        _renderRAF = null;
         const now = performance.now();
         if (now - _lastFullRenderTime < _MIN_RENDER_INTERVAL) {
-            // Too soon — defer to next frame
-            _renderDirty = false;
+            // Too soon — defer to next frame but keep dirty flag so calls are coalesced
             _renderRAF = requestAnimationFrame(() => {
                 _renderDirty = false;
                 _renderRAF = null;
@@ -319,6 +319,8 @@ function _scheduleRender() {
             });
             return;
         }
+        _renderDirty = false;
+        _renderRAF = null;
         _lastFullRenderTime = now;
         _renderCallUI();
     });
@@ -640,10 +642,17 @@ async function joinCall() {
 
 /** Leave the group call */
 function leaveCall() {
+    const streamId = callState.streamId;
+    const wasBroadcast = callState.broadcastMode;
+    const wasVcMode = callState.vcMode;
     callState.joined = false;
     callState.connecting = false;
     _cleanupCall();
     _renderCallUI();
+    // Resume HTTP status polling for viewer call UI (not needed for broadcast or VC mode)
+    if (streamId && !wasBroadcast && !wasVcMode) {
+        _startViewerCallStatusSync(streamId);
+    }
 }
 
 /** Internal cleanup (shared by leave, kick, ban) */
@@ -681,6 +690,18 @@ function _cleanupCall() {
         callState.audioContext = null;
     }
 
+    // Close sound effects AudioContext
+    if (_callSounds._ctx) {
+        try { _callSounds._ctx.close(); } catch {}
+        _callSounds._ctx = null;
+    }
+
+    // Close shared peer audio context (volume amplification)
+    if (_sharedPeerAudioCtx) {
+        try { _sharedPeerAudioCtx.close(); } catch {}
+        _sharedPeerAudioCtx = null;
+    }
+
     // Close WebSocket
     if (callState.ws) {
         try { callState.ws.close(); } catch {}
@@ -711,6 +732,8 @@ function _cleanupCall() {
     callState.localSpeechDetected = false;
     callState.pttPressed = false;
     callState.speechHoldUntil = 0;
+    delete callState._sharedBroadcastAudio;
+    callState._localVideoEl = null;
 }
 
 /** Toggle mute */
@@ -752,11 +775,18 @@ async function toggleCallCamera() {
             callState.localStream.addTrack(camTrack);
             callState.cameraOff = false;
 
-            // Add video track to all existing peer connections
+            // Add video track to all existing peer connections —
+            // use replaceTrack if a video sender slot already exists (avoids renegotiation)
             for (const [peerId, peer] of callState.peers) {
                 try {
-                    const sender = peer.pc.addTrack(camTrack, callState.localStream);
-                    _optimizeCallSender(sender, camTrack);
+                    const existingSender = peer.pc.getSenders().find(s => s.track?.kind === 'video' || (s.track === null && s._isVideoSlot));
+                    if (existingSender) {
+                        await existingSender.replaceTrack(camTrack);
+                        _optimizeCallSender(existingSender, camTrack);
+                    } else {
+                        const sender = peer.pc.addTrack(camTrack, callState.localStream);
+                        _optimizeCallSender(sender, camTrack);
+                    }
                 } catch (peerErr) {
                     console.warn(`[Call] Failed to add camera track to peer ${peerId}:`, peerErr.message);
                 }
@@ -881,7 +911,9 @@ function _connectCallWs() {
         }
     };
 
-    callState.ws.onerror = () => {};
+    callState.ws.onerror = (e) => {
+        console.warn('[Call] WebSocket error:', e);
+    };
 }
 
 function _handleCallMessage(msg) {
@@ -894,6 +926,9 @@ function _handleCallMessage(msg) {
             // Determine if we can moderate (streamer, channel creator, admin, or global mod)
             callState.canModerate = !!msg.isStreamer || (typeof currentUser !== 'undefined' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'global_mod'));
 
+            // Stop redundant HTTP polling while we have a live WS connection
+            _stopViewerCallStatusSync();
+
             {
                 const me = (msg.participants || []).find(p => p.peerId === msg.peerId);
                 _applyLocalParticipantInfo(me);
@@ -902,6 +937,8 @@ function _handleCallMessage(msg) {
             // Create peer connections to existing participants — stagger creation
             // to avoid a burst of WebRTC negotiation that freezes the UI
             {
+                callState._sessionGen = (callState._sessionGen || 0) + 1;
+                const gen = callState._sessionGen;
                 const others = (msg.participants || []).filter(p => p.peerId !== callState.myPeerId);
                 if (others.length <= 2) {
                     // Small room — create immediately
@@ -914,7 +951,7 @@ function _handleCallMessage(msg) {
                             _createPeerConnection(p.peerId, true, p);
                         } else {
                             setTimeout(() => {
-                                if (callState.joined) _createPeerConnection(p.peerId, true, p);
+                                if (callState.joined && callState._sessionGen === gen) _createPeerConnection(p.peerId, true, p);
                             }, i * 200);
                         }
                     });
@@ -1089,7 +1126,7 @@ function _handleCallMessage(msg) {
         case 'call-ended': {
             _callSystemMessage('The call has ended');
             leaveCall();
-            if (callState.streamId && !callState.broadcastMode) {
+            if (callState.streamId && !callState.broadcastMode && !callState.vcMode) {
                 _fetchCallStatus(callState.streamId);
             }
             break;
@@ -1196,7 +1233,15 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
                 if (!callState.joined) return;
                 const curState = peer.pc?.iceConnectionState;
                 if (curState === 'disconnected' || curState === 'failed') {
-                    console.log(`[Call] Attempting ICE restart for peer ${peerId}`);
+                    peer._iceRestartCount = (peer._iceRestartCount || 0) + 1;
+                    if (peer._iceRestartCount > 3) {
+                        console.warn(`[Call] Too many ICE restarts for ${peerId}, giving up`);
+                        _closePeer(peerId);
+                        callState.peers.delete(peerId);
+                        _scheduleRender();
+                        return;
+                    }
+                    console.log(`[Call] Attempting ICE restart for peer ${peerId} (attempt ${peer._iceRestartCount})`);
                     try {
                         peer.pc.restartIce();
                         peer.pc.createOffer({ iceRestart: true }).then(offer => {
@@ -1218,6 +1263,8 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
             }, 4000);
         } else if (state === 'connected' || state === 'completed') {
             if (peer._disconnectTimer) { clearTimeout(peer._disconnectTimer); peer._disconnectTimer = null; }
+            // Reset restart counter on successful connection
+            peer._iceRestartCount = 0;
         } else if (state === 'failed') {
             if (peer._disconnectTimer) { clearTimeout(peer._disconnectTimer); peer._disconnectTimer = null; }
             // One ICE restart attempt before giving up
@@ -1254,10 +1301,13 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
     };
 
     // Negotiation needed — set on ALL peer connections so track additions
-    // (e.g. camera toggle) trigger renegotiation from either side
+    // (e.g. camera toggle) trigger renegotiation from either side.
+    // Uses "perfect negotiation" pattern with polite/impolite roles for glare resolution.
     peer._negotiating = false;
+    peer._handlingRemoteOffer = false;
+    peer._iceRestartCount = 0;
     pc.onnegotiationneeded = async () => {
-        if (peer._negotiating) return; // prevent re-entrant negotiation
+        if (peer._negotiating || peer._handlingRemoteOffer) return; // prevent re-entrant negotiation
         peer._negotiating = true;
         try {
             const offer = await pc.createOffer();
@@ -1287,6 +1337,25 @@ async function _handleOffer(msg) {
     if (!peer) return;
 
     try {
+        // Perfect negotiation: detect offer collision (both sides sent offers simultaneously)
+        const offerCollision = peer._negotiating || peer.pc.signalingState !== 'stable';
+        // Deterministic politeness: the peer with the "larger" peerId is polite (yields)
+        const isPolite = callState.myPeerId > peerId;
+
+        if (offerCollision && !isPolite) {
+            // We are impolite and already have a pending offer — drop the incoming one
+            console.log(`[Call] Offer glare with ${peerId} — impolite side, ignoring incoming offer`);
+            return;
+        }
+
+        if (offerCollision) {
+            // We are polite — rollback our pending offer and accept the remote one
+            console.log(`[Call] Offer glare with ${peerId} — polite side, rolling back`);
+            await peer.pc.setLocalDescription({ type: 'rollback' });
+            peer._negotiating = false;
+        }
+
+        peer._handlingRemoteOffer = true;
         await peer.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         const answer = await peer.pc.createAnswer();
         await peer.pc.setLocalDescription(answer);
@@ -1297,12 +1366,19 @@ async function _handleOffer(msg) {
         });
     } catch (err) {
         console.error('[Call] Handle offer failed:', err);
+    } finally {
+        peer._handlingRemoteOffer = false;
     }
 }
 
 async function _handleAnswer(msg) {
     const peer = callState.peers.get(msg.fromPeerId);
     if (!peer) return;
+    // Guard: only accept answers when we have a pending local offer
+    if (peer.pc.signalingState !== 'have-local-offer') {
+        console.warn(`[Call] Ignoring stale answer from ${msg.fromPeerId} (state: ${peer.pc.signalingState})`);
+        return;
+    }
     try {
         await peer.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
     } catch (err) {
@@ -1335,12 +1411,16 @@ function _closePeer(peerId) {
         peer.pc.oniceconnectionstatechange = null;
         peer.pc.onnegotiationneeded = null;
         peer.pc.close();
+        peer.pc = null;
     }
-    if (peer._gainCtx) {
-        try { peer._gainCtx.close(); } catch {}
-        peer._gainCtx = null;
-        peer._gainNode = null;
+    // Disconnect gain chain (shared AudioContext is closed in _cleanupCall)
+    if (peer._gainSource) {
+        try { peer._gainSource.disconnect(); } catch {}
         peer._gainSource = null;
+    }
+    if (peer._gainNode) {
+        try { peer._gainNode.disconnect(); } catch {}
+        peer._gainNode = null;
     }
     if (peer.audioEl) {
         peer.audioEl.srcObject = null;
@@ -1354,6 +1434,7 @@ function _closePeer(peerId) {
             try { peer.mediaStream.removeTrack(track); } catch {}
         });
     }
+    peer.videoStream = null;
 }
 
 function _attachPeerAudioTrack(peerId, peer, track) {
@@ -1387,9 +1468,11 @@ function _attachPeerAudioTrack(peerId, peer, track) {
     if (playPromise && playPromise.catch) {
         playPromise.catch((err) => {
             console.warn(`[Call] Audio playback blocked for peer ${peerId}:`, err.message);
-            // Retry once on next user interaction
+            // Retry once on next user interaction — use peer ID to avoid holding stale references
+            const pid = peerId;
             const retryPlay = () => {
-                peer.audioEl?.play?.().catch(() => {});
+                const p = callState.peers.get(pid);
+                if (p?.audioEl) p.audioEl.play().catch(() => {});
                 document.removeEventListener('click', retryPlay);
                 document.removeEventListener('keydown', retryPlay);
             };
@@ -1420,7 +1503,7 @@ function _attachPeerVideoTrack(peerId, peer, track) {
         peer.mediaStream.addTrack(track);
     }
     peer.videoStream = peer.mediaStream;
-    peer.cameraOff = false;
+    if (!peer.forceCameraOff) peer.cameraOff = false;
     if (peer.videoEl) {
         _bindVideoElement(peer.videoEl, peer.videoStream, false);
     }
@@ -1459,21 +1542,31 @@ function _peerHasActiveVideo(opts) {
 /**
  * Set a GainNode on a peer's audio for volume amplification (>100%).
  * Uses Web Audio API to route the audio element through a gain node.
+ * Shares a single AudioContext across all peers to avoid browser limits.
  */
+let _sharedPeerAudioCtx = null;
+function _getSharedPeerAudioCtx() {
+    if (!_sharedPeerAudioCtx || _sharedPeerAudioCtx.state === 'closed') {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        _sharedPeerAudioCtx = new Ctx();
+    }
+    if (_sharedPeerAudioCtx.state === 'suspended') _sharedPeerAudioCtx.resume().catch(() => {});
+    return _sharedPeerAudioCtx;
+}
+
 function _setPeerGain(peer, gainValue) {
     if (!peer.audioEl) return;
     try {
         // Create or reuse the gain chain
-        if (!peer._gainCtx) {
-            const Ctx = window.AudioContext || window.webkitAudioContext;
-            if (!Ctx) return;
-            peer._gainCtx = new Ctx();
-            peer._gainSource = peer._gainCtx.createMediaElementSource(peer.audioEl);
-            peer._gainNode = peer._gainCtx.createGain();
+        if (!peer._gainNode) {
+            const ctx = _getSharedPeerAudioCtx();
+            if (!ctx) return;
+            peer._gainSource = ctx.createMediaElementSource(peer.audioEl);
+            peer._gainNode = ctx.createGain();
             peer._gainSource.connect(peer._gainNode);
-            peer._gainNode.connect(peer._gainCtx.destination);
+            peer._gainNode.connect(ctx.destination);
         }
-        if (peer._gainCtx.state === 'suspended') peer._gainCtx.resume().catch(() => {});
         peer._gainNode.gain.value = gainValue;
     } catch (err) {
         console.warn('[Call] GainNode setup failed:', err.message);
@@ -1705,7 +1798,14 @@ function _createParticipantTile(opts) {
     // Video or avatar placeholder
     const showVideo = _peerHasActiveVideo(opts);
     if (showVideo) {
-        const video = opts.isLocal ? document.createElement('video') : (callState.peers.get(opts.peerId)?.videoEl || document.createElement('video'));
+        let video;
+        if (opts.isLocal) {
+            // Cache the local video element to avoid flicker on re-render
+            if (!callState._localVideoEl) callState._localVideoEl = document.createElement('video');
+            video = callState._localVideoEl;
+        } else {
+            video = callState.peers.get(opts.peerId)?.videoEl || document.createElement('video');
+        }
         video.autoplay = true;
         video.playsInline = true;
         video.className = 'call-video';
@@ -2205,9 +2305,15 @@ function _processLocalSpeechFrame() {
     if (!callState.localAnalyser) return;
     const bins = new Uint8Array(callState.localAnalyser.frequencyBinCount);
     callState.localAnalyser.getByteFrequencyData(bins);
+    // Only average bins in the speech frequency band (~85–3400 Hz) to reduce
+    // false positives from fans, keyboard clicks, and low-frequency rumble
+    const sampleRate = callState.audioContext?.sampleRate || 48000;
+    const binHz = sampleRate / callState.localAnalyser.fftSize;
+    const startBin = Math.max(1, Math.floor(85 / binHz));
+    const endBin = Math.min(Math.ceil(3400 / binHz), bins.length);
     let sum = 0;
-    for (let i = 0; i < bins.length; i++) sum += bins[i];
-    const avg = bins.length ? (sum / bins.length) : 0;
+    for (let i = startBin; i < endBin; i++) sum += bins[i];
+    const avg = (endBin - startBin) > 0 ? sum / (endBin - startBin) : 0;
     const percent = Math.round((avg / 255) * 100);
     const detected = percent >= callState.vadThreshold;
     if (detected) callState.speechHoldUntil = Date.now() + 250;
@@ -2390,7 +2496,10 @@ async function switchCallCam(deviceId) {
         // Replace track in all peer connections
         for (const [, peer] of callState.peers) {
             const sender = peer.pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) await sender.replaceTrack(newTrack);
+            if (sender) {
+                await sender.replaceTrack(newTrack);
+                _optimizeCallSender(sender, newTrack);
+            }
         }
         _renderCallUI();
         _callSystemMessage('Camera switched');
@@ -2475,7 +2584,7 @@ document.addEventListener('mouseup', (e) => {
 // Prevent context menu from appearing when using right/middle mouse PTT
 document.addEventListener('contextmenu', (e) => {
     if (callState.inputMode === 'ptt' && callState.pttKey.startsWith('Mouse')) {
-        // Only suppress if we're in PTT mode with a mouse button key
+        e.preventDefault();
     }
 });
 
