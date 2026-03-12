@@ -399,6 +399,28 @@ class GameServer {
             username: ws.username,
             text,
         });
+
+        // Bridge game chat to global chat so it appears in the Global Chat tab
+        try {
+            const chatServer = require('../chat/chat-server');
+            const user = ws.userId ? db.getUserById(ws.userId) : null;
+            const gameChatMsg = {
+                type: 'chat',
+                username: ws.username,
+                user_id: ws.userId || null,
+                anon_id: null,
+                role: user ? user.role : 'user',
+                message: text,
+                stream_id: null,
+                is_global: true,
+                is_game_chat: true,
+                avatar_url: user?.avatar_url || null,
+                profile_color: user?.profile_color || '#999',
+                filtered: false,
+                timestamp: new Date().toISOString(),
+            };
+            chatServer.broadcastGlobal(gameChatMsg);
+        } catch { /* non-critical */ }
     }
 
     // ── Tick (broadcast player positions & node respawns) ───────

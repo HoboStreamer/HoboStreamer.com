@@ -1118,28 +1118,6 @@
                     </div>
 
                     <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
-                    <!-- Call controls for RTMP -->
-                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-rtmp" style="display:none">
-                        <div class="bc-call-header">
-                            <div class="bc-call-header-left">
-                                <i class="fa-solid fa-headset"></i>
-                                <span class="bc-call-status-text" id="bc-call-status-text-rtmp">Voice Chat — Off</span>
-                            </div>
-                            <span class="bc-call-count" id="bc-call-count-rtmp">0 in call</span>
-                        </div>
-                        <div class="bc-call-actions">
-                            <select id="bc-call-mode-select-rtmp" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
-                                <option value="">Disabled</option>
-                                <option value="mic">Voice Chat (mic only)</option>
-                                <option value="mic+cam">Voice + Camera</option>
-                                <option value="cam+mic">Video Call</option>
-                            </select>
-                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-rtmp" onclick="endBroadcastCall()" style="display:none">
-                                <i class="fa-solid fa-phone-slash"></i> End Call
-                            </button>
-                        </div>
-                        <p class="bc-call-explainer">This works like a Discord call built right into your stream page — viewers can join the on-page voice chat and talk with you live without leaving HoboStreamer.</p>
-                    </div>
                 </div>
 
                 <!-- JSMPEG Instructions Panel -->
@@ -1326,28 +1304,6 @@
                     </div>
 
                     <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
-                    <!-- Call controls for JSMPEG -->
-                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-jsmpeg" style="display:none">
-                        <div class="bc-call-header">
-                            <div class="bc-call-header-left">
-                                <i class="fa-solid fa-headset"></i>
-                                <span class="bc-call-status-text" id="bc-call-status-text-jsmpeg">Voice Chat — Off</span>
-                            </div>
-                            <span class="bc-call-count" id="bc-call-count-jsmpeg">0 in call</span>
-                        </div>
-                        <div class="bc-call-actions">
-                            <select id="bc-call-mode-select-jsmpeg" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
-                                <option value="">Disabled</option>
-                                <option value="mic">Voice Chat (mic only)</option>
-                                <option value="mic+cam">Voice + Camera</option>
-                                <option value="cam+mic">Video Call</option>
-                            </select>
-                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-jsmpeg" onclick="endBroadcastCall()" style="display:none">
-                                <i class="fa-solid fa-phone-slash"></i> End Call
-                            </button>
-                        </div>
-                        <p class="bc-call-explainer">This works like a Discord call built right into your stream page — viewers can join the on-page voice chat and talk with you live without leaving HoboStreamer.</p>
-                    </div>
                 </div>
 
                 <!-- WebRTC OBS (WHIP) Instructions Panel -->
@@ -1380,28 +1336,6 @@
                         <p class="muted"><i class="fa-solid fa-info-circle"></i> Requires OBS Studio 30.0 or newer. Older versions do not support WHIP.</p>
                     </div>
                     <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
-                    <!-- Call controls for WHIP -->
-                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-whip" style="display:none">
-                        <div class="bc-call-header">
-                            <div class="bc-call-header-left">
-                                <i class="fa-solid fa-headset"></i>
-                                <span class="bc-call-status-text" id="bc-call-status-text-whip">Voice Chat — Off</span>
-                            </div>
-                            <span class="bc-call-count" id="bc-call-count-whip">0 in call</span>
-                        </div>
-                        <div class="bc-call-actions">
-                            <select id="bc-call-mode-select-whip" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
-                                <option value="">Disabled</option>
-                                <option value="mic">Voice Chat (mic only)</option>
-                                <option value="mic+cam">Voice + Camera</option>
-                                <option value="cam+mic">Video Call</option>
-                            </select>
-                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-whip" onclick="endBroadcastCall()" style="display:none">
-                                <i class="fa-solid fa-phone-slash"></i> End Call
-                            </button>
-                        </div>
-                        <p class="bc-call-explainer">This works like a Discord call built right into your stream page — viewers can join the on-page voice chat and talk with you live without leaving HoboStreamer.</p>
-                    </div>
                 </div>
 
                 <!-- ═══ WebRTC Browser Broadcast (live controls) ═══ -->
@@ -1440,85 +1374,6 @@
                         <div class="bc-info-item">
                             <i class="fa-solid fa-clock"></i> <strong id="bc-uptime">0:00:00</strong>
                         </div>
-                    </div>
-
-                    <!-- Group Call Controls (shared across all stream methods) -->
-                    <div class="bc-call-controls" id="bc-call-controls" style="display:none">
-                        <div class="bc-call-header">
-                            <div class="bc-call-header-left">
-                                <i class="fa-solid fa-headset"></i>
-                                <span class="bc-call-status-text" id="bc-call-status-text">Voice Chat — Off</span>
-                            </div>
-                            <span class="bc-call-count" id="bc-call-count">0 in call</span>
-                        </div>
-                        <div class="bc-call-actions">
-                            <select id="bc-call-mode-select" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
-                                <option value="">Disabled</option>
-                                <option value="mic">Voice Chat (mic only)</option>
-                                <option value="mic+cam">Voice + Camera</option>
-                                <option value="cam+mic">Video Call</option>
-                            </select>
-                            <button class="btn btn-small btn-danger" id="bc-call-end-btn" onclick="endBroadcastCall()" style="display:none">
-                                <i class="fa-solid fa-phone-slash"></i> End Call
-                            </button>
-                        </div>
-                        <p class="bc-call-explainer">This works like a Discord call built right into your stream page — viewers can join the on-page voice chat and talk with you live without leaving HoboStreamer.</p>
-                    </div>
-
-                    <!-- Broadcast Call Panel (streamer's view of call participants) -->
-                    <div class="bc-call-panel call-panel" id="bc-call-panel" style="display:none">
-                        <div class="call-participants-grid" id="bc-call-participants-grid"></div>
-                        <div class="call-controls">
-                            <button class="call-ctrl-btn" id="bc-call-btn-mute" onclick="toggleCallMute()" title="Mute">
-                                <i class="fa-solid fa-microphone"></i>
-                            </button>
-                            <button class="call-ctrl-btn" id="bc-call-btn-camera" onclick="toggleCallCamera()" title="Toggle Camera">
-                                <i class="fa-solid fa-video"></i>
-                            </button>
-                        </div>
-                        <details class="call-device-switcher">
-                            <summary><i class="fa-solid fa-gear"></i> Call Settings & Devices</summary>
-                            <div class="call-device-selects call-device-selects-compact">
-                                <div class="call-device-group">
-                                    <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Mic</label>
-                                    <select id="bc-call-mic-switch" class="form-input form-input-sm" onchange="switchCallMic(this.value)">
-                                        <option value="default">Default Microphone</option>
-                                    </select>
-                                </div>
-                                <div class="call-device-group" id="bc-call-cam-switch-group">
-                                    <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
-                                    <select id="bc-call-cam-switch" class="form-input form-input-sm" onchange="switchCallCam(this.value)">
-                                        <option value="default">Default Camera</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="call-input-settings call-input-settings-compact">
-                                <div class="call-device-group">
-                                    <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
-                                    <select id="bc-call-input-mode-switch" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
-                                        <option value="open">Open Mic</option>
-                                        <option value="ptt">Push to Talk</option>
-                                        <option value="vad">Voice Activation</option>
-                                    </select>
-                                </div>
-                                <div class="call-device-group call-ptt-group" id="bc-call-ptt-switch-group" style="display:none">
-                                    <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
-                                    <select id="bc-call-ptt-key-switch" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
-                                        <option value="Space">Space</option>
-                                        <option value="KeyV">V</option>
-                                        <option value="KeyT">T</option>
-                                        <option value="AltLeft">Left Alt</option>
-                                    </select>
-                                </div>
-                                <div class="call-device-group call-vad-group" id="bc-call-vad-switch-group" style="display:none">
-                                    <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
-                                    <input id="bc-call-vad-threshold-switch" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
-                                    <span class="call-threshold-value" id="bc-call-vad-threshold-value-switch">32%</span>
-                                </div>
-                            </div>
-                            <div class="call-ptt-status" id="bc-call-ptt-status" style="display:none">Hold <strong id="bc-call-ptt-status-key">Space</strong> to talk</div>
-                        </details>
-                        <div class="call-log" id="bc-call-log"></div>
                     </div>
 
                     <!-- Live controls (visible when streaming) -->
@@ -2302,12 +2157,18 @@
             <div class="global-chat-main">
                 <div class="global-chat-header">
                     <div>
-                        <h2><i class="fa-solid fa-comments"></i> Global Chat</h2>
-                        <p class="muted">Live messages from all streams and the lobby</p>
+                        <h2><i class="fa-solid fa-comments"></i> <span id="chat-mode-title">Global Chat</span></h2>
+                        <p class="muted" id="chat-mode-subtitle">Live messages from all streams and the lobby</p>
                     </div>
-                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
-                        <i class="fa-solid fa-gear"></i>
-                    </button>
+                    <div class="chat-header-controls">
+                        <select id="chat-mode-select" class="form-input form-input-sm chat-mode-select" onchange="onChatModeChange(this.value)">
+                            <option value="global">Global</option>
+                            <option value="voice" id="chat-mode-voice-opt" disabled>Voice Call</option>
+                        </select>
+                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                            <i class="fa-solid fa-gear"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="global-chat-messages" id="global-chat-messages"></div>
                 <div class="chat-input-area">
@@ -2691,12 +2552,51 @@
 <script src="/js/controls.js?v=2"></script>
 <script src="/js/dashboard.js?v=2"></script>
 <script src="/js/admin.js?v=3"></script>
+<!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
+<div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
+    <div class="fcw-header" onmousedown="fcwStartDrag(event)">
+        <span><i class="fa-solid fa-comments"></i> Global Chat</span>
+        <div class="fcw-header-btns">
+            <button onclick="fcwMinimize()" title="Minimize"><i class="fa-solid fa-minus"></i></button>
+            <button onclick="fcwClose()" title="Close"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+    </div>
+    <div class="fcw-body">
+        <div class="fcw-messages" id="fcw-messages"></div>
+        <div class="fcw-input-area">
+            <input type="text" id="fcw-chat-input" placeholder="Send a message..." maxlength="500"
+                   enterkeyhint="send" onkeydown="if(event.key==='Enter')fcwSendChat()">
+            <button class="chat-send-btn" onclick="fcwSendChat()">
+                <i class="fa-solid fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+</div>
+<button id="floating-chat-fab" class="floating-chat-fab" onclick="fcwToggle()" title="Open Global Chat" style="display:none">
+    <i class="fa-solid fa-comments"></i>
+    <span id="fcw-unread-badge" class="fcw-unread-badge" style="display:none">0</span>
+</button>
+
+<!-- ── Mini Voice Channel Indicator (shows when connected & not on Chat tab) ── -->
+<div id="vc-mini-bar" class="vc-mini-bar" style="display:none">
+    <span class="vc-mini-status"><i class="fa-solid fa-circle vc-mini-dot"></i> Voice Connected</span>
+    <span class="vc-mini-channel" id="vc-mini-channel-name">Public</span>
+    <div class="vc-mini-controls">
+        <button class="vc-mini-btn" id="vc-mini-mute" onclick="vcToggleMute()" title="Mute">
+            <i class="fa-solid fa-microphone"></i>
+        </button>
+        <button class="vc-mini-btn vc-mini-leave" onclick="vcLeave()" title="Disconnect">
+            <i class="fa-solid fa-phone-slash"></i>
+        </button>
+    </div>
+</div>
+
 <script src="/js/hobo-bucks.js?v=2"></script>
 <script src="/js/hobo-coins.js?v=2"></script>
 <script src="/js/cosmetics-ui.js?v=2"></script>
 <script src="/js/broadcast.js?v=8"></script>
 <script src="/js/call.js?v=3"></script>
-<script src="/js/voice-channels.js?v=1"></script>
+<script src="/js/voice-channels.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>
 <script src="/js/game.js?v=2"></script>
 <script src="/js/pastes.js?v=1"></script>
