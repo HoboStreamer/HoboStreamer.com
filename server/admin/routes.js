@@ -28,6 +28,7 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../db/database');
 const { requireAuth } = require('../auth/auth');
+const chatServer = require('../chat/chat-server');
 const permissions = require('../auth/permissions');
 
 const router = express.Router();
@@ -119,7 +120,7 @@ router.get('/users', (req, res) => {
 // ── Update User ──────────────────────────────────────────────
 router.put('/users/:id', (req, res) => {
     try {
-        let { role, display_name } = req.body;
+        let { role, display_name, username } = req.body;
         const updates = [];
         const params = [];
 
@@ -129,6 +130,25 @@ router.put('/users/:id', (req, res) => {
                 return res.status(400).json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` });
             }
             updates.push('role = ?'); params.push(role);
+        }
+        if (username) {
+            // Validate username format (same rules as registration)
+            username = String(username).trim();
+            if (username.length < 3 || username.length > 24) {
+                return res.status(400).json({ error: 'Username must be 3-24 characters' });
+            }
+            if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+                return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
+            }
+            if (/^anon\d*$/i.test(username)) {
+                return res.status(400).json({ error: 'That username is reserved for anonymous users' });
+            }
+            // Check uniqueness (case-insensitive)
+            const existing = db.getUserByUsername(username);
+            if (existing && String(existing.id) !== String(req.params.id)) {
+                return res.status(409).json({ error: 'Username already taken' });
+            }
+            updates.push('username = ?'); params.push(username);
         }
         if (display_name) {
             // Sanitize display name — strip HTML + dangerous chars
@@ -147,6 +167,12 @@ router.put('/users/:id', (req, res) => {
         const user = db.getUserById(req.params.id);
         // Sanitize — never expose password_hash or stream_key
         const { password_hash, stream_key, ...safeUser } = user;
+
+        // Push real-time update to the affected user's chat connections
+        if (updates.length > 0) {
+            chatServer.sendUserUpdate(parseInt(req.params.id), safeUser);
+        }
+
         res.json({ user: safeUser });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update user' });

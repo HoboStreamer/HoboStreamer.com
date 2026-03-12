@@ -1440,6 +1440,18 @@ main#app { position: relative; z-index: 1; }
 .ctx-btn-danger i { color: var(--danger); }
 .ctx-btn-danger:hover { background: rgba(231,76,60,0.12); }
 
+/* ── Rename submenu ── */
+.ctx-rename-group { position: relative; }
+.ctx-rename-group > .ctx-btn { justify-content: flex-start; }
+.ctx-rename-arrow { margin-left: auto; font-size: 0.65rem; transition: transform 0.15s; }
+.ctx-rename-group.open .ctx-rename-arrow { transform: rotate(90deg); }
+.ctx-rename-submenu {
+    display: none; flex-direction: column;
+    padding: 2px 0 2px 18px;
+}
+.ctx-rename-group.open .ctx-rename-submenu { display: flex; }
+.ctx-rename-submenu .ctx-btn { font-size: 0.8rem; padding: 6px 10px; }
+
 /* ═══════════════════════════════════════════════════════════════
    CHAT LOGS MODAL
    ═══════════════════════════════════════════════════════════════ */

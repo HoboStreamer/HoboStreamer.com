@@ -891,6 +891,34 @@ class ChatServer {
     }
 
     /**
+     * Push a profile/identity update to all chat connections belonging to a user.
+     * Refreshes cached client.user so subsequent messages use the new info.
+     */
+    sendUserUpdate(userId, userData) {
+        const freshUser = db.getUserById(userId);
+        const payload = JSON.stringify({
+            type: 'user-updated',
+            user: {
+                id: userData.id,
+                username: userData.username,
+                display_name: userData.display_name,
+                role: userData.role,
+                avatar_url: userData.avatar_url,
+                profile_color: userData.profile_color,
+            },
+        });
+        for (const [ws, client] of this.clients) {
+            if (client.user?.id === userId && ws.readyState === WebSocket.OPEN) {
+                // Refresh cached user object so future messages use new name
+                if (freshUser) client.user = freshUser;
+                try {
+                    if (ws.bufferedAmount < MAX_SEND_BACKPRESSURE) ws.send(payload);
+                } catch { /* non-critical */ }
+            }
+        }
+    }
+
+    /**
      * Broadcast a message to ALL connected chat clients (every stream + global).
      * Used for server-wide announcements (restarts, updates).
      */

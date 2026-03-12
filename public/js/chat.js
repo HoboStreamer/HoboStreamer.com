@@ -453,6 +453,28 @@ function handleChatMessage(msg) {
             chatSlowModeSeconds = msg.seconds || 0;
             updateSlowModeIndicator();
             break;
+        case 'user-updated': {
+            // Admin renamed us — update local identity
+            if (msg.user && typeof currentUser !== 'undefined' && currentUser && currentUser.id === msg.user.id) {
+                const oldUsername = currentUser.username;
+                const oldDisplay = currentUser.display_name;
+                if (msg.user.username) currentUser.username = msg.user.username;
+                if (msg.user.display_name) currentUser.display_name = msg.user.display_name;
+                if (msg.user.role) currentUser.role = msg.user.role;
+                if (msg.user.avatar_url !== undefined) currentUser.avatar_url = msg.user.avatar_url;
+                if (msg.user.profile_color) currentUser.profile_color = msg.user.profile_color;
+                // Refresh auth-dependent UI
+                if (typeof onAuthChange === 'function') onAuthChange();
+                // Notify user of what changed
+                if (msg.user.username && msg.user.username !== oldUsername) {
+                    addSystemMessage(`Your username was changed to @${msg.user.username}`);
+                }
+                if (msg.user.display_name && msg.user.display_name !== oldDisplay) {
+                    addSystemMessage(`Your display name was changed to ${msg.user.display_name}`);
+                }
+            }
+            break;
+        }
         case 'clear': {
             const { messages: clearTarget } = getChatEl();
             if (clearTarget) clearTarget.innerHTML = '';
@@ -1085,7 +1107,13 @@ function renderContextMenu(menu, profile, username) {
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
-            ${currentUser?.capabilities?.manage_users ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" data-display="${esc(profile.display_name || username)}" onclick="ctxRenameUser(this.dataset.username, this.dataset.uid, this.dataset.display)"><i class="fa-solid fa-pen"></i> Rename</button>` : ''}
+            ${currentUser?.capabilities?.manage_users ? `<div class="ctx-rename-group">
+                <button class="ctx-btn" onclick="this.parentElement.classList.toggle('open')" type="button"><i class="fa-solid fa-pen"></i> Rename <i class="fa-solid fa-chevron-right ctx-rename-arrow"></i></button>
+                <div class="ctx-rename-submenu">
+                    <button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxRenameUsername(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-at"></i> Rename Username</button>
+                    <button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" data-display="${esc(profile.display_name || username)}" onclick="ctxRenameDisplayName(this.dataset.username, this.dataset.uid, this.dataset.display)"><i class="fa-solid fa-signature"></i> Rename Display Name</button>
+                </div>
+            </div>` : ''}
             ${(canModerateCurrentStream() && chatStreamId) || currentUser?.capabilities?.manage_site_bans ? '<div class="ctx-divider"></div>' : ''}
             ${canModerateCurrentStream() && chatStreamId ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxStreamBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>` : ''}
             ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxGlobalBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban from site</button>` : ''}
@@ -1114,15 +1142,27 @@ function ctxViewLogs(username, userId) {
     openChatLogsModal(username, userId);
 }
 
-async function ctxRenameUser(username, userId, currentDisplay) {
+async function ctxRenameUsername(username, userId) {
+    dismissContextMenu();
+    const newUsername = prompt(`Rename username for @${username}:`, username);
+    if (newUsername == null || !newUsername.trim()) return;
+    try {
+        await api(`/admin/users/${userId}`, { method: 'PUT', body: { username: newUsername.trim() } });
+        toast(`Username changed: @${username} → @${newUsername.trim()}`, 'success');
+    } catch (err) {
+        toast('Failed to rename username: ' + (err.message || 'unknown error'), 'error');
+    }
+}
+
+async function ctxRenameDisplayName(username, userId, currentDisplay) {
     dismissContextMenu();
     const newName = prompt(`Rename display name for @${username}:`, currentDisplay || username);
     if (newName == null || !newName.trim()) return;
     try {
         await api(`/admin/users/${userId}`, { method: 'PUT', body: { display_name: newName.trim() } });
-        toast(`Renamed @${username} → ${newName.trim()}`, 'success');
+        toast(`Display name changed: @${username} → ${newName.trim()}`, 'success');
     } catch (err) {
-        toast('Failed to rename: ' + (err.message || 'unknown error'), 'error');
+        toast('Failed to rename display name: ' + (err.message || 'unknown error'), 'error');
     }
 }
 
