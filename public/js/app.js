@@ -598,10 +598,17 @@ async function loadChannelPage(username, preferredStreamId = null) {
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
 
-            // Pick the preferred stream (from URL ?stream=ID), or fall back to highest viewer count
+            // Pick the preferred stream:
+            // 1. URL ?stream=ID (deep link / shared link)
+            // 2. Last viewed stream in this session (sessionStorage)
+            // 3. Highest viewer count stream (default)
             let targetStream;
             if (preferredStreamId) {
                 targetStream = liveStreams.find(s => s.id === preferredStreamId);
+            }
+            if (!targetStream) {
+                const lastId = getLastStream(username);
+                if (lastId) targetStream = liveStreams.find(s => s.id === lastId);
             }
             if (!targetStream) {
                 targetStream = liveStreams.reduce((best, s) =>
@@ -612,6 +619,13 @@ async function loadChannelPage(username, preferredStreamId = null) {
                     history.replaceState(null, '', `/${username}?stream=${targetStream.id}`);
                 }
             }
+
+            // Remember selection and update URL
+            rememberLastStream(username, targetStream.id);
+            if (!preferredStreamId && liveStreams.length > 1) {
+                history.replaceState(null, '', `/${username}?stream=${targetStream.id}`);
+            }
+
             loadLiveStreamTabs(username, targetStream.id, liveStreams, rsRestream);
 
             // Activate the selected stream
@@ -723,13 +737,66 @@ async function loadChannelPage(username, preferredStreamId = null) {
 }
 
 /**
+ * Format uptime from a started_at timestamp to a short human string (e.g. "2h 14m").
+ */
+function formatUptime(startedAt) {
+    if (!startedAt) return '';
+    const start = new Date(startedAt.replace ? startedAt.replace(' ', 'T') + 'Z' : startedAt).getTime();
+    if (isNaN(start)) return '';
+    const d = Date.now() - start;
+    if (d < 0) return '';
+    const h = Math.floor(d / 3600000);
+    const m = Math.floor((d % 3600000) / 60000);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/**
+ * Show/hide the stream switch loading overlay on the video container.
+ */
+function showStreamSwitchOverlay(show) {
+    const el = document.getElementById('stream-switch-overlay');
+    if (!el) return;
+    if (show) {
+        el.classList.add('visible');
+    } else {
+        el.classList.remove('visible');
+    }
+}
+
+/**
+ * Remember the last viewed stream for a channel (sessionStorage).
+ */
+function rememberLastStream(username, streamId) {
+    try { sessionStorage.setItem(`last-stream:${username}`, String(streamId)); } catch {}
+}
+function getLastStream(username) {
+    try { const v = sessionStorage.getItem(`last-stream:${username}`); return v ? parseInt(v) : null; } catch { return null; }
+}
+
+/**
+ * Auto-scroll the active tab into view within the tab bar.
+ */
+function scrollActiveTabIntoView() {
+    const active = document.querySelector('.live-tab.active');
+    if (active) active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+}
+
+/**
+ * Copy the current stream-specific URL to clipboard.
+ */
+function shareStreamUrl() {
+    const url = window.location.href;
+    navigator.clipboard.writeText(url).then(
+        () => toast('Stream link copied!', 'success'),
+        () => toast('Failed to copy link', 'error')
+    );
+}
+
+/**
  * Load tabs for the current channel's live streams.
  * Shows tabs when the channel has multiple concurrent streams.
- * Each tab shows the stream title and viewer count. Protocol is a small badge.
- * @param {string} currentUsername - The channel username being viewed
- * @param {number|null} activeStreamId - Currently active stream ID
- * @param {Array} channelStreams - Live streams for this channel
- * @param {Object} rsRestream - RS restream info keyed by stream ID
+ * Each tab shows: number badge, live dot, title, protocol badge, RS icon, viewers, uptime.
+ * Supports keyboard navigation (arrow keys) between tabs.
  */
 function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = [], rsRestream = {}) {
     const tabsContainer = document.getElementById('live-stream-tabs');
@@ -750,36 +817,74 @@ function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []
     tabsContainer.style.display = '';
     if (pageEl) pageEl.classList.add('has-live-tabs');
 
-    // Calculate total viewers for the tab bar summary
+    // Calculate total viewers for the summary
     const totalViewers = filtered.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
 
     tabsScroll.innerHTML = filtered.map((s, idx) => {
         const isActive = s.id === activeStreamId;
         const title = s.title || `Stream ${idx + 1}`;
         const viewers = s.viewer_count || 0;
+        const uptime = formatUptime(s.started_at);
         const protoTag = s.protocol ? `<span class="live-tab-proto">${s.protocol.toUpperCase()}</span>` : '';
-        const rsTag = rsRestream[s.id] ? '<span class="live-tab-rs" title="RobotStreamer Restream"><i class="fa-solid fa-robot"></i></span>' : '';
-        return `<button class="live-tab ${isActive ? 'active' : ''}"
+        const rsTag = rsRestream[s.id] ? '<span class="live-tab-rs" title="Also on RobotStreamer"><i class="fa-solid fa-robot"></i></span>' : '';
+        const uptimeTag = uptime ? `<span class="live-tab-uptime"><i class="fa-solid fa-clock"></i> ${uptime}</span>` : '';
+        const sep = idx > 0 ? '<span class="live-tab-separator" aria-hidden="true"></span>' : '';
+        return `${sep}<button class="live-tab ${isActive ? 'active' : ''}"
                     onclick="switchToLiveStream('${esc(currentUsername)}', ${s.id}, this)"
                     data-stream-id="${s.id}" data-username="${esc(currentUsername)}"
-                    title="${esc(title)} — ${viewers} viewer${viewers !== 1 ? 's' : ''} (${s.protocol || 'unknown'})">
+                    role="tab" aria-selected="${isActive}" tabindex="${isActive ? '0' : '-1'}"
+                    title="${esc(title)} — ${viewers} viewer${viewers !== 1 ? 's' : ''}${uptime ? ' — Live for ' + uptime : ''} (${s.protocol || 'unknown'})">
+            <span class="live-tab-num">${idx + 1}</span>
             <span class="live-tab-dot"></span>
             <span class="live-tab-title">${esc(title)}</span>
-            ${protoTag}${rsTag}
-            <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${viewers}</span>
+            <span class="live-tab-meta">
+                ${protoTag}${rsTag}
+                <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${viewers}</span>
+                ${uptimeTag}
+            </span>
         </button>`;
     }).join('') +
-    `<span class="live-tabs-total" title="Total viewers across all streams">
-        <i class="fa-solid fa-users"></i> ${totalViewers} total
+    `<span class="live-tabs-summary" title="${totalViewers} viewers across ${filtered.length} streams">
+        <i class="fa-solid fa-tower-broadcast"></i> <strong>${filtered.length}</strong> streams &middot;
+        <i class="fa-solid fa-eye"></i> <strong>${totalViewers}</strong> total
     </span>`;
+
+    // Auto-scroll active tab into view after render
+    requestAnimationFrame(scrollActiveTabIntoView);
+
+    // Setup keyboard navigation (arrow keys between tabs)
+    setupTabKeyboardNav(tabsScroll, currentUsername);
+}
+
+/**
+ * Keyboard navigation for stream tabs — left/right arrows move between tabs.
+ */
+function setupTabKeyboardNav(container, username) {
+    // Remove old listener if any
+    if (container._tabKeyHandler) container.removeEventListener('keydown', container._tabKeyHandler);
+    container._tabKeyHandler = (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const tabs = Array.from(container.querySelectorAll('.live-tab'));
+        if (!tabs.length) return;
+        const currentIdx = tabs.findIndex(t => t === document.activeElement);
+        if (currentIdx === -1) return;
+        e.preventDefault();
+        const nextIdx = e.key === 'ArrowRight'
+            ? (currentIdx + 1) % tabs.length
+            : (currentIdx - 1 + tabs.length) % tabs.length;
+        tabs[currentIdx].setAttribute('tabindex', '-1');
+        tabs[nextIdx].setAttribute('tabindex', '0');
+        tabs[nextIdx].focus();
+    };
+    container.addEventListener('keydown', container._tabKeyHandler);
 }
 
 /**
  * Update cumulative viewer display below the video player.
- * Shows total viewers across all streams + RS restream indicator.
+ * Shows total viewers across all streams, RS restream indicator, and share button.
  */
 function updateCumulativeViewers(liveStreams, rsRestream = {}) {
-    let el = document.getElementById('ch-cumulative-viewers');
+    const el = document.getElementById('ch-cumulative-viewers');
     if (!el) return;
 
     if (liveStreams.length <= 1 && !Object.keys(rsRestream).length) {
@@ -792,14 +897,20 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}) {
 
     let html = '';
     if (streamCount > 1) {
-        html += `<span class="ch-viewer-total"><i class="fa-solid fa-users"></i> ${total} viewer${total !== 1 ? 's' : ''} across ${streamCount} streams</span>`;
+        html += `<span class="ch-viewer-total"><i class="fa-solid fa-layer-group"></i> <strong>${total}</strong> viewer${total !== 1 ? 's' : ''} across <strong>${streamCount}</strong> streams</span>`;
     }
 
     // RS restream badges
-    for (const [sid, rs] of Object.entries(rsRestream)) {
+    for (const [, rs] of Object.entries(rsRestream)) {
         if (rs.active) {
-            html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + rs.robot_name : ''}"><i class="fa-solid fa-robot"></i> RS Restream${rs.video_restreamed ? '' : ' (chat only)'}</span>`;
+            const label = rs.video_restreamed ? 'RS Restream' : 'RS Chat Bridge';
+            html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + rs.robot_name : ''}"><i class="fa-solid fa-robot"></i> ${label}${rs.robot_name ? ' · ' + esc(rs.robot_name) : ''}</span>`;
         }
+    }
+
+    // Share button (copies stream-specific URL)
+    if (streamCount > 1) {
+        html += `<button class="ch-share-stream" onclick="shareStreamUrl()" title="Copy link to this specific stream"><i class="fa-solid fa-link"></i> Share stream</button>`;
     }
 
     if (html) {
@@ -812,7 +923,7 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}) {
 
 /**
  * Switch to a different live stream within the same channel.
- * Properly destroys the current player before initializing the new one.
+ * Shows loading overlay, destroys current player, fetches fresh data, initializes new stream.
  */
 function switchToLiveStream(username, streamId, btn) {
     // If switching to a different channel, navigate there with stream preference
@@ -824,18 +935,25 @@ function switchToLiveStream(username, streamId, btn) {
     // Don't re-switch to the already active stream
     if (streamId === currentStreamId) return;
 
-    // Update tab UI immediately
+    // Update tab UI immediately — highlight the target tab
     const tabsScroll = document.getElementById('live-tabs-scroll');
     if (tabsScroll) {
-        tabsScroll.querySelectorAll('.live-tab').forEach(t => t.classList.remove('active'));
+        tabsScroll.querySelectorAll('.live-tab').forEach(t => {
+            const isTarget = parseInt(t.dataset.streamId) === streamId;
+            t.classList.toggle('active', isTarget);
+            t.setAttribute('aria-selected', String(isTarget));
+            t.setAttribute('tabindex', isTarget ? '0' : '-1');
+        });
     }
-    if (btn) btn.classList.add('active');
+    if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
 
-    // Destroy current player and chat before fetching the new stream
+    // Show loading overlay
+    showStreamSwitchOverlay(true);
+
+    // Destroy current player before fetching the new stream
     if (typeof destroyPlayer === 'function') destroyPlayer();
 
     // Fetch the full stream data (with endpoint info) from the /channel API
-    // This ensures we get the endpoint config needed for each protocol
     api(`/streams/channel/${username}`).then(data => {
         const streams = data.streams || [];
         const target = streams.find(s => s.id === streamId && s.is_live);
@@ -843,13 +961,18 @@ function switchToLiveStream(username, streamId, btn) {
             activateChannelStream(target);
             // Update URL to reflect stream selection (without full nav)
             history.replaceState(null, '', `/${username}?stream=${streamId}`);
+            // Remember for return visits
+            rememberLastStream(username, streamId);
             // Update cumulative viewers with fresh data
             const liveStreams = streams.filter(s => s && s.is_live);
             updateCumulativeViewers(liveStreams, data.rs_restream || {});
+            // Refresh tabs with latest viewer counts
+            loadLiveStreamTabs(username, streamId, liveStreams, data.rs_restream || {});
         } else {
             toast('Stream is no longer live', 'error');
         }
-    }).catch(() => toast('Failed to load stream', 'error'));
+    }).catch(() => toast('Failed to load stream', 'error'))
+      .finally(() => showStreamSwitchOverlay(false));
 }
 
 function activateChannelStream(stream) {
@@ -919,34 +1042,33 @@ function startStreamStatusPoll(stream) {
             const current = liveStreams.find(s => s.id === currentStreamId);
             const rsRestream = data.rs_restream || {};
             if (!current && liveStreams.length > 0) {
-                // Current stream ended, but others are live — switch to best
+                // Current stream ended, but others are live — auto-switch to best
                 const best = liveStreams.reduce((b, s) =>
                     (s.viewer_count || 0) > (b.viewer_count || 0) ? s : b
                 , liveStreams[0]);
+                const bestTitle = best.title || 'another stream';
                 loadLiveStreamTabs(username, best.id, liveStreams, rsRestream);
                 activateChannelStream(best);
                 updateCumulativeViewers(liveStreams, rsRestream);
-                toast('Stream ended — switching to another live stream', 'info');
+                rememberLastStream(username, best.id);
+                history.replaceState(null, '', `/${username}?stream=${best.id}`);
+                toast(`Stream ended — switched to "${bestTitle}"`, 'info');
                 return;
             }
 
-            // Update tabs with fresh viewer counts
+            // Update tabs with fresh viewer counts and uptime
             if (liveStreams.length > 1) {
                 loadLiveStreamTabs(username, currentStreamId, liveStreams, rsRestream);
             } else {
                 // Single stream — ensure tabs are hidden
                 const tabsC = document.getElementById('live-stream-tabs');
                 if (tabsC) tabsC.style.display = 'none';
+                const pageEl = document.getElementById('page-channel');
+                if (pageEl) pageEl.classList.remove('has-live-tabs');
             }
 
             // Update cumulative viewers
             updateCumulativeViewers(liveStreams, rsRestream);
-
-            // Update viewer count in the active stream's tab
-            if (current) {
-                const badge = document.querySelector(`.live-tab[data-stream-id="${current.id}"] .live-tab-viewers`);
-                if (badge) badge.innerHTML = `<i class="fa-solid fa-eye"></i> ${current.viewer_count || 0}`;
-            }
         } catch { /* silent — network error, retry next interval */ }
     }, STREAM_POLL_INTERVAL);
 }

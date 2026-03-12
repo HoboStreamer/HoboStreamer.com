@@ -698,7 +698,7 @@ main#app { position: relative; z-index: 1; }
     height: calc(100vh - var(--navbar-h)); /* dynamic: no tabs bar deduction when tabs hidden */
 }
 #page-channel.has-live-tabs .stream-layout {
-    height: calc(100vh - var(--navbar-h) - 40px); /* account for live tabs bar when visible */
+    height: calc(100vh - var(--navbar-h) - 44px); /* account for live tabs bar when visible */
 }
 .stream-main {
     flex: 1; overflow-y: auto;
@@ -2117,11 +2117,14 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .ch-info-bar-top h2 { font-size: 0.95rem; }
     .ch-stream-title { font-size: 0.8rem; }
 
-    .live-stream-tabs { height: auto; padding: 4px 8px; flex-wrap: wrap; }
-    .live-tab { padding: 4px 10px; font-size: 0.78rem; }
+    .live-stream-tabs { height: 38px; padding: 0; }
+    .live-tab { padding: 0 10px; font-size: 0.78rem; gap: 5px; }
     .live-tab-title { max-width: 120px; }
-    .live-tabs-total { font-size: 0.7rem; border-left: none; padding: 2px 8px; margin-left: 0; }
-    .ch-cumulative-viewers { gap: 8px; }
+    .live-tab-uptime { display: none; }
+    .live-tab-num { width: 16px; height: 16px; font-size: 0.6rem; }
+    .live-tabs-summary { font-size: 0.7rem; padding: 0 8px; }
+    .ch-cumulative-viewers { gap: 6px; }
+    .ch-share-stream { display: none; }
     .ch-offline-header { flex-wrap: wrap; gap: 12px; padding: 16px; }
     .ch-avatar-lg { width: 56px; height: 56px; font-size: 1.4rem; }
 
@@ -2255,6 +2258,8 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
     /* Hide live stream tabs in portrait if only one stream (JS also handles this) */
     .live-stream-tabs:not(:has(.live-tab:nth-child(2))) { display: none; }
+    .live-tab-meta { gap: 3px; }
+    .live-tab-proto { display: none; }
 }
 
 /* 360px: Very small phones (iPhone SE, Galaxy S series) */
@@ -2298,37 +2303,52 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
 /* ── Live Stream Tabs (above video, platform-wide) ────────── */
 .live-stream-tabs {
-    display: flex; align-items: center;
+    display: flex; align-items: stretch;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
-    padding: 0 8px;
-    height: 42px;
+    padding: 0;
+    height: 44px;
     overflow: hidden;
+    position: relative;
 }
 .live-tabs-scroll {
-    display: flex; gap: 2px; overflow-x: auto; align-items: center;
+    display: flex; gap: 0; overflow-x: auto; align-items: stretch;
     scrollbar-width: none; -ms-overflow-style: none;
-    padding: 4px 0; flex: 1;
+    flex: 1; scroll-behavior: smooth;
 }
 .live-tabs-scroll::-webkit-scrollbar { display: none; }
 .live-tab {
-    display: flex; align-items: center; gap: 6px;
-    padding: 6px 14px; border-radius: var(--radius-sm);
-    background: transparent; border: none;
+    display: flex; align-items: center; gap: 7px;
+    padding: 0 16px; border: none;
+    background: transparent;
     color: var(--text-secondary); font-size: 0.82rem;
     white-space: nowrap; cursor: pointer;
-    transition: all 0.15s; font-family: var(--font);
+    transition: color 0.15s, background 0.15s;
+    font-family: var(--font);
+    position: relative; flex-shrink: 0;
+    border-bottom: 2px solid transparent;
+    outline: none;
 }
 .live-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
-.live-tab.active {
-    background: var(--accent-dark);
-    color: #fff; font-weight: 600;
+.live-tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
 }
-.live-tab-avatar {
-    width: 22px; height: 22px; border-radius: 50%;
-    background: var(--accent); color: var(--bg-main);
+.live-tab.active {
+    color: #fff; font-weight: 600;
+    background: rgba(255,255,255,0.04);
+    border-bottom-color: var(--accent);
+}
+.live-tab-num {
+    font-size: 0.65rem; font-weight: 700;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.06);
+    width: 18px; height: 18px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 0.65rem; font-weight: 700; flex-shrink: 0;
+    flex-shrink: 0; line-height: 1;
+}
+.live-tab.active .live-tab-num {
+    background: var(--accent); color: var(--bg-main);
 }
 .live-tab-dot {
     width: 6px; height: 6px; border-radius: 50%;
@@ -2344,43 +2364,82 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.live-tab-meta {
+    display: flex; align-items: center; gap: 5px;
+    margin-left: auto; padding-left: 4px;
+}
 .live-tab-proto {
-    font-size: 0.65rem; font-weight: 600;
+    font-size: 0.6rem; font-weight: 600;
     color: var(--text-muted);
-    background: rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.06);
     padding: 1px 5px; border-radius: 4px;
     text-transform: uppercase; letter-spacing: 0.5px;
 }
 .live-tab.active .live-tab-proto {
-    color: rgba(255,255,255,0.6);
-    background: rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.55);
+    background: rgba(255,255,255,0.1);
 }
 .live-tab-rs {
-    font-size: 0.72rem; color: #4fc3f7;
+    font-size: 0.68rem; color: #4fc3f7;
 }
-.live-tab.active .live-tab-rs { color: rgba(255,255,255,0.7); }
+.live-tab.active .live-tab-rs { color: rgba(255,255,255,0.65); }
 .live-tab-viewers {
-    font-size: 0.75rem; font-weight: 700;
-    color: #fff;
-    background: var(--live-red, #e53935);
-    padding: 2px 7px; border-radius: 10px;
-    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 0.72rem; font-weight: 700;
+    color: var(--text-secondary);
+    display: inline-flex; align-items: center; gap: 3px;
     line-height: 1;
 }
+.live-tab-viewers i { font-size: 0.62rem; }
 .live-tab.active .live-tab-viewers {
-    background: rgba(255,255,255,0.22);
+    color: rgba(255,255,255,0.85);
 }
-.live-tabs-total {
+.live-tab-uptime {
+    font-size: 0.65rem; color: var(--text-muted);
+    display: inline-flex; align-items: center; gap: 3px;
+}
+.live-tab-uptime i { font-size: 0.58rem; }
+.live-tab.active .live-tab-uptime { color: rgba(255,255,255,0.5); }
+.live-tab-separator {
+    width: 1px; height: 18px;
+    background: var(--border); flex-shrink: 0;
+    margin: 0 2px; align-self: center;
+}
+.live-tabs-summary {
     font-size: 0.75rem; color: var(--text-muted);
-    padding: 0 12px; white-space: nowrap;
-    display: inline-flex; align-items: center; gap: 5px;
+    padding: 0 14px; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
     border-left: 1px solid var(--border);
-    margin-left: 4px;
+    flex-shrink: 0; align-self: center;
 }
+.live-tabs-summary strong { color: var(--text-primary); font-weight: 600; }
+.live-tabs-summary i { color: var(--accent); font-size: 0.7rem; }
+
+/* ── Stream Switch Loading Overlay ─────────────────────────── */
+.stream-switch-overlay {
+    position: absolute; inset: 0; z-index: 20;
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.75);
+    color: var(--text-muted); gap: 14px;
+    font-size: 0.88rem; backdrop-filter: blur(4px);
+    transition: opacity 0.2s;
+}
+.stream-switch-overlay.visible {
+    display: flex; animation: fadeIn 0.15s ease;
+}
+.stream-switch-spinner {
+    width: 36px; height: 36px;
+    border: 3px solid rgba(255,255,255,0.15);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* ── Cumulative Viewers (below video info bar) ──────────── */
 .ch-cumulative-viewers {
-    display: flex; align-items: center; gap: 12px;
+    display: flex; align-items: center; gap: 10px;
     flex-wrap: wrap; margin-top: 4px;
 }
 .ch-viewer-total {
@@ -2388,13 +2447,22 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     display: inline-flex; align-items: center; gap: 5px;
 }
 .ch-viewer-total i { color: var(--accent); }
+.ch-viewer-total strong { color: var(--text-primary); }
 .ch-rs-badge {
     font-size: 0.72rem; font-weight: 600;
-    color: #4fc3f7; background: rgba(79, 195, 247, 0.1);
+    color: #4fc3f7; background: rgba(79, 195, 247, 0.08);
     padding: 2px 8px; border-radius: 10px;
     display: inline-flex; align-items: center; gap: 5px;
 }
 .ch-rs-badge i { font-size: 0.7rem; }
+.ch-share-stream {
+    font-size: 0.72rem; color: var(--text-muted);
+    background: none; border: 1px solid var(--border);
+    padding: 2px 8px; border-radius: 10px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--font); transition: all 0.15s;
+}
+.ch-share-stream:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ── Streamer Info Bar (below video, Kick/Twitch style) ───── */
 .ch-info-bar {

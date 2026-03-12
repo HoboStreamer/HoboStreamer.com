@@ -354,7 +354,7 @@
     <!-- ── CHANNEL PAGE (/:username) ─────────────────────── -->
     <section id="page-channel" class="page">
         <!-- Live Stream Tabs (this channel's concurrent streams) -->
-        <div class="live-stream-tabs" id="live-stream-tabs" style="display:none">
+        <div class="live-stream-tabs" id="live-stream-tabs" style="display:none" role="tablist" aria-label="Live streams">
             <div class="live-tabs-scroll" id="live-tabs-scroll"></div>
         </div>
 
@@ -366,6 +366,11 @@
                         <div class="video-placeholder">
                             <i class="fa-solid fa-satellite-dish fa-3x"></i>
                             <p>Connecting to stream...</p>
+                        </div>
+                        <!-- Loading overlay shown during stream switching -->
+                        <div class="stream-switch-overlay" id="stream-switch-overlay">
+                            <div class="stream-switch-spinner"></div>
+                            <p>Switching stream…</p>
                         </div>
                         <canvas id="video-canvas"></canvas>
                         <video id="video-element" autoplay playsinline></video>
