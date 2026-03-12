@@ -100,8 +100,10 @@ function renderCosmeticsUI() {
             const isEquipped = equipped[cat === 'name_effect' ? 'name_effect' : cat] === item.itemId;
 
             const card = document.createElement('div');
-            card.className = `cosmetic-card${isEquipped ? ' equipped' : ''}${!isOwned ? ' locked' : ''}`;
+            const userIsAdminCard = !!(currentUser?.capabilities?.admin_panel);
+            card.className = `cosmetic-card${isEquipped ? ' equipped' : ''}${!isOwned && !userIsAdminCard ? ' locked' : ''}`;
 
+            const userIsAdmin = !!(currentUser?.capabilities?.admin_panel);
             let actionsHtml = '';
             if (isOwned) {
                 if (isEquipped) {
@@ -113,6 +115,18 @@ function renderCosmeticsUI() {
                     actionsHtml = `
                         <button class="cosmetic-btn cosmetic-btn-equip" onclick="cosmeticEquip('${item.itemId}')">Equip</button>
                         <button class="cosmetic-btn cosmetic-btn-convert" onclick="cosmeticDeactivate('${item.itemId}')" title="Send back to game inventory">Return to Game</button>
+                    `;
+                }
+            } else if (userIsAdmin) {
+                // Admin bypass: can equip any cosmetic without owning it
+                if (isEquipped) {
+                    actionsHtml = `
+                        <button class="cosmetic-btn cosmetic-btn-unequip" onclick="cosmeticUnequip('${cat === 'name_effect' ? 'name_effect' : cat}')">Unequip</button>
+                    `;
+                } else {
+                    actionsHtml = `
+                        <button class="cosmetic-btn cosmetic-btn-equip" onclick="cosmeticEquip('${item.itemId}')">Equip</button>
+                        <span class="cosmetic-desc" style="font-style:italic;opacity:0.5;font-size:0.75rem">🔓 Admin bypass</span>
                     `;
                 }
             } else {

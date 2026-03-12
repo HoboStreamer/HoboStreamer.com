@@ -189,10 +189,17 @@ function revokeCosmetic(userId, itemId) {
 }
 
 // ── Equip a cosmetic ─────────────────────────────────────────
-function equipCosmetic(userId, itemId) {
+function equipCosmetic(userId, itemId, { isAdmin = false } = {}) {
     const cosmetic = COSMETICS[itemId];
     if (!cosmetic) return { error: 'Unknown cosmetic' };
-    if (!ownsCosmetic(userId, itemId)) return { error: 'You don\'t own this cosmetic' };
+    if (!ownsCosmetic(userId, itemId)) {
+        if (isAdmin) {
+            // Admin bypass: auto-unlock the cosmetic, then equip
+            unlockCosmetic(userId, itemId);
+        } else {
+            return { error: 'You don\'t own this cosmetic' };
+        }
+    }
     const slot = CATEGORY_SLOT[cosmetic.category];
     const d = db.getDb();
     d.prepare('INSERT OR REPLACE INTO user_equipped (user_id, slot, item_id) VALUES (?, ?, ?)').run(userId, slot, itemId);
