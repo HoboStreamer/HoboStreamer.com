@@ -2880,16 +2880,50 @@ async function toggleScreenShare() {
 
 function toggleBroadcastStats() { const el = document.getElementById('bc-stats-overlay'); if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none'; }
 
-/* ── Group Call Controls (removed — use Chat tab voice channels instead) ─ */
+/* ── Group Call Controls ───────────────────────────────────────── */
 let _broadcastCallMode = null;
 let _broadcastCallPollTimer = null;
 
-/** No-op — broadcast call controls removed */
-function showBroadcastCallControls() {}
-function hideBroadcastCallControls() {}
-function updateBroadcastCallUI() {}
-function onCallModeChange() {}
-function endBroadcastCall() {}
+/**
+ * Show the broadcast call panel and auto-join the streamer's voice channel.
+ * Delegates to initBroadcastCallPanel() in call.js which handles the actual
+ * WebRTC call setup and auto-join.
+ */
+function showBroadcastCallControls() {
+    if (typeof initBroadcastCallPanel !== 'function') return;
+    const streamId = broadcastState.activeStreamId;
+    const mode = _broadcastCallMode || 'mic+cam';
+    if (!streamId) return;
+    initBroadcastCallPanel(streamId, mode);
+    const panel = document.getElementById('bc-call-panel');
+    if (panel) panel.style.display = '';
+}
+
+function hideBroadcastCallControls() {
+    if (typeof leaveBroadcastCall === 'function') leaveBroadcastCall();
+    const panel = document.getElementById('bc-call-panel');
+    if (panel) panel.style.display = 'none';
+}
+
+function updateBroadcastCallUI() {
+    // call.js handles its own UI rendering via _renderCallUI()
+}
+
+function onCallModeChange(mode) {
+    _broadcastCallMode = mode || null;
+    if (!mode) {
+        hideBroadcastCallControls();
+        return;
+    }
+    if (isStreaming()) {
+        showBroadcastCallControls();
+    }
+}
+
+function endBroadcastCall() {
+    hideBroadcastCallControls();
+}
+
 function _startCallStatusPoll() {}
 function _stopCallStatusPoll() {
     if (_broadcastCallPollTimer) { clearInterval(_broadcastCallPollTimer); _broadcastCallPollTimer = null; }
