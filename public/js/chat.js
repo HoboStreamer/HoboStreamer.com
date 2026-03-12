@@ -898,17 +898,22 @@ async function loadGlobalChatHistory() {
         const data = await api('/chat/global/history?limit=500');
         const msgs = data.messages || [];
         msgs.forEach(m => {
-            addChatMessage({
-                username: m.username || m.display_name || `anon${m.user_id || ''}`,
-                message: m.message,
-                role: m.role || 'user',
-                color: m.color,
-                avatar_url: m.avatar_url,
-                profile_color: m.profile_color,
-                user_id: m.user_id,
-                timestamp: m.timestamp,
-                stream_username: m.stream_username || null,
-            });
+            if (m.message_type === 'system') {
+                // Render system messages (update announcements, etc.) with system styling
+                addRichSystemMessage(esc(m.message), 'update');
+            } else {
+                addChatMessage({
+                    username: m.username || m.display_name || `anon${m.user_id || ''}`,
+                    message: m.message,
+                    role: m.role || 'user',
+                    color: m.color,
+                    avatar_url: m.avatar_url,
+                    profile_color: m.profile_color,
+                    user_id: m.user_id,
+                    timestamp: m.timestamp,
+                    stream_username: m.stream_username || null,
+                });
+            }
         });
     } catch { /* silent */ }
 }

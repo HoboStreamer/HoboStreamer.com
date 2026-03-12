@@ -460,9 +460,17 @@ async function start() {
         console.log('[Server] Ready. Happy camping! 🏕️');
         console.log('');
 
-        // Broadcast recent git changes to all chat clients after a short delay
-        // (gives WebSocket clients time to reconnect after restart)
-        setTimeout(() => {
+        // Broadcast recent git changes to all chat clients after startup.
+        // Uses a retry loop — clients reconnect with backoff after a restart,
+        // so a single 5s broadcast misses most of them. We broadcast at 5s,
+        // 15s, and 30s intervals, tracking which clients already received it.
+        // The message is also persisted to chat_messages so it shows in history.
+        const _changelogSentTo = new Set();
+        let _changelogBroadcasts = 0;
+        const _changelogMaxBroadcasts = 3;
+        const _changelogDelays = [5000, 15000, 30000];
+
+        function broadcastChangelog() {
             try {
                 const raw = execSync(
                     `git --no-pager log --pretty=format:'%H||%h||%s||%an||%aI' -10`,
@@ -472,21 +480,62 @@ async function start() {
                     const [hash, short, subject, author, date] = line.split('||');
                     return { hash, short, subject, author, date };
                 });
-                if (commits.length > 0) {
-                    const top3 = commits.slice(0, 3).map(c => c.subject).join(' · ');
-                    chatServer.broadcastAll({
-                        type: 'update',
-                        summary: `Server updated — ${top3}`,
-                        commits,
-                        url: '/updates',
-                        timestamp: new Date().toISOString(),
-                    });
-                    console.log(`[Server] Broadcasted update notification with ${commits.length} commits to ${chatServer.getTotalConnections()} clients`);
+                if (commits.length === 0) return;
+
+                const top3 = commits.slice(0, 3).map(c => c.subject).join(' · ');
+                const payload = {
+                    type: 'update',
+                    summary: `Server updated — ${top3}`,
+                    commits,
+                    url: '/updates',
+                    timestamp: new Date().toISOString(),
+                };
+                const msg = JSON.stringify(payload);
+
+                // Persist to chat_messages on the FIRST broadcast only
+                if (_changelogBroadcasts === 0) {
+                    try {
+                        const summaryText = `🚀 Server updated — ${top3}`;
+                        db.saveChatMessage({
+                            stream_id: null,
+                            user_id: null,
+                            anon_id: null,
+                            username: 'HoboStreamer',
+                            message: summaryText,
+                            message_type: 'system',
+                            is_global: true,
+                        });
+                    } catch (dbErr) {
+                        console.warn('[Server] Failed to persist changelog to chat:', dbErr.message);
+                    }
+                }
+
+                // Send only to clients that haven't received it yet
+                let newRecipients = 0;
+                for (const [ws, client] of chatServer.clients) {
+                    const clientKey = client.user?.id ? `u:${client.user.id}` : `a:${client.anonId || ws._socket?.remoteAddress}`;
+                    if (_changelogSentTo.has(clientKey)) continue;
+                    if (ws.readyState === 1 /* WebSocket.OPEN */ && ws.bufferedAmount <= 256 * 1024) {
+                        ws.send(msg);
+                        _changelogSentTo.add(clientKey);
+                        newRecipients++;
+                    }
+                }
+
+                _changelogBroadcasts++;
+                console.log(`[Server] Changelog broadcast #${_changelogBroadcasts}: ${newRecipients} new recipients (${_changelogSentTo.size} total, ${chatServer.getTotalConnections()} connected)`);
+
+                // Schedule next broadcast if we haven't hit the max
+                if (_changelogBroadcasts < _changelogMaxBroadcasts) {
+                    const nextDelay = (_changelogDelays[_changelogBroadcasts] || 30000) - (_changelogDelays[_changelogBroadcasts - 1] || 0);
+                    setTimeout(broadcastChangelog, nextDelay);
                 }
             } catch (err) {
                 console.warn('[Server] Failed to broadcast startup changelog:', err.message);
             }
-        }, 5000);
+        }
+
+        setTimeout(broadcastChangelog, _changelogDelays[0]);
     });
 
     // 8. Start stale stream heartbeat cleanup (every 60 seconds)
