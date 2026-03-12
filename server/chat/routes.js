@@ -106,7 +106,7 @@ router.get('/global/history', optionalAuth, (req, res) => {
                    LEFT JOIN users u ON cm.user_id = u.id
                    LEFT JOIN streams s ON cm.stream_id = s.id
                    LEFT JOIN users su ON s.user_id = su.id
-                   WHERE cm.is_deleted = 0 AND cm.message_type = 'chat'`;
+                   WHERE cm.is_deleted = 0 AND cm.message_type IN ('chat', 'system')`;
         const params = [];
 
         if (before) {

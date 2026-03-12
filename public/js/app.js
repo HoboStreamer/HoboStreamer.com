@@ -2208,7 +2208,7 @@ async function loadUpdatesPage() {
     }
 }
 
-async function loadHomeChangelog() {
+async function loadHomeChangelog(attempt = 0) {
     const container = document.getElementById('home-changelog');
     if (!container) return;
 
@@ -2244,8 +2244,23 @@ async function loadHomeChangelog() {
         }
         container.innerHTML = html;
     } catch {
-        container.innerHTML = '<p style="opacity:0.5;text-align:center;padding:16px 0;">Failed to load changelog.</p>';
+        // Retry up to 2 times with increasing delay (handles Cloudflare challenge timing)
+        if (attempt < 2) {
+            setTimeout(() => loadHomeChangelog(attempt + 1), (attempt + 1) * 3000);
+        } else {
+            container.innerHTML = '<p style="opacity:0.5;text-align:center;padding:16px 0;">Failed to load changelog.</p>';
+        }
     }
+}
+
+/* Toggle collapsible changelog on homepage */
+function toggleHomeChangelog() {
+    const wrapper = document.getElementById('home-changelog-wrapper');
+    const btn = document.getElementById('home-changelog-toggle');
+    if (!wrapper || !btn) return;
+    const expanded = wrapper.classList.toggle('expanded');
+    wrapper.classList.toggle('collapsed', !expanded);
+    btn.textContent = expanded ? 'Show Less' : 'Show All';
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

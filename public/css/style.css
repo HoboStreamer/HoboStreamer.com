@@ -3661,14 +3661,42 @@ body.theme-light .user-dropdown {
 /* ═══════════════════════════════════════════════════════════════
    HOME CHANGELOG
    ═══════════════════════════════════════════════════════════════ */
+/* Collapsible wrapper */
+.home-changelog-wrapper {
+    position: relative;
+    margin-bottom: 24px;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: max-height 0.35s ease;
+}
+.home-changelog-wrapper.collapsed {
+    max-height: 220px;
+}
+.home-changelog-wrapper.expanded {
+    max-height: 2000px;
+}
+/* Gradient fade overlay when collapsed */
+.home-changelog-fade {
+    display: none;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 70px;
+    background: linear-gradient(to bottom, transparent, var(--bg, #0e0e12) 90%);
+    pointer-events: none;
+    border-radius: 0 0 12px 12px;
+}
+.home-changelog-wrapper.collapsed .home-changelog-fade {
+    display: block;
+}
+
 .home-changelog {
     background: var(--bg-secondary, rgba(255,255,255,0.03));
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 16px 20px;
-    max-height: 420px;
-    overflow-y: auto;
-    margin-bottom: 24px;
+    overflow: hidden;
 }
 
 /* ═══════════════════════════════════════════════════════════════

@@ -294,6 +294,21 @@
                 </div>
             </div>
 
+            <!-- HoboStreamer Changelog -->
+            <div class="section-header" style="margin-top:32px;">
+                <h2><i class="fa-solid fa-code-commit"></i> Recent Changes</h2>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button id="home-changelog-toggle" class="badge" onclick="toggleHomeChangelog()" style="cursor:pointer;border:none;background:var(--surface);padding:4px 10px;border-radius:6px;color:var(--text);font-size:0.78rem;">Show All</button>
+                    <a href="#" onclick="event.preventDefault();navigate('/updates')" class="badge" style="cursor:pointer;text-decoration:none;">View All</a>
+                </div>
+            </div>
+            <div id="home-changelog-wrapper" class="home-changelog-wrapper collapsed">
+                <div id="home-changelog" class="home-changelog">
+                    <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
+                </div>
+                <div class="home-changelog-fade" id="home-changelog-fade"></div>
+            </div>
+
             <!-- Recently Online -->
             <div class="section-header">
                 <h2><i class="fa-solid fa-clock-rotate-left"></i> Recently Online</h2>
@@ -302,15 +317,6 @@
                 <div class="empty-state">
                     <p class="muted">No recent streams</p>
                 </div>
-            </div>
-
-            <!-- HoboStreamer Changelog -->
-            <div class="section-header" style="margin-top:32px;">
-                <h2><i class="fa-solid fa-code-commit"></i> Recent Changes</h2>
-                <a href="#" onclick="event.preventDefault();navigate('/updates')" class="badge" style="cursor:pointer;text-decoration:none;">View All</a>
-            </div>
-            <div id="home-changelog" class="home-changelog">
-                <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
             </div>
         </div>
     </section>
