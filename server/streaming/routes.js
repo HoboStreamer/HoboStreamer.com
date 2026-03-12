@@ -257,6 +257,46 @@ router.get('/recent', (req, res) => {
     }
 });
 
+/* ── Voice Channels (global, non-stream) ───────────────────── */
+
+router.get('/voice-channels', (req, res) => {
+    try {
+        res.json({ channels: callServer.listChannels() });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to list voice channels' });
+    }
+});
+
+router.get('/voice-channels/:channelId', (req, res) => {
+    try {
+        const ch = callServer.getChannel(req.params.channelId);
+        if (!ch) return res.status(404).json({ error: 'Channel not found' });
+        res.json({ channel: ch });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get voice channel' });
+    }
+});
+
+router.post('/voice-channels', requireAuth, (req, res) => {
+    try {
+        const { name, mode, maxParticipants } = req.body;
+        const ch = callServer.createChannel({ name, mode, createdBy: req.user.id, maxParticipants });
+        res.status(201).json({ channel: ch });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to create voice channel' });
+    }
+});
+
+router.delete('/voice-channels/:channelId', requireAuth, (req, res) => {
+    try {
+        const ok = callServer.deleteChannel(req.params.channelId, req.user.id);
+        if (!ok) return res.status(403).json({ error: 'Cannot delete this channel' });
+        res.json({ deleted: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to delete voice channel' });
+    }
+});
+
 // ── Get Stream Details ───────────────────────────────────────
 router.get('/:id', optionalAuth, (req, res) => {
     try {
@@ -644,46 +684,6 @@ router.get('/:id/call', optionalAuth, (req, res) => {
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get call status' });
-    }
-});
-
-/* ── Voice Channels (global, non-stream) ───────────────────── */
-
-router.get('/voice-channels', (req, res) => {
-    try {
-        res.json({ channels: callServer.listChannels() });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to list voice channels' });
-    }
-});
-
-router.get('/voice-channels/:channelId', (req, res) => {
-    try {
-        const ch = callServer.getChannel(req.params.channelId);
-        if (!ch) return res.status(404).json({ error: 'Channel not found' });
-        res.json({ channel: ch });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to get voice channel' });
-    }
-});
-
-router.post('/voice-channels', requireAuth, (req, res) => {
-    try {
-        const { name, mode, maxParticipants } = req.body;
-        const ch = callServer.createChannel({ name, mode, createdBy: req.user.id, maxParticipants });
-        res.status(201).json({ channel: ch });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to create voice channel' });
-    }
-});
-
-router.delete('/voice-channels/:channelId', requireAuth, (req, res) => {
-    try {
-        const ok = callServer.deleteChannel(req.params.channelId, req.user.id);
-        if (!ok) return res.status(403).json({ error: 'Cannot delete this channel' });
-        res.json({ deleted: true });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to delete voice channel' });
     }
 });
 

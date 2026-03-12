@@ -55,6 +55,8 @@ const CHAT_SETTINGS_DEFAULTS = {
     // Notifications
     flashOnMention: true,         // Flash browser tab on @mention
     soundOnMention: false,        // Play a sound on @mention
+    // Widget
+    showFloatingChat: true,       // Show floating global chat button on non-chat pages
     // TTS
     ttsEnabled: true,             // TTS toggle (on by default)
     ttsVolume: 80,                // TTS volume (0–100)
@@ -1565,6 +1567,13 @@ function buildSettingsPanelHTML() {
             </label>
         </div>
         <div class="csp-section">
+            <div class="csp-title"><i class="fa-solid fa-window-restore"></i> Widget</div>
+            <label class="csp-row">
+                <span>Floating Chat Button</span>
+                <input type="checkbox" data-setting="showFloatingChat" onchange="onChatSettingChange(this)">
+            </label>
+        </div>
+        <div class="csp-section">
             <div class="csp-title"><i class="fa-solid fa-volume-high"></i> Text-to-Speech</div>
             <label class="csp-row">
                 <span>Enable TTS</span>
@@ -1589,6 +1598,7 @@ function onChatSettingChange(el) {
     else chatSettings[key] = el.value;
     saveChatSettings();
     if (key === 'ttsEnabled') syncTTSToggleButtons();
+    if (key === 'showFloatingChat') _fcwUpdateVisibility();
 }
 
 function resetChatSettings() {
@@ -1843,9 +1853,10 @@ function _fcwUpdateVisibility() {
     const isOnChatPage = chatPage && chatPage.classList.contains('active');
     const fab = document.getElementById('floating-chat-fab');
     const widget = document.getElementById('floating-chat-widget');
+    const disabled = chatSettings && chatSettings.showFloatingChat === false;
 
-    if (isOnChatPage) {
-        // On chat page — hide FAB and widget
+    if (isOnChatPage || disabled) {
+        // On chat page or disabled — hide FAB and widget
         if (fab) fab.style.display = 'none';
         if (widget) widget.style.display = 'none';
         _fcwOpen = false;
