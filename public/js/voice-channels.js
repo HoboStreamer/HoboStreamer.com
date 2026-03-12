@@ -639,6 +639,8 @@ function vcUpdateControlButtons() {
  */
 function vcRenderUI() {
     if (!callState.joined) {
+        // Still connecting — don't tear down the UI yet, just skip rendering
+        if (callState.connecting) return;
         // Disconnected (kicked, banned, call ended, etc.)
         const connPanel = document.getElementById('vc-connected-panel');
         if (connPanel) connPanel.style.display = 'none';
