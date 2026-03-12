@@ -988,6 +988,9 @@ function showChatContextMenu(event) {
     // Fetch user profile (or render simplified menu for anon users)
     loadContextMenuProfile(menu, coreUsername, userId, isAnon);
 
+    // Clicks inside the menu shouldn't dismiss it (needed for rename submenu toggle etc.)
+    menu.addEventListener('click', (e) => e.stopPropagation());
+
     // Click outside to dismiss
     setTimeout(() => {
         document.addEventListener('click', dismissContextMenu, { once: true });
