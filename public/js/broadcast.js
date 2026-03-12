@@ -62,8 +62,9 @@ function createStreamState(streamData) {
  * spurious ended events every few minutes during normal Gamescope
  * compositing, power transitions, and GPU context switches.
  */
-const KEEPALIVE_INTERVAL_MS = 2000;
-const WATCHDOG_DEAD_THRESHOLD_MS = 20000; // 20s of consecutive frame failures = dead
+const KEEPALIVE_INTERVAL_MS = 1000;
+const WATCHDOG_DEAD_THRESHOLD_MS = 15000; // 15s of grabFrame failures with 'live' readyState
+const WATCHDOG_ENDED_THRESHOLD_MS = 8000;  // 8s for track.readyState !== 'live' (definitive death)
 
 function startTrackKeepalive(streamId) {
     const ss = getStreamState(streamId);
@@ -98,12 +99,19 @@ function startTrackKeepalive(streamId) {
             return;
         }
 
+        // Check for unmute reset signal from mute/unmute event handlers
+        if (current._watchdogResetRequested) {
+            current._watchdogResetRequested = false;
+            lastSuccessfulFrame = Date.now();
+            watchdogTriggered = false;
+        }
+
         if (videoTrack.readyState !== 'live') {
-            // Track is not live — check if watchdog should fire
+            // Track is definitively not live — use shorter threshold
             const deadDuration = Date.now() - lastSuccessfulFrame;
-            if (deadDuration >= WATCHDOG_DEAD_THRESHOLD_MS && !watchdogTriggered) {
+            if (deadDuration >= WATCHDOG_ENDED_THRESHOLD_MS && !watchdogTriggered) {
                 watchdogTriggered = true;
-                console.warn(`[Broadcast] Watchdog: video track dead for ${(deadDuration / 1000).toFixed(1)}s — triggering recovery`);
+                console.warn(`[Broadcast] Watchdog: video track dead for ${(deadDuration / 1000).toFixed(1)}s (readyState: ${videoTrack.readyState}) — triggering recovery`);
                 scheduleMediaRecovery(streamId, 'video track dead (watchdog)');
             }
             return;
@@ -117,16 +125,17 @@ function startTrackKeepalive(streamId) {
             })
             .catch(() => {
                 // Frame grab failed but track is still 'live' — PipeWire glitch
-                // Don't panic, just let the watchdog timer accumulate
+                // If track is muted, PipeWire is renegotiating — be patient
                 const deadDuration = Date.now() - lastSuccessfulFrame;
                 if (deadDuration >= WATCHDOG_DEAD_THRESHOLD_MS && !watchdogTriggered) {
                     watchdogTriggered = true;
-                    console.warn(`[Broadcast] Watchdog: frame grabs failing for ${(deadDuration / 1000).toFixed(1)}s — triggering recovery`);
+                    const mutedNote = current._videoTrackMutedAt ? ` (muted for ${((Date.now() - current._videoTrackMutedAt) / 1000).toFixed(1)}s)` : '';
+                    console.warn(`[Broadcast] Watchdog: frame grabs failing for ${(deadDuration / 1000).toFixed(1)}s${mutedNote} — triggering recovery`);
                     scheduleMediaRecovery(streamId, 'frame capture failed (watchdog)');
                 }
             });
     }, KEEPALIVE_INTERVAL_MS);
-    console.log(`[Broadcast] Track keepalive + watchdog started (${KEEPALIVE_INTERVAL_MS / 1000}s interval, ${WATCHDOG_DEAD_THRESHOLD_MS / 1000}s dead threshold)`);
+    console.log(`[Broadcast] Track keepalive + watchdog started (${KEEPALIVE_INTERVAL_MS / 1000}s interval, ${WATCHDOG_ENDED_THRESHOLD_MS / 1000}s ended/${WATCHDOG_DEAD_THRESHOLD_MS / 1000}s stall threshold)`);
 }
 
 function stopTrackKeepalive(streamId) {
@@ -307,10 +316,23 @@ function attachLocalStreamRecoveryHandlers(streamId) {
         }, { once: true });
 
         track.addEventListener('mute', () => {
+            if (!isStillCurrent()) return;
             console.log(`[Broadcast] Track '${track.kind}' muted (readyState: ${track.readyState})`);
+            if (track.kind === 'video') {
+                const ss2 = getStreamState(streamId);
+                if (ss2) ss2._videoTrackMutedAt = Date.now();
+            }
         });
         track.addEventListener('unmute', () => {
+            if (!isStillCurrent()) return;
             console.log(`[Broadcast] Track '${track.kind}' unmuted (readyState: ${track.readyState})`);
+            if (track.kind === 'video') {
+                const ss2 = getStreamState(streamId);
+                if (ss2) {
+                    ss2._videoTrackMutedAt = null;
+                    ss2._watchdogResetRequested = true; // signal watchdog to reset timer
+                }
+            }
         });
     });
 
@@ -2100,13 +2122,20 @@ function getRobotStreamerPublishUrl(streamId) {
     return `${protocol}://${host}${portSuffix}/ws/robotstreamer-publish?token=${encodeURIComponent(token || '')}&streamId=${encodeURIComponent(streamId)}`;
 }
 
-function buildRobotStreamerDeviceDescriptor(device, stream) {
+function buildRobotStreamerDeviceDescriptor(device /*, stream — no longer needed */) {
+    // Construct a descriptor matching what the RS SFU expects from the
+    // official robotstreamer.com web client (HAR protocol analysis).
+    // The RS client serializes the mediasoup Device class which exposes
+    // underscore-prefixed internal properties. We replicate this structure
+    // using the Device's public API for compatibility.
     return {
-        name: 'HoboStreamer',
-        handlerName: device.handlerName || 'browser',
-        loaded: true,
-        canProduceAudio: !!stream?.getAudioTracks?.().length,
-        canProduceVideo: !!stream?.getVideoTracks?.().length,
+        _handlerName: device.handlerName,
+        _loaded: device.loaded,
+        _canProduceByKind: {
+            audio: device.canProduce('audio'),
+            video: device.canProduce('video'),
+        },
+        _sctpCapabilities: device.sctpCapabilities || { numStreams: { OS: 1024, MIS: 1024 } },
     };
 }
 
@@ -2249,7 +2278,7 @@ async function startRobotStreamerRestream(streamId) {
         setRobotStreamerStatus('Joining RobotStreamer room…', 'info', 'bc-rsLiveStatus');
         if (!requireLocalStream('join')) throw new Error('localStream unavailable for join');
         await rpc.request('join', {
-            device: buildRobotStreamerDeviceDescriptor(device, ss.localStream),
+            device: buildRobotStreamerDeviceDescriptor(device),
             rtpCapabilities: device.rtpCapabilities,
         });
         console.log('[RS Restream] Step 5/7 done: Joined');
