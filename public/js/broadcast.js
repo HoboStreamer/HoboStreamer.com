@@ -699,6 +699,9 @@ async function loadBroadcastPage() {
     hideBroadcastTabs();
     showStreamManager();
     loadExistingStreams();
+
+    // Pre-fill form with last-used values
+    _restoreLastBroadcastFields();
 }
 
 /* ── Stream Manager (Step 0) ─────────────────────────────────── */
@@ -707,6 +710,17 @@ function showStreamManager() {
     ids.forEach((id, i) => { const el = document.getElementById(id); if (el) el.style.display = i === 0 ? '' : 'none'; });
     const chat = document.getElementById('bc-chat-sidebar'); if (chat) chat.style.display = 'none';
     const info = document.getElementById('bc-info-bar'); if (info) info.style.display = 'none';
+}
+
+/** Pre-fill broadcast form with last-used title/description/category from localStorage */
+function _restoreLastBroadcastFields() {
+    const titleEl = document.getElementById('bc-title');
+    if (titleEl && !titleEl.value) titleEl.value = localStorage.getItem('bc-last-title') || '';
+    const descEl = document.getElementById('bc-description');
+    if (descEl && !descEl.value) descEl.value = localStorage.getItem('bc-last-description') || '';
+    const catEl = document.getElementById('bc-category');
+    const lastCat = localStorage.getItem('bc-last-category');
+    if (catEl && lastCat) catEl.value = lastCat;
 }
 
 /* ── Broadcast Stream Tabs ───────────────────────────────────── */
@@ -829,11 +843,8 @@ async function showCreateStreamPanel() {
     const createEl = document.getElementById('bc-create-section');
     if (createEl) createEl.style.display = '';
 
-    // Reset form fields
-    const titleEl = document.getElementById('bc-title');
-    if (titleEl) titleEl.value = '';
-    const descEl = document.getElementById('bc-description');
-    if (descEl) descEl.value = '';
+    // Restore last-used form fields from localStorage
+    _restoreLastBroadcastFields();
 
     // Populate device selectors for the create form
     await populateCreateFormDevices();
@@ -1091,6 +1102,11 @@ async function createNewStream() {
     const category = document.getElementById('bc-category')?.value || 'irl';
     const method = broadcastState.selectedMethod;
     if (!title) return toast('Stream title is required', 'error');
+
+    // Persist last-used values so they pre-fill next time
+    localStorage.setItem('bc-last-title', title);
+    localStorage.setItem('bc-last-description', description);
+    localStorage.setItem('bc-last-category', category);
 
     // Restore existing-streams panel visibility for next time
     const existingEl = document.getElementById('bc-existing-streams');
