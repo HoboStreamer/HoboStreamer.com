@@ -122,6 +122,7 @@ class CallServer {
         const id = `stream-${streamId}`;
         this.endCall(id);
         this.channels.delete(id);
+        this.callBans.delete(id);
     }
 
     deleteChannel(channelId, userId) {
@@ -133,6 +134,7 @@ class CallServer {
         }
         this.endCall(channelId);
         this.channels.delete(channelId);
+        this.callBans.delete(channelId);
         return true;
     }
 
@@ -200,7 +202,7 @@ class CallServer {
         const maxP = channel.maxParticipants || MAX_PARTICIPANTS;
         if (room.size >= maxP) { ws.send(JSON.stringify({ type: 'error', message: `Channel full (max ${maxP})` })); ws.close(); return; }
 
-        const clientInfo = { ws, user, anonId, ip, peerId, muted: false, cameraOff: true, forceMuted: false, forceCameraOff: false, speaking: false, isChannelCreator, isStreamer };
+        const clientInfo = { ws, user, anonId, ip, peerId, muted: false, cameraOff: true, forceMuted: false, forceCameraOff: false, speaking: false, isChannelCreator, isStreamer, _msgCount: 0, _msgResetTime: Date.now() };
         this.clients.set(ws, { channelId: resolvedId, peerId });
         room.set(peerId, clientInfo);
 
@@ -213,7 +215,13 @@ class CallServer {
         for (const [pid, info] of room) { if (pid !== peerId && info.ws.readyState === WebSocket.OPEN) info.ws.send(joinMsg); }
         this._broadcastParticipantCount(resolvedId);
 
-        ws.on('message', (data) => { try { this._handleMessage(ws, JSON.parse(data), resolvedId, peerId); } catch {} });
+        ws.on('message', (data) => {
+            // Rate limit: drop messages if client exceeds 50/sec
+            const now = Date.now();
+            if (now - clientInfo._msgResetTime > 1000) { clientInfo._msgCount = 0; clientInfo._msgResetTime = now; }
+            if (++clientInfo._msgCount > 50) return;
+            try { this._handleMessage(ws, JSON.parse(data), resolvedId, peerId); } catch {}
+        });
         ws.on('close', () => this._handleDisconnect(ws, resolvedId, peerId));
         ws.on('error', () => this._handleDisconnect(ws, resolvedId, peerId));
     }
@@ -233,6 +241,9 @@ class CallServer {
 
         switch (msg.type) {
             case 'offer': case 'answer': case 'ice-candidate': {
+                // Validate SDP/candidate size to prevent abuse
+                if (msg.sdp && (typeof msg.sdp.sdp !== 'string' || msg.sdp.sdp.length > 16384)) break;
+                if (msg.candidate && (typeof msg.candidate.candidate !== 'string' || msg.candidate.candidate.length > 2048)) break;
                 const tp = room.get(msg.targetPeerId);
                 if (tp && tp.ws.readyState === WebSocket.OPEN) tp.ws.send(JSON.stringify({ type: msg.type, fromPeerId: peerId, sdp: msg.sdp, candidate: msg.candidate }));
                 break;
@@ -330,6 +341,7 @@ class CallServer {
     }
 
     _handleDisconnect(ws, channelId, peerId) {
+        if (!this.clients.has(ws)) return; // already handled (error+close fire back-to-back)
         this.clients.delete(ws);
         const room = this.rooms.get(channelId);
         if (!room) return;
@@ -338,12 +350,15 @@ class CallServer {
         room.delete(peerId);
         const m = JSON.stringify({ type: 'peer-left', ...leftInfo, reason: 'disconnect' });
         for (const [pid, info] of room) { if (info.ws.readyState === WebSocket.OPEN) info.ws.send(m); }
+        this._broadcastParticipantCount(channelId);
         if (room.size === 0) {
             this.rooms.delete(channelId);
             const ch = this.channels.get(channelId);
-            if (ch && !ch.permanent && !ch.streamId) this.channels.delete(channelId);
+            if (ch && !ch.permanent && !ch.streamId) {
+                this.channels.delete(channelId);
+                this.callBans.delete(channelId);
+            }
         }
-        this._broadcastParticipantCount(channelId);
     }
 
     _broadcastParticipantCount(channelId) {
@@ -366,9 +381,13 @@ class CallServer {
 
     endCall(channelId) {
         const r = this.rooms.get(channelId); if (!r) return;
-        const m = JSON.stringify({ type: 'call-ended' });
-        for (const [pid, info] of r) { if (info.ws.readyState === WebSocket.OPEN) { info.ws.send(m); info.ws.close(); } }
+        const entries = [...r.values()];
         this.rooms.delete(channelId);
+        const m = JSON.stringify({ type: 'call-ended' });
+        for (const info of entries) {
+            this.clients.delete(info.ws);
+            if (info.ws.readyState === WebSocket.OPEN) { info.ws.send(m); info.ws.close(); }
+        }
     }
 
     /** Legacy compat: end call by stream ID */
