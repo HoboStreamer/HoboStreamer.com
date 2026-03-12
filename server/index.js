@@ -459,6 +459,34 @@ async function start() {
         console.log('');
         console.log('[Server] Ready. Happy camping! 🏕️');
         console.log('');
+
+        // Broadcast recent git changes to all chat clients after a short delay
+        // (gives WebSocket clients time to reconnect after restart)
+        setTimeout(() => {
+            try {
+                const raw = execSync(
+                    `git --no-pager log --pretty=format:'%H||%h||%s||%an||%aI' -10`,
+                    { cwd: REPO_DIR, encoding: 'utf8', timeout: 5000 }
+                );
+                const commits = raw.trim().split('\n').filter(Boolean).map(line => {
+                    const [hash, short, subject, author, date] = line.split('||');
+                    return { hash, short, subject, author, date };
+                });
+                if (commits.length > 0) {
+                    const top3 = commits.slice(0, 3).map(c => c.subject).join(' · ');
+                    chatServer.broadcastAll({
+                        type: 'update',
+                        summary: `Server updated — ${top3}`,
+                        commits,
+                        url: '/updates',
+                        timestamp: new Date().toISOString(),
+                    });
+                    console.log(`[Server] Broadcasted update notification with ${commits.length} commits to ${chatServer.getTotalConnections()} clients`);
+                }
+            } catch (err) {
+                console.warn('[Server] Failed to broadcast startup changelog:', err.message);
+            }
+        }, 5000);
     });
 
     // 8. Start stale stream heartbeat cleanup (every 60 seconds)
