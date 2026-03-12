@@ -550,6 +550,22 @@
                 </div>
                 <div class="chat-messages" id="offline-chat-messages"></div>
                 <div class="chat-input-area">
+                    <!-- Emote Picker -->
+                    <div id="oc-emote-picker" class="emote-picker" style="display:none">
+                        <div class="emote-picker-header">
+                            <input type="text" class="emote-search" placeholder="Search emotes..." oninput="onEmoteSearch(this.value)">
+                        </div>
+                        <div class="emote-picker-tabs">
+                            <button class="emote-tab-btn active" data-tab="all" onclick="renderEmotePicker('all')">All</button>
+                            <button class="emote-tab-btn" data-tab="defaults" onclick="renderEmotePicker('defaults')">Popular</button>
+                            <button class="emote-tab-btn" data-tab="channel" onclick="renderEmotePicker('channel')">Channel</button>
+                            <button class="emote-tab-btn" data-tab="global" onclick="renderEmotePicker('global')">Custom</button>
+                            <button class="emote-tab-btn" data-tab="ffz" onclick="renderEmotePicker('ffz')">FFZ</button>
+                            <button class="emote-tab-btn" data-tab="7tv" onclick="renderEmotePicker('7tv')">7TV</button>
+                            <button class="emote-tab-btn" data-tab="bttv" onclick="renderEmotePicker('bttv')">BTTV</button>
+                        </div>
+                        <div class="emote-picker-grid" id="oc-emote-picker-grid"></div>
+                    </div>
                     <div class="chat-input-row">
                         <button class="emote-picker-btn" onclick="toggleEmotePicker('offline-chat-input')" title="Emotes">
                             <i class="fa-solid fa-face-smile"></i>
@@ -2222,6 +2238,22 @@
                 </div>
                 <div class="global-chat-messages" id="global-chat-messages"></div>
                 <div class="chat-input-area">
+                    <!-- Emote Picker -->
+                    <div id="gc-emote-picker" class="emote-picker" style="display:none">
+                        <div class="emote-picker-header">
+                            <input type="text" class="emote-search" placeholder="Search emotes..." oninput="onEmoteSearch(this.value)">
+                        </div>
+                        <div class="emote-picker-tabs">
+                            <button class="emote-tab-btn active" data-tab="all" onclick="renderEmotePicker('all')">All</button>
+                            <button class="emote-tab-btn" data-tab="defaults" onclick="renderEmotePicker('defaults')">Popular</button>
+                            <button class="emote-tab-btn" data-tab="channel" onclick="renderEmotePicker('channel')">Channel</button>
+                            <button class="emote-tab-btn" data-tab="global" onclick="renderEmotePicker('global')">Custom</button>
+                            <button class="emote-tab-btn" data-tab="ffz" onclick="renderEmotePicker('ffz')">FFZ</button>
+                            <button class="emote-tab-btn" data-tab="7tv" onclick="renderEmotePicker('7tv')">7TV</button>
+                            <button class="emote-tab-btn" data-tab="bttv" onclick="renderEmotePicker('bttv')">BTTV</button>
+                        </div>
+                        <div class="emote-picker-grid" id="gc-emote-picker-grid"></div>
+                    </div>
                     <div class="chat-input-row">
                         <button class="emote-picker-btn" onclick="toggleEmotePicker('global-chat-input')" title="Emotes">
                             <i class="fa-solid fa-face-smile"></i>

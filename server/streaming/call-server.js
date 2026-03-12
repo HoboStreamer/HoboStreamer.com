@@ -220,7 +220,7 @@ class CallServer {
             const now = Date.now();
             if (now - clientInfo._msgResetTime > 1000) { clientInfo._msgCount = 0; clientInfo._msgResetTime = now; }
             if (++clientInfo._msgCount > 50) return;
-            try { this._handleMessage(ws, JSON.parse(data), resolvedId, peerId); } catch {}
+            try { this._handleMessage(ws, JSON.parse(data), resolvedId, peerId); } catch (err) { console.warn('[Call] Message error for peer', peerId, ':', err.message); }
         });
         ws.on('close', () => this._handleDisconnect(ws, resolvedId, peerId));
         ws.on('error', () => this._handleDisconnect(ws, resolvedId, peerId));
@@ -272,7 +272,7 @@ class CallServer {
             case 'auth-update': {
                 const c = room.get(peerId); if (!c) break;
                 let user = null;
-                if (typeof msg.token === 'string') { try { const d = verifyToken(msg.token); if (d?.id) user = db.getUserById(d.id); } catch {} }
+                if (typeof msg.token === 'string') { try { const d = verifyToken(msg.token); if (d?.id) user = db.getUserById(d.id); } catch (err) { console.warn('[Call] auth-update token verify failed for peer', peerId, ':', err.message); } }
                 if (user && this.callBans.has(channelId) && this.callBans.get(channelId).has(user.id)) {
                     if (c.ws.readyState === WebSocket.OPEN) { c.ws.send(JSON.stringify({ type: 'error', message: 'Banned' })); c.ws.close(); } break;
                 }
