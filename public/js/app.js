@@ -461,9 +461,10 @@ function routeFromURL() {
         showPage('stream');
         openStream(segments[1]);
     } else if (segments.length === 1 && !RESERVED.has(segments[0])) {
-        // Channel page: /:username
+        // Channel page: /:username?stream=ID
         showPage('channel');
-        loadChannelPage(segments[0]);
+        const streamParam = new URLSearchParams(window.location.search).get('stream');
+        loadChannelPage(segments[0], streamParam ? parseInt(streamParam) : null);
     } else {
         // 404 fallback
         showPage('home');
@@ -523,8 +524,11 @@ function renderStreamGrid(containerId, streams, isLive) {
         if (!isLive) c.innerHTML = '<div class="empty-state"><p class="muted">No recent streams</p></div>';
         return;
     }
-    c.innerHTML = streams.map(s => `
-        <div class="stream-card" onclick="navigate('/${esc(s.username)}')">
+    c.innerHTML = streams.map(s => {
+        // Navigate to channel with ?stream=ID so multi-stream channels open the right feed
+        const navUrl = isLive && s.id ? `/${esc(s.username)}?stream=${s.id}` : `/${esc(s.username)}`;
+        return `
+        <div class="stream-card" onclick="navigate('${navUrl}')">
             <div class="stream-card-thumb">
                 ${thumbImg(s.thumbnail_url, 'fa-campground', s.title)}
                 ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
@@ -540,8 +544,8 @@ function renderStreamGrid(containerId, streams, isLive) {
                 </div>
                 ${s.category ? `<div class="stream-card-tags"><span class="stream-card-tag">${esc(s.category)}</span></div>` : ''}
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
 /* ── Channel Page (/:username) ────────────────────────────────── */
@@ -555,7 +559,7 @@ function loadChatPage() {
     loadGlobalChatHistory();
 }
 
-async function loadChannelPage(username) {
+async function loadChannelPage(username, preferredStreamId = null) {
     try {
         currentChannelUsername = username;
         const data = await api(`/streams/channel/${username}`);
@@ -564,6 +568,7 @@ async function loadChannelPage(username) {
         const vods = data.vods || [];
         const clips = data.clips || [];
         const liveStreams = streams.filter(s => s && s.is_live);
+        const rsRestream = data.rs_restream || {};
 
         // Follow button helper
         const setupFollowBtn = (btn) => {
@@ -593,14 +598,23 @@ async function loadChannelPage(username) {
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
 
-            // Auto-select the stream with the most viewers
-            const targetStream = liveStreams.reduce((best, s) =>
-                (s.viewer_count || 0) > (best.viewer_count || 0) ? s : best
-            , liveStreams[0]);
-            loadLiveStreamTabs(username, targetStream.id, liveStreams);
+            // Pick the preferred stream (from URL ?stream=ID), or fall back to highest viewer count
+            let targetStream;
+            if (preferredStreamId) {
+                targetStream = liveStreams.find(s => s.id === preferredStreamId);
+            }
+            if (!targetStream) {
+                targetStream = liveStreams.reduce((best, s) =>
+                    (s.viewer_count || 0) > (best.viewer_count || 0) ? s : best
+                , liveStreams[0]);
+            }
+            loadLiveStreamTabs(username, targetStream.id, liveStreams, rsRestream);
 
-            // Activate the requested stream (or first if none specified)
+            // Activate the selected stream
             activateChannelStream(targetStream);
+
+            // Show cumulative viewers across all streams
+            updateCumulativeViewers(liveStreams, rsRestream);
         } else {
             // ── OFFLINE STATE ──
             document.getElementById('ch-live-area').style.display = 'none';
@@ -706,25 +720,20 @@ async function loadChannelPage(username) {
 
 /**
  * Load tabs for the current channel's live streams.
- * Only shows tabs when the channel has multiple concurrent streams (multi-protocol).
+ * Shows tabs when the channel has multiple concurrent streams.
+ * Each tab shows the stream title and viewer count. Protocol is a small badge.
  * @param {string} currentUsername - The channel username being viewed
  * @param {number|null} activeStreamId - Currently active stream ID
- * @param {Array} channelStreams - Live streams for this channel (already loaded)
+ * @param {Array} channelStreams - Live streams for this channel
+ * @param {Object} rsRestream - RS restream info keyed by stream ID
  */
-function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []) {
+function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = [], rsRestream = {}) {
     const tabsContainer = document.getElementById('live-stream-tabs');
     const tabsScroll = document.getElementById('live-tabs-scroll');
     const pageEl = document.getElementById('page-channel');
     if (!tabsContainer || !tabsScroll) return;
 
     // Only show tabs if the channel has more than one concurrent live stream
-    if (channelStreams.length <= 1) {
-        tabsContainer.style.display = 'none';
-        if (pageEl) pageEl.classList.remove('has-live-tabs');
-        return;
-    }
-
-    // Filter to only show streams belonging to this channel (safety check)
     const filtered = channelStreams.filter(s =>
         !s.username || s.username.toLowerCase() === currentUsername.toLowerCase()
     );
@@ -736,53 +745,116 @@ function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []
 
     tabsContainer.style.display = '';
     if (pageEl) pageEl.classList.add('has-live-tabs');
+
+    // Calculate total viewers for the tab bar summary
+    const totalViewers = filtered.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
+
     tabsScroll.innerHTML = filtered.map((s, idx) => {
         const isActive = s.id === activeStreamId;
-        // Use protocol-based label for clarity instead of raw stream title
-        const protoLabel = s.protocol ? s.protocol.toUpperCase() : `Stream ${idx + 1}`;
-        const tabLabel = `${esc(currentUsername)} (${protoLabel})`;
-        const title = esc(s.title || 'Untitled Stream');
+        const title = s.title || `Stream ${idx + 1}`;
+        const viewers = s.viewer_count || 0;
+        const protoTag = s.protocol ? `<span class="live-tab-proto">${s.protocol.toUpperCase()}</span>` : '';
+        const rsTag = rsRestream[s.id] ? '<span class="live-tab-rs" title="RobotStreamer Restream"><i class="fa-solid fa-robot"></i></span>' : '';
         return `<button class="live-tab ${isActive ? 'active' : ''}"
                     onclick="switchToLiveStream('${esc(currentUsername)}', ${s.id}, this)"
-                    data-stream-id="${s.id}" data-username="${esc(currentUsername)}" title="${title}">
+                    data-stream-id="${s.id}" data-username="${esc(currentUsername)}"
+                    title="${esc(title)} — ${viewers} viewer${viewers !== 1 ? 's' : ''} (${s.protocol || 'unknown'})">
             <span class="live-tab-dot"></span>
-            <span>${tabLabel}</span>
-            ${s.protocol ? protocolBadge(s.protocol) : ''}
-            <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>
+            <span class="live-tab-title">${esc(title)}</span>
+            ${protoTag}${rsTag}
+            <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${viewers}</span>
         </button>`;
-    }).join('');
+    }).join('') +
+    `<span class="live-tabs-total" title="Total viewers across all streams">
+        <i class="fa-solid fa-users"></i> ${totalViewers} total
+    </span>`;
 }
 
 /**
- * Switch to a different live stream (possibly different user/channel).
- * Navigates to that user's channel page and activates their stream.
+ * Update cumulative viewer display below the video player.
+ * Shows total viewers across all streams + RS restream indicator.
  */
-function switchToLiveStream(username, streamId, btn) {
-    // If switching to a different channel, navigate there
-    if (username !== currentChannelUsername) {
-        navigate('/' + username);
+function updateCumulativeViewers(liveStreams, rsRestream = {}) {
+    let el = document.getElementById('ch-cumulative-viewers');
+    if (!el) return;
+
+    if (liveStreams.length <= 1 && !Object.keys(rsRestream).length) {
+        el.style.display = 'none';
         return;
     }
 
-    // Same channel, just switch the stream (multi-protocol case)
+    const total = liveStreams.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
+    const streamCount = liveStreams.length;
+
+    let html = '';
+    if (streamCount > 1) {
+        html += `<span class="ch-viewer-total"><i class="fa-solid fa-users"></i> ${total} viewer${total !== 1 ? 's' : ''} across ${streamCount} streams</span>`;
+    }
+
+    // RS restream badges
+    for (const [sid, rs] of Object.entries(rsRestream)) {
+        if (rs.active) {
+            html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + rs.robot_name : ''}"><i class="fa-solid fa-robot"></i> RS Restream${rs.video_restreamed ? '' : ' (chat only)'}</span>`;
+        }
+    }
+
+    if (html) {
+        el.innerHTML = html;
+        el.style.display = '';
+    } else {
+        el.style.display = 'none';
+    }
+}
+
+/**
+ * Switch to a different live stream within the same channel.
+ * Properly destroys the current player before initializing the new one.
+ */
+function switchToLiveStream(username, streamId, btn) {
+    // If switching to a different channel, navigate there with stream preference
+    if (username !== currentChannelUsername) {
+        navigate('/' + username + '?stream=' + streamId);
+        return;
+    }
+
+    // Don't re-switch to the already active stream
+    if (streamId === currentStreamId) return;
+
+    // Update tab UI immediately
     const tabsScroll = document.getElementById('live-tabs-scroll');
     if (tabsScroll) {
         tabsScroll.querySelectorAll('.live-tab').forEach(t => t.classList.remove('active'));
     }
     if (btn) btn.classList.add('active');
 
-    api(`/streams/${streamId}`).then(data => {
-        const s = data.stream || data;
-        if (s && s.is_live) activateChannelStream(s);
-        else toast('Stream is no longer live', 'error');
+    // Destroy current player and chat before fetching the new stream
+    if (typeof destroyPlayer === 'function') destroyPlayer();
+
+    // Fetch the full stream data (with endpoint info) from the /channel API
+    // This ensures we get the endpoint config needed for each protocol
+    api(`/streams/channel/${username}`).then(data => {
+        const streams = data.streams || [];
+        const target = streams.find(s => s.id === streamId && s.is_live);
+        if (target) {
+            activateChannelStream(target);
+            // Update URL to reflect stream selection (without full nav)
+            history.replaceState(null, '', `/${username}?stream=${streamId}`);
+            // Update cumulative viewers with fresh data
+            const liveStreams = streams.filter(s => s && s.is_live);
+            updateCumulativeViewers(liveStreams, data.rs_restream || {});
+        } else {
+            toast('Stream is no longer live', 'error');
+        }
     }).catch(() => toast('Failed to load stream', 'error'));
 }
 
 function activateChannelStream(stream) {
+    // Avoid no-op reactivation of same stream (prevents double-init bugs)
+    const isSameStream = currentStreamId === stream.id;
     currentStreamId = stream.id;
     currentStreamData = stream;
     document.getElementById('ch-stream-title').textContent = stream.title || 'Untitled Stream';
-    // Protocol badge on live channel page
+    // Protocol badge on live channel page (moved from tabs to info bar)
     const chProtoEl = document.getElementById('ch-protocol-badge');
     if (chProtoEl) chProtoEl.innerHTML = stream.protocol ? protocolBadge(stream.protocol) : '';
     // Description on live channel page
@@ -792,6 +864,8 @@ function activateChannelStream(stream) {
         chDescEl.textContent = desc;
         chDescEl.style.display = desc ? '' : 'none';
     }
+    // Always destroy before init to prevent stale player state
+    if (typeof destroyPlayer === 'function') destroyPlayer();
     if (typeof initPlayer === 'function') initPlayer(stream);
     if (typeof initChat === 'function') initChat(stream.id);
     if (typeof loadStreamControls === 'function') loadStreamControls(stream.id);
@@ -839,25 +913,30 @@ function startStreamStatusPoll(stream) {
 
             // Check if current stream is still live
             const current = liveStreams.find(s => s.id === currentStreamId);
+            const rsRestream = data.rs_restream || {};
             if (!current && liveStreams.length > 0) {
                 // Current stream ended, but others are live — switch to best
                 const best = liveStreams.reduce((b, s) =>
                     (s.viewer_count || 0) > (b.viewer_count || 0) ? s : b
                 , liveStreams[0]);
-                loadLiveStreamTabs(username, best.id, liveStreams);
+                loadLiveStreamTabs(username, best.id, liveStreams, rsRestream);
                 activateChannelStream(best);
+                updateCumulativeViewers(liveStreams, rsRestream);
                 toast('Stream ended — switching to another live stream', 'info');
                 return;
             }
 
             // Update tabs with fresh viewer counts
             if (liveStreams.length > 1) {
-                loadLiveStreamTabs(username, currentStreamId, liveStreams);
+                loadLiveStreamTabs(username, currentStreamId, liveStreams, rsRestream);
             } else {
                 // Single stream — ensure tabs are hidden
                 const tabsC = document.getElementById('live-stream-tabs');
                 if (tabsC) tabsC.style.display = 'none';
             }
+
+            // Update cumulative viewers
+            updateCumulativeViewers(liveStreams, rsRestream);
 
             // Update viewer count in the active stream's tab
             if (current) {

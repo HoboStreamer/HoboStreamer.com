@@ -2117,8 +2117,11 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .ch-info-bar-top h2 { font-size: 0.95rem; }
     .ch-stream-title { font-size: 0.8rem; }
 
-    .live-stream-tabs { height: auto; padding: 4px 8px; }
+    .live-stream-tabs { height: auto; padding: 4px 8px; flex-wrap: wrap; }
     .live-tab { padding: 4px 10px; font-size: 0.78rem; }
+    .live-tab-title { max-width: 120px; }
+    .live-tabs-total { font-size: 0.7rem; border-left: none; padding: 2px 8px; margin-left: 0; }
+    .ch-cumulative-viewers { gap: 8px; }
     .ch-offline-header { flex-wrap: wrap; gap: 12px; padding: 16px; }
     .ch-avatar-lg { width: 56px; height: 56px; font-size: 1.4rem; }
 
@@ -2250,8 +2253,8 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .ch-follower-count { font-size: 0.75rem; }
     .btn-follow { font-size: 0.78rem; padding: 4px 10px; }
 
-    /* Hide live stream tabs in portrait if only one stream */
-    .live-stream-tabs:has(.live-tab:only-child) { display: none; }
+    /* Hide live stream tabs in portrait if only one stream (JS also handles this) */
+    .live-stream-tabs:not(:has(.live-tab:nth-child(2))) { display: none; }
 }
 
 /* 360px: Very small phones (iPhone SE, Galaxy S series) */
@@ -2299,18 +2302,18 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     padding: 0 8px;
-    height: 40px;
+    height: 42px;
     overflow: hidden;
 }
 .live-tabs-scroll {
-    display: flex; gap: 2px; overflow-x: auto;
+    display: flex; gap: 2px; overflow-x: auto; align-items: center;
     scrollbar-width: none; -ms-overflow-style: none;
-    padding: 4px 0;
+    padding: 4px 0; flex: 1;
 }
 .live-tabs-scroll::-webkit-scrollbar { display: none; }
 .live-tab {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 16px; border-radius: var(--radius-sm);
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: var(--radius-sm);
     background: transparent; border: none;
     color: var(--text-secondary); font-size: 0.82rem;
     white-space: nowrap; cursor: pointer;
@@ -2330,7 +2333,32 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .live-tab-dot {
     width: 6px; height: 6px; border-radius: 50%;
     background: var(--live-red); flex-shrink: 0;
+    animation: pulse-dot 2s infinite;
 }
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+.live-tab-title {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.live-tab-proto {
+    font-size: 0.65rem; font-weight: 600;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.08);
+    padding: 1px 5px; border-radius: 4px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+}
+.live-tab.active .live-tab-proto {
+    color: rgba(255,255,255,0.6);
+    background: rgba(255,255,255,0.12);
+}
+.live-tab-rs {
+    font-size: 0.72rem; color: #4fc3f7;
+}
+.live-tab.active .live-tab-rs { color: rgba(255,255,255,0.7); }
 .live-tab-viewers {
     font-size: 0.75rem; font-weight: 700;
     color: #fff;
@@ -2342,6 +2370,31 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .live-tab.active .live-tab-viewers {
     background: rgba(255,255,255,0.22);
 }
+.live-tabs-total {
+    font-size: 0.75rem; color: var(--text-muted);
+    padding: 0 12px; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 5px;
+    border-left: 1px solid var(--border);
+    margin-left: 4px;
+}
+
+/* ── Cumulative Viewers (below video info bar) ──────────── */
+.ch-cumulative-viewers {
+    display: flex; align-items: center; gap: 12px;
+    flex-wrap: wrap; margin-top: 4px;
+}
+.ch-viewer-total {
+    font-size: 0.78rem; color: var(--text-muted);
+    display: inline-flex; align-items: center; gap: 5px;
+}
+.ch-viewer-total i { color: var(--accent); }
+.ch-rs-badge {
+    font-size: 0.72rem; font-weight: 600;
+    color: #4fc3f7; background: rgba(79, 195, 247, 0.1);
+    padding: 2px 8px; border-radius: 10px;
+    display: inline-flex; align-items: center; gap: 5px;
+}
+.ch-rs-badge i { font-size: 0.7rem; }
 
 /* ── Streamer Info Bar (below video, Kick/Twitch style) ───── */
 .ch-info-bar {

@@ -140,10 +140,27 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         const followerCount = db.getFollowerCount(channel.user_id);
         const isFollowing = req.user ? db.isFollowing(req.user.id, channel.user_id) : false;
 
+        // Include RS restream status for each live stream
+        const rsInfo = {};
+        for (const ls of liveStreams) {
+            const hasBridge = robotStreamerService.chatBridges.has(ls.id);
+            const hasPublish = robotStreamerService._activePublish?.has(ls.id);
+            if (hasBridge || hasPublish) {
+                const integration = db.getRobotStreamerIntegrationByUserId(ls.user_id);
+                rsInfo[ls.id] = {
+                    active: true,
+                    robot_name: integration?.stream_name || integration?.robot_id || 'RS Robot',
+                    chat_mirrored: hasBridge,
+                    video_restreamed: !!hasPublish,
+                };
+            }
+        }
+
         res.json({
             channel: { ...channel, follower_count: followerCount, is_following: isFollowing },
             stream: liveStreams[0] || null,
             streams: liveStreams,
+            rs_restream: Object.keys(rsInfo).length ? rsInfo : null,
             vods,
             clips,
         });
