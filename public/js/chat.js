@@ -182,17 +182,19 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
 function initChat(streamId) {
     const nextTargetId = getChatRenderTargetId();
 
-    // Already connected to this stream — nothing to do
-    if (chatWs && chatWs.readyState === WebSocket.OPEN && chatStreamId === streamId) {
-        const { messages } = getChatEl();
-        const targetChanged = nextTargetId && nextTargetId !== chatRenderTargetId;
-        const needsHydrate = !messages || !messages.children.length;
-        chatRenderTargetId = nextTargetId;
-        if (targetChanged || needsHydrate) {
-            hydrateActiveChatHistory(streamId, { clear: true }).catch(() => {});
+    // Already connected or actively connecting to this stream — nothing to do
+    if (chatWs && chatStreamId === streamId) {
+        if (chatWs.readyState === WebSocket.OPEN || chatWs.readyState === WebSocket.CONNECTING) {
+            const { messages } = getChatEl();
+            const targetChanged = nextTargetId && nextTargetId !== chatRenderTargetId;
+            const needsHydrate = chatWs.readyState === WebSocket.OPEN && (!messages || !messages.children.length);
+            chatRenderTargetId = nextTargetId;
+            if (targetChanged || needsHydrate) {
+                hydrateActiveChatHistory(streamId, { clear: true }).catch(() => {});
+            }
+            applyChatSettings();
+            return;
         }
-        applyChatSettings();
-        return;
     }
 
     // Reclaim background broadcast WS if it's connected to the same stream
@@ -233,15 +235,18 @@ function initChat(streamId) {
     if (streamId) params.set('stream', streamId);
     const wsUrl = `${protocol}://${host}:${port}/ws/chat?${params.toString()}`;
 
-    chatWs = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl);
+    chatWs = ws;
 
     _chatIntentionalClose = false;
     _chatReconnectDelay = CHAT_RECONNECT_BASE;
     if (_chatReconnectTimer) { clearTimeout(_chatReconnectTimer); _chatReconnectTimer = null; }
 
-    chatWs.onopen = () => {
-        // Also send a join message (belt-and-suspenders auth + room join)
-        chatWs.send(JSON.stringify({
+    // All handlers capture `ws` so stale close/error events from a
+    // previously-destroyed WebSocket can't trigger spurious reconnects.
+    ws.onopen = () => {
+        if (chatWs !== ws) return; // stale — a newer WS replaced us
+        ws.send(JSON.stringify({
             type: 'join',
             streamId: streamId,
             token: token || undefined
@@ -253,18 +258,21 @@ function initChat(streamId) {
     // Load emotes for this stream context
     if (typeof loadEmotes === 'function') loadEmotes(streamId);
 
-    chatWs.onmessage = (e) => {
+    ws.onmessage = (e) => {
+        if (chatWs !== ws) return;
         try {
             const msg = JSON.parse(e.data);
             handleChatMessage(msg);
         } catch { /* ignore */ }
     };
 
-    chatWs.onerror = () => {
+    ws.onerror = () => {
+        if (chatWs !== ws) return;
         addSystemMessage('Chat connection error');
     };
 
-    chatWs.onclose = () => {
+    ws.onclose = () => {
+        if (chatWs !== ws) return; // stale close from old socket — ignore
         addSystemMessage('Chat disconnected');
         // Auto-reconnect unless intentionally closed (navigation/destroy)
         if (!_chatIntentionalClose && chatStreamId) {
@@ -348,6 +356,12 @@ function destroyChat() {
         chatStreamId = null;
     }
     chatRenderTargetId = null;
+    // Clean up stale background WS (disconnected while in bg)
+    if (_bgBroadcastWs && _bgBroadcastWs.readyState !== WebSocket.OPEN) {
+        try { _bgBroadcastWs.close(); } catch {}
+        _bgBroadcastWs = null;
+        _bgBroadcastStreamId = null;
+    }
     // Clear all chat containers
     for (const id of ['chat-messages', 'bc-chat-messages', 'global-chat-messages', 'offline-chat-messages']) {
         const el = document.getElementById(id);
