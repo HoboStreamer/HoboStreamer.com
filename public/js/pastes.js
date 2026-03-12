@@ -230,7 +230,8 @@ async function loadPasteViewer(slug) {
         container.innerHTML = `
             <div class="paste-view-header">
                 <div class="paste-view-title-row">
-                    <h1 class="paste-view-title">${escapeHtml(p.title)}${forkedFrom}</h1>
+                    <h1 class="paste-view-title" id="paste-view-title">${escapeHtml(p.title)}${forkedFrom}</h1>
+                    ${isAdmin ? `<button class="btn btn-outline btn-xs" onclick="renamePaste('${p.slug}')" title="Rename"><i class="fa-solid fa-pencil"></i></button>` : ''}
                     ${p.pinned ? '<span class="paste-card-pin"><i class="fa-solid fa-thumbtack"></i> Pinned</span>' : ''}
                     ${p.burn_after_read ? '<span class="paste-card-burn"><i class="fa-solid fa-fire"></i> Burns after read</span>' : ''}
                     ${p.visibility === 'unlisted' ? '<span class="paste-unlisted-badge"><i class="fa-solid fa-eye-slash"></i> Unlisted</span>' : ''}
@@ -246,7 +247,8 @@ async function loadPasteViewer(slug) {
                     </button>
                     ${isOwner || isAdmin ? `
                         <div class="paste-view-owner-actions">
-                            <button class="btn btn-outline btn-sm" onclick="editPaste('${p.slug}')"><i class="fa-solid fa-pen"></i> Edit</button>
+                            ${!isScreenshot ? `<button class="btn btn-outline btn-sm" onclick="editPaste('${p.slug}')"><i class="fa-solid fa-pen"></i> Edit</button>` : ''}
+                            ${isScreenshot && isAdmin ? `<button class="btn btn-outline btn-sm" onclick="openImageCensor('${p.slug}')"><i class="fa-solid fa-mask"></i> Censor</button>` : ''}
                             <button class="btn btn-outline btn-sm btn-danger" onclick="deletePaste('${p.slug}')"><i class="fa-solid fa-trash"></i> Delete</button>
                         </div>
                     ` : ''}
@@ -318,6 +320,288 @@ async function deletePaste(slug) {
     }
 }
 
+// ── Admin inline title rename ───────────────────────────────
+async function renamePaste(slug) {
+    const titleEl = document.getElementById('paste-view-title');
+    if (!titleEl) return;
+    const currentTitle = titleEl.textContent.trim();
+    const newTitle = prompt('Rename paste:', currentTitle);
+    if (newTitle === null || newTitle.trim() === '' || newTitle.trim() === currentTitle) return;
+    try {
+        const data = await api(`/pastes/${slug}`, {
+            method: 'PUT',
+            body: { title: newTitle.trim() },
+        });
+        toast('Title updated', 'success');
+        titleEl.textContent = data.paste?.title || newTitle.trim();
+    } catch (err) {
+        toast(err.message || 'Failed to rename', 'error');
+    }
+}
+
+// ── Admin image censoring ───────────────────────────────────
+let _censorState = null;
+
+function openImageCensor(slug) {
+    // Find the screenshot image in the viewer
+    const img = document.querySelector('.paste-screenshot-img');
+    if (!img) return toast('No image found to censor', 'error');
+
+    // Create a fullscreen censor overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'image-censor-overlay';
+    overlay.className = 'image-censor-overlay';
+    overlay.innerHTML = `
+        <div class="image-censor-toolbar">
+            <div class="image-censor-tools">
+                <button class="btn btn-sm image-censor-tool active" data-tool="rect" onclick="_setCensorTool('rect')" title="Black Rectangle">
+                    <i class="fa-solid fa-square"></i> Black Box
+                </button>
+                <button class="btn btn-sm image-censor-tool" data-tool="blur" onclick="_setCensorTool('blur')" title="Blur Region">
+                    <i class="fa-solid fa-droplet"></i> Blur
+                </button>
+                <button class="btn btn-sm image-censor-tool" data-tool="pixelate" onclick="_setCensorTool('pixelate')" title="Pixelate Region">
+                    <i class="fa-solid fa-th"></i> Pixelate
+                </button>
+            </div>
+            <div class="image-censor-actions">
+                <button class="btn btn-sm btn-outline" onclick="_undoCensor()" title="Undo last"><i class="fa-solid fa-undo"></i> Undo</button>
+                <button class="btn btn-sm btn-outline" onclick="_clearCensors()" title="Clear all"><i class="fa-solid fa-eraser"></i> Clear</button>
+                <button class="btn btn-sm btn-outline" onclick="closeImageCensor()"><i class="fa-solid fa-times"></i> Cancel</button>
+                <button class="btn btn-sm btn-primary" onclick="_saveCensoredImage('${slug}')"><i class="fa-solid fa-save"></i> Save</button>
+            </div>
+        </div>
+        <div class="image-censor-canvas-wrap">
+            <canvas id="censor-canvas"></canvas>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Load image into canvas
+    const canvas = document.getElementById('censor-canvas');
+    const ctx = canvas.getContext('2d');
+    const srcImg = new Image();
+    srcImg.crossOrigin = 'anonymous';
+    srcImg.onload = () => {
+        // Scale to fit viewport while maintaining aspect ratio
+        const maxW = window.innerWidth - 40;
+        const maxH = window.innerHeight - 80;
+        let w = srcImg.naturalWidth;
+        let h = srcImg.naturalHeight;
+        const scale = Math.min(1, maxW / w, maxH / h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+        canvas.width = srcImg.naturalWidth;
+        canvas.height = srcImg.naturalHeight;
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        ctx.drawImage(srcImg, 0, 0);
+
+        _censorState = {
+            canvas, ctx, srcImg, slug,
+            scaleX: srcImg.naturalWidth / w,
+            scaleY: srcImg.naturalHeight / h,
+            tool: 'rect',
+            regions: [],
+            drawing: false,
+            startX: 0, startY: 0,
+        };
+
+        // Attach mouse/touch handlers
+        canvas.addEventListener('mousedown', _censorMouseDown);
+        canvas.addEventListener('mousemove', _censorMouseMove);
+        canvas.addEventListener('mouseup', _censorMouseUp);
+        canvas.addEventListener('touchstart', _censorTouchStart, { passive: false });
+        canvas.addEventListener('touchmove', _censorTouchMove, { passive: false });
+        canvas.addEventListener('touchend', _censorTouchEnd);
+    };
+    srcImg.src = img.src;
+}
+
+function closeImageCensor() {
+    const overlay = document.getElementById('image-censor-overlay');
+    if (overlay) overlay.remove();
+    _censorState = null;
+}
+
+function _setCensorTool(tool) {
+    if (_censorState) _censorState.tool = tool;
+    document.querySelectorAll('.image-censor-tool').forEach(b =>
+        b.classList.toggle('active', b.dataset.tool === tool));
+}
+
+function _censorMouseDown(e) {
+    if (!_censorState) return;
+    const rect = _censorState.canvas.getBoundingClientRect();
+    _censorState.drawing = true;
+    _censorState.startX = (e.clientX - rect.left) * _censorState.scaleX;
+    _censorState.startY = (e.clientY - rect.top) * _censorState.scaleY;
+}
+
+function _censorMouseMove(e) {
+    if (!_censorState?.drawing) return;
+    const rect = _censorState.canvas.getBoundingClientRect();
+    const curX = (e.clientX - rect.left) * _censorState.scaleX;
+    const curY = (e.clientY - rect.top) * _censorState.scaleY;
+    _redrawCensor(curX, curY);
+}
+
+function _censorMouseUp(e) {
+    if (!_censorState?.drawing) return;
+    const rect = _censorState.canvas.getBoundingClientRect();
+    const endX = (e.clientX - rect.left) * _censorState.scaleX;
+    const endY = (e.clientY - rect.top) * _censorState.scaleY;
+    _finalizeCensorRegion(endX, endY);
+}
+
+function _censorTouchStart(e) {
+    e.preventDefault();
+    if (!_censorState || !e.touches.length) return;
+    const t = e.touches[0];
+    const rect = _censorState.canvas.getBoundingClientRect();
+    _censorState.drawing = true;
+    _censorState.startX = (t.clientX - rect.left) * _censorState.scaleX;
+    _censorState.startY = (t.clientY - rect.top) * _censorState.scaleY;
+}
+
+function _censorTouchMove(e) {
+    e.preventDefault();
+    if (!_censorState?.drawing || !e.touches.length) return;
+    const t = e.touches[0];
+    const rect = _censorState.canvas.getBoundingClientRect();
+    const curX = (t.clientX - rect.left) * _censorState.scaleX;
+    const curY = (t.clientY - rect.top) * _censorState.scaleY;
+    _redrawCensor(curX, curY);
+}
+
+function _censorTouchEnd(e) {
+    if (!_censorState?.drawing) return;
+    // Use the last known position from the most recent touchmove
+    const ct = e.changedTouches?.[0];
+    if (ct) {
+        const rect = _censorState.canvas.getBoundingClientRect();
+        const endX = (ct.clientX - rect.left) * _censorState.scaleX;
+        const endY = (ct.clientY - rect.top) * _censorState.scaleY;
+        _finalizeCensorRegion(endX, endY);
+    } else {
+        _censorState.drawing = false;
+    }
+}
+
+function _redrawCensor(curX, curY) {
+    const { ctx, srcImg, regions, startX, startY, tool } = _censorState;
+    // Redraw original image
+    ctx.drawImage(srcImg, 0, 0);
+    // Draw all committed regions
+    for (const r of regions) _applyCensorRegion(r);
+    // Draw current in-progress region
+    const x = Math.min(startX, curX);
+    const y = Math.min(startY, curY);
+    const w = Math.abs(curX - startX);
+    const h = Math.abs(curY - startY);
+    if (w > 2 && h > 2) {
+        _applyCensorRegion({ tool, x, y, w, h });
+        // Draw selection outline
+        ctx.strokeStyle = tool === 'rect' ? '#ff0000' : '#00aaff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 3]);
+        ctx.strokeRect(x, y, w, h);
+        ctx.setLineDash([]);
+    }
+}
+
+function _finalizeCensorRegion(endX, endY) {
+    const { startX, startY, tool } = _censorState;
+    _censorState.drawing = false;
+    const x = Math.min(startX, endX);
+    const y = Math.min(startY, endY);
+    const w = Math.abs(endX - startX);
+    const h = Math.abs(endY - startY);
+    if (w > 4 && h > 4) {
+        _censorState.regions.push({ tool, x, y, w, h });
+    }
+    // Full redraw with all committed regions
+    const { ctx, srcImg, regions } = _censorState;
+    ctx.drawImage(srcImg, 0, 0);
+    for (const r of regions) _applyCensorRegion(r);
+}
+
+function _applyCensorRegion(r) {
+    const { ctx, canvas } = _censorState;
+    const { x, y, w, h, tool } = r;
+    if (tool === 'rect') {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(x, y, w, h);
+    } else if (tool === 'blur') {
+        // Simulate blur by drawing scaled-down then scaled-up
+        const blurSize = 12;
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = Math.max(1, Math.round(w / blurSize));
+        tempCanvas.height = Math.max(1, Math.round(h / blurSize));
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(canvas, x, y, w, h, 0, 0, tempCanvas.width, tempCanvas.height);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, x, y, w, h);
+    } else if (tool === 'pixelate') {
+        const pixelSize = 16;
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = Math.max(1, Math.round(w / pixelSize));
+        tempCanvas.height = Math.max(1, Math.round(h / pixelSize));
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(canvas, x, y, w, h, 0, 0, tempCanvas.width, tempCanvas.height);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, x, y, w, h);
+        ctx.imageSmoothingEnabled = true;
+    }
+}
+
+function _undoCensor() {
+    if (!_censorState?.regions.length) return;
+    _censorState.regions.pop();
+    const { ctx, srcImg, regions } = _censorState;
+    ctx.drawImage(srcImg, 0, 0);
+    for (const r of regions) _applyCensorRegion(r);
+}
+
+function _clearCensors() {
+    if (!_censorState) return;
+    _censorState.regions = [];
+    const { ctx, srcImg } = _censorState;
+    ctx.drawImage(srcImg, 0, 0);
+}
+
+async function _saveCensoredImage(slug) {
+    if (!_censorState?.regions.length) {
+        return toast('No censoring applied', 'error');
+    }
+    const { canvas } = _censorState;
+    try {
+        // Convert canvas to blob
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) throw new Error('Failed to export image');
+
+        const formData = new FormData();
+        formData.append('screenshot', blob, 'censored.png');
+
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${typeof API !== 'undefined' ? API : ''}/api/pastes/${slug}/censor`, {
+            method: 'POST',
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+            body: formData,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to save');
+
+        toast('Image censored and saved', 'success');
+        closeImageCensor();
+        // Reload the paste viewer
+        loadPasteViewer(slug);
+    } catch (err) {
+        toast(err.message || 'Failed to save censored image', 'error');
+    }
+}
+
 function editPaste(slug) {
     // Load into the create form for editing
     navigate(`/pastes?edit=${slug}`);
@@ -328,12 +612,23 @@ function openNewPasteModal(prefill = {}) {
     const modal = document.getElementById('paste-create-modal');
     if (!modal) return;
 
+    const isEdit = !!prefill.slug;
     document.getElementById('paste-create-title').value = prefill.title || '';
     document.getElementById('paste-create-content').value = prefill.content || '';
     document.getElementById('paste-create-lang').value = prefill.language || 'auto';
     document.getElementById('paste-create-visibility').value = prefill.visibility || 'public';
     document.getElementById('paste-create-burn').checked = !!prefill.burn;
     document.getElementById('paste-create-slug').value = prefill.slug || ''; // For edits
+
+    // Update modal title and submit button for edit mode
+    const titleEl = document.getElementById('paste-modal-title');
+    const submitBtn = document.getElementById('paste-submit-btn');
+    if (titleEl) titleEl.innerHTML = isEdit
+        ? '<i class="fa-solid fa-pen"></i> Edit Paste'
+        : '<i class="fa-solid fa-paste"></i> New Paste';
+    if (submitBtn) submitBtn.innerHTML = isEdit
+        ? '<i class="fa-solid fa-save"></i> Save Changes'
+        : '<i class="fa-solid fa-paper-plane"></i> Create Paste';
 
     modal.style.display = 'flex';
     document.getElementById('paste-create-content').focus();

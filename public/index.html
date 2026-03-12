@@ -442,6 +442,9 @@
                     <div class="chat-header">
                         <span>STREAM CHAT</span>
                         <div class="chat-header-actions">
+                            <button class="chat-settings-btn" onclick="popoutStreamChat()" title="Pop Out Chat">
+                                <i class="fa-solid fa-up-right-from-square"></i>
+                            </button>
                             <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
                                 <i class="fa-solid fa-gear"></i>
                             </button>
@@ -2128,6 +2131,7 @@
                             <span class="vc-connected-badge"><i class="fa-solid fa-circle"></i> Voice Connected</span>
                             <span class="vc-connected-channel" id="vc-connected-channel">Public</span>
                         </div>
+                        <div class="vc-connected-status" id="vc-connected-status" style="display:none; color:#f87171; font-size:0.8rem; padding:4px 8px;"></div>
                     </div>
                     <div class="vc-participants-grid" id="vc-participants-grid"></div>
                     <div class="vc-controls">
@@ -2208,6 +2212,9 @@
                             <option value="global">Global</option>
                             <option value="voice" id="chat-mode-voice-opt" disabled>Voice Call</option>
                         </select>
+                        <button class="chat-settings-btn" onclick="popoutGlobalChat()" title="Pop Out Chat">
+                            <i class="fa-solid fa-up-right-from-square"></i>
+                        </button>
                         <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
                             <i class="fa-solid fa-gear"></i>
                         </button>
@@ -2422,7 +2429,7 @@
     <div id="paste-create-modal" class="paste-modal-overlay" style="display:none" onclick="if(event.target===this)closePasteModal()">
         <div class="paste-modal" onclick="event.stopPropagation()">
             <div class="paste-modal-header">
-                <h2><i class="fa-solid fa-paste"></i> New Paste</h2>
+                <h2 id="paste-modal-title"><i class="fa-solid fa-paste"></i> New Paste</h2>
                 <button class="paste-modal-close" onclick="closePasteModal()">&times;</button>
             </div>
             <div class="paste-modal-body">
@@ -2470,7 +2477,7 @@
             </div>
             <div class="paste-modal-footer">
                 <button class="btn btn-outline" onclick="closePasteModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="submitPaste()"><i class="fa-solid fa-paper-plane"></i> Create Paste</button>
+                <button class="btn btn-primary" id="paste-submit-btn" onclick="submitPaste()"><i class="fa-solid fa-paper-plane"></i> Create Paste</button>
             </div>
         </div>
     </div>

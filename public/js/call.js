@@ -2175,9 +2175,17 @@ function _updateLocalPreview() {
 }
 
 function _callSystemMessage(text) {
-    // In VC mode, log to console (no call-log element in the chat tab)
+    // In VC mode, show a toast + log so the user actually sees errors
     if (callState.vcMode) {
         console.log('[VC]', text);
+        if (typeof toast === 'function') toast(text, 'error');
+        // Also append to VC status area if visible
+        const vcStatus = document.getElementById('vc-connected-status');
+        if (vcStatus) {
+            vcStatus.textContent = text;
+            vcStatus.style.display = '';
+            setTimeout(() => { if (vcStatus.textContent === text) vcStatus.style.display = 'none'; }, 8000);
+        }
         return;
     }
     const log = _cid('call-log');

@@ -1435,6 +1435,7 @@ function setupVideoControls() {
 /* ── Clip Recording (rolling buffer with periodic cycling) ──── */
 let _clipCycleTimer = null;
 let _clipPrevSegment = null; // Backup from previous recorder cycle
+let _clipCycleGen = 0;      // Generation counter — prevents stale recorder events from corrupting state
 
 function startClipRecording(stream, streamId) {
     stopClipRecording();
@@ -1450,6 +1451,7 @@ function startClipRecording(stream, streamId) {
 }
 
 function _startNewRecorderCycle(stream) {
+    const gen = ++_clipCycleGen;
     clipHeaderChunk = null;
     clipChunks = [];
     clipRecorderMimeType = null;
@@ -1463,6 +1465,12 @@ function _startNewRecorderCycle(stream) {
         clipTimingBaseMs = Date.now() - Math.round(initialElapsedSeconds * 1000);
 
         clipRecorder.ondataavailable = (e) => {
+            // Ignore events from a stale recorder that was stopped during a cycle.
+            // Without this guard, the old recorder's final ondataavailable fires
+            // asynchronously AFTER _startNewRecorderCycle resets clipHeaderChunk,
+            // causing a data chunk to be stored as the "header" (corrupt EBML).
+            if (gen !== _clipCycleGen) return;
+
             if (e.data && e.data.size > 0) {
                 const capturedAt = Date.now();
                 const approxEndSeconds = Math.max(0, (capturedAt - clipTimingBaseMs) / 1000);
@@ -1520,6 +1528,7 @@ function _cycleClipRecorder(stream) {
 
 function stopClipRecording() {
     if (_clipCycleTimer) { clearInterval(_clipCycleTimer); _clipCycleTimer = null; }
+    _clipCycleGen++; // invalidate any pending ondataavailable from the stopped recorder
     if (clipRecorder && clipRecorder.state !== 'inactive') {
         try { clipRecorder.stop(); } catch {}
     }
@@ -1560,6 +1569,38 @@ async function createLiveClip() {
         header = _clipPrevSegment.header;
         chunks = _clipPrevSegment.chunks;
         mimeType = _clipPrevSegment.mimeType;
+    }
+
+    // Client-side EBML header validation — first 4 bytes must be 1A 45 DF A3.
+    // If the header chunk is corrupt (e.g. a stale data chunk), fall back to
+    // the previous segment before the server rejects it.
+    if (header && header.size >= 4) {
+        try {
+            const headerBytes = new Uint8Array(await header.slice(0, 4).arrayBuffer());
+            const validEbml = headerBytes[0] === 0x1A && headerBytes[1] === 0x45
+                           && headerBytes[2] === 0xDF && headerBytes[3] === 0xA3;
+            if (!validEbml) {
+                console.warn('[Clip] Current header chunk has invalid EBML magic — falling back to previous segment');
+                if (_clipPrevSegment && _clipPrevSegment.header) {
+                    const prevBytes = new Uint8Array(await _clipPrevSegment.header.slice(0, 4).arrayBuffer());
+                    const prevValid = prevBytes[0] === 0x1A && prevBytes[1] === 0x45
+                                   && prevBytes[2] === 0xDF && prevBytes[3] === 0xA3;
+                    if (prevValid) {
+                        header = _clipPrevSegment.header;
+                        chunks = _clipPrevSegment.chunks;
+                        mimeType = _clipPrevSegment.mimeType;
+                    } else {
+                        toast('Clip data is temporarily corrupt — please try again in a few seconds', 'warning');
+                        return;
+                    }
+                } else {
+                    toast('Clip data is temporarily corrupt — please try again in a few seconds', 'warning');
+                    return;
+                }
+            }
+        } catch (ebmlErr) {
+            console.warn('[Clip] EBML validation failed:', ebmlErr.message);
+        }
     }
 
     if (!header || !chunks.length || !clipStreamId) {

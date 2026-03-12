@@ -364,7 +364,25 @@ function vcCancelSetup() {
 }
 
 function vcToggleTest() {
-    if (!vcState.previewStream || !vcState.previewAudioCtx) return;
+    if (!vcState.previewStream || !vcState.previewAudioCtx) {
+        // Preview not ready — attempt to start it then retry
+        const ch = vcState.channels.find(c => c.id === vcState.selectedChannelId);
+        if (!vcState.previewStream && ch) {
+            toast('Starting microphone preview…', 'info');
+            vcStartPreview(ch.mode || 'mic').then(() => {
+                if (vcState.previewStream && vcState.previewAudioCtx) {
+                    vcToggleTest(); // retry after preview started
+                } else {
+                    toast('Could not access microphone — check permissions', 'error');
+                }
+            }).catch(() => {
+                toast('Could not access microphone — check permissions', 'error');
+            });
+        } else {
+            toast('Microphone not available — check permissions and try again', 'error');
+        }
+        return;
+    }
 
     if (vcState.testing) {
         // Stop test
@@ -378,7 +396,16 @@ function vcToggleTest() {
     } else {
         // Start test — route mic to speakers
         try {
-            if (!vcState.previewSource) return;
+            if (!vcState.previewSource) {
+                toast('Microphone source not available — try re-selecting your mic', 'error');
+                return;
+            }
+
+            // Resume AudioContext if suspended (browsers require user gesture)
+            if (vcState.previewAudioCtx.state === 'suspended') {
+                vcState.previewAudioCtx.resume().catch(() => {});
+            }
+
             const dest = vcState.previewAudioCtx.destination;
             vcState.previewTestNode = vcState.previewAudioCtx.createGain();
             vcState.previewTestNode.gain.value = 0.8;
@@ -387,8 +414,10 @@ function vcToggleTest() {
             vcState.testing = true;
             const btn = document.getElementById('vc-test-btn');
             if (btn) btn.innerHTML = '<i class="fa-solid fa-stop"></i> Stop Test';
+            toast('You should hear your microphone through your speakers', 'info');
         } catch (err) {
             console.warn('[VC] Test mic failed:', err.message);
+            toast(`Mic test failed: ${err.message}`, 'error');
         }
     }
 }
@@ -537,8 +566,20 @@ async function vcJoinFromSetup() {
         callState._reusableStream = reusableStream;
     }
 
-    // Join the actual call via call.js
-    joinCall();
+    // Join the actual call via call.js — await to catch errors
+    try {
+        await joinCall();
+    } catch (err) {
+        console.error('[VC] Join failed:', err);
+        toast(`Failed to join voice channel: ${err.message || 'Unknown error'}`, 'error');
+        // Revert UI back to setup
+        callState.channelId = null;
+        callState.vcMode = false;
+        if (connPanel) connPanel.style.display = 'none';
+        vcState.selectedChannelId = channelId;
+        vcShowSetup(ch);
+        return;
+    }
 
     vcRenderChannelList();
 

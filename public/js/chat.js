@@ -27,6 +27,13 @@ let _chatReconnectDelay = 2000;
 const CHAT_RECONNECT_BASE = 2000;
 const CHAT_RECONNECT_MAX = 30000;
 let _chatIntentionalClose = false;
+let _chatActive = false; // true whenever we have an active/desired chat connection (including global)
+
+// ── Cross-feed: secondary global WS for piping messages into stream chat ──
+let _globalFeedWs = null;
+let _globalFeedReconnectTimer = null;
+let _globalFeedReconnectDelay = 3000;
+const _GLOBAL_FEED_RECONNECT_MAX = 20000;
 
 // ── Slow mode state ─────────────────────────────────────────
 let chatSlowModeSeconds = 0;
@@ -57,6 +64,9 @@ const CHAT_SETTINGS_DEFAULTS = {
     soundOnMention: false,        // Play a sound on @mention
     // Widget
     showFloatingChat: true,       // Show floating global chat button on non-chat pages
+    // Cross-feed — show messages from other sources while in a stream chat
+    showGlobalInStream: false,    // Show global chat messages in stream chat
+    showAllStreamsInStream: false, // Show messages from ALL live streams in stream chat
     // TTS
     ttsEnabled: true,             // TTS toggle (on by default)
     ttsVolume: 80,                // TTS volume (0–100)
@@ -205,6 +215,8 @@ function initChat(streamId) {
         chatRenderTargetId = nextTargetId;
         _bgBroadcastWs = null;
         _bgBroadcastStreamId = null;
+        _chatIntentionalClose = false;
+        _chatActive = true;
         // Reattach full message handler
         chatWs.onmessage = (e) => {
             try {
@@ -212,7 +224,12 @@ function initChat(streamId) {
                 handleChatMessage(msg);
             } catch { /* ignore */ }
         };
-        chatWs.onclose = () => { addSystemMessage('Chat disconnected'); };
+        chatWs.onclose = () => {
+            addSystemMessage('Chat disconnected');
+            if (!_chatIntentionalClose && _chatActive) {
+                _scheduleChatReconnect(chatStreamId);
+            }
+        };
         chatWs.onerror = () => { addSystemMessage('Chat connection error'); };
         // Load history and apply settings
         hydrateActiveChatHistory(streamId, { clear: true }).catch(() => {});
@@ -239,6 +256,7 @@ function initChat(streamId) {
     chatWs = ws;
 
     _chatIntentionalClose = false;
+    _chatActive = true;
     _chatReconnectDelay = CHAT_RECONNECT_BASE;
     if (_chatReconnectTimer) { clearTimeout(_chatReconnectTimer); _chatReconnectTimer = null; }
 
@@ -275,7 +293,8 @@ function initChat(streamId) {
         if (chatWs !== ws) return; // stale close from old socket — ignore
         addSystemMessage('Chat disconnected');
         // Auto-reconnect unless intentionally closed (navigation/destroy)
-        if (!_chatIntentionalClose && chatStreamId) {
+        // For global chat, chatStreamId is null — use _chatActive to track connection intent
+        if (!_chatIntentionalClose && _chatActive) {
             _scheduleChatReconnect(chatStreamId);
         }
     };
@@ -285,6 +304,9 @@ function initChat(streamId) {
 
     // Apply persisted settings to DOM
     applyChatSettings();
+
+    // Start cross-feed if enabled and we're in a stream chat
+    _syncGlobalFeed();
 
     // Track user scroll position — clear indicator when user scrolls to bottom
     const { messages: chatContainer } = getChatEl();
@@ -313,11 +335,10 @@ function _scheduleChatReconnect(streamId) {
     addSystemMessage(`Reconnecting in ${Math.round(delay / 1000)}s…`);
     _chatReconnectTimer = setTimeout(() => {
         _chatReconnectTimer = null;
-        if (_chatIntentionalClose) return;
-        // Only reconnect if we still have a target stream
-        if (!chatStreamId && !streamId) return;
-        const targetStream = chatStreamId || streamId;
-        console.log('[Chat] Auto-reconnecting to stream', targetStream);
+        if (_chatIntentionalClose || !_chatActive) return;
+        // Reconnect to current stream or global (null)
+        const targetStream = chatStreamId ?? streamId ?? null;
+        console.log('[Chat] Auto-reconnecting to', targetStream || 'global');
         chatWs = null; // clear stale ref before reconnecting
         chatStreamId = targetStream;
         initChat(targetStream);
@@ -326,6 +347,8 @@ function _scheduleChatReconnect(streamId) {
 
 function destroyChat() {
     _chatIntentionalClose = true;
+    _chatActive = false;
+    _closeGlobalFeed();
     if (_chatReconnectTimer) { clearTimeout(_chatReconnectTimer); _chatReconnectTimer = null; }
     // When broadcasting, keep the chat WS alive in the background so TTS
     // messages continue to play while the user browses other pages.
@@ -998,25 +1021,72 @@ function showChatContextMenu(event) {
 }
 
 function positionContextMenu(menu, x, y) {
+    // Initial position — invisible until we measure
+    menu.style.visibility = 'hidden';
     menu.style.left = x + 'px';
     menu.style.top = y + 'px';
 
-    // Adjust if overflowing viewport
-    requestAnimationFrame(() => {
+    // ── Robust viewport-aware positioning ────────────────────
+    // Runs after DOM paint so getBoundingClientRect has real dimensions.
+    // Also handles profile card load (which changes menu height) via
+    // a MutationObserver.
+    const reposition = () => {
         const rect = menu.getBoundingClientRect();
-        if (rect.right > window.innerWidth - 8) {
-            menu.style.left = (window.innerWidth - rect.width - 8) + 'px';
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const pad = 8;
+
+        let finalX = x;
+        let finalY = y;
+
+        // Horizontal: prefer right of cursor, flip left if needed
+        if (finalX + rect.width > vw - pad) {
+            finalX = Math.max(pad, x - rect.width);
         }
-        if (rect.bottom > window.innerHeight - 8) {
-            menu.style.top = (window.innerHeight - rect.height - 8) + 'px';
+        if (finalX < pad) finalX = pad;
+
+        // Vertical: prefer below cursor, flip above if needed
+        if (finalY + rect.height > vh - pad) {
+            finalY = Math.max(pad, y - rect.height);
         }
-        if (rect.left < 8) menu.style.left = '8px';
-        if (rect.top < 8) menu.style.top = '8px';
-    });
+        if (finalY < pad) finalY = pad;
+
+        // Last resort: if it still overflows, pin to edges and allow internal scroll
+        if (rect.height > vh - pad * 2) {
+            finalY = pad;
+            menu.style.maxHeight = (vh - pad * 2) + 'px';
+            menu.style.overflowY = 'auto';
+        }
+
+        menu.style.left = finalX + 'px';
+        menu.style.top = finalY + 'px';
+        menu.style.visibility = '';
+    };
+
+    requestAnimationFrame(reposition);
+
+    // Re-position when content changes (profile card load, rename submenu toggle)
+    const observer = new MutationObserver(() => requestAnimationFrame(reposition));
+    observer.observe(menu, { childList: true, subtree: true, characterData: true });
+    menu._repositionObserver = observer;
+
+    // Re-position on window resize
+    const onResize = () => {
+        if (!menu.isConnected) {
+            window.removeEventListener('resize', onResize);
+            return;
+        }
+        reposition();
+    };
+    window.addEventListener('resize', onResize);
+    menu._resizeHandler = onResize;
 }
 
 function dismissContextMenu() {
     if (activeContextMenu) {
+        // Clean up observers
+        if (activeContextMenu._repositionObserver) activeContextMenu._repositionObserver.disconnect();
+        if (activeContextMenu._resizeHandler) window.removeEventListener('resize', activeContextMenu._resizeHandler);
         activeContextMenu.remove();
         activeContextMenu = null;
     }
@@ -1397,13 +1467,20 @@ function scrollChatToBottom() {
 function _showChatNewMessagesIndicator() {
     const { messages: container } = getChatEl();
     if (!container) return;
-    let indicator = container.parentElement?.querySelector('.chat-new-msgs-indicator');
+    const parent = container.parentElement;
+    if (!parent) return;
+    let indicator = parent.querySelector('.chat-new-msgs-indicator');
     if (!indicator) {
         indicator = document.createElement('button');
         indicator.className = 'chat-new-msgs-indicator';
         indicator.onclick = () => scrollChatToBottom();
-        container.parentElement.style.position = 'relative';
-        container.parentElement.appendChild(indicator);
+        // Insert directly above the chat-input-area so it doesn't overlap the input
+        const inputArea = parent.querySelector('.chat-input-area');
+        if (inputArea) {
+            parent.insertBefore(indicator, inputArea);
+        } else {
+            parent.appendChild(indicator);
+        }
     }
     indicator.innerHTML = `<i class="fa-solid fa-arrow-down"></i> ${_chatUnreadCount} new message${_chatUnreadCount !== 1 ? 's' : ''}`;
     indicator.style.display = 'flex';
@@ -1419,6 +1496,157 @@ function _hideChatNewMessagesIndicator() {
 function _onNewChatMessageWhileScrolledUp() {
     _chatUnreadCount++;
     _showChatNewMessagesIndicator();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Cross-Feed: Secondary Global WS (show global/all-stream msgs in stream chat)
+   ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * Sync the global feed WS connection based on current chat settings.
+ * Opens a secondary WS to global chat when the user is in a stream chat
+ * and has enabled showGlobalInStream or showAllStreamsInStream.
+ */
+function _syncGlobalFeed() {
+    const wantFeed = chatStreamId && (chatSettings.showGlobalInStream || chatSettings.showAllStreamsInStream);
+    if (wantFeed && !_globalFeedWs) {
+        _openGlobalFeed();
+    } else if (!wantFeed && _globalFeedWs) {
+        _closeGlobalFeed();
+    }
+}
+
+function _openGlobalFeed() {
+    _closeGlobalFeed();
+    const host = window.location.hostname;
+    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const token = localStorage.getItem('token');
+
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    // No stream param = global chat
+    const wsUrl = `${protocol}://${host}:${port}/ws/chat?${params.toString()}`;
+    const ws = new WebSocket(wsUrl);
+    _globalFeedWs = ws;
+    _globalFeedReconnectDelay = 3000;
+
+    ws.onopen = () => {
+        if (_globalFeedWs !== ws) return;
+        ws.send(JSON.stringify({ type: 'join', token: token || undefined }));
+        console.log('[CrossFeed] Global feed connected');
+    };
+
+    ws.onmessage = (e) => {
+        if (_globalFeedWs !== ws) return;
+        try {
+            const msg = JSON.parse(e.data);
+            _handleGlobalFeedMessage(msg);
+        } catch { /* ignore */ }
+    };
+
+    ws.onclose = () => {
+        if (_globalFeedWs !== ws) return;
+        _globalFeedWs = null;
+        // Auto-reconnect if still desired
+        const wantFeed = chatStreamId && (chatSettings.showGlobalInStream || chatSettings.showAllStreamsInStream);
+        if (wantFeed) {
+            _globalFeedReconnectTimer = setTimeout(() => {
+                _globalFeedReconnectTimer = null;
+                if (chatStreamId && (chatSettings.showGlobalInStream || chatSettings.showAllStreamsInStream)) {
+                    _openGlobalFeed();
+                }
+            }, _globalFeedReconnectDelay);
+            _globalFeedReconnectDelay = Math.min(_globalFeedReconnectDelay * 1.5, _GLOBAL_FEED_RECONNECT_MAX);
+        }
+    };
+
+    ws.onerror = () => {
+        if (_globalFeedWs !== ws) return;
+        console.warn('[CrossFeed] Global feed WS error');
+    };
+}
+
+function _closeGlobalFeed() {
+    if (_globalFeedReconnectTimer) {
+        clearTimeout(_globalFeedReconnectTimer);
+        _globalFeedReconnectTimer = null;
+    }
+    if (_globalFeedWs) {
+        const ws = _globalFeedWs;
+        _globalFeedWs = null;
+        try { ws.close(); } catch {}
+    }
+}
+
+function _handleGlobalFeedMessage(msg) {
+    // Only process chat messages — ignore system, auth, user-count, etc.
+    if (msg.type !== 'chat') return;
+
+    const hasStreamChannel = !!msg.stream_channel;
+
+    // Filter based on settings:
+    // - showAllStreamsInStream: show everything (global + all streams)
+    // - showGlobalInStream only: show global messages (those WITHOUT stream_channel)
+    if (!chatSettings.showAllStreamsInStream && hasStreamChannel) {
+        return; // only global messages when showAllStreams is off
+    }
+
+    // Don't duplicate messages from our own stream
+    // stream_channel matches a username; we need to skip if it's our current stream
+    // The msg.stream_channel is set by the server for messages originating from streams
+    // Our own stream's messages are already in the stream chat — skip them
+    if (hasStreamChannel && chatStreamId) {
+        // Try to detect if this is from our own stream (avoid duplicating)
+        // tag messages with cross-feed source so they're visually distinct
+    }
+
+    // Render into the stream chat container with a source badge
+    const container = document.getElementById('chat-messages')
+                   || document.getElementById('bc-chat-messages');
+    if (!container) return;
+
+    const el = document.createElement('div');
+    el.className = 'chat-msg chat-msg-crossfeed';
+
+    // Source badge
+    let sourceBadge = '';
+    if (hasStreamChannel) {
+        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-stream" title="From ${esc(msg.stream_channel)}'s stream"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</span> `;
+    } else {
+        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-global" title="Global chat"><i class="fa-solid fa-globe"></i> Global</span> `;
+    }
+
+    const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
+    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
+
+    const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
+    const rawText = msg.message || msg.text || '';
+    const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
+
+    // Timestamp
+    let tsHtml = '';
+    if (chatSettings.showTimestamps) {
+        const tsSource = msg.timestamp ? new Date(msg.timestamp) : new Date();
+        const tsOpts = chatSettings.timestampFormat === '24h'
+            ? { hour: '2-digit', minute: '2-digit', hour12: false }
+            : { hour: '2-digit', minute: '2-digit' };
+        tsHtml = `<span class="chat-time-inline">${tsSource.toLocaleTimeString([], tsOpts)}</span> `;
+    }
+
+    el.innerHTML = `${tsHtml}${sourceBadge}${badge}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}">${displayName}</span>: <span class="chat-text">${text}</span>`;
+
+    // Auto-scroll management
+    if (!_chatUserScrolledUp) {
+        container.appendChild(el);
+        container.scrollTop = container.scrollHeight;
+    } else {
+        container.appendChild(el);
+        _onNewChatMessageWhileScrolledUp();
+    }
+    // Trim old messages
+    while (container.children.length > 500) container.removeChild(container.firstChild);
 }
 
 /**
@@ -1696,6 +1924,18 @@ function buildSettingsPanelHTML() {
             </label>
         </div>
         <div class="csp-section">
+            <div class="csp-title"><i class="fa-solid fa-tower-broadcast"></i> Cross-Feed</div>
+            <p class="csp-hint">Show messages from other sources while watching a stream.</p>
+            <label class="csp-row">
+                <span>Show Global Chat</span>
+                <input type="checkbox" data-setting="showGlobalInStream" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row">
+                <span>Show All Streams</span>
+                <input type="checkbox" data-setting="showAllStreamsInStream" onchange="onChatSettingChange(this)">
+            </label>
+        </div>
+        <div class="csp-section">
             <div class="csp-title"><i class="fa-solid fa-volume-high"></i> Text-to-Speech</div>
             <label class="csp-row">
                 <span>Enable TTS</span>
@@ -1721,11 +1961,13 @@ function onChatSettingChange(el) {
     saveChatSettings();
     if (key === 'ttsEnabled') syncTTSToggleButtons();
     if (key === 'showFloatingChat') _fcwUpdateVisibility();
+    if (key === 'showGlobalInStream' || key === 'showAllStreamsInStream') _syncGlobalFeed();
 }
 
 function resetChatSettings() {
     chatSettings = { ...CHAT_SETTINGS_DEFAULTS };
     saveChatSettings();
+    _syncGlobalFeed();
     syncSettingsPanelUI();
     toast('Chat settings reset to defaults', 'info');
 }
@@ -2121,3 +2363,212 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial check
     setTimeout(_fcwUpdateVisibility, 100);
 });
+
+/* ═══════════════════════════════════════════════════════════════
+   POPOUT CHAT WINDOWS
+   Open global chat or stream chat in a standalone popup window.
+   ═══════════════════════════════════════════════════════════════ */
+let _popoutChatWindows = new Map(); // key → Window reference
+
+function popoutChat(mode = 'global', streamId = null) {
+    const key = mode === 'stream' ? `stream-${streamId}` : 'global';
+
+    // If already open and alive, focus it
+    const existing = _popoutChatWindows.get(key);
+    if (existing && !existing.closed) {
+        existing.focus();
+        return;
+    }
+
+    const title = mode === 'stream' ? `Stream Chat — ${streamId}` : 'Global Chat';
+    const w = 400, h = 600;
+    const left = window.screenX + window.outerWidth - w - 20;
+    const top = window.screenY + 80;
+
+    const popup = window.open('', `hobo_chat_${key}`,
+        `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=no`);
+    if (!popup) {
+        toast('Popup blocked — please allow popups for this site', 'error');
+        return;
+    }
+
+    _popoutChatWindows.set(key, popup);
+
+    // Build the popout HTML
+    const doc = popup.document;
+    doc.open();
+    doc.write(`<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>${title}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary, #0d0d1a);
+            color: var(--text-primary, #e0e0e0);
+            display: flex; flex-direction: column; height: 100vh;
+            --bg-primary: #0d0d1a; --bg-secondary: #1a1a2e; --border: #2a2a3e;
+            --text-primary: #e0e0e0; --text-muted: #888; --accent: #c0965c;
+            --danger: #e74c3c; --success: #2ecc71; --radius-sm: 4px;
+        }
+        .popout-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+            font-size: 0.85rem; font-weight: 600; flex-shrink: 0;
+        }
+        .popout-header i { margin-right: 6px; }
+        .popout-messages {
+            flex: 1; overflow-y: auto; padding: 8px;
+            font-size: 0.85rem; line-height: 1.4;
+        }
+        .popout-messages .chat-msg { padding: 2px 0; word-break: break-word; }
+        .popout-messages .chat-msg.system { color: var(--text-muted); font-style: italic; font-size: 0.8rem; }
+        .popout-messages .chat-user { font-weight: 600; cursor: default; }
+        .popout-messages .chat-time-inline { font-size: 0.7rem; color: var(--text-muted); margin-right: 4px; }
+        .popout-messages .chat-stream-badge {
+            font-size: 0.65rem; background: rgba(192,150,92,0.2); color: var(--accent);
+            padding: 1px 5px; border-radius: 3px; margin-right: 4px; cursor: pointer;
+        }
+        .popout-messages .chat-avatar, .popout-messages .chat-avatar-letter { display: none; }
+        .popout-messages .chat-badge { display: none; }
+        .popout-input-area {
+            display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--border);
+            background: var(--bg-secondary); flex-shrink: 0;
+        }
+        .popout-input-area input {
+            flex: 1; background: var(--bg-primary); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); color: var(--text-primary);
+            padding: 6px 10px; font-size: 0.85rem; outline: none;
+        }
+        .popout-input-area input:focus { border-color: var(--accent); }
+        .popout-input-area button {
+            background: var(--accent); color: #fff; border: none;
+            border-radius: var(--radius-sm); padding: 6px 12px;
+            cursor: pointer; font-size: 0.85rem;
+        }
+        .popout-input-area button:hover { opacity: 0.85; }
+    </style>
+</head>
+<body>
+    <div class="popout-header">
+        <span><i class="fa-solid fa-comments"></i> ${title}</span>
+    </div>
+    <div class="popout-messages" id="popout-msgs"></div>
+    <div class="popout-input-area">
+        <input type="text" id="popout-input" placeholder="Send a message..." maxlength="500" autocomplete="off">
+        <button id="popout-send">Send</button>
+    </div>
+</body>
+</html>`);
+    doc.close();
+
+    // Set up the popout's WS connection
+    const host = window.location.hostname;
+    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const token = localStorage.getItem('token');
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (mode === 'stream' && streamId) params.set('stream', streamId);
+    const wsUrl = `${protocol}://${host}:${port}/ws/chat?${params.toString()}`;
+
+    let popupWs = null;
+    let popupReconnectTimer = null;
+    let popupReconnectDelay = 2000;
+
+    function esc(s) {
+        const d = doc.createElement('div');
+        d.textContent = String(s || '');
+        return d.innerHTML;
+    }
+
+    function appendMsg(html) {
+        const container = doc.getElementById('popout-msgs');
+        if (!container) return;
+        const el = doc.createElement('div');
+        el.className = 'chat-msg';
+        el.innerHTML = html;
+        container.appendChild(el);
+        container.scrollTop = container.scrollHeight;
+        // Trim old messages
+        while (container.children.length > 500) container.removeChild(container.firstChild);
+    }
+
+    function connectPopout() {
+        popupWs = new WebSocket(wsUrl);
+        popupWs.onopen = () => {
+            popupReconnectDelay = 2000;
+            popupWs.send(JSON.stringify({ type: 'join', streamId: mode === 'stream' ? streamId : undefined, token: token || undefined }));
+            appendMsg('<div class="chat-msg system">Connected</div>');
+        };
+        popupWs.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'chat') {
+                    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const nameColor = msg.profile_color || '#999';
+                    let badge = '';
+                    if (msg.stream_channel) badge = `<span class="chat-stream-badge">${esc(msg.stream_channel)}</span> `;
+                    appendMsg(`<span class="chat-time-inline">${ts}</span> ${badge}<span class="chat-user" style="color:${esc(nameColor)}">${esc(msg.username)}</span>: ${esc(msg.message)}`);
+                } else if (msg.type === 'system') {
+                    appendMsg(`<span class="chat-msg system">${esc(msg.message)}</span>`);
+                }
+            } catch {}
+        };
+        popupWs.onclose = () => {
+            if (popup.closed) return;
+            appendMsg('<span class="chat-msg system">Disconnected — reconnecting...</span>');
+            popupReconnectTimer = setTimeout(() => {
+                if (!popup.closed) {
+                    popupReconnectDelay = Math.min(popupReconnectDelay * 1.5, 30000);
+                    connectPopout();
+                }
+            }, popupReconnectDelay);
+        };
+        popupWs.onerror = () => {};
+    }
+
+    connectPopout();
+
+    // Wire up input
+    popup.addEventListener('load', () => {
+        const input = doc.getElementById('popout-input');
+        const sendBtn = doc.getElementById('popout-send');
+        if (input && sendBtn) {
+            const doSend = () => {
+                const text = input.value.trim();
+                if (!text || !popupWs || popupWs.readyState !== WebSocket.OPEN) return;
+                popupWs.send(JSON.stringify({ type: 'chat', message: text, streamId: mode === 'stream' ? streamId : undefined }));
+                input.value = '';
+                input.focus();
+            };
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
+            sendBtn.addEventListener('click', doSend);
+            input.focus();
+        }
+    });
+
+    // Clean up on popup close
+    const checkClosed = setInterval(() => {
+        if (popup.closed) {
+            clearInterval(checkClosed);
+            if (popupReconnectTimer) clearTimeout(popupReconnectTimer);
+            if (popupWs) { try { popupWs.close(); } catch {} }
+            _popoutChatWindows.delete(key);
+        }
+    }, 1000);
+}
+
+/** Convenience: popout global chat */
+function popoutGlobalChat() { popoutChat('global'); }
+
+/** Convenience: popout the current stream's chat */
+function popoutStreamChat() {
+    if (!chatStreamId) {
+        toast('Not in a stream chat', 'error');
+        return;
+    }
+    popoutChat('stream', chatStreamId);
+}
