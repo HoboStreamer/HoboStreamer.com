@@ -2173,7 +2173,7 @@ async function loadUpdatesPage() {
     container.innerHTML = '<div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
 
     try {
-        const data = await api('/api/updates?limit=50');
+        const data = await api('/updates?limit=50');
         if (!data.commits || data.commits.length === 0) {
             container.innerHTML = '<p style="opacity:0.6;text-align:center;padding:32px 0;">No updates found.</p>';
             return;
@@ -2213,7 +2213,7 @@ async function loadHomeChangelog(attempt = 0) {
     if (!container) return;
 
     try {
-        const data = await api('/api/updates?limit=15');
+        const data = await api('/updates?limit=15');
         if (!data.commits || data.commits.length === 0) {
             container.innerHTML = '<p style="opacity:0.5;text-align:center;padding:16px 0;">No recent changes.</p>';
             return;
