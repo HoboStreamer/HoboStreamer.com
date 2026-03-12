@@ -1863,7 +1863,11 @@ function _fcwUpdateVisibility() {
     const isOnStreamPage = (streamPage && streamPage.classList.contains('active'))
         || (channelPage && channelPage.classList.contains('active'));
 
-    if (isOnChatPage || isOnStreamPage || disabled) {
+    // Hide on broadcast page (has its own chat panel)
+    const broadcastPage = document.getElementById('page-broadcast');
+    const isOnBroadcastPage = broadcastPage && broadcastPage.classList.contains('active');
+
+    if (isOnChatPage || isOnStreamPage || isOnBroadcastPage || disabled) {
         if (fab) fab.style.display = 'none';
         if (widget) widget.style.display = 'none';
         _fcwOpen = false;

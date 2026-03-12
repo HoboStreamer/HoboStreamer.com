@@ -1083,8 +1083,26 @@ router.post('/upload', requireAuth, vodUpload.single('video'), async (req, res) 
 //  CLIP ROUTES (mounted under /api/vods but also at /api/clips)
 // ══════════════════════════════════════════════════════════════
 
+// Separate multer for clip uploads — more lenient MIME filter because
+// MediaRecorder Blobs can arrive with codec-qualified types, empty types,
+// or application/octet-stream depending on the browser/platform.
+const CLIP_ALLOWED_MIMES = new Set([
+    ...Object.keys(VOD_MIME_TO_EXT),
+    'application/octet-stream',  // some browsers / Electron builds
+    '',                          // empty MIME from Blob() without explicit type
+]);
+const clipUpload = multer({
+    storage: vodStorage,
+    limits: { fileSize: config.vod.maxSizeMb * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const base = baseMediaType(file.mimetype);
+        if (CLIP_ALLOWED_MIMES.has(base) || base.startsWith('video/')) cb(null, true);
+        else cb(new Error('Only video files are allowed for clips'));
+    },
+});
+
 // ── Create Clip ──────────────────────────────────────────────
-router.post('/clips', requireAuth, vodUpload.single('video'), async (req, res) => {
+router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) => {
     try {
         const { vod_id, stream_id, start_time, end_time, title } = req.body;
         const parsedStreamId = stream_id ? parseInt(stream_id, 10) : null;

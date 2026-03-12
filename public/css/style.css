@@ -3151,8 +3151,8 @@ body.theme-light .user-dropdown {
     opacity: 0.75;
 }
 .call-participant-tile.is-speaking {
-    border-color: #22c55e;
-    box-shadow: 0 0 0 2px rgba(34,197,94,0.55), 0 0 18px rgba(34,197,94,0.22);
+    border-color: rgba(34,197,94,0.4);
+    box-shadow: 0 0 0 1px rgba(34,197,94,0.3);
 }
 
 /* Avatar (no camera) */
@@ -3167,6 +3167,16 @@ body.theme-light .user-dropdown {
     justify-content: center;
     font-size: 1.3rem;
     font-weight: 700;
+    border: 3px solid transparent;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.call-avatar.speaking {
+    border-color: #22c55e;
+    box-shadow: 0 0 0 2px rgba(34,197,94,0.45), 0 0 12px rgba(34,197,94,0.3);
+}
+.call-participant-tile.is-speaking .call-avatar {
+    border-color: #22c55e;
+    box-shadow: 0 0 0 2px rgba(34,197,94,0.45), 0 0 12px rgba(34,197,94,0.3);
 }
 
 /* Video (camera on) */
@@ -4610,26 +4620,26 @@ body.theme-light .user-dropdown {
 .vc-participants-grid {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: 6px;
     padding: 8px;
-    max-height: 200px;
+    max-height: 280px;
     overflow-y: auto;
 }
 /* Reuse call-participant-tile styles — these tiles live in the vc grid too */
 .vc-participants-grid .call-participant-tile {
-    width: 56px;
-    height: 56px;
-    min-width: 56px;
+    width: 80px;
+    height: 80px;
+    min-width: 80px;
     font-size: 0.65rem;
 }
 .vc-participants-grid .call-avatar {
-    width: 36px;
-    height: 36px;
-    font-size: 0.9rem;
+    width: 52px;
+    height: 52px;
+    font-size: 1.1rem;
 }
 .vc-participants-grid .call-participant-label {
-    font-size: 0.55rem;
-    padding: 1px 4px;
+    font-size: 0.58rem;
+    padding: 2px 4px;
 }
 .vc-participants-grid .call-video {
     width: 100%;
@@ -4717,6 +4727,39 @@ body.theme-light .user-dropdown {
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.82rem;
+}
+.vc-ptt-status.ptt-active {
+    color: #22c55e;
+    font-weight: 600;
+}
+.vc-ptt-status.ptt-active strong {
+    color: #fff;
+    background: #22c55e;
+}
+/* PTT transmitting state on mute button */
+.vc-ctrl-btn.ptt-transmitting,
+.call-control-btn.ptt-transmitting {
+    background: #22c55e !important;
+    color: #fff !important;
+    box-shadow: 0 0 8px rgba(34,197,94,0.5);
+}
+
+/* Camera-off toggle in setup panel */
+.vc-cam-off-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    margin-top: 4px;
+    user-select: none;
+}
+.vc-cam-off-toggle input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--accent);
 }
 
 /* ── Create Channel Modal ──────────────────────────────────── */

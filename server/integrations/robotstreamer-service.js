@@ -23,9 +23,14 @@ function normalizeBoolean(value, fallback = false) {
     return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+// Minimum interval between RS Publish connections for the same stream (prevents rapid reconnect loops)
+const RS_PUBLISH_MIN_INTERVAL_MS = 5000;
+
 class RobotStreamerService {
     constructor() {
         this.chatBridges = new Map();
+        /** @type {Map<number, { ws: WebSocket, upstream: WebSocket|null, connectedAt: number }>} streamId → active publish session */
+        this._activePublish = new Map();
         this.publishProxy = new WebSocket.Server({ noServer: true, maxPayload: 512 * 1024, perMessageDeflate: false });
         this.publishProxy.on('connection', (ws, req, ctx) => this._handlePublishConnection(ws, req, ctx));
     }
@@ -428,6 +433,37 @@ class RobotStreamerService {
 
     async _handlePublishConnection(ws, req, ctx) {
         let integration = ctx.integration;
+        const streamId = ctx.stream.id;
+
+        // ── Single-connection-per-stream guard ──────────────────────
+        // Close any existing publish session for this stream before starting a new one.
+        // This prevents multiple overlapping upstream connections to the RS SFU.
+        const existing = this._activePublish.get(streamId);
+        if (existing) {
+            const age = Date.now() - existing.connectedAt;
+            console.log(`[RS Publish] Replacing existing session for stream ${streamId} (age: ${age}ms)`);
+
+            // Rate-limit: if the previous connection was created very recently,
+            // delay the new one to prevent rapid reconnect loops.
+            if (age < RS_PUBLISH_MIN_INTERVAL_MS) {
+                const wait = RS_PUBLISH_MIN_INTERVAL_MS - age;
+                console.log(`[RS Publish] Rate-limiting new connection — waiting ${wait}ms`);
+                await new Promise(r => setTimeout(r, wait));
+                // Client may have disconnected during the wait
+                if (ws.readyState !== WebSocket.OPEN) {
+                    console.log('[RS Publish] Client disconnected during rate-limit wait');
+                    return;
+                }
+            }
+
+            try { existing.upstream?.close(1000); } catch {}
+            try { existing.ws?.close(1000); } catch {}
+            this._activePublish.delete(streamId);
+        }
+
+        // Track this connection
+        const publishEntry = { ws, upstream: null, connectedAt: Date.now() };
+        this._activePublish.set(streamId, publishEntry);
 
         // ── Buffer client messages IMMEDIATELY ──────────────────────
         // Client sends RPC requests as soon as its WS opens, but we need
@@ -477,6 +513,10 @@ class RobotStreamerService {
 
         ws.on('close', () => {
             if (upstream) { try { upstream.close(1000); } catch {} }
+            // Clean up tracking — only if we're still the active session for this stream
+            if (this._activePublish.get(streamId) === publishEntry) {
+                this._activePublish.delete(streamId);
+            }
         });
 
         ws.on('error', () => {
@@ -538,6 +578,7 @@ class RobotStreamerService {
             rejectUnauthorized: false,
             handshakeTimeout: 15000,
         });
+        publishEntry.upstream = upstream;
 
         // Now that upstream exists, drain buffered messages through processAndRelay
         hasUpstream = true;

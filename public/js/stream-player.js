@@ -1576,7 +1576,10 @@ async function createLiveClip() {
         // The header contains the WebM EBML header + track initialization
         // which is required for the file to be playable.
         const blobs = [header, ...chunks.map(c => c.data)];
-        const clipBlob = new Blob(blobs, { type: header.type || mimeType || 'video/webm' });
+        // Always use 'video/webm' — MediaRecorder on all platforms produces WebM,
+        // but some browsers set Blob.type to codec-qualified strings or empty,
+        // which can trip the server's MIME filter.
+        const clipBlob = new Blob(blobs, { type: 'video/webm' });
 
         const firstChunk = chunks[0];
         const lastChunk = chunks[chunks.length - 1];
