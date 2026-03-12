@@ -607,6 +607,10 @@ async function loadChannelPage(username, preferredStreamId = null) {
                 targetStream = liveStreams.reduce((best, s) =>
                     (s.viewer_count || 0) > (best.viewer_count || 0) ? s : best
                 , liveStreams[0]);
+                // Clean up stale ?stream= param — the requested stream isn't live
+                if (preferredStreamId && targetStream) {
+                    history.replaceState(null, '', `/${username}?stream=${targetStream.id}`);
+                }
             }
             loadLiveStreamTabs(username, targetStream.id, liveStreams, rsRestream);
 
