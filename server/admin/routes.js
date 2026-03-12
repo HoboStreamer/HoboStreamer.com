@@ -119,7 +119,7 @@ router.get('/users', (req, res) => {
 // ── Update User ──────────────────────────────────────────────
 router.put('/users/:id', (req, res) => {
     try {
-        const { role, display_name } = req.body;
+        let { role, display_name } = req.body;
         const updates = [];
         const params = [];
 
@@ -130,7 +130,14 @@ router.put('/users/:id', (req, res) => {
             }
             updates.push('role = ?'); params.push(role);
         }
-        if (display_name) { updates.push('display_name = ?'); params.push(display_name); }
+        if (display_name) {
+            // Sanitize display name — strip HTML + dangerous chars
+            display_name = display_name.replace(/<[^>]*>/g, '').replace(/[\\`'"<>(){};:/\[\]]/g, '').replace(/\s+/g, ' ').trim();
+            if (display_name.length < 1 || display_name.length > 60) {
+                return res.status(400).json({ error: 'Display name must be 1-60 characters' });
+            }
+            updates.push('display_name = ?'); params.push(display_name);
+        }
 
         if (updates.length > 0) {
             params.push(req.params.id);

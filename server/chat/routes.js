@@ -58,7 +58,11 @@ router.get('/user/:userId/history', requireAuth, (req, res) => {
 // ── User Profile Card ────────────────────────────────────────
 router.get('/user/:username/profile', optionalAuth, (req, res) => {
     try {
-        const user = db.getUserByUsername(req.params.username);
+        // Try core username first, then fall back to display_name lookup
+        let user = db.getUserByUsername(req.params.username);
+        if (!user) {
+            user = db.get('SELECT * FROM users WHERE display_name = ? COLLATE NOCASE', [req.params.username]);
+        }
         if (!user) return res.status(404).json({ error: 'User not found' });
 
         const profile = db.getUserProfile(user.id);
@@ -101,6 +105,7 @@ router.get('/global/history', optionalAuth, (req, res) => {
         const before = req.query.before;
 
         let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
+                          u.username AS core_username,
                           s.id AS sid, su.username AS stream_username
                    FROM chat_messages cm
                    LEFT JOIN users u ON cm.user_id = u.id
@@ -146,7 +151,8 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
         const limit = Math.min(parseInt(req.query.limit || '500'), 500);
         const before = req.query.before; // ISO timestamp for pagination
 
-        let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name
+        let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
+                          u.username AS core_username
                    FROM chat_messages cm
                    LEFT JOIN users u ON cm.user_id = u.id
                    WHERE cm.stream_id = ? AND cm.is_deleted = 0`;

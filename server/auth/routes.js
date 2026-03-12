@@ -30,6 +30,20 @@ function stripHtml(str) {
     return str.replace(/<[^>]*>/g, '');
 }
 
+/**
+ * Sanitize display names — strip HTML, control chars, and characters that could
+ * cause injection issues in HTML attributes / JS string contexts / URLs.
+ */
+function sanitizeDisplayName(raw) {
+    if (!raw) return raw;
+    let s = stripHtml(raw);
+    // Remove characters dangerous in HTML/JS/URL contexts
+    s = s.replace(/[\\`'"<>(){};:/\[\]]/g, '');
+    // Collapse whitespace and trim
+    s = s.replace(/\s+/g, ' ').trim();
+    return s;
+}
+
 function isValidEmail(value) {
     if (!value) return true;
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -89,7 +103,7 @@ router.post('/register', (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
         if (display_name) {
-            display_name = stripHtml(display_name).replace(/[\\`]/g, '');
+            display_name = sanitizeDisplayName(display_name);
         }
         if (display_name && display_name.length > 60) {
             return res.status(400).json({ error: 'Display name must be 1-60 characters' });
@@ -235,7 +249,7 @@ router.put('/profile', requireAuth, (req, res) => {
         const params = [];
 
         // Strip HTML tags from free-text fields
-        if (display_name !== undefined) display_name = stripHtml(display_name).replace(/[\\`]/g, '');
+        if (display_name !== undefined) display_name = sanitizeDisplayName(display_name);
         if (bio !== undefined) bio = stripHtml(bio);
 
         if (display_name !== undefined && (display_name.length < 1 || display_name.length > 60)) {

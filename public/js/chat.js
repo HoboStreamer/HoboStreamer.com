@@ -614,6 +614,7 @@ function addChatMessage(msg) {
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
 
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
+    const coreUsername = esc(msg.core_username || '');
     const rawText = msg.message || msg.text || '';
     const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
     const isAnon = displayName.startsWith('anon');
@@ -651,7 +652,7 @@ function addChatMessage(msg) {
     const particleWrapOpen = hasParticles ? `<span class="chat-particle-wrap ${esc(msg.particleFX.cssClass || '')}">` : '';
     const particleWrapClose = hasParticles ? `</span>` : '';
 
-    el.innerHTML = `${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
+    el.innerHTML = `${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
 
     // Spawn particles if equipped
     if (hasParticles) {
@@ -881,6 +882,7 @@ async function loadChatHistory(streamId) {
         msgs.forEach(m => {
             addChatMessage({
                 username: m.username || m.display_name || `anon${m.user_id || ''}`,
+                core_username: m.core_username || null,
                 message: m.message,
                 role: m.role || 'user',
                 color: m.color,
@@ -904,6 +906,7 @@ async function loadGlobalChatHistory() {
             } else {
                 addChatMessage({
                     username: m.username || m.display_name || `anon${m.user_id || ''}`,
+                    core_username: m.core_username || null,
                     message: m.message,
                     role: m.role || 'user',
                     color: m.color,
@@ -930,6 +933,7 @@ function showChatContextMenu(event) {
     const target = event.currentTarget || event.target.closest('[data-username]');
     if (!target) return;
     const username = target.dataset.username;
+    const coreUsername = target.dataset.coreUsername || username;
     const userId = target.dataset.userId;
     const isAnon = target.dataset.anon === '1';
     if (!username) return;
@@ -946,7 +950,7 @@ function showChatContextMenu(event) {
     activeContextMenu = menu;
 
     // Fetch user profile (or render simplified menu for anon users)
-    loadContextMenuProfile(menu, username, userId, isAnon);
+    loadContextMenuProfile(menu, coreUsername, userId, isAnon);
 
     // Click outside to dismiss
     setTimeout(() => {

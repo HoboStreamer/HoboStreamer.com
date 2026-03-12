@@ -244,6 +244,7 @@ class ChatServer {
                     type: 'auth',
                     authenticated: !!client.user,
                     username: displayName,
+                    core_username: client.user?.username || null,
                     role: client.user ? client.user.role : 'anon',
                     user_id: client.user?.id || null,
                     slowmode_seconds: streamSlowSec,
@@ -294,6 +295,7 @@ class ChatServer {
         }
 
         const username = client.user ? client.user.display_name : client.anonId;
+        const coreUsername = client.user ? client.user.username : null;
         const role = client.user ? client.user.role : 'anon';
 
         // Voice channel tagging — clients can tag messages with the voice channel they're in
@@ -302,6 +304,7 @@ class ChatServer {
         const chatMsg = {
             type: 'chat',
             username,
+            core_username: coreUsername,
             user_id: client.user?.id || null,
             anon_id: client.anonId,
             role,
@@ -413,6 +416,7 @@ class ChatServer {
                     const ttsMsg = {
                         type: 'tts',
                         username: client.user?.display_name || client.anonId,
+                        core_username: client.user?.username || null,
                         message: args,
                         timestamp: new Date().toISOString(),
                     };
@@ -500,6 +504,7 @@ class ChatServer {
                 this.broadcastToStream(client.streamId, {
                     type: 'chat',
                     username,
+                    core_username: client.user?.username || null,
                     role: client.user?.role || 'anon',
                     message: `* ${username} ${args}`,
                     is_action: true,
