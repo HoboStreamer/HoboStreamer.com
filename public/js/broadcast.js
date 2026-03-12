@@ -37,6 +37,7 @@ function createStreamState(streamData) {
         _suppressRecovery: false, // set true during intentional track stops (flip cam, screen share toggle)
         _trackKeepaliveInterval: null,
         _recoveryStartedAt: 0,
+        _lastRecoveryCompletedAt: 0,
         lastThumbnailAt: 0,
         thumbnailCanvas: null,
         thumbnailCtx: null,
@@ -53,7 +54,17 @@ function createStreamState(streamData) {
  * active by periodically consuming a video frame.  On Linux (Steam Deck,
  * PipeWire) the capture source can be dropped if no consumer reads frames
  * for several seconds — this heartbeat prevents that idle-timeout.
+ *
+ * ALSO serves as the primary health watchdog: if frame grabs fail for
+ * WATCHDOG_DEAD_THRESHOLD_MS consecutive milliseconds, we consider the
+ * stream truly dead and trigger recovery. This replaces the unreliable
+ * track ended/inactive event approach — PipeWire on Steam Deck fires
+ * spurious ended events every few minutes during normal Gamescope
+ * compositing, power transitions, and GPU context switches.
  */
+const KEEPALIVE_INTERVAL_MS = 2000;
+const WATCHDOG_DEAD_THRESHOLD_MS = 20000; // 20s of consecutive frame failures = dead
+
 function startTrackKeepalive(streamId) {
     const ss = getStreamState(streamId);
     if (!ss?.localStream) return;
@@ -62,14 +73,60 @@ function startTrackKeepalive(streamId) {
     if (!videoTrack || typeof ImageCapture === 'undefined') return;
     let capture;
     try { capture = new ImageCapture(videoTrack); } catch { return; }
+
+    // Watchdog state
+    let lastSuccessfulFrame = Date.now();
+    let watchdogTriggered = false;
+    const streamRef = ss.localStream; // capture reference for staleness check
+
     ss._trackKeepaliveInterval = setInterval(() => {
-        if (!getStreamState(streamId)?.localStream || videoTrack.readyState !== 'live') {
+        const current = getStreamState(streamId);
+        if (!current?.localStream || current.localStream !== streamRef) {
             stopTrackKeepalive(streamId);
             return;
         }
-        capture.grabFrame().then(bmp => bmp.close()).catch(() => {});
-    }, 4000);
-    console.log('[Broadcast] Track keepalive started (4 s interval)');
+
+        // If recovery is already in progress or suppressed, just keep ticking
+        if (current._suppressRecovery || current.mediaRecoveryInProgress || current.mediaRecoveryTimer) {
+            lastSuccessfulFrame = Date.now(); // reset watchdog during recovery
+            return;
+        }
+
+        // During cooldown after recovery, reset watchdog
+        if (current._lastRecoveryCompletedAt && (Date.now() - current._lastRecoveryCompletedAt) < 60000) {
+            lastSuccessfulFrame = Date.now();
+            return;
+        }
+
+        if (videoTrack.readyState !== 'live') {
+            // Track is not live — check if watchdog should fire
+            const deadDuration = Date.now() - lastSuccessfulFrame;
+            if (deadDuration >= WATCHDOG_DEAD_THRESHOLD_MS && !watchdogTriggered) {
+                watchdogTriggered = true;
+                console.warn(`[Broadcast] Watchdog: video track dead for ${(deadDuration / 1000).toFixed(1)}s — triggering recovery`);
+                scheduleMediaRecovery(streamId, 'video track dead (watchdog)');
+            }
+            return;
+        }
+
+        capture.grabFrame()
+            .then(bmp => {
+                bmp.close();
+                lastSuccessfulFrame = Date.now();
+                watchdogTriggered = false; // reset if we got a frame
+            })
+            .catch(() => {
+                // Frame grab failed but track is still 'live' — PipeWire glitch
+                // Don't panic, just let the watchdog timer accumulate
+                const deadDuration = Date.now() - lastSuccessfulFrame;
+                if (deadDuration >= WATCHDOG_DEAD_THRESHOLD_MS && !watchdogTriggered) {
+                    watchdogTriggered = true;
+                    console.warn(`[Broadcast] Watchdog: frame grabs failing for ${(deadDuration / 1000).toFixed(1)}s — triggering recovery`);
+                    scheduleMediaRecovery(streamId, 'frame capture failed (watchdog)');
+                }
+            });
+    }, KEEPALIVE_INTERVAL_MS);
+    console.log(`[Broadcast] Track keepalive + watchdog started (${KEEPALIVE_INTERVAL_MS / 1000}s interval, ${WATCHDOG_DEAD_THRESHOLD_MS / 1000}s dead threshold)`);
 }
 
 function stopTrackKeepalive(streamId) {
@@ -220,143 +277,49 @@ function scheduleViewerReconnect(streamId, viewerPeerId, delay = 2000) {
     }, delay));
 }
 
+/**
+ * Attach diagnostic logging to track/stream events.
+ *
+ * IMPORTANT: These handlers NO LONGER trigger recovery directly.
+ * Recovery is driven exclusively by the frame watchdog in startTrackKeepalive().
+ *
+ * On Steam Deck / PipeWire / Gamescope, track 'ended' and stream 'inactive'
+ * events fire spuriously every few minutes during normal operation (GPU
+ * compositing switches, power state transitions, PipeWire pipeline
+ * renegotiations). Reacting to these events caused the stream to go black
+ * and restart constantly. The watchdog approach only triggers recovery when
+ * frames actually stop being produced for 20+ seconds.
+ */
 function attachLocalStreamRecoveryHandlers(streamId) {
     const ss = getStreamState(streamId);
     if (!ss?.localStream) return;
     const currentStream = ss.localStream;
-    let _trackEndedFired = false;
-    let _pendingRecoveryTimer = null;
 
     const isStillCurrent = () => {
         const latest = getStreamState(streamId);
         return latest && latest.localStream === currentStream;
     };
 
-    const cancelPendingRecovery = () => {
-        if (_pendingRecoveryTimer) {
-            clearTimeout(_pendingRecoveryTimer);
-            _pendingRecoveryTimer = null;
-        }
-    };
-
-    const onMediaLost = (reason) => {
-        if (!isStillCurrent()) return;
-        const latest = getStreamState(streamId);
-        // Ignore track-ended events caused by intentional operations
-        // (camera flip, screen share toggle, settings changes, cleanup)
-        if (latest._suppressRecovery) {
-            console.log(`[Broadcast] Ignored track event during intentional operation: ${reason}`);
-            return;
-        }
-        _trackEndedFired = true;
-        cancelPendingRecovery();
-        scheduleMediaRecovery(streamId, reason);
-    };
-
     currentStream.getTracks().forEach((track) => {
-        // Track 'ended' — the definitive signal that a track is gone.
-        // But on Linux (PipeWire/PulseAudio) tracks can briefly end during
-        // session renegotiations, so defer slightly and verify.
         track.addEventListener('ended', () => {
-            console.log(`[Broadcast] Track '${track.kind}' ended event (readyState: ${track.readyState})`);
-            // If any sibling track is still live, wait a beat before recovering
-            const siblingAlive = currentStream.getTracks().some(
-                t => t !== track && t.readyState === 'live'
-            );
-            if (siblingAlive) {
-                console.log('[Broadcast] Sibling tracks still live, deferring recovery 5s');
-                _pendingRecoveryTimer = setTimeout(() => {
-                    _pendingRecoveryTimer = null;
-                    if (!isStillCurrent()) return;
-                    // Re-check: are ALL tracks now dead?
-                    const allDead = currentStream.getTracks().every(
-                        t => t.readyState === 'ended'
-                    );
-                    if (allDead) {
-                        onMediaLost(`${track.kind} track ended`);
-                    } else {
-                        console.log('[Broadcast] Tracks recovered — skipping recovery');
-                    }
-                }, 5000);
-            } else {
-                onMediaLost(`${track.kind} track ended`);
-            }
+            if (!isStillCurrent()) return;
+            console.log(`[Broadcast] Track '${track.kind}' ended event (readyState: ${track.readyState}) — watchdog will handle if persistent`);
         }, { once: true });
 
-        // Track 'mute'/'unmute' — Linux audio/video drivers can temporarily
-        // mute tracks during power transitions or session changes without
-        // ending them. Log for diagnostics but don't trigger recovery.
         track.addEventListener('mute', () => {
             console.log(`[Broadcast] Track '${track.kind}' muted (readyState: ${track.readyState})`);
         });
         track.addEventListener('unmute', () => {
             console.log(`[Broadcast] Track '${track.kind}' unmuted (readyState: ${track.readyState})`);
-            // Cancel any pending recovery — the track came back
-            if (_pendingRecoveryTimer) {
-                console.log('[Broadcast] Track unmuted — cancelling pending recovery');
-                cancelPendingRecovery();
-            }
         });
     });
 
-    // The 'inactive' event fires when ALL tracks end, but also fires spuriously
-    // on some browsers during GPU resets, screen share renegotiation, tab
-    // backgrounding, power management, PipeWire restarts, Gamescope compositing, etc.
-    // Use an active ImageCapture probe to verify the stream is truly dead before
-    // triggering recovery — this eliminates false positives on Steam Deck / PipeWire.
     if (typeof currentStream.addEventListener === 'function') {
         currentStream.addEventListener('inactive', () => {
             if (!isStillCurrent()) return;
             const latest = getStreamState(streamId);
-            if (_trackEndedFired || latest._suppressRecovery) return;
-            console.log('[Broadcast] MediaStream inactive event fired — probing liveness');
-
-            // Active probe: grab a video frame. If it works, the capture source is alive.
-            const vt = currentStream.getVideoTracks()[0];
-            const probeLive = () => {
-                if (!vt || typeof ImageCapture === 'undefined' || vt.readyState !== 'live')
-                    return Promise.resolve(false);
-                return new ImageCapture(vt).grabFrame()
-                    .then(bmp => { bmp.close(); return true; })
-                    .catch(() => false);
-            };
-
-            probeLive().then(alive => {
-                if (alive) {
-                    console.log('[Broadcast] Frame probe succeeded — stream alive, ignoring inactive event');
-                    return;
-                }
-                console.log('[Broadcast] Frame probe failed — starting 12 s grace period');
-                setTimeout(() => {
-                    if (!isStillCurrent()) return;
-                    const s2 = getStreamState(streamId);
-                    if (_trackEndedFired || s2?._suppressRecovery) return;
-
-                    probeLive().then(recovered => {
-                        if (recovered) {
-                            console.log('[Broadcast] Stream recovered during grace period — no action needed');
-                            return;
-                        }
-                        const tracks = currentStream.getTracks();
-                        const allDead = tracks.every(t => t.readyState === 'ended');
-                        if (allDead) {
-                            console.log(`[Broadcast] All ${tracks.length} tracks confirmed dead after grace period`);
-                            onMediaLost('media stream inactive');
-                        } else {
-                            const summary = tracks.map(t => `${t.kind}:${t.readyState}/${t.muted?'muted':'unmuted'}`).join(', ');
-                            console.log(`[Broadcast] Tracks partially alive — ${summary}, extending grace 15 s`);
-                            setTimeout(() => {
-                                if (!isStillCurrent() || _trackEndedFired || getStreamState(streamId)?._suppressRecovery) return;
-                                if (currentStream.getTracks().every(t => t.readyState === 'ended')) {
-                                    onMediaLost('media stream inactive');
-                                } else {
-                                    console.log('[Broadcast] Tracks self-healed after extended grace — no recovery needed');
-                                }
-                            }, 15000);
-                        }
-                    });
-                }, 12000);
-            });
+            if (latest._suppressRecovery) return;
+            console.log('[Broadcast] MediaStream inactive event — watchdog will handle if persistent');
         }, { once: true });
     }
 }
@@ -364,6 +327,16 @@ function attachLocalStreamRecoveryHandlers(streamId) {
 function scheduleMediaRecovery(streamId, reason = 'media interrupted') {
     const ss = getStreamState(streamId);
     if (!ss || ss.mediaRecoveryInProgress || ss.mediaRecoveryTimer || !broadcastState.streams.has(streamId)) return;
+
+    // Recovery cooldown — if media was just recovered, spurious track events from
+    // the fresh capture pipeline should be ignored. This prevents rapid recovery
+    // loops on Steam Deck / PipeWire where tracks can fire ended events briefly
+    // after a new getUserMedia call.
+    const RECOVERY_COOLDOWN_MS = 60000;
+    if (ss._lastRecoveryCompletedAt && (Date.now() - ss._lastRecoveryCompletedAt) < RECOVERY_COOLDOWN_MS) {
+        console.log(`[Broadcast] Ignoring recovery trigger during cooldown (${reason})`);
+        return;
+    }
 
     if (broadcastState.settings.broadcastLimit === 'stop') {
         toast(`Broadcast input lost (${reason}). Stream stopping.`, 'error');
@@ -446,6 +419,7 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
 
     ss.mediaRecoveryAttempts = 0;
     ss.mediaRecoveryInProgress = false;
+    ss._lastRecoveryCompletedAt = Date.now();
     if (broadcastState.activeStreamId === streamId) {
         updateBroadcastStatusFromConnections(streamId);
         // Only show success toast if recovery was slow enough for the user to notice
@@ -2352,9 +2326,11 @@ async function startRobotStreamerRestream(streamId) {
             console.log('[RS Restream] Audio producer ID:', session.audioProducer.id);
         }
 
-        // Monitor producer track-ended events — when the underlying MediaStreamTrack
-        // ends (e.g., PipeWire restart, device disconnect), the mediasoup producer
-        // becomes dead. Detect this and trigger a full RS restream restart.
+        // Monitor producer track-ended events — on Steam Deck / PipeWire, these
+        // fire spuriously during normal Gamescope compositing. Do NOT trigger an
+        // independent RS reconnect — the frame watchdog in startTrackKeepalive()
+        // will detect if the stream is truly dead and trigger media recovery,
+        // which will restart the RS restream as part of its flow.
         const onProducerTrackEnded = (kind) => {
             if (ss.robotStreamer !== session || !session.active) return;
             // If media recovery is already in progress, it will restart RS when done
@@ -2362,9 +2338,8 @@ async function startRobotStreamerRestream(streamId) {
                 console.log(`[RS Restream] ${kind} producer trackended — media recovery active, will restart after`);
                 return;
             }
-            console.warn(`[RS Restream] ${kind} producer trackended — scheduling reconnect`);
-            setRobotStreamerStatus(`RobotStreamer ${kind} track ended — restarting…`, 'warning', 'bc-rsLiveStatus');
-            scheduleRobotStreamerReconnect(streamId);
+            // Log but do NOT reconnect — let the watchdog decide
+            console.log(`[RS Restream] ${kind} producer trackended — deferring to frame watchdog`);
         };
         if (session.videoProducer) {
             session.videoProducer.on('trackended', () => onProducerTrackEnded('video'));

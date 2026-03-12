@@ -333,8 +333,10 @@ class CallServer {
         this.clients.delete(ws);
         const room = this.rooms.get(channelId);
         if (!room) return;
+        const leaving = room.get(peerId);
+        const leftInfo = leaving ? this._buildParticipantInfo(peerId, leaving) : { peerId };
         room.delete(peerId);
-        const m = JSON.stringify({ type: 'peer-left', peerId });
+        const m = JSON.stringify({ type: 'peer-left', ...leftInfo, reason: 'disconnect' });
         for (const [pid, info] of room) { if (info.ws.readyState === WebSocket.OPEN) info.ws.send(m); }
         if (room.size === 0) {
             this.rooms.delete(channelId);

@@ -158,6 +158,13 @@ async function vcShowSetup(channel) {
     const camGroup = document.getElementById('vc-cam-group');
     if (camGroup) camGroup.style.display = channel.mode === 'mic' ? 'none' : '';
 
+    // Show camera-off toggle for modes that support camera
+    const camOffToggle = document.getElementById('vc-cam-off-toggle');
+    if (camOffToggle) camOffToggle.style.display = channel.mode === 'mic' ? 'none' : '';
+    // Always default to camera off — user must explicitly opt in
+    const startCamOff = document.getElementById('vc-start-cam-off');
+    if (startCamOff) startCamOff.checked = true;
+
     // Set current input mode from callState (persisted settings)
     const inputMode = document.getElementById('vc-input-mode');
     if (inputMode) inputMode.value = callState.inputMode;
@@ -419,7 +426,12 @@ function vcOnPttKeyChange(value) {
 
     const keyDisplay = document.getElementById('vc-ptt-status-key');
     if (keyDisplay) {
-        const map = { Space: 'Space', KeyV: 'V', KeyT: 'T', AltLeft: 'Left Alt' };
+        const map = {
+            Space: 'Space', KeyV: 'V', KeyT: 'T', KeyB: 'B', KeyX: 'X',
+            AltLeft: 'Left Alt', AltRight: 'Right Alt',
+            ControlLeft: 'Left Ctrl', ShiftLeft: 'Left Shift',
+            Mouse3: 'Middle Click', Mouse4: 'Mouse 4', Mouse5: 'Mouse 5',
+        };
         keyDisplay.textContent = map[value] || value;
     }
 }
@@ -454,7 +466,22 @@ async function vcJoinFromSetup() {
     const camSelect = document.getElementById('vc-cam-select');
     if (camSelect) callState.selectedCam = camSelect.value;
 
-    // Stop preview audio (we'll get a fresh stream in joinCall)
+    // Check if user wants to start with camera off
+    const startCamOff = document.getElementById('vc-start-cam-off');
+    const wantCameraOff = startCamOff ? startCamOff.checked : true;
+
+    // Harvest the preview stream for reuse in joinCall — avoids a second
+    // getUserMedia round-trip which is the main source of join lag.
+    let reusableStream = null;
+    if (vcState.previewStream) {
+        const audioTracks = vcState.previewStream.getAudioTracks();
+        if (audioTracks.length && audioTracks[0].readyState === 'live') {
+            reusableStream = vcState.previewStream;
+            vcState.previewStream = null; // detach so vcStopPreview doesn't kill it
+        }
+    }
+
+    // Stop preview audio analysis (but preserve the reusable stream)
     vcStopPreview();
 
     // Configure callState for channel-based join
@@ -464,6 +491,7 @@ async function vcJoinFromSetup() {
     callState.isStreamer = false;
     callState.broadcastMode = false;
     callState.vcMode = true;
+    callState.startCameraOff = wantCameraOff;
 
     vcState.lastJoinedChannelId = channelId;
 
@@ -490,6 +518,11 @@ async function vcJoinFromSetup() {
     const inputModeSwitch = document.getElementById('vc-input-mode-switch');
     if (inputModeSwitch) inputModeSwitch.value = callState.inputMode;
     vcOnInputModeChange(callState.inputMode);
+
+    // Pass the reusable preview stream to avoid double getUserMedia
+    if (reusableStream) {
+        callState._reusableStream = reusableStream;
+    }
 
     // Join the actual call via call.js
     joinCall();
