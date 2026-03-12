@@ -2360,11 +2360,14 @@ async function startRobotStreamerRestream(streamId) {
         const audioTrack = ss.localStream.getAudioTracks()[0] || null;
         console.log('[RS Restream] Tracks — video:', !!videoTrack, 'audio:', !!audioTrack);
         if (videoTrack) {
-            session.videoProducer = await transport.produce({ track: videoTrack });
+            // stopTracks: false — the broadcast owns these tracks, not the RS producer.
+            // Without this, Producer.close() calls track.stop() on the ORIGINAL broadcast
+            // tracks, killing the stream when RS reconnects.
+            session.videoProducer = await transport.produce({ track: videoTrack, stopTracks: false });
             console.log('[RS Restream] Video producer ID:', session.videoProducer.id);
         }
         if (audioTrack) {
-            session.audioProducer = await transport.produce({ track: audioTrack });
+            session.audioProducer = await transport.produce({ track: audioTrack, stopTracks: false });
             console.log('[RS Restream] Audio producer ID:', session.audioProducer.id);
         }
 
