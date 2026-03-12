@@ -164,6 +164,16 @@ router.put('/users/:id', (req, res) => {
             db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
         }
 
+        // If display_name or username changed, update denormalized chat_messages.username
+        // (chat_messages.username stores display_name at message creation time)
+        if (display_name || username) {
+            const freshUser = db.getUserById(req.params.id);
+            if (freshUser) {
+                const newChatName = freshUser.display_name || freshUser.username;
+                db.run('UPDATE chat_messages SET username = ? WHERE user_id = ?', [newChatName, req.params.id]);
+            }
+        }
+
         const user = db.getUserById(req.params.id);
         // Sanitize — never expose password_hash or stream_key
         const { password_hash, stream_key, ...safeUser } = user;
