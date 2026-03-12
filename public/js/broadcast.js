@@ -258,6 +258,87 @@ let broadcastState = {
 let _globalStatsInterval = null;
 let _globalUptimeInterval = null;
 
+/* ── RS Restream Slot ────────────────────────────────────────── */
+// Only one stream at a time can restream to RobotStreamer.
+// The slot stores which streamId is assigned. Persisted in localStorage.
+function getRsRestreamSlotStreamId() {
+    const v = localStorage.getItem('bc-rs-restream-slot');
+    return v ? parseInt(v) : null;
+}
+function setRsRestreamSlot(streamId) {
+    if (streamId) localStorage.setItem('bc-rs-restream-slot', String(streamId));
+    else localStorage.removeItem('bc-rs-restream-slot');
+}
+/** Should RS restream auto-start for this stream? */
+function isRsRestreamAssigned(streamId) {
+    const slot = getRsRestreamSlotStreamId();
+    // If no slot assigned, auto-assign to the first stream that goes live
+    if (!slot) return true;
+    return slot === streamId;
+}
+/** Toggle RS restream for the currently active stream */
+function toggleRsRestreamSlot() {
+    const streamId = broadcastState.activeStreamId;
+    if (!streamId) return;
+    const ss = getStreamState(streamId);
+    if (!ss) return;
+    const currentSlot = getRsRestreamSlotStreamId();
+    if (currentSlot === streamId) {
+        // Unassign — stop restream
+        setRsRestreamSlot(null);
+        stopRobotStreamerRestream(streamId).catch(() => {});
+        toast('RS restream disabled for this stream', 'info');
+    } else {
+        // Assign this stream — stop restream on old slot first
+        if (currentSlot) {
+            const oldSs = getStreamState(currentSlot);
+            if (oldSs?.robotStreamer?.active) {
+                stopRobotStreamerRestream(currentSlot, { quiet: true }).catch(() => {});
+            }
+        }
+        setRsRestreamSlot(streamId);
+        if (ss.localStream && canUseRobotStreamerRestream()) {
+            startRobotStreamerRestream(streamId).catch(() => {});
+        }
+        toast('RS restream assigned to this stream', 'success');
+    }
+    updateRsRestreamSlotUI();
+}
+/** Update RS restream slot button state in controls */
+function updateRsRestreamSlotUI() {
+    const btn = document.getElementById('bc-rs-slot-btn');
+    if (!btn) return;
+    if (!canUseRobotStreamerRestream()) {
+        btn.style.display = 'none';
+        return;
+    }
+    btn.style.display = '';
+    const streamId = broadcastState.activeStreamId;
+    const slotStreamId = getRsRestreamSlotStreamId();
+    const isAssigned = streamId && (slotStreamId === streamId || !slotStreamId);
+    const ss = streamId ? getStreamState(streamId) : null;
+    const isLive = ss?.robotStreamer?.active;
+    if (isAssigned && isLive) {
+        btn.innerHTML = '<i class="fa-solid fa-robot"></i> RS: ON';
+        btn.classList.add('bc-ctrl-btn-active');
+    } else if (isAssigned) {
+        btn.innerHTML = '<i class="fa-solid fa-robot"></i> RS: Assigned';
+        btn.classList.add('bc-ctrl-btn-active');
+    } else {
+        btn.innerHTML = '<i class="fa-solid fa-robot"></i> RS: Off';
+        btn.classList.remove('bc-ctrl-btn-active');
+    }
+}
+/** Conditionally start RS restream only if this stream has the slot */
+function maybeStartRsRestream(streamId) {
+    if (!isRsRestreamAssigned(streamId)) return;
+    // Auto-assign the slot on first live stream
+    const currentSlot = getRsRestreamSlotStreamId();
+    if (!currentSlot) setRsRestreamSlot(streamId);
+    startRobotStreamerRestream(streamId).catch(() => {});
+    updateRsRestreamSlotUI();
+}
+
 function sendBroadcastSignal(ss, msg) {
     if (!ss?.signalingWs || ss.signalingWs.readyState !== WebSocket.OPEN) return false;
     if (ss.signalingWs.bufferedAmount > BROADCAST_SIGNALING_MAX_BUFFERED_AMOUNT) return false;
@@ -544,6 +625,7 @@ function syncRobotStreamerUI() {
             }
         }
     }
+    updateRsRestreamSlotUI();
 }
 
 async function loadRobotStreamerIntegration() {
@@ -635,7 +717,7 @@ async function saveRobotStreamerIntegration() {
             .filter(([, state]) => state?.localStream)
             .map(([streamId]) => streamId);
         for (const streamId of restreamTargets) {
-            if (broadcastState.robotStreamer.enabled) {
+            if (broadcastState.robotStreamer.enabled && isRsRestreamAssigned(streamId)) {
                 stopRobotStreamerRestream(streamId, { quiet: true })
                     .catch(() => {})
                     .finally(() => startRobotStreamerRestream(streamId).catch(() => {}));
@@ -667,7 +749,7 @@ async function loadBroadcastPage() {
     loadBroadcastSettings();
     loadRobotStreamerIntegration().catch(() => {});
 
-    // If we have active browser WebRTC streams, restore the active one's live UI
+    // If THIS tab has active browser WebRTC streams (localStream exists), restore UI
     if (broadcastState.streams.size > 0 && broadcastState.activeStreamId != null) {
         const ss = getActiveStreamState();
         if (ss && ss.streamData?.protocol === 'webrtc' && ss.localStream) {
@@ -679,23 +761,13 @@ async function loadBroadcastPage() {
             if (ph) ph.style.display = 'none';
             ensureBroadcastChat(ss.streamData.id);
             startGlobalDisplayTimers();
+            updateRsRestreamSlotUI();
             return;
         }
     }
 
-    // Check for any live streams — if any exist, show tabs
-    try {
-        const data = await api('/streams/mine');
-        const liveStreams = (data.streams || []).filter(s => s.is_live);
-        if (liveStreams.length > 0) {
-            const firstLive = liveStreams[0];
-            await buildBroadcastTabs(firstLive.id);
-            await resumeStreamView(firstLive);
-            return;
-        }
-    } catch (e) { console.warn('Failed to load live streams:', e); }
-
-    // No live streams — show the full stream manager
+    // Always show stream manager — never auto-resume WebRTC streams from other tabs/devices
+    // (connecting signaling would override the existing broadcaster)
     hideBroadcastTabs();
     showStreamManager();
     loadExistingStreams();
@@ -797,7 +869,8 @@ async function switchBroadcastTab(streamId) {
         startGlobalDisplayTimers();
         updateBroadcastStatusFromConnections(streamId);
         ensureBroadcastChat(streamId);
-        if (!ss.robotStreamer?.active) startRobotStreamerRestream(streamId).catch(() => {});
+        if (!ss.robotStreamer?.active) maybeStartRsRestream(streamId);
+        updateRsRestreamSlotUI();
         return;
     }
 
@@ -901,7 +974,7 @@ async function switchOrResumeStream(stream) {
         startGlobalDisplayTimers();
         updateBroadcastStatusFromConnections(stream.id);
         ensureBroadcastChat(stream.id);
-        if (!ss.robotStreamer?.active) startRobotStreamerRestream(stream.id).catch(() => {});
+        if (!ss.robotStreamer?.active) maybeStartRsRestream(stream.id);
     } else {
         await resumeStreamView(stream);
     }
@@ -935,8 +1008,9 @@ async function resumeStreamView(stream) {
             if (ph) ph.style.display = 'none';
             ensureBroadcastChat(stream.id);
             startGlobalDisplayTimers();
-            if (!existing.robotStreamer?.active) startRobotStreamerRestream(stream.id).catch(() => {});
+            if (!existing.robotStreamer?.active) maybeStartRsRestream(stream.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
+            updateRsRestreamSlotUI();
             return;
         }
         // Not yet broadcasting — create per-stream state and start capture
@@ -949,10 +1023,11 @@ async function resumeStreamView(stream) {
         populateDeviceLists(); populateTTSVoices(); syncSettingsUI();
         ensureBroadcastChat(stream.id);
         startHeartbeat(stream.id);
-        await startMediaCapture(stream.id); connectSignaling(stream.id); startRobotStreamerRestream(stream.id).catch(() => {}); startVodRecording(stream.id);
+        await startMediaCapture(stream.id); connectSignaling(stream.id); maybeStartRsRestream(stream.id); startVodRecording(stream.id);
         startGlobalDisplayTimers();
         acquireWakeLock();
         showBroadcastCallControls(); updateBroadcastCallUI();
+        updateRsRestreamSlotUI();
     } else if (stream.protocol === 'rtmp') {
         const ss = createStreamState(stream);
         ss.startedAt = stream.started_at || new Date().toISOString();
@@ -1039,13 +1114,15 @@ function renderStreamItem(s) {
     const badge = s.is_live ? '<span class="badge badge-live">LIVE</span>' : '<span class="badge badge-offline">Ended</span>';
     const time = s.started_at ? new Date(s.started_at.replace(' ', 'T') + 'Z').toLocaleString() : '';
     const duration = s.duration_seconds ? formatDuration(s.duration_seconds) : '';
+    const hasBrowserState = broadcastState.streams.has(s.id);
+    const resumeLabel = hasBrowserState ? 'Continue' : 'Resume';
     return `<div class="bc-stream-item ${s.is_live ? 'bc-stream-live' : ''}">
         <div class="bc-stream-info">
             <strong>${esc(s.title || 'Untitled')}</strong>
-            <span class="muted">${(s.protocol || 'webrtc').toUpperCase()} · ${time}${duration ? ' · ' + duration : ''}</span>
+            <span class="muted">${(s.protocol || 'webrtc').toUpperCase()} · ${time}${duration ? ' · ' + duration : ''}${s.viewer_count ? ' · ' + s.viewer_count + ' viewer' + (s.viewer_count === 1 ? '' : 's') : ''}</span>
         </div>
         <div class="bc-stream-actions">
-            ${s.is_live ? `<button class="btn btn-small btn-primary" onclick="resumeStream(${s.id})"><i class="fa-solid fa-play"></i> Resume</button> <button class="btn btn-small btn-danger" onclick="endExistingStream(${s.id})"><i class="fa-solid fa-stop"></i> End</button>` : ''}
+            ${s.is_live ? `<button class="btn btn-small btn-primary" onclick="resumeStream(${s.id})"><i class="fa-solid fa-play"></i> ${resumeLabel}</button> <button class="btn btn-small btn-danger" onclick="endExistingStream(${s.id})"><i class="fa-solid fa-stop"></i> End</button>` : ''}
             ${badge}
         </div>
     </div>`;
@@ -1138,11 +1215,12 @@ async function createNewStream() {
             ensureBroadcastChat(streamData.id);
             await startMediaCapture(streamData.id, { cameraId: createCamera, audioId: createAudio });
             connectSignaling(streamData.id);
-            startRobotStreamerRestream(streamData.id).catch(() => {});
+            maybeStartRsRestream(streamData.id);
             startHeartbeat(streamData.id); startVodRecording(streamData.id);
             startGlobalDisplayTimers();
             acquireWakeLock();
             showBroadcastCallControls(); updateBroadcastCallUI();
+            updateRsRestreamSlotUI();
             toast('You are now LIVE!', 'success');
         } else if (method === 'webrtc' && broadcastState.selectedWebRTCSub === 'obs') {
             showWHIPInstructions(streamData); startHeartbeat(streamData.id);
@@ -1694,6 +1772,9 @@ function cleanupStream(streamId) {
     ss._suppressRecovery = true;
     if (ss.localStream) { ss.localStream.getTracks().forEach(t => t.stop()); ss.localStream = null; }
     stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
+
+    // Clear RS restream slot if this stream had it
+    if (getRsRestreamSlotStreamId() === streamId) setRsRestreamSlot(null);
 
     // Close viewer connections
     for (const [, pc] of ss.viewerConnections) { try { pc.close(); } catch {} }
