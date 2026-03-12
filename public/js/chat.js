@@ -1849,19 +1849,26 @@ function updateChatModeVoiceOption(enabled) {
 
 /** Show/hide the floating chat FAB on non-chat pages */
 function _fcwUpdateVisibility() {
-    const chatPage = document.getElementById('page-chat');
-    const isOnChatPage = chatPage && chatPage.classList.contains('active');
     const fab = document.getElementById('floating-chat-fab');
     const widget = document.getElementById('floating-chat-widget');
     const disabled = chatSettings && chatSettings.showFloatingChat === false;
 
-    if (isOnChatPage || disabled) {
-        // On chat page or disabled — hide FAB and widget
+    // Hide on the global chat page (already has full chat)
+    const chatPage = document.getElementById('page-chat');
+    const isOnChatPage = chatPage && chatPage.classList.contains('active');
+
+    // Hide on live stream / channel pages (already have chat sidebar)
+    const streamPage = document.getElementById('page-stream');
+    const channelPage = document.getElementById('page-channel');
+    const isOnStreamPage = (streamPage && streamPage.classList.contains('active'))
+        || (channelPage && channelPage.classList.contains('active'));
+
+    if (isOnChatPage || isOnStreamPage || disabled) {
         if (fab) fab.style.display = 'none';
         if (widget) widget.style.display = 'none';
         _fcwOpen = false;
     } else {
-        // Not on chat page — show FAB
+        // Not on chat/stream page — show FAB
         if (fab) fab.style.display = '';
         if (!_fcwOpen && widget) widget.style.display = 'none';
     }
