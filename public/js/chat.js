@@ -6,6 +6,15 @@ let chatWs = null;
 let chatStreamId = null;
 let chatRenderTargetId = null;
 
+// ── Chat mode (Global / Voice Call) ──────────────────────────
+let chatMode = 'global'; // 'global' or 'voice'
+
+// ── Floating chat widget state ───────────────────────────────
+let _fcwOpen = false;
+let _fcwUnread = 0;
+let _fcwDragging = false;
+let _fcwDragOffset = { x: 0, y: 0 };
+
 // ── Background broadcast chat ────────────────────────────────
 // When the user is broadcasting and navigates away, the chat WS
 // is kept alive in the background so TTS messages still play.
@@ -509,7 +518,26 @@ function handleChatMessage(msg) {
 function addChatMessage(msg) {
     const chatEl = getChatEl();
     const container = chatEl.messages;
-    if (!container) return;
+
+    // Voice Call mode filter: skip messages not tagged with our voice channel
+    const isVoiceMsg = !!msg.voiceChannelId;
+    if (chatMode === 'voice' && !isVoiceMsg) {
+        // Still mirror to floating widget even if filtered from main view
+        _fcwAddMessage(msg);
+        return;
+    }
+    if (chatMode === 'voice' && isVoiceMsg) {
+        // Only show messages from the same channel
+        if (typeof callState !== 'undefined' && callState.joined && msg.voiceChannelId !== callState.channelId) {
+            _fcwAddMessage(msg);
+            return;
+        }
+    }
+
+    if (!container) {
+        _fcwAddMessage(msg);
+        return;
+    }
     const el = document.createElement('div');
     el.className = 'chat-msg';
 
@@ -539,6 +567,18 @@ function addChatMessage(msg) {
         streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_channel)}'s stream" data-channel="${esc(msg.stream_channel)}" onclick="navigate('/' + this.dataset.channel)">${esc(msg.stream_channel)}</span> `;
     } else if (isGlobal && msg.stream_username) {
         streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_username)}'s stream" data-channel="${esc(msg.stream_username)}" onclick="navigate('/' + this.dataset.channel)">${esc(msg.stream_username)}</span> `;
+    }
+
+    // Voice call badge (shown in global mode for voice-tagged messages)
+    let voiceBadge = '';
+    if (isGlobal && isVoiceMsg && chatMode === 'global') {
+        voiceBadge = `<span class="chat-voice-badge" title="Voice Channel"><i class="fa-solid fa-headset"></i> VC</span> `;
+    }
+
+    // Game chat badge
+    let gameBadge = '';
+    if (isGlobal && msg.is_game_chat) {
+        gameBadge = `<span class="chat-game-badge" title="Game Chat"><i class="fa-solid fa-gamepad"></i></span> `;
     }
 
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
@@ -584,7 +624,7 @@ function addChatMessage(msg) {
     const particleWrapOpen = hasParticles ? `<span class="chat-particle-wrap ${esc(msg.particleFX.cssClass || '')}">` : '';
     const particleWrapClose = hasParticles ? `</span>` : '';
 
-    el.innerHTML = `${timestamp}${streamBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
+    el.innerHTML = `${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
 
     // Spawn particles if equipped
     if (hasParticles) {
@@ -605,6 +645,9 @@ function addChatMessage(msg) {
         // If user is scrolled up, show the new-messages indicator instead
         if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
     }
+
+    // Mirror message to floating chat widget (for non-chat pages)
+    _fcwAddMessage(msg);
 }
 
 /**
@@ -784,11 +827,18 @@ function sendChat() {
         return;
     }
 
-    chatWs.send(JSON.stringify({
+    const msg = {
         type: 'chat',
         message: text,
         streamId: chatStreamId,
-    }));
+    };
+
+    // Tag message with voice channel ID if in voice call chat mode
+    if (chatMode === 'voice' && typeof callState !== 'undefined' && callState.joined && callState.channelId) {
+        msg.voiceChannelId = callState.channelId;
+    }
+
+    chatWs.send(JSON.stringify(msg));
 
     input.value = '';
     input.focus();
@@ -1743,3 +1793,187 @@ const _origAddChatMessage = typeof addChatMessage === 'function' ? addChatMessag
         if (dy > 60) toggleMobileChat(); // swipe down > 60px = close
     }, { passive: true });
 })();
+
+/* ═══════════════════════════════════════════════════════════════
+   CHAT MODE (Global / Voice Call)
+   ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * Called when the chat mode dropdown changes.
+ * 'global' — show all messages (default)
+ * 'voice'  — show only messages tagged with the user's current voice channel
+ */
+function onChatModeChange(mode) {
+    if (!['global', 'voice'].includes(mode)) return;
+    chatMode = mode;
+    const titleEl = document.getElementById('chat-mode-title');
+    const subtitleEl = document.getElementById('chat-mode-subtitle');
+    if (mode === 'voice') {
+        if (titleEl) titleEl.textContent = 'Voice Call Chat';
+        if (subtitleEl) subtitleEl.textContent = 'Messages only shared with your voice channel';
+    } else {
+        if (titleEl) titleEl.textContent = 'Global Chat';
+        if (subtitleEl) subtitleEl.textContent = 'Live messages from all streams and the lobby';
+    }
+}
+
+/**
+ * Enable/disable the Voice Call option in the dropdown based on VC connection state.
+ * Called from voice-channels.js when joining/leaving.
+ */
+function updateChatModeVoiceOption(enabled) {
+    const opt = document.getElementById('chat-mode-voice-opt');
+    if (opt) opt.disabled = !enabled;
+    // Auto-switch back to global if voice channel disconnected
+    if (!enabled && chatMode === 'voice') {
+        chatMode = 'global';
+        const sel = document.getElementById('chat-mode-select');
+        if (sel) sel.value = 'global';
+        onChatModeChange('global');
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FLOATING CHAT WIDGET
+   ═══════════════════════════════════════════════════════════════ */
+
+/** Show/hide the floating chat FAB on non-chat pages */
+function _fcwUpdateVisibility() {
+    const chatPage = document.getElementById('page-chat');
+    const isOnChatPage = chatPage && chatPage.classList.contains('active');
+    const fab = document.getElementById('floating-chat-fab');
+    const widget = document.getElementById('floating-chat-widget');
+
+    if (isOnChatPage) {
+        // On chat page — hide FAB and widget
+        if (fab) fab.style.display = 'none';
+        if (widget) widget.style.display = 'none';
+        _fcwOpen = false;
+    } else {
+        // Not on chat page — show FAB
+        if (fab) fab.style.display = '';
+        if (!_fcwOpen && widget) widget.style.display = 'none';
+    }
+}
+
+function fcwToggle() {
+    _fcwOpen = !_fcwOpen;
+    const widget = document.getElementById('floating-chat-widget');
+    if (widget) widget.style.display = _fcwOpen ? '' : 'none';
+
+    if (_fcwOpen) {
+        // Clear unread
+        _fcwUnread = 0;
+        const badge = document.getElementById('fcw-unread-badge');
+        if (badge) badge.style.display = 'none';
+
+        // Ensure chat is connected (global)
+        if (!chatWs || chatWs.readyState !== WebSocket.OPEN) {
+            initChat(null);
+        }
+
+        // Scroll to bottom
+        const msgs = document.getElementById('fcw-messages');
+        if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    }
+}
+
+function fcwMinimize() {
+    _fcwOpen = false;
+    const widget = document.getElementById('floating-chat-widget');
+    if (widget) widget.style.display = 'none';
+}
+
+function fcwClose() {
+    fcwMinimize();
+}
+
+function fcwSendChat() {
+    const input = document.getElementById('fcw-chat-input');
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+
+    chatWs.send(JSON.stringify({ type: 'chat', message: text, streamId: null }));
+    input.value = '';
+    input.focus();
+}
+
+/** Mirror a chat message to the floating widget */
+function _fcwAddMessage(msg) {
+    const container = document.getElementById('fcw-messages');
+    if (!container) return;
+
+    const username = msg.username || msg.displayName || 'anon';
+    const text = msg.message || msg.text || '';
+    const color = msg.color || msg.profile_color || '#999';
+
+    const el = document.createElement('div');
+    el.className = 'chat-msg';
+    el.innerHTML = `<span class="chat-user" style="color:${esc(color)}">${esc(username)}</span>: ${(typeof parseEmotes === 'function') ? parseEmotes(text) : esc(text)}`;
+    container.appendChild(el);
+
+    // Trim old messages
+    while (container.children.length > 200) container.removeChild(container.firstChild);
+
+    // Auto-scroll
+    const isScrolledDown = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+    if (isScrolledDown) container.scrollTop = container.scrollHeight;
+
+    // Increment unread if widget is closed and not on chat page
+    if (!_fcwOpen) {
+        const chatPage = document.getElementById('page-chat');
+        const isOnChatPage = chatPage && chatPage.classList.contains('active');
+        if (!isOnChatPage) {
+            _fcwUnread++;
+            const badge = document.getElementById('fcw-unread-badge');
+            if (badge) {
+                badge.textContent = _fcwUnread > 99 ? '99+' : String(_fcwUnread);
+                badge.style.display = '';
+            }
+        }
+    }
+}
+
+/** Dragging support for the floating widget header */
+function fcwStartDrag(e) {
+    if (e.button !== 0) return;
+    _fcwDragging = true;
+    const widget = document.getElementById('floating-chat-widget');
+    if (!widget) return;
+    const rect = widget.getBoundingClientRect();
+    _fcwDragOffset.x = e.clientX - rect.left;
+    _fcwDragOffset.y = e.clientY - rect.top;
+    document.addEventListener('mousemove', _fcwDrag);
+    document.addEventListener('mouseup', _fcwStopDrag);
+    e.preventDefault();
+}
+
+function _fcwDrag(e) {
+    if (!_fcwDragging) return;
+    const widget = document.getElementById('floating-chat-widget');
+    if (!widget) return;
+    const x = Math.max(0, Math.min(window.innerWidth - 100, e.clientX - _fcwDragOffset.x));
+    const y = Math.max(0, Math.min(window.innerHeight - 80, e.clientY - _fcwDragOffset.y));
+    widget.style.left = x + 'px';
+    widget.style.top = y + 'px';
+    widget.style.right = 'auto';
+    widget.style.bottom = 'auto';
+}
+
+function _fcwStopDrag() {
+    _fcwDragging = false;
+    document.removeEventListener('mousemove', _fcwDrag);
+    document.removeEventListener('mouseup', _fcwStopDrag);
+}
+
+// Hook into page navigation to show/hide FAB
+document.addEventListener('DOMContentLoaded', () => {
+    // Watch all page sections for class changes
+    document.querySelectorAll('.page').forEach(page => {
+        const obs = new MutationObserver(_fcwUpdateVisibility);
+        obs.observe(page, { attributes: true, attributeFilter: ['class'] });
+    });
+    // Initial check
+    setTimeout(_fcwUpdateVisibility, 100);
+});

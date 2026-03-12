@@ -32,7 +32,8 @@ async function vcFetchChannels() {
     try {
         const resp = await fetch('/api/streams/voice-channels');
         if (!resp.ok) return;
-        vcState.channels = await resp.json();
+        const data = await resp.json();
+        vcState.channels = data.channels || data || [];
         vcRenderChannelList();
     } catch {}
 }
@@ -494,6 +495,12 @@ async function vcJoinFromSetup() {
     joinCall();
 
     vcRenderChannelList();
+
+    // Enable voice call chat mode option
+    if (typeof updateChatModeVoiceOption === 'function') updateChatModeVoiceOption(true);
+
+    // Update mini VC bar
+    vcUpdateMiniBar();
 }
 
 function vcLeave() {
@@ -511,6 +518,12 @@ function vcLeave() {
 
     vcState.selectedChannelId = null;
     vcRenderChannelList();
+
+    // Disable voice call chat mode option & switch back to global
+    if (typeof updateChatModeVoiceOption === 'function') updateChatModeVoiceOption(false);
+
+    // Hide mini VC bar
+    vcUpdateMiniBar();
 }
 
 /* ── Controls ──────────────────────────────────────────────── */
@@ -518,6 +531,7 @@ function vcLeave() {
 function vcToggleMute() {
     toggleCallMute();
     vcUpdateControlButtons();
+    vcUpdateMiniBar();
 }
 
 function vcToggleCamera() {
@@ -755,7 +769,53 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (!isVisible && vcState.pollTimer) {
                 vcDeinit();
             }
+            // Show/hide mini bar based on whether we're on the chat tab
+            vcUpdateMiniBar();
         });
         observer.observe(chatTab, { attributes: true, attributeFilter: ['class'] });
     }
+
+    // Also watch all pages for mini bar updates
+    document.querySelectorAll('.page').forEach(page => {
+        if (page.id === 'page-chat') return; // already handled
+        const obs = new MutationObserver(() => vcUpdateMiniBar());
+        obs.observe(page, { attributes: true, attributeFilter: ['class'] });
+    });
 });
+
+/* ── Mini Voice Channel Bar ────────────────────────────────── */
+
+/**
+ * Show/hide the mini VC indicator bar based on:
+ * - Whether user is connected to a voice channel
+ * - Whether user is currently on the Chat tab (hide if on chat tab)
+ */
+function vcUpdateMiniBar() {
+    const miniBar = document.getElementById('vc-mini-bar');
+    if (!miniBar) return;
+
+    const chatTab = document.getElementById('page-chat');
+    const isOnChatTab = chatTab && chatTab.classList.contains('active');
+    const isConnected = typeof callState !== 'undefined' && callState.joined && callState.vcMode;
+
+    if (isConnected && !isOnChatTab) {
+        miniBar.style.display = '';
+        // Update channel name
+        const nameEl = document.getElementById('vc-mini-channel-name');
+        if (nameEl) {
+            const ch = vcState.channels.find(c => c.id === callState.channelId);
+            nameEl.textContent = ch ? ch.name : (callState.channelId || 'Voice Channel');
+        }
+        // Update mute button state
+        const muteBtn = document.getElementById('vc-mini-mute');
+        if (muteBtn) {
+            const muted = callState.muted || callState.forceMuted;
+            muteBtn.innerHTML = muted
+                ? '<i class="fa-solid fa-microphone-slash"></i>'
+                : '<i class="fa-solid fa-microphone"></i>';
+            muteBtn.style.color = muted ? '#ef4444' : '';
+        }
+    } else {
+        miniBar.style.display = 'none';
+    }
+}

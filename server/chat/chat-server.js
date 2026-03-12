@@ -296,6 +296,9 @@ class ChatServer {
         const username = client.user ? client.user.display_name : client.anonId;
         const role = client.user ? client.user.role : 'anon';
 
+        // Voice channel tagging — clients can tag messages with the voice channel they're in
+        const voiceChannelId = (typeof msg.voiceChannelId === 'string' && msg.voiceChannelId) ? msg.voiceChannelId : null;
+
         const chatMsg = {
             type: 'chat',
             username,
@@ -310,6 +313,9 @@ class ChatServer {
             filtered: !filterResult.safe,
             timestamp: new Date().toISOString(),
         };
+
+        // Preserve voice channel tag so clients can filter voice-call messages
+        if (voiceChannelId) chatMsg.voiceChannelId = voiceChannelId;
 
         // Attach cosmetic data for chat rendering
         if (client.user?.id) {

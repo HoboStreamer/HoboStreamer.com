@@ -2835,129 +2835,19 @@ async function toggleScreenShare() {
 
 function toggleBroadcastStats() { const el = document.getElementById('bc-stats-overlay'); if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none'; }
 
-/* ── Group Call Controls (broadcaster — shared across all methods) ─ */
+/* ── Group Call Controls (removed — use Chat tab voice channels instead) ─ */
 let _broadcastCallMode = null;
 let _broadcastCallPollTimer = null;
 
-/** Show the call controls section for the current streaming method */
-function showBroadcastCallControls() {
-    // Show the main call controls (for browser WebRTC panel)
-    const mainCtrl = document.getElementById('bc-call-controls');
-    if (mainCtrl) mainCtrl.style.display = '';
-
-    // Show method-specific call controls (for RTMP/JSMPEG/WHIP instruction panels)
-    ['rtmp', 'jsmpeg', 'whip'].forEach(m => {
-        const el = document.getElementById(`bc-call-controls-${m}`);
-        if (el) el.style.display = '';
-    });
-
-    // Start polling participant count
-    _startCallStatusPoll();
-}
-
-function hideBroadcastCallControls() {
-    const mainCtrl = document.getElementById('bc-call-controls');
-    if (mainCtrl) mainCtrl.style.display = 'none';
-    ['rtmp', 'jsmpeg', 'whip'].forEach(m => {
-        const el = document.getElementById(`bc-call-controls-${m}`);
-        if (el) el.style.display = 'none';
-    });
-    // Hide the participant panel
-    const callPanel = document.getElementById('bc-call-panel');
-    if (callPanel) callPanel.style.display = 'none';
-    _stopCallStatusPoll();
-}
-
-function updateBroadcastCallUI() {
-    const mode = _broadcastCallMode;
-    const labels = { 'mic': 'Voice Chat', 'mic+cam': 'Voice + Camera', 'cam+mic': 'Video Call' };
-    const statusText = mode ? `${labels[mode]} — Active` : 'Voice Chat — Off';
-
-    // Update all instances (main + method-specific panels)
-    ['', '-rtmp', '-jsmpeg', '-whip'].forEach(suffix => {
-        const statusEl = document.getElementById(`bc-call-status-text${suffix}`);
-        if (statusEl) {
-            statusEl.textContent = statusText;
-            statusEl.style.color = mode ? 'var(--success, #22c55e)' : '';
-        }
-        const sel = document.getElementById(`bc-call-mode-select${suffix}`);
-        if (sel) sel.value = mode || '';
-        const endBtn = document.getElementById(`bc-call-end-btn${suffix}`);
-        if (endBtn) endBtn.style.display = mode ? '' : 'none';
-    });
-}
-
-async function onCallModeChange(mode) {
-    const streamId = broadcastState.activeStreamId;
-    if (!streamId) return toast('No active stream', 'error');
-
-    try {
-        await api(`/streams/${streamId}/call`, { method: 'PUT', body: { call_mode: mode || null } });
-        _broadcastCallMode = mode || null;
-        updateBroadcastCallUI();
-        toast(mode ? `Group call enabled: ${mode}` : 'Group call disabled', mode ? 'success' : 'info');
-
-        // Auto-join/leave the call as streamer
-        if (mode) {
-            initBroadcastCallPanel(streamId, mode);
-        } else {
-            leaveBroadcastCall();
-        }
-    } catch (e) { toast(e.message, 'error'); }
-}
-
-async function endBroadcastCall() {
-    const streamId = broadcastState.activeStreamId;
-    if (!streamId) return;
-
-    // Leave the WebSocket call first
-    leaveBroadcastCall();
-
-    try {
-        await api(`/streams/${streamId}/call`, { method: 'PUT', body: { call_mode: null } });
-        _broadcastCallMode = null;
-        updateBroadcastCallUI();
-        toast('Group call ended', 'info');
-    } catch (e) { toast(e.message, 'error'); }
-}
-
-function _startCallStatusPoll() {
-    _stopCallStatusPoll();
-    const poll = async () => {
-        const streamId = broadcastState.activeStreamId;
-        if (!streamId) return;
-        try {
-            const data = await api(`/streams/${streamId}/call`);
-            const count = data.participant_count || 0;
-            ['', '-rtmp', '-jsmpeg', '-whip'].forEach(suffix => {
-                const el = document.getElementById(`bc-call-count${suffix}`);
-                if (el) el.textContent = `${count} in call`;
-            });
-            // Sync mode from server in case it changed
-            if (data.call_mode !== undefined) {
-                const newMode = data.call_mode || null;
-                const oldMode = _broadcastCallMode;
-                _broadcastCallMode = newMode;
-                updateBroadcastCallUI();
-
-                // Auto-join if call mode became active and we're not yet in the call
-                if (newMode && !callState.joined && !callState.connecting) {
-                    initBroadcastCallPanel(streamId, newMode);
-                } else if (!newMode && callState.broadcastMode) {
-                    leaveBroadcastCall();
-                }
-            }
-        } catch {}
-    };
-    poll();
-    _broadcastCallPollTimer = setInterval(poll, 5000);
-}
-
+/** No-op — broadcast call controls removed */
+function showBroadcastCallControls() {}
+function hideBroadcastCallControls() {}
+function updateBroadcastCallUI() {}
+function onCallModeChange() {}
+function endBroadcastCall() {}
+function _startCallStatusPoll() {}
 function _stopCallStatusPoll() {
-    if (_broadcastCallPollTimer) {
-        clearInterval(_broadcastCallPollTimer);
-        _broadcastCallPollTimer = null;
-    }
+    if (_broadcastCallPollTimer) { clearInterval(_broadcastCallPollTimer); _broadcastCallPollTimer = null; }
 }
 
 /* ── Clipboard Helper ─────────────────────────────────────────── */
