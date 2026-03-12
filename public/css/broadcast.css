@@ -277,6 +277,89 @@
     background: var(--accent-dark);
 }
 
+/* ── RS Restream Control Panel ─────────────────────────────── */
+.bc-rs-control {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    margin-bottom: 16px;
+}
+
+.bc-rs-stream-picker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+.bc-rs-stream-picker label {
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.bc-rs-stream-picker select {
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.bc-rs-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.bc-rs-status {
+    font-size: 0.82rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+.bc-rs-status i { font-size: 0.7rem; }
+.bc-rs-live    { color: var(--success, #2ecc71); }
+.bc-rs-live i  { animation: rs-pulse 1.5s ease-in-out infinite; }
+.bc-rs-connecting { color: var(--warning, #f39c12); }
+.bc-rs-error   { color: var(--danger, #e74c3c); }
+.bc-rs-ready   { color: var(--text-secondary, #888); }
+.bc-rs-off     { color: var(--text-muted, #555); }
+
+@keyframes rs-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+}
+
+.bc-ctrl-btn-sm {
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.bc-ctrl-btn-sm:hover {
+    border-color: var(--accent-dark);
+    background: var(--bg-tertiary);
+}
+
 /* ── Settings Rows ────────────────────────────────────────────── */
 .bc-settings-group {
     margin-bottom: 20px;
@@ -631,6 +714,15 @@
 
     .bc-ctrl-btn {
         justify-content: center;
+    }
+
+    .bc-rs-control {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .bc-rs-status-row {
+        margin-left: 0;
+        justify-content: space-between;
     }
 
     .bc-setting-row {
@@ -1240,6 +1332,8 @@
     .bc-info-bar { padding: 8px 10px; gap: 8px; font-size: 0.82rem; }
     .bc-ctrl-btn { padding: 8px 10px; font-size: 0.78rem; gap: 4px; }
     .bc-ctrl-btn i { font-size: 0.9rem; }
+    .bc-rs-control { padding: 6px 10px; gap: 8px; font-size: 0.78rem; }
+    .bc-ctrl-btn-sm { padding: 3px 8px; font-size: 0.72rem; }
     .bc-setting-label { font-size: 0.82rem; }
     .bc-setting-control select,
     .bc-setting-control input { font-size: 0.82rem; }

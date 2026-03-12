@@ -274,7 +274,16 @@ function isRsRestreamAssigned(streamId) {
     const slot = getRsRestreamSlotStreamId();
     // If no slot assigned, auto-assign to the first stream that goes live
     if (!slot) return true;
-    return slot === streamId;
+    if (slot === streamId) return true;
+    // Validate the slotted stream still exists and has media — if not, the slot is
+    // stale from a previous session. Clear it so this new stream can auto-assign.
+    const slotState = broadcastState.streams.get(slot);
+    if (!slotState || !slotState.localStream) {
+        console.log(`[RS Slot] Clearing stale slot ${slot} — stream no longer active, auto-assigning to ${streamId}`);
+        setRsRestreamSlot(null);
+        return true;
+    }
+    return false; // another LIVE stream holds the slot
 }
 /** Toggle RS restream for the currently active stream */
 function toggleRsRestreamSlot() {
@@ -287,7 +296,7 @@ function toggleRsRestreamSlot() {
         // Unassign — stop restream
         setRsRestreamSlot(null);
         stopRobotStreamerRestream(streamId).catch(() => {});
-        toast('RS restream disabled for this stream', 'info');
+        toast('RS restream stopped', 'info');
     } else {
         // Assign this stream — stop restream on old slot first
         if (currentSlot) {
@@ -304,30 +313,128 @@ function toggleRsRestreamSlot() {
     }
     updateRsRestreamSlotUI();
 }
-/** Update RS restream slot button state in controls */
+
+/** Assign RS restream to a specific stream (from dropdown) */
+function assignRsRestreamToStream(streamId) {
+    streamId = parseInt(streamId);
+    if (!streamId || !Number.isFinite(streamId)) return;
+    const currentSlot = getRsRestreamSlotStreamId();
+    // Stop old restream
+    if (currentSlot && currentSlot !== streamId) {
+        stopRobotStreamerRestream(currentSlot, { quiet: true }).catch(() => {});
+    }
+    setRsRestreamSlot(streamId);
+    const ss = getStreamState(streamId);
+    if (ss?.localStream && canUseRobotStreamerRestream()) {
+        startRobotStreamerRestream(streamId).catch(() => {});
+    }
+    updateRsRestreamSlotUI();
+}
+
+/** Stop RS restream and clear the slot */
+function stopRsRestream() {
+    const slot = getRsRestreamSlotStreamId();
+    if (slot) {
+        stopRobotStreamerRestream(slot).catch(() => {});
+    }
+    setRsRestreamSlot(null);
+    updateRsRestreamSlotUI();
+}
+
+/** Start or retry RS restream for the current slot / active stream */
+function startOrRetryRsRestream() {
+    let targetId = getRsRestreamSlotStreamId() || broadcastState.activeStreamId;
+    if (!targetId) return;
+    const ss = getStreamState(targetId);
+    if (!ss?.localStream) {
+        // Slot stream has no media — try active stream instead
+        targetId = broadcastState.activeStreamId;
+        if (!targetId) return;
+    }
+    // Reset retry counters for fresh attempt
+    const targetSs = getStreamState(targetId);
+    if (targetSs) {
+        targetSs._rsConsecutiveShortLived = 0;
+        targetSs._rsReconnectDelay = RS_RECONNECT_BASE_DELAY;
+    }
+    setRsRestreamSlot(targetId);
+    stopRobotStreamerRestream(targetId, { quiet: true })
+        .catch(() => {})
+        .then(() => {
+            startRobotStreamerRestream(targetId).catch(() => {});
+        });
+    updateRsRestreamSlotUI();
+}
+
+/** Update RS restream control panel in live controls */
 function updateRsRestreamSlotUI() {
-    const btn = document.getElementById('bc-rs-slot-btn');
-    if (!btn) return;
+    const panel = document.getElementById('bc-rs-control');
+    if (!panel) return;
+
+    // If RS not configured, completely hide the panel
     if (!canUseRobotStreamerRestream()) {
-        btn.style.display = 'none';
+        panel.style.display = 'none';
         return;
     }
-    btn.style.display = '';
-    const streamId = broadcastState.activeStreamId;
-    const slotStreamId = getRsRestreamSlotStreamId();
-    const isAssigned = streamId && (slotStreamId === streamId || !slotStreamId);
-    const ss = streamId ? getStreamState(streamId) : null;
-    const isLive = ss?.robotStreamer?.active;
-    if (isAssigned && isLive) {
-        btn.innerHTML = '<i class="fa-solid fa-robot"></i> RS: ON';
-        btn.classList.add('bc-ctrl-btn-active');
-    } else if (isAssigned) {
-        btn.innerHTML = '<i class="fa-solid fa-robot"></i> RS: Assigned';
-        btn.classList.add('bc-ctrl-btn-active');
-    } else {
-        btn.innerHTML = '<i class="fa-solid fa-robot"></i> RS: Off';
-        btn.classList.remove('bc-ctrl-btn-active');
+    panel.style.display = '';
+
+    const liveStreams = [];
+    for (const [id, ss] of broadcastState.streams) {
+        if (ss.localStream && ss.streamData) {
+            liveStreams.push({ id, title: ss.streamData.title || `Stream ${id}`, ss });
+        }
     }
+
+    const slotId = getRsRestreamSlotStreamId();
+    const slotSs = slotId ? getStreamState(slotId) : null;
+    const isLive = !!(slotSs?.robotStreamer?.active);
+    const isStarting = !!(slotSs?._rsRestreamStarting);
+    const hasFailed = !isLive && !isStarting && slotSs && !slotSs.robotStreamer && (slotSs._rsConsecutiveShortLived || 0) >= RS_MAX_SHORT_LIVED_RETRIES;
+
+    let html = '';
+
+    // Stream picker (only when multi-streaming)
+    if (liveStreams.length > 1) {
+        html += `<div class="bc-rs-stream-picker">
+            <label><i class="fa-solid fa-tower-broadcast"></i> Stream:</label>
+            <select onchange="assignRsRestreamToStream(this.value)">`;
+        if (!slotId) html += `<option value="">— Select stream —</option>`;
+        for (const s of liveStreams) {
+            const sel = slotId === s.id ? 'selected' : '';
+            html += `<option value="${s.id}" ${sel}>${s.title}</option>`;
+        }
+        html += `</select></div>`;
+    }
+
+    // Status + action buttons
+    html += '<div class="bc-rs-status-row">';
+    if (isLive) {
+        html += `<span class="bc-rs-status bc-rs-live"><i class="fa-solid fa-circle"></i> RS Live</span>`;
+        html += `<button class="bc-ctrl-btn bc-ctrl-btn-sm" onclick="stopRsRestream()"><i class="fa-solid fa-stop"></i> Stop</button>`;
+    } else if (isStarting) {
+        html += `<span class="bc-rs-status bc-rs-connecting"><i class="fa-solid fa-spinner fa-spin"></i> Connecting…</span>`;
+        html += `<button class="bc-ctrl-btn bc-ctrl-btn-sm" onclick="stopRsRestream()"><i class="fa-solid fa-stop"></i> Cancel</button>`;
+    } else if (hasFailed) {
+        html += `<span class="bc-rs-status bc-rs-error"><i class="fa-solid fa-circle-exclamation"></i> Failed</span>`;
+        html += `<button class="bc-ctrl-btn bc-ctrl-btn-sm" onclick="startOrRetryRsRestream()"><i class="fa-solid fa-rotate-right"></i> Retry</button>`;
+    } else if (slotId && slotSs?.localStream) {
+        // Slot assigned but not started yet (could be reconnecting)
+        const isReconnecting = !!(slotSs._rsReconnectTimer);
+        if (isReconnecting) {
+            html += `<span class="bc-rs-status bc-rs-connecting"><i class="fa-solid fa-spinner fa-spin"></i> Reconnecting…</span>`;
+            html += `<button class="bc-ctrl-btn bc-ctrl-btn-sm" onclick="stopRsRestream()"><i class="fa-solid fa-stop"></i> Cancel</button>`;
+        } else {
+            html += `<span class="bc-rs-status bc-rs-ready"><i class="fa-solid fa-robot"></i> Ready</span>`;
+            html += `<button class="bc-ctrl-btn bc-ctrl-btn-sm" onclick="startOrRetryRsRestream()"><i class="fa-solid fa-play"></i> Start</button>`;
+        }
+    } else {
+        // No slot assigned
+        html += `<span class="bc-rs-status bc-rs-off"><i class="fa-solid fa-robot"></i> RS Off</span>`;
+        html += `<button class="bc-ctrl-btn bc-ctrl-btn-sm" onclick="startOrRetryRsRestream()"><i class="fa-solid fa-play"></i> Start</button>`;
+    }
+    html += '</div>';
+
+    panel.innerHTML = html;
 }
 /** Conditionally start RS restream only if this stream has the slot */
 function maybeStartRsRestream(streamId) {
@@ -614,10 +721,19 @@ function syncRobotStreamerUI() {
     if (liveStatusEl) {
         // Don't overwrite active status messages from ongoing restream
         const currentText = liveStatusEl.textContent;
-        const isActiveStatus = currentText.includes('live') || currentText.includes('connecting') || currentText.includes('reconnect');
+        const isActiveStatus = currentText.includes('live') || currentText.includes('connecting') || currentText.includes('reconnect') || currentText.includes('Loading') || currentText.includes('Joining') || currentText.includes('Sending') || currentText.includes('Negotiating') || currentText.includes('Creating');
         if (!isActiveStatus) {
             if (rs.enabled && rs.hasToken && rs.robotId) {
                 setRobotStreamerStatus('RobotStreamer restream ready — will start when you go live.', 'info', 'bc-rsLiveStatus');
+                // If we're already live but RS isn't running, trigger start now
+                // (fixes race condition where integration loads after go-live)
+                for (const [streamId, ss] of broadcastState.streams) {
+                    if (ss.localStream && !ss.robotStreamer?.active && !ss._rsRestreamStarting && isRsRestreamAssigned(streamId)) {
+                        console.log('[RS Sync] Integration loaded while live — triggering RS start for stream', streamId);
+                        maybeStartRsRestream(streamId);
+                        break;
+                    }
+                }
             } else if (!rs.enabled) {
                 setRobotStreamerStatus('RobotStreamer restream is disabled.', 'info', 'bc-rsLiveStatus');
             } else {

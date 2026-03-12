@@ -1431,9 +1431,6 @@
                             <button class="bc-ctrl-btn" onclick="flipCamera()">
                                 <i class="fa-solid fa-camera-rotate"></i> Flip
                             </button>
-                            <button class="bc-ctrl-btn" id="bc-rs-slot-btn" onclick="toggleRsRestreamSlot()" style="display:none">
-                                <i class="fa-solid fa-robot"></i> RS: Off
-                            </button>
                             <button class="bc-ctrl-btn" onclick="toggleBroadcastStats()">
                                 <i class="fa-solid fa-chart-line"></i> Stats
                             </button>
@@ -1444,6 +1441,9 @@
                                 <i class="fa-solid fa-ban"></i> Reset TTS
                             </button>
                         </div>
+
+                        <!-- RS Restream Control Panel (visible when RS is configured + streaming) -->
+                        <div class="bc-rs-control" id="bc-rs-control" style="display:none"></div>
 
                         <!-- TTS Settings -->
                         <div class="bc-settings-group">

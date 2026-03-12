@@ -559,6 +559,8 @@ async function start() {
                 vodRoutes.finalizeVodRecording(stream.id).catch(err => {
                     console.warn(`[VOD] Auto-finalize failed for stale stream ${stream.id}:`, err.message);
                 });
+                // Stop RS chat bridge for this stream (prevents zombie bridges)
+                robotStreamerService.stopForStream(stream.id);
                 const user = db.getUserById(stream.user_id);
                 if (stream.protocol === 'jsmpeg' && user) {
                     jsmpegRelay.destroyChannel(user.stream_key);
