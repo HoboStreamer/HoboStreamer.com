@@ -3659,6 +3659,19 @@ body.theme-light .user-dropdown {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   HOME CHANGELOG
+   ═══════════════════════════════════════════════════════════════ */
+.home-changelog {
+    background: var(--bg-secondary, rgba(255,255,255,0.03));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    max-height: 420px;
+    overflow-y: auto;
+    margin-bottom: 24px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    UPDATES / CHANGELOG
    ═══════════════════════════════════════════════════════════════ */
 .updates-list {

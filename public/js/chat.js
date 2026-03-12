@@ -492,11 +492,36 @@ function handleChatMessage(msg) {
             addRichSystemMessage(msg.message || 'Server restarting — chat will reconnect automatically.', 'warning');
             break;
         case 'update': {
-            // Platform update notification with commit logs + link
+            // Platform update notification with commit logs + expandable changelog
             const summary = esc(msg.summary || 'New update deployed!');
+            const commits = Array.isArray(msg.commits) ? msg.commits : [];
             const linkUrl = msg.url ? esc(msg.url) : null;
-            const linkHtml = linkUrl ? ` <a href="${linkUrl}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">View full patch notes →</a>` : '';
-            addRichSystemMessage(`🚀 ${summary}${linkHtml}`, 'update');
+
+            let html = `🚀 ${summary}`;
+
+            if (commits.length > 0) {
+                const changelogId = 'update-changelog-' + Date.now();
+                html += ` <a href="#" onclick="event.preventDefault();document.getElementById('${changelogId}').classList.toggle('open')" style="color:var(--accent);text-decoration:underline;cursor:pointer">View changelog ▾</a>`;
+                if (linkUrl) {
+                    html += ` · <a href="${linkUrl}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">Full patch notes →</a>`;
+                }
+                html += `<div id="${changelogId}" class="chat-changelog" style="display:none;margin-top:6px;padding:6px 8px;background:rgba(0,0,0,0.25);border-radius:6px;font-size:0.82rem;max-height:200px;overflow-y:auto;">`;
+                for (const c of commits) {
+                    const short = esc(c.short || '');
+                    const subject = esc(c.subject || '');
+                    const commitUrl = c.hash ? `https://github.com/HoboStreamer/HoboStreamer.com/commit/${esc(c.hash)}` : '#';
+                    html += `<div style="padding:2px 0;display:flex;gap:6px;align-items:baseline;"><a href="${commitUrl}" target="_blank" rel="noopener" style="color:var(--accent);font-family:monospace;font-size:0.78rem;text-decoration:none;flex-shrink:0">${short}</a> <span style="opacity:0.85">${subject}</span></div>`;
+                }
+                html += '</div>';
+                // Auto-expand with a microtask so the DOM element exists
+                setTimeout(() => {
+                    const el = document.getElementById(changelogId);
+                    if (el) el.classList.add('open'), el.style.display = '';
+                }, 0);
+            } else if (linkUrl) {
+                html += ` <a href="${linkUrl}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">View full patch notes →</a>`;
+            }
+            addRichSystemMessage(html, 'update');
             break;
         }
         case 'coin_earned':

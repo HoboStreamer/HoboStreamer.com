@@ -500,6 +500,7 @@ function showPage(page) {
 /* ── Home Page ────────────────────────────────────────────────── */
 async function loadHome() {
     void loadHoboAppMeta();
+    void loadHomeChangelog();
 
     try {
         const liveData = await api('/streams');
@@ -2204,6 +2205,46 @@ async function loadUpdatesPage() {
         container.innerHTML = html;
     } catch (err) {
         container.innerHTML = `<p style="color:var(--error);text-align:center;padding:32px 0;">Failed to load updates.</p>`;
+    }
+}
+
+async function loadHomeChangelog() {
+    const container = document.getElementById('home-changelog');
+    if (!container) return;
+
+    try {
+        const data = await api('/api/updates?limit=15');
+        if (!data.commits || data.commits.length === 0) {
+            container.innerHTML = '<p style="opacity:0.5;text-align:center;padding:16px 0;">No recent changes.</p>';
+            return;
+        }
+
+        // Group commits by date (same pattern as updates page)
+        const groups = {};
+        for (const c of data.commits) {
+            const day = new Date(c.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+            if (!groups[day]) groups[day] = [];
+            groups[day].push(c);
+        }
+
+        let html = '';
+        for (const [day, commits] of Object.entries(groups)) {
+            html += `<div class="updates-day">
+                <h3 class="updates-day-header">${esc(day)}</h3>
+                <div class="updates-day-commits">`;
+            for (const c of commits) {
+                const time = new Date(c.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                html += `<div class="update-entry">
+                    <a class="update-hash" href="https://github.com/HoboStreamer/HoboStreamer.com/commit/${c.hash}" target="_blank" title="View on GitHub">${esc(c.short)}</a>
+                    <span class="update-subject">${esc(c.subject)}</span>
+                    <span class="update-meta">${esc(c.author)} &middot; ${esc(time)}</span>
+                </div>`;
+            }
+            html += '</div></div>';
+        }
+        container.innerHTML = html;
+    } catch {
+        container.innerHTML = '<p style="opacity:0.5;text-align:center;padding:16px 0;">Failed to load changelog.</p>';
     }
 }
 
