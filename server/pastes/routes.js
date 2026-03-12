@@ -398,7 +398,9 @@ router.put('/:slug', requireAuth, (req, res) => {
     try {
         const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [req.params.slug]);
         if (!paste) return res.status(404).json({ error: 'Paste not found' });
-        if (paste.user_id !== req.user.id && req.user.role !== 'admin') {
+        const isOwner = paste.user_id && paste.user_id === req.user.id;
+        const isStaff = req.user.role === 'admin' || req.user.role === 'global_mod';
+        if (!isOwner && !isStaff) {
             return res.status(403).json({ error: 'Not your paste' });
         }
 
@@ -440,7 +442,9 @@ router.delete('/:slug', requireAuth, (req, res) => {
     try {
         const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [req.params.slug]);
         if (!paste) return res.status(404).json({ error: 'Paste not found' });
-        if (paste.user_id !== req.user.id && req.user.role !== 'admin') {
+        const isOwner = paste.user_id && paste.user_id === req.user.id;
+        const isStaff = req.user.role === 'admin' || req.user.role === 'global_mod';
+        if (!isOwner && !isStaff) {
             return res.status(403).json({ error: 'Not your paste' });
         }
 
@@ -455,6 +459,55 @@ router.delete('/:slug', requireAuth, (req, res) => {
         console.error('[Pastes] Delete error:', err);
         res.status(500).json({ error: 'Failed to delete paste' });
     }
+});
+
+// ── Censor screenshot image (admin/global_mod) ─────────────
+router.post('/:slug/censor', requireAuth, (req, res) => {
+    if (req.user.role !== 'admin' && req.user.role !== 'global_mod') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [req.params.slug]);
+    if (!paste) return res.status(404).json({ error: 'Paste not found' });
+    if (paste.type !== 'screenshot' || !paste.screenshot_path) {
+        return res.status(400).json({ error: 'Not a screenshot paste' });
+    }
+
+    // Use multer to handle the uploaded censored image
+    const censorUpload = multer({
+        storage: screenshotStorage,
+        limits: { fileSize: 16 * 1024 * 1024 }, // 16 MB for censored exports
+        fileFilter: (_req, file, cb) => {
+            if (/^image\/(png|jpeg|webp)$/.test(file.mimetype)) cb(null, true);
+            else cb(new Error('Only PNG, JPEG, or WebP images allowed'));
+        },
+    }).single('screenshot');
+
+    censorUpload(req, res, (err) => {
+        if (err) return res.status(400).json({ error: err.message || 'Upload failed' });
+        if (!req.file) return res.status(400).json({ error: 'Censored image is required' });
+
+        try {
+            // Delete the old screenshot file
+            try { fs.unlinkSync(paste.screenshot_path); } catch {}
+
+            // Update the paste record with the new screenshot path
+            db.run('UPDATE pastes SET screenshot_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                [req.file.path, paste.id]);
+
+            const updated = db.get(
+                `SELECT p.*, u.username, u.display_name, u.avatar_url
+                 FROM pastes p LEFT JOIN users u ON p.user_id = u.id WHERE p.slug = ?`,
+                [req.params.slug]
+            );
+            updated.screenshot_url = `/data/pastes/screenshots/${path.basename(req.file.path)}`;
+            res.json({ paste: updated });
+        } catch (err2) {
+            console.error('[Pastes] Censor error:', err2);
+            if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch {}
+            res.status(500).json({ error: 'Failed to save censored image' });
+        }
+    });
 });
 
 // ── Fork (copy) a paste ─────────────────────────────────────

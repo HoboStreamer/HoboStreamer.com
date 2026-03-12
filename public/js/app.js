@@ -440,7 +440,7 @@ function routeFromURL() {
         // Handle ?edit=slug
         const editSlug = new URLSearchParams(window.location.search).get('edit');
         if (editSlug) {
-            api(`/api/pastes/${editSlug}`).then(data => {
+            api(`/pastes/${editSlug}`).then(data => {
                 if (data.paste) openNewPasteModal({
                     title: data.paste.title,
                     content: data.paste.content,

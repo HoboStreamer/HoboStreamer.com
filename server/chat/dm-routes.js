@@ -21,6 +21,30 @@ const dm = require('./dm');
 // All DM routes require authentication
 router.use(requireAuth);
 
+// ── Per-user rate limiting (in-memory sliding window) ────────
+const _rateBuckets = new Map();
+const RATE_MSG_MAX = 10, RATE_MSG_WINDOW = 60_000;       // 10 messages / 60s
+const RATE_CONV_MAX = 5, RATE_CONV_WINDOW = 3_600_000;   // 5 new conversations / hour
+const MAX_GROUP_SIZE = 20;
+
+function _checkRate(userId, bucket, max, windowMs) {
+    if (!_rateBuckets.has(userId)) _rateBuckets.set(userId, { messages: [], convos: [] });
+    const u = _rateBuckets.get(userId);
+    const now = Date.now(), cutoff = now - windowMs;
+    u[bucket] = u[bucket].filter(t => t > cutoff);
+    if (u[bucket].length >= max) return false;
+    u[bucket].push(now);
+    return true;
+}
+setInterval(() => {
+    const cutoff = Date.now() - 3_600_000;
+    for (const [uid, b] of _rateBuckets) {
+        b.messages = b.messages.filter(t => t > cutoff);
+        b.convos = b.convos.filter(t => t > cutoff);
+        if (!b.messages.length && !b.convos.length) _rateBuckets.delete(uid);
+    }
+}, 300_000);
+
 // List conversations for current user
 router.get('/conversations', (req, res) => {
     try {
@@ -43,20 +67,44 @@ router.post('/conversations', (req, res) => {
         if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
             return res.status(400).json({ error: 'user_ids array required' });
         }
-        // Ensure current user is included
         const participantIds = [...new Set([req.user.id, ...user_ids.map(Number).filter(Boolean)])];
         if (participantIds.length < 2) {
             return res.status(400).json({ error: 'Need at least one other user' });
         }
+        if (participantIds.length > MAX_GROUP_SIZE) {
+            return res.status(400).json({ error: `Groups are limited to ${MAX_GROUP_SIZE} members` });
+        }
+
+        // Rate limit conversation creation
+        if (!_checkRate(req.user.id, 'convos', RATE_CONV_MAX, RATE_CONV_WINDOW)) {
+            return res.status(429).json({ error: 'Too many new conversations. Try again later.' });
+        }
+
+        // New account restriction
+        const accountCheck = dm.isAccountTooNew(req.user.id, 5);
+        if (accountCheck.tooNew) {
+            return res.status(403).json({ error: `Your account is too new to start conversations. Please wait ${accountCheck.minutesRemaining} more minute(s).` });
+        }
+
+        // Validate all target users exist, aren't banned, aren't blocked
+        const userDb = require('../db/database');
+        for (const uid of participantIds) {
+            if (uid === req.user.id) continue;
+            const target = userDb.getUserById(uid);
+            if (!target) return res.status(400).json({ error: 'User not found' });
+            if (target.is_banned) return res.status(400).json({ error: 'Cannot message banned users' });
+            if (dm.isBlockedEither(req.user.id, uid)) {
+                return res.status(403).json({ error: 'Cannot start a conversation with this user' });
+            }
+        }
 
         let conversationId;
         if (participantIds.length === 2) {
-            // 1-on-1: get or create
             const otherId = participantIds.find(id => id !== req.user.id);
             conversationId = dm.getOrCreateDirect(req.user.id, otherId);
         } else {
-            // Group: always create new
-            conversationId = dm.createConversation(req.user.id, participantIds, name || null);
+            const safeName = name ? String(name).replace(/<[^>]*>/g, '').replace(/[\\`'"<>(){};:/\[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 100) : null;
+            conversationId = dm.createConversation(req.user.id, participantIds, safeName);
         }
 
         const conversation = dm.getConversation(conversationId);
@@ -109,10 +157,46 @@ router.post('/conversations/:id/messages', (req, res) => {
         if (!dm.isParticipant(convId, req.user.id)) {
             return res.status(403).json({ error: 'Not a participant' });
         }
+
+        // Per-user message rate limit
+        if (!_checkRate(req.user.id, 'messages', RATE_MSG_MAX, RATE_MSG_WINDOW)) {
+            return res.status(429).json({ error: 'Slow down! You\'re sending messages too fast.' });
+        }
+
+        // Block check for 1-on-1 conversations
+        const conv = dm.getConversation(convId);
+        if (conv && !conv.is_group) {
+            const participants = dm.getParticipants(convId);
+            const other = participants.find(p => p.id !== req.user.id);
+            if (other && dm.isBlockedEither(req.user.id, other.id)) {
+                return res.status(403).json({ error: 'Cannot send messages in this conversation' });
+            }
+        }
+
         const { message } = req.body;
         if (!message || typeof message !== 'string' || !message.trim()) {
             return res.status(400).json({ error: 'Message required' });
         }
+
+        // ── Anti-spam hardening ──────────────────────────────
+        // New account restriction
+        const accountCheck = dm.isAccountTooNew(req.user.id, 5);
+        if (accountCheck.tooNew) {
+            return res.status(403).json({ error: `Your account is too new to send DMs. Please wait ${accountCheck.minutesRemaining} more minute(s).` });
+        }
+
+        // Content spam detection
+        const spamCheck = dm.checkMessageSpam(message);
+        if (spamCheck.isSpam) {
+            return res.status(400).json({ error: `Message blocked: ${spamCheck.reason}` });
+        }
+
+        // Duplicate message detection (same text within 30s)
+        if (dm.isDuplicateMessage(convId, req.user.id, message, 30)) {
+            return res.status(429).json({ error: 'Duplicate message — please wait before sending the same message again.' });
+        }
+        // ─────────────────────────────────────────────────────
+
         const msg = dm.sendMessage(convId, req.user.id, message);
         if (!msg) return res.status(400).json({ error: 'Failed to send' });
 
@@ -169,6 +253,21 @@ router.post('/conversations/:id/participants', (req, res) => {
         }
         const { user_id } = req.body;
         if (!user_id) return res.status(400).json({ error: 'user_id required' });
+
+        // Validate target user exists, isn't banned, isn't blocked
+        const userDb = require('../db/database');
+        const target = userDb.getUserById(user_id);
+        if (!target) return res.status(400).json({ error: 'User not found' });
+        if (target.is_banned) return res.status(400).json({ error: 'Cannot add banned users' });
+        if (dm.isBlockedEither(req.user.id, user_id)) {
+            return res.status(403).json({ error: 'Cannot add this user' });
+        }
+
+        // Group size limit
+        if (dm.getParticipantCount(convId) >= MAX_GROUP_SIZE) {
+            return res.status(400).json({ error: `Group is full (max ${MAX_GROUP_SIZE} members)` });
+        }
+
         dm.addParticipant(convId, user_id);
         const participants = dm.getParticipants(convId);
 
@@ -220,7 +319,10 @@ router.patch('/conversations/:id', (req, res) => {
         if (!dm.isParticipant(convId, req.user.id)) {
             return res.status(403).json({ error: 'Not a participant' });
         }
-        const { name } = req.body;
+        let { name } = req.body;
+        if (name) {
+            name = String(name).replace(/<[^>]*>/g, '').replace(/[\\`'"<>(){};:/\[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 100);
+        }
         dm.renameConversation(convId, name || null);
         res.json({ ok: true });
     } catch (err) {
@@ -243,11 +345,77 @@ router.get('/unread', (req, res) => {
 router.get('/users/search', (req, res) => {
     try {
         const q = (req.query.q || '').trim();
-        if (q.length < 1) return res.json({ users: [] });
+        if (q.length < 2) return res.json({ users: [] });
         const users = dm.searchUsers(q, req.user.id);
         res.json({ users });
     } catch (err) {
         res.status(500).json({ error: 'Failed' });
+    }
+});
+
+// ── Block & message management ───────────────────────────────
+
+// Block a user
+router.post('/blocks/:userId', (req, res) => {
+    try {
+        const targetId = parseInt(req.params.userId);
+        if (!targetId || targetId === req.user.id) {
+            return res.status(400).json({ error: 'Invalid user' });
+        }
+        dm.blockUser(req.user.id, targetId);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[DM] Block error:', err.message);
+        res.status(500).json({ error: 'Failed to block user' });
+    }
+});
+
+// Unblock a user
+router.delete('/blocks/:userId', (req, res) => {
+    try {
+        const targetId = parseInt(req.params.userId);
+        dm.unblockUser(req.user.id, targetId);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[DM] Unblock error:', err.message);
+        res.status(500).json({ error: 'Failed to unblock user' });
+    }
+});
+
+// List blocked users
+router.get('/blocks', (req, res) => {
+    try {
+        const blocked = dm.getBlockedUsers(req.user.id);
+        res.json({ blocked });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load blocked users' });
+    }
+});
+
+// Check if a specific user is blocked
+router.get('/blocks/check/:userId', (req, res) => {
+    try {
+        const targetId = parseInt(req.params.userId);
+        res.json({ blocked: dm.hasBlocked(req.user.id, targetId) });
+    } catch {
+        res.json({ blocked: false });
+    }
+});
+
+// Delete own message
+router.delete('/conversations/:id/messages/:msgId', (req, res) => {
+    try {
+        const convId = parseInt(req.params.id);
+        const msgId = parseInt(req.params.msgId);
+        if (!dm.isParticipant(convId, req.user.id)) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+        const deleted = dm.deleteMessage(msgId, req.user.id);
+        if (!deleted) return res.status(403).json({ error: 'Cannot delete this message' });
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[DM] Delete message error:', err.message);
+        res.status(500).json({ error: 'Failed to delete message' });
     }
 });
 

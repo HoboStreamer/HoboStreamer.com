@@ -20,6 +20,7 @@
     let unreadTotal = 0;
     let pollTimer = null;
     let searchDebounce = null;
+    let isOtherBlocked = false;
 
     // ── DOM refs (set once in init) ──────────────────────────────
     let $toggle, $badge, $panel;
@@ -191,34 +192,49 @@
         const conv = activeConv;
         const name = esc(getConvName(conv));
         const isGroup = conv.is_group;
+        const other = !isGroup ? getConvOther(conv) : null;
+
+        const composeHtml = isOtherBlocked
+            ? `<div class="msg-blocked-bar"><i class="fa-solid fa-ban"></i> You blocked this user. <button class="msg-unblock-inline" id="msg-unblock-btn">Unblock</button></div>`
+            : `<div class="msg-compose"><input type="text" id="msg-compose-input" placeholder="Type a message..." maxlength="2000" autocomplete="off"><button class="msg-send-btn" id="msg-send-btn"><i class="fa-solid fa-paper-plane"></i></button></div>`;
 
         $panel.innerHTML = `
             <div class="msg-header">
                 <button class="msg-header-btn" id="msg-back-btn" title="Back"><i class="fa-solid fa-arrow-left"></i></button>
                 <span class="msg-header-title">${name}</span>
                 <div class="msg-header-actions">
-                    ${isGroup ? `<button class="msg-header-btn" id="msg-info-btn" title="Group info"><i class="fa-solid fa-circle-info"></i></button>` : ''}
+                    ${isGroup ? `<button class="msg-header-btn" id="msg-info-btn" title="Group info"><i class="fa-solid fa-circle-info"></i></button>` : `<button class="msg-header-btn" id="msg-thread-menu-btn" title="Options"><i class="fa-solid fa-ellipsis-vertical"></i></button>`}
                     <button class="msg-header-btn" id="msg-close-btn2" title="Close"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
             <div class="msg-thread" id="msg-thread"></div>
-            <div class="msg-compose">
-                <input type="text" id="msg-compose-input" placeholder="Type a message..." maxlength="2000" autocomplete="off">
-                <button class="msg-send-btn" id="msg-send-btn"><i class="fa-solid fa-paper-plane"></i></button>
-            </div>
+            ${composeHtml}
         `;
 
         document.getElementById('msg-back-btn').addEventListener('click', () => { renderInbox(); loadConversations(); });
         document.getElementById('msg-close-btn2').addEventListener('click', closePanel);
-        if (isGroup) document.getElementById('msg-info-btn')?.addEventListener('click', showGroupInfo);
+        if (isGroup) {
+            document.getElementById('msg-info-btn')?.addEventListener('click', showGroupInfo);
+        } else {
+            document.getElementById('msg-thread-menu-btn')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleThreadMenu(other);
+            });
+        }
 
-        const input = document.getElementById('msg-compose-input');
-        const sendBtn = document.getElementById('msg-send-btn');
-        input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-        sendBtn.addEventListener('click', sendMessage);
+        if (isOtherBlocked) {
+            document.getElementById('msg-unblock-btn')?.addEventListener('click', () => unblockOther(other));
+        } else {
+            const input = document.getElementById('msg-compose-input');
+            const sendBtn = document.getElementById('msg-send-btn');
+            if (input && sendBtn) {
+                input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+                sendBtn.addEventListener('click', sendMessage);
+                input.focus();
+            }
+        }
 
         renderMessages();
-        input.focus();
     }
 
     function renderMessages() {
@@ -255,6 +271,7 @@
                     ${showSender ? `<div class="msg-bubble-sender">${esc(msg.display_name || msg.username)}</div>` : ''}
                     <div class="msg-bubble-text">${esc(msg.message)}</div>
                     <div class="msg-bubble-time">${formatMessageTime(msg.created_at)}</div>
+                    ${isSelf ? `<button class="msg-bubble-delete" data-mid="${msg.id}" title="Delete"><i class="fa-solid fa-trash-can"></i></button>` : ''}
                 </div>
             </div>`;
         }
@@ -262,6 +279,11 @@
 
         // Scroll to bottom
         thread.scrollTop = thread.scrollHeight;
+
+        // Wire up message delete buttons
+        thread.querySelectorAll('.msg-bubble-delete').forEach(btn => {
+            btn.addEventListener('click', () => deleteMsg(parseInt(btn.dataset.mid)));
+        });
 
         // Load more button
         const loadMoreBtn = document.getElementById('msg-load-more-btn');
@@ -531,6 +553,7 @@
         activeConvId = convId;
         threadMessages = [];
         hasMoreMessages = true;
+        isOtherBlocked = false;
 
         try {
             const [convData, msgData] = await Promise.all([
@@ -543,6 +566,17 @@
         } catch {
             toast('Failed to load conversation', 'error');
             return;
+        }
+
+        // Check block status for 1-on-1 conversations
+        if (!activeConv.is_group) {
+            const other = (activeConv.participants || []).find(p => p.id !== currentUser?.id);
+            if (other) {
+                try {
+                    const bdata = await dmApi(`/blocks/check/${other.id}`);
+                    isOtherBlocked = bdata.blocked || false;
+                } catch { /* ignore */ }
+            }
         }
 
         renderThread();
@@ -621,6 +655,89 @@
             }
         } catch {
             toast('Failed to start conversation', 'error');
+        }
+    }
+
+    // ── Thread menu & block/unblock ──────────────────────────────
+
+    function toggleThreadMenu(otherUser) {
+        let menu = document.getElementById('msg-thread-dropdown');
+        if (menu) { menu.remove(); return; }
+
+        menu = document.createElement('div');
+        menu.id = 'msg-thread-dropdown';
+        menu.className = 'msg-thread-dropdown';
+
+        const blockLabel = isOtherBlocked ? 'Unblock' : 'Block';
+        const blockIcon = isOtherBlocked ? 'fa-user-check' : 'fa-user-slash';
+        const blockClass = isOtherBlocked ? '' : ' danger';
+
+        menu.innerHTML = `<button class="msg-thread-dropdown-item${blockClass}" id="msg-block-toggle"><i class="fa-solid ${blockIcon}"></i> ${blockLabel} ${esc(otherUser?.display_name || otherUser?.username || 'user')}</button>`;
+
+        const headerActions = document.querySelector('.msg-header-actions');
+        if (headerActions) headerActions.style.position = 'relative';
+        headerActions?.appendChild(menu);
+
+        // Viewport-aware repositioning
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth - 8) {
+                menu.style.right = '0';
+                menu.style.left = 'auto';
+            }
+            if (rect.bottom > window.innerHeight - 8) {
+                menu.style.bottom = '100%';
+                menu.style.top = 'auto';
+            }
+        });
+
+        document.getElementById('msg-block-toggle')?.addEventListener('click', async () => {
+            menu.remove();
+            if (!otherUser) return;
+            if (isOtherBlocked) await unblockOther(otherUser);
+            else await blockOther(otherUser);
+        });
+
+        setTimeout(() => {
+            document.addEventListener('click', function dismiss() {
+                const m = document.getElementById('msg-thread-dropdown');
+                if (m) m.remove();
+            }, { once: true });
+        }, 10);
+    }
+
+    async function blockOther(otherUser) {
+        if (!otherUser) return;
+        try {
+            await dmApi(`/blocks/${otherUser.id}`, { method: 'POST' });
+            isOtherBlocked = true;
+            toast(`Blocked ${otherUser.display_name || otherUser.username}`, 'info');
+            renderThread();
+        } catch {
+            toast('Failed to block user', 'error');
+        }
+    }
+
+    async function unblockOther(otherUser) {
+        if (!otherUser) return;
+        try {
+            await dmApi(`/blocks/${otherUser.id}`, { method: 'DELETE' });
+            isOtherBlocked = false;
+            toast(`Unblocked ${otherUser.display_name || otherUser.username}`, 'info');
+            renderThread();
+        } catch {
+            toast('Failed to unblock user', 'error');
+        }
+    }
+
+    async function deleteMsg(messageId) {
+        if (!activeConvId) return;
+        try {
+            await dmApi(`/conversations/${activeConvId}/messages/${messageId}`, { method: 'DELETE' });
+            threadMessages = threadMessages.filter(m => m.id !== messageId);
+            renderMessages();
+        } catch {
+            toast('Failed to delete message', 'error');
         }
     }
 

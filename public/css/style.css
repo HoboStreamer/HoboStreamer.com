@@ -1187,16 +1187,40 @@ main#app { position: relative; z-index: 1; }
 
 /* ── New messages indicator (shown when user scrolls up) ──── */
 .chat-new-msgs-indicator {
-    display: none; position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
-    z-index: 10; padding: 6px 14px; border-radius: 20px;
+    display: none; position: relative; margin: 0 auto;
+    z-index: 10; padding: 5px 14px; border-radius: 20px 20px 0 0;
     background: var(--accent, #c0965c); color: #fff; font-size: 0.78rem; font-weight: 600;
     border: none; cursor: pointer; gap: 6px; align-items: center; justify-content: center;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.3);
     transition: opacity 0.2s;
     white-space: nowrap;
+    flex-shrink: 0;
 }
 .chat-new-msgs-indicator:hover { opacity: 0.85; }
 .chat-new-msgs-indicator i { font-size: 0.7rem; }
+
+/* ── Cross-feed messages (global/other streams in stream chat) ── */
+.chat-msg-crossfeed {
+    border-left: 2px solid rgba(255,255,255,0.08);
+    padding-left: 6px;
+    opacity: 0.85;
+}
+.chat-crossfeed-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 0.65rem; font-weight: 600;
+    padding: 1px 5px; border-radius: 3px;
+    vertical-align: middle; margin-right: 3px;
+}
+.chat-crossfeed-global {
+    background: rgba(99, 179, 237, 0.18); color: #63b3ed;
+}
+.chat-crossfeed-stream {
+    background: rgba(237, 137, 54, 0.18); color: #ed8936;
+}
+.csp-hint {
+    font-size: 0.72rem; color: var(--text-muted, #888);
+    margin: 0 0 6px 0; padding: 0;
+}
 
 .chat-msg .chat-badge {
     display: inline-flex; align-items: center;
@@ -2174,7 +2198,13 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .offline-global-chat { height: 45vh; margin: 12px 8px; }
 
     /* Context menu fits small screens */
-    .chat-context-menu { min-width: 0; width: calc(100vw - 16px); max-width: 300px; }
+    .chat-context-menu {
+        min-width: 0; width: calc(100vw - 16px); max-width: 300px;
+        max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px);
+        overflow-y: auto;
+        /* Center on mobile if near edges */
+        left: 8px !important;
+    }
 
     /* Dashboard reward cards stack actions */
     .dash-reward-card { flex-wrap: wrap; }
@@ -5117,3 +5147,82 @@ body.theme-light .user-dropdown {
 .vc-mini-btn:hover { background: var(--bg-primary, #0f0f1a); }
 .vc-mini-btn.vc-mini-leave { color: #ef4444; }
 .vc-mini-btn.vc-mini-leave:hover { background: rgba(239,68,68,0.15); }
+
+/* ═══════════════════════════════════════════════════════════
+   Image Censor Overlay (Admin tool)
+   ═══════════════════════════════════════════════════════════ */
+.image-censor-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: rgba(0,0,0,0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.image-censor-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 10px 16px;
+    background: var(--bg-secondary, #1a1a2e);
+    border-bottom: 1px solid var(--border, #333);
+    flex-shrink: 0;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.image-censor-tools, .image-censor-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.image-censor-tool {
+    background: var(--bg-tertiary, #252540);
+    border: 1px solid var(--border, #444);
+    color: var(--text, #ccc);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    transition: all 0.15s;
+}
+.image-censor-tool:hover {
+    background: var(--bg-primary, #0e0e1a);
+    border-color: var(--primary, #7c3aed);
+}
+.image-censor-tool.active {
+    background: var(--primary, #7c3aed);
+    color: #fff;
+    border-color: var(--primary, #7c3aed);
+}
+.image-censor-canvas-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: 16px;
+}
+#censor-canvas {
+    cursor: crosshair;
+    border: 1px solid var(--border, #555);
+    border-radius: 4px;
+    max-width: 100%;
+    max-height: 100%;
+}
+/* Tiny btn variant for inline rename */
+.btn-xs {
+    padding: 2px 6px;
+    font-size: 0.72rem;
+    border-radius: 4px;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+}
+.btn-xs:hover { opacity: 1; }
+.paste-view-title-row { display: flex; align-items: center; gap: 8px; }
+@media (max-width: 600px) {
+    .image-censor-toolbar { flex-direction: column; align-items: stretch; }
+    .image-censor-tools, .image-censor-actions { justify-content: center; }
+}
