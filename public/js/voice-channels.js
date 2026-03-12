@@ -189,11 +189,23 @@ async function vcShowSetup(channel) {
 
 async function vcEnumerateDevices(mode) {
     try {
-        // Request a temp stream to get labeled devices
-        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        tempStream.getTracks().forEach(t => t.stop());
+        // First try enumerating without a temp stream — if permission was already
+        // granted, browsers return labeled devices. This avoids acquiring a temp
+        // getUserMedia stream that can steal the audio device from an active broadcast
+        // on Linux/PipeWire.
+        let devices = await navigator.mediaDevices.enumerateDevices();
+        const hasLabels = devices.some(d => d.kind === 'audioinput' && d.label);
 
-        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!hasLabels) {
+            // No labels yet — need a temp stream to trigger permission prompt.
+            // Skip if actively broadcasting to avoid device contention.
+            const isBroadcasting = typeof isStreaming === 'function' && isStreaming();
+            if (!isBroadcasting) {
+                const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                tempStream.getTracks().forEach(t => t.stop());
+                devices = await navigator.mediaDevices.enumerateDevices();
+            }
+        }
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
         const videoInputs = devices.filter(d => d.kind === 'videoinput');
 

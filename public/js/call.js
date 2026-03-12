@@ -61,6 +61,10 @@ const callState = {
 const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    // TURN relay on HoboStreamer server — ensures connectivity behind symmetric NATs / firewalls
+    { urls: 'turn:40.160.240.222:3478', username: 'hobo', credential: 'hobostreamer-turn-2025' },
+    { urls: 'turn:40.160.240.222:3478?transport=tcp', username: 'hobo', credential: 'hobostreamer-turn-2025' },
 ];
 const CALL_WS_MAX_BUFFERED_AMOUNT = 256 * 1024;
 const CALL_AUDIO_MAX_BITRATE = 32000;
@@ -559,27 +563,60 @@ async function joinCall() {
     if (reuseStream) {
         callState.localStream = reuseStream;
     } else {
-        const constraints = { audio: { deviceId: callState.selectedMic !== 'default' ? { exact: callState.selectedMic } : undefined } };
-
-        // Camera: only enabled if the user explicitly opted in
-        if ((mode === 'cam+mic' || mode === 'mic+cam') && !wantCameraOff) {
-            constraints.video = { deviceId: callState.selectedCam !== 'default' ? { exact: callState.selectedCam } : undefined, width: { ideal: 320 }, height: { ideal: 240 } };
-            callState.cameraOff = false;
-        } else {
-            constraints.video = false;
-            callState.cameraOff = true;
+        // If we're broadcasting, clone the broadcast's audio track instead of
+        // calling getUserMedia again — avoids device contention on Linux/PipeWire
+        // where a second getUserMedia can steal the mic from the broadcast or
+        // produce silent/dead tracks.
+        let broadcastAudioTrack = null;
+        if (typeof isStreaming === 'function' && isStreaming() && typeof getActiveStreamState === 'function') {
+            const bss = getActiveStreamState();
+            const bTrack = bss?.localStream?.getAudioTracks()?.[0];
+            if (bTrack && bTrack.readyState === 'live') {
+                broadcastAudioTrack = bTrack.clone();
+                console.log('[Call] Sharing cloned audio track from broadcast — avoiding device contention');
+            }
         }
 
-        try {
-            callState.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (err) {
-            callState.connecting = false;
-            console.error('[Call] getUserMedia failed:', err);
-            const msg = err.name === 'NotFoundError' ? 'No microphone found'
-                : err.name === 'NotAllowedError' ? 'Microphone access denied'
-                : `Media error: ${err.message}`;
-            _callSystemMessage(msg);
-            return;
+        if (broadcastAudioTrack) {
+            callState.localStream = new MediaStream([broadcastAudioTrack]);
+            callState.cameraOff = true;
+            callState._sharedBroadcastAudio = true;
+
+            // Camera: only add if user explicitly opted in and mode supports it
+            if ((mode === 'cam+mic' || mode === 'mic+cam') && !wantCameraOff) {
+                try {
+                    const camStream = await navigator.mediaDevices.getUserMedia({
+                        video: { deviceId: callState.selectedCam !== 'default' ? { exact: callState.selectedCam } : undefined, width: { ideal: 320 }, height: { ideal: 240 } }
+                    });
+                    camStream.getVideoTracks().forEach(t => callState.localStream.addTrack(t));
+                    callState.cameraOff = false;
+                } catch (camErr) {
+                    console.warn('[Call] Camera acquisition failed (broadcast audio shared):', camErr.message);
+                }
+            }
+        } else {
+            const constraints = { audio: { deviceId: callState.selectedMic !== 'default' ? { exact: callState.selectedMic } : undefined } };
+
+            // Camera: only enabled if the user explicitly opted in
+            if ((mode === 'cam+mic' || mode === 'mic+cam') && !wantCameraOff) {
+                constraints.video = { deviceId: callState.selectedCam !== 'default' ? { exact: callState.selectedCam } : undefined, width: { ideal: 320 }, height: { ideal: 240 } };
+                callState.cameraOff = false;
+            } else {
+                constraints.video = false;
+                callState.cameraOff = true;
+            }
+
+            try {
+                callState.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (err) {
+                callState.connecting = false;
+                console.error('[Call] getUserMedia failed:', err);
+                const msg = err.name === 'NotFoundError' ? 'No microphone found'
+                    : err.name === 'NotAllowedError' ? 'Microphone access denied'
+                    : `Media error: ${err.message}`;
+                _callSystemMessage(msg);
+                return;
+            }
         }
     }
 
@@ -712,8 +749,12 @@ async function toggleCallCamera() {
 
             // Add video track to all existing peer connections
             for (const [peerId, peer] of callState.peers) {
-                const sender = peer.pc.addTrack(camTrack, callState.localStream);
-                _optimizeCallSender(sender, camTrack);
+                try {
+                    const sender = peer.pc.addTrack(camTrack, callState.localStream);
+                    _optimizeCallSender(sender, camTrack);
+                } catch (peerErr) {
+                    console.warn(`[Call] Failed to add camera track to peer ${peerId}:`, peerErr.message);
+                }
             }
         } catch (err) {
             console.warn('[Call] Camera enable failed:', err);
@@ -731,11 +772,15 @@ async function toggleCallCamera() {
 
         // Remove video senders from all peer connections
         for (const [peerId, peer] of callState.peers) {
-            const senders = peer.pc.getSenders();
-            for (const sender of senders) {
-                if (sender.track && sender.track.kind === 'video') {
-                    peer.pc.removeTrack(sender);
+            try {
+                const senders = peer.pc.getSenders();
+                for (const sender of senders) {
+                    if (sender.track && sender.track.kind === 'video') {
+                        peer.pc.removeTrack(sender);
+                    }
                 }
+            } catch (peerErr) {
+                console.warn(`[Call] Failed to remove camera track from peer ${peerId}:`, peerErr.message);
             }
         }
     }
@@ -1158,7 +1203,10 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
 async function _handleOffer(msg) {
     const peerId = msg.fromPeerId;
     if (!callState.peers.has(peerId)) {
-        _createPeerConnection(peerId, false, null);
+        // Peer sent an offer before we received their peer-joined message —
+        // create the connection with whatever info the offer message carries
+        // (may include username, displayName from the server relay).
+        _createPeerConnection(peerId, false, msg);
     }
     const peer = callState.peers.get(peerId);
     if (!peer) return;
