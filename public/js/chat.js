@@ -1006,12 +1006,13 @@ async function loadContextMenuProfile(menu, username, userId, isAnon) {
 function renderAnonContextMenu(menu, username, userId) {
     const initial = username[0] ? username[0].toUpperCase() : '?';
     let banBtns = '';
-    if (canModerateCurrentStream()) {
-        banBtns += `<div class="ctx-divider"></div>
-           <button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxStreamBan(this.dataset.username, null, this.dataset.username)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>`;
+    const showStreamBan = canModerateCurrentStream() && chatStreamId;
+    const showSiteBan = currentUser?.capabilities?.manage_site_bans;
+    if (showStreamBan || showSiteBan) banBtns += '<div class="ctx-divider"></div>';
+    if (showStreamBan) {
+        banBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxStreamBan(this.dataset.username, null, this.dataset.username)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>`;
     }
-    if (currentUser?.capabilities?.manage_site_bans) {
-        if (!canModerateCurrentStream()) banBtns += '<div class="ctx-divider"></div>';
+    if (showSiteBan) {
         banBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxGlobalBanAnon(this.dataset.username)"><i class="fa-solid fa-ban"></i> Ban from site</button>`;
     }
     menu.innerHTML = `
@@ -1081,7 +1082,8 @@ function renderContextMenu(menu, profile, username) {
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
             ${currentUser?.capabilities?.manage_users ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" data-display="${esc(profile.display_name || username)}" onclick="ctxRenameUser(this.dataset.username, this.dataset.uid, this.dataset.display)"><i class="fa-solid fa-pen"></i> Rename</button>` : ''}
-            ${canModerateCurrentStream() ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxStreamBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>` : ''}
+            ${(canModerateCurrentStream() && chatStreamId) || currentUser?.capabilities?.manage_site_bans ? '<div class="ctx-divider"></div>' : ''}
+            ${canModerateCurrentStream() && chatStreamId ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxStreamBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>` : ''}
             ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxGlobalBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban from site</button>` : ''}
         </div>
     `;
