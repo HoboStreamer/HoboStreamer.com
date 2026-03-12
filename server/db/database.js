@@ -336,6 +336,38 @@ function initDb() {
         for (const [k, v, d, t] of pasteSettings) seedPaste.run(k, v, d, t);
     } catch (e) { console.warn('[DB] paste settings seed:', e.message); }
 
+    // Migrate: paste_comments table (separate from vod/clip comments — supports anon)
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS paste_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paste_id INTEGER NOT NULL,
+            user_id INTEGER,
+            parent_id INTEGER,
+            anon_name TEXT,
+            message TEXT NOT NULL,
+            ip_address TEXT,
+            is_deleted INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (paste_id) REFERENCES pastes(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY (parent_id) REFERENCES paste_comments(id) ON DELETE CASCADE
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_paste_comments_paste ON paste_comments(paste_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_paste_comments_user ON paste_comments(user_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_paste_comments_parent ON paste_comments(parent_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_paste_comments_ip ON paste_comments(ip_address)`);
+
+        // Seed paste comment settings
+        const commentSettings = [
+            ['paste_comment_cooldown_seconds', '10', 'Cooldown between paste comments in seconds', 'number'],
+            ['paste_comment_max_length', '2000', 'Maximum paste comment length in characters', 'number'],
+            ['paste_comment_anon_allowed', 'true', 'Allow anonymous comments on pastes', 'boolean'],
+        ];
+        const seedComment = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of commentSettings) seedComment.run(k, v, d, t);
+    } catch (e) { console.warn('[DB] paste_comments migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1445,6 +1477,58 @@ function getPasteStats() {
     return { total, textPastes, screenshots, forks, totalViews, totalCopies, totalLikes };
 }
 
+// ── Paste Comment helpers ────────────────────────────────────
+
+function createPasteComment({ paste_id, user_id, parent_id, anon_name, message, ip_address }) {
+    return run(
+        `INSERT INTO paste_comments (paste_id, user_id, parent_id, anon_name, message, ip_address)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [paste_id, user_id || null, parent_id || null, anon_name || null, message, ip_address || null]
+    );
+}
+
+function getPasteComments(pasteId, limit = 50, offset = 0) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.role
+        FROM paste_comments c
+        LEFT JOIN users u ON c.user_id = u.id
+        WHERE c.paste_id = ? AND c.is_deleted = 0 AND c.parent_id IS NULL
+        ORDER BY c.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [pasteId, limit, offset]);
+}
+
+function getPasteCommentReplies(parentId) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.role
+        FROM paste_comments c
+        LEFT JOIN users u ON c.user_id = u.id
+        WHERE c.parent_id = ? AND c.is_deleted = 0
+        ORDER BY c.created_at ASC
+    `, [parentId]);
+}
+
+function getPasteCommentById(commentId) {
+    return get('SELECT * FROM paste_comments WHERE id = ?', [commentId]);
+}
+
+function getPasteCommentCount(pasteId) {
+    const row = get('SELECT COUNT(*) as count FROM paste_comments WHERE paste_id = ? AND is_deleted = 0', [pasteId]);
+    return row ? row.count : 0;
+}
+
+function deletePasteComment(commentId) {
+    return run('UPDATE paste_comments SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [commentId]);
+}
+
+function getRecentPasteCommentsByIp(ip, seconds = 10) {
+    return all(`
+        SELECT * FROM paste_comments
+        WHERE ip_address = ? AND created_at > datetime('now', '-' || ? || ' seconds')
+        ORDER BY created_at DESC
+    `, [ip, seconds]);
+}
+
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
@@ -1507,4 +1591,8 @@ module.exports = {
     incrementPasteViews, updatePaste, deletePaste, getUserPastes,
     likePaste, unlikePaste, hasUserLikedPaste, incrementPasteCopies,
     countUserPastesToday, getLastPasteTime, deleteAllForks, getPasteStats,
+    // Paste Comments
+    createPasteComment, getPasteComments, getPasteCommentReplies,
+    getPasteCommentById, getPasteCommentCount, deletePasteComment,
+    getRecentPasteCommentsByIp,
 };

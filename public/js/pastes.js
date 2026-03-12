@@ -189,6 +189,7 @@ async function loadPasteViewer(slug) {
         const isAdmin = typeof currentUser !== 'undefined' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'global_mod');
         const isLoggedIn = typeof currentUser !== 'undefined' && !!currentUser;
         const userLiked = !!p.liked;
+        const paste_id_for_js = p.id;
 
         let meta;
         try { meta = JSON.parse(p.metadata); } catch { meta = {}; }
@@ -255,11 +256,39 @@ async function loadPasteViewer(slug) {
                 </div>
             </div>
             ${contentHtml}
+
+            <div class="paste-comments-section" id="paste-comments-section">
+                <div class="paste-comments-header">
+                    <h3><i class="fa-solid fa-comments"></i> Comments <span id="paste-comment-count"></span></h3>
+                </div>
+                <div class="paste-comment-form" id="paste-comment-form">
+                    ${isLoggedIn ? `
+                        <div class="paste-comment-form-inner">
+                            <div class="comment-avatar" style="background:${escapeHtml(currentUser.profile_color || '#c0965c')}">${(currentUser.username || '?')[0].toUpperCase()}</div>
+                            <input type="text" id="paste-comment-input" placeholder="Write a comment..." maxlength="2000"
+                                   onkeydown="if(event.key==='Enter')postPasteComment('${p.slug}', ${paste_id_for_js})">
+                            <button class="btn btn-primary btn-sm" onclick="postPasteComment('${p.slug}', ${paste_id_for_js})">Post</button>
+                        </div>
+                    ` : `
+                        <div class="paste-comment-form-inner paste-comment-anon-form">
+                            <div class="comment-avatar" style="background:#666">?</div>
+                            <input type="text" id="paste-comment-anon-name" placeholder="Name (optional)" maxlength="32" style="max-width:140px">
+                            <input type="text" id="paste-comment-input" placeholder="Write a comment..." maxlength="2000"
+                                   onkeydown="if(event.key==='Enter')postPasteComment('${p.slug}', ${paste_id_for_js})">
+                            <button class="btn btn-primary btn-sm" onclick="postPasteComment('${p.slug}', ${paste_id_for_js})">Post</button>
+                        </div>
+                    `}
+                </div>
+                <div id="paste-comments-list"></div>
+            </div>
         `;
 
         // Store content for clipboard
         container._pasteContent = p.content || '';
         container._pasteSlug = p.slug;
+
+        // Load comments
+        loadPasteComments(p.slug, paste_id_for_js, p.user_id);
     } catch (err) {
         container.innerHTML = `
             <div class="empty-state" style="text-align:center; padding:48px;">
@@ -336,6 +365,180 @@ async function renamePaste(slug) {
         titleEl.textContent = data.paste?.title || newTitle.trim();
     } catch (err) {
         toast(err.message || 'Failed to rename', 'error');
+    }
+}
+
+// ═════════════════════════════════════════════════════════════
+// ── Paste Comments ──────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+
+// Current paste context for comments (set by loadPasteComments)
+let _pasteCommentCtx = {};
+
+async function loadPasteComments(slug, pasteId, pasteOwnerId) {
+    _pasteCommentCtx = { slug, pasteId, pasteOwnerId };
+
+    const countEl = document.getElementById('paste-comment-count');
+    const listEl = document.getElementById('paste-comments-list');
+    if (!listEl) return;
+
+    try {
+        const data = await api(`/pastes/${slug}/comments`);
+        const comments = data.comments || [];
+        const total = data.total || 0;
+
+        if (countEl) countEl.textContent = total > 0 ? `(${total})` : '';
+
+        if (!comments.length) {
+            listEl.innerHTML = '<div class="comments-empty"><i class="fa-solid fa-comment-dots" style="font-size:1.5rem;margin-bottom:8px"></i><p>No comments yet. Be the first!</p></div>';
+            return;
+        }
+
+        listEl.innerHTML = comments.map(c => renderPasteComment(c)).join('');
+    } catch (e) {
+        listEl.innerHTML = '<p class="muted">Failed to load comments</p>';
+    }
+}
+
+function renderPasteComment(c) {
+    const isAnon = !c.user_id;
+    const name = isAnon ? (c.anon_name || 'Anonymous') : (c.display_name || c.username || 'Unknown');
+    const initial = name[0].toUpperCase();
+    const color = isAnon ? '#666' : (c.profile_color || '#c0965c');
+    const edited = c.updated_at && c.updated_at !== c.created_at;
+
+    const isLoggedIn = typeof currentUser !== 'undefined' && !!currentUser;
+    const isOwnComment = isLoggedIn && c.user_id && c.user_id === currentUser.id;
+    const isPasteOwner = isLoggedIn && _pasteCommentCtx.pasteOwnerId && currentUser.id === _pasteCommentCtx.pasteOwnerId;
+    const isAdmin = isLoggedIn && (currentUser.role === 'admin' || currentUser.role === 'global_mod' || currentUser.capabilities?.moderate_global);
+
+    let actionsHtml = '';
+    // Reply button — anyone can reply (logged-in users or anon)
+    if (!c.parent_id) {
+        actionsHtml += `<button onclick="showPasteReplyForm(${c.id})"><i class="fa-solid fa-reply"></i> Reply</button>`;
+    }
+    // Delete — comment author, paste owner, or admin
+    if (isOwnComment || isPasteOwner || isAdmin) {
+        actionsHtml += `<button onclick="deletePasteComment(${c.id})"><i class="fa-solid fa-trash"></i> Delete</button>`;
+    }
+
+    let repliesHtml = '';
+    if (c.replies && c.replies.length) {
+        repliesHtml = `<div class="comment-replies">${c.replies.map(r => renderPasteComment(r)).join('')}</div>`;
+    }
+
+    const anonBadge = isAnon ? '<span class="badge" style="font-size:0.65rem;padding:1px 4px;background:#555;margin-left:4px">ANON</span>' : '';
+    const adminBadge = !isAnon && c.role === 'admin' ? '<span class="badge" style="font-size:0.7rem;padding:1px 5px">ADMIN</span>' : '';
+    const avatarHtml = !isAnon && c.avatar_url
+        ? `<img src="${escapeHtml(c.avatar_url)}" class="comment-avatar" style="width:32px;height:32px;border-radius:50%;object-fit:cover" alt="">`
+        : `<div class="comment-avatar" style="background:${escapeHtml(color)}">${initial}</div>`;
+
+    return `
+        <div class="comment-item" id="paste-comment-${c.id}">
+            ${avatarHtml}
+            <div class="comment-body">
+                <div class="comment-meta">
+                    <span class="comment-author" style="color:${escapeHtml(color)}">${escapeHtml(name)}</span>${anonBadge}${adminBadge}
+                    <span class="comment-date">${formatTimeAgo(c.created_at)}${edited ? ' (edited)' : ''}</span>
+                </div>
+                <div class="comment-text">${escapeHtml(c.message)}</div>
+                <div class="comment-actions">${actionsHtml}</div>
+                <div id="paste-reply-form-${c.id}"></div>
+                ${repliesHtml}
+            </div>
+        </div>`;
+}
+
+async function postPasteComment(slug, pasteId) {
+    const input = document.getElementById('paste-comment-input');
+    if (!input) return;
+
+    const message = input.value.trim();
+    if (!message) return toast('Write a comment first', 'error');
+
+    const body = { message };
+
+    // Include anon_name if not logged in
+    const isLoggedIn = typeof currentUser !== 'undefined' && !!currentUser;
+    if (!isLoggedIn) {
+        const nameInput = document.getElementById('paste-comment-anon-name');
+        if (nameInput) body.anon_name = nameInput.value.trim();
+    }
+
+    try {
+        await api(`/pastes/${slug}/comments`, {
+            method: 'POST',
+            body,
+        });
+        input.value = '';
+        toast('Comment posted', 'success');
+        loadPasteComments(slug, pasteId, _pasteCommentCtx.pasteOwnerId);
+    } catch (e) {
+        toast(e.message || 'Failed to post comment', 'error');
+    }
+}
+
+function showPasteReplyForm(parentId) {
+    const container = document.getElementById(`paste-reply-form-${parentId}`);
+    if (!container) return;
+
+    // Toggle off if already open
+    if (container.innerHTML) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const isLoggedIn = typeof currentUser !== 'undefined' && !!currentUser;
+    const slug = _pasteCommentCtx.slug;
+
+    container.innerHTML = `
+        <div class="reply-form">
+            ${!isLoggedIn ? `<input type="text" id="paste-reply-anon-name-${parentId}" placeholder="Name" maxlength="32" style="max-width:100px">` : ''}
+            <input type="text" id="paste-reply-input-${parentId}" placeholder="Write a reply..." maxlength="2000"
+                   onkeydown="if(event.key==='Enter')postPasteReply(${parentId})">
+            <button class="btn btn-small btn-primary" onclick="postPasteReply(${parentId})">Reply</button>
+        </div>`;
+    document.getElementById(`paste-reply-input-${parentId}`)?.focus();
+}
+
+async function postPasteReply(parentId) {
+    const input = document.getElementById(`paste-reply-input-${parentId}`);
+    if (!input) return;
+
+    const message = input.value.trim();
+    if (!message) return;
+
+    const slug = _pasteCommentCtx.slug;
+    const body = { message, parent_id: parentId };
+
+    const isLoggedIn = typeof currentUser !== 'undefined' && !!currentUser;
+    if (!isLoggedIn) {
+        const nameInput = document.getElementById(`paste-reply-anon-name-${parentId}`);
+        if (nameInput) body.anon_name = nameInput.value.trim();
+    }
+
+    try {
+        await api(`/pastes/${slug}/comments`, {
+            method: 'POST',
+            body,
+        });
+        toast('Reply posted', 'success');
+        loadPasteComments(slug, _pasteCommentCtx.pasteId, _pasteCommentCtx.pasteOwnerId);
+    } catch (e) {
+        toast(e.message || 'Failed to post reply', 'error');
+    }
+}
+
+async function deletePasteComment(commentId) {
+    if (!confirm('Delete this comment?')) return;
+    const slug = _pasteCommentCtx.slug;
+
+    try {
+        await api(`/pastes/${slug}/comments/${commentId}`, { method: 'DELETE' });
+        toast('Comment deleted', 'success');
+        loadPasteComments(slug, _pasteCommentCtx.pasteId, _pasteCommentCtx.pasteOwnerId);
+    } catch (e) {
+        toast(e.message || 'Failed to delete comment', 'error');
     }
 }
 

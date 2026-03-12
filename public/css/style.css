@@ -5216,3 +5216,62 @@ body.theme-light .user-dropdown {
     .image-censor-toolbar { flex-direction: column; align-items: stretch; }
     .image-censor-tools, .image-censor-actions { justify-content: center; }
 }
+
+/* ── Paste Comments ──────────────────────────────────────── */
+.paste-comments-section {
+    margin-top: 24px;
+    padding: 20px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius, 12px);
+}
+.paste-comments-header h3 {
+    font-size: 1rem;
+    color: var(--text-primary);
+    margin: 0 0 16px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.paste-comments-header h3 i {
+    color: var(--accent);
+}
+.paste-comment-form {
+    margin-bottom: 16px;
+}
+.paste-comment-form-inner {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.paste-comment-form-inner input[type="text"] {
+    flex: 1;
+    background: var(--bg-input, var(--bg-primary));
+    border: 1px solid var(--border);
+    border-radius: var(--radius, 8px);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    font-size: 0.88rem;
+}
+.paste-comment-form-inner input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+.paste-comment-form-inner .comment-avatar {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+}
+.paste-comment-anon-form input#paste-comment-anon-name {
+    flex: 0 0 auto;
+    max-width: 140px;
+}
+@media (max-width: 600px) {
+    .paste-comment-form-inner {
+        flex-wrap: wrap;
+    }
+    .paste-comment-anon-form input#paste-comment-anon-name {
+        max-width: 100%;
+        flex: 1 1 100%;
+    }
+}

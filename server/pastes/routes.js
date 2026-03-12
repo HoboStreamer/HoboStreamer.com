@@ -598,4 +598,182 @@ router.post('/:slug/copy', optionalAuth, (req, res) => {
     }
 });
 
+// ═════════════════════════════════════════════════════════════
+// ── Paste Comments ──────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+
+// Rate-limit state: IP → timestamp of last comment
+const commentCooldowns = new Map();
+
+// Cleanup stale cooldown entries every 10 minutes
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, ts] of commentCooldowns) {
+        if (now - ts > 120_000) commentCooldowns.delete(ip);
+    }
+}, 600_000);
+
+/**
+ * GET /:slug/comments — List comments for a paste
+ */
+router.get('/:slug/comments', optionalAuth, (req, res) => {
+    try {
+        const paste = db.get('SELECT id FROM pastes WHERE slug = ?', [req.params.slug]);
+        if (!paste) return res.status(404).json({ error: 'Paste not found' });
+
+        const limit = Math.min(parseInt(req.query.limit || '50'), 100);
+        const offset = parseInt(req.query.offset || '0');
+
+        const comments = db.getPasteComments(paste.id, limit, offset);
+        const total = db.getPasteCommentCount(paste.id);
+
+        // Attach replies to each top-level comment
+        for (const c of comments) {
+            c.replies = db.getPasteCommentReplies(c.id);
+            c.reply_count = c.replies.length;
+        }
+
+        res.json({ comments, total });
+    } catch (err) {
+        console.error('[PasteComments] List error:', err.message);
+        res.status(500).json({ error: 'Failed to load comments' });
+    }
+});
+
+/**
+ * POST /:slug/comments — Add a comment (logged-in or anon)
+ *
+ * Body: { message, parent_id?, anon_name? }
+ * Anti-spam: IP cooldown, length limit, duplicate check, banned IP check
+ */
+router.post('/:slug/comments', optionalAuth, (req, res) => {
+    try {
+        const paste = db.get('SELECT id, user_id FROM pastes WHERE slug = ?', [req.params.slug]);
+        if (!paste) return res.status(404).json({ error: 'Paste not found' });
+
+        const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+        const isLoggedIn = !!req.user;
+
+        // ── Anon check ──────────────────────────────────────
+        if (!isLoggedIn) {
+            const anonAllowed = db.getSetting('paste_comment_anon_allowed');
+            if (anonAllowed === 'false') {
+                return res.status(401).json({ error: 'You must be logged in to comment' });
+            }
+        }
+
+        // ── IP ban check ────────────────────────────────────
+        if (db.isIpBanned && db.isIpBanned(ip)) {
+            return res.status(403).json({ error: 'You are not allowed to comment' });
+        }
+
+        // ── Message validation ──────────────────────────────
+        const message = (req.body.message || '').trim();
+        const maxLen = parseInt(db.getSetting('paste_comment_max_length') || '2000');
+        if (!message) return res.status(400).json({ error: 'Comment cannot be empty' });
+        if (message.length > maxLen) {
+            return res.status(400).json({ error: `Comment must be under ${maxLen} characters` });
+        }
+
+        // ── Anon name validation ────────────────────────────
+        let anonName = null;
+        if (!isLoggedIn) {
+            anonName = (req.body.anon_name || '').trim().substring(0, 32) || 'Anonymous';
+            // Sanitize — alphanumeric, spaces, underscores, hyphens only
+            anonName = anonName.replace(/[^a-zA-Z0-9 _\-]/g, '').trim() || 'Anonymous';
+        }
+
+        // ── Rate limit (IP-based cooldown) ──────────────────
+        const cooldownSec = parseInt(db.getSetting('paste_comment_cooldown_seconds') || '10');
+        const lastComment = commentCooldowns.get(ip);
+        if (lastComment && (Date.now() - lastComment) < cooldownSec * 1000) {
+            const wait = Math.ceil((cooldownSec * 1000 - (Date.now() - lastComment)) / 1000);
+            return res.status(429).json({ error: `Please wait ${wait}s before commenting again` });
+        }
+
+        // ── Flood detection (multiple recent comments from same IP) ──
+        const recentFromIp = db.getRecentPasteCommentsByIp(ip, 60);
+        if (recentFromIp.length >= 5) {
+            return res.status(429).json({ error: 'Too many comments. Please slow down.' });
+        }
+
+        // ── Duplicate detection ─────────────────────────────
+        if (recentFromIp.length > 0 && recentFromIp[0].message === message) {
+            return res.status(400).json({ error: 'Duplicate comment' });
+        }
+
+        // ── Parent comment validation ───────────────────────
+        const parentId = req.body.parent_id ? parseInt(req.body.parent_id) : null;
+        if (parentId) {
+            const parent = db.getPasteCommentById(parentId);
+            if (!parent || parent.paste_id !== paste.id) {
+                return res.status(400).json({ error: 'Invalid parent comment' });
+            }
+            // Prevent deeply nested replies — only allow replies to top-level
+            if (parent.parent_id) {
+                return res.status(400).json({ error: 'Cannot reply to a reply — reply to the original comment instead' });
+            }
+        }
+
+        // ── Create comment ──────────────────────────────────
+        const result = db.createPasteComment({
+            paste_id: paste.id,
+            user_id: isLoggedIn ? req.user.id : null,
+            parent_id: parentId,
+            anon_name: anonName,
+            message,
+            ip_address: ip,
+        });
+
+        // Record cooldown
+        commentCooldowns.set(ip, Date.now());
+
+        // Return the newly created comment with user data
+        const comment = db.get(`
+            SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.role
+            FROM paste_comments c
+            LEFT JOIN users u ON c.user_id = u.id
+            WHERE c.id = ?
+        `, [result.lastInsertRowid]);
+
+        res.status(201).json({ comment });
+    } catch (err) {
+        console.error('[PasteComments] Create error:', err.message);
+        res.status(500).json({ error: 'Failed to post comment' });
+    }
+});
+
+/**
+ * DELETE /:slug/comments/:commentId — Delete a comment
+ *
+ * Allowed by: comment author, paste owner/poster, or site admin
+ */
+router.delete('/:slug/comments/:commentId', optionalAuth, (req, res) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: 'Login required' });
+
+        const paste = db.get('SELECT id, user_id FROM pastes WHERE slug = ?', [req.params.slug]);
+        if (!paste) return res.status(404).json({ error: 'Paste not found' });
+
+        const comment = db.getPasteCommentById(parseInt(req.params.commentId));
+        if (!comment || comment.paste_id !== paste.id) {
+            return res.status(404).json({ error: 'Comment not found' });
+        }
+
+        const isAuthor = comment.user_id && comment.user_id === req.user.id;
+        const isPasteOwner = paste.user_id && paste.user_id === req.user.id;
+        const isAdmin = req.user.role === 'admin';
+
+        if (!isAuthor && !isPasteOwner && !isAdmin) {
+            return res.status(403).json({ error: 'Not authorized to delete this comment' });
+        }
+
+        db.deletePasteComment(comment.id);
+        res.json({ message: 'Comment deleted' });
+    } catch (err) {
+        console.error('[PasteComments] Delete error:', err.message);
+        res.status(500).json({ error: 'Failed to delete comment' });
+    }
+});
+
 module.exports = router;
