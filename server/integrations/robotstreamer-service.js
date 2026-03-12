@@ -615,7 +615,8 @@ class RobotStreamerService {
 
         upstream.on('close', (code, reason) => {
             const reasonStr = reason?.toString() || 'upstream closed';
-            console.warn(`[RS Publish] Upstream closed: code=${code} reason=${reasonStr}`);
+            const sessionAge = Date.now() - publishEntry.connectedAt;
+            console.warn(`[RS Publish] Upstream closed: code=${code} reason=${reasonStr} (session age: ${sessionAge}ms)`);
             if (ws.readyState === WebSocket.OPEN) {
                 ws.close(code || 1006, reasonStr);
             }

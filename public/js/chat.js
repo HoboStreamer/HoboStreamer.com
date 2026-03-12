@@ -1409,10 +1409,26 @@ function _processTTSAudioQueue() {
         const blob = new Blob([bytes], { type: msg.mimeType });
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
-        audio.volume = (chatSettings.ttsVolume || 80) / 100;
-        audio.onended = () => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); };
-        audio.play().catch(() => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); });
+        const volume = (chatSettings.ttsVolume || 80) / 100;
+        console.log('[TTS] Chat audio volume:', volume, '(raw setting:', chatSettings.ttsVolume, ')');
+        // Use Web Audio API GainNode for volume — Audio.volume is unreliable on PipeWire/Steam Deck
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const source = ctx.createMediaElementSource(audio);
+            const gain = ctx.createGain();
+            gain.gain.value = volume;
+            source.connect(gain).connect(ctx.destination);
+            const cleanup = () => { URL.revokeObjectURL(url); try { ctx.close(); } catch {} _ttsAudioPlaying = false; _processTTSAudioQueue(); };
+            audio.onended = cleanup;
+            audio.onerror = cleanup;
+            audio.play().catch(cleanup);
+        } catch {
+            // Fallback to Audio.volume if Web Audio API unavailable
+            audio.volume = volume;
+            audio.onended = () => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); };
+            audio.onerror = () => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); };
+            audio.play().catch(() => { URL.revokeObjectURL(url); _ttsAudioPlaying = false; _processTTSAudioQueue(); });
+        }
     } catch {
         _ttsAudioPlaying = false;
         _processTTSAudioQueue();

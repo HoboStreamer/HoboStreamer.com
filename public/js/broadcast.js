@@ -2075,7 +2075,9 @@ function applyManualGain(streamId) {
 let _robotStreamerMediasoupModulePromise = null;
 let _robotStreamerIntegrationPromise = null;
 const RS_RECONNECT_BASE_DELAY = 3000;
-const RS_RECONNECT_MAX_DELAY = 30000;
+const RS_RECONNECT_MAX_DELAY = 60000;
+const RS_STABLE_CONNECTION_MS = 30000; // connection must survive 30s to reset backoff
+const RS_MAX_SHORT_LIVED_RETRIES = 5;   // give up after this many consecutive short-lived sessions
 
 function canUseRobotStreamerRestream() {
     const rs = broadcastState.robotStreamer;
@@ -2299,11 +2301,22 @@ async function startRobotStreamerRestream(streamId) {
             transport,
             videoProducer: null,
             audioProducer: null,
-            reconnectDelay: RS_RECONNECT_BASE_DELAY,
             reconnectTimer: null,
             intentionalClose: false,
+            connectedAt: Date.now(),
         };
         ss.robotStreamer = session;
+
+        // Start a stability timer — if connection survives RS_STABLE_CONNECTION_MS,
+        // reset the backoff delay and consecutive failure counter.
+        ss._rsStabilityTimer = setTimeout(() => {
+            ss._rsStabilityTimer = null;
+            if (ss.robotStreamer === session && session.active) {
+                console.log('[RS Restream] Connection stable for', RS_STABLE_CONNECTION_MS / 1000, 's — resetting backoff');
+                ss._rsReconnectDelay = RS_RECONNECT_BASE_DELAY;
+                ss._rsConsecutiveShortLived = 0;
+            }
+        }, RS_STABLE_CONNECTION_MS);
 
         console.log('[RS Restream] Step 7/7: Producing tracks…');
         setRobotStreamerStatus('Sending media to RobotStreamer…', 'info', 'bc-rsLiveStatus');
@@ -2350,12 +2363,15 @@ async function startRobotStreamerRestream(streamId) {
 
         ws.addEventListener('close', (ev) => {
             if (ss.robotStreamer === session) {
+                const sessionAge = Date.now() - (session.connectedAt || 0);
                 session.active = false;
                 if (!session.intentionalClose) {
-                    console.warn('[RS Restream] WebSocket closed unexpectedly — code:', ev.code, 'reason:', ev.reason || '(none)');
+                    console.warn(`[RS Restream] WebSocket closed unexpectedly — code: ${ev.code}, reason: ${ev.reason || '(none)'}, session age: ${sessionAge}ms`);
                     const detail = ev.reason ? ` — ${ev.reason}` : '';
                     setRobotStreamerStatus(`RobotStreamer restream disconnected${detail} — reconnecting…`, 'warning', 'bc-rsLiveStatus');
                     scheduleRobotStreamerReconnect(streamId);
+                } else {
+                    console.log(`[RS Restream] WebSocket closed intentionally — code: ${ev.code}, session age: ${sessionAge}ms`);
                 }
             }
         });
@@ -2390,12 +2406,37 @@ function scheduleRobotStreamerReconnect(streamId) {
     const ss = getStreamState(streamId);
     if (!ss?.localStream || !canUseRobotStreamerRestream()) return;
 
+    // Track short-lived sessions (connection lasted < RS_STABLE_CONNECTION_MS)
     const session = ss.robotStreamer;
-    const delay = session?.reconnectDelay || RS_RECONNECT_BASE_DELAY;
+    if (session?.connectedAt) {
+        const sessionAge = Date.now() - session.connectedAt;
+        if (sessionAge < RS_STABLE_CONNECTION_MS) {
+            ss._rsConsecutiveShortLived = (ss._rsConsecutiveShortLived || 0) + 1;
+        }
+    }
+
+    // Cancel stability timer since connection is being torn down
+    if (ss._rsStabilityTimer) { clearTimeout(ss._rsStabilityTimer); ss._rsStabilityTimer = null; }
+
+    // Give up after too many consecutive short-lived sessions
+    if ((ss._rsConsecutiveShortLived || 0) >= RS_MAX_SHORT_LIVED_RETRIES) {
+        console.warn(`[RS Restream] Giving up after ${ss._rsConsecutiveShortLived} consecutive short-lived sessions`);
+        setRobotStreamerStatus(
+            `RobotStreamer restream failed after ${ss._rsConsecutiveShortLived} attempts — click Retry to try again.`,
+            'error', 'bc-rsLiveStatus'
+        );
+        ss._rsReconnectDelay = RS_RECONNECT_BASE_DELAY; // reset for manual retry
+        return;
+    }
+
+    // Use stream-state-level delay so it persists across sessions
+    const delay = ss._rsReconnectDelay || RS_RECONNECT_BASE_DELAY;
     const nextDelay = Math.min(delay * 1.5, RS_RECONNECT_MAX_DELAY);
+    ss._rsReconnectDelay = nextDelay;
+
+    console.log(`[RS Restream] Scheduling reconnect in ${delay}ms (attempt ${ss._rsConsecutiveShortLived || 0}/${RS_MAX_SHORT_LIVED_RETRIES}, next delay: ${nextDelay}ms)`);
 
     // Dedup: clear any previously scheduled reconnect for this stream
-    // Check both storage locations to prevent dual-reconnect race
     if (ss._rsReconnectTimer) { clearTimeout(ss._rsReconnectTimer); ss._rsReconnectTimer = null; }
     if (session?.reconnectTimer) { clearTimeout(session.reconnectTimer); session.reconnectTimer = null; }
 
@@ -2410,18 +2451,13 @@ function scheduleRobotStreamerReconnect(streamId) {
         await stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
 
         // Start fresh
-        const newSession = await startRobotStreamerRestream(streamId);
-        // Carry over escalated delay if it failed again
-        if (!newSession && currSs.robotStreamer) {
-            currSs.robotStreamer.reconnectDelay = nextDelay;
-        }
+        await startRobotStreamerRestream(streamId);
     }, delay);
 
     // Store timer on BOTH stream state and session for reliable dedup
     ss._rsReconnectTimer = timer;
     if (session) {
         session.reconnectTimer = timer;
-        session.reconnectDelay = nextDelay;
     }
 }
 
@@ -2477,6 +2513,8 @@ async function stopRobotStreamerRestream(streamId, { quiet = false } = {}) {
     if (!session) return;
 
     session.intentionalClose = true;
+    // Cancel stability timer
+    if (ss._rsStabilityTimer) { clearTimeout(ss._rsStabilityTimer); ss._rsStabilityTimer = null; }
     try { session.videoProducer?.close?.(); } catch {}
     try { session.audioProducer?.close?.(); } catch {}
     try { session.transport?.close?.(); } catch {}
@@ -2844,8 +2882,21 @@ function testTTS() {
     if (mode === 'self') {
         speakBroadcastTTS('This is a TTS test message from HoboStreamer');
     } else {
-        // For site-wide, play a test via the server
-        speakBroadcastTTS('This is a TTS test message from HoboStreamer');
+        // For site-wide, request server synthesis so we hear the actual espeak-ng output
+        api('/tts/admin/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: 'This is a TTS test message from HoboStreamer' }),
+        }).then(result => {
+            if (result?.audio && result?.mimeType) {
+                playBroadcastTTSAudio(result);
+            } else {
+                toast('TTS test: no audio returned from server', 'warning');
+            }
+        }).catch(err => {
+            console.warn('[TTS] Server test failed, falling back to browser TTS:', err.message);
+            speakBroadcastTTS('This is a TTS test message from HoboStreamer');
+        });
     }
 }
 function cancelTTS() {
@@ -2866,6 +2917,7 @@ function speakBroadcastTTS(text, username) {
 /** Play server-synthesized TTS audio on the broadcast page (site-wide mode) */
 function playBroadcastTTSAudio(msg) {
     const s = broadcastState.settings;
+    console.log('[TTS] playBroadcastTTSAudio called — mode:', s.ttsMode, 'hasAudio:', !!msg.audio, 'mimeType:', msg.mimeType);
     if (s.ttsMode !== 'site-wide') return;
     if (!msg.audio || !msg.mimeType) return;
     const maxQueue = parseInt(s.ttsQueue) || 0;
@@ -2886,10 +2938,26 @@ function _processBcTtsAudioQueue() {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         const s = broadcastState.settings;
-        audio.volume = (s.ttsVolume || 800) / 1000;
-        audio.onended = () => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); };
-        audio.play().catch(() => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); });
+        const volume = (s.ttsVolume || 800) / 1000;
+        console.log('[TTS] Broadcast audio volume:', volume, '(raw setting:', s.ttsVolume, ')');
+        // Use Web Audio API GainNode for volume — Audio.volume is unreliable on PipeWire/Steam Deck
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const source = ctx.createMediaElementSource(audio);
+            const gain = ctx.createGain();
+            gain.gain.value = volume;
+            source.connect(gain).connect(ctx.destination);
+            const cleanup = () => { URL.revokeObjectURL(url); try { ctx.close(); } catch {} _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); };
+            audio.onended = cleanup;
+            audio.onerror = cleanup;
+            audio.play().catch(cleanup);
+        } catch {
+            // Fallback to Audio.volume if Web Audio API unavailable
+            audio.volume = volume;
+            audio.onended = () => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); };
+            audio.onerror = () => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); };
+            audio.play().catch(() => { URL.revokeObjectURL(url); _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); });
+        }
     } catch {
         _bcTtsAudioPlaying = false;
         _processBcTtsAudioQueue();
