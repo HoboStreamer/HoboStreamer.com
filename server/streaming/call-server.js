@@ -25,7 +25,7 @@ const chatServer = require('../chat/chat-server');
 const cosmetics = require('../monetization/cosmetics');
 
 const WS_HEARTBEAT_MS = 30000;
-const MAX_PARTICIPANTS = 15;
+const MAX_PARTICIPANTS = 8;
 const PUBLIC_CHANNEL_ID = 'public';
 
 class CallServer {

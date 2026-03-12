@@ -595,6 +595,11 @@ async function joinCall() {
                 }
             }
         } else {
+            // Not broadcasting or clone failed — acquire mic directly
+            // Warn if broadcasting: a new getUserMedia might steal the mic from the stream
+            if (typeof isStreaming === 'function' && isStreaming()) {
+                console.warn('[Call] Broadcasting is active but could not clone audio — new getUserMedia may cause device contention');
+            }
             const constraints = { audio: { deviceId: callState.selectedMic !== 'default' ? { exact: callState.selectedMic } : undefined } };
 
             // Camera: only enabled if the user explicitly opted in
@@ -840,6 +845,13 @@ function _connectCallWs() {
         callState.ws = null;
     }
 
+    // Clean up stale peer connections from the previous WS session
+    // so the new welcome message starts from a clean state
+    for (const [peerId] of callState.peers) {
+        _closePeer(peerId);
+    }
+    callState.peers.clear();
+
     callState.ws = new WebSocket(url);
 
     callState.ws.onopen = () => {
@@ -895,14 +907,15 @@ function _handleCallMessage(msg) {
                     // Small room — create immediately
                     others.forEach(p => _createPeerConnection(p.peerId, true, p));
                 } else {
-                    // Larger room — stagger 80ms apart to keep the UI responsive
+                    // Larger room — stagger 200ms apart to keep the UI responsive
+                    // and avoid overwhelming the network with parallel ICE negotiations
                     others.forEach((p, i) => {
                         if (i === 0) {
                             _createPeerConnection(p.peerId, true, p);
                         } else {
                             setTimeout(() => {
                                 if (callState.joined) _createPeerConnection(p.peerId, true, p);
-                            }, i * 80);
+                            }, i * 200);
                         }
                     });
                 }
@@ -1173,31 +1186,93 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
         }
     };
 
-    // Connection state
+    // Connection state — handle disconnected (transient) vs failed (permanent)
     pc.oniceconnectionstatechange = () => {
-        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+        const state = pc.iceConnectionState;
+        if (state === 'disconnected') {
+            // Transient network glitch — attempt ICE restart after 4s grace period
+            console.warn(`[Call] Peer ${peerId} ICE disconnected — will attempt restart`);
+            peer._disconnectTimer = setTimeout(() => {
+                if (!callState.joined) return;
+                const curState = peer.pc?.iceConnectionState;
+                if (curState === 'disconnected' || curState === 'failed') {
+                    console.log(`[Call] Attempting ICE restart for peer ${peerId}`);
+                    try {
+                        peer.pc.restartIce();
+                        peer.pc.createOffer({ iceRestart: true }).then(offer => {
+                            return peer.pc.setLocalDescription(offer);
+                        }).then(() => {
+                            _sendCallMsg({ type: 'offer', targetPeerId: peerId, sdp: peer.pc.localDescription });
+                        }).catch(err => {
+                            console.warn(`[Call] ICE restart offer failed for ${peerId}:`, err.message);
+                            _closePeer(peerId);
+                            callState.peers.delete(peerId);
+                            _scheduleRender();
+                        });
+                    } catch {
+                        _closePeer(peerId);
+                        callState.peers.delete(peerId);
+                        _scheduleRender();
+                    }
+                }
+            }, 4000);
+        } else if (state === 'connected' || state === 'completed') {
+            if (peer._disconnectTimer) { clearTimeout(peer._disconnectTimer); peer._disconnectTimer = null; }
+        } else if (state === 'failed') {
+            if (peer._disconnectTimer) { clearTimeout(peer._disconnectTimer); peer._disconnectTimer = null; }
+            // One ICE restart attempt before giving up
+            if (!peer._iceRestartAttempted) {
+                peer._iceRestartAttempted = true;
+                console.log(`[Call] Peer ${peerId} ICE failed — attempting one restart`);
+                try {
+                    peer.pc.restartIce();
+                    peer.pc.createOffer({ iceRestart: true }).then(offer => {
+                        return peer.pc.setLocalDescription(offer);
+                    }).then(() => {
+                        _sendCallMsg({ type: 'offer', targetPeerId: peerId, sdp: peer.pc.localDescription });
+                    }).catch(() => {
+                        _closePeer(peerId);
+                        callState.peers.delete(peerId);
+                        _scheduleRender();
+                    });
+                } catch {
+                    _closePeer(peerId);
+                    callState.peers.delete(peerId);
+                    _scheduleRender();
+                }
+            } else {
+                _closePeer(peerId);
+                callState.peers.delete(peerId);
+                _scheduleRender();
+            }
+        } else if (state === 'closed') {
+            if (peer._disconnectTimer) { clearTimeout(peer._disconnectTimer); peer._disconnectTimer = null; }
             _closePeer(peerId);
             callState.peers.delete(peerId);
             _scheduleRender();
         }
     };
 
-    // Negotiation needed — the initiator creates and sends the offer
-    if (initiator) {
-        pc.onnegotiationneeded = async () => {
-            try {
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                _sendCallMsg({
-                    type: 'offer',
-                    targetPeerId: peerId,
-                    sdp: pc.localDescription,
-                });
-            } catch (err) {
-                console.error('[Call] Offer creation failed:', err);
-            }
-        };
-    }
+    // Negotiation needed — set on ALL peer connections so track additions
+    // (e.g. camera toggle) trigger renegotiation from either side
+    peer._negotiating = false;
+    pc.onnegotiationneeded = async () => {
+        if (peer._negotiating) return; // prevent re-entrant negotiation
+        peer._negotiating = true;
+        try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            _sendCallMsg({
+                type: 'offer',
+                targetPeerId: peerId,
+                sdp: pc.localDescription,
+            });
+        } catch (err) {
+            console.error('[Call] Offer creation failed:', err);
+        } finally {
+            peer._negotiating = false;
+        }
+    };
 }
 
 async function _handleOffer(msg) {
@@ -1253,6 +1328,7 @@ function _closePeer(peerId) {
     if (callState.popoutPeerId === peerId) {
         _closeCallVideoPopout();
     }
+    if (peer._disconnectTimer) { clearTimeout(peer._disconnectTimer); peer._disconnectTimer = null; }
     if (peer.pc) {
         peer.pc.onicecandidate = null;
         peer.pc.ontrack = null;
@@ -2259,6 +2335,11 @@ async function _populateCallDevices() {
 /** Switch microphone while in an active call */
 async function switchCallMic(deviceId) {
     if (!callState.joined || !callState.localStream) return;
+    // Prevent mic switch when sharing broadcast audio — would steal the mic from the stream
+    if (callState._sharedBroadcastAudio) {
+        _callSystemMessage('Cannot switch mic while sharing broadcast audio');
+        return;
+    }
     callState.selectedMic = deviceId;
     try {
         const newStream = await navigator.mediaDevices.getUserMedia({
