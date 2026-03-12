@@ -1502,6 +1502,12 @@ function _populateCreateDeviceDropdowns(devices) {
             opt.textContent = d.label || `Camera ${d.deviceId.slice(0, 8)}`;
             camSelect.appendChild(opt);
         });
+        // Restore saved camera selection
+        const savedCam = localStorage.getItem('bc-last-camera');
+        if (savedCam && camSelect.querySelector(`option[value="${CSS.escape(savedCam)}"]`)) {
+            camSelect.value = savedCam;
+        }
+        camSelect.onchange = () => localStorage.setItem('bc-last-camera', camSelect.value);
     }
     if (audioSelect) {
         audioSelect.innerHTML = '<option value="default">Default</option>';
@@ -1511,6 +1517,12 @@ function _populateCreateDeviceDropdowns(devices) {
             opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
             audioSelect.appendChild(opt);
         });
+        // Restore saved microphone selection
+        const savedMic = localStorage.getItem('bc-last-audio');
+        if (savedMic && audioSelect.querySelector(`option[value="${CSS.escape(savedMic)}"]`)) {
+            audioSelect.value = savedMic;
+        }
+        audioSelect.onchange = () => localStorage.setItem('bc-last-audio', audioSelect.value);
     }
 }
 

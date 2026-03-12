@@ -99,6 +99,9 @@ router.post('/register', (req, res) => {
         if (!/^[a-zA-Z0-9_]+$/.test(username)) {
             return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
         }
+        if (/^anon\d*$/i.test(username)) {
+            return res.status(400).json({ error: 'That username is reserved for anonymous users' });
+        }
         if (password.length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
