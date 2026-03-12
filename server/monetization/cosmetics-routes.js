@@ -11,6 +11,7 @@
  */
 const express = require('express');
 const { requireAuth } = require('../auth/auth');
+const { isAdmin } = require('../auth/permissions');
 const cosmetics = require('./cosmetics');
 
 const router = express.Router();
@@ -45,7 +46,7 @@ router.get('/equipped/:userId', (req, res) => {
 router.post('/equip', requireAuth, (req, res) => {
     const { itemId } = req.body;
     if (!itemId) return res.status(400).json({ error: 'itemId required' });
-    const result = cosmetics.equipCosmetic(req.user.id, itemId);
+    const result = cosmetics.equipCosmetic(req.user.id, itemId, { isAdmin: isAdmin(req.user) });
     if (result.error) return res.status(400).json(result);
     res.json(result);
 });
