@@ -180,7 +180,7 @@ router.post('/register', (req, res) => {
                         if (username.toLowerCase() === 'patrick') {
                             tags.grantTag(user.id, 'cfo', 'migration');
                         }
-                    } catch { /* non-critical — tags table may not exist yet */ }
+                    } catch (err) { console.warn('[Auth] Tags migration error:', err.message); /* non-critical */ }
                 }
             }
         }

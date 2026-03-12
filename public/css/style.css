@@ -2139,15 +2139,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .controls-panel { padding: 8px; }
     .controls-header h3 { font-size: 0.9rem; }
 
-    /* Backdrop scrim when chat is open (tint the video area) */
-    body.mobile-chat-visible .ch-live-area::after {
-        content: '';
-        position: fixed;
-        inset: 0; bottom: 55vh;
-        background: rgba(0,0,0,0.4);
-        z-index: 899;
-        pointer-events: auto;
-    }
+    /* Mobile chat is open — no scrim over video, keep it visible */
 
     /* Offline global chat responsive */
     .offline-global-chat { height: 50vh; max-height: 350px; margin: 16px 12px; }
@@ -2245,9 +2237,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
         height: 50vh;
         max-height: 50vh;
     }
-    body.mobile-chat-visible .ch-live-area::after {
-        bottom: 50vh;
-    }
+    /* no scrim in portrait either */
 
     /* Compact info bar even more in portrait — minimal vertical footprint */
     .ch-info-bar {

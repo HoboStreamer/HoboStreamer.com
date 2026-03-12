@@ -180,8 +180,8 @@ class ChatServer {
             try {
                 const msg = JSON.parse(data.toString());
                 this.handleMessage(ws, msg);
-            } catch {
-                // Ignore malformed messages
+            } catch (err) {
+                console.warn('[Chat] Malformed message from', ws._clientIp || 'unknown', ':', err.message);
             }
         });
 
@@ -190,7 +190,8 @@ class ChatServer {
             this.broadcastUserCount(streamId);
         });
 
-        ws.on('error', () => {
+        ws.on('error', (err) => {
+            console.warn('[Chat] WebSocket error for', ws._clientIp || 'unknown', ':', err.message);
             this.clients.delete(ws);
         });
     }

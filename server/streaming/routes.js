@@ -253,6 +253,7 @@ router.get('/recent', (req, res) => {
         });
         res.json({ streams: enriched });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to list recent streams' });
     }
 });
@@ -263,6 +264,7 @@ router.get('/voice-channels', (req, res) => {
     try {
         res.json({ channels: callServer.listChannels() });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to list voice channels' });
     }
 });
@@ -273,6 +275,7 @@ router.get('/voice-channels/:channelId', (req, res) => {
         if (!ch) return res.status(404).json({ error: 'Channel not found' });
         res.json({ channel: ch });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to get voice channel' });
     }
 });
@@ -283,6 +286,7 @@ router.post('/voice-channels', requireAuth, (req, res) => {
         const ch = callServer.createChannel({ name, mode, createdBy: req.user.id, maxParticipants });
         res.status(201).json({ channel: ch });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to create voice channel' });
     }
 });
@@ -293,6 +297,7 @@ router.delete('/voice-channels/:channelId', requireAuth, (req, res) => {
         if (!ok) return res.status(403).json({ error: 'Cannot delete this channel' });
         res.json({ deleted: true });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to delete voice channel' });
     }
 });
@@ -449,6 +454,7 @@ router.put('/:id', requireAuth, (req, res) => {
         const updated = db.getStreamById(req.params.id);
         res.json({ stream: updated });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to update stream' });
     }
 });
@@ -489,6 +495,7 @@ router.delete('/:id', requireAuth, (req, res) => {
 
         res.json({ message: 'Stream ended' });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to end stream' });
     }
 });
@@ -541,6 +548,7 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
 
         res.json({ endpoint, stream_key: user.stream_key });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to get endpoint' });
     }
 });
@@ -558,6 +566,7 @@ router.post('/:id/heartbeat', requireAuth, (req, res) => {
         db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [stream.id]);
         res.json({ ok: true });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Heartbeat failed' });
     }
 });
@@ -578,6 +587,7 @@ router.get('/:id/rtmp-status', requireAuth, (req, res) => {
         const receiving = rtmpServer.isReceiving(user.stream_key);
         res.json({ receiving });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to check RTMP status' });
     }
 });
@@ -601,6 +611,7 @@ router.post('/:id/follow', requireAuth, (req, res) => {
             res.json({ following: true, count: db.getFollowerCount(stream.user_id) });
         }
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to follow/unfollow' });
     }
 });
@@ -624,6 +635,7 @@ router.post('/channel/:username/follow', requireAuth, (req, res) => {
             res.json({ following: true, count: db.getFollowerCount(user.id) });
         }
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to follow/unfollow' });
     }
 });
@@ -683,6 +695,7 @@ router.get('/:id/call', optionalAuth, (req, res) => {
             participant_count: callServer.getParticipantCount(channelId),
         });
     } catch (err) {
+        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to get call status' });
     }
 });
