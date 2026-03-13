@@ -2370,18 +2370,6 @@ function applyManualGain(streamId) {
     } catch (err) { console.warn('[Broadcast] Manual gain failed:', err); }
 }
 
-    const ss = getStreamState(streamId);
-    if (!broadcastState.settings.manualGainEnabled || !ss || !ss.localStream) return;
-    try {
-        const audioTrack = ss.localStream.getAudioTracks()[0]; if (!audioTrack) return;
-        const ctx = new AudioContext(); const source = ctx.createMediaStreamSource(new MediaStream([audioTrack]));
-        const gain = ctx.createGain(); gain.gain.value = broadcastState.settings.manualGain / 100;
-        source.connect(gain); const dest = ctx.createMediaStreamDestination(); gain.connect(dest);
-        ss.localStream.removeTrack(audioTrack); ss.localStream.addTrack(dest.stream.getAudioTracks()[0]);
-        ss.audioContext = ctx; ss.gainNode = gain;
-    } catch (err) { console.warn('[Broadcast] Manual gain failed:', err); }
-}
-
 /* ── Multi-Platform Restream Destinations ──────────────────── */
 
 const RESTREAM_PLATFORM_META = {
