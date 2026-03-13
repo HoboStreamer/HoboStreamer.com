@@ -158,6 +158,23 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] RobotStreamer integration migration:', e.message); }
 
+    // Migrate: create restream_destinations table if missing
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS restream_destinations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            platform TEXT NOT NULL CHECK(platform IN ('youtube', 'twitch', 'kick', 'custom')),
+            name TEXT,
+            server_url TEXT,
+            stream_key TEXT,
+            enabled INTEGER DEFAULT 1,
+            auto_start INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+    } catch (e) { console.warn('[DB] Restream destinations migration:', e.message); }
+
     // Migrate: create comments table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS comments (
@@ -610,6 +627,43 @@ function upsertRobotStreamerIntegration(userId, fields) {
     }
 
     return getRobotStreamerIntegrationByUserId(userId);
+}
+
+// ── Restream Destination helpers ─────────────────────────────
+
+function getRestreamDestinationsByUserId(userId) {
+    return all('SELECT * FROM restream_destinations WHERE user_id = ? ORDER BY created_at', [userId]);
+}
+
+function getRestreamDestinationById(id) {
+    return get('SELECT * FROM restream_destinations WHERE id = ?', [id]);
+}
+
+function createRestreamDestination(userId, fields) {
+    const result = run(
+        `INSERT INTO restream_destinations (user_id, platform, name, server_url, stream_key, enabled, auto_start)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [userId, fields.platform, fields.name || null, fields.server_url || null,
+         fields.stream_key || null, fields.enabled ?? 1, fields.auto_start ?? 0]
+    );
+    return get('SELECT * FROM restream_destinations WHERE id = ?', [result.lastInsertRowid]);
+}
+
+function updateRestreamDestination(id, fields) {
+    const allowed = new Set(['name', 'server_url', 'stream_key', 'enabled', 'auto_start']);
+    const filtered = Object.entries(fields || {}).filter(([key]) => allowed.has(key));
+    if (!filtered.length) return getRestreamDestinationById(id);
+
+    const updates = filtered.map(([key]) => `${key} = ?`);
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    const params = [...filtered.map(([, val]) => val), id];
+
+    run(`UPDATE restream_destinations SET ${updates.join(', ')} WHERE id = ?`, params);
+    return getRestreamDestinationById(id);
+}
+
+function deleteRestreamDestination(id) {
+    return run('DELETE FROM restream_destinations WHERE id = ?', [id]);
 }
 
 // ── Chat helpers ─────────────────────────────────────────────
@@ -1540,6 +1594,9 @@ module.exports = {
     getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
     // RobotStreamer integration
     getRobotStreamerIntegrationByUserId, upsertRobotStreamerIntegration,
+    // Restream destinations
+    getRestreamDestinationsByUserId, getRestreamDestinationById,
+    createRestreamDestination, updateRestreamDestination, deleteRestreamDestination,
     // Chat
     saveChatMessage, searchChatMessages, getUserChatHistory,
     // Profiles

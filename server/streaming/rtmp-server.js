@@ -4,6 +4,7 @@
  * Accepts RTMP streams from OBS/FFmpeg and converts to HLS or relays.
  * Uses node-media-server for RTMP handling.
  */
+const EventEmitter = require('events');
 const config = require('../config');
 const db = require('../db/database');
 const recorder = require('../vod/recorder');
@@ -16,8 +17,9 @@ try {
     console.warn('[RTMP] Install with: npm install node-media-server');
 }
 
-class RTMPServer {
+class RTMPServer extends EventEmitter {
     constructor() {
+        super();
         this.nms = null;
         this.activeStreams = new Map(); // streamKey → { streamId, userId }
     }
@@ -122,6 +124,9 @@ class RTMPServer {
             this.activeStreams.set(streamKey, { streamId, userId: user.id, sessionId: id });
             console.log(`[RTMP] Stream started: ${user.username} (stream ${streamId})`);
 
+            // Emit event for restream auto-start
+            this.emit('publish', { streamId, userId: user.id, streamKey });
+
             // Start server-side VOD recording via FFmpeg
             // Small delay to let NMS fully register the RTMP stream before FFmpeg pulls it
             setTimeout(() => {
@@ -137,6 +142,9 @@ class RTMPServer {
             if (info) {
                 // Stop VOD recording first (SIGINT → FFmpeg writes trailer → finalize)
                 recorder.stopRecording(info.streamId);
+
+                // Emit event for restream cleanup
+                this.emit('unpublish', { streamId: info.streamId, userId: info.userId, streamKey });
 
                 db.endStream(info.streamId);
                 this.activeStreams.delete(streamKey);

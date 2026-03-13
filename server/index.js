@@ -73,6 +73,10 @@ const metaRoutes = require('./meta/routes');
 const pasteRoutes = require('./pastes/routes');
 const robotStreamerService = require('./integrations/robotstreamer-service');
 
+// Restream
+const restreamRoutes = require('./streaming/restream-routes');
+const restreamManager = require('./streaming/restream-manager');
+
 // Game
 const gameRoutes = require('./game/routes');
 const gameServer = require('./game/game-server');
@@ -224,6 +228,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/mod', require('./admin/mod-routes'));
 app.use('/api/channels', require('./admin/channel-mod-routes'));
 app.use('/api/robotstreamer', robotStreamerRoutes);
+app.use('/api/restream', restreamRoutes);
 app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
@@ -446,6 +451,16 @@ async function start() {
         console.warn('[Server] RTMP server not available:', err.message);
     }
 
+    // 6b. Hook RTMP events for auto-start/stop restreams
+    rtmpServer.on('publish', ({ streamId, userId, streamKey }) => {
+        restreamManager.autoStartForStream(streamId, userId, { protocol: 'rtmp', streamKey }).catch(err => {
+            console.warn(`[Restream] RTMP auto-start error for stream ${streamId}:`, err.message);
+        });
+    });
+    rtmpServer.on('unpublish', ({ streamId }) => {
+        restreamManager.stopAllForStream(streamId);
+    });
+
     // 7. Start HTTP server
     server.listen(config.port, config.host, () => {
         console.log('');
@@ -561,6 +576,8 @@ async function start() {
                 });
                 // Stop RS chat bridge for this stream (prevents zombie bridges)
                 robotStreamerService.stopForStream(stream.id);
+                // Stop any active restreams for this stream
+                restreamManager.stopAllForStream(stream.id);
                 // Close signaling room and notify viewers
                 broadcastServer.endStream(stream.id);
                 const user = db.getUserById(stream.user_id);
@@ -637,6 +654,7 @@ function shutdown() {
 
     // Small delay to let the message reach clients before closing sockets
     setTimeout(() => {
+        restreamManager.stopAll();
         gameServer.close();
         callServer.close();
         chatServer.close();
