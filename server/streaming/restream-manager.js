@@ -16,7 +16,7 @@
  *   For JSMPEG input:  ffmpeg -f mpegts -i pipe:0 -c:v libx264 -preset ultrafast ... -f flv rtmp://dest
  *   For WebRTC input:  ffmpeg -protocol_whitelist file,rtp,udp -i /tmp/hobo-restream-{key}.sdp ... -f flv rtmp://dest
  */
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
@@ -28,6 +28,10 @@ const RESTART_MAX_DELAY = 60000;
 const STABLE_THRESHOLD_MS = 30000;
 const MAX_RESTART_ATTEMPTS = 10;
 const FFMPEG_STARTUP_DELAY_RTMP = 3000;
+
+/** Port range for stunnel RTMPS proxies (separate from WebRTC RTP ports) */
+const STUNNEL_PORT_MIN = 30100;
+const STUNNEL_PORT_MAX = 30200;
 
 /**
  * Quality presets for restream encoding.
@@ -102,6 +106,10 @@ class RestreamManager extends EventEmitter {
         super();
         /** @type {Map<string, RestreamSession>} key: `${streamId}:${destId}` */
         this.sessions = new Map();
+        /** @type {number} Next available port for stunnel RTMPS proxies */
+        this._nextStunnelPort = STUNNEL_PORT_MIN;
+        /** @type {boolean|null} Cached result of stunnel availability check */
+        this._stunnelAvailable = null;
     }
 
     _key(streamId, destId) {
@@ -143,6 +151,22 @@ class RestreamManager extends EventEmitter {
             return null;
         }
 
+        // For RTMPS destinations, use a stunnel TLS proxy so FFmpeg connects via
+        // plain RTMP to a local port (works around GnuTLS incompatibility with
+        // certain RTMPS endpoints like Kick/Amazon CloudFront).
+        let effectiveDestUrl = destUrl;
+        let stunnelProxy = null;
+        if (destUrl.startsWith('rtmps://')) {
+            stunnelProxy = this._startStunnelProxy(destUrl);
+            if (stunnelProxy) {
+                effectiveDestUrl = stunnelProxy.localUrl;
+                // Small delay for stunnel to start listening
+                await new Promise(r => setTimeout(r, 500));
+            } else {
+                console.warn(`[Restream] stunnel not available — passing rtmps:// URL directly to FFmpeg`);
+            }
+        }
+
         const session = {
             key,
             streamId,
@@ -158,6 +182,8 @@ class RestreamManager extends EventEmitter {
             stableTimer: null,
             lastError: null,
             dataTapCleanup: null,
+            stunnelProcess: stunnelProxy?.stunnelProcess || null,
+            stunnelConf: stunnelProxy?.stunnelConf || null,
         };
         this.sessions.set(key, session);
         this.emit('status-change', { streamId, destId: destination.id, status: 'starting' });
@@ -165,11 +191,11 @@ class RestreamManager extends EventEmitter {
         if (protocol === 'rtmp') {
             // Delay to let NMS HTTP-FLV endpoint be ready
             await new Promise(r => setTimeout(r, FFMPEG_STARTUP_DELAY_RTMP));
-            this._startRtmpRestream(session, streamKey, destUrl);
+            this._startRtmpRestream(session, streamKey, effectiveDestUrl);
         } else if (protocol === 'jsmpeg') {
-            this._startJsmpegRestream(session, streamKey, destUrl);
+            this._startJsmpegRestream(session, streamKey, effectiveDestUrl);
         } else if (protocol === 'webrtc') {
-            await this._startWebrtcRestream(session, destUrl);
+            await this._startWebrtcRestream(session, effectiveDestUrl);
         } else {
             console.warn(`[Restream] Unsupported protocol: ${protocol}`);
             this._cleanup(key);
@@ -186,6 +212,124 @@ class RestreamManager extends EventEmitter {
         if (!dest.server_url || !dest.stream_key) return null;
         const url = dest.server_url.replace(/\/+$/, '');
         return `${url}/${dest.stream_key}`;
+    }
+
+    /**
+     * Check if stunnel is available on this system.
+     * Caches the result after the first check.
+     */
+    _isStunnelAvailable() {
+        if (this._stunnelAvailable !== null) return this._stunnelAvailable;
+        try {
+            execSync('which stunnel', { stdio: 'ignore' });
+            this._stunnelAvailable = true;
+            console.log('[Restream] stunnel is available for RTMPS proxy');
+        } catch {
+            this._stunnelAvailable = false;
+            console.warn('[Restream] stunnel not found — RTMPS destinations may fail with GnuTLS-based FFmpeg');
+        }
+        return this._stunnelAvailable;
+    }
+
+    /**
+     * Allocate a local port for stunnel RTMPS proxy.
+     */
+    _allocateStunnelPort() {
+        const port = this._nextStunnelPort;
+        this._nextStunnelPort++;
+        if (this._nextStunnelPort > STUNNEL_PORT_MAX) this._nextStunnelPort = STUNNEL_PORT_MIN;
+        return port;
+    }
+
+    /**
+     * For RTMPS destinations, spawn a stunnel process that accepts plain RTMP on
+     * a local port and tunnels it over TLS to the remote RTMPS endpoint (using
+     * OpenSSL). FFmpeg can then connect to the local port with plain `rtmp://`.
+     * 
+     * This works around FFmpeg's GnuTLS backend being incompatible with certain
+     * RTMPS endpoints (notably Kick/Amazon CloudFront).
+     * 
+     * @param {string} rtmpsUrl - Full destination URL starting with `rtmps://`
+     * @returns {{ localUrl: string, stunnelProcess: ChildProcess, stunnelConf: string }|null}
+     */
+    _startStunnelProxy(rtmpsUrl) {
+        if (!this._isStunnelAvailable()) return null;
+
+        // Parse rtmps://host:port/path → host, port (default 443), path
+        const match = rtmpsUrl.match(/^rtmps:\/\/([^/:]+)(?::(\d+))?(\/.*)?$/);
+        if (!match) {
+            console.warn(`[Restream] Could not parse RTMPS URL: ${rtmpsUrl.slice(0, 60)}...`);
+            return null;
+        }
+
+        const remoteHost = match[1];
+        const remotePort = match[2] || '443';
+        const urlPath = match[3] || '/';
+
+        const localPort = this._allocateStunnelPort();
+        const confPath = path.join(os.tmpdir(), `hobo-stunnel-${localPort}.conf`);
+
+        // Write a minimal stunnel config for a client-mode TLS tunnel
+        const confContent = [
+            'pid =',                          // Don't write a PID file
+            'foreground = yes',               // Stay in foreground (we manage the process)
+            'syslog = no',                    // Don't use syslog
+            'debug = 4',                      // Warning level
+            '',
+            '[rtmps-proxy]',
+            'client = yes',
+            `accept = 127.0.0.1:${localPort}`,
+            `connect = ${remoteHost}:${remotePort}`,
+            `sni = ${remoteHost}`,            // Send SNI for proper TLS handshake
+            'verifyChain = no',               // Don't verify — matches FFmpeg behavior
+        ].join('\n');
+
+        fs.writeFileSync(confPath, confContent, 'utf8');
+
+        const stunnelProc = spawn('stunnel', [confPath], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        let stderrBuf = '';
+        stunnelProc.stderr.on('data', (d) => {
+            stderrBuf += d.toString();
+            if (stderrBuf.length > 2048) stderrBuf = stderrBuf.slice(-2048);
+        });
+        stunnelProc.stdout.on('data', () => {}); // drain
+
+        stunnelProc.on('error', (err) => {
+            console.error(`[Restream] stunnel spawn error: ${err.message}`);
+        });
+
+        stunnelProc.on('close', (code) => {
+            if (code && code !== 0) {
+                const lastLines = stderrBuf.split('\n').filter(Boolean).slice(-3).join(' | ');
+                console.warn(`[Restream] stunnel exited code=${code}: ${lastLines.slice(0, 200)}`);
+            }
+            try { fs.unlinkSync(confPath); } catch {}
+        });
+
+        // Build the local RTMP URL that FFmpeg will connect to
+        const localUrl = `rtmp://127.0.0.1:${localPort}${urlPath}`;
+        console.log(`[Restream] stunnel RTMPS proxy started — ${remoteHost}:${remotePort} → 127.0.0.1:${localPort}`);
+
+        return { localUrl, stunnelProcess: stunnelProc, stunnelConf: confPath };
+    }
+
+    /**
+     * Kill a stunnel proxy process and clean up its config file.
+     */
+    _killStunnelProxy(session) {
+        if (session.stunnelProcess) {
+            try { session.stunnelProcess.kill('SIGTERM'); } catch {}
+            const proc = session.stunnelProcess;
+            setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 3000);
+            session.stunnelProcess = null;
+        }
+        if (session.stunnelConf) {
+            try { fs.unlinkSync(session.stunnelConf); } catch {}
+            session.stunnelConf = null;
+        }
     }
 
     /**
@@ -521,7 +665,7 @@ class RestreamManager extends EventEmitter {
      */
     _spawnFFmpeg(session, args) {
         const maskedArgs = args.map(a =>
-            a.includes('rtmp://') ? a.replace(/\/[^/]+$/, '/****') : a
+            (a.includes('rtmp://') || a.includes('rtmps://')) ? a.replace(/\/[^/]+$/, '/****') : a
         );
         console.log(`[Restream] Spawning FFmpeg for ${session.key}: ffmpeg ${maskedArgs.join(' ')}`);
 
@@ -643,23 +787,42 @@ class RestreamManager extends EventEmitter {
             const destUrl = this._buildDestUrl(dest);
             if (!destUrl) return;
 
+            // Clean up old stunnel proxy if any
+            this._killStunnelProxy(session);
+
+            // Set up new stunnel proxy for RTMPS destinations
+            let effectiveDestUrl = destUrl;
+            if (destUrl.startsWith('rtmps://')) {
+                const proxy = this._startStunnelProxy(destUrl);
+                if (proxy) {
+                    effectiveDestUrl = proxy.localUrl;
+                    session.stunnelProcess = proxy.stunnelProcess;
+                    session.stunnelConf = proxy.stunnelConf;
+                }
+            }
+
             session.status = 'starting';
             this.emit('status-change', {
                 streamId: session.streamId, destId: session.destId, status: 'starting',
             });
 
-            if (session.streamInfo.protocol === 'rtmp') {
-                this._startRtmpRestream(session, session.streamInfo.streamKey, destUrl);
-            } else if (session.streamInfo.protocol === 'jsmpeg') {
-                this._startJsmpegRestream(session, session.streamInfo.streamKey, destUrl);
-            } else if (session.streamInfo.protocol === 'webrtc') {
-                this._startWebrtcRestream(session, destUrl).catch(err => {
-                    console.warn(`[Restream] WebRTC restart failed for ${session.key}:`, err.message);
-                    session.lastError = err.message;
-                    session.status = 'error';
-                    this._scheduleRestart(session);
-                });
-            }
+            // Small delay for stunnel to start listening if it was just spawned
+            const stunnelDelay = session.stunnelProcess ? 500 : 0;
+            setTimeout(() => {
+                if (session.status === 'stopped') return;
+                if (session.streamInfo.protocol === 'rtmp') {
+                    this._startRtmpRestream(session, session.streamInfo.streamKey, effectiveDestUrl);
+                } else if (session.streamInfo.protocol === 'jsmpeg') {
+                    this._startJsmpegRestream(session, session.streamInfo.streamKey, effectiveDestUrl);
+                } else if (session.streamInfo.protocol === 'webrtc') {
+                    this._startWebrtcRestream(session, effectiveDestUrl).catch(err => {
+                        console.warn(`[Restream] WebRTC restart failed for ${session.key}:`, err.message);
+                        session.lastError = err.message;
+                        session.status = 'error';
+                        this._scheduleRestart(session);
+                    });
+                }
+            }, stunnelDelay);
         }, delay);
     }
 
@@ -703,6 +866,7 @@ class RestreamManager extends EventEmitter {
         if (session.restartTimer) { clearTimeout(session.restartTimer); session.restartTimer = null; }
         if (session.stableTimer) { clearTimeout(session.stableTimer); session.stableTimer = null; }
         if (session.dataTapCleanup) { session.dataTapCleanup(); session.dataTapCleanup = null; }
+        this._killStunnelProxy(session);
         if (session.process) {
             try { session.process.stdin?.end(); } catch {}
             try { session.process.kill('SIGTERM'); } catch {}

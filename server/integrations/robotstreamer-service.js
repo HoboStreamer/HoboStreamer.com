@@ -25,6 +25,10 @@ function normalizeBoolean(value, fallback = false) {
 
 // Minimum interval between RS Publish connections for the same stream (prevents rapid reconnect loops)
 const RS_PUBLISH_MIN_INTERVAL_MS = 5000;
+// Upstream WebSocket keepalive interval — prevents NAT/firewall idle timeout on the SFU connection
+const RS_UPSTREAM_PING_INTERVAL_MS = 25000;
+// Skip refreshIntegration() if last validation was within this window (avoids 870KB API call on every reconnect)
+const RS_REFRESH_CACHE_MS = 5 * 60 * 1000;
 
 class RobotStreamerService {
     constructor() {
@@ -474,6 +478,7 @@ class RobotStreamerService {
         let upstream = null;
         let upstreamReady = false;
         const outboundQueue = [];
+        let upstreamPingInterval = null;
 
         const processAndRelay = (raw) => {
             const msg = safeJsonParse(raw);
@@ -512,6 +517,7 @@ class RobotStreamerService {
         });
 
         ws.on('close', () => {
+            if (upstreamPingInterval) { clearInterval(upstreamPingInterval); upstreamPingInterval = null; }
             if (upstream) { try { upstream.close(1000); } catch {} }
             // Clean up tracking — only if we're still the active session for this stream
             if (this._activePublish.get(streamId) === publishEntry) {
@@ -524,22 +530,32 @@ class RobotStreamerService {
         });
 
         // ── Refresh integration (registers session with RS API) ─────
-        console.log('[RS Publish] Refreshing integration for user', ctx.user.id);
-        try {
-            integration = await this.refreshIntegration(ctx.user.id);
-            console.log('[RS Publish] Refreshed integration:', {
-                robot_id: integration.robot_id,
-                rtc_sfu_url: integration.rtc_sfu_url,
-                owner_id: integration.owner_id,
-                hasToken: !!integration.token,
-                tokenLen: integration.token?.length,
-            });
-        } catch (err) {
-            console.warn('[RS Publish] Refresh failed:', err.message);
-            if (!integration?.rtc_sfu_url) {
-                ws.close(1011, `refresh failed: ${err.message}`);
-                return;
+        // Skip if the integration was recently validated to avoid an expensive
+        // 870KB+ API call on every client reconnect (which can also invalidate
+        // the previous session). Only force-refresh if data is stale.
+        const lastValidated = integration.last_validated_at ? new Date(integration.last_validated_at).getTime() : 0;
+        const needsRefresh = !lastValidated || (Date.now() - lastValidated) > RS_REFRESH_CACHE_MS;
+
+        if (needsRefresh) {
+            console.log('[RS Publish] Refreshing integration for user', ctx.user.id, '(last validated:', integration.last_validated_at || 'never', ')');
+            try {
+                integration = await this.refreshIntegration(ctx.user.id);
+                console.log('[RS Publish] Refreshed integration:', {
+                    robot_id: integration.robot_id,
+                    rtc_sfu_url: integration.rtc_sfu_url,
+                    owner_id: integration.owner_id,
+                    hasToken: !!integration.token,
+                    tokenLen: integration.token?.length,
+                });
+            } catch (err) {
+                console.warn('[RS Publish] Refresh failed:', err.message);
+                if (!integration?.rtc_sfu_url) {
+                    ws.close(1011, `refresh failed: ${err.message}`);
+                    return;
+                }
             }
+        } else {
+            console.log('[RS Publish] Using cached integration for user', ctx.user.id, '(validated', Math.round((Date.now() - lastValidated) / 1000), 's ago)');
         }
 
         if (!integration?.rtc_sfu_url) {
@@ -595,6 +611,17 @@ class RobotStreamerService {
             while (outboundQueue.length) {
                 upstream.send(outboundQueue.shift());
             }
+
+            // Start WebSocket ping keepalive to prevent NAT/firewall idle timeout.
+            // Without this, connections die after 60-300s of no data flow.
+            upstreamPingInterval = setInterval(() => {
+                if (upstream.readyState === WebSocket.OPEN) {
+                    try { upstream.ping(); } catch {}
+                } else {
+                    clearInterval(upstreamPingInterval);
+                    upstreamPingInterval = null;
+                }
+            }, RS_UPSTREAM_PING_INTERVAL_MS);
         });
 
         upstream.on('message', (payload) => {
@@ -617,6 +644,7 @@ class RobotStreamerService {
             const reasonStr = reason?.toString() || 'upstream closed';
             const sessionAge = Date.now() - publishEntry.connectedAt;
             console.warn(`[RS Publish] Upstream closed: code=${code} reason=${reasonStr} (session age: ${sessionAge}ms)`);
+            if (upstreamPingInterval) { clearInterval(upstreamPingInterval); upstreamPingInterval = null; }
             if (ws.readyState === WebSocket.OPEN) {
                 ws.close(code || 1006, reasonStr);
             }
