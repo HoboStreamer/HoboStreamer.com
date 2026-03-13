@@ -569,6 +569,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
         const clips = data.clips || [];
         const liveStreams = streams.filter(s => s && s.is_live);
         const rsRestream = data.rs_restream || {};
+        const restreamLinks = data.restream_links || null;
 
         // Follow button helper
         const setupFollowBtn = (btn) => {
@@ -632,7 +633,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
             activateChannelStream(targetStream);
 
             // Show cumulative viewers across all streams
-            updateCumulativeViewers(liveStreams, rsRestream);
+            updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
         } else {
             // ── OFFLINE STATE ──
             document.getElementById('ch-live-area').style.display = 'none';
@@ -883,11 +884,11 @@ function setupTabKeyboardNav(container, username) {
  * Update cumulative viewer display below the video player.
  * Shows total viewers across all streams, RS restream indicator, and share button.
  */
-function updateCumulativeViewers(liveStreams, rsRestream = {}) {
+function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = null) {
     const el = document.getElementById('ch-cumulative-viewers');
     if (!el) return;
 
-    if (liveStreams.length <= 1 && !Object.keys(rsRestream).length) {
+    if (liveStreams.length <= 1 && !Object.keys(rsRestream).length && !restreamLinks?.length) {
         el.style.display = 'none';
         return;
     }
@@ -905,6 +906,19 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}) {
         if (rs.active) {
             const label = rs.video_restreamed ? 'RS Restream' : 'RS Chat Bridge';
             html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + rs.robot_name : ''}"><i class="fa-solid fa-robot"></i> ${label}${rs.robot_name ? ' · ' + esc(rs.robot_name) : ''}</span>`;
+        }
+    }
+
+    // Restream platform link badges (Twitch/Kick/YouTube)
+    if (restreamLinks?.length) {
+        const platformIcons = { twitch: 'fa-brands fa-twitch', kick: 'fa-brands fa-kickstarter-k', youtube: 'fa-brands fa-youtube', custom: 'fa-solid fa-globe' };
+        const platformColors = { twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', custom: '#888' };
+        for (const link of restreamLinks) {
+            const icon = platformIcons[link.platform] || platformIcons.custom;
+            const color = platformColors[link.platform] || platformColors.custom;
+            const liveDot = link.is_live ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#e91916;margin-right:4px;animation:pulse-live 1.5s infinite"></span>' : '';
+            const name = esc(link.name || link.platform);
+            html += `<a href="${esc(link.channel_url)}" target="_blank" rel="noopener" class="ch-restream-badge" style="color:${color}" title="${link.is_live ? 'Live on' : 'Also on'} ${name}">${liveDot}<i class="${icon}"></i> ${name}</a>`;
         }
     }
 
@@ -965,7 +979,7 @@ function switchToLiveStream(username, streamId, btn) {
             rememberLastStream(username, streamId);
             // Update cumulative viewers with fresh data
             const liveStreams = streams.filter(s => s && s.is_live);
-            updateCumulativeViewers(liveStreams, data.rs_restream || {});
+            updateCumulativeViewers(liveStreams, data.rs_restream || {}, data.restream_links || null);
             // Refresh tabs with latest viewer counts
             loadLiveStreamTabs(username, streamId, liveStreams, data.rs_restream || {});
         } else {
@@ -1041,6 +1055,7 @@ function startStreamStatusPoll(stream) {
             // Check if current stream is still live
             const current = liveStreams.find(s => s.id === currentStreamId);
             const rsRestream = data.rs_restream || {};
+            const restreamLinks = data.restream_links || null;
             if (!current && liveStreams.length > 0) {
                 // Current stream ended, but others are live — auto-switch to best
                 const best = liveStreams.reduce((b, s) =>
@@ -1049,7 +1064,7 @@ function startStreamStatusPoll(stream) {
                 const bestTitle = best.title || 'another stream';
                 loadLiveStreamTabs(username, best.id, liveStreams, rsRestream);
                 activateChannelStream(best);
-                updateCumulativeViewers(liveStreams, rsRestream);
+                updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
                 rememberLastStream(username, best.id);
                 history.replaceState(null, '', `/${username}?stream=${best.id}`);
                 toast(`Stream ended — switched to "${bestTitle}"`, 'info');
@@ -1068,7 +1083,7 @@ function startStreamStatusPoll(stream) {
             }
 
             // Update cumulative viewers
-            updateCumulativeViewers(liveStreams, rsRestream);
+            updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
         } catch { /* silent — network error, retry next interval */ }
     }, STREAM_POLL_INTERVAL);
 }

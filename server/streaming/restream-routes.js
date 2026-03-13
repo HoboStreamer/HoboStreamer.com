@@ -36,6 +36,8 @@ function sanitizeDest(d) {
         stream_key: d.stream_key ? '****' + d.stream_key.slice(-4) : '',
         has_key: !!d.stream_key,
         quality_preset: d.quality_preset || 'auto',
+        channel_url: d.channel_url || '',
+        chat_relay: !!d.chat_relay,
     };
 }
 
@@ -126,6 +128,8 @@ router.post('/destinations', requireAuth, (req, res) => {
             enabled: enabled !== false ? 1 : 0,
             auto_start: auto_start ? 1 : 0,
             quality_preset: quality_preset || 'auto',
+            channel_url: req.body.channel_url?.trim() || null,
+            chat_relay: req.body.chat_relay ? 1 : 0,
             ...parseCustomOverrides(req.body),
         });
 
@@ -160,6 +164,10 @@ router.put('/destinations/:id', requireAuth, (req, res) => {
         }
         // Custom encoding overrides
         Object.assign(updates, parseCustomOverrides(req.body));
+
+        // Channel URL + chat relay
+        if (req.body.channel_url !== undefined) updates.channel_url = req.body.channel_url?.trim() || null;
+        if (req.body.chat_relay !== undefined) updates.chat_relay = req.body.chat_relay ? 1 : 0;
 
         const updated = db.updateRestreamDestination(dest.id, updates);
         res.json({ destination: sanitizeDest(updated) });
