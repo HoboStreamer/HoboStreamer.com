@@ -484,6 +484,8 @@ async function initWebRTC(stream) {
                         if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
                         _rewatchCount = 0; // reset retry count on successful offer
                         _hideReconnectingIndicator();
+                        // Clear any stale error overlay — we got a valid offer
+                        _clearStreamError();
                         await handleViewerOffer(msg, player.ws, video);
                         break;
                     case 'ice-candidate':
@@ -689,7 +691,14 @@ async function handleViewerOffer(msg, ws, video) {
             _hasVideoFrames = true;
             if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
             const ph = document.querySelector('.video-placeholder');
-            if (ph) ph.style.display = 'none';
+            if (ph) {
+                ph.style.display = 'none';
+                // Reset error content so stale "try refreshing" text doesn't
+                // reappear on the next transient disconnect.
+                ph.innerHTML = `
+                    <i class="fa-solid fa-satellite-dish fa-3x"></i>
+                    <p>Connecting to stream...</p>`;
+            }
             // Remove the unmute overlay if somehow it lingered
             document.getElementById('unmute-overlay')?.remove();
         };
@@ -1836,7 +1845,21 @@ function showStreamError(msg) {
         placeholder.style.display = '';
         placeholder.innerHTML = `
             <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
-            <p>${msg}</p>`;
+            <p>${msg}</p>
+            <button onclick="this.parentElement.style.display='none'" style="margin-top:8px;padding:6px 18px;border-radius:8px;border:1px solid var(--border);background:var(--bg-hover);color:var(--text-primary);cursor:pointer;font-size:0.85rem;">Dismiss</button>`;
+    }
+}
+
+/** Clear stream error and reset placeholder to default connecting state */
+function _clearStreamError() {
+    const placeholder = document.querySelector('.video-placeholder');
+    if (!placeholder) return;
+    // Only clear if it's currently showing an error (has the warning icon)
+    if (placeholder.innerHTML.includes('fa-triangle-exclamation')) {
+        placeholder.style.display = 'none';
+        placeholder.innerHTML = `
+            <i class="fa-solid fa-satellite-dish fa-3x"></i>
+            <p>Connecting to stream...</p>`;
     }
 }
 
