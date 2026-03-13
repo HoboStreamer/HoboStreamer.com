@@ -2551,6 +2551,20 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     display: inline-flex; align-items: center; gap: 5px;
 }
 .ch-rs-badge i { font-size: 0.7rem; }
+.ch-restream-badge {
+    font-size: 0.72rem; font-weight: 600;
+    text-decoration: none;
+    padding: 2px 8px; border-radius: 10px;
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(255, 255, 255, 0.06);
+    transition: all 0.15s;
+}
+.ch-restream-badge:hover { background: rgba(255, 255, 255, 0.12); filter: brightness(1.3); }
+.ch-restream-badge i { font-size: 0.7rem; }
+@keyframes pulse-live {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
 .ch-share-stream {
     font-size: 0.72rem; color: var(--text-muted);
     background: none; border: 1px solid var(--border);

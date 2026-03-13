@@ -22,6 +22,7 @@ const jsmpegRelay = require('./jsmpeg-relay');
 const webrtcSFU = require('./webrtc-sfu');
 const recorder = require('../vod/recorder');
 const robotStreamerService = require('../integrations/robotstreamer-service');
+const chatRelayService = require('../integrations/chat-relay-service');
 
 const router = express.Router();
 const ALLOWED_PROTOCOLS = new Set(['jsmpeg', 'webrtc', 'rtmp']);
@@ -156,11 +157,36 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             }
         }
 
+        // Include restream destination links (Twitch/Kick/YouTube) for live streams
+        let restreamLinks = null;
+        if (liveStreams.length > 0) {
+            const dests = db.getRestreamDestinationsByUserId(channel.user_id) || [];
+            const enabledWithUrl = dests.filter(d => d.enabled && d.channel_url);
+            if (enabledWithUrl.length > 0) {
+                const restreamManager = require('./restream-manager');
+                restreamLinks = enabledWithUrl.map(d => {
+                    // Check if this destination is actively streaming
+                    const streamStatuses = liveStreams.flatMap(ls => restreamManager.getStreamStatus(ls.id));
+                    const activeSession = streamStatuses.find(s => s.destId === d.id && s.status === 'running');
+                    const relayInfo = chatRelayService.getRelayInfo(liveStreams[0].id);
+                    const hasRelay = relayInfo?.some(r => r.destId === d.id);
+                    return {
+                        platform: d.platform,
+                        name: d.name,
+                        channel_url: d.channel_url,
+                        is_live: !!activeSession,
+                        chat_relayed: !!hasRelay,
+                    };
+                });
+            }
+        }
+
         res.json({
             channel: { ...channel, follower_count: followerCount, is_following: isFollowing },
             stream: liveStreams[0] || null,
             streams: liveStreams,
             rs_restream: Object.keys(rsInfo).length ? rsInfo : null,
+            restream_links: restreamLinks,
             vods,
             clips,
         });
@@ -426,6 +452,9 @@ router.post('/', requireAuth, (req, res) => {
         robotStreamerService.startForStream(stream).catch((rsErr) => {
             console.warn(`[RS] Failed to start integration for stream ${streamId}:`, rsErr.message);
         });
+        chatRelayService.startForStream(stream).catch((relayErr) => {
+            console.warn(`[ChatRelay] Failed to start relay for stream ${streamId}:`, relayErr.message);
+        });
         res.status(201).json({ stream, endpoint });
     } catch (err) {
         console.error('[Streams] Create error:', err.message);
@@ -509,6 +538,7 @@ router.delete('/:id', requireAuth, (req, res) => {
         callServer.removeStreamChannel(stream.id);
 
         robotStreamerService.stopForStream(stream.id);
+        chatRelayService.stopForStream(stream.id);
 
         // Close signaling room and notify viewers
         const broadcastServer = require('./broadcast-server');

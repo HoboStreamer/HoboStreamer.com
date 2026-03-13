@@ -2444,11 +2444,13 @@ function renderRestreamDestinations() {
             : '';
 
         const keyDisplay = dest.has_key ? `Key: ${dest.stream_key}` : 'No key set';
+        const chatRelayBadge = dest.chat_relay ? '<span style="font-size:0.65rem;color:#53fc18;margin-left:4px" title="Chat relay enabled">[relay]</span>' : '';
+        const channelUrlBadge = dest.channel_url ? `<a href="${dest.channel_url}" target="_blank" rel="noopener" style="font-size:0.65rem;color:${meta.color};margin-left:4px;text-decoration:none" title="${dest.channel_url}"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : '';
 
         html += `<div class="bc-restream-dest-card" ${enabledClass} data-dest-id="${dest.id}">
             <span class="bc-restream-platform-icon" style="color:${meta.color}"><i class="${meta.icon}"></i></span>
             <span class="bc-restream-name" title="${dest.name || meta.name}">${dest.name || meta.name}</span>
-            ${autoStartBadge}${qualityBadge}${customBadge}
+            ${autoStartBadge}${qualityBadge}${customBadge}${chatRelayBadge}${channelUrlBadge}
             <span class="bc-restream-dest-meta">${keyDisplay}</span>
             <div class="bc-restream-dest-actions">
                 <button class="bc-ctrl-btn-sm" onclick="editRestreamDestination(${dest.id})" title="Edit"><i class="fa-solid fa-pen"></i></button>
@@ -2472,6 +2474,8 @@ function showAddRestreamDestination() {
     document.getElementById('bc-restream-name').value = '';
     document.getElementById('bc-restream-key').value = '';
     document.getElementById('bc-restream-autostart').checked = false;
+    document.getElementById('bc-restream-channel-url').value = '';
+    document.getElementById('bc-restream-chat-relay').checked = false;
     document.getElementById('bc-restream-quality').value = 'auto';
     // Reset advanced fields
     document.getElementById('bc-restream-custom-vbr').value = '';
@@ -2520,6 +2524,8 @@ async function saveRestreamDestination() {
     const server_url = document.getElementById('bc-restream-url').value.trim();
     const stream_key = document.getElementById('bc-restream-key').value.trim();
     const auto_start = document.getElementById('bc-restream-autostart').checked;
+    const channel_url = document.getElementById('bc-restream-channel-url').value.trim() || null;
+    const chat_relay = document.getElementById('bc-restream-chat-relay').checked;
     const quality_preset = document.getElementById('bc-restream-quality').value;
 
     // Custom encoding overrides (empty string → null to clear)
@@ -2538,7 +2544,7 @@ async function saveRestreamDestination() {
 
         if (_restreamEditingId) {
             // Update existing
-            const body = { name, server_url, auto_start, quality_preset, ...customFields };
+            const body = { name, server_url, auto_start, channel_url, chat_relay, quality_preset, ...customFields };
             if (stream_key && !stream_key.startsWith('****')) body.stream_key = stream_key;
             await api(`/restream/destinations/${_restreamEditingId}`, { method: 'PUT', body });
             toast('Destination updated', 'success');
@@ -2546,7 +2552,7 @@ async function saveRestreamDestination() {
             // Create new
             await api('/restream/destinations', {
                 method: 'POST',
-                body: { platform, name, server_url, stream_key, auto_start, quality_preset, ...customFields },
+                body: { platform, name, server_url, stream_key, auto_start, channel_url, chat_relay, quality_preset, ...customFields },
             });
             toast('Destination added', 'success');
         }
@@ -2577,6 +2583,8 @@ function editRestreamDestination(destId) {
     document.getElementById('bc-restream-key').value = ''; // Don't show key, let user replace
     document.getElementById('bc-restream-key').placeholder = dest.has_key ? 'Leave empty to keep existing key' : 'Paste your stream key';
     document.getElementById('bc-restream-autostart').checked = !!dest.auto_start;
+    document.getElementById('bc-restream-channel-url').value = dest.channel_url || '';
+    document.getElementById('bc-restream-chat-relay').checked = !!dest.chat_relay;
     document.getElementById('bc-restream-quality').value = dest.quality_preset || 'auto';
 
     // Populate custom override fields

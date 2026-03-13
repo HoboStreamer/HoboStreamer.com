@@ -72,6 +72,7 @@ const emoteRoutes = require('./emotes/routes');
 const metaRoutes = require('./meta/routes');
 const pasteRoutes = require('./pastes/routes');
 const robotStreamerService = require('./integrations/robotstreamer-service');
+const chatRelayService = require('./integrations/chat-relay-service');
 
 // Restream
 const restreamRoutes = require('./streaming/restream-routes');
@@ -426,6 +427,9 @@ async function start() {
         robotStreamerService.startForStream(stream).catch((err) => {
             console.warn(`[RS] Restore failed for stream ${stream.id}:`, err.message);
         });
+        chatRelayService.startForStream(stream).catch((err) => {
+            console.warn(`[ChatRelay] Restore failed for stream ${stream.id}:`, err.message);
+        });
     }
 
     // 4e. Refresh heartbeats for streams surviving a server restart
@@ -613,6 +617,8 @@ async function start() {
                 });
                 // Stop RS chat bridge for this stream (prevents zombie bridges)
                 robotStreamerService.stopForStream(stream.id);
+                // Stop chat relay bridges for this stream
+                chatRelayService.stopForStream(stream.id);
                 // Stop any active restreams for this stream
                 restreamManager.stopAllForStream(stream.id);
                 // Close signaling room and notify viewers

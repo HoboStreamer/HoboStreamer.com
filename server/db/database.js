@@ -201,6 +201,21 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] Restream custom overrides migration:', e.message); }
 
+    // Migrate: add channel_url and chat_relay columns to restream_destinations
+    try {
+        const cols = database.pragma('table_info(restream_destinations)').map(c => c.name);
+        const newCols = [
+            { name: 'channel_url', def: 'TEXT DEFAULT NULL' },
+            { name: 'chat_relay', def: 'INTEGER DEFAULT 0' },
+        ];
+        for (const col of newCols) {
+            if (!cols.includes(col.name)) {
+                database.exec(`ALTER TABLE restream_destinations ADD COLUMN ${col.name} ${col.def}`);
+                console.log(`[DB] Added ${col.name} column to restream_destinations`);
+            }
+        }
+    } catch (e) { console.warn('[DB] Restream channel_url/chat_relay migration:', e.message); }
+
     // Migrate: create comments table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS comments (
@@ -668,20 +683,22 @@ function getRestreamDestinationById(id) {
 function createRestreamDestination(userId, fields) {
     const result = run(
         `INSERT INTO restream_destinations (user_id, platform, name, server_url, stream_key, enabled, auto_start, quality_preset,
-         custom_video_bitrate, custom_audio_bitrate, custom_fps, custom_encoder_preset)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         custom_video_bitrate, custom_audio_bitrate, custom_fps, custom_encoder_preset, channel_url, chat_relay)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [userId, fields.platform, fields.name || null, fields.server_url || null,
          fields.stream_key || null, fields.enabled ?? 1, fields.auto_start ?? 0,
          fields.quality_preset || 'auto',
          fields.custom_video_bitrate ?? null, fields.custom_audio_bitrate ?? null,
-         fields.custom_fps ?? null, fields.custom_encoder_preset || null]
+         fields.custom_fps ?? null, fields.custom_encoder_preset || null,
+         fields.channel_url || null, fields.chat_relay ? 1 : 0]
     );
     return get('SELECT * FROM restream_destinations WHERE id = ?', [result.lastInsertRowid]);
 }
 
 function updateRestreamDestination(id, fields) {
     const allowed = new Set(['name', 'server_url', 'stream_key', 'enabled', 'auto_start', 'quality_preset',
-        'custom_video_bitrate', 'custom_audio_bitrate', 'custom_fps', 'custom_encoder_preset']);
+        'custom_video_bitrate', 'custom_audio_bitrate', 'custom_fps', 'custom_encoder_preset',
+        'channel_url', 'chat_relay']);
     const filtered = Object.entries(fields || {}).filter(([key]) => allowed.has(key));
     if (!filtered.length) return getRestreamDestinationById(id);
 
