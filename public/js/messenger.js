@@ -9,7 +9,7 @@
 
     // ── State ────────────────────────────────────────────────────
     let panelOpen = false;
-    let view = 'inbox';           // 'inbox' | 'thread' | 'new' | 'group-info'
+    let view = 'inbox';           // 'inbox' | 'thread' | 'new' | 'group-info' | 'settings'
     let conversations = [];
     let activeConvId = null;
     let activeConv = null;
@@ -25,6 +25,118 @@
     let isOtherBlocked = false;
     const THREAD_POLL_MS = 3000;  // poll open thread every 3s
     const INBOX_POLL_MS = 10000;  // poll inbox every 10s
+
+    // ── Settings (persisted to localStorage) ─────────────────────
+    const SETTINGS_KEY = 'hobo_dm_settings';
+    const DEFAULT_SETTINGS = {
+        soundEnabled: true,
+        soundVolume: 0.5,         // 0–1
+        desktopNotifs: false,
+        enterToSend: true,        // Enter sends, Shift+Enter newline
+        showPreviews: true,       // show message previews in inbox
+    };
+    let settings = { ...DEFAULT_SETTINGS };
+
+    function loadSettings() {
+        try {
+            const raw = localStorage.getItem(SETTINGS_KEY);
+            if (raw) {
+                const saved = JSON.parse(raw);
+                settings = { ...DEFAULT_SETTINGS, ...saved };
+            }
+        } catch { /* ignore corrupt data */ }
+    }
+
+    function saveSettings() {
+        try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+    }
+
+    // ── Notification sound (per-user rate-limit) ─────────────────
+    const _dmSoundCooldowns = new Map();        // userId → timestamp
+    const DM_SOUND_COOLDOWN_MS = 60_000;        // 1 sound per user per 60s
+    let _audioCtx = null;
+
+    function _getDmAudioCtx() {
+        if (!_audioCtx || _audioCtx.state === 'closed') {
+            _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (_audioCtx.state === 'suspended') _audioCtx.resume().catch(() => {});
+        return _audioCtx;
+    }
+
+    function _playDmSound() {
+        if (!settings.soundEnabled || settings.soundVolume <= 0) return;
+        try {
+            const ctx = _getDmAudioCtx();
+            const now = ctx.currentTime;
+
+            // Two-tone chime: short ascending notes
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(settings.soundVolume * 0.3, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+            gain.connect(ctx.destination);
+
+            // Note 1 (E5 = 659 Hz)
+            const osc1 = ctx.createOscillator();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(659, now);
+            osc1.connect(gain);
+            osc1.start(now);
+            osc1.stop(now + 0.15);
+
+            // Note 2 (A5 = 880 Hz) — slight delay
+            const gain2 = ctx.createGain();
+            gain2.gain.setValueAtTime(settings.soundVolume * 0.25, now + 0.12);
+            gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+            gain2.connect(ctx.destination);
+
+            const osc2 = ctx.createOscillator();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(880, now + 0.12);
+            osc2.connect(gain2);
+            osc2.start(now + 0.12);
+            osc2.stop(now + 0.35);
+        } catch { /* non-critical */ }
+    }
+
+    /**
+     * Play DM notification sound + desktop notification, rate-limited per sender.
+     * Won't play if the panel is open viewing that thread.
+     */
+    function _notifyDm(senderId, senderName, messageText, convId) {
+        // Don't notify for messages in the currently-viewed thread
+        if (panelOpen && view === 'thread' && activeConvId === convId) return;
+
+        // Per-user sound cooldown
+        const now = Date.now();
+        const lastPlayed = _dmSoundCooldowns.get(senderId) || 0;
+        if (now - lastPlayed >= DM_SOUND_COOLDOWN_MS) {
+            _dmSoundCooldowns.set(senderId);
+            _playDmSound();
+            _dmSoundCooldowns.set(senderId, now);
+        }
+
+        // Desktop notification (if enabled + permission granted)
+        if (settings.desktopNotifs && Notification.permission === 'granted') {
+            try {
+                const n = new Notification(senderName || 'New message', {
+                    body: messageText?.slice(0, 100) || '',
+                    tag: `dm-${convId}`,
+                    silent: true,   // we play our own sound
+                });
+                n.onclick = () => { window.focus(); if (!panelOpen) togglePanel(); openThread(convId); n.close(); };
+                setTimeout(() => n.close(), 5000);
+            } catch { /* non-critical */ }
+        }
+    }
+
+    // Clean up stale cooldown entries periodically
+    setInterval(() => {
+        const cutoff = Date.now() - DM_SOUND_COOLDOWN_MS * 2;
+        for (const [uid, ts] of _dmSoundCooldowns) {
+            if (ts < cutoff) _dmSoundCooldowns.delete(uid);
+        }
+    }, 120_000);
 
     // ── DOM refs (set once in init) ──────────────────────────────
     let $toggle, $badge, $panel;
@@ -154,12 +266,14 @@
             <div class="msg-header">
                 <span class="msg-header-title">Messages</span>
                 <div class="msg-header-actions">
+                    <button class="msg-header-btn" id="msg-settings-btn" title="Settings"><i class="fa-solid fa-gear"></i></button>
                     <button class="msg-header-btn" id="msg-new-btn" title="New message"><i class="fa-solid fa-pen-to-square"></i></button>
                     <button class="msg-header-btn" id="msg-close-btn" title="Close"><i class="fa-solid fa-xmark"></i></button>
                 </div>
             </div>
             <div class="msg-inbox" id="msg-inbox"></div>
         `;
+        document.getElementById('msg-settings-btn').addEventListener('click', showSettings);
         document.getElementById('msg-new-btn').addEventListener('click', showNewMessage);
         document.getElementById('msg-close-btn').addEventListener('click', closePanel);
         renderConversationList();
@@ -176,7 +290,9 @@
             const other = getConvOther(conv);
             const avatar = conv.is_group ? groupAvatarHtml(conv) : avatarHtml(other);
             const name = esc(getConvName(conv));
-            const preview = conv.last_message ? esc(conv.last_message.length > 45 ? conv.last_message.slice(0, 45) + '…' : conv.last_message) : '<i>No messages</i>';
+            const preview = settings.showPreviews
+                ? (conv.last_message ? esc(conv.last_message.length > 45 ? conv.last_message.slice(0, 45) + '…' : conv.last_message) : '<i>No messages</i>')
+                : (conv.last_message ? '<i>Message</i>' : '<i>No messages</i>');
             const time = timeAgo(conv.last_message_at || conv.updated_at);
             const unreadBadge = conv.unread_count > 0 ? `<span class="msg-conv-unread">${conv.unread_count}</span>` : '';
             const unreadClass = conv.unread_count > 0 ? ' unread' : '';
@@ -242,7 +358,12 @@
             const input = document.getElementById('msg-compose-input');
             const sendBtn = document.getElementById('msg-send-btn');
             if (input && sendBtn) {
-                input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+                input.addEventListener('keydown', e => {
+                    if (e.key === 'Enter') {
+                        if (settings.enterToSend && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+                        else if (!settings.enterToSend && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); }
+                    }
+                });
                 sendBtn.addEventListener('click', sendMessage);
                 input.focus();
             }
@@ -533,6 +654,168 @@
         };
     }
 
+    // ── Render: Settings ─────────────────────────────────────────
+    function showSettings() {
+        view = 'settings';
+        _stopThreadPoll();
+        _stopInboxPoll();
+
+        const volPct = Math.round(settings.soundVolume * 100);
+
+        $panel.innerHTML = `
+            <div class="msg-header">
+                <button class="msg-header-btn" id="msg-back-settings" title="Back"><i class="fa-solid fa-arrow-left"></i></button>
+                <span class="msg-header-title">Settings</span>
+                <div class="msg-header-actions">
+                    <button class="msg-header-btn" id="msg-close-settings" title="Close"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            <div class="msg-settings-body">
+                <div class="msg-settings-section">
+                    <div class="msg-settings-section-title"><i class="fa-solid fa-volume-high"></i> Notifications</div>
+
+                    <label class="msg-settings-toggle">
+                        <span class="msg-settings-label">DM notification sound</span>
+                        <input type="checkbox" id="msg-set-sound" ${settings.soundEnabled ? 'checked' : ''}>
+                        <span class="msg-toggle-slider"></span>
+                    </label>
+
+                    <div class="msg-settings-range-row" id="msg-vol-row" ${settings.soundEnabled ? '' : 'style="opacity:0.4;pointer-events:none"'}>
+                        <span class="msg-settings-label">Volume</span>
+                        <input type="range" id="msg-set-volume" min="0" max="100" value="${volPct}" class="msg-settings-range">
+                        <span class="msg-settings-range-val" id="msg-vol-val">${volPct}%</span>
+                    </div>
+
+                    <label class="msg-settings-toggle">
+                        <span class="msg-settings-label">Desktop notifications</span>
+                        <input type="checkbox" id="msg-set-desktop" ${settings.desktopNotifs ? 'checked' : ''}>
+                        <span class="msg-toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="msg-settings-section">
+                    <div class="msg-settings-section-title"><i class="fa-solid fa-keyboard"></i> Input</div>
+
+                    <label class="msg-settings-toggle">
+                        <span class="msg-settings-label">Enter to send<span class="msg-settings-hint">Shift+Enter for new line</span></span>
+                        <input type="checkbox" id="msg-set-enter" ${settings.enterToSend ? 'checked' : ''}>
+                        <span class="msg-toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="msg-settings-section">
+                    <div class="msg-settings-section-title"><i class="fa-solid fa-eye"></i> Privacy</div>
+
+                    <label class="msg-settings-toggle">
+                        <span class="msg-settings-label">Show message previews<span class="msg-settings-hint">In conversation list</span></span>
+                        <input type="checkbox" id="msg-set-previews" ${settings.showPreviews ? 'checked' : ''}>
+                        <span class="msg-toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="msg-settings-section">
+                    <div class="msg-settings-section-title"><i class="fa-solid fa-shield-halved"></i> Blocked Users</div>
+                    <div id="msg-blocked-list" class="msg-blocked-list"><div class="msg-settings-loading"><i class="fa-solid fa-spinner fa-spin"></i></div></div>
+                </div>
+
+                <div class="msg-settings-footer">
+                    <button class="msg-settings-test-btn" id="msg-test-sound"><i class="fa-solid fa-play"></i> Test Sound</button>
+                </div>
+            </div>
+        `;
+
+        // Wire event handlers
+        document.getElementById('msg-back-settings').addEventListener('click', () => { renderInbox(); loadConversations(); });
+        document.getElementById('msg-close-settings').addEventListener('click', closePanel);
+
+        document.getElementById('msg-set-sound').addEventListener('change', e => {
+            settings.soundEnabled = e.target.checked;
+            saveSettings();
+            const volRow = document.getElementById('msg-vol-row');
+            if (volRow) {
+                volRow.style.opacity = e.target.checked ? '' : '0.4';
+                volRow.style.pointerEvents = e.target.checked ? '' : 'none';
+            }
+        });
+
+        document.getElementById('msg-set-volume').addEventListener('input', e => {
+            settings.soundVolume = parseInt(e.target.value) / 100;
+            saveSettings();
+            const val = document.getElementById('msg-vol-val');
+            if (val) val.textContent = e.target.value + '%';
+        });
+
+        document.getElementById('msg-set-desktop').addEventListener('change', async e => {
+            if (e.target.checked) {
+                if (Notification.permission === 'default') {
+                    const perm = await Notification.requestPermission();
+                    if (perm !== 'granted') { e.target.checked = false; return; }
+                } else if (Notification.permission === 'denied') {
+                    toast('Notifications blocked by browser — enable in site settings', 'error');
+                    e.target.checked = false;
+                    return;
+                }
+            }
+            settings.desktopNotifs = e.target.checked;
+            saveSettings();
+        });
+
+        document.getElementById('msg-set-enter').addEventListener('change', e => {
+            settings.enterToSend = e.target.checked;
+            saveSettings();
+        });
+
+        document.getElementById('msg-set-previews').addEventListener('change', e => {
+            settings.showPreviews = e.target.checked;
+            saveSettings();
+        });
+
+        document.getElementById('msg-test-sound').addEventListener('click', () => {
+            const was = settings.soundEnabled;
+            settings.soundEnabled = true;
+            _playDmSound();
+            settings.soundEnabled = was;
+        });
+
+        // Load blocked users list
+        loadBlockedList();
+    }
+
+    async function loadBlockedList() {
+        const container = document.getElementById('msg-blocked-list');
+        if (!container) return;
+        try {
+            const data = await dmApi('/blocks');
+            const blocked = data.blocked || [];
+            if (!blocked.length) {
+                container.innerHTML = '<div class="msg-settings-empty">No blocked users</div>';
+                return;
+            }
+            container.innerHTML = blocked.map(u => `
+                <div class="msg-blocked-item">
+                    ${avatarHtml(u, 28)}
+                    <span class="msg-blocked-name">${esc(u.display_name || u.username)}</span>
+                    <button class="msg-blocked-unblock" data-uid="${u.id}">Unblock</button>
+                </div>
+            `).join('');
+            container.querySelectorAll('.msg-blocked-unblock').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const uid = parseInt(btn.dataset.uid);
+                    try {
+                        await dmApi(`/blocks/${uid}`, { method: 'DELETE' });
+                        btn.closest('.msg-blocked-item')?.remove();
+                        if (!container.querySelector('.msg-blocked-item')) {
+                            container.innerHTML = '<div class="msg-settings-empty">No blocked users</div>';
+                        }
+                        toast('User unblocked', 'info');
+                    } catch { toast('Failed to unblock', 'error'); }
+                });
+            });
+        } catch {
+            container.innerHTML = '<div class="msg-settings-empty">Failed to load</div>';
+        }
+    }
+
     // ── API Actions ──────────────────────────────────────────────
     async function loadConversations() {
         try {
@@ -814,6 +1097,15 @@
     function handleIncomingDm(data) {
         if (data.type === 'dm' && data.message) {
             const msg = data.message;
+
+            // Play notification sound + desktop notif (rate-limited per sender)
+            _notifyDm(
+                msg.sender_id,
+                msg.display_name || msg.username,
+                msg.message,
+                data.conversation_id
+            );
+
             // If currently viewing this thread, append it
             if (panelOpen && view === 'thread' && activeConvId === data.conversation_id) {
                 threadMessages.unshift(msg);
@@ -868,6 +1160,7 @@
     // ── Init ─────────────────────────────────────────────────────
     function init() {
         if (!document.body) return;
+        loadSettings();
         injectWidget();
 
         // Poll unread every 30s
