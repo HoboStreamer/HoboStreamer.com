@@ -1805,6 +1805,13 @@
                                 </div>
                             </div>
                             <div class="bc-setting-row">
+                                <span class="bc-setting-label">Server Reconnect</span>
+                                <div class="bc-setting-control">
+                                    <label class="bc-toggle"><input type="checkbox" id="bc-serverReconnect" checked onchange="updateBroadcastSetting('serverReconnect', this.checked)"><span class="bc-toggle-slider"></span></label>
+                                    <span class="bc-setting-hint" style="font-size:11px;color:var(--text-muted);margin-left:8px">Auto-reconnect stream after server restart</span>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
                                 <span class="bc-setting-label">Allow Sounds</span>
                                 <div class="bc-setting-control">
                                     <select id="bc-allowSounds"><option value="false" selected>Off</option><option value="true">On</option></select>

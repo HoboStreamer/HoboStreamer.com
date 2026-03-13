@@ -428,6 +428,17 @@ async function start() {
         });
     }
 
+    // 4e. Refresh heartbeats for streams surviving a server restart
+    // After a deploy/restart, is_live=1 streams have stale heartbeats from before
+    // the server went down. Without this, the stale-stream cleanup (every 60s) would
+    // kill them before the broadcaster's client can reconnect and resume heartbeating.
+    // This gives broadcasters a fresh 5-minute window to reconnect.
+    const survivingStreams = db.all('SELECT id FROM streams WHERE is_live = 1');
+    if (survivingStreams.length > 0) {
+        db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE is_live = 1');
+        console.log(`[Server] Refreshed heartbeats for ${survivingStreams.length} surviving stream(s) — broadcasters have 5 min to reconnect`);
+    }
+
     // 5. Initialize WebRTC SFU (may fail if mediasoup not installed)
     try {
         await webrtcSFU.init();

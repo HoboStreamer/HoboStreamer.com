@@ -239,6 +239,7 @@ let broadcastState = {
         manualGainEnabled: false, manualGain: 100, force48kSampleRate: false,
         forceCamera: 'default', broadcastRes: '720', broadcastFps: '30', broadcastCodec: 'auto',
         broadcastBps: '2500', broadcastBpsMin: '500', broadcastLimit: 'restart', screenShare: false,
+        serverReconnect: true,
         allowSounds: 'false', soundVolume: 800,
     },
     robotStreamer: {
@@ -1774,6 +1775,7 @@ function syncSettingsUI() {
     setVal('bc-broadcastRes', s.broadcastRes); setVal('bc-broadcastFps', s.broadcastFps);
     setVal('bc-broadcastCodec', s.broadcastCodec); setVal('bc-broadcastBps', s.broadcastBps);
     setVal('bc-broadcastBpsMin', s.broadcastBpsMin); setVal('bc-broadcastLimit', s.broadcastLimit);
+    setCheck('bc-serverReconnect', s.serverReconnect !== false);
     setVal('bc-allowSounds', s.allowSounds); setVal('bc-soundVolume', s.soundVolume);
     setCheck('bc-screenShare', s.screenShare);
     syncRobotStreamerUI();
@@ -2080,8 +2082,16 @@ function startHeartbeat(streamId) {
                 },
             });
             if (!res.ok) {
-                // Server says stream is not live (400) or gone — clean up client state
-                console.warn(`[Heartbeat] Stream ${streamId} heartbeat returned ${res.status} — cleaning up`);
+                // Server might be restarting — retry several times before giving up.
+                // During a deploy the server is briefly unavailable, and the stale-stream
+                // cleanup could end our stream before our heartbeat comes through.
+                // Give it 5 retries (2.5 minutes at 30s intervals) before cleaning up.
+                ss._heartbeatFailCount = (ss._heartbeatFailCount || 0) + 1;
+                if (ss._heartbeatFailCount < 5) {
+                    console.warn(`[Heartbeat] Stream ${streamId} returned ${res.status} — retry ${ss._heartbeatFailCount}/5`);
+                    return;
+                }
+                console.warn(`[Heartbeat] Stream ${streamId} heartbeat failed ${ss._heartbeatFailCount} times — cleaning up`);
                 cleanupStream(streamId);
                 if (!isStreaming()) {
                     hideBroadcastTabs();
@@ -2092,8 +2102,10 @@ function startHeartbeat(streamId) {
                 }
                 return;
             }
+            // Reset fail counter on success
+            ss._heartbeatFailCount = 0;
         } catch {
-            // Network error — don't clean up, transient failure
+            // Network error — don't clean up, server may be restarting
         }
         // Only capture thumbnail if this is the active stream (has the preview element)
         if (broadcastState.activeStreamId === streamId) captureLiveThumbnail(streamId);
@@ -3285,10 +3297,26 @@ function connectSignaling(streamId) {
         // Only reconnect if this was NOT an intentional close and the stream is still active
         if (ss.signalingIntentionalClose) return;
         if (broadcastState.activeStreamId === streamId) updateBroadcastStatus('disconnected');
+
+        // If server reconnect is disabled, clean up the stream on signaling disconnect
+        if (broadcastState.settings.serverReconnect === false) {
+            console.log(`[Broadcast] Server reconnect disabled — stopping stream ${streamId}`);
+            toast('Server disconnected — stream stopped (auto-reconnect is off)', 'warning');
+            cleanupStream(streamId);
+            if (!isStreaming()) {
+                hideBroadcastTabs(); clearGlobalDisplayTimers();
+                setNavLiveIndicator(false); showStreamManager(); loadExistingStreams();
+            }
+            return;
+        }
+
         if (broadcastState.streams.has(streamId) && ss.streamData) {
             const delay = ss.signalingReconnectDelay;
             ss.signalingReconnectDelay = Math.min(ss.signalingReconnectDelay * 1.5, 30000);
             console.log(`[Broadcast] Reconnecting signaling for stream ${streamId} in ${Math.round(delay)}ms`);
+            if (broadcastState.activeStreamId === streamId) {
+                toast('Server disconnected — reconnecting...', 'warning');
+            }
             ss.signalingReconnectTimer = setTimeout(() => {
                 ss.signalingReconnectTimer = null;
                 if (broadcastState.streams.has(streamId)) connectSignaling(streamId);
