@@ -30,6 +30,15 @@ const MAX_RESTART_ATTEMPTS = 10;
 const FFMPEG_STARTUP_DELAY_RTMP = 3000;
 
 /**
+ * Path to a static FFmpeg binary built with OpenSSL (not GnuTLS).
+ * GnuTLS has a known issue where long-running TLS sessions get "invalidated"
+ * during rekeying against certain CDN servers (especially AWS CloudFront,
+ * which Kick uses). Using an OpenSSL-based binary avoids this completely.
+ * Falls back to system ffmpeg if the static binary doesn't exist.
+ */
+const OPENSSL_FFMPEG_PATH = path.join(__dirname, '../../bin/ffmpeg');
+
+/**
  * Quality presets for restream encoding.
  * Used for JSMPEG and WebRTC sources (RTMP uses codec copy).
  * 
@@ -368,8 +377,8 @@ class RestreamManager extends EventEmitter {
             '-hide_banner',
             '-loglevel', 'warning',
             '-protocol_whitelist', 'file,rtp,udp',
-            '-analyzeduration', '10000000',   // 10s — absorb RTP jitter during startup
-            '-probesize', '10000000',          // 10MB — reliable stream detection
+            '-analyzeduration', '2000000',    // 2s — SDP is known, don't over-probe
+            '-probesize', '2000000',           // 2MB — plenty for known RTP streams
             '-fflags', '+genpts+discardcorrupt',
             '-i', sdpPath,
             ...this._getEncodingArgs(preset, { hasAudio: !!audioConsumer }),
@@ -413,11 +422,11 @@ class RestreamManager extends EventEmitter {
      * Produces stable CBR-like H.264/AAC output suitable for RTMP ingest.
      * 
      * @param {object} preset - Resolved quality preset
-     * @param {object} [opts] - { hasAudio: boolean }
+     * @param {object} [opts] - { hasAudio: boolean, platform: string }
      * @returns {string[]} FFmpeg args array
      */
     _getEncodingArgs(preset, opts = {}) {
-        const { hasAudio = true } = opts;
+        const { hasAudio = true, platform } = opts;
         const args = [];
 
         // Video encoding — CBR-like rate control for stable RTMP delivery
@@ -447,11 +456,12 @@ class RestreamManager extends EventEmitter {
 
         // Audio encoding
         if (hasAudio) {
+            // Kick requires 48000 Hz sample rate; use it for all platforms (universally compatible)
             args.push(
                 '-map', '0:a:0',
                 '-c:a', 'aac',
                 '-b:a', preset.audioBitrate,
-                '-ar', '44100',
+                '-ar', '48000',
                 '-ac', '2',
             );
         }
@@ -528,14 +538,23 @@ class RestreamManager extends EventEmitter {
 
     /**
      * Spawn an FFmpeg child process and monitor its lifecycle.
+     * Automatically uses the OpenSSL-based static FFmpeg for RTMPS destinations
+     * to avoid GnuTLS TLS session invalidation issues.
      */
     _spawnFFmpeg(session, args) {
+        // Use OpenSSL FFmpeg binary for RTMPS destinations (GnuTLS has TLS rekeying issues)
+        const destUrl = args[args.length - 1] || '';
+        const isRtmps = destUrl.startsWith('rtmps://');
+        const useOpenSslBinary = isRtmps && fs.existsSync(OPENSSL_FFMPEG_PATH);
+        const ffmpegBin = useOpenSslBinary ? OPENSSL_FFMPEG_PATH : 'ffmpeg';
+
         const maskedArgs = args.map(a =>
             (a.includes('rtmp://') || a.includes('rtmps://')) ? a.replace(/\/[^/]+$/, '/****') : a
         );
-        console.log(`[Restream] Spawning FFmpeg for ${session.key}: ffmpeg ${maskedArgs.join(' ')}`);
+        const binLabel = useOpenSslBinary ? 'ffmpeg(openssl)' : 'ffmpeg';
+        console.log(`[Restream] Spawning FFmpeg for ${session.key}: ${binLabel} ${maskedArgs.join(' ')}`);
 
-        const proc = spawn('ffmpeg', args, {
+        const proc = spawn(ffmpegBin, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
         });
 
