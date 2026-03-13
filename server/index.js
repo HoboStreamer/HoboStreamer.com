@@ -561,6 +561,8 @@ async function start() {
                 });
                 // Stop RS chat bridge for this stream (prevents zombie bridges)
                 robotStreamerService.stopForStream(stream.id);
+                // Close signaling room and notify viewers
+                broadcastServer.endStream(stream.id);
                 const user = db.getUserById(stream.user_id);
                 if (stream.protocol === 'jsmpeg' && user) {
                     jsmpegRelay.destroyChannel(user.stream_key);

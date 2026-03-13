@@ -362,6 +362,36 @@ class BroadcastServer {
         return room ? room.viewers.size : 0;
     }
 
+    /**
+     * Cleanly end a stream: close broadcaster WS, notify viewers, clear room.
+     * Called from DELETE /streams/:id and stale heartbeat cleanup.
+     */
+    endStream(streamId) {
+        const room = this.rooms.get(streamId);
+        if (!room) return;
+
+        // Cancel any pending disconnect timer
+        if (room._disconnectTimer) {
+            clearTimeout(room._disconnectTimer);
+            room._disconnectTimer = null;
+        }
+
+        // Close broadcaster WS
+        if (room.broadcaster) {
+            this.safeSend(room.broadcaster, { type: 'stream-ended' });
+            this.clients.delete(room.broadcaster);
+            try { room.broadcaster.close(4020, 'Stream ended'); } catch {}
+            room.broadcaster = null;
+        }
+
+        // Notify all viewers
+        for (const [, viewerWs] of room.viewers) {
+            this.safeSend(viewerWs, { type: 'stream-ended' });
+        }
+
+        this.rooms.delete(streamId);
+    }
+
     getTotalConnections() {
         return this.clients.size;
     }
