@@ -28,6 +28,7 @@ const CHAT_RECONNECT_BASE = 2000;
 const CHAT_RECONNECT_MAX = 30000;
 let _chatIntentionalClose = false;
 let _chatActive = false; // true whenever we have an active/desired chat connection (including global)
+let _chatIsReconnecting = false; // true during auto-reconnect to prevent clearing messages
 
 // ── Cross-feed: secondary global WS for piping messages into stream chat ──
 let _globalFeedWs = null;
@@ -339,10 +340,70 @@ function _scheduleChatReconnect(streamId) {
         // Reconnect to current stream or global (null)
         const targetStream = chatStreamId ?? streamId ?? null;
         console.log('[Chat] Auto-reconnecting to', targetStream || 'global');
-        chatWs = null; // clear stale ref before reconnecting
-        chatStreamId = targetStream;
-        initChat(targetStream);
+        // Reconnect the WebSocket WITHOUT clearing messages or tearing down the DOM.
+        // This prevents the flash/clear that users see during server restarts.
+        _reconnectChatWs(targetStream);
     }, delay);
+}
+
+/**
+ * Reconnect just the WebSocket without clearing the chat UI.
+ * Preserves all existing messages — only new messages are appended after reconnect.
+ */
+function _reconnectChatWs(streamId) {
+    _chatIsReconnecting = true;
+    // Close stale WS if any
+    if (chatWs) {
+        try { chatWs.onclose = null; chatWs.onerror = null; chatWs.close(); } catch {}
+        chatWs = null;
+    }
+    chatStreamId = streamId;
+
+    const host = window.location.hostname;
+    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const token = localStorage.getItem('token');
+
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (streamId) params.set('stream', streamId);
+    const wsUrl = `${protocol}://${host}:${port}/ws/chat?${params.toString()}`;
+
+    const ws = new WebSocket(wsUrl);
+    chatWs = ws;
+    _chatIntentionalClose = false;
+    _chatActive = true;
+
+    ws.onopen = () => {
+        if (chatWs !== ws) return;
+        _chatIsReconnecting = false;
+        ws.send(JSON.stringify({ type: 'join', streamId, token: token || undefined }));
+        _chatReconnectDelay = CHAT_RECONNECT_BASE;
+        addSystemMessage('Reconnected to chat');
+    };
+
+    ws.onmessage = (e) => {
+        if (chatWs !== ws) return;
+        try { handleChatMessage(JSON.parse(e.data)); } catch {}
+    };
+
+    ws.onerror = () => {
+        if (chatWs !== ws) return;
+        _chatIsReconnecting = false;
+        addSystemMessage('Chat connection error');
+    };
+
+    ws.onclose = () => {
+        if (chatWs !== ws) return;
+        _chatIsReconnecting = false;
+        addSystemMessage('Chat disconnected');
+        if (!_chatIntentionalClose && _chatActive) {
+            _scheduleChatReconnect(chatStreamId);
+        }
+    };
+
+    // Restart cross-feed if applicable
+    _syncGlobalFeed();
 }
 
 function destroyChat() {
@@ -385,10 +446,12 @@ function destroyChat() {
         _bgBroadcastWs = null;
         _bgBroadcastStreamId = null;
     }
-    // Clear all chat containers
-    for (const id of ['chat-messages', 'bc-chat-messages', 'global-chat-messages', 'offline-chat-messages']) {
-        const el = document.getElementById(id);
-        if (el) el.innerHTML = '';
+    // Clear all chat containers (only on intentional navigation, not auto-reconnect)
+    if (!_chatIsReconnecting) {
+        for (const id of ['chat-messages', 'bc-chat-messages', 'global-chat-messages', 'offline-chat-messages']) {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '';
+        }
     }
     dismissContextMenu();
 }
@@ -913,7 +976,13 @@ function sendChat() {
     const { input } = getChatEl();
     if (!input) return;
     const text = input.value.trim();
-    if (!text || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+    if (!text) return;
+
+    // If WS is down (server restarting, etc.), send to global chat via REST API
+    if (!chatWs || chatWs.readyState !== WebSocket.OPEN) {
+        _sendChatViaRest(text, input);
+        return;
+    }
 
     // Client-side cooldown enforcement
     if (chatSlowModeCooldownEnd > Date.now()) {
@@ -947,6 +1016,42 @@ function sendChat() {
     _autoResizeTextarea(input);
     input.focus();
     startSlowModeCooldown();
+}
+
+/**
+ * Fallback: send a chat message via REST API when the WebSocket is down.
+ * The message goes to global chat so the user isn't silenced during reconnects.
+ */
+async function _sendChatViaRest(text, input) {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        addSystemMessage('Chat disconnected — log in to send messages while reconnecting');
+        return;
+    }
+    try {
+        const res = await fetch('/api/chat/send', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ message: text }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            addSystemMessage(err.error || 'Failed to send message');
+            return;
+        }
+        // Clear input on success
+        input.value = '';
+        _autoResizeTextarea(input);
+        input.focus();
+        if (chatStreamId) {
+            addSystemMessage('Sent to global chat (stream chat reconnecting)');
+        }
+    } catch {
+        addSystemMessage('Server unreachable — message not sent');
+    }
 }
 
 /**

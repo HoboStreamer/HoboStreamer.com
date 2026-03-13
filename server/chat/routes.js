@@ -1,6 +1,7 @@
 /**
  * HoboStreamer — Chat API Routes
  * 
+ * POST /api/chat/send                  - Send a chat message (REST fallback)
  * GET  /api/chat/:streamId/history   - Get chat history for a stream
  * GET  /api/chat/:streamId/users     - Get users in chat
  * GET  /api/chat/search              - Search chat messages
@@ -13,6 +14,87 @@ const { optionalAuth, requireAuth, requireAdmin } = require('../auth/auth');
 const permissions = require('../auth/permissions');
 
 const router = express.Router();
+
+// ── Send Chat Message (REST fallback when WS is down) ────────
+router.post('/send', requireAuth, (req, res) => {
+    try {
+        const text = (req.body.message || '').trim();
+        if (!text || text.length > 500) {
+            return res.status(400).json({ error: 'Invalid message' });
+        }
+
+        // Ban check
+        if (db.isUserBanned(req.user.id, null)) {
+            return res.status(403).json({ error: 'You are banned from chat' });
+        }
+
+        const chatServer = require('./chat-server');
+
+        // Word filter
+        const wordFilter = require('./word-filter');
+        const filterResult = wordFilter.check(text);
+        const filtered = filterResult.safe ? text : filterResult.filtered;
+
+        if (wordFilter.isSpam(filtered)) {
+            return res.status(400).json({ error: 'Message blocked: detected as spam' });
+        }
+
+        const username = req.user.display_name || req.user.username;
+
+        const chatMsg = {
+            type: 'chat',
+            username,
+            core_username: req.user.username,
+            user_id: req.user.id,
+            anon_id: null,
+            role: req.user.role || 'user',
+            message: filtered,
+            stream_id: null,
+            is_global: true,
+            avatar_url: req.user.avatar_url || null,
+            profile_color: req.user.profile_color || '#999',
+            filtered: !filterResult.safe,
+            timestamp: new Date().toISOString(),
+        };
+
+        // Attach cosmetics
+        try {
+            const cosmetics = require('../game/cosmetics');
+            const cosmeticProfile = cosmetics.getCosmeticProfile(req.user.id);
+            if (cosmeticProfile.nameFX) chatMsg.nameFX = cosmeticProfile.nameFX;
+            if (cosmeticProfile.particleFX) chatMsg.particleFX = cosmeticProfile.particleFX;
+            if (cosmeticProfile.hatFX) chatMsg.hatFX = cosmeticProfile.hatFX;
+            if (cosmeticProfile.voiceFX) chatMsg.voiceFX = cosmeticProfile.voiceFX;
+        } catch { /* non-critical */ }
+
+        // Attach tag
+        try {
+            const tags = require('../game/tags');
+            const tagProfile = tags.getTagProfile(req.user.id);
+            if (tagProfile) chatMsg.tag = tagProfile;
+        } catch { /* non-critical */ }
+
+        // Save to database
+        try {
+            db.saveChatMessage({
+                stream_id: null,
+                user_id: req.user.id,
+                anon_id: null,
+                username,
+                message: filtered,
+                message_type: 'chat',
+                is_global: true,
+            });
+        } catch { /* non-critical */ }
+
+        // Broadcast to all global chat clients
+        chatServer.broadcastGlobal(chatMsg);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[Chat] REST send error:', err.message);
+        res.status(500).json({ error: 'Failed to send message' });
+    }
+});
 
 // ── Search Chat Messages (admin or self) ─────────────────────
 router.get('/search', requireAuth, (req, res) => {
