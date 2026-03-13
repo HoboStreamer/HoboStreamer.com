@@ -1960,6 +1960,9 @@ function cleanupStream(streamId) {
         // Close any background broadcast chat WS now that we're no longer live
         if (typeof destroyBgBroadcastChat === 'function') destroyBgBroadcastChat();
     }
+
+    updateBroadcastMobileChatFab();
+    updateRsRestreamSlotUI();
 }
 
 /**
@@ -2326,7 +2329,11 @@ async function startMediaCapture(streamId, opts = {}) {
         const preview = document.getElementById('bc-video-preview');
         if (preview) { preview.srcObject = ss.localStream; preview.muted = true; preview.play().catch(() => {}); }
         const ph = document.getElementById('bc-video-placeholder'); if (ph) ph.style.display = 'none';
+
+        // Detect vertical video and add class for responsive mobile layout
+        _detectBroadcastVerticalPreview(ss.localStream);
     }
+    updateBroadcastMobileChatFab();
 }
 
 function buildAudioConstraints(s, forceAudio) {
@@ -3068,6 +3075,48 @@ function _stopRsViewerPoll() {
 }
 
 /* ── Broadcaster Controls ─────────────────────────────────────── */
+
+/** Toggle broadcast page mobile chat bottom sheet */
+let _bcMobileChatOpen = false;
+function toggleBroadcastMobileChat() {
+    const sidebar = document.getElementById('bc-chat-sidebar');
+    const fab = document.getElementById('bc-mobile-chat-toggle');
+    if (!sidebar) return;
+    _bcMobileChatOpen = !_bcMobileChatOpen;
+    sidebar.classList.toggle('mobile-chat-open', _bcMobileChatOpen);
+    document.body.classList.toggle('mobile-chat-visible', _bcMobileChatOpen);
+    if (fab) {
+        const icon = fab.querySelector('i');
+        if (icon) icon.className = _bcMobileChatOpen ? 'fa-solid fa-xmark' : 'fa-solid fa-comment';
+    }
+    if (_bcMobileChatOpen) {
+        const msgs = document.getElementById('bc-chat-messages');
+        if (msgs) msgs.scrollTop = msgs.scrollHeight;
+        const badge = document.getElementById('bc-mobile-chat-badge');
+        if (badge) { badge.style.display = 'none'; badge.textContent = '0'; }
+    }
+}
+/** Show/hide the broadcast mobile chat FAB based on screen size and live state */
+function updateBroadcastMobileChatFab() {
+    const fab = document.getElementById('bc-mobile-chat-toggle');
+    if (!fab) return;
+    const isLive = broadcastState.streams.size > 0;
+    const isMobile = window.innerWidth <= 768;
+    fab.style.display = (isLive && isMobile) ? 'flex' : 'none';
+}
+
+/** Detect if the broadcast preview video is vertical and toggle a class on the container */
+function _detectBroadcastVerticalPreview(stream) {
+    const container = document.querySelector('.bc-video-container');
+    if (!container || !stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+    const settings = videoTrack.getSettings();
+    if (settings.width && settings.height) {
+        container.classList.toggle('bc-vertical-preview', settings.height > settings.width);
+    }
+}
+
 async function flipCamera() {
     const ss = getActiveStreamState();
     if (!ss || !ss.localStream) return;
@@ -3326,6 +3375,9 @@ function initBroadcastSettingsListeners() {
 
 document.addEventListener('DOMContentLoaded', () => {
     initBroadcastSettingsListeners();
+
+    // Update mobile chat FAB visibility on resize
+    window.addEventListener('resize', updateBroadcastMobileChatFab);
 
     const robotSelect = document.getElementById('bc-rsRobotSelect');
     if (robotSelect) {

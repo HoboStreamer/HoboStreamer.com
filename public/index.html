@@ -1695,7 +1695,7 @@
                         <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
                             <i class="fa-solid fa-gear"></i>
                         </button>
-                        <button class="mobile-chat-close" onclick="toggleMobileChat()" title="Close Chat">
+                        <button class="mobile-chat-close" onclick="toggleBroadcastMobileChat()" title="Close Chat">
                             <i class="fa-solid fa-xmark"></i>
                         </button>
                     </div>
@@ -1750,6 +1750,12 @@
                 </div>
             </div>
         </div>
+
+        <!-- Mobile Chat Toggle FAB for Broadcast page (visible only on small screens when live) -->
+        <button class="mobile-chat-toggle bc-mobile-chat-fab" id="bc-mobile-chat-toggle" onclick="toggleBroadcastMobileChat()" title="Toggle Chat" style="display:none">
+            <i class="fa-solid fa-comment"></i>
+            <span class="mobile-chat-badge" id="bc-mobile-chat-badge" style="display:none">0</span>
+        </button>
     </section>
 
     <!-- ── SETTINGS ──────────────────────────────────────── -->

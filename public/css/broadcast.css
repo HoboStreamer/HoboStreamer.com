@@ -689,17 +689,41 @@
 @media (max-width: 768px) {
     .broadcast-layout {
         flex-direction: column;
-        height: auto;
-        padding: 10px;
-        gap: 10px;
-    }
-
-    .bc-video-container {
-        max-height: 40vh;
+        height: calc(100vh - var(--navbar-h));
+        height: calc(100dvh - var(--navbar-h));
+        padding: 0;
+        gap: 0;
+        overflow: hidden;
+        position: relative;
     }
 
     .broadcast-main {
-        border-radius: 16px;
+        flex: 1;
+        min-height: 0; /* allow shrink in flex */
+        border-radius: 0;
+        border: none;
+        overflow-y: auto;
+    }
+
+    .bc-video-container {
+        max-height: 35vh;
+        max-height: 35dvh;
+        border-radius: 0;
+        aspect-ratio: unset; /* let video size naturally on mobile */
+    }
+    .bc-video-container video {
+        max-height: 35vh;
+        max-height: 35dvh;
+    }
+
+    /* When streaming vertically on phone, give the preview more room */
+    .bc-video-container.bc-vertical-preview {
+        max-height: 45vh;
+        max-height: 45dvh;
+    }
+    .bc-video-container.bc-vertical-preview video {
+        max-height: 45vh;
+        max-height: 45dvh;
     }
 
     .bc-info-bar {
@@ -758,6 +782,69 @@
     .settings-banner-content {
         flex-direction: column;
         align-items: flex-start;
+    }
+}
+
+/* ── Broadcast Portrait Mode (Phone held vertically while streaming) ── */
+@media (max-width: 768px) and (orientation: portrait) {
+    .bc-video-container {
+        aspect-ratio: unset;
+        max-height: 40vh;
+        max-height: 40dvh;
+    }
+    .bc-video-container video {
+        max-height: 40vh;
+        max-height: 40dvh;
+    }
+    .bc-video-container.bc-vertical-preview {
+        max-height: 50vh;
+        max-height: 50dvh;
+    }
+    .bc-video-container.bc-vertical-preview video {
+        max-height: 50vh;
+        max-height: 50dvh;
+    }
+    /* Tighter controls on portrait phone */
+    .bc-ctrl-buttons {
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+    }
+    .bc-info-bar {
+        padding: 6px 10px;
+        gap: 6px;
+    }
+}
+
+/* ── Broadcast Landscape Phone ── */
+@media (max-height: 500px) and (max-width: 900px) {
+    .broadcast-layout {
+        flex-direction: row;
+        height: calc(100vh - var(--navbar-h));
+        height: calc(100dvh - var(--navbar-h));
+        padding: 0;
+        gap: 0;
+        overflow: hidden;
+    }
+    .broadcast-main {
+        flex: 1;
+        min-width: 0;
+        border-radius: 0;
+        border: none;
+    }
+    .bc-video-container {
+        max-height: calc(100vh - var(--navbar-h));
+        max-height: calc(100dvh - var(--navbar-h));
+    }
+    /* Show chat sidebar alongside on landscape phone */
+    #bc-chat-sidebar {
+        width: 280px;
+        flex-shrink: 0;
+        position: relative;
+        transform: none;
+        max-height: none;
+        height: auto;
+        border-radius: 0;
+        box-shadow: none;
     }
 }
 
@@ -1326,21 +1413,24 @@
 
 /* 480px: Very small phone broadcast layout */
 @media (max-width: 480px) {
-    .broadcast-layout { padding: 8px; gap: 8px; }
-    .broadcast-main { border-radius: 12px; }
-    .bc-video-container { max-height: 35vh; }
-    .bc-info-bar { padding: 8px 10px; gap: 8px; font-size: 0.82rem; }
-    .bc-ctrl-btn { padding: 8px 10px; font-size: 0.78rem; gap: 4px; }
-    .bc-ctrl-btn i { font-size: 0.9rem; }
-    .bc-rs-control { padding: 6px 10px; gap: 8px; font-size: 0.78rem; }
-    .bc-ctrl-btn-sm { padding: 3px 8px; font-size: 0.72rem; }
-    .bc-setting-label { font-size: 0.82rem; }
+    .broadcast-layout { padding: 0; gap: 0; }
+    .broadcast-main { border-radius: 0; }
+    .bc-video-container { max-height: 30vh; max-height: 30dvh; }
+    .bc-video-container video { max-height: 30vh; max-height: 30dvh; }
+    .bc-video-container.bc-vertical-preview { max-height: 40vh; max-height: 40dvh; }
+    .bc-video-container.bc-vertical-preview video { max-height: 40vh; max-height: 40dvh; }
+    .bc-info-bar { padding: 6px 8px; gap: 6px; font-size: 0.78rem; }
+    .bc-ctrl-btn { padding: 6px 8px; font-size: 0.75rem; gap: 4px; }
+    .bc-ctrl-btn i { font-size: 0.85rem; }
+    .bc-rs-control { padding: 4px 8px; gap: 6px; font-size: 0.75rem; }
+    .bc-ctrl-btn-sm { padding: 3px 6px; font-size: 0.7rem; }
+    .bc-setting-label { font-size: 0.78rem; }
     .bc-setting-control select,
-    .bc-setting-control input { font-size: 0.82rem; }
-    .stream-config-card { padding: 12px; }
-    .stream-config-card h4 { font-size: 0.88rem; }
+    .bc-setting-control input { font-size: 0.78rem; }
+    .stream-config-card { padding: 10px; }
+    .stream-config-card h4 { font-size: 0.85rem; }
     #bc-stream-manager,
-    .bc-instructions-panel { padding: 12px; }
+    .bc-instructions-panel { padding: 10px; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
