@@ -476,6 +476,17 @@ async function start() {
         });
     });
 
+    // 6d. Hook broadcaster connection for WebRTC restream auto-start
+    // When a broadcaster connects (or reconnects), trigger restreams.
+    // _startWebrtcRestream() will request the broadcaster to produce into the local SFU if needed.
+    broadcastServer.on('broadcaster-connected', ({ streamId, userId }) => {
+        const stream = db.getStreamById(streamId);
+        if (!stream?.is_live || stream.protocol !== 'webrtc') return;
+        restreamManager.autoStartForStream(streamId, userId, { protocol: 'webrtc' }).catch(err => {
+            console.warn(`[Restream] Broadcaster-connect auto-start error for stream ${streamId}:`, err.message);
+        });
+    });
+
     // 7. Start HTTP server
     server.listen(config.port, config.host, () => {
         console.log('');
