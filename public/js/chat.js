@@ -2364,6 +2364,41 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(_fcwUpdateVisibility, 100);
 });
 
+// ── Re-authenticate chat WebSocket on login/logout ───────────
+// When the user logs in or registers, the navbar updates but the existing
+// WebSocket still carries the old anonymous identity. Re-send a `join`
+// message with the new token so the server upgrades the connection.
+// On logout, reconnect so the server assigns a fresh anon identity.
+window.addEventListener('hobo-auth-changed', (e) => {
+    const token = e.detail?.token;
+    const wasAuthed = chatWs?._hoboAuthed;
+
+    if (token && chatWs && chatWs.readyState === WebSocket.OPEN) {
+        // Logged in — re-authenticate the existing connection
+        chatWs.send(JSON.stringify({
+            type: 'join',
+            streamId: chatStreamId,
+            token,
+        }));
+        chatWs._hoboAuthed = true;
+    } else if (!token && wasAuthed) {
+        // Logged out — reconnect to get a fresh anon identity
+        chatWs._hoboAuthed = false;
+        const sid = chatStreamId;
+        destroyChat();
+        if (sid) initChat(sid); else initChat(null);
+    }
+
+    // Also re-auth background broadcast WS if active
+    if (token && _bgBroadcastWs && _bgBroadcastWs.readyState === WebSocket.OPEN) {
+        _bgBroadcastWs.send(JSON.stringify({
+            type: 'join',
+            streamId: _bgBroadcastStreamId,
+            token,
+        }));
+    }
+});
+
 /* ═══════════════════════════════════════════════════════════════
    POPOUT CHAT WINDOWS
    Open global chat or stream chat in a standalone popup window.

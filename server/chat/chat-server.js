@@ -140,6 +140,16 @@ class ChatServer {
      */
     handleConnection(ws, req) {
         const ip = this.getClientIp(req);
+
+        // Diagnostic: log IP resolution chain for first few connections
+        if (this.anonMap.size < 20) {
+            console.log('[Chat] IP resolution — cf-connecting-ip:', req.headers?.['cf-connecting-ip'] || '(none)',
+                '| x-forwarded-for:', req.headers?.['x-forwarded-for'] || '(none)',
+                '| x-real-ip:', req.headers?.['x-real-ip'] || '(none)',
+                '| socket:', req.socket?.remoteAddress || '(none)',
+                '| resolved:', ip);
+        }
+
         const urlParams = new URL(req.url, 'http://localhost').searchParams;
         const token = urlParams.get('token');
         const streamId = parseInt(urlParams.get('stream')) || null;
