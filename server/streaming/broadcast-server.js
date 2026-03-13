@@ -12,6 +12,7 @@
  * Each stream has ONE broadcaster and MANY viewers.
  * The server acts as a signaling relay (not an SFU).
  */
+const { EventEmitter } = require('events');
 const WebSocket = require('ws');
 const { authenticateWs } = require('../auth/auth');
 const db = require('../db/database');
@@ -20,8 +21,9 @@ const webrtcSFU = require('./webrtc-sfu');
 const WS_HEARTBEAT_MS = 30000;
 const MAX_SEND_BACKPRESSURE = 512 * 1024;
 
-class BroadcastServer {
+class BroadcastServer extends EventEmitter {
     constructor() {
+        super();
         this.wss = null;
         /** @type {Map<number, { broadcaster: WebSocket, viewers: Map<string, WebSocket> }>} streamId → room */
         this.rooms = new Map();
@@ -128,6 +130,7 @@ class BroadcastServer {
             }
             room.broadcaster = ws;
             console.log(`[Broadcast] Broadcaster connected: stream ${streamId} (${user.username})`);
+            this.emit('broadcaster-connected', { streamId, userId: user.id });
 
             // Notify existing viewers to re-negotiate
             for (const [viewerPeerId, viewerWs] of room.viewers) {
