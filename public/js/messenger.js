@@ -241,9 +241,14 @@
         panelOpen = !panelOpen;
         $panel.classList.toggle('open', panelOpen);
         if (panelOpen) {
-            view = 'inbox';
-            loadConversations();
-            _startInboxPoll();
+            // If we had a conversation open before closing, restore it
+            if (activeConvId) {
+                openThread(activeConvId);
+            } else {
+                view = 'inbox';
+                loadConversations();
+                _startInboxPoll();
+            }
         } else {
             _stopThreadPoll();
             _stopInboxPoll();
@@ -260,6 +265,8 @@
     // ── Render: Inbox ────────────────────────────────────────────
     function renderInbox() {
         view = 'inbox';
+        activeConvId = null;
+        activeConv = null;
         _stopThreadPoll();
         _startInboxPoll();
         $panel.innerHTML = `
