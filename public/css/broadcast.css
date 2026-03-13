@@ -277,7 +277,100 @@
     background: var(--accent-dark);
 }
 
-/* ── RS Restream Control Panel ─────────────────────────────── */
+/* ── Restream Control Panel ─────────────────────────────────── */
+.bc-restream-control {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    margin-bottom: 16px;
+}
+
+.bc-restream-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.82rem;
+}
+
+.bc-restream-platform-icon {
+    width: 20px;
+    text-align: center;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+.bc-restream-name {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
+}
+
+.bc-restream-status-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+.bc-restream-status-badge i { font-size: 0.65rem; }
+.bc-restream-status-live { background: rgba(46, 204, 113, 0.15); color: var(--success, #2ecc71); }
+.bc-restream-status-live i { animation: restream-pulse 1.5s ease-in-out infinite; }
+.bc-restream-status-starting { background: rgba(243, 156, 18, 0.15); color: var(--warning, #f39c12); }
+.bc-restream-status-error { background: rgba(231, 76, 60, 0.15); color: var(--danger, #e74c3c); }
+.bc-restream-status-idle { background: var(--bg-tertiary); color: var(--text-secondary); }
+.bc-restream-status-failed { background: rgba(231, 76, 60, 0.15); color: var(--danger, #e74c3c); }
+
+@keyframes restream-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+}
+
+.bc-restream-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+}
+
+/* Destination card in settings */
+.bc-restream-dest-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    margin-bottom: 8px;
+    font-size: 0.82rem;
+}
+
+.bc-restream-dest-card .bc-restream-name {
+    flex: 1;
+    min-width: 0;
+}
+
+.bc-restream-dest-meta {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.bc-restream-dest-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+/* Legacy RS control panel (kept for backward compat) */
 .bc-rs-control {
     display: flex;
     flex-wrap: wrap;
@@ -330,16 +423,11 @@
 }
 .bc-rs-status i { font-size: 0.7rem; }
 .bc-rs-live    { color: var(--success, #2ecc71); }
-.bc-rs-live i  { animation: rs-pulse 1.5s ease-in-out infinite; }
+.bc-rs-live i  { animation: restream-pulse 1.5s ease-in-out infinite; }
 .bc-rs-connecting { color: var(--warning, #f39c12); }
 .bc-rs-error   { color: var(--danger, #e74c3c); }
 .bc-rs-ready   { color: var(--text-secondary, #888); }
 .bc-rs-off     { color: var(--text-muted, #555); }
-
-@keyframes rs-pulse {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.3; }
-}
 
 .bc-ctrl-btn-sm {
     padding: 4px 10px;
@@ -747,6 +835,12 @@
     .bc-rs-status-row {
         margin-left: 0;
         justify-content: space-between;
+    }
+    .bc-restream-row {
+        flex-wrap: wrap;
+    }
+    .bc-restream-actions {
+        margin-left: 0;
     }
 
     .bc-setting-row {
@@ -1423,6 +1517,8 @@
     .bc-ctrl-btn { padding: 6px 8px; font-size: 0.75rem; gap: 4px; }
     .bc-ctrl-btn i { font-size: 0.85rem; }
     .bc-rs-control { padding: 4px 8px; gap: 6px; font-size: 0.75rem; }
+    .bc-restream-control { padding: 4px 8px; gap: 4px; font-size: 0.75rem; }
+    .bc-restream-dest-card { padding: 6px 8px; gap: 6px; font-size: 0.75rem; }
     .bc-ctrl-btn-sm { padding: 3px 6px; font-size: 0.7rem; }
     .bc-setting-label { font-size: 0.78rem; }
     .bc-setting-control select,

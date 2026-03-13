@@ -368,6 +368,7 @@ function startOrRetryRsRestream() {
 
 /** Update RS restream control panel in live controls */
 function updateRsRestreamSlotUI() {
+    updateRestreamControlPanel();
     const panel = document.getElementById('bc-rs-control');
     if (!panel) return;
 
@@ -864,6 +865,7 @@ function ensureBroadcastChat(streamId) {
 async function loadBroadcastPage() {
     loadBroadcastSettings();
     loadRobotStreamerIntegration().catch(() => {});
+    loadRestreamDestinations().catch(() => {});
 
     // If THIS tab has active browser WebRTC streams (localStream exists), restore UI
     if (broadcastState.streams.size > 0 && broadcastState.activeStreamId != null) {
@@ -878,6 +880,7 @@ async function loadBroadcastPage() {
             ensureBroadcastChat(ss.streamData.id);
             startGlobalDisplayTimers();
             updateRsRestreamSlotUI();
+            startRestreamStatusPolling();
             return;
         }
     }
@@ -1144,6 +1147,7 @@ async function resumeStreamView(stream) {
         acquireWakeLock();
         showBroadcastCallControls(); updateBroadcastCallUI();
         updateRsRestreamSlotUI();
+        startRestreamStatusPolling();
     } else if (stream.protocol === 'rtmp') {
         const ss = createStreamState(stream);
         ss.startedAt = stream.started_at || new Date().toISOString();
@@ -1155,6 +1159,7 @@ async function resumeStreamView(stream) {
         startGlobalDisplayTimers();
         ensureBroadcastChat(stream.id);
         showBroadcastCallControls(); updateBroadcastCallUI();
+        startRestreamStatusPolling();
     } else if (stream.protocol === 'jsmpeg') {
         const ss = createStreamState(stream);
         ss.startedAt = stream.started_at || new Date().toISOString();
@@ -1166,6 +1171,7 @@ async function resumeStreamView(stream) {
         startGlobalDisplayTimers();
         ensureBroadcastChat(stream.id);
         showBroadcastCallControls(); updateBroadcastCallUI();
+        startRestreamStatusPolling();
     }
 }
 
@@ -1349,21 +1355,25 @@ async function createNewStream() {
             acquireWakeLock();
             showBroadcastCallControls(); updateBroadcastCallUI();
             updateRsRestreamSlotUI();
+            startRestreamStatusPolling();
             toast('You are now LIVE!', 'success');
         } else if (method === 'webrtc' && broadcastState.selectedWebRTCSub === 'obs') {
             showWHIPInstructions(streamData); startHeartbeat(streamData.id);
             ensureBroadcastChat(streamData.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
+            startRestreamStatusPolling();
             toast('Stream created — configure OBS with the details below', 'success');
         } else if (method === 'rtmp') {
             showRTMPInstructions(streamData); startHeartbeat(streamData.id);
             ensureBroadcastChat(streamData.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
+            startRestreamStatusPolling();
             toast('Stream created — configure your streaming software', 'success');
         } else if (method === 'jsmpeg') {
             showJSMPEGInstructions(streamData); startHeartbeat(streamData.id);
             ensureBroadcastChat(streamData.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
+            startRestreamStatusPolling();
             toast('Stream created — start FFmpeg with the command below', 'success');
         }
     } catch (e) {
@@ -1957,6 +1967,7 @@ function cleanupStream(streamId) {
         setNavLiveIndicator(false);
         clearGlobalDisplayTimers();
         releaseWakeLock();
+        stopRestreamStatusPolling();
         // Close any background broadcast chat WS now that we're no longer live
         if (typeof destroyBgBroadcastChat === 'function') destroyBgBroadcastChat();
     }
@@ -2357,6 +2368,381 @@ function applyManualGain(streamId) {
         ss.localStream.removeTrack(audioTrack); ss.localStream.addTrack(dest.stream.getAudioTracks()[0]);
         ss.audioContext = ctx; ss.gainNode = gain;
     } catch (err) { console.warn('[Broadcast] Manual gain failed:', err); }
+}
+
+    const ss = getStreamState(streamId);
+    if (!broadcastState.settings.manualGainEnabled || !ss || !ss.localStream) return;
+    try {
+        const audioTrack = ss.localStream.getAudioTracks()[0]; if (!audioTrack) return;
+        const ctx = new AudioContext(); const source = ctx.createMediaStreamSource(new MediaStream([audioTrack]));
+        const gain = ctx.createGain(); gain.gain.value = broadcastState.settings.manualGain / 100;
+        source.connect(gain); const dest = ctx.createMediaStreamDestination(); gain.connect(dest);
+        ss.localStream.removeTrack(audioTrack); ss.localStream.addTrack(dest.stream.getAudioTracks()[0]);
+        ss.audioContext = ctx; ss.gainNode = gain;
+    } catch (err) { console.warn('[Broadcast] Manual gain failed:', err); }
+}
+
+/* ── Multi-Platform Restream Destinations ──────────────────── */
+
+const RESTREAM_PLATFORM_META = {
+    youtube: { name: 'YouTube', icon: 'fa-brands fa-youtube', color: '#ff0000' },
+    twitch:  { name: 'Twitch', icon: 'fa-brands fa-twitch', color: '#9146ff' },
+    kick:    { name: 'Kick', icon: 'fa-solid fa-k', color: '#53fc18' },
+    custom:  { name: 'Custom', icon: 'fa-solid fa-globe', color: '#888' },
+};
+
+const RESTREAM_DEFAULT_URLS = {
+    youtube: 'rtmp://a.rtmp.youtube.com/live2',
+    twitch: 'rtmp://live.twitch.tv/app',
+    kick: '',
+    custom: '',
+};
+
+/** Client-side cache of loaded destinations */
+let _restreamDestinations = [];
+let _restreamStatusPollInterval = null;
+let _restreamEditingId = null; // null = adding new, number = editing existing
+
+/** Load restream destinations from server */
+async function loadRestreamDestinations() {
+    try {
+        const data = await api('/restream/destinations');
+        _restreamDestinations = data.destinations || [];
+        renderRestreamDestinations();
+    } catch (err) {
+        console.warn('[Restream] Failed to load destinations:', err.message);
+    }
+}
+
+/** Render destination cards in the settings section */
+function renderRestreamDestinations() {
+    const container = document.getElementById('bc-restream-destinations');
+    if (!container) return;
+
+    if (_restreamDestinations.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '';
+    for (const dest of _restreamDestinations) {
+        const meta = RESTREAM_PLATFORM_META[dest.platform] || RESTREAM_PLATFORM_META.custom;
+        const enabledClass = dest.enabled ? '' : 'style="opacity:0.5"';
+        const autoStartBadge = dest.auto_start ? '<span style="font-size:0.7rem;color:var(--text-secondary);margin-left:4px" title="Auto-starts when you go live">[auto]</span>' : '';
+        const keyDisplay = dest.has_key ? `Key: ${dest.stream_key}` : 'No key set';
+
+        html += `<div class="bc-restream-dest-card" ${enabledClass} data-dest-id="${dest.id}">
+            <span class="bc-restream-platform-icon" style="color:${meta.color}"><i class="${meta.icon}"></i></span>
+            <span class="bc-restream-name" title="${dest.name || meta.name}">${dest.name || meta.name}</span>
+            ${autoStartBadge}
+            <span class="bc-restream-dest-meta">${keyDisplay}</span>
+            <div class="bc-restream-dest-actions">
+                <button class="bc-ctrl-btn-sm" onclick="editRestreamDestination(${dest.id})" title="Edit"><i class="fa-solid fa-pen"></i></button>
+                <button class="bc-ctrl-btn-sm" onclick="toggleRestreamDestination(${dest.id})" title="${dest.enabled ? 'Disable' : 'Enable'}">
+                    <i class="fa-solid fa-${dest.enabled ? 'toggle-on' : 'toggle-off'}"></i>
+                </button>
+                <button class="bc-ctrl-btn-sm" onclick="deleteRestreamDestination(${dest.id})" title="Delete"><i class="fa-solid fa-trash"></i></button>
+            </div>
+        </div>`;
+    }
+    container.innerHTML = html;
+}
+
+/** Show the add destination form */
+function showAddRestreamDestination() {
+    _restreamEditingId = null;
+    document.getElementById('bc-restream-add-form').style.display = '';
+    document.getElementById('bc-restream-add-btn-row').style.display = 'none';
+    // Reset form
+    document.getElementById('bc-restream-platform').value = 'youtube';
+    document.getElementById('bc-restream-name').value = '';
+    document.getElementById('bc-restream-key').value = '';
+    document.getElementById('bc-restream-autostart').checked = false;
+    onRestreamPlatformChange();
+}
+
+/** Cancel add/edit form */
+function cancelAddRestreamDestination() {
+    document.getElementById('bc-restream-add-form').style.display = 'none';
+    document.getElementById('bc-restream-add-btn-row').style.display = '';
+    _restreamEditingId = null;
+}
+
+/** Handle platform selection change — update server URL placeholder */
+function onRestreamPlatformChange() {
+    const platform = document.getElementById('bc-restream-platform').value;
+    const urlInput = document.getElementById('bc-restream-url');
+    const urlRow = document.getElementById('bc-restream-url-row');
+    const defaultUrl = RESTREAM_DEFAULT_URLS[platform] || '';
+
+    if (defaultUrl) {
+        urlInput.value = defaultUrl;
+        urlInput.placeholder = defaultUrl;
+        // For YouTube/Twitch, the URL is standard — show but pre-fill
+        urlRow.style.display = '';
+    } else {
+        urlInput.value = '';
+        urlInput.placeholder = 'rtmp://your-server.com/live';
+        urlRow.style.display = '';
+    }
+
+    const nameInput = document.getElementById('bc-restream-name');
+    if (!nameInput.value && !_restreamEditingId) {
+        nameInput.placeholder = (RESTREAM_PLATFORM_META[platform]?.name || 'Custom') + ' Channel';
+    }
+}
+
+/** Save a new or edited restream destination */
+async function saveRestreamDestination() {
+    const platform = document.getElementById('bc-restream-platform').value;
+    const name = document.getElementById('bc-restream-name').value.trim();
+    const server_url = document.getElementById('bc-restream-url').value.trim();
+    const stream_key = document.getElementById('bc-restream-key').value.trim();
+    const auto_start = document.getElementById('bc-restream-autostart').checked;
+
+    if (!stream_key) {
+        toast('Stream key is required', 'error');
+        return;
+    }
+
+    try {
+        if (_restreamEditingId) {
+            // Update existing
+            const body = { name, server_url, auto_start };
+            if (stream_key && !stream_key.startsWith('****')) body.stream_key = stream_key;
+            await api(`/restream/destinations/${_restreamEditingId}`, { method: 'PUT', body });
+            toast('Destination updated', 'success');
+        } else {
+            // Create new
+            await api('/restream/destinations', {
+                method: 'POST',
+                body: { platform, name, server_url, stream_key, auto_start },
+            });
+            toast('Destination added', 'success');
+        }
+        cancelAddRestreamDestination();
+        await loadRestreamDestinations();
+        updateRestreamControlPanel();
+    } catch (err) {
+        toast(err.message || 'Failed to save destination', 'error');
+    }
+}
+
+/** Edit an existing destination */
+function editRestreamDestination(destId) {
+    const dest = _restreamDestinations.find(d => d.id === destId);
+    if (!dest) return;
+
+    _restreamEditingId = destId;
+    document.getElementById('bc-restream-add-form').style.display = '';
+    document.getElementById('bc-restream-add-btn-row').style.display = 'none';
+
+    // Can't change platform on edit
+    const platformSelect = document.getElementById('bc-restream-platform');
+    platformSelect.value = dest.platform;
+    platformSelect.disabled = true;
+
+    document.getElementById('bc-restream-name').value = dest.name || '';
+    document.getElementById('bc-restream-url').value = dest.server_url || '';
+    document.getElementById('bc-restream-key').value = ''; // Don't show key, let user replace
+    document.getElementById('bc-restream-key').placeholder = dest.has_key ? 'Leave empty to keep existing key' : 'Paste your stream key';
+    document.getElementById('bc-restream-autostart').checked = !!dest.auto_start;
+    onRestreamPlatformChange();
+
+    // Re-enable platform on cancel
+    const origCancel = cancelAddRestreamDestination;
+    cancelAddRestreamDestination = function() {
+        platformSelect.disabled = false;
+        cancelAddRestreamDestination = origCancel;
+        origCancel();
+    };
+}
+
+/** Toggle enabled/disabled */
+async function toggleRestreamDestination(destId) {
+    const dest = _restreamDestinations.find(d => d.id === destId);
+    if (!dest) return;
+    try {
+        await api(`/restream/destinations/${destId}`, {
+            method: 'PUT', body: { enabled: !dest.enabled },
+        });
+        await loadRestreamDestinations();
+        updateRestreamControlPanel();
+        toast(`Destination ${dest.enabled ? 'disabled' : 'enabled'}`, 'info');
+    } catch (err) {
+        toast(err.message || 'Failed to update destination', 'error');
+    }
+}
+
+/** Delete a destination */
+async function deleteRestreamDestination(destId) {
+    if (!confirm('Delete this restream destination?')) return;
+    try {
+        await api(`/restream/destinations/${destId}`, { method: 'DELETE' });
+        await loadRestreamDestinations();
+        updateRestreamControlPanel();
+        toast('Destination deleted', 'info');
+    } catch (err) {
+        toast(err.message || 'Failed to delete destination', 'error');
+    }
+}
+
+/** Start restream for a specific destination */
+async function startRestreamDest(destId) {
+    try {
+        await api(`/restream/destinations/${destId}/start`, { method: 'POST', body: {} });
+        toast('Restream starting…', 'info');
+        // Poll status immediately
+        await pollRestreamStatus();
+    } catch (err) {
+        toast(err.message || 'Failed to start restream', 'error');
+    }
+}
+
+/** Stop restream for a specific destination */
+async function stopRestreamDest(destId) {
+    try {
+        await api(`/restream/destinations/${destId}/stop`, { method: 'POST' });
+        toast('Restream stopped', 'info');
+        await pollRestreamStatus();
+    } catch (err) {
+        toast(err.message || 'Failed to stop restream', 'error');
+    }
+}
+
+/**
+ * Poll restream status from the server and update the control panel.
+ * Called periodically while streaming.
+ */
+let _lastRestreamStatuses = {};
+async function pollRestreamStatus() {
+    try {
+        const data = await api('/restream/status');
+        _lastRestreamStatuses = data.statuses || {};
+        updateRestreamControlPanel();
+    } catch {
+        // Silent — polling failure is non-critical
+    }
+}
+
+/** Start polling restream status (called when going live) */
+function startRestreamStatusPolling() {
+    stopRestreamStatusPolling();
+    pollRestreamStatus();
+    _restreamStatusPollInterval = setInterval(pollRestreamStatus, 5000);
+}
+
+/** Stop polling */
+function stopRestreamStatusPolling() {
+    if (_restreamStatusPollInterval) {
+        clearInterval(_restreamStatusPollInterval);
+        _restreamStatusPollInterval = null;
+    }
+}
+
+/**
+ * Update the restream control panel in the live controls section.
+ * Shows all RTMP destinations + RS status as a unified bar.
+ */
+function updateRestreamControlPanel() {
+    const panel = document.getElementById('bc-restream-control');
+    if (!panel) return;
+
+    const enabledDests = _restreamDestinations.filter(d => d.enabled);
+    const hasRs = canUseRobotStreamerRestream();
+
+    if (enabledDests.length === 0 && !hasRs) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    // Flatten all stream statuses into a destId → status map
+    const statusMap = {};
+    for (const streamStatuses of Object.values(_lastRestreamStatuses)) {
+        for (const s of (streamStatuses || [])) {
+            statusMap[s.destId] = s;
+        }
+    }
+
+    let html = '';
+
+    // RTMP destinations
+    for (const dest of enabledDests) {
+        const meta = RESTREAM_PLATFORM_META[dest.platform] || RESTREAM_PLATFORM_META.custom;
+        const status = statusMap[dest.id];
+        const statusLabel = status?.status || 'idle';
+
+        let badgeClass = 'bc-restream-status-idle';
+        let badgeIcon = 'fa-solid fa-circle';
+        let badgeText = 'Idle';
+
+        if (statusLabel === 'live') {
+            badgeClass = 'bc-restream-status-live';
+            badgeText = 'Live';
+        } else if (statusLabel === 'starting') {
+            badgeClass = 'bc-restream-status-starting';
+            badgeIcon = 'fa-solid fa-spinner fa-spin';
+            badgeText = 'Starting…';
+        } else if (statusLabel === 'error') {
+            badgeClass = 'bc-restream-status-error';
+            badgeIcon = 'fa-solid fa-circle-exclamation';
+            badgeText = 'Error';
+        } else if (statusLabel === 'failed') {
+            badgeClass = 'bc-restream-status-failed';
+            badgeIcon = 'fa-solid fa-circle-xmark';
+            badgeText = 'Failed';
+        }
+
+        const isActive = statusLabel === 'live' || statusLabel === 'starting';
+
+        html += `<div class="bc-restream-row">
+            <span class="bc-restream-platform-icon" style="color:${meta.color}"><i class="${meta.icon}"></i></span>
+            <span class="bc-restream-name">${dest.name || meta.name}</span>
+            <span class="bc-restream-status-badge ${badgeClass}"><i class="${badgeIcon}"></i> ${badgeText}</span>
+            <div class="bc-restream-actions">
+                ${isActive
+                    ? `<button class="bc-ctrl-btn-sm" onclick="stopRestreamDest(${dest.id})"><i class="fa-solid fa-stop"></i> Stop</button>`
+                    : `<button class="bc-ctrl-btn-sm" onclick="startRestreamDest(${dest.id})"><i class="fa-solid fa-play"></i> Start</button>`
+                }
+            </div>
+        </div>`;
+    }
+
+    // RS status row (if configured)
+    if (hasRs) {
+        const slotId = getRsRestreamSlotStreamId();
+        const slotSs = slotId ? getStreamState(slotId) : null;
+        const isRsLive = !!(slotSs?.robotStreamer?.active);
+        const isRsStarting = !!(slotSs?._rsRestreamStarting);
+
+        let rsBadgeClass = 'bc-restream-status-idle';
+        let rsBadgeIcon = 'fa-solid fa-circle';
+        let rsBadgeText = 'Idle';
+
+        if (isRsLive) {
+            rsBadgeClass = 'bc-restream-status-live';
+            rsBadgeText = 'Live';
+        } else if (isRsStarting || slotSs?._rsReconnectTimer) {
+            rsBadgeClass = 'bc-restream-status-starting';
+            rsBadgeIcon = 'fa-solid fa-spinner fa-spin';
+            rsBadgeText = isRsStarting ? 'Starting…' : 'Reconnecting…';
+        }
+
+        html += `<div class="bc-restream-row">
+            <span class="bc-restream-platform-icon" style="color:#4a9eff"><i class="fa-solid fa-robot"></i></span>
+            <span class="bc-restream-name">RobotStreamer</span>
+            <span class="bc-restream-status-badge ${rsBadgeClass}"><i class="${rsBadgeIcon}"></i> ${rsBadgeText}</span>
+            <div class="bc-restream-actions">
+                ${isRsLive
+                    ? `<button class="bc-ctrl-btn-sm" onclick="stopRsRestream()"><i class="fa-solid fa-stop"></i> Stop</button>`
+                    : `<button class="bc-ctrl-btn-sm" onclick="startOrRetryRsRestream()"><i class="fa-solid fa-play"></i> Start</button>`
+                }
+            </div>
+        </div>`;
+    }
+
+    panel.innerHTML = html;
+    panel.style.display = html ? '' : 'none';
 }
 
 /* ── RobotStreamer Restream ─────────────────────────────────── */

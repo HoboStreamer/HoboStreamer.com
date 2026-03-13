@@ -1442,8 +1442,8 @@
                             </button>
                         </div>
 
-                        <!-- RS Restream Control Panel (visible when RS is configured + streaming) -->
-                        <div class="bc-rs-control" id="bc-rs-control" style="display:none"></div>
+                        <!-- Restream Control Panel (visible when destinations configured + streaming) -->
+                        <div class="bc-restream-control" id="bc-restream-control" style="display:none"></div>
 
                         <!-- TTS Settings -->
                         <div class="bc-settings-group">
@@ -1542,49 +1542,122 @@
                         </div>
 
                         <!-- RobotStreamer Integration -->
+                        <!-- Restream Destinations -->
                         <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-robot"></i> RobotStreamer</div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">Enable Restream</span>
-                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsEnabled"><span class="bc-toggle-slider"></span></label></div>
+                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
+
+                            <!-- Active destination list (dynamically populated) -->
+                            <div id="bc-restream-destinations"></div>
+
+                            <!-- Add Destination button -->
+                            <div class="bc-setting-row" id="bc-restream-add-btn-row">
+                                <button class="bc-ctrl-btn" type="button" onclick="showAddRestreamDestination()">
+                                    <i class="fa-solid fa-plus"></i> Add Destination
+                                </button>
                             </div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">Mirror RS Chat</span>
-                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsMirrorChat"><span class="bc-toggle-slider"></span></label></div>
-                            </div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">RS Token</span>
-                                <div class="bc-setting-control">
-                                    <input type="password" id="bc-rsToken" placeholder="Paste your robotstreamer-token cookie or JWT">
+
+                            <!-- Add Destination form (hidden by default) -->
+                            <div id="bc-restream-add-form" style="display:none">
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Platform</span>
+                                    <div class="bc-setting-control">
+                                        <select id="bc-restream-platform" onchange="onRestreamPlatformChange()">
+                                            <option value="youtube">YouTube</option>
+                                            <option value="twitch">Twitch</option>
+                                            <option value="kick">Kick</option>
+                                            <option value="custom">Custom RTMP</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Name</span>
+                                    <div class="bc-setting-control">
+                                        <input type="text" id="bc-restream-name" placeholder="My Channel">
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row" id="bc-restream-url-row">
+                                    <span class="bc-setting-label">Server URL</span>
+                                    <div class="bc-setting-control">
+                                        <input type="text" id="bc-restream-url" placeholder="rtmp://a.rtmp.youtube.com/live2">
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Stream Key</span>
+                                    <div class="bc-setting-control">
+                                        <input type="password" id="bc-restream-key" placeholder="Paste your stream key">
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Auto-Start</span>
+                                    <div class="bc-setting-control">
+                                        <label class="bc-toggle"><input type="checkbox" id="bc-restream-autostart"><span class="bc-toggle-slider"></span></label>
+                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Start restream automatically when you go live (RTMP/JSMPEG)</span>
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Actions</span>
+                                    <div class="bc-setting-control" style="display:flex;gap:8px">
+                                        <button class="bc-ctrl-btn" type="button" onclick="saveRestreamDestination()">
+                                            <i class="fa-solid fa-floppy-disk"></i> Save
+                                        </button>
+                                        <button class="bc-ctrl-btn" type="button" onclick="cancelAddRestreamDestination()">
+                                            <i class="fa-solid fa-xmark"></i> Cancel
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">Robot ID / URL</span>
-                                <div class="bc-setting-control">
-                                    <input type="text" id="bc-rsRobotInput" placeholder="1837 or https://robotstreamer.com/robot/1837">
+
+                            <p class="bc-call-explainer" style="margin-top:8px">
+                                Restream to YouTube, Twitch, Kick, or any custom RTMP server. Works with RTMP and JSMPEG streaming methods. WebRTC streams use the RobotStreamer browser-side restream below.
+                            </p>
+
+                            <!-- RobotStreamer subsection -->
+                            <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:12px">
+                                <div class="bc-settings-subtitle" style="font-size:0.85rem;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+                                    <i class="fa-solid fa-robot"></i> RobotStreamer (WebRTC)
                                 </div>
-                            </div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">Detected Robots</span>
-                                <div class="bc-setting-control">
-                                    <select id="bc-rsRobotSelect">
-                                        <option value="">Validate to load your RobotStreamer streams</option>
-                                    </select>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Enable RS Restream</span>
+                                    <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsEnabled"><span class="bc-toggle-slider"></span></label></div>
                                 </div>
-                            </div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">Actions</span>
-                                <div class="bc-setting-control" style="display:flex;gap:8px;flex-wrap:wrap">
-                                    <button class="bc-ctrl-btn" type="button" onclick="validateRobotStreamerIntegration()">
-                                        <i class="fa-solid fa-plug-circle-check"></i> Validate
-                                    </button>
-                                    <button class="bc-ctrl-btn" type="button" onclick="saveRobotStreamerIntegration()">
-                                        <i class="fa-solid fa-floppy-disk"></i> Save
-                                    </button>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Mirror RS Chat</span>
+                                    <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsMirrorChat"><span class="bc-toggle-slider"></span></label></div>
                                 </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">RS Token</span>
+                                    <div class="bc-setting-control">
+                                        <input type="password" id="bc-rsToken" placeholder="Paste your robotstreamer-token cookie or JWT">
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Robot ID / URL</span>
+                                    <div class="bc-setting-control">
+                                        <input type="text" id="bc-rsRobotInput" placeholder="1837 or https://robotstreamer.com/robot/1837">
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Detected Robots</span>
+                                    <div class="bc-setting-control">
+                                        <select id="bc-rsRobotSelect">
+                                            <option value="">Validate to load your RobotStreamer streams</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Actions</span>
+                                    <div class="bc-setting-control" style="display:flex;gap:8px;flex-wrap:wrap">
+                                        <button class="bc-ctrl-btn" type="button" onclick="validateRobotStreamerIntegration()">
+                                            <i class="fa-solid fa-plug-circle-check"></i> Validate
+                                        </button>
+                                        <button class="bc-ctrl-btn" type="button" onclick="saveRobotStreamerIntegration()">
+                                            <i class="fa-solid fa-floppy-disk"></i> Save
+                                        </button>
+                                    </div>
+                                </div>
+                                <p class="bc-call-explainer" id="bc-rsStatus">RobotStreamer restreaming requires browser WebRTC broadcasting. Configure your token and robot, then go live.</p>
+                                <p class="bc-call-explainer" id="bc-rsLiveStatus">RobotStreamer restream is idle.</p>
                             </div>
-                            <p class="bc-call-explainer" id="bc-rsStatus">RobotStreamer restreaming works with browser WebRTC broadcasting. Paste your RobotStreamer token, validate a robot, then go live.</p>
-                            <p class="bc-call-explainer" id="bc-rsLiveStatus">RobotStreamer restream is idle.</p>
                         </div>
 
                         <!-- Video / Broadcast Settings -->
