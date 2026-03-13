@@ -1296,6 +1296,18 @@ async function createNewStream() {
     const method = broadcastState.selectedMethod;
     if (!title) return toast('Stream title is required', 'error');
 
+    // Stop any existing browser WebRTC streams to prevent camera contention.
+    // Without this, old streams fight with the new one over the camera device,
+    // causing infinite media recovery loops and orphaned VOD uploads.
+    for (const [existingId, ss] of broadcastState.streams) {
+        if (ss.localStream) {
+            console.log(`[Broadcast] Cleaning up existing stream ${existingId} before creating new one`);
+            const bgCtx = _detachVodForBackground(existingId);
+            cleanupStream(existingId);
+            _backgroundStreamEnd(existingId, bgCtx);
+        }
+    }
+
     // Persist last-used values so they pre-fill next time
     localStorage.setItem('bc-last-title', title);
     localStorage.setItem('bc-last-description', description);
@@ -2042,8 +2054,31 @@ function startHeartbeat(streamId) {
     if (!ss || !ss.streamData) return;
     clearInterval(ss.heartbeatInterval);
     const sid = ss.streamData.id;
-    ss.heartbeatInterval = setInterval(() => {
-        api(`/streams/${sid}/heartbeat`, { method: 'POST' }).catch(() => {});
+    ss.heartbeatInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/streams/${sid}/heartbeat`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+            if (!res.ok) {
+                // Server says stream is not live (400) or gone — clean up client state
+                console.warn(`[Heartbeat] Stream ${streamId} heartbeat returned ${res.status} — cleaning up`);
+                cleanupStream(streamId);
+                if (!isStreaming()) {
+                    hideBroadcastTabs();
+                    clearGlobalDisplayTimers();
+                    setNavLiveIndicator(false);
+                    showStreamManager();
+                    loadExistingStreams();
+                }
+                return;
+            }
+        } catch {
+            // Network error — don't clean up, transient failure
+        }
         // Only capture thumbnail if this is the active stream (has the preview element)
         if (broadcastState.activeStreamId === streamId) captureLiveThumbnail(streamId);
     }, 30000);

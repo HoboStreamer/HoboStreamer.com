@@ -510,6 +510,10 @@ router.delete('/:id', requireAuth, (req, res) => {
 
         robotStreamerService.stopForStream(stream.id);
 
+        // Close signaling room and notify viewers
+        const broadcastServer = require('./broadcast-server');
+        broadcastServer.endStream(stream.id);
+
         res.json({ message: 'Stream ended' });
     } catch (err) {
         console.error('[Streaming]', err.message);
