@@ -236,6 +236,33 @@ class BroadcastServer {
                 }
                 break;
 
+            // ── SFU Produce Signaling (for WebRTC → RTMP restreaming) ──
+            case 'sfu-get-capabilities':
+                if (client.role === 'broadcaster') {
+                    this._handleSfuGetCapabilities(ws, client);
+                }
+                break;
+            case 'sfu-create-transport':
+                if (client.role === 'broadcaster') {
+                    this._handleSfuCreateTransport(ws, client);
+                }
+                break;
+            case 'sfu-connect-transport':
+                if (client.role === 'broadcaster') {
+                    this._handleSfuConnectTransport(ws, client, msg);
+                }
+                break;
+            case 'sfu-produce':
+                if (client.role === 'broadcaster') {
+                    this._handleSfuProduce(ws, client, msg);
+                }
+                break;
+            case 'sfu-stop-produce':
+                if (client.role === 'broadcaster') {
+                    this._handleSfuStopProduce(ws, client);
+                }
+                break;
+
             default:
                 break;
         }
@@ -360,6 +387,98 @@ class BroadcastServer {
     getViewerCount(streamId) {
         const room = this.rooms.get(streamId);
         return room ? room.viewers.size : 0;
+    }
+
+    // ── SFU Produce Signaling (for WebRTC → RTMP restreaming) ────
+
+    /**
+     * Signal the broadcaster to start producing into the Mediasoup SFU.
+     * Called by the restream manager when a WebRTC restream is requested.
+     * @param {number} streamId
+     * @returns {boolean} true if signal was sent
+     */
+    requestSfuProduce(streamId) {
+        const room = this.rooms.get(streamId);
+        if (!room?.broadcaster || room.broadcaster.readyState !== WebSocket.OPEN) return false;
+        this.safeSend(room.broadcaster, { type: 'sfu-produce-request' });
+        return true;
+    }
+
+    /**
+     * Check if a broadcaster is connected for a stream.
+     * @param {number} streamId
+     * @returns {boolean}
+     */
+    isBroadcasterConnected(streamId) {
+        const room = this.rooms.get(streamId);
+        return !!(room?.broadcaster && room.broadcaster.readyState === WebSocket.OPEN);
+    }
+
+    async _handleSfuGetCapabilities(ws, client) {
+        try {
+            const roomId = `stream-${client.streamId}`;
+            const caps = await webrtcSFU.getRouterCapabilities(roomId);
+            this.safeSend(ws, { type: 'sfu-capabilities', rtpCapabilities: caps });
+        } catch (err) {
+            console.error('[Broadcast] SFU get-capabilities error:', err.message);
+            this.safeSend(ws, { type: 'sfu-error', error: err.message });
+        }
+    }
+
+    async _handleSfuCreateTransport(ws, client) {
+        try {
+            const roomId = `stream-${client.streamId}`;
+            const transport = await webrtcSFU.createTransport(roomId, `sfu-${client.peerId}`);
+            this.safeSend(ws, { type: 'sfu-transport-created', ...transport });
+        } catch (err) {
+            console.error('[Broadcast] SFU create-transport error:', err.message);
+            this.safeSend(ws, { type: 'sfu-error', error: err.message });
+        }
+    }
+
+    async _handleSfuConnectTransport(ws, client, msg) {
+        try {
+            const roomId = `stream-${client.streamId}`;
+            await webrtcSFU.connectTransport(
+                roomId, `sfu-${client.peerId}`, msg.transportId, msg.dtlsParameters
+            );
+            this.safeSend(ws, { type: 'sfu-transport-connected', transportId: msg.transportId });
+        } catch (err) {
+            console.error('[Broadcast] SFU connect-transport error:', err.message);
+            this.safeSend(ws, { type: 'sfu-error', error: err.message });
+        }
+    }
+
+    async _handleSfuProduce(ws, client, msg) {
+        try {
+            const roomId = `stream-${client.streamId}`;
+            const result = await webrtcSFU.produce(
+                roomId, `sfu-${client.peerId}`, msg.transportId, msg.kind, msg.rtpParameters
+            );
+            this.safeSend(ws, { type: 'sfu-produced', id: result.id, kind: msg.kind });
+        } catch (err) {
+            console.error('[Broadcast] SFU produce error:', err.message);
+            this.safeSend(ws, { type: 'sfu-error', error: err.message });
+        }
+    }
+
+    _handleSfuStopProduce(ws, client) {
+        // Close the SFU room producers for this broadcaster
+        // The room itself stays open — PlainTransport consumers will detect producer close
+        const roomId = `stream-${client.streamId}`;
+        const room = webrtcSFU.rooms?.get(roomId);
+        if (!room) return;
+
+        const peerId = `sfu-${client.peerId}`;
+        const toRemove = [];
+        for (const [id, { producer, peerId: pid }] of room.producers) {
+            if (pid === peerId) {
+                try { producer.close(); } catch {}
+                toRemove.push(id);
+            }
+        }
+        for (const id of toRemove) room.producers.delete(id);
+        if (toRemove.length) console.log(`[Broadcast] SFU: Closed ${toRemove.length} producer(s) for ${peerId}`);
     }
 
     /**

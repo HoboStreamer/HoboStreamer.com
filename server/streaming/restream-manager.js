@@ -2,21 +2,25 @@
  * HoboStreamer — Restream Manager
  * 
  * Manages FFmpeg processes that forward live streams to external RTMP destinations
- * (YouTube, Twitch, Kick, custom RTMP). Supports RTMP and JSMPEG input sources.
+ * (YouTube, Twitch, Kick, custom RTMP). Supports RTMP, JSMPEG, and WebRTC input sources.
  * 
  * Input sources:
  *   - RTMP: Reads via HTTP-FLV from node-media-server (codec copy, zero CPU overhead)
  *   - JSMPEG: Taps relay data, pipes combined MPEG-TS → FFmpeg (re-encodes MPEG1 → H.264)
- *   - WebRTC: Not yet supported server-side (browser-side RS restream handles this)
+ *   - WebRTC: Consumes via Mediasoup PlainRtpTransport → FFmpeg (re-encodes VP8/Opus → H.264/AAC)
  * 
  * Architecture:
  *   Stream → Restream Manager → FFmpeg child process → External RTMP endpoint
  *   
- *   For RTMP input:  ffmpeg -i http://localhost:9935/live/{key}.flv -c copy -f flv rtmp://dest
- *   For JSMPEG input: ffmpeg -f mpegts -i pipe:0 -c:v libx264 -preset ultrafast ... -f flv rtmp://dest
+ *   For RTMP input:   ffmpeg -i http://localhost:9935/live/{key}.flv -c copy -f flv rtmp://dest
+ *   For JSMPEG input:  ffmpeg -f mpegts -i pipe:0 -c:v libx264 -preset ultrafast ... -f flv rtmp://dest
+ *   For WebRTC input:  ffmpeg -protocol_whitelist file,rtp,udp -i /tmp/hobo-restream-{key}.sdp ... -f flv rtmp://dest
  */
 const { spawn } = require('child_process');
 const EventEmitter = require('events');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const config = require('../config');
 
 const RESTART_BASE_DELAY = 5000;
@@ -58,8 +62,11 @@ class RestreamManager extends EventEmitter {
         const { protocol, streamKey } = streamInfo;
 
         if (protocol === 'webrtc') {
-            console.warn('[Restream] WebRTC → RTMP not yet supported server-side. Use browser-side RS restream for WebRTC streams.');
-            return null;
+            const webrtcSFU = require('./webrtc-sfu');
+            if (!webrtcSFU.ready) {
+                console.warn('[Restream] WebRTC → RTMP requires Mediasoup SFU. Mediasoup not available.');
+                return null;
+            }
         }
 
         const destUrl = this._buildDestUrl(destination);
@@ -93,6 +100,8 @@ class RestreamManager extends EventEmitter {
             this._startRtmpRestream(session, streamKey, destUrl);
         } else if (protocol === 'jsmpeg') {
             this._startJsmpegRestream(session, streamKey, destUrl);
+        } else if (protocol === 'webrtc') {
+            await this._startWebrtcRestream(session, destUrl);
         } else {
             console.warn(`[Restream] Unsupported protocol: ${protocol}`);
             this._cleanup(key);
@@ -180,6 +189,227 @@ class RestreamManager extends EventEmitter {
         } else {
             console.warn(`[Restream] JSMPEG channel not found for ${streamKey} — tap will miss initial data`);
         }
+    }
+
+    /**
+     * Start WebRTC → RTMP restream.
+     * 
+     * Flow:
+     *   1. Signal the broadcaster to produce tracks into Mediasoup SFU
+     *   2. Wait for video + audio producers to appear in the SFU room
+     *   3. Create PlainRtpTransport consumers that send RTP to local ports
+     *   4. Build an SDP file describing the RTP streams
+     *   5. Spawn FFmpeg reading the SDP, re-encoding VP8/Opus → H.264/AAC, outputting RTMP
+     */
+    async _startWebrtcRestream(session, destUrl) {
+        const webrtcSFU = require('./webrtc-sfu');
+        const broadcastServer = require('./broadcast-server');
+
+        const roomId = `stream-${session.streamId}`;
+
+        // Step 1: If no producers yet, ask the broadcaster to produce into the SFU
+        if (!webrtcSFU.hasProducers(roomId)) {
+            const signaled = broadcastServer.requestSfuProduce(session.streamId);
+            if (!signaled) {
+                console.warn(`[Restream] WebRTC: No broadcaster connected for stream ${session.streamId}`);
+                session.lastError = 'Broadcaster not connected';
+                session.status = 'error';
+                this.emit('status-change', {
+                    streamId: session.streamId, destId: session.destId,
+                    status: 'error', error: session.lastError,
+                });
+                this._scheduleRestart(session);
+                return;
+            }
+            console.log(`[Restream] WebRTC: Signaled broadcaster to produce into SFU for stream ${session.streamId}`);
+        }
+
+        // Step 2: Wait for video producer (audio is optional)
+        let videoProducer;
+        try {
+            videoProducer = await webrtcSFU.waitForProducer(roomId, 'video', 30000);
+        } catch (err) {
+            console.warn(`[Restream] WebRTC: ${err.message}`);
+            session.lastError = 'No video producer available';
+            session.status = 'error';
+            this.emit('status-change', {
+                streamId: session.streamId, destId: session.destId,
+                status: 'error', error: session.lastError,
+            });
+            this._scheduleRestart(session);
+            return;
+        }
+
+        // Check for audio producer (don't block on it — start without if not available)
+        const audioProducer = webrtcSFU.findProducerByKind(roomId, 'audio');
+
+        // Step 3: Allocate ports and create PlainRtpTransport consumers
+        const videoRtpPort = this._allocatePort();
+        const videoRtcpPort = videoRtpPort + 1;
+        let audioRtpPort, audioRtcpPort;
+
+        let videoConsumer, audioConsumer;
+        try {
+            videoConsumer = await webrtcSFU.createPlainConsumer(
+                roomId, videoProducer.id, '127.0.0.1', videoRtpPort, videoRtcpPort
+            );
+            console.log(`[Restream] WebRTC: Video consumer created — PT:${videoConsumer.payloadType} SSRC:${videoConsumer.ssrc} port:${videoRtpPort}`);
+
+            if (audioProducer) {
+                audioRtpPort = this._allocatePort();
+                audioRtcpPort = audioRtpPort + 1;
+                audioConsumer = await webrtcSFU.createPlainConsumer(
+                    roomId, audioProducer.id, '127.0.0.1', audioRtpPort, audioRtcpPort
+                );
+                console.log(`[Restream] WebRTC: Audio consumer created — PT:${audioConsumer.payloadType} SSRC:${audioConsumer.ssrc} port:${audioRtpPort}`);
+            }
+        } catch (err) {
+            console.error(`[Restream] WebRTC: Failed to create PlainRTP consumers: ${err.message}`);
+            // Clean up any created consumers
+            if (videoConsumer) webrtcSFU.closePlainConsumer(roomId, videoConsumer.transportId);
+            if (audioConsumer) webrtcSFU.closePlainConsumer(roomId, audioConsumer.transportId);
+            session.lastError = err.message;
+            session.status = 'error';
+            this.emit('status-change', {
+                streamId: session.streamId, destId: session.destId,
+                status: 'error', error: session.lastError,
+            });
+            this._scheduleRestart(session);
+            return;
+        }
+
+        // Step 4: Build SDP file
+        const sdpPath = path.join(os.tmpdir(), `hobo-restream-${session.key.replace(':', '-')}.sdp`);
+        const sdpContent = this._buildSdp(videoConsumer, audioConsumer, videoRtpPort, audioRtpPort);
+        fs.writeFileSync(sdpPath, sdpContent, 'utf8');
+        console.log(`[Restream] WebRTC: SDP written to ${sdpPath}`);
+
+        // Store SFU state for cleanup
+        session.webrtcState = {
+            roomId,
+            sdpPath,
+            videoTransportId: videoConsumer.transportId,
+            audioTransportId: audioConsumer?.transportId || null,
+        };
+
+        // Step 5: Spawn FFmpeg with SDP input → RTMP output
+        const args = [
+            '-hide_banner',
+            '-loglevel', 'warning',
+            '-protocol_whitelist', 'file,rtp,udp',
+            '-fflags', '+genpts',
+            '-i', sdpPath,
+        ];
+
+        // Video encoding (VP8 → H.264)
+        args.push(
+            '-map', '0:v:0',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-crf', '23',
+            '-maxrate', '2500k',
+            '-bufsize', '5000k',
+            '-g', '60',
+            '-pix_fmt', 'yuv420p',
+        );
+
+        // Audio encoding (Opus → AAC) — only if audio is available
+        if (audioConsumer) {
+            args.push(
+                '-map', '0:a:0',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-ar', '44100',
+                '-ac', '2',
+            );
+        }
+
+        args.push(
+            '-f', 'flv',
+            '-flvflags', 'no_duration_filesize',
+            destUrl,
+        );
+
+        this._spawnFFmpeg(session, args);
+
+        // On FFmpeg close, clean up SFU consumers + SDP
+        session.dataTapCleanup = () => {
+            if (session.webrtcState) {
+                const { roomId: rid, videoTransportId, audioTransportId, sdpPath: sdp } = session.webrtcState;
+                if (videoTransportId) webrtcSFU.closePlainConsumer(rid, videoTransportId);
+                if (audioTransportId) webrtcSFU.closePlainConsumer(rid, audioTransportId);
+                try { fs.unlinkSync(sdp); } catch {}
+                session.webrtcState = null;
+            }
+        };
+    }
+
+    /**
+     * Build an SDP file for FFmpeg to receive RTP from Mediasoup PlainTransport consumers.
+     * @param {object} videoConsumer - Video consumer info from createPlainConsumer
+     * @param {object|null} audioConsumer - Audio consumer info (nullable)
+     * @param {number} videoPort - RTP port for video
+     * @param {number} [audioPort] - RTP port for audio
+     * @returns {string} SDP content
+     */
+    _buildSdp(videoConsumer, audioConsumer, videoPort, audioPort) {
+        const lines = [
+            'v=0',
+            'o=- 0 0 IN IP4 127.0.0.1',
+            's=HoboStreamer WebRTC Restream',
+            'c=IN IP4 127.0.0.1',
+            't=0 0',
+        ];
+
+        // Video media line
+        const vPT = videoConsumer.payloadType;
+        const vCodecName = (videoConsumer.mimeType || 'video/VP8').split('/')[1];
+        lines.push(`m=video ${videoPort} RTP/AVP ${vPT}`);
+        lines.push(`a=rtpmap:${vPT} ${vCodecName}/${videoConsumer.clockRate}`);
+        if (videoConsumer.ssrc) {
+            lines.push(`a=ssrc:${videoConsumer.ssrc} cname:restream-video`);
+        }
+        // Add codec parameters (e.g., profile-level-id for H264)
+        if (videoConsumer.codecParameters) {
+            const fmtp = Object.entries(videoConsumer.codecParameters)
+                .map(([k, v]) => `${k}=${v}`).join(';');
+            if (fmtp) lines.push(`a=fmtp:${vPT} ${fmtp}`);
+        }
+        lines.push('a=recvonly');
+
+        // Audio media line
+        if (audioConsumer && audioPort) {
+            const aPT = audioConsumer.payloadType;
+            const aCodecName = (audioConsumer.mimeType || 'audio/opus').split('/')[1];
+            const channels = audioConsumer.channels || 2;
+            lines.push(`m=audio ${audioPort} RTP/AVP ${aPT}`);
+            lines.push(`a=rtpmap:${aPT} ${aCodecName}/${audioConsumer.clockRate}/${channels}`);
+            if (audioConsumer.ssrc) {
+                lines.push(`a=ssrc:${audioConsumer.ssrc} cname:restream-audio`);
+            }
+            if (audioConsumer.codecParameters) {
+                const fmtp = Object.entries(audioConsumer.codecParameters)
+                    .map(([k, v]) => `${k}=${v}`).join(';');
+                if (fmtp) lines.push(`a=fmtp:${aPT} ${fmtp}`);
+            }
+            lines.push('a=recvonly');
+        }
+
+        lines.push('');
+        return lines.join('\r\n');
+    }
+
+    /**
+     * Allocate a pair of sequential ports for RTP/RTCP.
+     * Uses even-numbered ports (RTP convention) from a rotating range.
+     */
+    _allocatePort() {
+        if (!this._nextPort) this._nextPort = 20000;
+        const port = this._nextPort;
+        this._nextPort += 2;
+        if (this._nextPort > 30000) this._nextPort = 20000;
+        return port;
     }
 
     /**
@@ -318,6 +548,13 @@ class RestreamManager extends EventEmitter {
                 this._startRtmpRestream(session, session.streamInfo.streamKey, destUrl);
             } else if (session.streamInfo.protocol === 'jsmpeg') {
                 this._startJsmpegRestream(session, session.streamInfo.streamKey, destUrl);
+            } else if (session.streamInfo.protocol === 'webrtc') {
+                this._startWebrtcRestream(session, destUrl).catch(err => {
+                    console.warn(`[Restream] WebRTC restart failed for ${session.key}:`, err.message);
+                    session.lastError = err.message;
+                    session.status = 'error';
+                    this._scheduleRestart(session);
+                });
             }
         }, delay);
     }

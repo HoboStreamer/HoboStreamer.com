@@ -3,7 +3,11 @@
  * 
  * Provides low-latency WebRTC streaming using Mediasoup as an SFU.
  * Producers (streamers) send media, consumers (viewers) receive it.
+ * 
+ * Also provides PlainRtpTransport-based consumers for extracting RTP
+ * from the SFU — used by the restream manager to pipe WebRTC → FFmpeg → RTMP.
  */
+const EventEmitter = require('events');
 const config = require('../config');
 
 let mediasoup;
@@ -14,8 +18,9 @@ try {
     console.warn('[WebRTC] Install with: npm install mediasoup');
 }
 
-class WebRTCSFU {
+class WebRTCSFU extends EventEmitter {
     constructor() {
+        super();
         /** @type {Map<string, { router: any, producers: Map, consumers: Map, transports: Map }>} */
         this.rooms = new Map();
         this.worker = null;
@@ -144,7 +149,10 @@ class WebRTCSFU {
 
         producer.on('transportclose', () => {
             room.producers.delete(producer.id);
+            this.emit('producer-removed', { roomId, producerId: producer.id, kind });
         });
+
+        this.emit('producer-added', { roomId, producerId: producer.id, kind, peerId });
 
         return { id: producer.id };
     }
@@ -201,6 +209,137 @@ class WebRTCSFU {
             port: transport.tuple.localPort,
             rtcpPort: transport.rtcpTuple ? transport.rtcpTuple.localPort : undefined,
         };
+    }
+
+    /**
+     * Create a PlainRtpTransport consumer for piping media to FFmpeg.
+     * Used for WebRTC → RTMP restreaming.
+     * 
+     * @param {string} roomId - SFU room ID (e.g., 'stream-42')
+     * @param {string} producerId - The producer to consume
+     * @param {string} remoteIp - Where to send RTP (FFmpeg listen address)
+     * @param {number} remoteRtpPort - FFmpeg RTP listen port
+     * @param {number} remoteRtcpPort - FFmpeg RTCP listen port
+     * @returns {{ transportId, consumerId, kind, rtpParameters, payloadType, ssrc, clockRate }}
+     */
+    async createPlainConsumer(roomId, producerId, remoteIp, remoteRtpPort, remoteRtcpPort) {
+        const room = this.rooms.get(roomId);
+        if (!room) throw new Error(`Room ${roomId} not found`);
+
+        const transport = await room.router.createPlainTransport({
+            listenIp: { ip: '127.0.0.1' },
+            rtcpMux: false,
+            comedia: false,
+        });
+
+        await transport.connect({
+            ip: remoteIp,
+            port: remoteRtpPort,
+            rtcpPort: remoteRtcpPort,
+        });
+
+        const consumer = await transport.consume({
+            producerId,
+            rtpCapabilities: room.router.rtpCapabilities,
+            paused: false,
+        });
+
+        // Track for cleanup
+        const key = `plain-${transport.id}`;
+        room.transports.set(key, transport);
+        room.consumers.set(consumer.id, { consumer, peerId: '__restream__' });
+
+        consumer.on('transportclose', () => {
+            room.consumers.delete(consumer.id);
+        });
+
+        const codec = consumer.rtpParameters.codecs[0];
+        const encoding = consumer.rtpParameters.encodings?.[0];
+
+        return {
+            transportId: transport.id,
+            consumerId: consumer.id,
+            kind: consumer.kind,
+            rtpParameters: consumer.rtpParameters,
+            payloadType: codec?.payloadType,
+            clockRate: codec?.clockRate,
+            mimeType: codec?.mimeType,
+            channels: codec?.channels,
+            ssrc: encoding?.ssrc,
+            codecParameters: codec?.parameters,
+        };
+    }
+
+    /**
+     * Close a PlainRtpTransport and its consumer.
+     * @param {string} roomId
+     * @param {string} transportId
+     */
+    closePlainConsumer(roomId, transportId) {
+        const room = this.rooms.get(roomId);
+        if (!room) return;
+
+        const key = `plain-${transportId}`;
+        const transport = room.transports.get(key);
+        if (transport) {
+            try { transport.close(); } catch {}
+            room.transports.delete(key);
+        }
+    }
+
+    /**
+     * Check if a room has producers.
+     * @param {string} roomId
+     * @returns {boolean}
+     */
+    hasProducers(roomId) {
+        const room = this.rooms.get(roomId);
+        return room ? room.producers.size > 0 : false;
+    }
+
+    /**
+     * Find a producer by kind (audio/video) in a room.
+     * @param {string} roomId
+     * @param {string} kind - 'audio' or 'video'
+     * @returns {{ id: string, peerId: string }|null}
+     */
+    findProducerByKind(roomId, kind) {
+        const room = this.rooms.get(roomId);
+        if (!room) return null;
+        for (const [id, { producer, peerId }] of room.producers) {
+            if (producer.kind === kind && !producer.closed) return { id, peerId };
+        }
+        return null;
+    }
+
+    /**
+     * Wait for a producer of a given kind to appear in a room.
+     * Resolves with the producer info, or rejects on timeout.
+     * @param {string} roomId
+     * @param {string} kind - 'audio' or 'video'
+     * @param {number} [timeoutMs=30000]
+     * @returns {Promise<{ id: string, peerId: string }>}
+     */
+    waitForProducer(roomId, kind, timeoutMs = 30000) {
+        const existing = this.findProducerByKind(roomId, kind);
+        if (existing) return Promise.resolve(existing);
+
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.removeListener('producer-added', handler);
+                reject(new Error(`Timeout waiting for ${kind} producer in ${roomId}`));
+            }, timeoutMs);
+
+            const handler = (ev) => {
+                if (ev.roomId === roomId && ev.kind === kind) {
+                    clearTimeout(timer);
+                    this.removeListener('producer-added', handler);
+                    resolve({ id: ev.producerId, peerId: ev.peerId });
+                }
+            };
+
+            this.on('producer-added', handler);
+        });
     }
 
     /**

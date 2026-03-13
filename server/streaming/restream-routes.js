@@ -166,9 +166,13 @@ router.post('/destinations/:id/start', requireAuth, async (req, res) => {
         }
 
         if (stream.protocol === 'webrtc') {
-            return res.status(400).json({
-                error: 'WebRTC → RTMP restreaming is not yet supported server-side. WebRTC streams can use browser-side RobotStreamer restreaming.',
-            });
+            // WebRTC → RTMP requires Mediasoup SFU
+            const webrtcSFU = require('./webrtc-sfu');
+            if (!webrtcSFU.ready) {
+                return res.status(400).json({
+                    error: 'WebRTC → RTMP restreaming requires Mediasoup. Install mediasoup: npm install mediasoup',
+                });
+            }
         }
 
         const user = db.getUserById(req.user.id);

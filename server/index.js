@@ -461,6 +461,21 @@ async function start() {
         restreamManager.stopAllForStream(streamId);
     });
 
+    // 6c. Hook WebRTC SFU events for auto-start restreams
+    // When a broadcaster produces into the SFU (triggered by restream request),
+    // the first video producer signals that media is available for restreaming.
+    webrtcSFU.on('producer-added', ({ roomId, kind }) => {
+        if (kind !== 'video') return; // Only trigger on video producer
+        const match = roomId.match(/^stream-(\d+)$/);
+        if (!match) return;
+        const streamId = parseInt(match[1]);
+        const stream = db.getStreamById(streamId);
+        if (!stream?.is_live || stream.protocol !== 'webrtc') return;
+        restreamManager.autoStartForStream(streamId, stream.user_id, { protocol: 'webrtc' }).catch(err => {
+            console.warn(`[Restream] WebRTC auto-start error for stream ${streamId}:`, err.message);
+        });
+    });
+
     // 7. Start HTTP server
     server.listen(config.port, config.host, () => {
         console.log('');

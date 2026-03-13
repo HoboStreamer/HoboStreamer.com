@@ -596,6 +596,7 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
     // "localStream lost before join" race if an RS start is in-flight.
     const hadRsRestream = !!ss.robotStreamer?.active;
     await stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
+    _cleanupSfuProduce(streamId);
 
     // Suppress recovery and null-out localStream BEFORE stopping tracks.
     // This ensures the ended/inactive handlers see a different localStream
@@ -1910,6 +1911,7 @@ function cleanupStream(streamId) {
     ss._suppressRecovery = true;
     if (ss.localStream) { ss.localStream.getTracks().forEach(t => t.stop()); ss.localStream = null; }
     stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
+    _cleanupSfuProduce(streamId);
 
     // Clear RS restream slot if this stream had it
     if (getRsRestreamSlotStreamId() === streamId) setRsRestreamSlot(null);
@@ -3347,6 +3349,160 @@ function updateBroadcastStatusFromConnections(streamId) {
     updateBroadcastStatus(hasConnected ? 'connected' : 'checking');
 }
 
+/* ── SFU Produce for Server-Side Restreaming ─────────────────── */
+// When the server needs WebRTC → RTMP restreaming, it asks the broadcaster
+// to produce tracks into the Mediasoup SFU via the signaling WebSocket.
+// This is similar to the RS restream flow but targets our own SFU.
+
+/** Per-stream SFU produce state */
+const _sfuProduceStates = new Map();
+
+/** Pending SFU message resolvers, keyed by streamId */
+const _sfuPendingMessages = new Map();
+
+function _resolveSfuMessage(streamId, msg) {
+    const pending = _sfuPendingMessages.get(streamId);
+    if (!pending?.length) return;
+    // Find the first pending handler that matches this message type
+    const idx = pending.findIndex(p => p.type === msg.type);
+    if (idx >= 0) {
+        const handler = pending.splice(idx, 1)[0];
+        if (msg.type === 'sfu-error') handler.reject(new Error(msg.error || 'SFU error'));
+        else handler.resolve(msg);
+    }
+}
+
+function _waitForSfuMessage(streamId, type, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+        if (!_sfuPendingMessages.has(streamId)) _sfuPendingMessages.set(streamId, []);
+        const pending = _sfuPendingMessages.get(streamId);
+        const timer = setTimeout(() => {
+            const idx = pending.findIndex(p => p.id === id);
+            if (idx >= 0) pending.splice(idx, 1);
+            reject(new Error(`SFU message timeout: ${type}`));
+        }, timeoutMs);
+        const id = Math.random();
+        // Also listen for sfu-error as a rejection for any pending request
+        pending.push({ id, type, resolve: (msg) => { clearTimeout(timer); resolve(msg); }, reject: (err) => { clearTimeout(timer); reject(err); } });
+        pending.push({ id: id + 0.1, type: 'sfu-error', resolve: () => {}, reject: (err) => {
+            clearTimeout(timer);
+            const idx2 = pending.findIndex(p => p.id === id);
+            if (idx2 >= 0) { pending.splice(idx2, 1); }
+            reject(err);
+        }});
+    });
+}
+
+async function _handleSfuProduceRequest(streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss?.localStream || !ss?.signalingWs) {
+        console.warn('[SFU Produce] No local stream or signaling — cannot produce');
+        return;
+    }
+
+    // Already producing?
+    if (_sfuProduceStates.has(streamId)) {
+        console.log('[SFU Produce] Already producing for stream', streamId);
+        return;
+    }
+
+    console.log('[SFU Produce] Starting SFU produce for stream', streamId);
+    const state = { active: true, transport: null, videoProducer: null, audioProducer: null };
+    _sfuProduceStates.set(streamId, state);
+
+    try {
+        // Step 1: Load mediasoup-client (reuse the same loader as RS restream)
+        const mod = await loadRobotStreamerMediasoup();
+        const Device = mod.Device || mod.default?.Device;
+        if (!Device) throw new Error('mediasoup-client failed to load');
+
+        // Step 2: Get router capabilities from our SFU
+        sendBroadcastSignal(ss, { type: 'sfu-get-capabilities' });
+        const capsMsg = await _waitForSfuMessage(streamId, 'sfu-capabilities');
+
+        const device = new Device();
+        await device.load({ routerRtpCapabilities: capsMsg.rtpCapabilities });
+
+        // Step 3: Create send transport
+        sendBroadcastSignal(ss, { type: 'sfu-create-transport' });
+        const transportMsg = await _waitForSfuMessage(streamId, 'sfu-transport-created');
+
+        const transport = device.createSendTransport({
+            id: transportMsg.id,
+            iceParameters: transportMsg.iceParameters,
+            iceCandidates: transportMsg.iceCandidates,
+            dtlsParameters: transportMsg.dtlsParameters,
+        });
+        state.transport = transport;
+
+        transport.on('connect', ({ dtlsParameters }, callback, errback) => {
+            sendBroadcastSignal(ss, {
+                type: 'sfu-connect-transport',
+                transportId: transport.id,
+                dtlsParameters,
+            });
+            _waitForSfuMessage(streamId, 'sfu-transport-connected')
+                .then(() => callback())
+                .catch(errback);
+        });
+
+        transport.on('produce', ({ kind, rtpParameters }, callback, errback) => {
+            sendBroadcastSignal(ss, {
+                type: 'sfu-produce',
+                transportId: transport.id,
+                kind,
+                rtpParameters,
+            });
+            _waitForSfuMessage(streamId, 'sfu-produced')
+                .then((msg) => callback({ id: msg.id }))
+                .catch(errback);
+        });
+
+        transport.on('connectionstatechange', (connState) => {
+            console.log('[SFU Produce] Transport state:', connState);
+            if (connState === 'failed' || connState === 'closed') {
+                _cleanupSfuProduce(streamId);
+            }
+        });
+
+        // Step 4: Produce video + audio tracks
+        const videoTrack = ss.localStream.getVideoTracks()[0];
+        const audioTrack = ss.localStream.getAudioTracks()[0];
+
+        if (videoTrack) {
+            state.videoProducer = await transport.produce({ track: videoTrack, stopTracks: false });
+            console.log('[SFU Produce] Video producer:', state.videoProducer.id);
+        }
+        if (audioTrack) {
+            state.audioProducer = await transport.produce({ track: audioTrack, stopTracks: false });
+            console.log('[SFU Produce] Audio producer:', state.audioProducer.id);
+        }
+
+        console.log('[SFU Produce] Producing into local SFU for stream', streamId);
+    } catch (err) {
+        console.error('[SFU Produce] Failed:', err.message);
+        _cleanupSfuProduce(streamId);
+    }
+}
+
+function _cleanupSfuProduce(streamId) {
+    const state = _sfuProduceStates.get(streamId);
+    if (!state) return;
+
+    state.active = false;
+    if (state.videoProducer) { try { state.videoProducer.close(); } catch {} }
+    if (state.audioProducer) { try { state.audioProducer.close(); } catch {} }
+    if (state.transport) { try { state.transport.close(); } catch {} }
+    _sfuProduceStates.delete(streamId);
+    _sfuPendingMessages.delete(streamId);
+
+    // Notify server we stopped producing
+    const ss = getStreamState(streamId);
+    if (ss) sendBroadcastSignal(ss, { type: 'sfu-stop-produce' });
+
+    console.log('[SFU Produce] Cleaned up for stream', streamId);
+}
+
 async function handleSignalingMessage(streamId, msg) {
     const ss = getStreamState(streamId);
     if (!ss) return;
@@ -3375,6 +3531,23 @@ async function handleSignalingMessage(streamId, msg) {
             break;
         case 'welcome': console.log(`[Broadcast] Stream ${streamId} welcome:`, msg); break;
         case 'error': toast(msg.message || 'Broadcast error', 'error'); break;
+
+        // ── SFU Produce (for server-side WebRTC → RTMP restreaming) ──
+        case 'sfu-produce-request':
+            // Server is asking us to produce our tracks into the Mediasoup SFU
+            // so the restream manager can consume them via PlainRtpTransport
+            _handleSfuProduceRequest(streamId).catch(err => {
+                console.warn('[SFU Produce] Failed:', err.message);
+            });
+            break;
+        case 'sfu-capabilities':
+        case 'sfu-transport-created':
+        case 'sfu-transport-connected':
+        case 'sfu-produced':
+        case 'sfu-error':
+            // These are handled by the SFU produce flow's promise-based handlers
+            _resolveSfuMessage(streamId, msg);
+            break;
     }
 }
 
