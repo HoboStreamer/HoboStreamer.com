@@ -109,6 +109,54 @@ function detectLanguage(content, hint) {
 
 const MAX_PASTE_SIZE = 512 * 1024; // 512 KB text limit (fallback; overridden by site setting)
 
+/**
+ * Level-based daily paste limits.
+ * Users earn higher limits by leveling up skills in HoboGame.
+ * Total level = sum of all 8 skill levels (mining, fishing, woodcut, farming,
+ * combat, crafting, smithing, agility). Each skill starts at level 1.
+ * A brand-new game profile has total level 8 (all skills at 1).
+ *
+ * Tiers (total game level → daily paste limit):
+ *   Anon / no account:   10/day
+ *   Level 0-15  (new):   20/day
+ *   Level 16-30 (casual): 40/day
+ *   Level 31-60 (active): 75/day
+ *   Level 61-100 (vet):  120/day
+ *   Level 101+  (elite): 200/day
+ *   Admin/global_mod:    unlimited (0 = no limit)
+ */
+const PASTE_LEVEL_TIERS = [
+    { minLevel: 101, limit: 200 },
+    { minLevel:  61, limit: 120 },
+    { minLevel:  31, limit:  75 },
+    { minLevel:  16, limit:  40 },
+    { minLevel:   0, limit:  20 },
+];
+const PASTE_ANON_LIMIT = 10;
+
+/**
+ * Get the effective daily paste limit for a user based on their game level.
+ * @param {object|null} user - req.user (null for anon)
+ * @returns {{ limit: number, totalLevel: number, tierLabel: string }}
+ */
+function getEffectivePasteLimit(user) {
+    if (!user) return { limit: PASTE_ANON_LIMIT, totalLevel: 0, tierLabel: 'Anonymous' };
+
+    // Admins and global mods get unlimited
+    if (user.role === 'admin' || user.role === 'global_mod') {
+        return { limit: 0, totalLevel: -1, tierLabel: 'Unlimited (staff)' };
+    }
+
+    const totalLevel = db.getUserTotalGameLevel(user.id);
+    for (const tier of PASTE_LEVEL_TIERS) {
+        if (totalLevel >= tier.minLevel) {
+            return { limit: tier.limit, totalLevel, tierLabel: `Lv ${totalLevel}` };
+        }
+    }
+    // Fallback (shouldn't reach here)
+    return { limit: 20, totalLevel, tierLabel: `Lv ${totalLevel}` };
+}
+
 // Helper: get configurable limits from site settings
 function getPasteConfig() {
     return {
@@ -167,16 +215,31 @@ router.get('/', optionalAuth, (req, res) => {
 });
 
 // ── Get paste config (public) — must be before /:slug ───────
-router.get('/config', (req, res) => {
+router.get('/config', optionalAuth, (req, res) => {
     try {
         const config = getPasteConfig();
+        const { limit, totalLevel, tierLabel } = getEffectivePasteLimit(req.user);
+        const effectiveLimit = limit || config.maxPerUserPerDay; // 0 = unlimited for staff
+        const todayCount = req.user
+            ? db.countUserPastesToday(req.user.id, null)
+            : db.countUserPastesToday(null, req.ip);
         res.json({
             maxSizeKb: config.maxSizeKb,
             screenshotMaxSizeMb: config.screenshotMaxSizeMb,
             cooldownSeconds: config.cooldownSeconds,
-            maxPerUserPerDay: config.maxPerUserPerDay,
+            maxPerUserPerDay: effectiveLimit,
             anonAllowed: config.anonAllowed,
             imageUploadEnabled: config.imageUploadEnabled,
+            // Level-based limit details
+            levelInfo: {
+                totalLevel,
+                tierLabel,
+                dailyLimit: effectiveLimit,
+                usedToday: todayCount,
+                remaining: limit === 0 ? Infinity : Math.max(0, effectiveLimit - todayCount),
+            },
+            tiers: PASTE_LEVEL_TIERS.map(t => ({ minLevel: t.minLevel, limit: t.limit })),
+            anonLimit: PASTE_ANON_LIMIT,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get config' });
@@ -278,11 +341,13 @@ router.post('/', optionalAuth, (req, res) => {
             }
         }
 
-        // Daily limit check
-        if (config.maxPerUserPerDay > 0) {
+        // Daily limit check (level-based)
+        const { limit: dailyLimit } = getEffectivePasteLimit(req.user);
+        if (dailyLimit > 0) {
             const todayCount = db.countUserPastesToday(req.user?.id, req.ip);
-            if (todayCount >= config.maxPerUserPerDay) {
-                return res.status(429).json({ error: `Daily paste limit reached (${config.maxPerUserPerDay}/day)` });
+            if (todayCount >= dailyLimit) {
+                const hint = req.user ? ' Level up in HoboGame to increase your limit!' : ' Log in for a higher limit!';
+                return res.status(429).json({ error: `Daily paste limit reached (${dailyLimit}/day).${hint}`, dailyLimit });
             }
         }
 
@@ -329,11 +394,13 @@ router.post('/screenshot', optionalAuth, (req, res, next) => {
         }
     }
 
-    // Daily limit check
-    if (config.maxPerUserPerDay > 0) {
+    // Daily limit check (level-based)
+    const { limit: dailyLimit } = getEffectivePasteLimit(req.user);
+    if (dailyLimit > 0) {
         const todayCount = db.countUserPastesToday(req.user?.id, req.ip);
-        if (todayCount >= config.maxPerUserPerDay) {
-            return res.status(429).json({ error: `Daily upload limit reached (${config.maxPerUserPerDay}/day)` });
+        if (todayCount >= dailyLimit) {
+            const hint = req.user ? ' Level up in HoboGame to increase your limit!' : ' Log in for a higher limit!';
+            return res.status(429).json({ error: `Daily upload limit reached (${dailyLimit}/day).${hint}`, dailyLimit });
         }
     }
 

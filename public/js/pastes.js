@@ -11,7 +11,10 @@ let _pastesFilter = 'all'; // 'all' | 'paste' | 'screenshot'
 let _pastesSearch = '';
 let _pastesTotal = 0;
 let _pastesCooldownUntil = 0; // timestamp (ms) until next paste allowed
+let _pasteLimitCache = null; // cached config from /pastes/config
+let _pasteLimitCacheTime = 0;
 const PASTES_PER_PAGE = 30;
+const PASTE_LIMIT_CACHE_TTL = 60000; // 1 minute
 
 // ── Syntax highlighting (lightweight, no lib needed) ────────
 const _hlKeywords = {
@@ -811,6 +814,60 @@ function editPaste(slug) {
 }
 
 // ── Create / New paste UI ───────────────────────────────────
+
+/**
+ * Fetch paste config (with level-based limit info) from the server.
+ * Caches for 1 minute to avoid spamming on every modal open.
+ */
+async function _fetchPasteLimitInfo(force = false) {
+    if (!force && _pasteLimitCache && (Date.now() - _pasteLimitCacheTime) < PASTE_LIMIT_CACHE_TTL) {
+        return _pasteLimitCache;
+    }
+    try {
+        const data = await api('/pastes/config');
+        _pasteLimitCache = data;
+        _pasteLimitCacheTime = Date.now();
+        return data;
+    } catch (err) {
+        console.warn('[Pastes] Failed to fetch config:', err);
+        return null;
+    }
+}
+
+/**
+ * Render a small daily-limit bar into the given container element.
+ * Shows remaining count, tier label, and a narrow progress bar.
+ */
+function _renderLimitInfo(container, info) {
+    if (!container || !info?.levelInfo) {
+        if (container) container.innerHTML = '';
+        return;
+    }
+    const li = info.levelInfo;
+    const isUnlimited = li.remaining === null || li.remaining === Infinity || !Number.isFinite(li.remaining);
+    const isAnon = li.totalLevel === 0 && !localStorage.getItem('token');
+    const pct = isUnlimited ? 0 : Math.min(100, Math.round((li.usedToday / li.dailyLimit) * 100));
+    const barColor = pct >= 90 ? 'var(--danger, #e74c3c)' : pct >= 70 ? 'var(--warning, #f39c12)' : 'var(--accent, #646cff)';
+
+    let label;
+    if (isUnlimited) {
+        label = `<i class="fa-solid fa-infinity" style="font-size:0.7em;"></i> Unlimited (staff)`;
+    } else if (isAnon) {
+        label = `${li.remaining}/${li.dailyLimit} today · <a href="#" onclick="navigate('/login');return false" style="color:var(--accent);">Log in</a> for more`;
+    } else {
+        label = `${li.remaining}/${li.dailyLimit} today · ${li.tierLabel}`;
+    }
+
+    container.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;font-size:0.8rem;opacity:0.7;">
+            <i class="fa-solid fa-gauge" style="font-size:0.75rem;"></i>
+            <span>${label}</span>
+            ${!isUnlimited ? `<div style="flex:1;max-width:80px;height:4px;background:var(--border, #333);border-radius:2px;overflow:hidden;">
+                <div style="width:${pct}%;height:100%;background:${barColor};border-radius:2px;transition:width 0.3s;"></div>
+            </div>` : ''}
+        </div>`;
+}
+
 function openNewPasteModal(prefill = {}) {
     const modal = document.getElementById('paste-create-modal');
     if (!modal) return;
@@ -838,6 +895,13 @@ function openNewPasteModal(prefill = {}) {
 
     // Update line count
     _updatePasteLineCount();
+
+    // Fetch and show daily limit info (non-blocking)
+    if (!isEdit) {
+        const limitEl = document.getElementById('paste-limit-info');
+        if (limitEl) limitEl.innerHTML = '<span style="opacity:0.4;font-size:0.8rem;">Loading limit…</span>';
+        _fetchPasteLimitInfo().then(info => _renderLimitInfo(limitEl, info));
+    }
 }
 
 function closePasteModal() {
@@ -887,6 +951,7 @@ async function submitPaste() {
             toast('Paste created!', 'success');
             // Set cooldown
             _pastesCooldownUntil = Date.now() + 30000; // 30s default; will be overridden by server response
+            _pasteLimitCacheTime = 0; // invalidate limit cache after creation
         }
         closePasteModal();
         navigate(`/p/${data.paste.slug}`);
@@ -1004,6 +1069,11 @@ function _openScreenshotUploadDialog(blob, opts = {}) {
     if (fileInput) fileInput.value = '';
 
     modal.style.display = 'flex';
+
+    // Fetch and show daily limit info (non-blocking)
+    const limitEl = document.getElementById('screenshot-limit-info');
+    if (limitEl) limitEl.innerHTML = '<span style="opacity:0.4;font-size:0.8rem;">Loading limit…</span>';
+    _fetchPasteLimitInfo().then(info => _renderLimitInfo(limitEl, info));
 }
 
 function closeScreenshotModal() {
@@ -1068,6 +1138,7 @@ async function submitScreenshot() {
         toast('Screenshot uploaded!', 'success');
         closeScreenshotModal();
         _pastesCooldownUntil = Date.now() + 30000;
+        _pasteLimitCacheTime = 0; // invalidate limit cache after upload
         navigate(`/p/${data.paste.slug}`);
     } catch (err) {
         toast(err.message || 'Failed to upload screenshot', 'error');

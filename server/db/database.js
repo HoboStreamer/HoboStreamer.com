@@ -1514,6 +1514,21 @@ function countUserPastesToday(userId, ip) {
     return 0;
 }
 
+/**
+ * Get a user's total game level (sum of all skill levels).
+ * Returns 0 if the user has no game profile.
+ * Used for tiered paste/upload limits.
+ */
+function getUserTotalGameLevel(userId) {
+    if (!userId) return 0;
+    const p = get('SELECT mining_xp, fishing_xp, woodcut_xp, farming_xp, combat_xp, crafting_xp, smithing_xp, agility_xp FROM game_players WHERE user_id = ?', [userId]);
+    if (!p) return 0;
+    const xpToLevel = (xp) => Math.floor(Math.sqrt((xp || 0) / 25)) + 1;
+    return xpToLevel(p.mining_xp) + xpToLevel(p.fishing_xp) + xpToLevel(p.woodcut_xp) +
+           xpToLevel(p.farming_xp) + xpToLevel(p.combat_xp) + xpToLevel(p.crafting_xp) +
+           xpToLevel(p.smithing_xp) + xpToLevel(p.agility_xp);
+}
+
 function getLastPasteTime(userId, ip) {
     let row;
     if (userId) {
@@ -1657,7 +1672,7 @@ module.exports = {
     createPaste, getPasteBySlug, getPasteById, listPastes,
     incrementPasteViews, updatePaste, deletePaste, getUserPastes,
     likePaste, unlikePaste, hasUserLikedPaste, incrementPasteCopies,
-    countUserPastesToday, getLastPasteTime, deleteAllForks, getPasteStats,
+    countUserPastesToday, getLastPasteTime, deleteAllForks, getPasteStats, getUserTotalGameLevel,
     // Paste Comments
     createPasteComment, getPasteComments, getPasteCommentReplies,
     getPasteCommentById, getPasteCommentCount, deletePasteComment,

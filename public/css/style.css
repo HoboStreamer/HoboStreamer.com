@@ -4482,6 +4482,7 @@ body.theme-light .user-dropdown {
     padding: 14px 20px;
     border-top: 1px solid var(--border);
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 8px;
 }
