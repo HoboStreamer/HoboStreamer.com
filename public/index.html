@@ -481,8 +481,8 @@
                             <button class="emote-picker-btn" onclick="toggleEmotePicker('chat-input')" title="Emotes">
                                 <i class="fa-solid fa-face-smile"></i>
                             </button>
-                            <input type="text" id="chat-input" placeholder="Send a message..." maxlength="500"
-                                   enterkeyhint="send" onkeydown="if(event.key==='Enter')sendChat()">
+                            <textarea id="chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
+                                      rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
                             <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                                 <i class="fa-solid fa-volume-high"></i>
                             </button>
@@ -576,8 +576,8 @@
                         <button class="emote-picker-btn" onclick="toggleEmotePicker('offline-chat-input')" title="Emotes">
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
-                        <input type="text" id="offline-chat-input" placeholder="Send a message..." maxlength="500"
-                               enterkeyhint="send" onkeydown="if(event.key==='Enter')sendChat()">
+                        <textarea id="offline-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
+                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
                         <button class="chat-send-btn" onclick="sendChat()">
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
@@ -1722,8 +1722,8 @@
                         <button class="emote-picker-btn" onclick="toggleEmotePicker('bc-chat-input')" title="Emotes">
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
-                        <input type="text" id="bc-chat-input" placeholder="Send a message..." maxlength="500"
-                               enterkeyhint="send" onkeydown="if(event.key==='Enter')sendChat()">
+                        <textarea id="bc-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
+                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
                         <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                             <i class="fa-solid fa-volume-high"></i>
                         </button>
@@ -2270,8 +2270,8 @@
                         <button class="emote-picker-btn" onclick="toggleEmotePicker('global-chat-input')" title="Emotes">
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
-                        <input type="text" id="global-chat-input" placeholder="Send a message..." maxlength="500"
-                               enterkeyhint="send" onkeydown="if(event.key==='Enter')sendChat()">
+                        <textarea id="global-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
+                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
                         <button class="chat-send-btn" onclick="sendChat()">
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
@@ -2658,8 +2658,8 @@
     <div class="fcw-body">
         <div class="fcw-messages" id="fcw-messages"></div>
         <div class="fcw-input-area">
-            <input type="text" id="fcw-chat-input" placeholder="Send a message..." maxlength="500"
-                   enterkeyhint="send" onkeydown="if(event.key==='Enter')fcwSendChat()">
+            <textarea id="fcw-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
+                      rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
             <button class="chat-send-btn" onclick="fcwSendChat()">
                 <i class="fa-solid fa-paper-plane"></i>
             </button>

@@ -901,6 +901,14 @@ function clearSlowModeCooldown() {
 }
 
 /* ── Send ──────────────────────────────────────────────────────── */
+
+// ── Message history (up/down arrow recall) ───────────────────
+const _chatMsgHistory = [];
+let _chatHistoryIndex = -1;
+let _chatHistoryDraft = '';
+const CHAT_HISTORY_MAX = 50;
+const CHAT_TEXTAREA_MAX_LINES = 4;
+
 function sendChat() {
     const { input } = getChatEl();
     if (!input) return;
@@ -913,6 +921,14 @@ function sendChat() {
         addSystemMessage(`Slow mode: wait ${remaining}s`);
         return;
     }
+
+    // Save to message history
+    if (_chatMsgHistory[0] !== text) {
+        _chatMsgHistory.unshift(text);
+        if (_chatMsgHistory.length > CHAT_HISTORY_MAX) _chatMsgHistory.pop();
+    }
+    _chatHistoryIndex = -1;
+    _chatHistoryDraft = '';
 
     const msg = {
         type: 'chat',
@@ -928,9 +944,91 @@ function sendChat() {
     chatWs.send(JSON.stringify(msg));
 
     input.value = '';
+    _autoResizeTextarea(input);
     input.focus();
     startSlowModeCooldown();
 }
+
+/**
+ * Auto-resize a chat textarea to fit content, up to max lines.
+ */
+function _autoResizeTextarea(el) {
+    if (!el || el.tagName !== 'TEXTAREA') return;
+    el.style.height = 'auto';
+    // Clamp to max-height set in CSS (~108px = 4 lines)
+    el.style.height = Math.min(el.scrollHeight, 108) + 'px';
+    // Toggle overflow once content exceeds max
+    el.style.overflowY = el.scrollHeight > 108 ? 'auto' : 'hidden';
+}
+
+/**
+ * Handle keydown for chat textareas:
+ *  - Enter (no shift) = send
+ *  - Shift+Enter = newline (up to max lines)
+ *  - ArrowUp/Down = message history
+ */
+function _chatTextareaKeydown(e) {
+    const el = e.target;
+    const isFcw = el.id === 'fcw-chat-input';
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (isFcw) fcwSendChat(); else sendChat();
+        return;
+    }
+
+    // Shift+Enter: allow newline but enforce line limit
+    if (e.key === 'Enter' && e.shiftKey) {
+        const lines = (el.value.substring(0, el.selectionStart).match(/\n/g) || []).length + 1;
+        if (lines >= CHAT_TEXTAREA_MAX_LINES) {
+            e.preventDefault();
+            return;
+        }
+        // Let the newline insert, then resize
+        requestAnimationFrame(() => _autoResizeTextarea(el));
+        return;
+    }
+
+    // Arrow Up — recall older messages
+    if (e.key === 'ArrowUp' && el.selectionStart === 0 && !e.shiftKey) {
+        if (_chatMsgHistory.length === 0) return;
+        if (_chatHistoryIndex === -1) _chatHistoryDraft = el.value;
+        if (_chatHistoryIndex < _chatMsgHistory.length - 1) {
+            _chatHistoryIndex++;
+            el.value = _chatMsgHistory[_chatHistoryIndex];
+            _autoResizeTextarea(el);
+            requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = el.value.length; });
+            e.preventDefault();
+        }
+        return;
+    }
+
+    // Arrow Down — recall newer messages
+    if (e.key === 'ArrowDown' && el.selectionEnd === el.value.length && !e.shiftKey) {
+        if (_chatHistoryIndex > 0) {
+            _chatHistoryIndex--;
+            el.value = _chatMsgHistory[_chatHistoryIndex];
+            _autoResizeTextarea(el);
+            requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = el.value.length; });
+            e.preventDefault();
+        } else if (_chatHistoryIndex === 0) {
+            _chatHistoryIndex = -1;
+            el.value = _chatHistoryDraft;
+            _autoResizeTextarea(el);
+            requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = el.value.length; });
+            e.preventDefault();
+        }
+        return;
+    }
+}
+
+// Attach handlers to all chat textareas (delegated for dynamic elements too)
+document.addEventListener('keydown', (e) => {
+    if (e.target.classList.contains('chat-textarea')) _chatTextareaKeydown(e);
+}, true);
+document.addEventListener('input', (e) => {
+    if (e.target.classList.contains('chat-textarea')) _autoResizeTextarea(e.target);
+}, true);
 
 /* ── History ──────────────────────────────────────────────────── */
 async function loadChatHistory(streamId) {
@@ -2280,8 +2378,17 @@ function fcwSendChat() {
     const text = input.value.trim();
     if (!text || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
 
+    // Save to shared message history
+    if (_chatMsgHistory[0] !== text) {
+        _chatMsgHistory.unshift(text);
+        if (_chatMsgHistory.length > CHAT_HISTORY_MAX) _chatMsgHistory.pop();
+    }
+    _chatHistoryIndex = -1;
+    _chatHistoryDraft = '';
+
     chatWs.send(JSON.stringify({ type: 'chat', message: text, streamId: null }));
     input.value = '';
+    _autoResizeTextarea(input);
     input.focus();
 }
 

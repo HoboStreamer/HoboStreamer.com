@@ -323,6 +323,10 @@ main#app { position: relative; z-index: 1; }
     max-width: var(--content-max); margin: 0 auto;
     padding: 0 clamp(16px, 2vw, 28px);
 }
+.content-container {
+    max-width: var(--content-max); margin: 0 auto;
+    padding: 0 clamp(16px, 2vw, 28px);
+}
 .page { display: none; padding-top: var(--navbar-h); min-height: 100vh; padding-bottom: 32px; }
 .page.active { display: block; }
 
@@ -1317,8 +1321,26 @@ main#app { position: relative; z-index: 1; }
 }
 .donation-quick { margin-bottom: 6px; }
 .chat-input-row {
-    display: flex; gap: 4px; align-items: center;
+    display: flex; gap: 4px; align-items: flex-end;
 }
+.chat-textarea {
+    flex: 1; min-width: 0; padding: 8px 10px;
+    background: var(--bg-input); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    font-family: var(--font); font-size: 0.85rem; outline: none;
+    transition: border-color 0.2s;
+    resize: none; overflow-y: hidden;
+    line-height: 1.4;
+    min-height: 36px; max-height: 108px; /* ~4 lines */
+    field-sizing: content; /* modern browsers auto-size */
+}
+.chat-textarea::placeholder {
+    color: var(--text-muted);
+}
+.chat-textarea:focus {
+    border-color: var(--accent-dark);
+}
+/* Legacy fallback selector for any remaining input[type=text] */
 .chat-input-row input[type="text"] {
     flex: 1; min-width: 0; padding: 8px 10px;
     background: var(--bg-input); color: var(--text-primary);
@@ -2185,6 +2207,43 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     /* Tab bars should scroll — no overflow hidden */
     .tab-bar { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .tab-bar .tab-btn { flex-shrink: 0; }
+
+    /* ─── VOD/Clip Player Mobile ───────────────────────────── */
+    .vod-player-row {
+        flex-direction: column;
+        max-height: none; /* remove desktop height constraint */
+        border-radius: 12px;
+    }
+    .chat-replay-sidebar {
+        width: 100%;
+        max-height: 250px;
+        border-left: none;
+        border-top: 1px solid var(--border);
+    }
+    .vod-player-layout { gap: 12px; }
+    .vod-player-info h2 { font-size: 1.1rem; }
+    .vod-player-meta { gap: 8px; font-size: 0.82rem; }
+    .vod-extra-details { flex-wrap: wrap; }
+    .vod-extra-details .detail-chip { font-size: 0.72rem; }
+
+    /* ─── Stream Grid (VODs/Clips list pages) ─────────────── */
+    .stream-grid {
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+        gap: 12px;
+    }
+
+    /* ─── Pastes Page Mobile ───────────────────────────────── */
+    .page-header { flex-wrap: wrap; gap: 10px; }
+    .page-header h1 { font-size: 1.3rem; }
+    .page-header .page-subtitle { font-size: 0.82rem; }
+
+    /* ─── Section headers ──────────────────────────────────── */
+    .section-header { flex-wrap: wrap; gap: 8px; }
+    .section-header h2 { font-size: 1.1rem; }
+
+    /* ─── Channel below-fold (vods/clips on channel page) ── */
+    .channel-below-fold { padding: 0 8px 24px; }
+    .channel-below-fold .section-header { padding: 12px 0; }
 }
 
 @media (max-width: 480px) {
@@ -2232,6 +2291,21 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
     /* Smaller section headers */
     .section-header h2 { font-size: 1.1rem; }
+
+    /* VOD player tighter on small phones */
+    .vod-player-info { padding: 12px; border-radius: 12px; }
+    .vod-player-info h2 { font-size: 1rem; }
+    .comments-section { padding: 12px; border-radius: 12px; }
+    .chat-replay-sidebar { max-height: 200px; }
+
+    /* Pastes page header buttons stack */
+    .page-header { flex-direction: column; align-items: flex-start; }
+    .page-header > div:last-child { width: 100%; display: flex; gap: 6px; }
+    .page-header > div:last-child .btn { flex: 1; justify-content: center; font-size: 0.8rem; }
+    .paste-card-thumb, .paste-card-code { height: 120px; }
+
+    /* Stream grid single column */
+    .stream-grid { grid-template-columns: 1fr; gap: 10px; }
 }
 
 /* ─── Portrait-specific: mobile phone streaming vertically ──── */
@@ -2567,7 +2641,8 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .offline-global-chat .chat-messages { flex: 1; overflow-y: auto; padding: 8px; }
 .offline-global-chat .chat-input-area { border-top: 1px solid var(--border); }
 .offline-global-chat .chat-input-row { display: flex; gap: 6px; padding: 8px; }
-.offline-global-chat .chat-input-row input { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; font-size: 0.9rem; }
+.offline-global-chat .chat-input-row input,
+.offline-global-chat .chat-input-row .chat-textarea { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; font-size: 0.9rem; }
 
 /* ── Global Chat Page (Voice Channels + Chat Layout) ───── */
 .chat-voice-layout {
@@ -2588,7 +2663,8 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 }
 .global-chat-main .chat-input-area { border-top: 1px solid var(--border); }
 .global-chat-main .chat-input-row { display: flex; gap: 6px; padding: 10px 12px; }
-.global-chat-main .chat-input-row input { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; font-size: 0.9rem; }
+.global-chat-main .chat-input-row input,
+.global-chat-main .chat-input-row .chat-textarea { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; font-size: 0.9rem; }
 
 /* Stream source badge in global chat */
 .chat-stream-badge {
@@ -2673,6 +2749,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     border: 1px solid rgba(255,255,255,0.06);
     background: #000;
     box-shadow: var(--shadow-soft);
+    max-height: 75vh; /* constrain so chat replay doesn't push off screen */
 }
 .vod-player-main { flex: 1; min-width: 0; position: relative; }
 .chat-replay-sidebar {
@@ -2680,6 +2757,8 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     background: var(--bg-secondary);
     border-left: 1px solid var(--border);
     display: flex; flex-direction: column;
+    min-height: 0; /* allow flex children to shrink */
+    overflow: hidden;
 }
 .chat-replay-header {
     display: flex; justify-content: space-between; align-items: center;
@@ -4470,6 +4549,39 @@ body.theme-light .user-dropdown {
     .paste-view-title {
         font-size: 1.1rem;
     }
+    .paste-view-title-row {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .paste-view-meta {
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 0.78rem;
+    }
+    .paste-view-owner-actions {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    .paste-view-owner-actions .btn {
+        font-size: 0.78rem;
+        padding: 4px 8px;
+    }
+    .paste-code-header {
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 8px 12px;
+    }
+    .paste-code-actions .btn {
+        font-size: 0.75rem;
+        padding: 4px 8px;
+    }
+    .paste-code-pre {
+        font-size: 0.72rem;
+    }
+    .paste-viewer-nav .btn {
+        font-size: 0.78rem;
+        padding: 6px 10px;
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -5427,4 +5539,30 @@ body.theme-light .user-dropdown {
         max-width: 100%;
         flex: 1 1 100%;
     }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Touch Device & General Fluidity
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Disable hover effects on touch devices to prevent sticky hovers */
+@media (hover: none) {
+    .stream-card:hover { transform: none; border-color: var(--border); box-shadow: none; }
+    .paste-card:hover { transform: none; border-color: var(--border); box-shadow: none; }
+    .chat-send-btn:hover { background: var(--accent-dark); color: var(--text-primary); }
+    .btn:hover { filter: none; }
+}
+
+/* Fluid font sizes for headings across the board */
+.page-header h1 { font-size: clamp(1.2rem, 4vw, 1.8rem); }
+.section-header h2 { font-size: clamp(1rem, 3vw, 1.3rem); }
+
+/* Ensure smooth scrolling on mobile for all scroll containers */
+.chat-messages,
+.chat-replay-messages,
+.global-chat-messages,
+.emote-picker-grid,
+.pastes-grid,
+.stream-grid {
+    -webkit-overflow-scrolling: touch;
 }
