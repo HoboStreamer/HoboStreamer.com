@@ -184,6 +184,23 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] Restream quality_preset migration:', e.message); }
 
+    // Migrate: add custom encoding override columns to restream_destinations
+    try {
+        const cols = database.pragma('table_info(restream_destinations)').map(c => c.name);
+        const newCols = [
+            { name: 'custom_video_bitrate', def: 'INTEGER DEFAULT NULL' },
+            { name: 'custom_audio_bitrate', def: 'INTEGER DEFAULT NULL' },
+            { name: 'custom_fps', def: 'INTEGER DEFAULT NULL' },
+            { name: 'custom_encoder_preset', def: 'TEXT DEFAULT NULL' },
+        ];
+        for (const col of newCols) {
+            if (!cols.includes(col.name)) {
+                database.exec(`ALTER TABLE restream_destinations ADD COLUMN ${col.name} ${col.def}`);
+                console.log(`[DB] Added ${col.name} column to restream_destinations`);
+            }
+        }
+    } catch (e) { console.warn('[DB] Restream custom overrides migration:', e.message); }
+
     // Migrate: create comments table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS comments (
@@ -650,17 +667,21 @@ function getRestreamDestinationById(id) {
 
 function createRestreamDestination(userId, fields) {
     const result = run(
-        `INSERT INTO restream_destinations (user_id, platform, name, server_url, stream_key, enabled, auto_start, quality_preset)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO restream_destinations (user_id, platform, name, server_url, stream_key, enabled, auto_start, quality_preset,
+         custom_video_bitrate, custom_audio_bitrate, custom_fps, custom_encoder_preset)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [userId, fields.platform, fields.name || null, fields.server_url || null,
          fields.stream_key || null, fields.enabled ?? 1, fields.auto_start ?? 0,
-         fields.quality_preset || 'auto']
+         fields.quality_preset || 'auto',
+         fields.custom_video_bitrate ?? null, fields.custom_audio_bitrate ?? null,
+         fields.custom_fps ?? null, fields.custom_encoder_preset || null]
     );
     return get('SELECT * FROM restream_destinations WHERE id = ?', [result.lastInsertRowid]);
 }
 
 function updateRestreamDestination(id, fields) {
-    const allowed = new Set(['name', 'server_url', 'stream_key', 'enabled', 'auto_start', 'quality_preset']);
+    const allowed = new Set(['name', 'server_url', 'stream_key', 'enabled', 'auto_start', 'quality_preset',
+        'custom_video_bitrate', 'custom_audio_bitrate', 'custom_fps', 'custom_encoder_preset']);
     const filtered = Object.entries(fields || {}).filter(([key]) => allowed.has(key));
     if (!filtered.length) return getRestreamDestinationById(id);
 

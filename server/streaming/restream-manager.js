@@ -45,11 +45,18 @@ const OPENSSL_FFMPEG_PATH = path.join(__dirname, '../../bin/ffmpeg');
  * Each preset defines video/audio encoding parameters tuned for RTMP output.
  * Key design decisions:
  *   - Uses `-b:v` with CBR-like rate control (not CRF) for stable RTMP delivery
+ *   - `-tune zerolatency` — essential for real-time WebRTC/JSMPEG input; eliminates
+ *     encoder stalls from lookahead buffering on jittery source data. B-frames are
+ *     disabled (implicit with zerolatency) as they add reordering latency.
  *   - `-vsync cfr` forces constant framerate, required for RTMP
- *   - No `-tune zerolatency` — restream viewers have 5-10s buffer anyway;
- *     allowing lookahead/B-frames vastly improves compression efficiency
  *   - `-sc_threshold 0` prevents excessive keyframes on scene changes
- *   - `-bf 2` enables B-frames for better compression (compatible with all RTMP services)
+ *   - `nal-hrd=cbr` produces truly CBR output for optimal RTMP ingest compatibility
+ *   - `-flags +cgop` — closed GOPs for clean segment boundaries
+ *   - `-thread_queue_size` on input prevents demuxer blocking (video/audio interleave)
+ *   - `-max_muxing_queue_size` on output prevents FLV muxer stalls
+ *
+ * Per-destination overrides (custom_video_bitrate, custom_audio_bitrate, custom_fps)
+ * are applied on top of the resolved preset to allow fine-tuning without changing preset.
  */
 const QUALITY_PRESETS = {
     low: {
@@ -64,10 +71,10 @@ const QUALITY_PRESETS = {
         gop: 60,        // 2s keyframe interval at 30fps
     },
     medium: {
-        label: 'Medium (720p 3000k)',
-        videoBitrate: '3000k',
-        maxrate: '3500k',
-        bufsize: '6000k',
+        label: 'Medium (720p 2500k)',
+        videoBitrate: '2500k',
+        maxrate: '3000k',
+        bufsize: '5000k',
         audioBitrate: '128k',
         preset: 'veryfast',
         scale: '1280:720',
@@ -75,21 +82,32 @@ const QUALITY_PRESETS = {
         gop: 60,
     },
     high: {
-        label: 'High (1080p 4500k)',
-        videoBitrate: '4500k',
-        maxrate: '5000k',
-        bufsize: '9000k',
+        label: 'High (720p 4000k)',
+        videoBitrate: '4000k',
+        maxrate: '4500k',
+        bufsize: '8000k',
         audioBitrate: '160k',
+        preset: 'fast',
+        scale: '1280:720',
+        fps: 30,
+        gop: 60,
+    },
+    ultra: {
+        label: 'Ultra (1080p 6000k)',
+        videoBitrate: '6000k',
+        maxrate: '6500k',
+        bufsize: '12000k',
+        audioBitrate: '192k',
         preset: 'fast',
         scale: null,     // No scaling — pass through native resolution
         fps: 30,
         gop: 60,
     },
     source: {
-        label: 'Source (native 6000k)',
-        videoBitrate: '6000k',
-        maxrate: '6500k',
-        bufsize: '12000k',
+        label: 'Source (native 8000k)',
+        videoBitrate: '8000k',
+        maxrate: '8500k',
+        bufsize: '16000k',
         audioBitrate: '192k',
         preset: 'medium',
         scale: null,
@@ -105,6 +123,9 @@ const PLATFORM_DEFAULT_PRESET = {
     kick: 'medium',
     custom: 'medium',
 };
+
+/** Allowed encoder presets (exposed in UI for custom override) */
+const ENCODER_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'];
 
 class RestreamManager extends EventEmitter {
     constructor() {
@@ -236,12 +257,15 @@ class RestreamManager extends EventEmitter {
         const jsmpegRelay = require('./jsmpeg-relay');
 
         const preset = this._resolvePreset(session.destination);
+        const customOverrides = this._getCustomOverrides(session.destination);
         const args = [
             '-hide_banner',
             '-loglevel', 'warning',
+            '-thread_queue_size', '1024',
             '-f', 'mpegts',
             '-i', 'pipe:0',             // Read combined MPEG-TS from stdin
-            ...this._getEncodingArgs(preset),
+            ...this._getEncodingArgs(preset, { customOverrides }),
+            '-max_muxing_queue_size', '4096',
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
             destUrl,
@@ -373,15 +397,19 @@ class RestreamManager extends EventEmitter {
 
         // Step 5: Spawn FFmpeg with SDP input → RTMP output
         const preset = this._resolvePreset(session.destination);
+        const customOverrides = this._getCustomOverrides(session.destination);
         const args = [
             '-hide_banner',
             '-loglevel', 'warning',
             '-protocol_whitelist', 'file,rtp,udp',
-            '-analyzeduration', '2000000',    // 2s — SDP is known, don't over-probe
+            '-thread_queue_size', '1024',      // Prevent input queue blocking (video+audio demux interleave)
+            '-analyzeduration', '2000000',     // 2s — SDP is known, don't over-probe
             '-probesize', '2000000',           // 2MB — plenty for known RTP streams
             '-fflags', '+genpts+discardcorrupt',
+            '-use_wallclock_as_timestamps', '1', // Better timestamp handling for live RTP
             '-i', sdpPath,
-            ...this._getEncodingArgs(preset, { hasAudio: !!audioConsumer }),
+            ...this._getEncodingArgs(preset, { hasAudio: !!audioConsumer, customOverrides }),
+            '-max_muxing_queue_size', '4096',  // Prevent FLV muxer stalls from interleave gaps
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
             destUrl,
@@ -418,30 +446,72 @@ class RestreamManager extends EventEmitter {
     }
 
     /**
+     * Extract per-destination custom overrides from DB row.
+     * These override the preset values for fine-tuning without changing preset.
+     * @param {object} destination - DB row
+     * @returns {object} Override fields (only those that are set)
+     */
+    _getCustomOverrides(destination) {
+        const overrides = {};
+        if (destination?.custom_video_bitrate && Number.isFinite(Number(destination.custom_video_bitrate))) {
+            overrides.videoBitrate = `${destination.custom_video_bitrate}k`;
+        }
+        if (destination?.custom_audio_bitrate && Number.isFinite(Number(destination.custom_audio_bitrate))) {
+            overrides.audioBitrate = `${destination.custom_audio_bitrate}k`;
+        }
+        if (destination?.custom_fps && Number.isFinite(Number(destination.custom_fps)) && destination.custom_fps > 0) {
+            overrides.fps = Number(destination.custom_fps);
+        }
+        if (destination?.custom_encoder_preset && ENCODER_PRESETS.includes(destination.custom_encoder_preset)) {
+            overrides.encoderPreset = destination.custom_encoder_preset;
+        }
+        return overrides;
+    }
+
+    /**
      * Build the video + audio encoding args for FFmpeg.
-     * Produces stable CBR-like H.264/AAC output suitable for RTMP ingest.
+     * Produces stable CBR H.264/AAC output suitable for RTMP ingest.
+     * Uses `-tune zerolatency` to prevent encoder stalls on jittery real-time input.
      * 
      * @param {object} preset - Resolved quality preset
-     * @param {object} [opts] - { hasAudio: boolean, platform: string }
+     * @param {object} [opts] - { hasAudio: boolean, customOverrides: object }
      * @returns {string[]} FFmpeg args array
      */
     _getEncodingArgs(preset, opts = {}) {
-        const { hasAudio = true, platform } = opts;
+        const { hasAudio = true, customOverrides = {} } = opts;
         const args = [];
 
-        // Video encoding — CBR-like rate control for stable RTMP delivery
+        // Apply custom overrides on top of preset
+        const videoBitrate = customOverrides.videoBitrate || preset.videoBitrate;
+        const audioBitrate = customOverrides.audioBitrate || preset.audioBitrate;
+        const fps = customOverrides.fps || preset.fps;
+        const encoderPreset = customOverrides.encoderPreset || preset.preset;
+
+        // Compute maxrate/bufsize relative to video bitrate (if custom bitrate overridden)
+        let maxrate = preset.maxrate;
+        let bufsize = preset.bufsize;
+        if (customOverrides.videoBitrate) {
+            const kbps = parseInt(customOverrides.videoBitrate, 10);
+            maxrate = `${kbps + 500}k`;
+            bufsize = `${kbps * 2}k`;
+        }
+
+        // Video encoding — CBR with zerolatency for stable real-time RTMP delivery
         args.push(
             '-map', '0:v:0',
             '-c:v', 'libx264',
-            '-preset', preset.preset,
-            '-b:v', preset.videoBitrate,
-            '-maxrate', preset.maxrate,
-            '-bufsize', preset.bufsize,
+            '-preset', encoderPreset,
+            '-tune', 'zerolatency',          // Eliminates lookahead buffering; critical for jittery real-time input
+            '-b:v', videoBitrate,
+            '-maxrate', maxrate,
+            '-bufsize', bufsize,
             '-g', String(preset.gop),
+            '-keyint_min', String(preset.gop), // Consistent keyframe intervals (min = max)
             '-sc_threshold', '0',            // Prevent random keyframes on scene changes
-            '-bf', '2',                       // B-frames — better compression; RTMP services support this
+            '-flags', '+cgop',               // Closed GOPs — clean segment boundaries for RTMP ingest
             '-pix_fmt', 'yuv420p',
             '-threads', '0',                  // Use all available CPU cores
+            '-x264-params', 'nal-hrd=cbr',   // Truly CBR output for RTMP service compatibility
         );
 
         // Optional resolution scaling
@@ -450,8 +520,8 @@ class RestreamManager extends EventEmitter {
         }
 
         // Constant framerate for RTMP (WebRTC/JSMPEG can send variable fps)
-        if (preset.fps > 0) {
-            args.push('-r', String(preset.fps), '-vsync', 'cfr');
+        if (fps > 0) {
+            args.push('-r', String(fps), '-vsync', 'cfr');
         }
 
         // Audio encoding
@@ -460,7 +530,7 @@ class RestreamManager extends EventEmitter {
             args.push(
                 '-map', '0:a:0',
                 '-c:a', 'aac',
-                '-b:a', preset.audioBitrate,
+                '-b:a', audioBitrate,
                 '-ar', '48000',
                 '-ac', '2',
             );
@@ -820,6 +890,14 @@ class RestreamManager extends EventEmitter {
             presets[key] = { label: val.label };
         }
         return presets;
+    }
+
+    /**
+     * Get available encoder presets for the client UI.
+     * @returns {string[]} encoder preset names
+     */
+    static getEncoderPresets() {
+        return ENCODER_PRESETS;
     }
 }
 

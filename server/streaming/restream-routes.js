@@ -14,7 +14,8 @@ const restreamManager = require('./restream-manager');
 const router = express.Router();
 
 const VALID_PLATFORMS = ['youtube', 'twitch', 'kick', 'custom'];
-const VALID_QUALITY_PRESETS = ['auto', 'low', 'medium', 'high', 'source'];
+const VALID_QUALITY_PRESETS = ['auto', 'low', 'medium', 'high', 'ultra', 'source'];
+const VALID_ENCODER_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'];
 const MAX_DESTINATIONS = 10;
 
 /** Platform presets with default RTMP server URLs and UI metadata. */
@@ -38,11 +39,39 @@ function sanitizeDest(d) {
     };
 }
 
+/**
+ * Parse and validate custom encoding override fields from request body.
+ * Returns only fields that are present and valid; null values clear overrides.
+ */
+function parseCustomOverrides(body) {
+    const overrides = {};
+
+    if (body.custom_video_bitrate !== undefined) {
+        const v = body.custom_video_bitrate === null ? null : parseInt(body.custom_video_bitrate, 10);
+        overrides.custom_video_bitrate = (v !== null && Number.isFinite(v) && v >= 500 && v <= 50000) ? v : null;
+    }
+    if (body.custom_audio_bitrate !== undefined) {
+        const v = body.custom_audio_bitrate === null ? null : parseInt(body.custom_audio_bitrate, 10);
+        overrides.custom_audio_bitrate = (v !== null && Number.isFinite(v) && v >= 32 && v <= 512) ? v : null;
+    }
+    if (body.custom_fps !== undefined) {
+        const v = body.custom_fps === null ? null : parseInt(body.custom_fps, 10);
+        overrides.custom_fps = (v !== null && Number.isFinite(v) && v >= 15 && v <= 120) ? v : null;
+    }
+    if (body.custom_encoder_preset !== undefined) {
+        overrides.custom_encoder_preset = VALID_ENCODER_PRESETS.includes(body.custom_encoder_preset)
+            ? body.custom_encoder_preset : null;
+    }
+
+    return overrides;
+}
+
 // ── GET /presets — platform hints for the client ─────────────
 router.get('/presets', requireAuth, (req, res) => {
     res.json({
         presets: PLATFORM_PRESETS,
         qualityPresets: restreamManager.constructor.getQualityPresets(),
+        encoderPresets: VALID_ENCODER_PRESETS,
     });
 });
 
@@ -97,6 +126,7 @@ router.post('/destinations', requireAuth, (req, res) => {
             enabled: enabled !== false ? 1 : 0,
             auto_start: auto_start ? 1 : 0,
             quality_preset: quality_preset || 'auto',
+            ...parseCustomOverrides(req.body),
         });
 
         res.json({ destination: sanitizeDest(dest) });
@@ -128,6 +158,8 @@ router.put('/destinations/:id', requireAuth, (req, res) => {
             }
             updates.quality_preset = req.body.quality_preset;
         }
+        // Custom encoding overrides
+        Object.assign(updates, parseCustomOverrides(req.body));
 
         const updated = db.updateRestreamDestination(dest.id, updates);
         res.json({ destination: sanitizeDest(updated) });
