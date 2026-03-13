@@ -24,10 +24,11 @@ const os = require('os');
 const config = require('../config');
 
 const RESTART_BASE_DELAY = 5000;
-const RESTART_MAX_DELAY = 60000;
+const RESTART_MAX_DELAY = 120000;          // 2 min cap (was 60s — too aggressive for persistent outages)
 const STABLE_THRESHOLD_MS = 30000;
-const MAX_RESTART_ATTEMPTS = 10;
+const MAX_RESTART_ATTEMPTS = 30;           // 30 attempts (was 10 — too few for Twitch connection storms)
 const FFMPEG_STARTUP_DELAY_RTMP = 3000;
+const RAPID_CRASH_THRESHOLD_MS = 5000;     // If FFmpeg exits within this, apply extra backoff
 
 /**
  * Path to a static FFmpeg binary built with OpenSSL (not GnuTLS).
@@ -65,7 +66,7 @@ const QUALITY_PRESETS = {
         maxrate: '1800k',
         bufsize: '3000k',
         audioBitrate: '96k',
-        preset: 'veryfast',
+        preset: 'ultrafast',       // ultrafast: ~50% less CPU than veryfast — critical for multi-dest servers
         scale: '1280:720',
         fps: 30,
         gop: 60,        // 2s keyframe interval at 30fps
@@ -76,7 +77,7 @@ const QUALITY_PRESETS = {
         maxrate: '3000k',
         bufsize: '5000k',
         audioBitrate: '128k',
-        preset: 'veryfast',
+        preset: 'ultrafast',       // ultrafast: stream stability > marginal quality gain from veryfast
         scale: '1280:720',
         fps: 30,
         gop: 60,
@@ -87,7 +88,7 @@ const QUALITY_PRESETS = {
         maxrate: '4500k',
         bufsize: '8000k',
         audioBitrate: '160k',
-        preset: 'fast',
+        preset: 'superfast',       // superfast: good balance for single-dest or beefier servers
         scale: '1280:720',
         fps: 30,
         gop: 60,
@@ -98,7 +99,7 @@ const QUALITY_PRESETS = {
         maxrate: '6500k',
         bufsize: '12000k',
         audioBitrate: '192k',
-        preset: 'fast',
+        preset: 'veryfast',
         scale: null,     // No scaling — pass through native resolution
         fps: 30,
         gop: 60,
@@ -109,7 +110,7 @@ const QUALITY_PRESETS = {
         maxrate: '8500k',
         bufsize: '16000k',
         audioBitrate: '192k',
-        preset: 'medium',
+        preset: 'fast',
         scale: null,
         fps: 0,          // 0 = pass through source framerate
         gop: 60,
@@ -405,7 +406,8 @@ class RestreamManager extends EventEmitter {
             '-thread_queue_size', '1024',      // Prevent input queue blocking (video+audio demux interleave)
             '-analyzeduration', '2000000',     // 2s — SDP is known, don't over-probe
             '-probesize', '2000000',           // 2MB — plenty for known RTP streams
-            '-fflags', '+genpts+discardcorrupt',
+            '-fflags', '+genpts+discardcorrupt+nobuffer',
+            '-err_detect', 'ignore_err',       // Don't bail on corrupt RTP packets (missed packets → partial frames)
             '-use_wallclock_as_timestamps', '1', // Better timestamp handling for live RTP
             '-i', sdpPath,
             ...this._getEncodingArgs(preset, { hasAudio: !!audioConsumer, customOverrides }),
@@ -510,7 +512,7 @@ class RestreamManager extends EventEmitter {
             '-sc_threshold', '0',            // Prevent random keyframes on scene changes
             '-flags', '+cgop',               // Closed GOPs — clean segment boundaries for RTMP ingest
             '-pix_fmt', 'yuv420p',
-            '-threads', '0',                  // Use all available CPU cores
+            '-threads', '2',                  // Cap per-process threads — prevents N encodes from fighting over all cores
             '-x264-params', 'nal-hrd=cbr',   // Truly CBR output for RTMP service compatibility
         );
 
@@ -521,7 +523,7 @@ class RestreamManager extends EventEmitter {
 
         // Constant framerate for RTMP (WebRTC/JSMPEG can send variable fps)
         if (fps > 0) {
-            args.push('-r', String(fps), '-vsync', 'cfr');
+            args.push('-r', String(fps), '-fps_mode', 'cfr');
         }
 
         // Audio encoding
@@ -710,11 +712,18 @@ class RestreamManager extends EventEmitter {
             return;
         }
 
+        // Rapid-crash detection: if FFmpeg died within 5s, it likely can't connect at all.
+        // Apply extra backoff to avoid hammering the ingest server (which can trigger IP bans).
+        const runtime = Date.now() - (session.startedAt || Date.now());
+        if (runtime < RAPID_CRASH_THRESHOLD_MS) {
+            session.restartDelay = Math.min(session.restartDelay * 2, RESTART_MAX_DELAY);
+        }
+
         const delay = session.restartDelay;
         session.restartDelay = Math.min(session.restartDelay * 1.5, RESTART_MAX_DELAY);
         session.restartAttempts++;
 
-        console.log(`[Restream] Scheduling restart for ${session.key} in ${delay}ms (attempt ${session.restartAttempts}/${MAX_RESTART_ATTEMPTS})`);
+        console.log(`[Restream] Scheduling restart for ${session.key} in ${(delay / 1000).toFixed(1)}s (attempt ${session.restartAttempts}/${MAX_RESTART_ATTEMPTS}, ran ${(runtime / 1000).toFixed(1)}s)`);
 
         session.restartTimer = setTimeout(() => {
             session.restartTimer = null;
