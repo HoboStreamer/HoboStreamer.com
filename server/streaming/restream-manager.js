@@ -29,6 +29,74 @@ const STABLE_THRESHOLD_MS = 30000;
 const MAX_RESTART_ATTEMPTS = 10;
 const FFMPEG_STARTUP_DELAY_RTMP = 3000;
 
+/**
+ * Quality presets for restream encoding.
+ * Used for JSMPEG and WebRTC sources (RTMP uses codec copy).
+ * 
+ * Each preset defines video/audio encoding parameters tuned for RTMP output.
+ * Key design decisions:
+ *   - Uses `-b:v` with CBR-like rate control (not CRF) for stable RTMP delivery
+ *   - `-vsync cfr` forces constant framerate, required for RTMP
+ *   - No `-tune zerolatency` — restream viewers have 5-10s buffer anyway;
+ *     allowing lookahead/B-frames vastly improves compression efficiency
+ *   - `-sc_threshold 0` prevents excessive keyframes on scene changes
+ *   - `-bf 2` enables B-frames for better compression (compatible with all RTMP services)
+ */
+const QUALITY_PRESETS = {
+    low: {
+        label: 'Low (720p 1500k)',
+        videoBitrate: '1500k',
+        maxrate: '1800k',
+        bufsize: '3000k',
+        audioBitrate: '96k',
+        preset: 'veryfast',
+        scale: '1280:720',
+        fps: 30,
+        gop: 60,        // 2s keyframe interval at 30fps
+    },
+    medium: {
+        label: 'Medium (720p 3000k)',
+        videoBitrate: '3000k',
+        maxrate: '3500k',
+        bufsize: '6000k',
+        audioBitrate: '128k',
+        preset: 'veryfast',
+        scale: '1280:720',
+        fps: 30,
+        gop: 60,
+    },
+    high: {
+        label: 'High (1080p 4500k)',
+        videoBitrate: '4500k',
+        maxrate: '5000k',
+        bufsize: '9000k',
+        audioBitrate: '160k',
+        preset: 'fast',
+        scale: null,     // No scaling — pass through native resolution
+        fps: 30,
+        gop: 60,
+    },
+    source: {
+        label: 'Source (native 6000k)',
+        videoBitrate: '6000k',
+        maxrate: '6500k',
+        bufsize: '12000k',
+        audioBitrate: '192k',
+        preset: 'medium',
+        scale: null,
+        fps: 0,          // 0 = pass through source framerate
+        gop: 60,
+    },
+};
+
+/** Default preset per platform (used when quality_preset='auto') */
+const PLATFORM_DEFAULT_PRESET = {
+    twitch: 'medium',
+    youtube: 'high',
+    kick: 'medium',
+    custom: 'medium',
+};
+
 class RestreamManager extends EventEmitter {
     constructor() {
         super();
@@ -148,21 +216,13 @@ class RestreamManager extends EventEmitter {
     _startJsmpegRestream(session, streamKey, destUrl) {
         const jsmpegRelay = require('./jsmpeg-relay');
 
+        const preset = this._resolvePreset(session.destination);
         const args = [
             '-hide_banner',
             '-loglevel', 'warning',
             '-f', 'mpegts',
             '-i', 'pipe:0',             // Read combined MPEG-TS from stdin
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-tune', 'zerolatency',
-            '-crf', '23',
-            '-maxrate', '2500k',
-            '-bufsize', '5000k',
-            '-g', '60',                  // Keyframe interval
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
+            ...this._getEncodingArgs(preset),
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
             destUrl,
@@ -293,43 +353,20 @@ class RestreamManager extends EventEmitter {
         };
 
         // Step 5: Spawn FFmpeg with SDP input → RTMP output
+        const preset = this._resolvePreset(session.destination);
         const args = [
             '-hide_banner',
             '-loglevel', 'warning',
             '-protocol_whitelist', 'file,rtp,udp',
-            '-fflags', '+genpts',
+            '-analyzeduration', '10000000',   // 10s — absorb RTP jitter during startup
+            '-probesize', '10000000',          // 10MB — reliable stream detection
+            '-fflags', '+genpts+discardcorrupt',
             '-i', sdpPath,
-        ];
-
-        // Video encoding (VP8 → H.264)
-        args.push(
-            '-map', '0:v:0',
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-tune', 'zerolatency',
-            '-crf', '23',
-            '-maxrate', '2500k',
-            '-bufsize', '5000k',
-            '-g', '60',
-            '-pix_fmt', 'yuv420p',
-        );
-
-        // Audio encoding (Opus → AAC) — only if audio is available
-        if (audioConsumer) {
-            args.push(
-                '-map', '0:a:0',
-                '-c:a', 'aac',
-                '-b:a', '128k',
-                '-ar', '44100',
-                '-ac', '2',
-            );
-        }
-
-        args.push(
+            ...this._getEncodingArgs(preset, { hasAudio: !!audioConsumer }),
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
             destUrl,
-        );
+        ];
 
         this._spawnFFmpeg(session, args);
 
@@ -343,6 +380,73 @@ class RestreamManager extends EventEmitter {
                 session.webrtcState = null;
             }
         };
+    }
+
+    /**
+     * Resolve quality preset for a destination.
+     * @param {object} destination - DB row
+     * @returns {object} Resolved preset from QUALITY_PRESETS
+     */
+    _resolvePreset(destination) {
+        const presetKey = destination?.quality_preset || 'auto';
+        if (presetKey !== 'auto' && QUALITY_PRESETS[presetKey]) {
+            return QUALITY_PRESETS[presetKey];
+        }
+        // Auto: pick per-platform default
+        const platform = destination?.platform || 'custom';
+        const defaultKey = PLATFORM_DEFAULT_PRESET[platform] || 'medium';
+        return QUALITY_PRESETS[defaultKey];
+    }
+
+    /**
+     * Build the video + audio encoding args for FFmpeg.
+     * Produces stable CBR-like H.264/AAC output suitable for RTMP ingest.
+     * 
+     * @param {object} preset - Resolved quality preset
+     * @param {object} [opts] - { hasAudio: boolean }
+     * @returns {string[]} FFmpeg args array
+     */
+    _getEncodingArgs(preset, opts = {}) {
+        const { hasAudio = true } = opts;
+        const args = [];
+
+        // Video encoding — CBR-like rate control for stable RTMP delivery
+        args.push(
+            '-map', '0:v:0',
+            '-c:v', 'libx264',
+            '-preset', preset.preset,
+            '-b:v', preset.videoBitrate,
+            '-maxrate', preset.maxrate,
+            '-bufsize', preset.bufsize,
+            '-g', String(preset.gop),
+            '-sc_threshold', '0',            // Prevent random keyframes on scene changes
+            '-bf', '2',                       // B-frames — better compression; RTMP services support this
+            '-pix_fmt', 'yuv420p',
+            '-threads', '0',                  // Use all available CPU cores
+        );
+
+        // Optional resolution scaling
+        if (preset.scale) {
+            args.push('-vf', `scale=${preset.scale}:force_original_aspect_ratio=decrease,pad=${preset.scale}:(ow-iw)/2:(oh-ih)/2`);
+        }
+
+        // Constant framerate for RTMP (WebRTC/JSMPEG can send variable fps)
+        if (preset.fps > 0) {
+            args.push('-r', String(preset.fps), '-vsync', 'cfr');
+        }
+
+        // Audio encoding
+        if (hasAudio) {
+            args.push(
+                '-map', '0:a:0',
+                '-c:a', 'aac',
+                '-b:a', preset.audioBitrate,
+                '-ar', '44100',
+                '-ac', '2',
+            );
+        }
+
+        return args;
     }
 
     /**
@@ -675,6 +779,18 @@ class RestreamManager extends EventEmitter {
             this._killProcess(session);
         }
         this.sessions.clear();
+    }
+
+    /**
+     * Get available quality presets for the client UI.
+     * @returns {Object} presetKey → { label }
+     */
+    static getQualityPresets() {
+        const presets = { auto: { label: 'Auto (per-platform default)' } };
+        for (const [key, val] of Object.entries(QUALITY_PRESETS)) {
+            presets[key] = { label: val.label };
+        }
+        return presets;
     }
 }
 

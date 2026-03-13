@@ -2419,12 +2419,14 @@ function renderRestreamDestinations() {
         const meta = RESTREAM_PLATFORM_META[dest.platform] || RESTREAM_PLATFORM_META.custom;
         const enabledClass = dest.enabled ? '' : 'style="opacity:0.5"';
         const autoStartBadge = dest.auto_start ? '<span style="font-size:0.7rem;color:var(--text-secondary);margin-left:4px" title="Auto-starts when you go live">[auto]</span>' : '';
+        const qualityLabel = dest.quality_preset && dest.quality_preset !== 'auto' ? dest.quality_preset : 'auto';
+        const qualityBadge = `<span style="font-size:0.65rem;color:var(--text-secondary);margin-left:4px;text-transform:uppercase" title="Encoding quality preset">[${qualityLabel}]</span>`;
         const keyDisplay = dest.has_key ? `Key: ${dest.stream_key}` : 'No key set';
 
         html += `<div class="bc-restream-dest-card" ${enabledClass} data-dest-id="${dest.id}">
             <span class="bc-restream-platform-icon" style="color:${meta.color}"><i class="${meta.icon}"></i></span>
             <span class="bc-restream-name" title="${dest.name || meta.name}">${dest.name || meta.name}</span>
-            ${autoStartBadge}
+            ${autoStartBadge}${qualityBadge}
             <span class="bc-restream-dest-meta">${keyDisplay}</span>
             <div class="bc-restream-dest-actions">
                 <button class="bc-ctrl-btn-sm" onclick="editRestreamDestination(${dest.id})" title="Edit"><i class="fa-solid fa-pen"></i></button>
@@ -2448,6 +2450,7 @@ function showAddRestreamDestination() {
     document.getElementById('bc-restream-name').value = '';
     document.getElementById('bc-restream-key').value = '';
     document.getElementById('bc-restream-autostart').checked = false;
+    document.getElementById('bc-restream-quality').value = 'auto';
     onRestreamPlatformChange();
 }
 
@@ -2489,6 +2492,7 @@ async function saveRestreamDestination() {
     const server_url = document.getElementById('bc-restream-url').value.trim();
     const stream_key = document.getElementById('bc-restream-key').value.trim();
     const auto_start = document.getElementById('bc-restream-autostart').checked;
+    const quality_preset = document.getElementById('bc-restream-quality').value;
 
     if (!stream_key) {
         toast('Stream key is required', 'error');
@@ -2498,7 +2502,7 @@ async function saveRestreamDestination() {
     try {
         if (_restreamEditingId) {
             // Update existing
-            const body = { name, server_url, auto_start };
+            const body = { name, server_url, auto_start, quality_preset };
             if (stream_key && !stream_key.startsWith('****')) body.stream_key = stream_key;
             await api(`/restream/destinations/${_restreamEditingId}`, { method: 'PUT', body });
             toast('Destination updated', 'success');
@@ -2506,7 +2510,7 @@ async function saveRestreamDestination() {
             // Create new
             await api('/restream/destinations', {
                 method: 'POST',
-                body: { platform, name, server_url, stream_key, auto_start },
+                body: { platform, name, server_url, stream_key, auto_start, quality_preset },
             });
             toast('Destination added', 'success');
         }
@@ -2537,6 +2541,7 @@ function editRestreamDestination(destId) {
     document.getElementById('bc-restream-key').value = ''; // Don't show key, let user replace
     document.getElementById('bc-restream-key').placeholder = dest.has_key ? 'Leave empty to keep existing key' : 'Paste your stream key';
     document.getElementById('bc-restream-autostart').checked = !!dest.auto_start;
+    document.getElementById('bc-restream-quality').value = dest.quality_preset || 'auto';
     onRestreamPlatformChange();
 
     // Re-enable platform on cancel

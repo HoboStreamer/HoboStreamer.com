@@ -14,6 +14,7 @@ const restreamManager = require('./restream-manager');
 const router = express.Router();
 
 const VALID_PLATFORMS = ['youtube', 'twitch', 'kick', 'custom'];
+const VALID_QUALITY_PRESETS = ['auto', 'low', 'medium', 'high', 'source'];
 const MAX_DESTINATIONS = 10;
 
 /** Platform presets with default RTMP server URLs and UI metadata. */
@@ -33,12 +34,16 @@ function sanitizeDest(d) {
         ...d,
         stream_key: d.stream_key ? '****' + d.stream_key.slice(-4) : '',
         has_key: !!d.stream_key,
+        quality_preset: d.quality_preset || 'auto',
     };
 }
 
 // ── GET /presets — platform hints for the client ─────────────
 router.get('/presets', requireAuth, (req, res) => {
-    res.json({ presets: PLATFORM_PRESETS });
+    res.json({
+        presets: PLATFORM_PRESETS,
+        qualityPresets: restreamManager.constructor.getQualityPresets(),
+    });
 });
 
 // ── GET /destinations — list user's restream destinations ────
@@ -55,10 +60,14 @@ router.get('/destinations', requireAuth, (req, res) => {
 // ── POST /destinations — create a new restream destination ───
 router.post('/destinations', requireAuth, (req, res) => {
     try {
-        const { platform, name, server_url, stream_key, enabled, auto_start } = req.body;
+        const { platform, name, server_url, stream_key, enabled, auto_start, quality_preset } = req.body;
 
         if (!platform || !VALID_PLATFORMS.includes(platform)) {
             return res.status(400).json({ error: `Invalid platform. Must be one of: ${VALID_PLATFORMS.join(', ')}` });
+        }
+
+        if (quality_preset && !VALID_QUALITY_PRESETS.includes(quality_preset)) {
+            return res.status(400).json({ error: `Invalid quality preset. Must be one of: ${VALID_QUALITY_PRESETS.join(', ')}` });
         }
 
         // Enforce a reasonable limit
@@ -87,6 +96,7 @@ router.post('/destinations', requireAuth, (req, res) => {
             stream_key: stream_key.trim(),
             enabled: enabled !== false ? 1 : 0,
             auto_start: auto_start ? 1 : 0,
+            quality_preset: quality_preset || 'auto',
         });
 
         res.json({ destination: sanitizeDest(dest) });
@@ -112,6 +122,12 @@ router.put('/destinations/:id', requireAuth, (req, res) => {
         }
         if (req.body.enabled !== undefined) updates.enabled = req.body.enabled ? 1 : 0;
         if (req.body.auto_start !== undefined) updates.auto_start = req.body.auto_start ? 1 : 0;
+        if (req.body.quality_preset !== undefined) {
+            if (!VALID_QUALITY_PRESETS.includes(req.body.quality_preset)) {
+                return res.status(400).json({ error: `Invalid quality preset. Must be one of: ${VALID_QUALITY_PRESETS.join(', ')}` });
+            }
+            updates.quality_preset = req.body.quality_preset;
+        }
 
         const updated = db.updateRestreamDestination(dest.id, updates);
         res.json({ destination: sanitizeDest(updated) });
