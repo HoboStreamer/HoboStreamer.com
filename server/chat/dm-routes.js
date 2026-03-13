@@ -142,7 +142,8 @@ router.get('/conversations/:id/messages', (req, res) => {
         }
         const limit = Math.min(parseInt(req.query.limit) || 50, 100);
         const before = parseInt(req.query.before) || null;
-        const messages = dm.getMessages(convId, limit, before);
+        const after = parseInt(req.query.after) || null;
+        const messages = dm.getMessages(convId, limit, before, after);
         res.json({ messages });
     } catch (err) {
         console.error('[DM] Get messages error:', err.message);

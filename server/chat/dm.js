@@ -223,7 +223,18 @@ function sendMessage(conversationId, senderId, text) {
 /**
  * Get messages in a conversation (paginated, newest first).
  */
-function getMessages(conversationId, limit = 50, before = null) {
+function getMessages(conversationId, limit = 50, before = null, after = null) {
+    if (after) {
+        // Fetch messages newer than `after` id (for live polling)
+        return db.all(`
+            SELECT m.*, u.username, u.display_name, u.avatar_url, u.profile_color
+            FROM dm_messages m
+            JOIN users u ON u.id = m.sender_id
+            WHERE m.conversation_id = ? AND m.id > ?
+            ORDER BY m.created_at ASC
+            LIMIT ?
+        `, [conversationId, after, limit]);
+    }
     if (before) {
         return db.all(`
             SELECT m.*, u.username, u.display_name, u.avatar_url, u.profile_color

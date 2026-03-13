@@ -19,8 +19,12 @@
     let selectedUsers = [];
     let unreadTotal = 0;
     let pollTimer = null;
+    let threadPollTimer = null;   // poll for new messages in active thread
+    let inboxPollTimer = null;    // poll for inbox refresh
     let searchDebounce = null;
     let isOtherBlocked = false;
+    const THREAD_POLL_MS = 3000;  // poll open thread every 3s
+    const INBOX_POLL_MS = 10000;  // poll inbox every 10s
 
     // ── DOM refs (set once in init) ──────────────────────────────
     let $toggle, $badge, $panel;
@@ -127,17 +131,25 @@
         if (panelOpen) {
             view = 'inbox';
             loadConversations();
+            _startInboxPoll();
+        } else {
+            _stopThreadPoll();
+            _stopInboxPoll();
         }
     }
 
     function closePanel() {
         panelOpen = false;
         $panel.classList.remove('open');
+        _stopThreadPoll();
+        _stopInboxPoll();
     }
 
     // ── Render: Inbox ────────────────────────────────────────────
     function renderInbox() {
         view = 'inbox';
+        _stopThreadPoll();
+        _startInboxPoll();
         $panel.innerHTML = `
             <div class="msg-header">
                 <span class="msg-header-title">Messages</span>
@@ -189,6 +201,8 @@
     // ── Render: Thread ───────────────────────────────────────────
     function renderThread() {
         view = 'thread';
+        _stopInboxPoll();
+        _startThreadPoll();
         const conv = activeConv;
         const name = esc(getConvName(conv));
         const isGroup = conv.is_group;
@@ -295,6 +309,8 @@
     // ── Render: New Message ──────────────────────────────────────
     function showNewMessage() {
         view = 'new';
+        _stopThreadPoll();
+        _stopInboxPoll();
         selectedUsers = [];
         searchResults = [];
 
@@ -385,6 +401,7 @@
     // ── Render: Group Info ───────────────────────────────────────
     function showGroupInfo() {
         view = 'group-info';
+        _stopThreadPoll();
         const conv = activeConv;
         const participants = conv.participants || [];
         const isCreator = conv.created_by === currentUser?.id;
@@ -739,6 +756,58 @@
         } catch {
             toast('Failed to delete message', 'error');
         }
+    }
+
+    // ── Polling: live sync for open thread & inbox ─────────────
+
+    function _stopThreadPoll() {
+        if (threadPollTimer) { clearInterval(threadPollTimer); threadPollTimer = null; }
+    }
+
+    function _startThreadPoll() {
+        _stopThreadPoll();
+        threadPollTimer = setInterval(_pollThread, THREAD_POLL_MS);
+    }
+
+    async function _pollThread() {
+        if (!panelOpen || view !== 'thread' || !activeConvId) return;
+        // Find the newest message id we already have
+        let newestId = 0;
+        for (const m of threadMessages) { if (m.id > newestId) newestId = m.id; }
+        if (!newestId) return;
+        try {
+            const data = await dmApi(`/conversations/${activeConvId}/messages?after=${newestId}&limit=50`);
+            const newMsgs = data.messages || [];
+            if (!newMsgs.length) return;
+            // Deduplicate — WS may have already delivered some
+            const existing = new Set(threadMessages.map(m => m.id));
+            let added = 0;
+            for (const m of newMsgs) {
+                if (!existing.has(m.id)) {
+                    threadMessages.unshift(m);
+                    added++;
+                }
+            }
+            if (added > 0) {
+                renderMessages();
+                // Auto-mark read for messages from others
+                dmApi(`/conversations/${activeConvId}/read`, { method: 'POST' }).catch(() => {});
+            }
+        } catch { /* non-critical */ }
+    }
+
+    function _stopInboxPoll() {
+        if (inboxPollTimer) { clearInterval(inboxPollTimer); inboxPollTimer = null; }
+    }
+
+    function _startInboxPoll() {
+        _stopInboxPoll();
+        inboxPollTimer = setInterval(_pollInbox, INBOX_POLL_MS);
+    }
+
+    async function _pollInbox() {
+        if (!panelOpen || view !== 'inbox') return;
+        await loadConversations();
     }
 
     // ── Real-time: handle incoming DM from WebSocket ─────────────
