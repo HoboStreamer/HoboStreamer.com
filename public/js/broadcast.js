@@ -2421,12 +2421,22 @@ function renderRestreamDestinations() {
         const autoStartBadge = dest.auto_start ? '<span style="font-size:0.7rem;color:var(--text-secondary);margin-left:4px" title="Auto-starts when you go live">[auto]</span>' : '';
         const qualityLabel = dest.quality_preset && dest.quality_preset !== 'auto' ? dest.quality_preset : 'auto';
         const qualityBadge = `<span style="font-size:0.65rem;color:var(--text-secondary);margin-left:4px;text-transform:uppercase" title="Encoding quality preset">[${qualityLabel}]</span>`;
+
+        // Show custom overrides badge if any are set
+        const customParts = [];
+        if (dest.custom_video_bitrate) customParts.push(`${dest.custom_video_bitrate}k`);
+        if (dest.custom_fps) customParts.push(`${dest.custom_fps}fps`);
+        if (dest.custom_encoder_preset) customParts.push(dest.custom_encoder_preset);
+        const customBadge = customParts.length > 0
+            ? `<span style="font-size:0.6rem;color:var(--accent);margin-left:3px" title="Custom overrides: ${customParts.join(', ')}">[${customParts.join(' ')}]</span>`
+            : '';
+
         const keyDisplay = dest.has_key ? `Key: ${dest.stream_key}` : 'No key set';
 
         html += `<div class="bc-restream-dest-card" ${enabledClass} data-dest-id="${dest.id}">
             <span class="bc-restream-platform-icon" style="color:${meta.color}"><i class="${meta.icon}"></i></span>
             <span class="bc-restream-name" title="${dest.name || meta.name}">${dest.name || meta.name}</span>
-            ${autoStartBadge}${qualityBadge}
+            ${autoStartBadge}${qualityBadge}${customBadge}
             <span class="bc-restream-dest-meta">${keyDisplay}</span>
             <div class="bc-restream-dest-actions">
                 <button class="bc-ctrl-btn-sm" onclick="editRestreamDestination(${dest.id})" title="Edit"><i class="fa-solid fa-pen"></i></button>
@@ -2451,6 +2461,12 @@ function showAddRestreamDestination() {
     document.getElementById('bc-restream-key').value = '';
     document.getElementById('bc-restream-autostart').checked = false;
     document.getElementById('bc-restream-quality').value = 'auto';
+    // Reset advanced fields
+    document.getElementById('bc-restream-custom-vbr').value = '';
+    document.getElementById('bc-restream-custom-abr').value = '';
+    document.getElementById('bc-restream-custom-fps').value = '';
+    document.getElementById('bc-restream-custom-encoder').value = '';
+    document.getElementById('bc-restream-advanced').style.display = 'none';
     onRestreamPlatformChange();
 }
 
@@ -2494,15 +2510,23 @@ async function saveRestreamDestination() {
     const auto_start = document.getElementById('bc-restream-autostart').checked;
     const quality_preset = document.getElementById('bc-restream-quality').value;
 
-    if (!stream_key) {
+    // Custom encoding overrides (empty string → null to clear)
+    const custom_video_bitrate = document.getElementById('bc-restream-custom-vbr').value.trim() || null;
+    const custom_audio_bitrate = document.getElementById('bc-restream-custom-abr').value.trim() || null;
+    const custom_fps = document.getElementById('bc-restream-custom-fps').value.trim() || null;
+    const custom_encoder_preset = document.getElementById('bc-restream-custom-encoder').value || null;
+
+    if (!stream_key && !_restreamEditingId) {
         toast('Stream key is required', 'error');
         return;
     }
 
     try {
+        const customFields = { custom_video_bitrate, custom_audio_bitrate, custom_fps, custom_encoder_preset };
+
         if (_restreamEditingId) {
             // Update existing
-            const body = { name, server_url, auto_start, quality_preset };
+            const body = { name, server_url, auto_start, quality_preset, ...customFields };
             if (stream_key && !stream_key.startsWith('****')) body.stream_key = stream_key;
             await api(`/restream/destinations/${_restreamEditingId}`, { method: 'PUT', body });
             toast('Destination updated', 'success');
@@ -2510,7 +2534,7 @@ async function saveRestreamDestination() {
             // Create new
             await api('/restream/destinations', {
                 method: 'POST',
-                body: { platform, name, server_url, stream_key, auto_start, quality_preset },
+                body: { platform, name, server_url, stream_key, auto_start, quality_preset, ...customFields },
             });
             toast('Destination added', 'success');
         }
@@ -2542,6 +2566,17 @@ function editRestreamDestination(destId) {
     document.getElementById('bc-restream-key').placeholder = dest.has_key ? 'Leave empty to keep existing key' : 'Paste your stream key';
     document.getElementById('bc-restream-autostart').checked = !!dest.auto_start;
     document.getElementById('bc-restream-quality').value = dest.quality_preset || 'auto';
+
+    // Populate custom override fields
+    document.getElementById('bc-restream-custom-vbr').value = dest.custom_video_bitrate || '';
+    document.getElementById('bc-restream-custom-abr').value = dest.custom_audio_bitrate || '';
+    document.getElementById('bc-restream-custom-fps').value = dest.custom_fps || '';
+    document.getElementById('bc-restream-custom-encoder').value = dest.custom_encoder_preset || '';
+
+    // Auto-expand advanced section if any custom overrides are set
+    const hasCustom = dest.custom_video_bitrate || dest.custom_audio_bitrate || dest.custom_fps || dest.custom_encoder_preset;
+    document.getElementById('bc-restream-advanced').style.display = hasCustom ? '' : 'none';
+
     onRestreamPlatformChange();
 
     // Re-enable platform on cancel
