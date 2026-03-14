@@ -382,17 +382,20 @@ class ChatRelayService {
     async _connectKick(bridge) {
         if (bridge.stopped) return;
 
-        // Step 1: Resolve chatroom ID — use pre-parsed from URL, or try API, or fall back to channel slug
+        // Step 1: Resolve chatroom ID — use pre-parsed from URL, or try API, or give up
         let chatroomId = bridge.chatroomId;
         if (!chatroomId) {
             try {
                 chatroomId = await this._getKickChatroomId(bridge.channelName);
                 bridge.chatroomId = chatroomId; // cache for reconnects
             } catch (err) {
-                // Kick API is Cloudflare-blocked from servers — fall back to channel slug
-                // This subscribes to `chatrooms.{slug}.v2` which may or may not work
-                console.warn(`[ChatRelay] Kick: API blocked for ${bridge.channelName} (${err.message}) — using channel slug as chatroom ID`);
-                chatroomId = bridge.channelName; // will produce `chatrooms.channelname.v2`
+                // Kick API is Cloudflare-blocked from servers — slug subscriptions won't receive messages.
+                // The broadcast UI auto-detects the chatroom ID from the user's browser and appends ?chatroom=ID.
+                // If that didn't happen, log a clear error so the user knows to fix it.
+                console.error(`[ChatRelay] Kick: Cannot resolve chatroom ID for ${bridge.channelName} (${err.message}). ` +
+                    `Chat relay will NOT work. Edit the Kick destination and re-save to auto-detect the chatroom ID, ` +
+                    `or manually add ?chatroom=ID to the Channel URL.`);
+                return; // Don't connect — slug subscriptions silently fail
             }
         }
 
@@ -431,6 +434,17 @@ class ChatRelayService {
                             ws.send(JSON.stringify({ event: 'pusher:ping', data: {} }));
                         }
                     }, (timeout - 10) * 1000);
+                    break;
+                }
+
+                case 'pusher_internal:subscription_succeeded': {
+                    console.log(`[ChatRelay] Kick: Subscription confirmed for chatrooms.${chatroomId}.v2`);
+                    break;
+                }
+
+                case 'pusher:error': {
+                    const errData = safeJsonParse(msg.data) || msg.data;
+                    console.warn(`[ChatRelay] Kick: Pusher error for ${bridge.channelName}:`, errData);
                     break;
                 }
 
