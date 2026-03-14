@@ -888,7 +888,10 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
     const el = document.getElementById('ch-cumulative-viewers');
     if (!el) return;
 
-    if (liveStreams.length <= 1 && !Object.keys(rsRestream).length && !restreamLinks?.length) {
+    const hasRs = Object.keys(rsRestream).length > 0;
+    const hasRestream = restreamLinks?.length > 0;
+
+    if (liveStreams.length <= 1 && !hasRs && !hasRestream) {
         el.style.display = 'none';
         return;
     }
@@ -901,16 +904,21 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
         html += `<span class="ch-viewer-total"><i class="fa-solid fa-layer-group"></i> <strong>${total}</strong> viewer${total !== 1 ? 's' : ''} across <strong>${streamCount}</strong> streams</span>`;
     }
 
-    // RS restream badges
+    // RS restream badges — link to robotstreamer.com/robot/{id} when robot_id available
     for (const [, rs] of Object.entries(rsRestream)) {
         if (rs.active) {
-            const label = rs.video_restreamed ? 'RS Restream' : 'RS Chat Bridge';
-            html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + rs.robot_name : ''}"><i class="fa-solid fa-robot"></i> ${label}${rs.robot_name ? ' · ' + esc(rs.robot_name) : ''}</span>`;
+            const label = 'RS Restream';
+            if (rs.robot_id) {
+                const rsUrl = `https://robotstreamer.com/robot/${esc(rs.robot_id)}`;
+                html += `<a href="${rsUrl}" target="_blank" rel="noopener" class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}"><i class="fa-solid fa-robot"></i> ${label}</a>`;
+            } else {
+                html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}"><i class="fa-solid fa-robot"></i> ${label}</span>`;
+            }
         }
     }
 
-    // Restream platform link badges (Twitch/Kick/YouTube)
-    if (restreamLinks?.length) {
+    // Restream platform link badges (Twitch/Kick/YouTube) with viewer counts
+    if (hasRestream) {
         const platformIcons = { twitch: 'fa-brands fa-twitch', kick: 'fa-brands fa-kickstarter-k', youtube: 'fa-brands fa-youtube', custom: 'fa-solid fa-globe' };
         const platformColors = { twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', custom: '#888' };
         for (const link of restreamLinks) {
@@ -918,7 +926,8 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
             const color = platformColors[link.platform] || platformColors.custom;
             const liveDot = link.is_live ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#e91916;margin-right:4px;animation:pulse-live 1.5s infinite"></span>' : '';
             const name = esc(link.name || link.platform);
-            html += `<a href="${esc(link.channel_url)}" target="_blank" rel="noopener" class="ch-restream-badge" style="color:${color}" title="${link.is_live ? 'Live on' : 'Also on'} ${name}">${liveDot}<i class="${icon}"></i> ${name}</a>`;
+            const viewerStr = link.viewer_count != null ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${link.viewer_count}` : '';
+            html += `<a href="${esc(link.channel_url)}" target="_blank" rel="noopener" class="ch-restream-badge" style="color:${color}" title="${link.is_live ? 'Live on' : 'Also on'} ${name}${link.viewer_count != null ? ' (' + link.viewer_count + ' viewers)' : ''}">${liveDot}<i class="${icon}"></i> ${name}${viewerStr}</a>`;
         }
     }
 

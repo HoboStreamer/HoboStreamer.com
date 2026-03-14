@@ -134,6 +134,9 @@ class RestreamManager extends EventEmitter {
         /** @type {Map<string, RestreamSession>} key: `${streamId}:${destId}` */
         this.sessions = new Map();
         this._sfuListenerBound = false;
+        /** @type {Map<number, { count: number|null, fetchedAt: number }>} destId → cached viewer count */
+        this._viewerCountCache = new Map();
+        this._viewerPollTimer = null;
     }
 
     /**
@@ -883,6 +886,119 @@ class RestreamManager extends EventEmitter {
             this._killProcess(session);
         }
         this.sessions.delete(key);
+    }
+
+    // ── Viewer Count Polling ─────────────────────────────────
+
+    /**
+     * Get a cached viewer count for a destination.
+     * Returns the count if fresh (<90s), otherwise null.
+     */
+    getCachedViewerCount(destId) {
+        const cached = this._viewerCountCache.get(destId);
+        if (!cached || Date.now() - cached.fetchedAt > 90000) return null;
+        return cached.count;
+    }
+
+    /**
+     * Start periodic viewer count polling for active restream destinations.
+     * Called from server/index.js on startup.
+     */
+    startViewerCountPolling() {
+        if (this._viewerPollTimer) return;
+        this._viewerPollTimer = setInterval(() => this._pollViewerCounts(), 60000);
+        // Initial poll after short delay
+        setTimeout(() => this._pollViewerCounts(), 5000);
+    }
+
+    stopViewerCountPolling() {
+        if (this._viewerPollTimer) {
+            clearInterval(this._viewerPollTimer);
+            this._viewerPollTimer = null;
+        }
+    }
+
+    /**
+     * Poll viewer counts for all active restream destinations.
+     */
+    async _pollViewerCounts() {
+        const db = require('../db/database');
+        const activeDests = new Set();
+
+        for (const [, session] of this.sessions) {
+            if (session.status === 'live' || session.status === 'starting') {
+                activeDests.add(session.destId);
+            }
+        }
+
+        if (activeDests.size === 0) return;
+
+        // Get destination details from DB
+        for (const destId of activeDests) {
+            try {
+                const dest = db.getRestreamDestinationById(destId);
+                if (!dest?.channel_url) continue;
+
+                let count = null;
+                if (dest.platform === 'kick') {
+                    count = await this._fetchKickViewerCount(dest.channel_url);
+                }
+                // Twitch Helix API requires OAuth token — skip for now
+                // YouTube API requires API key — skip for now
+
+                this._viewerCountCache.set(destId, { count, fetchedAt: Date.now() });
+            } catch (e) {
+                // Silent — don't spam logs for polling failures
+            }
+        }
+
+        // Clean stale entries for no-longer-active destinations
+        for (const [destId] of this._viewerCountCache) {
+            if (!activeDests.has(destId)) {
+                this._viewerCountCache.delete(destId);
+            }
+        }
+    }
+
+    /**
+     * Fetch viewer count from Kick's public API.
+     * @param {string} channelUrl - e.g. https://kick.com/HoboStreamer?chatroom=123
+     * @returns {Promise<number|null>}
+     */
+    _fetchKickViewerCount(channelUrl) {
+        const https = require('https');
+        try {
+            const url = new URL(channelUrl);
+            const slug = url.pathname.split('/').filter(Boolean)[0];
+            if (!slug) return Promise.resolve(null);
+
+            return new Promise((resolve) => {
+                const req = https.get(`https://kick.com/api/v2/channels/${slug}`, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+                    },
+                    timeout: 8000,
+                }, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => {
+                        if (res.statusCode >= 400) return resolve(null);
+                        try {
+                            const parsed = JSON.parse(data);
+                            const count = parsed?.livestream?.viewer_count;
+                            resolve(typeof count === 'number' ? count : null);
+                        } catch {
+                            resolve(null);
+                        }
+                    });
+                });
+                req.on('error', () => resolve(null));
+                req.on('timeout', () => { req.destroy(); resolve(null); });
+            });
+        } catch {
+            return Promise.resolve(null);
+        }
     }
 
     /**

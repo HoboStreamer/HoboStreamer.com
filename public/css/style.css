@@ -2549,7 +2549,9 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     color: #4fc3f7; background: rgba(79, 195, 247, 0.08);
     padding: 2px 8px; border-radius: 10px;
     display: inline-flex; align-items: center; gap: 5px;
+    text-decoration: none; transition: all 0.15s;
 }
+.ch-rs-badge:hover { background: rgba(79, 195, 247, 0.16); filter: brightness(1.2); }
 .ch-rs-badge i { font-size: 0.7rem; }
 .ch-restream-badge {
     font-size: 0.72rem; font-weight: 600;

@@ -28,9 +28,10 @@ class ChatServer {
         this.wss = null;
         /** @type {Map<WebSocket, { user: object|null, anonId: string, streamId: number|null, ip: string }>} */
         this.clients = new Map();
-        /** @type {Map<string, number>} IP → sequential anon number */
+        /** @type {Map<string, number>} IP → sequential anon number (warm cache, backed by DB) */
         this.anonMap = new Map();
         this.nextAnonId = 1;
+        this._anonDbLoaded = false;
         /** @type {Map<string, number>} `${ip}:${streamId}` → last message time (rate limiting) */
         this.rateLimits = new Map();
         this.DEFAULT_RATE_LIMIT_MS = 1000; // 1 message per second
@@ -65,10 +66,40 @@ class ChatServer {
         return this.normalizeIp(raw);
     }
 
+    /**
+     * Warm the in-memory anonMap from DB on first use.
+     * This ensures anon numbers survive server restarts.
+     */
+    _loadAnonMappings() {
+        if (this._anonDbLoaded) return;
+        this._anonDbLoaded = true;
+        try {
+            const { maxNum, mappings } = db.loadAnonMappings();
+            for (const [ip, num] of mappings) {
+                this.anonMap.set(ip, num);
+            }
+            this.nextAnonId = maxNum + 1;
+            if (mappings.size > 0) {
+                console.log(`[Chat] Loaded ${mappings.size} persistent anon mappings (next: anon${this.nextAnonId})`);
+            }
+        } catch (e) {
+            console.warn('[Chat] Failed to load anon mappings from DB:', e.message);
+        }
+    }
+
     getAnonIdForIp(ip) {
+        this._loadAnonMappings();
         const anonKey = this.normalizeIp(ip);
         if (!this.anonMap.has(anonKey)) {
-            this.anonMap.set(anonKey, this.nextAnonId++);
+            // Persist to DB so it survives restarts
+            try {
+                const num = db.getOrCreateAnonNum(anonKey);
+                this.anonMap.set(anonKey, num);
+                if (num >= this.nextAnonId) this.nextAnonId = num + 1;
+            } catch (e) {
+                // Fallback: use in-memory only
+                this.anonMap.set(anonKey, this.nextAnonId++);
+            }
         }
         return `anon${this.anonMap.get(anonKey)}`;
     }

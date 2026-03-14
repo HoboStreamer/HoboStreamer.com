@@ -502,6 +502,9 @@ async function start() {
         });
     });
 
+    // 6e. Start periodic viewer count polling for restream destinations
+    restreamManager.startViewerCountPolling();
+
     // 7. Start HTTP server
     server.listen(config.port, config.host, () => {
         console.log('');
@@ -697,6 +700,7 @@ function shutdown() {
 
     // Small delay to let the message reach clients before closing sockets
     setTimeout(() => {
+        restreamManager.stopViewerCountPolling();
         restreamManager.stopAll();
         gameServer.close();
         callServer.close();

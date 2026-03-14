@@ -150,6 +150,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                 const integration = db.getRobotStreamerIntegrationByUserId(ls.user_id);
                 rsInfo[ls.id] = {
                     active: true,
+                    robot_id: integration?.robot_id || null,
                     robot_name: integration?.stream_name || integration?.robot_id || 'RS Robot',
                     chat_mirrored: hasBridge,
                     video_restreamed: !!hasPublish,
@@ -176,6 +177,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                         channel_url: d.channel_url,
                         is_live: !!activeSession,
                         chat_relayed: !!hasRelay,
+                        viewer_count: restreamManager.getCachedViewerCount(d.id),
                     };
                 });
             }

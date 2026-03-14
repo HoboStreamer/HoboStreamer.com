@@ -236,6 +236,14 @@ function initDb() {
         database.exec(`CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_id)`);
     } catch (e) { console.warn('[DB] Comments migration:', e.message); }
 
+    // Migrate: create anon IP mapping table for persistent anon numbering
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS anon_ip_mappings (
+            ip TEXT PRIMARY KEY,
+            anon_num INTEGER NOT NULL UNIQUE
+        )`);
+    } catch (e) { console.warn('[DB] anon_ip_mappings migration:', e.message); }
+
     // Seed default site settings if empty
     try {
         const settingsCount = database.prepare("SELECT COUNT(*) as c FROM site_settings").get().c;
@@ -1638,6 +1646,44 @@ function deletePasteComment(commentId) {
     return run('UPDATE paste_comments SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [commentId]);
 }
 
+// ── Anon IP Mapping ─────────────────────────────────
+
+/**
+ * Get or assign a persistent anon number for a normalized IP.
+ * Returns the existing number if the IP was seen before, or assigns
+ * the next sequential number. Survives server restarts.
+ */
+function getOrCreateAnonNum(ip) {
+    const existing = get('SELECT anon_num FROM anon_ip_mappings WHERE ip = ?', [ip]);
+    if (existing) return existing.anon_num;
+    const max = get('SELECT MAX(anon_num) as m FROM anon_ip_mappings');
+    const nextNum = (max?.m || 0) + 1;
+    try {
+        run('INSERT INTO anon_ip_mappings (ip, anon_num) VALUES (?, ?)', [ip, nextNum]);
+    } catch (e) {
+        // Race condition: another connection inserted first — re-read
+        const retry = get('SELECT anon_num FROM anon_ip_mappings WHERE ip = ?', [ip]);
+        if (retry) return retry.anon_num;
+        throw e;
+    }
+    return nextNum;
+}
+
+/**
+ * Load all existing anon mappings (for in-memory cache warmup).
+ * @returns {{ maxNum: number, mappings: Map<string, number> }}
+ */
+function loadAnonMappings() {
+    const rows = all('SELECT ip, anon_num FROM anon_ip_mappings ORDER BY anon_num');
+    const mappings = new Map();
+    let maxNum = 0;
+    for (const row of rows) {
+        mappings.set(row.ip, row.anon_num);
+        if (row.anon_num > maxNum) maxNum = row.anon_num;
+    }
+    return { maxNum, mappings };
+}
+
 function getRecentPasteCommentsByIp(ip, seconds = 10) {
     return all(`
         SELECT * FROM paste_comments
@@ -1715,4 +1761,6 @@ module.exports = {
     createPasteComment, getPasteComments, getPasteCommentReplies,
     getPasteCommentById, getPasteCommentCount, deletePasteComment,
     getRecentPasteCommentsByIp,
+    // Anon IP Mappings
+    getOrCreateAnonNum, loadAnonMappings,
 };

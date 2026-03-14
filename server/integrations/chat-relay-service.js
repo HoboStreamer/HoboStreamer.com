@@ -32,7 +32,7 @@ const PLATFORM_COLORS = {
 };
 
 const PLATFORM_LABELS = {
-    twitch: 'TTV',
+    twitch: 'Twitch',
     kick: 'Kick',
     youtube: 'YT',
 };
