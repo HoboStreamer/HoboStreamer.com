@@ -10,6 +10,7 @@ const express = require('express');
 const db = require('../db/database');
 const { requireAuth } = require('../auth/auth');
 const restreamManager = require('./restream-manager');
+const chatRelayService = require('../integrations/chat-relay-service');
 
 const router = express.Router();
 
@@ -133,6 +134,13 @@ router.post('/destinations', requireAuth, (req, res) => {
             ...parseCustomOverrides(req.body),
         });
 
+        // Auto-start chat relay if enabled on a live stream
+        if (dest.chat_relay && dest.channel_url) {
+            try { chatRelayService.syncForUser(req.user.id); } catch (err) {
+                console.warn('[ChatRelay] Sync after create failed:', err.message);
+            }
+        }
+
         res.json({ destination: sanitizeDest(dest) });
     } catch (err) {
         console.error('[Restream] Create destination error:', err.message);
@@ -170,6 +178,14 @@ router.put('/destinations/:id', requireAuth, (req, res) => {
         if (req.body.chat_relay !== undefined) updates.chat_relay = req.body.chat_relay ? 1 : 0;
 
         const updated = db.updateRestreamDestination(dest.id, updates);
+
+        // If chat_relay or channel_url changed, sync relay bridges for live streams
+        if (updates.chat_relay !== undefined || updates.channel_url !== undefined || updates.enabled !== undefined) {
+            try { chatRelayService.syncForUser(req.user.id); } catch (err) {
+                console.warn('[ChatRelay] Sync after update failed:', err.message);
+            }
+        }
+
         res.json({ destination: sanitizeDest(updated) });
     } catch (err) {
         console.error('[Restream] Update destination error:', err.message);
@@ -189,6 +205,7 @@ router.delete('/destinations/:id', requireAuth, (req, res) => {
         const liveStreams = db.getLiveStreamsByUserId(req.user.id) || [];
         for (const stream of liveStreams) {
             restreamManager.stopRestream(stream.id, dest.id);
+            chatRelayService.stopBridge(stream.id, dest.id);
         }
 
         db.deleteRestreamDestination(dest.id);

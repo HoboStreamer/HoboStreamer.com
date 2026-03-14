@@ -57,7 +57,13 @@ function parseChannelUrl(url) {
             return { platform: 'twitch', channelName: pathParts[0].toLowerCase() };
         }
         if (host.includes('kick.com') && pathParts[0]) {
-            return { platform: 'kick', channelName: pathParts[0].toLowerCase() };
+            const result = { platform: 'kick', channelName: pathParts[0].toLowerCase() };
+            // Support ?chatroom=ID for bypassing Kick's Cloudflare-blocked API
+            const chatroomParam = u.searchParams.get('chatroom');
+            if (chatroomParam && /^\d+$/.test(chatroomParam)) {
+                result.chatroomId = parseInt(chatroomParam, 10);
+            }
+            return result;
         }
         if (host.includes('youtube.com')) {
             // Handle youtube.com/live/VIDEO_ID, youtube.com/watch?v=VIDEO_ID, youtube.com/@channel
@@ -121,6 +127,7 @@ class ChatRelayService {
             destId: dest.id,
             platform: parsed.platform,
             channelName: parsed.channelName,
+            chatroomId: parsed.chatroomId || null, // Kick chatroom ID from URL query
             channelUrl: dest.channel_url,
             destName: dest.name || PLATFORM_LABELS[parsed.platform] || parsed.platform,
             stopped: false,
@@ -188,6 +195,40 @@ class ChatRelayService {
      */
     hasBridge(streamId, destId) {
         return this.bridges.has(`${streamId}:${destId}`);
+    }
+
+    /**
+     * Sync relay bridges for a user after destination settings change.
+     * Stops bridges for destinations that no longer have relay enabled,
+     * starts bridges for newly enabled ones on all live streams.
+     */
+    syncForUser(userId) {
+        const liveStreams = db.getLiveStreamsByUserId(userId) || [];
+        if (!liveStreams.length) return;
+
+        const destinations = db.getRestreamDestinationsByUserId(userId) || [];
+
+        for (const stream of liveStreams) {
+            // Stop bridges for disabled/removed relay destinations
+            for (const [key, bridge] of this.bridges) {
+                if (bridge.streamId !== stream.id) continue;
+                const dest = destinations.find(d => d.id === bridge.destId);
+                if (!dest || !dest.enabled || !dest.chat_relay || !dest.channel_url) {
+                    console.log(`[ChatRelay] Stopping bridge ${key} — relay disabled or destination removed`);
+                    this._teardown(bridge);
+                    this.bridges.delete(key);
+                }
+            }
+
+            // Start bridges for newly enabled destinations
+            for (const dest of destinations) {
+                if (!dest.enabled || !dest.chat_relay || !dest.channel_url) continue;
+                if (!this.hasBridge(stream.id, dest.id)) {
+                    console.log(`[ChatRelay] Starting new bridge for dest ${dest.id} (${dest.platform}) on stream ${stream.id}`);
+                    this.startBridge(stream.id, dest);
+                }
+            }
+        }
     }
 
     /**
@@ -341,14 +382,18 @@ class ChatRelayService {
     async _connectKick(bridge) {
         if (bridge.stopped) return;
 
-        // Step 1: Resolve chatroom ID from channel name
-        let chatroomId;
-        try {
-            chatroomId = await this._getKickChatroomId(bridge.channelName);
-        } catch (err) {
-            console.warn(`[ChatRelay] Kick: Failed to get chatroom ID for ${bridge.channelName}:`, err.message);
-            this._scheduleReconnect(bridge, (b) => this._connectKick(b));
-            return;
+        // Step 1: Resolve chatroom ID — use pre-parsed from URL, or try API, or fall back to channel slug
+        let chatroomId = bridge.chatroomId;
+        if (!chatroomId) {
+            try {
+                chatroomId = await this._getKickChatroomId(bridge.channelName);
+                bridge.chatroomId = chatroomId; // cache for reconnects
+            } catch (err) {
+                // Kick API is Cloudflare-blocked from servers — fall back to channel slug
+                // This subscribes to `chatrooms.{slug}.v2` which may or may not work
+                console.warn(`[ChatRelay] Kick: API blocked for ${bridge.channelName} (${err.message}) — using channel slug as chatroom ID`);
+                chatroomId = bridge.channelName; // will produce `chatrooms.channelname.v2`
+            }
         }
 
         if (bridge.stopped) return;

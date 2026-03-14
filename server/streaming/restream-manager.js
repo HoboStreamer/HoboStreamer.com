@@ -408,7 +408,6 @@ class RestreamManager extends EventEmitter {
             '-probesize', '2000000',           // 2MB — plenty for known RTP streams
             '-fflags', '+genpts+discardcorrupt+nobuffer',
             '-err_detect', 'ignore_err',       // Don't bail on corrupt RTP packets (missed packets → partial frames)
-            '-use_wallclock_as_timestamps', '1', // Better timestamp handling for live RTP
             '-i', sdpPath,
             ...this._getEncodingArgs(preset, { hasAudio: !!audioConsumer, customOverrides }),
             '-max_muxing_queue_size', '4096',  // Prevent FLV muxer stalls from interleave gaps
