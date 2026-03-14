@@ -63,6 +63,11 @@ function parseChannelUrl(url) {
             if (chatroomParam && /^\d+$/.test(chatroomParam)) {
                 result.chatroomId = parseInt(chatroomParam, 10);
             }
+            // Support ?kickChannelId=ID for Pusher viewer-count subscription
+            const kickChParam = u.searchParams.get('kickChannelId');
+            if (kickChParam && /^\d+$/.test(kickChParam)) {
+                result.kickChannelId = parseInt(kickChParam, 10);
+            }
             return result;
         }
         if (host.includes('youtube.com')) {
@@ -128,6 +133,7 @@ class ChatRelayService {
             platform: parsed.platform,
             channelName: parsed.channelName,
             chatroomId: parsed.chatroomId || null, // Kick chatroom ID from URL query
+            kickChannelId: parsed.kickChannelId || null, // Kick channel ID for viewer-count Pusher subscription
             channelUrl: dest.channel_url,
             destName: dest.name || PLATFORM_LABELS[parsed.platform] || parsed.platform,
             stopped: false,
@@ -136,6 +142,7 @@ class ChatRelayService {
             reconnectDelay: RECONNECT_BASE_MS,
             reconnectTimer: null,
             disconnect: null,
+            viewerCount: null, // Populated by Kick Pusher viewer-count events
         };
 
         this.bridges.set(key, bridge);
@@ -248,6 +255,20 @@ class ChatRelayService {
             }
         }
         return relays;
+    }
+
+    /**
+     * Get viewer count for a specific destination via Kick Pusher (or other future sources).
+     * @param {number} destId — restream destination ID
+     * @returns {number|null}
+     */
+    getViewerCount(destId) {
+        for (const [, bridge] of this.bridges) {
+            if (bridge.destId === destId && bridge.viewerCount != null) {
+                return bridge.viewerCount;
+            }
+        }
+        return null;
     }
 
     // ── Internal: teardown ────────────────────────────────────
@@ -419,12 +440,19 @@ class ChatRelayService {
 
             switch (msg.event) {
                 case 'pusher:connection_established': {
-                    // Subscribe to the chatroom
+                    // Subscribe to the chatroom for chat messages
                     ws.send(JSON.stringify({
                         event: 'pusher:subscribe',
                         data: { channel: `chatrooms.${chatroomId}.v2` },
                     }));
-                    console.log(`[ChatRelay] Kick: Connected to ${bridge.channelName} (room ${chatroomId}) for stream ${bridge.streamId}`);
+                    // Subscribe to the channel for viewer count events (if we have the channel ID)
+                    if (bridge.kickChannelId) {
+                        ws.send(JSON.stringify({
+                            event: 'pusher:subscribe',
+                            data: { channel: `channel.${bridge.kickChannelId}` },
+                        }));
+                    }
+                    console.log(`[ChatRelay] Kick: Connected to ${bridge.channelName} (room ${chatroomId}${bridge.kickChannelId ? ', ch ' + bridge.kickChannelId : ''}) for stream ${bridge.streamId}`);
 
                     // Keep-alive pings
                     const connData = safeJsonParse(msg.data);
@@ -438,7 +466,8 @@ class ChatRelayService {
                 }
 
                 case 'pusher_internal:subscription_succeeded': {
-                    console.log(`[ChatRelay] Kick: Subscription confirmed for chatrooms.${chatroomId}.v2`);
+                    const subChannel = msg.channel || '';
+                    console.log(`[ChatRelay] Kick: Subscription confirmed for ${subChannel}`);
                     break;
                 }
 
@@ -453,6 +482,29 @@ class ChatRelayService {
                     if (!payload?.sender?.username || !payload?.content) break;
 
                     this._broadcastMessage(bridge, payload.sender.username, payload.content);
+                    break;
+                }
+
+                // Kick Pusher viewer count events on channel.{id}
+                case 'App\\Events\\LivestreamUpdated':
+                case 'App\\Events\\StreamerIsLive': {
+                    const payload = safeJsonParse(msg.data);
+                    if (payload?.viewer_count != null || payload?.livestream?.viewer_count != null) {
+                        bridge.viewerCount = payload.viewer_count ?? payload.livestream?.viewer_count;
+                    }
+                    break;
+                }
+
+                default: {
+                    // Log unknown channel.* events for discovery (only from the channel subscription)
+                    if (msg.channel && msg.channel.startsWith('channel.') && msg.event && !msg.event.startsWith('pusher')) {
+                        const payload = safeJsonParse(msg.data);
+                        const count = payload?.viewer_count ?? payload?.viewers ?? payload?.livestream?.viewer_count;
+                        if (count != null) {
+                            bridge.viewerCount = count;
+                        }
+                        console.log(`[ChatRelay] Kick channel event: ${msg.event} (viewers: ${count ?? 'N/A'}) for ${bridge.channelName}`);
+                    }
                     break;
                 }
             }
