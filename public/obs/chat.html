@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat Overlay</title>
+<style>
+/* ── OBS Browser Source: transparent background ─────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+    background: transparent;
+    overflow: hidden;
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 16px;
+    color: #fff;
+    height: 100%;
+    width: 100%;
+}
+
+#chat-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    height: 100%;
+    width: 100%;
+    padding: 8px 12px;
+    overflow: hidden;
+}
+
+/* ── Messages ───────────────────────────────────────────────── */
+.msg {
+    padding: 4px 0;
+    line-height: 1.45;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    animation: msg-in 0.25s ease-out;
+    text-shadow:
+        -1px -1px 1px rgba(0,0,0,0.8),
+         1px -1px 1px rgba(0,0,0,0.8),
+        -1px  1px 1px rgba(0,0,0,0.8),
+         1px  1px 1px rgba(0,0,0,0.8),
+         0    0   4px rgba(0,0,0,0.6);
+}
+
+@keyframes msg-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Fade out old messages ──────────────────────────────────── */
+.msg.fading {
+    animation: msg-fade 1s ease-out forwards;
+}
+@keyframes msg-fade {
+    to { opacity: 0; }
+}
+
+/* ── Username ───────────────────────────────────────────────── */
+.username {
+    font-weight: 700;
+}
+
+/* ── Platform badge ─────────────────────────────────────────── */
+.badge {
+    display: inline-block;
+    font-size: 0.7em;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-right: 4px;
+    vertical-align: middle;
+    text-shadow: none;
+    letter-spacing: 0.3px;
+}
+.badge-twitch  { background: #9146ff; color: #fff; }
+.badge-kick    { background: #53fc18; color: #000; }
+.badge-youtube { background: #ff0000; color: #fff; }
+.badge-rs      { background: #ff6600; color: #fff; }
+
+/* ── Role badges ────────────────────────────────────────────── */
+.role-badge {
+    display: inline-block;
+    font-size: 0.65em;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-right: 3px;
+    vertical-align: middle;
+    text-shadow: none;
+}
+.role-admin  { background: #e74c3c; color: #fff; }
+.role-mod    { background: #2ecc71; color: #fff; }
+.role-vip    { background: #f1c40f; color: #000; }
+
+/* ── System messages ────────────────────────────────────────── */
+.msg.system {
+    color: #aaa;
+    font-style: italic;
+    font-size: 0.9em;
+}
+
+/* ── Emotes ─────────────────────────────────────────────────── */
+.emote {
+    display: inline-block;
+    height: 28px;
+    vertical-align: middle;
+    margin: -2px 1px;
+}
+
+/* ── Status overlay ─────────────────────────────────────────── */
+#status {
+    position: fixed;
+    top: 8px;
+    right: 12px;
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    text-shadow: 0 0 3px rgba(0,0,0,0.8);
+    pointer-events: none;
+    transition: opacity 0.3s;
+}
+#status.hidden { opacity: 0; }
+</style>
+</head>
+<body>
+
+<div id="chat-container"></div>
+<div id="status"></div>
+
+<script>
+(function() {
+    'use strict';
+
+    // ── Config ─────────────────────────────────────────────────
+    const MAX_MESSAGES = 50;
+    const FADE_AFTER_MS = 60000;      // Fade messages after 60s (0 = never)
+    const RECONNECT_BASE = 2000;
+    const RECONNECT_MAX = 30000;
+    const EMOTE_LOAD_INTERVAL = 300000; // Refresh emotes every 5 min
+
+    // ── Parse username from URL: /obs/chat/:username ───────────
+    const pathParts = window.location.pathname.split('/');
+    const username = decodeURIComponent(pathParts[pathParts.length - 1] || '');
+    if (!username) {
+        document.getElementById('chat-container').innerHTML =
+            '<div class="msg system">No username specified. Use /obs/chat/yourusername</div>';
+        return;
+    }
+
+    const container = document.getElementById('chat-container');
+    const statusEl = document.getElementById('status');
+
+    let ws = null;
+    let streamId = null;
+    let channelUserId = null;
+    let reconnectDelay = RECONNECT_BASE;
+    let reconnectTimer = null;
+    let intentionalClose = false;
+    let emoteMap = {};           // code → {url, animated}
+    let fadeTimers = [];
+
+    // ── URL params for customization ───────────────────────────
+    // ?fade=0        — disable message fading
+    // ?max=100       — max visible messages
+    // ?fontsize=20   — font size in px
+    // ?bg=000000cc   — background color (hex with optional alpha)
+    const params = new URLSearchParams(window.location.search);
+    const fadeAfter = params.has('fade') ? parseInt(params.get('fade'), 10) : FADE_AFTER_MS;
+    const maxMsgs = params.has('max') ? parseInt(params.get('max'), 10) : MAX_MESSAGES;
+    if (params.has('fontsize')) {
+        document.body.style.fontSize = params.get('fontsize') + 'px';
+    }
+    if (params.has('bg')) {
+        const bg = params.get('bg');
+        document.body.style.background = bg.startsWith('#') ? bg : '#' + bg;
+    }
+
+    // ── Utility ────────────────────────────────────────────────
+    function esc(s) {
+        if (!s) return '';
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    function setStatus(text) {
+        statusEl.textContent = text;
+        statusEl.classList.remove('hidden');
+        clearTimeout(statusEl._hideTimer);
+        statusEl._hideTimer = setTimeout(() => statusEl.classList.add('hidden'), 5000);
+    }
+
+    // ── Emote parsing ──────────────────────────────────────────
+    function parseEmotes(text) {
+        if (!Object.keys(emoteMap).length) return esc(text);
+        // Split on whitespace, replace known emote codes with <img>
+        return text.split(/(\s+)/).map(token => {
+            const emote = emoteMap[token];
+            if (emote) {
+                const cls = emote.animated ? 'emote emote-animated' : 'emote';
+                return `<img class="${cls}" src="${esc(emote.url)}" alt="${esc(token)}" title="${esc(token)}">`;
+            }
+            return esc(token);
+        }).join('');
+    }
+
+    async function loadEmotes() {
+        if (!streamId) return;
+        try {
+            const resp = await fetch(`/api/emotes/all/${streamId}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const map = {};
+            for (const emote of (data.emotes || [])) {
+                map[emote.code] = { url: emote.url, animated: !!emote.animated };
+            }
+            emoteMap = map;
+        } catch { /* ignore */ }
+    }
+
+    // ── Platform detection ─────────────────────────────────────
+    const PLATFORM_RE = /^\[(Twitch|Kick|YouTube|RS)\]\s*/;
+    const PLATFORM_COLORS = {
+        Twitch:  '#9146ff',
+        Kick:    '#53fc18',
+        YouTube: '#ff0000',
+        RS:      '#ff6600',
+    };
+
+    function detectPlatform(name) {
+        const m = name.match(PLATFORM_RE);
+        if (m) return { platform: m[1], cleanName: name.slice(m[0].length) };
+        return { platform: null, cleanName: name };
+    }
+
+    // ── Role badge ─────────────────────────────────────────────
+    function getRoleBadge(role) {
+        if (role === 'admin')     return '<span class="role-badge role-admin">ADMIN</span>';
+        if (role === 'moderator') return '<span class="role-badge role-mod">MOD</span>';
+        if (role === 'vip')       return '<span class="role-badge role-vip">VIP</span>';
+        return '';
+    }
+
+    // ── Render message ─────────────────────────────────────────
+    function addMessage(msg) {
+        if (msg.type === 'system') {
+            const el = document.createElement('div');
+            el.className = 'msg system';
+            el.textContent = msg.message || msg.text || '';
+            appendMessage(el);
+            return;
+        }
+
+        if (msg.type !== 'chat') return;
+
+        const rawName = msg.username || msg.displayName || (msg.anonId ? `anon${msg.anonId}` : 'anon');
+        const { platform, cleanName } = detectPlatform(rawName);
+
+        const el = document.createElement('div');
+        el.className = 'msg';
+
+        // Badge
+        let badgeHtml = '';
+        if (platform) {
+            const cls = 'badge-' + platform.toLowerCase();
+            badgeHtml = `<span class="badge ${cls}">${esc(platform)}</span>`;
+        }
+
+        // Role
+        const roleBadge = getRoleBadge(msg.role);
+
+        // Name color
+        let nameColor = msg.color || msg.profile_color || '#fff';
+        if (platform) nameColor = PLATFORM_COLORS[platform] || nameColor;
+
+        // Message text with emotes
+        const rawText = msg.message || msg.text || '';
+        const text = parseEmotes(rawText);
+
+        el.innerHTML = `${badgeHtml}${roleBadge}<span class="username" style="color:${esc(nameColor)}">${esc(cleanName)}</span>: ${text}`;
+
+        appendMessage(el);
+    }
+
+    function appendMessage(el) {
+        container.appendChild(el);
+
+        // Trim old messages
+        while (container.children.length > maxMsgs) {
+            container.removeChild(container.firstChild);
+        }
+
+        // Schedule fade
+        if (fadeAfter > 0) {
+            const timer = setTimeout(() => {
+                el.classList.add('fading');
+                setTimeout(() => { if (el.parentNode) el.remove(); }, 1100);
+            }, fadeAfter);
+            fadeTimers.push(timer);
+        }
+
+        // Auto-scroll (flex end handles this naturally, but force it)
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // ── Resolve stream ID from username ────────────────────────
+    async function resolveStream() {
+        setStatus('Looking up channel...');
+        try {
+            const resp = await fetch(`/api/streams/channel/${encodeURIComponent(username)}`);
+            if (!resp.ok) {
+                setStatus(resp.status === 404 ? 'Channel not found' : 'Error loading channel');
+                return false;
+            }
+            const data = await resp.json();
+            channelUserId = data.channel?.user_id;
+
+            if (data.stream && data.stream.id) {
+                streamId = data.stream.id;
+                return true;
+            }
+
+            // No live stream — try all streams
+            if (data.streams && data.streams.length > 0) {
+                streamId = data.streams[0].id;
+                return true;
+            }
+
+            setStatus('Channel offline — waiting for stream...');
+            return false;
+        } catch (err) {
+            setStatus('Network error');
+            return false;
+        }
+    }
+
+    // ── WebSocket connection ───────────────────────────────────
+    function connectChat() {
+        if (ws) {
+            intentionalClose = true;
+            ws.close();
+            ws = null;
+        }
+
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        const host = location.hostname;
+        const port = location.port || (proto === 'wss' ? '443' : '80');
+        const wsUrl = `${proto}://${host}:${port}/ws/chat?stream=${streamId}`;
+
+        ws = new WebSocket(wsUrl);
+        intentionalClose = false;
+
+        ws.onopen = () => {
+            reconnectDelay = RECONNECT_BASE;
+            ws.send(JSON.stringify({ type: 'join', streamId }));
+            setStatus('Connected');
+        };
+
+        ws.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                addMessage(msg);
+            } catch { /* ignore */ }
+        };
+
+        ws.onclose = () => {
+            if (!intentionalClose) {
+                setStatus('Disconnected — reconnecting...');
+                scheduleReconnect();
+            }
+        };
+
+        ws.onerror = () => {
+            // onclose will fire after this
+        };
+    }
+
+    function scheduleReconnect() {
+        if (reconnectTimer) return;
+        reconnectTimer = setTimeout(async () => {
+            reconnectTimer = null;
+            // Re-resolve in case stream changed
+            const ok = await resolveStream();
+            if (ok) {
+                connectChat();
+            } else {
+                // Channel offline — keep polling
+                reconnectDelay = Math.min(reconnectDelay * 1.5, RECONNECT_MAX);
+                scheduleReconnect();
+            }
+        }, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 1.5, RECONNECT_MAX);
+    }
+
+    // ── Load chat history ──────────────────────────────────────
+    async function loadHistory() {
+        if (!streamId) return;
+        try {
+            const resp = await fetch(`/api/chat/${streamId}/history?limit=30`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const messages = data.messages || data || [];
+            // Render in chronological order (API returns newest first)
+            const sorted = [...messages].reverse();
+            for (const msg of sorted) {
+                addMessage(msg);
+            }
+        } catch { /* ignore */ }
+    }
+
+    // ── Bootstrap ──────────────────────────────────────────────
+    async function init() {
+        const ok = await resolveStream();
+        if (ok) {
+            await loadEmotes();
+            await loadHistory();
+            connectChat();
+
+            // Periodic emote refresh
+            setInterval(loadEmotes, EMOTE_LOAD_INTERVAL);
+        } else {
+            // Poll until stream comes online
+            scheduleReconnect();
+        }
+    }
+
+    init();
+})();
+</script>
+</body>
+</html>

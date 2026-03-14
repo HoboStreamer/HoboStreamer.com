@@ -409,6 +409,25 @@ class ChatServer {
             } catch { /* non-critical */ }
         }
 
+        // Welcome first-time chatters in this streamer's channel
+        if (client.streamId) {
+            try {
+                const stream = db.getStreamById(client.streamId);
+                if (stream?.user_id) {
+                    const chatterKey = client.user ? `user:${client.user.id}` : `anon:${client.anonId}`;
+                    if (db.isFirstChatInChannel(chatterKey, stream.user_id)) {
+                        db.recordFirstChat(chatterKey, stream.user_id);
+                        const welcomeName = client.user?.display_name || client.user?.username || client.anonId || 'stranger';
+                        this.broadcastToStream(client.streamId, {
+                            type: 'system',
+                            message: `Welcome ${welcomeName} to the chat! 👋`,
+                            timestamp: new Date().toISOString(),
+                        });
+                    }
+                }
+            } catch { /* non-critical */ }
+        }
+
         // Broadcast to appropriate audience
         if (client.streamId) {
             // Stream-specific chat

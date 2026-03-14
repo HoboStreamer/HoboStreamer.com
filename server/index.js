@@ -299,6 +299,13 @@ app.post('/api/admin/broadcast', requireAuth, permissions.requireAdmin, (req, re
     }
 });
 
+// ── OBS Overlay Widgets ──────────────────────────────────────
+// Modular system: /obs/<widget>/<username>
+// Each widget is a standalone HTML page designed for OBS browser sources.
+app.get('/obs/chat/:username', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/obs/chat.html'));
+});
+
 // ── SPA Fallback ─────────────────────────────────────────────
 app.get('*', (req, res) => {
     // Don't serve HTML for API routes
