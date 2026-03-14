@@ -2517,6 +2517,39 @@ function onRestreamPlatformChange() {
     }
 }
 
+/**
+ * For Kick URLs with chat relay enabled, auto-detect the numeric chatroom ID.
+ * Kick's Pusher requires numeric IDs (e.g. chatrooms.98275805.v2) — slugs don't work.
+ * The Kick API is Cloudflare-blocked from servers, but works from user browsers.
+ */
+async function _resolveKickChatroomId(url) {
+    if (!url) return url;
+    try {
+        const u = new URL(url);
+        const host = u.hostname.toLowerCase().replace('www.', '');
+        if (!host.includes('kick.com')) return url;
+        if (u.searchParams.get('chatroom')) return url; // already has chatroom ID
+        const slug = u.pathname.split('/').filter(Boolean)[0];
+        if (!slug) return url;
+
+        const resp = await fetch(`https://kick.com/api/v2/channels/${slug}`, {
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(8000),
+        });
+        if (!resp.ok) return url;
+        const data = await resp.json();
+        const chatroomId = data?.chatroom?.id;
+        if (chatroomId && Number.isFinite(chatroomId)) {
+            u.searchParams.set('chatroom', chatroomId);
+            console.log(`[Restream] Auto-detected Kick chatroom ID: ${chatroomId} for ${slug}`);
+            return u.toString();
+        }
+    } catch (err) {
+        console.warn('[Restream] Could not auto-detect Kick chatroom ID:', err.message);
+    }
+    return url;
+}
+
 /** Save a new or edited restream destination */
 async function saveRestreamDestination() {
     const platform = document.getElementById('bc-restream-platform').value;
@@ -2524,9 +2557,14 @@ async function saveRestreamDestination() {
     const server_url = document.getElementById('bc-restream-url').value.trim();
     const stream_key = document.getElementById('bc-restream-key').value.trim();
     const auto_start = document.getElementById('bc-restream-autostart').checked;
-    const channel_url = document.getElementById('bc-restream-channel-url').value.trim() || null;
+    let channel_url = document.getElementById('bc-restream-channel-url').value.trim() || null;
     const chat_relay = document.getElementById('bc-restream-chat-relay').checked;
     const quality_preset = document.getElementById('bc-restream-quality').value;
+
+    // Auto-detect Kick chatroom ID for chat relay (Kick API is Cloudflare-blocked from servers)
+    if (chat_relay && channel_url) {
+        channel_url = await _resolveKickChatroomId(channel_url);
+    }
 
     // Custom encoding overrides (empty string → null to clear)
     const custom_video_bitrate = document.getElementById('bc-restream-custom-vbr').value.trim() || null;
