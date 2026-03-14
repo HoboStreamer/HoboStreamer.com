@@ -133,6 +133,57 @@ class RestreamManager extends EventEmitter {
         super();
         /** @type {Map<string, RestreamSession>} key: `${streamId}:${destId}` */
         this.sessions = new Map();
+        this._sfuListenerBound = false;
+    }
+
+    /**
+     * Bind to the WebRTC SFU's producer-removed event.
+     * Called lazily on first WebRTC restream start to avoid require-time circular deps.
+     * When a producer dies (broadcaster disconnect/reconnect), all restream sessions
+     * consuming from that room are killed and restarted so they pick up the new producer.
+     */
+    _bindSfuEvents() {
+        if (this._sfuListenerBound) return;
+        this._sfuListenerBound = true;
+
+        const webrtcSFU = require('./webrtc-sfu');
+        webrtcSFU.on('producer-removed', ({ roomId, producerId, kind }) => {
+            if (kind !== 'video') return; // Only restart on video producer loss
+            this._handleProducerRemoved(roomId, producerId);
+        });
+    }
+
+    /**
+     * Handle a video producer being removed from the SFU.
+     * Kills all WebRTC restream sessions for the affected room and schedules restarts
+     * so they re-create consumers from the new producer.
+     */
+    _handleProducerRemoved(roomId, producerId) {
+        // roomId format: 'stream-{streamId}'
+        const streamIdMatch = roomId.match(/^stream-(\d+)$/);
+        if (!streamIdMatch) return;
+        const streamId = parseInt(streamIdMatch[1], 10);
+
+        let restarted = 0;
+        for (const [key, session] of this.sessions) {
+            if (session.streamId !== streamId) continue;
+            if (session.streamInfo?.protocol !== 'webrtc') continue;
+            if (session.status === 'stopped') continue;
+
+            console.log(`[Restream] Producer removed in ${roomId} — restarting ${key}`);
+            // Kill current FFmpeg (it's receiving no data anyway)
+            this._killProcess(session);
+            session.status = 'error';
+            session.lastError = 'Source producer reconnected';
+            // Reset backoff so restart is quick
+            session.restartAttempts = 0;
+            session.restartDelay = RESTART_BASE_DELAY;
+            this._scheduleRestart(session);
+            restarted++;
+        }
+        if (restarted > 0) {
+            console.log(`[Restream] Restarting ${restarted} WebRTC restream(s) for stream ${streamId} after producer change`);
+        }
     }
 
     _key(streamId, destId) {
@@ -308,6 +359,9 @@ class RestreamManager extends EventEmitter {
     async _startWebrtcRestream(session, destUrl) {
         const webrtcSFU = require('./webrtc-sfu');
         const broadcastServer = require('./broadcast-server');
+
+        // Bind to producer lifecycle events (lazy, once)
+        this._bindSfuEvents();
 
         const roomId = `stream-${session.streamId}`;
 
