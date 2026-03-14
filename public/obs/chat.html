@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chat Overlay</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous">
 <style>
 /* ── OBS Browser Source: transparent background ─────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -77,20 +78,19 @@ html, body {
 .badge-youtube { background: #ff0000; color: #fff; }
 .badge-rs      { background: #ff6600; color: #fff; }
 
-/* ── Role badges ────────────────────────────────────────────── */
-.role-badge {
-    display: inline-block;
-    font-size: 0.65em;
-    font-weight: 700;
-    padding: 1px 4px;
-    border-radius: 3px;
-    margin-right: 3px;
+/* ── Chat badges (icon-based, matching main chat) ──────────── */
+.chat-badge {
+    display: inline-flex; align-items: center;
+    margin-right: 4px;
+    font-size: 0.8em;
     vertical-align: middle;
     text-shadow: none;
 }
-.role-admin  { background: #e74c3c; color: #fff; }
-.role-mod    { background: #2ecc71; color: #fff; }
-.role-vip    { background: #f1c40f; color: #000; }
+.chat-badge-admin    { color: #f39c12; }
+.chat-badge-streamer { color: #e74c3c; }
+.chat-badge-mod      { color: #2ecc71; }
+.chat-badge-sub      { color: #3498db; }
+.chat-badge i { font-size: 0.75rem; }
 
 /* ── System messages ────────────────────────────────────────── */
 .msg.system {
@@ -106,6 +106,175 @@ html, body {
     vertical-align: middle;
     margin: -2px 1px;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   NAME EFFECTS — from cosmetics.css
+   ══════════════════════════════════════════════════════════════ */
+.name-fx-rainbow {
+    background: linear-gradient(90deg, #ff0000, #ff8800, #ffff00, #00ff00, #0088ff, #8800ff, #ff0088);
+    background-size: 400% 100%;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: nameFxRainbow 3s linear infinite;
+}
+@keyframes nameFxRainbow { 0%{background-position:0% 50%} 100%{background-position:400% 50%} }
+
+.name-fx-fire {
+    color: #ff6600 !important;
+    text-shadow: 0 0 6px #ff4400, 0 0 12px #ff220088, 0 0 20px #cc110044;
+    animation: nameFxFire 1.5s ease-in-out infinite alternate;
+}
+@keyframes nameFxFire {
+    0%{text-shadow:0 0 6px #ff4400,0 0 12px #ff220088;color:#ff6600}
+    100%{text-shadow:0 0 10px #ff8800,0 0 20px #ff440088,0 0 30px #cc220044;color:#ffaa00}
+}
+
+.name-fx-ice {
+    color: #88ddff !important;
+    text-shadow: 0 0 6px #44bbff88, 0 0 12px #2288cc44;
+    animation: nameFxIce 2s ease-in-out infinite alternate;
+}
+@keyframes nameFxIce {
+    0%{text-shadow:0 0 4px #44bbff88;color:#88ddff}
+    100%{text-shadow:0 0 10px #66eeff,0 0 20px #44bbff88;color:#bbffff}
+}
+
+.name-fx-golden {
+    background: linear-gradient(90deg, #ffd700, #ffec80, #ffd700, #ffb800);
+    background-size: 300% 100%;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: nameFxGolden 2s ease-in-out infinite;
+    filter: drop-shadow(0 0 4px #ffd70066);
+}
+@keyframes nameFxGolden { 0%,100%{background-position:0% 50%} 50%{background-position:100% 50%} }
+
+.name-fx-neon {
+    color: #00ff88 !important;
+    text-shadow: 0 0 8px #00ff88, 0 0 16px #00ff8888, 0 0 24px #00cc6644;
+    animation: nameFxNeon 1.2s ease-in-out infinite alternate;
+}
+@keyframes nameFxNeon {
+    0%{text-shadow:0 0 4px #00ff88,0 0 8px #00ff8866}
+    100%{text-shadow:0 0 12px #00ff88,0 0 24px #00ff88aa,0 0 36px #00cc6666}
+}
+
+.name-fx-galaxy {
+    background: linear-gradient(90deg, #8b5cf6, #ec4899, #3b82f6, #8b5cf6);
+    background-size: 400% 100%;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: nameFxGalaxy 4s linear infinite;
+    filter: drop-shadow(0 0 6px #8b5cf644);
+}
+@keyframes nameFxGalaxy { 0%{background-position:0% 50%} 100%{background-position:400% 50%} }
+
+.name-fx-void {
+    color: #9900ff !important;
+    text-shadow: 0 0 8px #6600cc, 0 0 16px #33006688, 0 0 24px #11003344;
+    animation: nameFxVoid 2s ease-in-out infinite;
+}
+@keyframes nameFxVoid {
+    0%,100%{text-shadow:0 0 8px #6600cc,0 0 16px #33006688;transform:scale(1)}
+    50%{text-shadow:0 0 12px #9900ff,0 0 24px #6600ccaa,0 0 36px #33006666;transform:scale(1.03)}
+}
+
+.name-fx-toxic {
+    background: linear-gradient(90deg, #00ff44, #88ff00, #ccff00, #00ff88);
+    background-size: 200% 100%;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: nameFxToxic 1.8s ease-in-out infinite alternate;
+}
+@keyframes nameFxToxic { 0%{background-position:0% 50%;filter:brightness(1)} 100%{background-position:200% 50%;filter:brightness(1.3)} }
+
+.name-fx-blood {
+    background: linear-gradient(180deg, #ff0000, #880000, #ff2222);
+    background-size: 100% 200%;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: nameFxBlood 2s ease-in-out infinite;
+}
+@keyframes nameFxBlood { 0%,100%{background-position:50% 0%} 50%{background-position:50% 200%} }
+
+.name-fx-shadow {
+    color: #aa88cc !important;
+    animation: nameFxShadow 2s ease-in-out infinite;
+}
+@keyframes nameFxShadow {
+    0%,100%{text-shadow:0 0 6px rgba(0,0,0,0.8),0 0 12px rgba(80,0,120,0.6),2px 2px 4px rgba(0,0,0,0.9)}
+    50%{text-shadow:0 0 12px rgba(0,0,0,0.9),0 0 24px rgba(80,0,120,0.8),4px 4px 8px rgba(0,0,0,1)}
+}
+
+.name-fx-glitch {
+    color: #00ff88 !important;
+    animation: nameFxGlitch 0.15s infinite;
+    text-shadow: 2px 0 #ff0044, -2px 0 #00ccff;
+}
+@keyframes nameFxGlitch {
+    0%{transform:translate(0)} 20%{transform:translate(-1px,1px)} 40%{transform:translate(1px,-1px)}
+    60%{transform:translate(-1px,0)} 80%{transform:translate(1px,1px)} 100%{transform:translate(0)}
+}
+
+.name-fx-hologram {
+    background: linear-gradient(90deg, #00ffcc, #00ccff, #8888ff, #00ffaa);
+    background-size: 300% 100%;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: nameFxHoloFlicker 0.12s infinite, nameFxHoloShift 3s linear infinite;
+}
+@keyframes nameFxHoloFlicker { 0%,45%,55%,100%{opacity:1} 50%{opacity:0.6} }
+@keyframes nameFxHoloShift { 0%{background-position:0% 50%} 100%{background-position:300% 50%} }
+
+.name-fx-divine {
+    background: linear-gradient(90deg, #ffffff, #ffe066, #ffffff, #ffcc00, #ffffff);
+    background-size: 300% 100%;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: nameFxDivine 2s ease-in-out infinite;
+    filter: drop-shadow(0 0 8px #ffe06688);
+}
+@keyframes nameFxDivine { 0%,100%{background-position:0% 50%} 50%{background-position:300% 50%} }
+
+/* ══════════════════════════════════════════════════════════════
+   PARTICLE EFFECTS
+   ══════════════════════════════════════════════════════════════ */
+.chat-particle-wrap {
+    position: relative;
+    display: inline-block;
+}
+.chat-particle {
+    position: absolute;
+    pointer-events: none;
+    font-size: 10px;
+    opacity: 0;
+    animation: chatParticleFloat 1.8s ease-out forwards;
+}
+@keyframes chatParticleFloat {
+    0%{opacity:1;transform:translate(0,0) scale(1)}
+    100%{opacity:0;transform:translate(var(--px-dx,10px),var(--px-dy,-20px)) scale(0.4)}
+}
+.px-sparkle .chat-particle { color: #ffd700; }
+.px-hearts .chat-particle  { color: #ff6b9d; }
+.px-flames .chat-particle  { color: #ff6600; }
+.px-stars .chat-particle   { color: #fbbf24; }
+.px-void .chat-particle    { color: #9900ff; }
+
+/* ══════════════════════════════════════════════════════════════
+   HAT EFFECTS
+   ══════════════════════════════════════════════════════════════ */
+.chat-hat {
+    display: inline-block;
+    margin-right: 2px;
+    font-size: 0.85em;
+    vertical-align: middle;
+}
+.chat-hat.hat-float { animation: chatHatFloat 2s ease-in-out infinite; }
+.chat-hat.hat-pulse { animation: chatHatPulse 1.5s ease-in-out infinite; }
+.chat-hat.hat-warp  { animation: chatHatWarp 2s ease-in-out infinite; }
+@keyframes chatHatFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+@keyframes chatHatPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
+@keyframes chatHatWarp  { 0%,100%{transform:scale(1) rotate(0deg);filter:hue-rotate(0deg)} 50%{transform:scale(1.1) rotate(5deg);filter:hue-rotate(180deg)} }
 
 /* ── Status overlay ─────────────────────────────────────────── */
 #status {
@@ -232,12 +401,37 @@ html, body {
         return { platform: null, cleanName: name };
     }
 
-    // ── Role badge ─────────────────────────────────────────────
-    function getRoleBadge(role) {
-        if (role === 'admin')     return '<span class="role-badge role-admin">ADMIN</span>';
-        if (role === 'moderator') return '<span class="role-badge role-mod">MOD</span>';
-        if (role === 'vip')       return '<span class="role-badge role-vip">VIP</span>';
-        return '';
+    // ── Role badge (icon-based, matches main chat) ────────────
+    function getBadgeHTML(role) {
+        switch (role) {
+            case 'admin':     return '<span class="chat-badge chat-badge-admin" title="Admin"><i class="fa-solid fa-shield"></i></span>';
+            case 'streamer':  return '<span class="chat-badge chat-badge-streamer" title="Streamer"><i class="fa-solid fa-broadcast-tower"></i></span>';
+            case 'global_mod':
+            case 'mod':
+            case 'moderator': return '<span class="chat-badge chat-badge-mod" title="Moderator"><i class="fa-solid fa-gavel"></i></span>';
+            case 'subscriber': return '<span class="chat-badge chat-badge-sub" title="Subscriber"><i class="fa-solid fa-star"></i></span>';
+            default: return '';
+        }
+    }
+
+    // ── Particle spawner ───────────────────────────────────────
+    function spawnParticles(wrap, chars) {
+        const charArr = [...chars];
+        const count = 3 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < count; i++) {
+            const p = document.createElement('span');
+            p.className = 'chat-particle';
+            p.textContent = charArr[Math.floor(Math.random() * charArr.length)];
+            const dx = (Math.random() - 0.5) * 40;
+            const dy = -10 - Math.random() * 25;
+            p.style.setProperty('--px-dx', `${dx}px`);
+            p.style.setProperty('--px-dy', `${dy}px`);
+            p.style.left = `${Math.random() * 80}%`;
+            p.style.top = `${Math.random() * 60}%`;
+            p.style.animationDelay = `${Math.random() * 0.4}s`;
+            wrap.appendChild(p);
+            setTimeout(() => p.remove(), 2200);
+        }
     }
 
     // ── Render message ─────────────────────────────────────────
@@ -258,15 +452,30 @@ html, body {
         const el = document.createElement('div');
         el.className = 'msg';
 
-        // Badge
-        let badgeHtml = '';
+        // Platform badge
+        let platformBadge = '';
         if (platform) {
             const cls = 'badge-' + platform.toLowerCase();
-            badgeHtml = `<span class="badge ${cls}">${esc(platform)}</span>`;
+            platformBadge = `<span class="badge ${cls}">${esc(platform)}</span>`;
         }
 
-        // Role
-        const roleBadge = getRoleBadge(msg.role);
+        // Role badge (icon)
+        const roleBadge = getBadgeHTML(msg.role);
+
+        // Hat effect (emoji before username)
+        let hatHtml = '';
+        if (msg.hatFX && msg.hatFX.hatChar) {
+            const animClass = msg.hatFX.animated ? ` hat-${esc(msg.hatFX.animated)}` : '';
+            hatHtml = `<span class="chat-hat${animClass}">${esc(msg.hatFX.hatChar)}</span>`;
+        }
+
+        // Name effect CSS class
+        const nameFXClass = msg.nameFX?.cssClass ? ` ${esc(msg.nameFX.cssClass)}` : '';
+
+        // Particle effect wrapper
+        const hasParticles = msg.particleFX?.chars;
+        const particleOpen = hasParticles ? `<span class="chat-particle-wrap ${esc(msg.particleFX.cssClass || '')}">` : '';
+        const particleClose = hasParticles ? '</span>' : '';
 
         // Name color
         let nameColor = msg.color || msg.profile_color || '#fff';
@@ -276,7 +485,13 @@ html, body {
         const rawText = msg.message || msg.text || '';
         const text = parseEmotes(rawText);
 
-        el.innerHTML = `${badgeHtml}${roleBadge}<span class="username" style="color:${esc(nameColor)}">${esc(cleanName)}</span>: ${text}`;
+        el.innerHTML = `${platformBadge}${roleBadge}${hatHtml}${particleOpen}<span class="username${nameFXClass}" style="color:${esc(nameColor)}">${esc(cleanName)}</span>${particleClose}: ${text}`;
+
+        // Spawn particles
+        if (hasParticles) {
+            const wrap = el.querySelector('.chat-particle-wrap');
+            if (wrap) spawnParticles(wrap, msg.particleFX.chars);
+        }
 
         appendMessage(el);
     }
