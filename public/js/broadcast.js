@@ -2541,7 +2541,12 @@ async function _resolveKickChatroomId(url) {
         const chatroomId = data?.chatroom?.id;
         if (chatroomId && Number.isFinite(chatroomId)) {
             u.searchParams.set('chatroom', chatroomId);
-            console.log(`[Restream] Auto-detected Kick chatroom ID: ${chatroomId} for ${slug}`);
+            // Also store channel ID for Pusher viewer-count subscription
+            const kickChannelId = data?.id;
+            if (kickChannelId && Number.isFinite(kickChannelId)) {
+                u.searchParams.set('kickChannelId', kickChannelId);
+            }
+            console.log(`[Restream] Auto-detected Kick chatroom ID: ${chatroomId}, channel ID: ${data?.id} for ${slug}`);
             return u.toString();
         }
     } catch (err) {

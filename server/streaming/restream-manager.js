@@ -923,6 +923,7 @@ class RestreamManager extends EventEmitter {
      */
     async _pollViewerCounts() {
         const db = require('../db/database');
+        const chatRelayService = require('../integrations/chat-relay-service');
         const activeDests = new Set();
 
         for (const [, session] of this.sessions) {
@@ -941,7 +942,12 @@ class RestreamManager extends EventEmitter {
 
                 let count = null;
                 if (dest.platform === 'kick') {
-                    count = await this._fetchKickViewerCount(dest.channel_url);
+                    // Primary: check chat relay Pusher viewer count (reliable, not CF-blocked)
+                    count = chatRelayService.getViewerCount(destId);
+                    // Fallback: try Kick HTTP API (usually CF-blocked from servers)
+                    if (count == null) {
+                        count = await this._fetchKickViewerCount(dest.channel_url);
+                    }
                 }
                 // Twitch Helix API requires OAuth token — skip for now
                 // YouTube API requires API key — skip for now
