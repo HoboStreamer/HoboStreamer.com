@@ -329,6 +329,22 @@ class ChatRelayService {
         } catch {}
 
         chatServer.broadcastToStream(bridge.streamId, chatMsg);
+
+        // Welcome first-time external chatters in this streamer's channel
+        try {
+            const stream = db.getStreamById(bridge.streamId);
+            if (stream?.user_id) {
+                const chatterKey = `ext:${prefixedUsername}`;
+                if (db.isFirstChatInChannel(chatterKey, stream.user_id)) {
+                    db.recordFirstChat(chatterKey, stream.user_id);
+                    chatServer.broadcastToStream(bridge.streamId, {
+                        type: 'system',
+                        message: `Welcome ${username} from ${PLATFORM_LABELS[bridge.platform] || bridge.platform}! 👋`,
+                        timestamp: new Date().toISOString(),
+                    });
+                }
+            }
+        } catch { /* non-critical */ }
     }
 
     // ── Twitch IRC ────────────────────────────────────────────

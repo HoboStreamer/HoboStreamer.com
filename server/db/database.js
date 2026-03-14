@@ -434,6 +434,17 @@ function initDb() {
         for (const [k, v, d, t] of commentSettings) seedComment.run(k, v, d, t);
     } catch (e) { console.warn('[DB] paste_comments migration:', e.message); }
 
+    // Migrate: stream_first_chats — tracks first-time chatters per streamer (for welcome messages)
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS stream_first_chats (
+            chatter_key TEXT NOT NULL,
+            channel_user_id INTEGER NOT NULL,
+            first_chat_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chatter_key, channel_user_id)
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_sfc_channel ON stream_first_chats(channel_user_id)`);
+    } catch (e) { console.warn('[DB] stream_first_chats migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1684,6 +1695,32 @@ function loadAnonMappings() {
     return { maxNum, mappings };
 }
 
+// ── Stream First Chats (Welcome Messages) ────────────────────
+
+/**
+ * Check if a chatter has ever chatted in this streamer's channel.
+ * @param {string} chatterKey - e.g. "user:42" or "anon:anon3" or "ext:[Twitch] foo"
+ * @param {number} channelUserId - the streamer's user ID
+ * @returns {boolean} true if this is their first time
+ */
+function isFirstChatInChannel(chatterKey, channelUserId) {
+    const row = get(
+        'SELECT 1 FROM stream_first_chats WHERE chatter_key = ? AND channel_user_id = ?',
+        [chatterKey, channelUserId]
+    );
+    return !row;
+}
+
+/**
+ * Record that a chatter has chatted in a streamer's channel.
+ */
+function recordFirstChat(chatterKey, channelUserId) {
+    run(
+        'INSERT OR IGNORE INTO stream_first_chats (chatter_key, channel_user_id) VALUES (?, ?)',
+        [chatterKey, channelUserId]
+    );
+}
+
 function getRecentPasteCommentsByIp(ip, seconds = 10) {
     return all(`
         SELECT * FROM paste_comments
@@ -1763,4 +1800,6 @@ module.exports = {
     getRecentPasteCommentsByIp,
     // Anon IP Mappings
     getOrCreateAnonNum, loadAnonMappings,
+    // Stream first chats (welcome messages)
+    isFirstChatInChannel, recordFirstChat,
 };
