@@ -253,6 +253,13 @@ class WebRTCSFU extends EventEmitter {
             room.consumers.delete(consumer.id);
         });
 
+        consumer.on('producerclose', () => {
+            // Producer died (broadcaster disconnected) — close transport to free the RTP port
+            room.consumers.delete(consumer.id);
+            room.transports.delete(key);
+            try { transport.close(); } catch {}
+        });
+
         const codec = consumer.rtpParameters.codecs[0];
         const encoding = consumer.rtpParameters.encodings?.[0];
 
