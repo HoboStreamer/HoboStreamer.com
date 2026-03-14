@@ -168,7 +168,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                 restreamLinks = enabledWithUrl.map(d => {
                     // Check if this destination is actively streaming
                     const streamStatuses = liveStreams.flatMap(ls => restreamManager.getStreamStatus(ls.id));
-                    const activeSession = streamStatuses.find(s => s.destId === d.id && s.status === 'running');
+                    const activeSession = streamStatuses.find(s => s.destId === d.id && (s.status === 'live' || s.status === 'starting'));
                     const relayInfo = chatRelayService.getRelayInfo(liveStreams[0].id);
                     const hasRelay = relayInfo?.some(r => r.destId === d.id);
                     return {
