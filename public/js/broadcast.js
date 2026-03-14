@@ -1394,6 +1394,7 @@ function showBrowserBroadcast() {
     const lb = document.getElementById('bc-live-badge'); if (lb) lb.style.display = '';
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
+    _startRestreamViewerPoll();
 }
 
 let _rtmpStatusPollTimer = null;
@@ -1407,6 +1408,7 @@ async function showRTMPInstructions(stream) {
     document.getElementById('bc-chat-sidebar').style.display = '';
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
+    _startRestreamViewerPoll();
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
@@ -1468,6 +1470,7 @@ async function showJSMPEGInstructions(stream) {
     document.getElementById('bc-chat-sidebar').style.display = '';
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
+    _startRestreamViewerPoll();
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
@@ -1505,6 +1508,7 @@ async function showWHIPInstructions(stream) {
     document.getElementById('bc-chat-sidebar').style.display = '';
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
+    _startRestreamViewerPoll();
     document.getElementById('bc-whip-url').textContent = `${location.origin}/whip/${stream.id}`;
     document.getElementById('bc-whip-token').textContent = localStorage.getItem('token') || 'N/A';
 }
@@ -1950,7 +1954,7 @@ function cleanupStream(streamId) {
     _updateTotalViewerCount();
 
     // Stop RS viewer polling if no streams left
-    if (broadcastState.streams.size === 0) _stopRsViewerPoll();
+    if (broadcastState.streams.size === 0) { _stopRsViewerPoll(); _stopRestreamViewerPoll(); }
 
     // If this was the active stream, clear the preview and switch to another if possible
     if (broadcastState.activeStreamId === streamId) {
@@ -2063,6 +2067,7 @@ function clearGlobalDisplayTimers() {
     clearInterval(_globalStatsInterval); _globalStatsInterval = null;
     clearInterval(_globalUptimeInterval); _globalUptimeInterval = null;
     _stopRsViewerPoll();
+    _stopRestreamViewerPoll();
 }
 
 /* ── Per-Stream Heartbeat ────────────────────────────────────── */
@@ -3738,6 +3743,57 @@ async function _startRsViewerPoll() {
 function _stopRsViewerPoll() {
     if (_rsViewerPollTimer) { clearInterval(_rsViewerPollTimer); _rsViewerPollTimer = null; }
     _rsViewerCount = 0;
+}
+
+/* ── Restream Platform Viewer Count Relay ─────────────────────── */
+// The server can't reach Kick/Twitch APIs (Cloudflare-blocked). But the
+// broadcaster's browser CAN, so we poll here and relay counts to the server.
+let _restreamViewerPollTimer = null;
+
+function _startRestreamViewerPoll() {
+    _stopRestreamViewerPoll();
+    // Poll every 60s, with initial 10s delay
+    setTimeout(async () => {
+        await _pollRestreamViewerCounts();
+        _restreamViewerPollTimer = setInterval(_pollRestreamViewerCounts, 60000);
+    }, 10000);
+}
+
+function _stopRestreamViewerPoll() {
+    if (_restreamViewerPollTimer) { clearInterval(_restreamViewerPollTimer); _restreamViewerPollTimer = null; }
+}
+
+async function _pollRestreamViewerCounts() {
+    if (!_restreamDestinations || _restreamDestinations.length === 0) return;
+    const counts = [];
+    for (const dest of _restreamDestinations) {
+        if (!dest.enabled || !dest.channel_url) continue;
+        try {
+            if (dest.platform === 'kick') {
+                const u = new URL(dest.channel_url);
+                const slug = u.pathname.split('/').filter(Boolean)[0];
+                if (!slug) continue;
+                const resp = await fetch(`https://kick.com/api/v2/channels/${slug}`, {
+                    headers: { 'Accept': 'application/json' },
+                    signal: AbortSignal.timeout(8000),
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const vc = data?.livestream?.viewer_count;
+                    if (typeof vc === 'number') {
+                        counts.push({ destId: dest.id, count: vc });
+                    }
+                }
+            }
+            // Twitch Helix requires OAuth — skip for now
+            // YouTube Data API requires API key — skip for now
+        } catch {}
+    }
+    if (counts.length > 0) {
+        try {
+            await api('/restream/viewer-counts', { method: 'POST', body: { counts } });
+        } catch {}
+    }
 }
 
 /* ── Broadcaster Controls ─────────────────────────────────────── */

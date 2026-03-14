@@ -901,6 +901,13 @@ class RestreamManager extends EventEmitter {
     }
 
     /**
+     * Set viewer count from an external source (e.g. broadcaster client-side polling).
+     */
+    setViewerCount(destId, count) {
+        this._viewerCountCache.set(destId, { count, fetchedAt: Date.now() });
+    }
+
+    /**
      * Start periodic viewer count polling for active restream destinations.
      * Called from server/index.js on startup.
      */
