@@ -931,6 +931,40 @@ class RestreamManager extends EventEmitter {
     }
 
     /**
+     * Resume all enabled restreams for a live stream.
+     * Unlike autoStartForStream, this does NOT require auto_start=1.
+     * Used on broadcaster reconnect (e.g. after server restart) so manually-started
+     * restreams also resume — the stream is live, so they should be running.
+     * Skips destinations that already have an active session.
+     */
+    async resumeForStream(streamId, userId, streamInfo) {
+        const db = require('../db/database');
+        const destinations = db.getRestreamDestinationsByUserId(userId);
+        if (!destinations?.length) return;
+
+        let resumed = 0;
+        for (const dest of destinations) {
+            if (!dest.enabled || !dest.server_url || !dest.stream_key) continue;
+
+            // Skip if already running
+            const key = this._key(streamId, dest.id);
+            const existing = this.sessions.get(key);
+            if (existing && (existing.status === 'live' || existing.status === 'starting')) continue;
+
+            console.log(`[Restream] Resuming ${dest.platform} restream for stream ${streamId}`);
+            try {
+                await this.startRestream(streamId, dest, streamInfo);
+                resumed++;
+            } catch (err) {
+                console.warn(`[Restream] Resume failed for dest ${dest.id}:`, err.message);
+            }
+        }
+        if (resumed > 0) {
+            console.log(`[Restream] Resumed ${resumed} restream(s) for stream ${streamId}`);
+        }
+    }
+
+    /**
      * Shutdown — stop all active restreams.
      */
     stopAll() {
