@@ -301,4 +301,21 @@ router.get('/status', requireAuth, (req, res) => {
     }
 });
 
+// ── POST /viewer-counts — broadcaster relays platform viewer counts
+// The broadcaster's browser can access Kick/Twitch APIs (not CF-blocked),
+// so it polls viewer counts client-side and pushes them to the server.
+router.post('/viewer-counts', requireAuth, (req, res) => {
+    try {
+        const { counts } = req.body;
+        if (!Array.isArray(counts)) return res.status(400).json({ error: 'counts must be an array' });
+        for (const { destId, count } of counts) {
+            if (!Number.isFinite(destId) || (count != null && !Number.isFinite(count))) continue;
+            restreamManager.setViewerCount(destId, count);
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update viewer counts' });
+    }
+});
+
 module.exports = router;
