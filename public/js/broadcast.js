@@ -51,11 +51,10 @@ function createStreamState(streamData) {
         _compositeAnimFrame: null,
         _cameraOverlayEnabled: false,
     };
-    };
 }
 
-    const BROADCAST_SIGNALING_MAX_BUFFERED_AMOUNT = 512 * 1024;
-    const BROADCAST_THUMBNAIL_INTERVAL_MS = 115000;
+const BROADCAST_SIGNALING_MAX_BUFFERED_AMOUNT = 512 * 1024;
+const BROADCAST_THUMBNAIL_INTERVAL_MS = 115000;
 
 /**
  * Keep the PipeWire / v4l2loopback / xdg-desktop-portal capture pipeline
