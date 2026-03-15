@@ -1928,8 +1928,25 @@ function _teardownClipDragHandlers() {
     _clipDragging = null;
 }
 
+let _clipCreating = false;
+let _clipCooldownUntil = 0;
+let _clipCooldownTimer = null;
+const CLIP_CLIENT_COOLDOWN_MS = 10000;
+
 async function createVodClip() {
     if (!currentUser) { toast('Login required to create clips', 'info'); return; }
+
+    // Debounce: prevent double-clicks while request is in-flight
+    if (_clipCreating) return;
+
+    // Cooldown: enforce client-side wait between clips
+    const now = Date.now();
+    if (now < _clipCooldownUntil) {
+        const secs = Math.ceil((_clipCooldownUntil - now) / 1000);
+        toast(`Please wait ${secs}s before creating another clip`, 'info');
+        return;
+    }
+
     const vodId = window._vpVodId;
     if (!vodId) { toast('No VOD loaded', 'error'); return; }
 
@@ -1939,6 +1956,8 @@ async function createVodClip() {
 
     const title = document.getElementById('clip-title-input')?.value?.trim() || 'Untitled Clip';
     const btn = document.getElementById('clip-create-btn');
+
+    _clipCreating = true;
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating…'; }
 
     try {
@@ -1951,7 +1970,12 @@ async function createVodClip() {
                 title,
             }
         });
-        toast('Clip created!', 'success');
+        toast(result.deduplicated ? 'Clip already exists — opening it' : 'Clip created!', 'success');
+
+        // Start client-side cooldown
+        _clipCooldownUntil = Date.now() + CLIP_CLIENT_COOLDOWN_MS;
+        _startClipCooldownUI(btn);
+
         closeClipCreator();
         if (result.clip?.id) {
             navigate(`/clip/${result.clip.id}`);
@@ -1960,9 +1984,29 @@ async function createVodClip() {
         }
     } catch (err) {
         toast(err.message || 'Failed to create clip', 'error');
-    } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-scissors"></i> Create Clip'; }
+    } finally {
+        _clipCreating = false;
     }
+}
+
+function _startClipCooldownUI(btn) {
+    if (!btn) return;
+    if (_clipCooldownTimer) clearInterval(_clipCooldownTimer);
+    const update = () => {
+        const left = Math.ceil((_clipCooldownUntil - Date.now()) / 1000);
+        if (left <= 0) {
+            clearInterval(_clipCooldownTimer);
+            _clipCooldownTimer = null;
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-scissors"></i> Create Clip';
+        } else {
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fa-solid fa-clock"></i> Wait ${left}s`;
+        }
+    };
+    update();
+    _clipCooldownTimer = setInterval(update, 1000);
 }
 
 /* ── Clip Player ──────────────────────────────────────────────── */

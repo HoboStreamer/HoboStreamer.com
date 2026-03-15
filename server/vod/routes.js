@@ -30,11 +30,19 @@ const config = require('../config');
 const thumbService = require('../thumbnails/thumbnail-service');
 
 const router = express.Router();
-const CLIP_USER_COOLDOWN_MS = 2500;
-const CLIP_IP_COOLDOWN_MS = 1200;
+const CLIP_USER_COOLDOWN_MS = 10000;    // 10s between VOD clip creations per user
+const CLIP_IP_COOLDOWN_MS = 5000;       // 5s between clip creations per IP
+const CLIP_LIVE_USER_COOLDOWN_MS = 2500; // 2.5s for live clips (lighter operation)
+const CLIP_LIVE_IP_COOLDOWN_MS = 1200;
 const CLIP_DUPLICATE_START_WINDOW_SEC = 8;
 const CLIP_DUPLICATE_END_WINDOW_SEC = 10;
 const CLIP_DUPLICATE_LOOKBACK_MINUTES = 10;
+const CLIP_MAX_PER_USER_PER_HOUR = 20;
+const CLIP_MAX_OUTPUT_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
+const CLIP_FFMPEG_TIMEOUT_MS = 30000;   // 30s FFmpeg timeout
+const CLIP_MAX_CONCURRENT_FFMPEG = 3;
+const CLIP_MIN_ACCOUNT_AGE_MS = 60000;  // 1 minute
+let _activeFFmpegJobs = 0;
 const recentClipAttemptsByUser = new Map();
 const recentClipAttemptsByIp = new Map();
 
@@ -74,22 +82,47 @@ function findExistingDuplicateClip({ streamId, vodId, startTime, endTime }) {
     });
 }
 
-function shouldThrottleClipRequest(req) {
+function shouldThrottleClipRequest(req, isLive = false) {
     const now = Date.now();
     pruneRecentAttempts(now);
 
+    const userCooldown = isLive ? CLIP_LIVE_USER_COOLDOWN_MS : CLIP_USER_COOLDOWN_MS;
+    const ipCooldown = isLive ? CLIP_LIVE_IP_COOLDOWN_MS : CLIP_IP_COOLDOWN_MS;
     const userKey = req.user?.id ? `user:${req.user.id}` : null;
     const ipKey = `ip:${getRequesterIp(req)}`;
     const userLast = userKey ? recentClipAttemptsByUser.get(userKey) || 0 : 0;
     const ipLast = recentClipAttemptsByIp.get(ipKey) || 0;
 
-    if ((userKey && (now - userLast) < CLIP_USER_COOLDOWN_MS) || (now - ipLast) < CLIP_IP_COOLDOWN_MS) {
+    if ((userKey && (now - userLast) < userCooldown) || (now - ipLast) < ipCooldown) {
         return true;
     }
 
     if (userKey) recentClipAttemptsByUser.set(userKey, now);
     recentClipAttemptsByIp.set(ipKey, now);
     return false;
+}
+
+/** Sanitize user-provided title: strip HTML tags, limit length */
+function sanitizeClipTitle(title) {
+    if (!title || typeof title !== 'string') return 'Untitled Clip';
+    return title.replace(/<[^>]*>/g, '').replace(/&[a-z]+;/gi, '').trim().slice(0, 200) || 'Untitled Clip';
+}
+
+/** Check if user has exceeded hourly clip creation limit */
+function isUserOverHourlyClipLimit(userId) {
+    if (!userId) return true;
+    const row = db.get(
+        `SELECT COUNT(*) as cnt FROM clips WHERE user_id = ? AND created_at >= datetime('now', '-1 hour')`,
+        [userId]
+    );
+    return (row?.cnt || 0) >= CLIP_MAX_PER_USER_PER_HOUR;
+}
+
+/** Check account age meets minimum requirement */
+function isAccountTooNew(user) {
+    if (!user?.created_at) return true;
+    const created = new Date(user.created_at + (user.created_at.includes('Z') ? '' : 'Z'));
+    return (Date.now() - created.getTime()) < CLIP_MIN_ACCOUNT_AGE_MS;
 }
 
 /**
@@ -1108,7 +1141,22 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
         const parsedStreamId = stream_id ? parseInt(stream_id, 10) : null;
         const parsedVodId = vod_id ? parseInt(vod_id, 10) : null;
         const { startTime, endTime } = parseClipWindow(req.body);
+        const isLiveClip = !!req.file;
+        const sanitizedTitle = sanitizeClipTitle(title);
 
+        // ── Anti-abuse: account age check ────────────────────
+        if (isAccountTooNew(req.user)) {
+            if (req.file) cleanupTempFile(req.file.path);
+            return res.status(403).json({ error: 'Your account is too new to create clips. Please wait a minute.' });
+        }
+
+        // ── Anti-abuse: hourly clip limit ────────────────────
+        if (isUserOverHourlyClipLimit(req.user.id)) {
+            if (req.file) cleanupTempFile(req.file.path);
+            return res.status(429).json({ error: `You've created too many clips this hour (max ${CLIP_MAX_PER_USER_PER_HOUR}). Please try again later.` });
+        }
+
+        // ── Anti-abuse: duplicate detection ──────────────────
         const duplicateClip = findExistingDuplicateClip({
             streamId: parsedStreamId,
             vodId: parsedVodId,
@@ -1124,9 +1172,11 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             });
         }
 
-        if (shouldThrottleClipRequest(req)) {
+        // ── Anti-abuse: per-user/IP cooldown ─────────────────
+        if (shouldThrottleClipRequest(req, isLiveClip)) {
             if (req.file) cleanupTempFile(req.file.path);
-            return res.status(429).json({ error: 'You are clipping too fast. Please wait a few seconds before making another clip.' });
+            const wait = isLiveClip ? 'a few seconds' : '10 seconds';
+            return res.status(429).json({ error: `You are clipping too fast. Please wait ${wait} before making another clip.` });
         }
 
         // Direct clip upload from browser (MediaRecorder clip)
@@ -1186,7 +1236,7 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             const result = db.createClip({
                 stream_id: parsedStreamId,
                 user_id: req.user.id,
-                title: title || 'Untitled Clip',
+                title: sanitizedTitle,
                 file_path: clipPath,
                 start_time: startTime,
                 end_time: endTime,
@@ -1207,7 +1257,7 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             }
 
             const clip = db.getClipById(clipId);
-            console.log(`[Clips] Direct upload: ${req.file.filename} for user ${req.user.username}`);
+            console.log(`[Clips] Direct upload: ${req.file.filename} for user ${req.user.username} (${stat.size} bytes)`);
 
             // Generate clip thumbnail in background
             thumbService.generateClipThumbnail(clip.id, clipPath).then(thumbUrl => {
@@ -1217,88 +1267,154 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             return res.status(201).json({ clip, file: req.file.filename });
         }
 
-        // FFmpeg extraction from VOD
+        // ══════════════════════════════════════════════════════
+        //  VOD Clip Extraction (server-side FFmpeg)
+        // ══════════════════════════════════════════════════════
+
         if (start_time === undefined || end_time === undefined) {
             return res.status(400).json({ error: 'start_time and end_time required' });
         }
 
-        const duration = endTime - startTime;
-        if (duration <= 0 || duration > 60) {
-            return res.status(400).json({ error: 'Clip must be 1-60 seconds' });
+        // ── Validate time parameters are finite numbers ──────
+        if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+            return res.status(400).json({ error: 'Invalid time values' });
+        }
+        if (startTime < 0 || endTime < 0) {
+            return res.status(400).json({ error: 'Time values cannot be negative' });
         }
 
-        // If from VOD, extract the clip
-        if (parsedVodId) {
-            const vod = db.get('SELECT * FROM vods WHERE id = ?', [parsedVodId]);
-            if (!vod || !vod.file_path || !fs.existsSync(vod.file_path)) {
-                return res.status(404).json({ error: 'VOD not found or file missing' });
+        const duration = endTime - startTime;
+        const maxClipDuration = db.getSetting('max_clip_duration') || 60;
+        if (duration < 1) {
+            return res.status(400).json({ error: 'Clip must be at least 1 second' });
+        }
+        if (duration > maxClipDuration) {
+            return res.status(400).json({ error: `Clips are limited to ${maxClipDuration} seconds` });
+        }
+
+        if (!parsedVodId || !Number.isFinite(parsedVodId)) {
+            return res.status(400).json({ error: 'Valid vod_id is required for VOD clips' });
+        }
+
+        // ── Look up VOD and validate ─────────────────────────
+        const vod = db.get('SELECT * FROM vods WHERE id = ?', [parsedVodId]);
+        if (!vod || !vod.file_path || !fs.existsSync(vod.file_path)) {
+            return res.status(404).json({ error: 'VOD not found or file missing' });
+        }
+
+        // ── Private VOD check: only owner can clip ───────────
+        if (vod.is_private && vod.user_id !== req.user.id) {
+            return res.status(403).json({ error: 'Cannot create clips from private videos' });
+        }
+
+        // ── Bounds validation: clip must be within VOD duration
+        if (vod.duration_seconds && Number.isFinite(vod.duration_seconds)) {
+            const vodDur = vod.duration_seconds;
+            if (startTime > vodDur + 5) {
+                return res.status(400).json({ error: 'Start time exceeds video duration' });
+            }
+            if (endTime > vodDur + 10) {
+                return res.status(400).json({ error: 'End time exceeds video duration' });
+            }
+        }
+
+        // ── Concurrent FFmpeg limit ──────────────────────────
+        if (_activeFFmpegJobs >= CLIP_MAX_CONCURRENT_FFMPEG) {
+            return res.status(503).json({ error: 'Server is busy processing other clips. Please try again in a few seconds.' });
+        }
+
+        const clipsDir = path.resolve(config.vod.clipsPath);
+        if (!fs.existsSync(clipsDir)) fs.mkdirSync(clipsDir, { recursive: true });
+
+        const clipFilename = `clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.webm`;
+        const clipPath = path.join(clipsDir, clipFilename);
+
+        // ── FFmpeg extraction with timeout ───────────────────
+        _activeFFmpegJobs++;
+        let ffStderr = '';
+        let ffTimedOut = false;
+        const ffmpeg = spawn('ffmpeg', [
+            '-y',
+            '-ss', String(startTime),
+            '-i', vod.file_path,
+            '-t', String(duration),
+            '-c', 'copy',
+            clipPath,
+        ]);
+        ffmpeg.stderr?.on('data', d => { ffStderr += d; if (ffStderr.length > 10000) ffStderr = ffStderr.slice(-5000); });
+
+        const ffTimeout = setTimeout(() => {
+            ffTimedOut = true;
+            try { ffmpeg.kill('SIGKILL'); } catch {}
+            console.warn(`[Clips] FFmpeg timed out after ${CLIP_FFMPEG_TIMEOUT_MS}ms for VOD ${parsedVodId}`);
+        }, CLIP_FFMPEG_TIMEOUT_MS);
+
+        ffmpeg.on('error', (err) => {
+            _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1);
+            clearTimeout(ffTimeout);
+            cleanupTempFile(clipPath);
+            console.error('[Clips] FFmpeg spawn error:', err.message);
+            if (!res.headersSent) res.status(500).json({ error: 'FFmpeg not available' });
+        });
+
+        ffmpeg.on('exit', (code) => {
+            _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1);
+            clearTimeout(ffTimeout);
+
+            if (ffTimedOut) {
+                cleanupTempFile(clipPath);
+                if (!res.headersSent) return res.status(504).json({ error: 'Clip extraction timed out. Try a shorter clip or try again later.' });
+                return;
             }
 
-            const clipsDir = path.resolve(config.vod.clipsPath);
-            if (!fs.existsSync(clipsDir)) fs.mkdirSync(clipsDir, { recursive: true });
+            if (code !== 0) {
+                cleanupTempFile(clipPath);
+                console.warn(`[Clips] FFmpeg clip extraction failed (code ${code}):`, ffStderr.slice(-500));
+                if (!res.headersSent) return res.status(500).json({ error: 'Failed to create clip' });
+                return;
+            }
 
-            const clipFilename = `clip-${Date.now()}.webm`;
-            const clipPath = path.join(clipsDir, clipFilename);
-
-            // Use FFmpeg to extract clip
-            let ffStderr = '';
-            const ffmpeg = spawn('ffmpeg', [
-                '-y',
-                '-ss', String(startTime),
-                '-i', vod.file_path,
-                '-t', String(duration),
-                '-c', 'copy',
-                clipPath,
-            ]);
-            ffmpeg.stderr?.on('data', d => ffStderr += d);
-
-            ffmpeg.on('error', (err) => {
-                console.error('[Clips] FFmpeg spawn error:', err.message);
-                if (!res.headersSent) res.status(500).json({ error: 'FFmpeg not available' });
-            });
-
-            ffmpeg.on('exit', (code) => {
-                if (code !== 0) {
-                    console.warn(`[Clips] FFmpeg clip extraction failed (code ${code}):`, ffStderr.slice(-500));
-                    if (!res.headersSent) return res.status(500).json({ error: 'Failed to create clip' });
+            // ── Output file validation ───────────────────────
+            try {
+                const stat = fs.statSync(clipPath);
+                if (stat.size === 0) {
+                    cleanupTempFile(clipPath);
+                    if (!res.headersSent) return res.status(500).json({ error: 'Clip extraction produced an empty file' });
                     return;
                 }
+                if (stat.size > CLIP_MAX_OUTPUT_SIZE_BYTES) {
+                    cleanupTempFile(clipPath);
+                    console.warn(`[Clips] Output file too large: ${stat.size} bytes for VOD ${parsedVodId}`);
+                    if (!res.headersSent) return res.status(500).json({ error: 'Clip file was unexpectedly large. Try a shorter clip.' });
+                    return;
+                }
+            } catch (statErr) {
+                cleanupTempFile(clipPath);
+                if (!res.headersSent) return res.status(500).json({ error: 'Failed to verify clip file' });
+                return;
+            }
 
-                const result = db.createClip({
-                    vod_id: parsedVodId,
-                    stream_id: parsedStreamId || vod.stream_id,
-                    user_id: req.user.id,
-                    title: title || 'Untitled Clip',
-                    file_path: clipPath,
-                    start_time: startTime,
-                    end_time: endTime,
-                    duration_seconds: duration,
-                    description: '',
-                });
-
-                const clip = db.getClipById(result.lastInsertRowid);
-                // Generate clip thumbnail in background
-                thumbService.generateClipThumbnail(clip.id, clipPath).then(thumbUrl => {
-                    if (thumbUrl) console.log(`[Clips] Thumbnail generated: ${thumbUrl}`);
-                }).catch(err => console.warn(`[Clips] Thumbnail failed for clip ${clip.id}:`, err.message));
-                res.status(201).json({ clip, file: clipFilename });
-            });
-        } else {
-            // Create clip record without file (placeholder for live clip)
             const result = db.createClip({
-                stream_id: stream_id || null,
+                vod_id: parsedVodId,
+                stream_id: parsedStreamId || vod.stream_id,
                 user_id: req.user.id,
-                title: title || 'Untitled Clip',
-                file_path: '',
-                start_time,
-                end_time,
+                title: sanitizedTitle,
+                file_path: clipPath,
+                start_time: startTime,
+                end_time: endTime,
                 duration_seconds: duration,
                 description: '',
             });
 
             const clip = db.getClipById(result.lastInsertRowid);
-            res.status(201).json({ clip });
-        }
+            console.log(`[Clips] VOD clip extracted: ${clipFilename} for user ${req.user.username} (VOD ${parsedVodId}, ${startTime.toFixed(1)}s-${endTime.toFixed(1)}s)`);
+
+            // Generate clip thumbnail in background
+            thumbService.generateClipThumbnail(clip.id, clipPath).then(thumbUrl => {
+                if (thumbUrl) console.log(`[Clips] Thumbnail generated: ${thumbUrl}`);
+            }).catch(err => console.warn(`[Clips] Thumbnail failed for clip ${clip.id}:`, err.message));
+            res.status(201).json({ clip, file: clipFilename });
+        });
     } catch (err) {
         console.error('[Clips] Create error:', err.message);
         res.status(500).json({ error: 'Failed to create clip' });
