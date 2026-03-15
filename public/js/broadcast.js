@@ -1073,7 +1073,10 @@ async function endBroadcastTab(streamId) {
             clearGlobalDisplayTimers();
             setNavLiveIndicator(false);
             showStreamManager();
-            loadExistingStreams();
+            loadExistingStreams(streamId);
+            // Scroll create section into view so user lands on "Create New Stream"
+            const createSec = document.getElementById('bc-create-section');
+            if (createSec) createSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     } catch (e) {
         toast(e.message || 'Failed to end stream', 'error');
@@ -1177,13 +1180,14 @@ async function resumeStreamView(stream) {
     }
 }
 
-async function loadExistingStreams() {
+async function loadExistingStreams(excludeStreamId) {
     const listEl = document.getElementById('bc-streams-list');
     if (!listEl) return;
     try {
         // Use the /mine endpoint to get all user's streams
         const data = await api('/streams/mine');
-        const all = data.streams || [];
+        // Exclude the just-ended stream (background DELETE may not have fired yet)
+        const all = (data.streams || []).filter(s => !excludeStreamId || s.id !== excludeStreamId);
 
         if (!all.length) {
             listEl.innerHTML = `
@@ -1274,7 +1278,7 @@ async function endExistingStream(streamId) {
         }
         toast('Stream ended', 'info');
         if (!isStreaming()) setNavLiveIndicator(false);
-        loadExistingStreams();
+        loadExistingStreams(streamId);
         _backgroundStreamEnd(streamId, bgCtx);
     } catch (e) { toast(e.message || 'Failed to end stream', 'error'); }
 }
@@ -1896,7 +1900,10 @@ async function stopBroadcast() {
     hideBroadcastTabs();
     clearGlobalDisplayTimers();
     if (!isStreaming()) setNavLiveIndicator(false);
-    showStreamManager(); loadExistingStreams(); toast('Stream ended', 'info');
+    showStreamManager(); loadExistingStreams(activeId); toast('Stream ended', 'info');
+    // Scroll create section into view so user lands on "Create New Stream"
+    const createSec = document.getElementById('bc-create-section');
+    if (createSec) createSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (activeId) _backgroundStreamEnd(activeId, bgCtx);
 }
 
@@ -3842,33 +3849,74 @@ function _detectBroadcastVerticalPreview(stream) {
 async function flipCamera() {
     const ss = getActiveStreamState();
     if (!ss || !ss.localStream) return;
+
+    // Block flip during screen share — clicking would replace screen with camera
+    if (broadcastState.settings.screenShare) {
+        toast('Disable screen share before flipping camera', 'info');
+        return;
+    }
+
     const videoTrack = ss.localStream.getVideoTracks()[0]; if (!videoTrack) return;
-    const facingMode = videoTrack.getSettings().facingMode;
-    const newFacing = (facingMode === 'user') ? 'environment' : 'user';
+    const oldSettings = videoTrack.getSettings();
+    const facingMode = oldSettings.facingMode; // may be undefined on desktop
+    const oldDeviceId = oldSettings.deviceId;
+
+    // Determine new camera: use facingMode on mobile, cycle deviceId on desktop
+    let newConstraints;
+    if (facingMode) {
+        // Mobile: toggle user ↔ environment
+        const newFacing = (facingMode === 'user') ? 'environment' : 'user';
+        newConstraints = { video: {
+            facingMode: { ideal: newFacing },
+            width: { ideal: oldSettings.width || 1280 },
+            height: { ideal: oldSettings.height || 720 }
+        } };
+    } else {
+        // Desktop: facingMode is undefined — cycle through video input devices
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            if (videoDevices.length < 2) { toast('Only one camera detected', 'info'); return; }
+            const currentIdx = videoDevices.findIndex(d => d.deviceId === oldDeviceId);
+            const nextIdx = (currentIdx + 1) % videoDevices.length;
+            newConstraints = { video: {
+                deviceId: { exact: videoDevices[nextIdx].deviceId },
+                width: { ideal: oldSettings.width || 1280 },
+                height: { ideal: oldSettings.height || 720 }
+            } };
+        } catch {
+            newConstraints = { video: {
+                width: { ideal: oldSettings.width || 1280 },
+                height: { ideal: oldSettings.height || 720 }
+            } };
+        }
+    }
+
     // Android requires stopping the old camera BEFORE acquiring the new one
     // (concurrent camera access is often blocked on mobile)
-    const oldSettings = videoTrack.getSettings();
     ss._suppressRecovery = true; // prevent track.ended from triggering recovery
+    const suppressTimeout = setTimeout(() => { ss._suppressRecovery = false; }, 15000);
     videoTrack.stop();
     ss.localStream.removeTrack(videoTrack);
     try {
         let newStream;
         try {
-            // Try with ideal resolution matching the old track
-            newStream = await _getUserMediaWithTimeout({ video: {
-                facingMode: { ideal: newFacing },
-                width: { ideal: oldSettings.width || 1280 },
-                height: { ideal: oldSettings.height || 720 }
-            } });
+            newStream = await _getUserMediaWithTimeout(newConstraints);
         } catch {
             // Bare minimum fallback
-            newStream = await _getUserMediaWithTimeout({ video: { facingMode: newFacing } });
+            newStream = await _getUserMediaWithTimeout({ video: true });
         }
         const newTrack = newStream.getVideoTracks()[0];
         ss.localStream.addTrack(newTrack);
-        for (const [, pc] of ss.viewerConnections) { const sender = pc.getSenders().find(s => s.track?.kind === 'video'); if (sender) sender.replaceTrack(newTrack); }
+        // Replace track on all viewer peer connections — check for video senders including null tracks
+        for (const [, pc] of ss.viewerConnections) {
+            const sender = pc.getSenders().find(s => s.track === null || s.track?.kind === 'video');
+            if (sender) sender.replaceTrack(newTrack);
+        }
         syncRobotStreamerTracks(broadcastState.activeStreamId).catch(() => {});
         const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
+        updateVerticalPreview();
+        clearTimeout(suppressTimeout);
         ss._suppressRecovery = false;
         attachLocalStreamRecoveryHandlers(broadcastState.activeStreamId);
         toast('Camera flipped', 'success');
@@ -3876,10 +3924,19 @@ async function flipCamera() {
         // Failed to get new camera — try to re-acquire the original
         console.error('[Broadcast] flipCamera failed:', err);
         try {
-            const recovery = await _getUserMediaWithTimeout({ video: { facingMode: { ideal: facingMode || 'user' } } });
-            ss.localStream.addTrack(recovery.getVideoTracks()[0]);
+            const recovery = await _getUserMediaWithTimeout({ video: { deviceId: oldDeviceId ? { ideal: oldDeviceId } : undefined, facingMode: { ideal: facingMode || 'user' } } });
+            const recoveryTrack = recovery.getVideoTracks()[0];
+            ss.localStream.addTrack(recoveryTrack);
+            // Also update viewer connections on recovery
+            for (const [, pc] of ss.viewerConnections) {
+                const sender = pc.getSenders().find(s => s.track === null || s.track?.kind === 'video');
+                if (sender) sender.replaceTrack(recoveryTrack);
+            }
+            syncRobotStreamerTracks(broadcastState.activeStreamId).catch(() => {});
             const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
+            updateVerticalPreview();
         } catch { /* truly stuck — no video track */ }
+        clearTimeout(suppressTimeout);
         ss._suppressRecovery = false;
         attachLocalStreamRecoveryHandlers(broadcastState.activeStreamId);
         toast('Could not flip camera: ' + err.message, 'error');

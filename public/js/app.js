@@ -1596,6 +1596,92 @@ async function loadVodPlayer(vodId) {
     }
 }
 
+/* ── VOD Clip Creator ─────────────────────────────────────────── */
+let _vpClipStart = 0;
+let _vpClipEnd = 0;
+
+function toggleVodClipPanel() {
+    const panel = document.getElementById('vp-clip-panel');
+    if (!panel) return;
+    const visible = panel.style.display !== 'none';
+    panel.style.display = visible ? 'none' : '';
+    if (!visible) {
+        // Initialize marks from current time
+        const video = document.getElementById('vp-video');
+        if (video) {
+            const cur = Math.floor(video.currentTime);
+            _vpClipStart = Math.max(0, cur - 15);
+            _vpClipEnd = Math.min(cur, _vpClipStart + 60);
+            _updateVodClipUI();
+        }
+    }
+}
+
+function setVodClipMark(which) {
+    const video = document.getElementById('vp-video');
+    if (!video) return;
+    const cur = video.currentTime;
+    if (which === 'start') {
+        _vpClipStart = cur;
+        if (_vpClipEnd <= _vpClipStart) _vpClipEnd = Math.min(cur + 30, video.duration || cur + 30);
+    } else {
+        _vpClipEnd = cur;
+        if (_vpClipStart >= _vpClipEnd) _vpClipStart = Math.max(0, cur - 30);
+    }
+    _updateVodClipUI();
+}
+
+function _updateVodClipUI() {
+    const startEl = document.getElementById('vp-clip-start');
+    const endEl = document.getElementById('vp-clip-end');
+    const durEl = document.getElementById('vp-clip-duration');
+    if (startEl) startEl.value = formatDuration(Math.floor(_vpClipStart));
+    if (endEl) endEl.value = formatDuration(Math.floor(_vpClipEnd));
+    const dur = Math.max(0, Math.floor(_vpClipEnd - _vpClipStart));
+    if (durEl) durEl.textContent = dur + 's' + (dur > 60 ? ' (max 60s!)' : '');
+    if (durEl) durEl.style.color = dur > 60 || dur <= 0 ? '#e53e3e' : '';
+}
+
+async function createVodClip() {
+    if (!currentUser) { toast('Login required to create clips', 'info'); return; }
+    const vodId = window._vpVodId;
+    if (!vodId) { toast('No VOD loaded', 'error'); return; }
+
+    const duration = _vpClipEnd - _vpClipStart;
+    if (duration <= 0) { toast('End time must be after start time', 'error'); return; }
+    if (duration > 60) { toast('Clips are limited to 60 seconds', 'error'); return; }
+
+    const title = document.getElementById('vp-clip-title')?.value?.trim() || 'Untitled Clip';
+    const btn = document.getElementById('vp-clip-create-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating…'; }
+
+    try {
+        const result = await api('/vods/clips', {
+            method: 'POST',
+            body: {
+                vod_id: vodId,
+                start_time: _vpClipStart,
+                end_time: _vpClipEnd,
+                title,
+            }
+        });
+        toast('Clip created!', 'success');
+        // Hide panel and navigate to the new clip
+        const panel = document.getElementById('vp-clip-panel');
+        if (panel) panel.style.display = 'none';
+        if (result.clip?.id) {
+            navigate(`/clip/${result.clip.id}`);
+        } else {
+            // Reload VOD page to show new clip in grid
+            loadVodPlayer(vodId);
+        }
+    } catch (err) {
+        toast(err.message || 'Failed to create clip', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-scissors"></i> Create Clip'; }
+    }
+}
+
 /* ── Clip Player ──────────────────────────────────────────────── */
 async function loadClipPlayer(clipId) {
     try {
