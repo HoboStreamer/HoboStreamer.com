@@ -10,12 +10,19 @@
  * DELETE /api/mod/ban/:id                 - Unban (removes ban entry + clears is_banned if global)
  * GET    /api/mod/chat/search             - Search all chat logs
  * GET    /api/mod/chat/user/:userId       - View a user's chat history
+ * GET    /api/mod/ip/user/:userId         - Get all IPs used by a user
+ * GET    /api/mod/ip/anon/:anonId         - Get latest IP + alts for an anon
+ * GET    /api/mod/ip/lookup/:ip           - Get all accounts on an IP
+ * GET    /api/mod/ip/alts/:userId         - Get linked accounts (alt detection)
+ * POST   /api/mod/ip/ban-all              - Ban all accounts on an IP
+ * GET    /api/mod/ip/log                  - Search IP history log
  */
 const express = require('express');
 const db = require('../db/database');
 const { requireAuth } = require('../auth/auth');
 const permissions = require('../auth/permissions');
 const chatServer = require('../chat/chat-server');
+const ipUtils = require('./ip-utils');
 
 const router = express.Router();
 
@@ -46,7 +53,8 @@ router.get('/bans', permissions.requireGlobalMod, (req, res) => {
 });
 
 // ── Global Ban (admin + global_mod) ──────────────────────────
-// Site-wide ban: sets is_banned flag, creates bans entry with no stream_id, adds IP ban
+// Site-wide ban: sets is_banned flag, creates bans entry with no stream_id, adds IP ban.
+// Also cascades: bans all other accounts that share this user's IP.
 router.post('/global-ban', permissions.requireGlobalMod, (req, res) => {
     try {
         const { user_id, reason, duration_hours, ip_address } = req.body;
@@ -60,8 +68,12 @@ router.post('/global-ban', permissions.requireGlobalMod, (req, res) => {
             ? new Date(Date.now() + parseInt(duration_hours) * 3600000).toISOString()
             : null;
 
-        // Auto-detect IP from connected WebSocket clients if not provided
-        const resolvedIp = ip_address || chatServer.getConnectedUserIp(targetUser.id);
+        // Auto-detect IP from connected WebSocket clients, then fall back to IP log
+        let resolvedIp = ip_address || chatServer.getConnectedUserIp(targetUser.id);
+        if (!resolvedIp) {
+            const latest = db.getLatestIpForUser(targetUser.id);
+            if (latest) resolvedIp = latest.ip_address;
+        }
 
         // Set the site-wide is_banned flag
         db.run('UPDATE users SET is_banned = 1, ban_reason = ? WHERE id = ?',
@@ -73,12 +85,29 @@ router.post('/global-ban', permissions.requireGlobalMod, (req, res) => {
             [targetUser.id, resolvedIp, banReason, req.user.id, expires]
         );
 
-        // Also create standalone IP ban for the IP (catches alt accounts)
+        // Also create standalone IP ban for the IP (catches alt accounts + future visits)
         if (resolvedIp) {
             db.run(
                 `INSERT INTO bans (ip_address, reason, banned_by, expires_at) VALUES (?, ?, ?, ?)`,
                 [resolvedIp, banReason + ` (IP of ${targetUser.username})`, req.user.id, expires]
             );
+
+            // Cascade: ban all other accounts that have ever used this IP
+            const linked = db.getLinkedAccounts(targetUser.id);
+            let cascadeBanned = 0;
+            for (const alt of linked) {
+                if (alt.is_banned) continue; // already banned
+                db.run('UPDATE users SET is_banned = 1, ban_reason = ? WHERE id = ?',
+                    [banReason + ` (alt of ${targetUser.username})`, alt.id]);
+                db.run(`INSERT INTO bans (user_id, reason, banned_by, expires_at) VALUES (?, ?, ?, ?)`,
+                    [alt.id, banReason + ` (alt of ${targetUser.username})`, req.user.id, expires]);
+                chatServer.disconnectUser({ userId: alt.id });
+                cascadeBanned++;
+            }
+
+            if (cascadeBanned > 0) {
+                console.log(`[Mod] Global ban cascade: ${cascadeBanned} alt accounts of ${targetUser.username} also banned`);
+            }
         }
 
         // Immediately disconnect the user from chat
@@ -242,6 +271,147 @@ router.get('/chat/user/:userId', (req, res) => {
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: 'Failed to get chat history' });
+    }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  IP TRACKING & ADMIN TOOLS
+// ══════════════════════════════════════════════════════════════
+
+// ── Get all IPs used by a user ───────────────────────────────
+router.get('/ip/user/:userId', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const user = db.getUserById(userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        const ips = db.getIpsByUser(userId);
+        const linked = db.getLinkedAccounts(userId);
+
+        // Also check if the user is currently connected and get their live IP
+        const liveIp = chatServer.getConnectedUserIp(userId);
+
+        res.json({
+            user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role, is_banned: user.is_banned, ban_reason: user.ban_reason, created_at: user.created_at },
+            ips,
+            linked_accounts: linked,
+            live_ip: liveIp || null,
+        });
+    } catch (err) {
+        console.error('[Mod] IP user lookup error:', err.message);
+        res.status(500).json({ error: 'Failed to lookup user IPs' });
+    }
+});
+
+// ── Get IP info for an anon ──────────────────────────────────
+router.get('/ip/anon/:anonId', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const anonId = req.params.anonId;
+        const latest = db.getLatestIpForAnon(anonId);
+        const linked = db.getLinkedAccountsByAnon(anonId);
+
+        // Try to find their live IP from connected clients
+        const anonClient = chatServer.findClientByAnonId(anonId);
+        const liveIp = anonClient?.ip || null;
+        const currentIp = liveIp || latest?.ip_address || null;
+
+        // If we have an IP, do a GeoIP lookup
+        let geo = null;
+        if (currentIp) {
+            geo = ipUtils.lookupIp(currentIp);
+        }
+
+        res.json({
+            anon_id: anonId,
+            current_ip: currentIp,
+            geo,
+            latest_record: latest,
+            linked_accounts: linked,
+        });
+    } catch (err) {
+        console.error('[Mod] IP anon lookup error:', err.message);
+        res.status(500).json({ error: 'Failed to lookup anon IPs' });
+    }
+});
+
+// ── Lookup all accounts on a specific IP ─────────────────────
+router.get('/ip/lookup/:ip', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const ip = req.params.ip;
+        const users = db.getUsersByIp(ip);
+        const geo = ipUtils.lookupIp(ip);
+        const isBanned = db.isIpBanned(ip, null);
+
+        res.json({ ip, geo, is_banned: isBanned, accounts: users });
+    } catch (err) {
+        console.error('[Mod] IP lookup error:', err.message);
+        res.status(500).json({ error: 'Failed to lookup IP' });
+    }
+});
+
+// ── Get linked accounts (alt detection) ──────────────────────
+router.get('/ip/alts/:userId', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const linked = db.getLinkedAccounts(userId);
+        res.json({ user_id: userId, linked_accounts: linked });
+    } catch (err) {
+        console.error('[Mod] Alt detection error:', err.message);
+        res.status(500).json({ error: 'Failed to find linked accounts' });
+    }
+});
+
+// ── Ban all accounts on an IP ────────────────────────────────
+router.post('/ip/ban-all', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const { ip, reason, duration_hours } = req.body;
+        if (!ip) return res.status(400).json({ error: 'ip required' });
+
+        const banReason = reason || 'IP-wide ban by moderator';
+        const expires = duration_hours
+            ? new Date(Date.now() + parseInt(duration_hours) * 3600000).toISOString()
+            : null;
+
+        const bannedIds = db.banAllAccountsOnIp(ip, {
+            reason: banReason,
+            bannedBy: req.user.id,
+            expires,
+        });
+
+        // Disconnect all clients on this IP
+        chatServer.disconnectUser({ ip });
+
+        // Log the action
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            action_type: 'ip_ban_all',
+            details: { ip, reason: banReason, banned_user_ids: bannedIds, duration_hours: duration_hours || null },
+        });
+
+        res.json({ message: `Banned IP ${ip} and ${bannedIds.length} associated account(s)`, banned_user_ids: bannedIds });
+    } catch (err) {
+        console.error('[Mod] IP ban-all error:', err.message);
+        res.status(500).json({ error: 'Failed to ban IP' });
+    }
+});
+
+// ── Search IP history log ────────────────────────────────────
+router.get('/ip/log', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const filters = {};
+        if (req.query.user_id) filters.userId = parseInt(req.query.user_id);
+        if (req.query.anon_id) filters.anonId = req.query.anon_id;
+        if (req.query.ip) filters.ip = req.query.ip;
+        if (req.query.action) filters.action = req.query.action;
+        filters.limit = Math.min(parseInt(req.query.limit || '100'), 500);
+        filters.offset = parseInt(req.query.offset || '0');
+
+        const log = db.getIpLog(filters);
+        res.json({ log });
+    } catch (err) {
+        console.error('[Mod] IP log error:', err.message);
+        res.status(500).json({ error: 'Failed to get IP log' });
     }
 });
 

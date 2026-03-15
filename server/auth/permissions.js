@@ -244,6 +244,7 @@ function getCapabilities(user) {
             can_access_staff_console: false,
             can_manage_channels: false,
             can_moderate_site_chat: false,
+            view_ip_info: false,
             owned_channel_id: null,
             moderated_channel_ids: [],
         };
@@ -270,6 +271,7 @@ function getCapabilities(user) {
         can_access_staff_console: isStaffUser,
         can_manage_channels: !!ownedChannel || moderatedChannels.length > 0 || isStaffUser,
         can_moderate_site_chat: isStaffUser,
+        view_ip_info: isStaffUser,
         owned_channel_id: ownedChannel?.id || null,
         moderated_channel_ids: moderatedChannels.map(ch => ch.id),
     };

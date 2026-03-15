@@ -17,6 +17,7 @@ const db = require('../db/database');
 const { generateToken, requireAuth } = require('./auth');
 const permissions = require('./permissions');
 const legacyMigration = require('../game/legacy-migration');
+const ipUtils = require('../admin/ip-utils');
 
 const router = express.Router();
 
@@ -187,6 +188,12 @@ router.post('/register', (req, res) => {
 
         const token = generateToken(user);
 
+        // Log IP on registration
+        try {
+            const geo = ipUtils.enrichIp(req.ip);
+            db.logIp({ userId: user.id, ip: req.ip, action: 'register', geo, userAgent: req.headers['user-agent'] });
+        } catch (e) { /* non-critical */ }
+
         res.status(201).json({
             token,
             user: sanitizeUser(user),
@@ -223,6 +230,12 @@ router.post('/login', (req, res) => {
 
         // Update last seen
         db.run('UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+
+        // Log IP on login
+        try {
+            const geo = ipUtils.enrichIp(req.ip);
+            db.logIp({ userId: user.id, ip: req.ip, action: 'login', geo, userAgent: req.headers['user-agent'] });
+        } catch (e) { /* non-critical */ }
 
         const token = generateToken(user);
         res.json({ token, user: sanitizeUser(user) });

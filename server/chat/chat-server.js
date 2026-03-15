@@ -18,6 +18,7 @@ const permissions = require('../auth/permissions');
 const wordFilter = require('./word-filter');
 const cosmetics = require('../monetization/cosmetics');
 const ttsEngine = require('./tts-engine');
+const ipUtils = require('../admin/ip-utils');
 
 const WS_HEARTBEAT_MS = 30000;
 const MAX_SEND_BACKPRESSURE = 256 * 1024;
@@ -205,6 +206,12 @@ class ChatServer {
             joinedAt: Date.now(),
         };
         this.clients.set(ws, clientInfo);
+
+        // Log IP for tracking
+        try {
+            const geo = ipUtils.enrichIp(ip);
+            db.logIp({ userId: user?.id, anonId, ip, action: 'chat', geo });
+        } catch (e) { /* non-critical */ }
 
         // Send welcome message
         this.sendTo(ws, {

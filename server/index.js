@@ -179,6 +179,23 @@ app.use('/api/vods/stream/:streamId/chunk', uploadLimiter);
 app.use('/api/vods/stream/:streamId/finalize', uploadLimiter);
 app.use('/api/vods/clips', uploadLimiter);
 
+// ── IP Ban Enforcement ───────────────────────────────────────
+// Check if the requester's IP is globally banned. If so, return 404 for page requests
+// and 403 for API requests. This makes the site appear to not exist for banned IPs.
+app.use((req, res, next) => {
+    // Skip health check so monitoring still works
+    if (req.url === '/api/health') return next();
+    try {
+        if (db.isIpBanned(req.ip, null)) {
+            if (req.url.startsWith('/api/') || req.url.startsWith('/ws/')) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+            return res.status(404).send('<!DOCTYPE html><html><head><title>404</title></head><body><h1>404 Not Found</h1></body></html>');
+        }
+    } catch (e) { /* DB error — let request through rather than block everyone */ }
+    next();
+});
+
 // ── Static Files ─────────────────────────────────────────────
 // JS/CSS/HTML: no-cache + tell Cloudflare CDN not to cache at edge
 // Browsers revalidate with etag (304 Not Modified), CDN always fetches fresh from origin
@@ -340,6 +357,15 @@ server.on('upgrade', (req, socket, head) => {
         socket.destroy();
         return;
     }
+
+    // Block banned IPs from WebSocket connections
+    try {
+        const wsIp = chatServer.getClientIp(req);
+        if (db.isIpBanned(wsIp, null)) {
+            socket.destroy();
+            return;
+        }
+    } catch (e) { /* non-critical — allow through on DB error */ }
 
     if (url.startsWith('/ws/chat')) {
         chatServer.handleUpgrade(req, socket, head);

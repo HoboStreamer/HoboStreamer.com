@@ -475,6 +475,30 @@ function initDb() {
         database.exec(`CREATE INDEX IF NOT EXISTS idx_sfc_channel ON stream_first_chats(channel_user_id)`);
     } catch (e) { console.warn('[DB] stream_first_chats migration:', e.message); }
 
+    // Migrate: ip_log — tracks IP addresses used by users and anons
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS ip_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            anon_id TEXT,
+            ip_address TEXT NOT NULL,
+            action TEXT NOT NULL DEFAULT 'chat',
+            geo_country TEXT,
+            geo_region TEXT,
+            geo_city TEXT,
+            geo_isp TEXT,
+            geo_org TEXT,
+            geo_ll TEXT,
+            user_agent TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_ip_log_user ON ip_log(user_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_ip_log_ip ON ip_log(ip_address)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_ip_log_created ON ip_log(created_at)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_ip_log_action ON ip_log(action)`);
+    } catch (e) { console.warn('[DB] ip_log migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1844,6 +1868,183 @@ function searchChannelChatMessages(channelId, { query, userId, limit = 50, offse
     };
 }
 
+// ── IP Tracking ──────────────────────────────────────────────
+
+/**
+ * Log an IP association. Deduplicates within 10 minutes for the same user+ip+action.
+ */
+function logIp({ userId, anonId, ip, action = 'chat', geo, userAgent }) {
+    if (!ip || ip === 'unknown') return;
+    // Deduplicate: skip if same user+ip+action within the last 10 minutes
+    const dedupKey = userId
+        ? `user_id = ? AND ip_address = ? AND action = ?`
+        : `anon_id = ? AND ip_address = ? AND action = ?`;
+    const dedupParams = userId ? [userId, ip, action] : [anonId, ip, action];
+    const recent = get(
+        `SELECT id FROM ip_log WHERE ${dedupKey} AND created_at > datetime('now', '-10 minutes') LIMIT 1`,
+        dedupParams
+    );
+    if (recent) return;
+
+    run(
+        `INSERT INTO ip_log (user_id, anon_id, ip_address, action, geo_country, geo_region, geo_city, geo_isp, geo_org, geo_ll, user_agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            userId || null,
+            anonId || null,
+            ip,
+            action,
+            geo?.country || null,
+            geo?.region || null,
+            geo?.city || null,
+            geo?.isp || null,
+            geo?.org || null,
+            geo?.ll || null,
+            userAgent || null,
+        ]
+    );
+}
+
+/**
+ * Get all IPs used by a user, with geo data and last-seen times.
+ */
+function getIpsByUser(userId) {
+    return all(`
+        SELECT ip_address, geo_country, geo_region, geo_city, geo_isp, geo_org, geo_ll,
+               COUNT(*) as hit_count,
+               MIN(created_at) as first_seen,
+               MAX(created_at) as last_seen,
+               GROUP_CONCAT(DISTINCT action) as actions
+        FROM ip_log
+        WHERE user_id = ?
+        GROUP BY ip_address
+        ORDER BY last_seen DESC
+    `, [userId]);
+}
+
+/**
+ * Get all users (and anons) that have used a specific IP.
+ */
+function getUsersByIp(ip) {
+    return all(`
+        SELECT il.user_id, il.anon_id,
+               u.username, u.display_name, u.avatar_url, u.role, u.is_banned, u.ban_reason, u.created_at as user_created_at,
+               COUNT(*) as hit_count,
+               MIN(il.created_at) as first_seen,
+               MAX(il.created_at) as last_seen,
+               GROUP_CONCAT(DISTINCT il.action) as actions
+        FROM ip_log il
+        LEFT JOIN users u ON il.user_id = u.id
+        WHERE il.ip_address = ?
+        GROUP BY COALESCE(il.user_id, il.anon_id)
+        ORDER BY last_seen DESC
+    `, [ip]);
+}
+
+/**
+ * Get linked accounts for a user — finds all IPs the user has used, then finds all other
+ * accounts sharing any of those IPs. Returns accounts sorted by number of shared IPs.
+ */
+function getLinkedAccounts(userId) {
+    return all(`
+        SELECT u.id, u.username, u.display_name, u.avatar_url, u.role, u.is_banned, u.ban_reason,
+               u.created_at,
+               COUNT(DISTINCT shared.ip_address) as shared_ip_count,
+               GROUP_CONCAT(DISTINCT shared.ip_address) as shared_ips,
+               MAX(shared.created_at) as last_shared_activity
+        FROM ip_log mine
+        JOIN ip_log shared ON mine.ip_address = shared.ip_address AND shared.user_id != ?
+        JOIN users u ON shared.user_id = u.id
+        WHERE mine.user_id = ?
+        GROUP BY shared.user_id
+        ORDER BY shared_ip_count DESC, last_shared_activity DESC
+    `, [userId, userId]);
+}
+
+/**
+ * Get linked accounts for an anon — same as above but using anon_id.
+ */
+function getLinkedAccountsByAnon(anonId) {
+    return all(`
+        SELECT u.id, u.username, u.display_name, u.avatar_url, u.role, u.is_banned, u.ban_reason,
+               u.created_at,
+               COUNT(DISTINCT shared.ip_address) as shared_ip_count,
+               GROUP_CONCAT(DISTINCT shared.ip_address) as shared_ips,
+               MAX(shared.created_at) as last_shared_activity
+        FROM ip_log mine
+        JOIN ip_log shared ON mine.ip_address = shared.ip_address AND (shared.user_id IS NOT NULL OR shared.anon_id != ?)
+        LEFT JOIN users u ON shared.user_id = u.id
+        WHERE mine.anon_id = ?
+        GROUP BY COALESCE(shared.user_id, shared.anon_id)
+        ORDER BY shared_ip_count DESC, last_shared_activity DESC
+    `, [anonId, anonId]);
+}
+
+/**
+ * Get the most recent IP for a user.
+ */
+function getLatestIpForUser(userId) {
+    return get(`SELECT ip_address, geo_country, geo_region, geo_city, geo_isp, geo_org, geo_ll, created_at
+                FROM ip_log WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, [userId]);
+}
+
+/**
+ * Get the most recent IP for an anon.
+ */
+function getLatestIpForAnon(anonId) {
+    return get(`SELECT ip_address, geo_country, geo_region, geo_city, geo_isp, geo_org, geo_ll, created_at
+                FROM ip_log WHERE anon_id = ? ORDER BY created_at DESC LIMIT 1`, [anonId]);
+}
+
+/**
+ * Get full IP history log (admin search).
+ */
+function getIpLog({ userId, anonId, ip, action, limit = 100, offset = 0 } = {}) {
+    const conditions = [];
+    const params = [];
+    if (userId) { conditions.push('il.user_id = ?'); params.push(userId); }
+    if (anonId) { conditions.push('il.anon_id = ?'); params.push(anonId); }
+    if (ip) { conditions.push('il.ip_address = ?'); params.push(ip); }
+    if (action) { conditions.push('il.action = ?'); params.push(action); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(limit, offset);
+    return all(`
+        SELECT il.*, u.username, u.display_name
+        FROM ip_log il
+        LEFT JOIN users u ON il.user_id = u.id
+        ${where}
+        ORDER BY il.created_at DESC
+        LIMIT ? OFFSET ?
+    `, params);
+}
+
+/**
+ * Ban all accounts sharing an IP. Returns the list of user IDs banned.
+ */
+function banAllAccountsOnIp(ip, { reason, bannedBy, expires }) {
+    const users = all(`
+        SELECT DISTINCT il.user_id
+        FROM ip_log il
+        WHERE il.ip_address = ? AND il.user_id IS NOT NULL
+    `, [ip]);
+
+    const bannedIds = [];
+    for (const row of users) {
+        if (!row.user_id) continue;
+        // Set is_banned flag
+        run('UPDATE users SET is_banned = 1, ban_reason = ? WHERE id = ? AND is_banned = 0', [reason, row.user_id]);
+        // Create global user ban
+        run(`INSERT INTO bans (user_id, ip_address, reason, banned_by, expires_at) VALUES (?, ?, ?, ?, ?)`,
+            [row.user_id, ip, reason, bannedBy, expires || null]);
+        bannedIds.push(row.user_id);
+    }
+    // Also create standalone IP ban
+    run(`INSERT INTO bans (ip_address, reason, banned_by, expires_at) VALUES (?, ?, ?, ?)`,
+        [ip, reason, bannedBy, expires || null]);
+
+    return bannedIds;
+}
+
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
@@ -1920,4 +2121,7 @@ module.exports = {
     // Moderation Action Logging
     logModerationAction, getModerationActions,
     getChatMessageById, deleteChatMessage, searchChannelChatMessages,
+    // IP Tracking
+    logIp, getIpsByUser, getUsersByIp, getLinkedAccounts, getLinkedAccountsByAnon,
+    getLatestIpForUser, getLatestIpForAnon, getIpLog, banAllAccountsOnIp,
 };

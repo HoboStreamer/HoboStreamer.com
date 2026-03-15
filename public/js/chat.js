@@ -1327,7 +1327,11 @@ function renderAnonContextMenu(menu, username, userId) {
     let banBtns = '';
     const showStreamBan = canModerateCurrentStream() && chatStreamId;
     const showSiteBan = currentUser?.capabilities?.manage_site_bans;
-    if (showStreamBan || showSiteBan) banBtns += '<div class="ctx-divider"></div>';
+    const showAdminTools = currentUser?.capabilities?.view_ip_info;
+    if (showStreamBan || showSiteBan || showAdminTools) banBtns += '<div class="ctx-divider"></div>';
+    if (showAdminTools) {
+        banBtns += `<button class="ctx-btn ctx-btn-admin-tools" data-username="${esc(username)}" data-uid="" data-anon="1" onclick="ctxAdminTools(this.dataset.username, null, this.dataset.username)"><i class="fa-solid fa-shield-halved"></i> Admin Tools</button>`;
+    }
     if (showStreamBan) {
         banBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxStreamBan(this.dataset.username, null, this.dataset.username)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>`;
     }
@@ -1407,7 +1411,8 @@ function renderContextMenu(menu, profile, username) {
                     <button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" data-display="${esc(profile.display_name || username)}" onclick="ctxRenameDisplayName(this.dataset.username, this.dataset.uid, this.dataset.display)"><i class="fa-solid fa-signature"></i> Rename Display Name</button>
                 </div>
             </div>` : ''}
-            ${(canModerateCurrentStream() && chatStreamId) || currentUser?.capabilities?.manage_site_bans ? '<div class="ctx-divider"></div>' : ''}
+            ${(canModerateCurrentStream() && chatStreamId) || currentUser?.capabilities?.manage_site_bans || currentUser?.capabilities?.view_ip_info ? '<div class="ctx-divider"></div>' : ''}
+            ${currentUser?.capabilities?.view_ip_info ? `<button class="ctx-btn ctx-btn-admin-tools" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxAdminTools(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-shield-halved"></i> Admin Tools</button>` : ''}
             ${canModerateCurrentStream() && chatStreamId ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxStreamBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>` : ''}
             ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxGlobalBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban from site</button>` : ''}
         </div>
@@ -1500,7 +1505,258 @@ function ctxGlobalBan(username, userId) {
 
 function ctxGlobalBanAnon(anonName) {
     dismissContextMenu();
-    toast('Anonymous users can only be stream-banned. Use /ban in chat for IP bans.', 'info');
+    if (!confirm(`⚠️ GLOBAL BAN: Ban ${anonName} from the entire site? This will IP-ban them and all associated accounts.`)) return;
+    // Look up anon IP first, then ban-all on that IP
+    api(`/mod/ip/anon/${encodeURIComponent(anonName)}`)
+        .then(data => {
+            if (!data.current_ip) {
+                toast('Could not determine IP for this anonymous user.', 'error');
+                return;
+            }
+            return api('/mod/ip/ban-all', { method: 'POST', body: { ip: data.current_ip, reason: `Banned via chat (${anonName})` } });
+        })
+        .then(result => {
+            if (result) toast(`${anonName} IP-banned (${result.banned_user_ids?.length || 0} associated accounts also banned)`, 'success');
+        })
+        .catch(e => toast(e.message || 'Ban failed', 'error'));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ADMIN TOOLS PANEL
+   ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * Open the Admin Tools modal for a user or anon.
+ * Shows: IP info, GeoIP, IP history, linked accounts (alts), ban controls.
+ */
+async function ctxAdminTools(username, userId, anonId) {
+    dismissContextMenu();
+    closeModal();
+
+    const overlay = document.getElementById('modal-overlay');
+    const content = document.getElementById('modal-content');
+    if (!overlay || !content) return;
+
+    const isAnon = !userId || userId === '';
+    const displayName = username;
+
+    content.innerHTML = `
+        <div class="admin-tools-modal">
+            <div class="admin-tools-header">
+                <h3><i class="fa-solid fa-shield-halved"></i> Admin Tools — ${esc(displayName)}</h3>
+                <button class="modal-close-btn" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="admin-tools-body">
+                <div class="admin-tools-loading"><i class="fa-solid fa-spinner fa-spin"></i> Loading IP intelligence...</div>
+            </div>
+        </div>
+    `;
+    overlay.classList.add('show');
+
+    try {
+        let data;
+        if (isAnon) {
+            data = await api(`/mod/ip/anon/${encodeURIComponent(anonId || username)}`);
+            renderAdminToolsAnon(content.querySelector('.admin-tools-body'), data, username);
+        } else {
+            data = await api(`/mod/ip/user/${encodeURIComponent(userId)}`);
+            renderAdminToolsUser(content.querySelector('.admin-tools-body'), data, username);
+        }
+    } catch (err) {
+        content.querySelector('.admin-tools-body').innerHTML = `
+            <div class="admin-tools-error"><i class="fa-solid fa-triangle-exclamation"></i> Failed to load: ${esc(err.message)}</div>
+        `;
+    }
+}
+
+function renderAdminToolsUser(container, data, username) {
+    const { user, ips, linked_accounts, live_ip } = data;
+
+    // Current IP section
+    const currentIp = live_ip || (ips.length ? ips[0].ip_address : 'Unknown');
+    const currentGeo = ips.length ? ips[0] : {};
+
+    let html = `
+        <div class="at-section">
+            <h4><i class="fa-solid fa-user"></i> User Info</h4>
+            <div class="at-info-grid">
+                <span class="at-label">Username</span><span class="at-value">@${esc(user.username)}</span>
+                <span class="at-label">Display Name</span><span class="at-value">${esc(user.display_name || user.username)}</span>
+                <span class="at-label">Role</span><span class="at-value at-role-${esc(user.role)}">${esc(user.role)}</span>
+                <span class="at-label">Joined</span><span class="at-value">${user.created_at ? new Date(user.created_at).toLocaleDateString() : '?'}</span>
+                <span class="at-label">Status</span><span class="at-value ${user.is_banned ? 'at-banned' : 'at-active'}">${user.is_banned ? '⛔ BANNED' : '✅ Active'}${user.ban_reason ? ' — ' + esc(user.ban_reason) : ''}</span>
+            </div>
+        </div>
+
+        <div class="at-section">
+            <h4><i class="fa-solid fa-globe"></i> Current IP</h4>
+            <div class="at-ip-card at-ip-current">
+                <span class="at-ip-address" title="Click to copy" onclick="navigator.clipboard.writeText('${esc(currentIp)}');toast('IP copied','success')">${esc(currentIp)}</span>
+                ${live_ip ? '<span class="at-live-badge">● LIVE</span>' : ''}
+                ${formatGeoLine(currentGeo)}
+            </div>
+        </div>
+    `;
+
+    // IP History
+    if (ips.length) {
+        html += `
+            <div class="at-section">
+                <h4><i class="fa-solid fa-clock-rotate-left"></i> IP History (${ips.length})</h4>
+                <div class="at-ip-list">
+                    ${ips.map(ip => `
+                        <div class="at-ip-card">
+                            <div class="at-ip-row">
+                                <span class="at-ip-address" title="Click to copy" onclick="navigator.clipboard.writeText('${esc(ip.ip_address)}');toast('IP copied','success')">${esc(ip.ip_address)}</span>
+                                <span class="at-ip-hits">${ip.hit_count} hits</span>
+                            </div>
+                            ${formatGeoLine(ip)}
+                            <div class="at-ip-times">
+                                <span>First: ${timeAgoShort(ip.first_seen)}</span>
+                                <span>Last: ${timeAgoShort(ip.last_seen)}</span>
+                                <span>Actions: ${esc(ip.actions || '')}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    // Linked accounts (alts)
+    if (linked_accounts && linked_accounts.length) {
+        html += `
+            <div class="at-section">
+                <h4><i class="fa-solid fa-users"></i> Linked Accounts — Alt Detection (${linked_accounts.length})</h4>
+                <div class="at-alts-list">
+                    ${linked_accounts.map(alt => `
+                        <div class="at-alt-card ${alt.is_banned ? 'at-alt-banned' : ''}">
+                            <div class="at-alt-row">
+                                <span class="at-alt-name" onclick="ctxAdminTools('${esc(alt.username)}', '${alt.id}')" title="Open admin tools for this user">@${esc(alt.username)}</span>
+                                <span class="at-alt-role at-role-${esc(alt.role)}">${esc(alt.role)}</span>
+                                ${alt.is_banned ? '<span class="at-banned-badge">BANNED</span>' : ''}
+                            </div>
+                            <div class="at-alt-detail">
+                                <span>${alt.shared_ip_count} shared IP${alt.shared_ip_count > 1 ? 's' : ''}</span>
+                                <span>Last shared: ${timeAgoShort(alt.last_shared_activity)}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    } else {
+        html += `
+            <div class="at-section">
+                <h4><i class="fa-solid fa-users"></i> Linked Accounts</h4>
+                <div class="at-empty">No linked accounts found (no shared IPs)</div>
+            </div>
+        `;
+    }
+
+    // Quick actions
+    html += `
+        <div class="at-section at-actions">
+            <h4><i class="fa-solid fa-bolt"></i> Quick Actions</h4>
+            <div class="at-action-grid">
+                ${currentIp !== 'Unknown' ? `<button class="btn btn-sm at-action-btn" onclick="adminToolsIpBanAll('${esc(currentIp)}', '${esc(username)}')"><i class="fa-solid fa-ban"></i> Ban IP + All Accounts</button>` : ''}
+                <button class="btn btn-sm at-action-btn" onclick="ctxViewLogs('${esc(username)}', '${data.user.id}');closeModal()"><i class="fa-solid fa-clock-rotate-left"></i> View Chat Logs</button>
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+function renderAdminToolsAnon(container, data, username) {
+    const { anon_id, current_ip, geo, linked_accounts } = data;
+
+    let html = `
+        <div class="at-section">
+            <h4><i class="fa-solid fa-ghost"></i> Anonymous User</h4>
+            <div class="at-info-grid">
+                <span class="at-label">Anon ID</span><span class="at-value">${esc(anon_id)}</span>
+            </div>
+        </div>
+
+        <div class="at-section">
+            <h4><i class="fa-solid fa-globe"></i> IP Address</h4>
+            <div class="at-ip-card at-ip-current">
+                <span class="at-ip-address" title="Click to copy" onclick="navigator.clipboard.writeText('${esc(current_ip || 'unknown')}');toast('IP copied','success')">${esc(current_ip || 'Unknown')}</span>
+                ${geo ? formatGeoFromObj(geo) : '<span class="at-geo">No geo data</span>'}
+            </div>
+        </div>
+    `;
+
+    // Linked accounts
+    if (linked_accounts && linked_accounts.length) {
+        html += `
+            <div class="at-section">
+                <h4><i class="fa-solid fa-users"></i> Linked Accounts — Alt Detection (${linked_accounts.length})</h4>
+                <div class="at-alts-list">
+                    ${linked_accounts.map(alt => `
+                        <div class="at-alt-card ${alt.is_banned ? 'at-alt-banned' : ''}">
+                            <div class="at-alt-row">
+                                <span class="at-alt-name" onclick="ctxAdminTools('${esc(alt.username || 'anon')}', '${alt.id || ''}')" title="Open admin tools">${alt.username ? '@' + esc(alt.username) : 'Anonymous'}</span>
+                                ${alt.role ? `<span class="at-alt-role at-role-${esc(alt.role)}">${esc(alt.role)}</span>` : ''}
+                                ${alt.is_banned ? '<span class="at-banned-badge">BANNED</span>' : ''}
+                            </div>
+                            <div class="at-alt-detail">
+                                <span>${alt.shared_ip_count} shared IP${alt.shared_ip_count > 1 ? 's' : ''}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    // Quick actions
+    if (current_ip) {
+        html += `
+            <div class="at-section at-actions">
+                <h4><i class="fa-solid fa-bolt"></i> Quick Actions</h4>
+                <div class="at-action-grid">
+                    <button class="btn btn-sm at-action-btn" onclick="adminToolsIpBanAll('${esc(current_ip)}', '${esc(username)}')"><i class="fa-solid fa-ban"></i> Ban IP + All Accounts</button>
+                </div>
+            </div>
+        `;
+    }
+
+    container.innerHTML = html;
+}
+
+function formatGeoLine(ip) {
+    const parts = [];
+    if (ip.geo_city) parts.push(ip.geo_city);
+    if (ip.geo_region) parts.push(ip.geo_region);
+    if (ip.geo_country) parts.push(ip.geo_country);
+    if (!parts.length) return '';
+    return `<span class="at-geo"><i class="fa-solid fa-location-dot"></i> ${esc(parts.join(', '))}${ip.geo_isp ? ' — ' + esc(ip.geo_isp) : ''}</span>`;
+}
+
+function formatGeoFromObj(geo) {
+    const parts = [];
+    if (geo.city) parts.push(geo.city);
+    if (geo.region) parts.push(geo.region);
+    if (geo.country) parts.push(geo.country);
+    if (!parts.length) return '<span class="at-geo">No geo data</span>';
+    return `<span class="at-geo"><i class="fa-solid fa-location-dot"></i> ${esc(parts.join(', '))}${geo.isp ? ' — ' + esc(geo.isp) : ''}</span>`;
+}
+
+async function adminToolsIpBanAll(ip, username) {
+    if (!confirm(`⚠️ IP BAN: Ban ${ip} and ALL associated accounts?\n\nThis will:\n- IP-ban this address\n- Global-ban every account that has ever used this IP\n- Return 404 for all pages from this IP\n\nThis action cannot be easily undone.`)) return;
+    try {
+        const result = await api('/mod/ip/ban-all', { method: 'POST', body: { ip, reason: `IP ban via Admin Tools (user: ${username})` } });
+        toast(`IP banned: ${ip} — ${result.banned_user_ids?.length || 0} account(s) banned`, 'success');
+        // Refresh the admin tools panel if still open
+        const body = document.querySelector('.admin-tools-body');
+        if (body) {
+            body.innerHTML = '<div class="admin-tools-loading"><i class="fa-solid fa-check" style="color:var(--success)"></i> Ban applied. Close and reopen to refresh.</div>';
+        }
+    } catch (e) {
+        toast(e.message || 'Ban failed', 'error');
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════
