@@ -2927,6 +2927,45 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 }
 .vod-extra-details .detail-chip i { color: var(--accent); font-size: 0.75rem; }
 
+/* VOD Clip Creator Panel ───────────────────────────────────── */
+.vod-clip-panel {
+    background: rgba(22,22,26,0.85);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 16px 20px;
+    margin-top: 14px;
+}
+.vod-clip-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+}
+.vod-clip-header h4 {
+    margin: 0; font-size: 1rem; display: flex; align-items: center; gap: 8px;
+}
+.vod-clip-times {
+    display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;
+}
+.vod-clip-time-group {
+    display: flex; flex-direction: column; gap: 4px;
+}
+.vod-clip-time-group label {
+    font-size: 0.78rem; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 4px;
+}
+.vod-clip-time-row {
+    display: flex; gap: 6px; align-items: center;
+}
+.vod-clip-time-row input {
+    width: 80px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.vod-clip-duration {
+    font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums;
+    padding: 4px 0;
+}
+.vod-clip-actions {
+    margin-top: 12px; display: flex; gap: 8px;
+}
+
 /* Chat Replay Sidebar ─────────────────────────────────────── */
 .vod-player-row {
     display: flex; gap: 0; margin-bottom: 16px;
@@ -4696,19 +4735,107 @@ body.theme-light .user-dropdown {
     padding-bottom: 8px;
 }
 
-/* Screenshot upload zone */
+/* Screenshot upload modal (redesigned) */
+.paste-modal-upload {
+    max-width: 560px;
+}
 .screenshot-preview-area {
-    margin-bottom: 12px;
+    margin-bottom: 16px;
+}
+.screenshot-preview-img {
+    max-width: 100%;
+    border-radius: 10px;
+    border: 1px solid var(--border);
 }
 .screenshot-upload-zone {
     border: 2px dashed var(--border);
-    border-radius: 10px;
+    border-radius: 12px;
     text-align: center;
     color: var(--text-secondary);
-    transition: border-color 0.15s;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+    background: rgba(var(--primary-rgb, 99,102,241), 0.03);
 }
-.screenshot-upload-zone:hover {
+.screenshot-upload-zone:hover,
+.screenshot-upload-zone.drag-over {
     border-color: var(--primary);
+    background: rgba(var(--primary-rgb, 99,102,241), 0.08);
+    box-shadow: 0 0 0 3px rgba(var(--primary-rgb, 99,102,241), 0.12);
+}
+.screenshot-upload-label {
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 36px 24px;
+}
+.screenshot-upload-icon {
+    font-size: 2.5rem;
+    opacity: 0.45;
+    transition: opacity 0.2s, transform 0.2s;
+}
+.screenshot-upload-zone:hover .screenshot-upload-icon {
+    opacity: 0.75;
+    transform: translateY(-2px);
+}
+.screenshot-upload-title {
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+.screenshot-upload-hint {
+    font-size: 0.8rem;
+    opacity: 0.6;
+}
+.screenshot-upload-hint strong {
+    color: var(--primary);
+}
+.screenshot-upload-formats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 4px;
+}
+.screenshot-format-tag {
+    font-size: 0.7rem;
+    background: var(--bg-secondary, rgba(255,255,255,0.06));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0.7;
+}
+
+/* Details grid */
+.screenshot-details-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.screenshot-detail-full {
+    grid-column: 1 / -1;
+}
+.screenshot-details-grid .form-group label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    margin-bottom: 4px;
+}
+.screenshot-details-grid .muted {
+    opacity: 0.5;
+    font-weight: 400;
+}
+
+@media (max-width: 480px) {
+    .screenshot-details-grid {
+        grid-template-columns: 1fr;
+    }
+    .screenshot-upload-label {
+        padding: 24px 16px;
+    }
 }
 
 /* ── Responsive ───────────────────────────────────────────── */

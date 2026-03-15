@@ -250,14 +250,27 @@ function updateCanvasHover(tile) {
     }
     const stored = canvasTiles.get(`${tile.x},${tile.y}`);
     if (!stored) {
-        meta.innerHTML = `Tile <strong>${tile.x}, ${tile.y}</strong><br>Empty`;
+        meta.innerHTML = `Tile <strong>${tile.x}, ${tile.y}</strong><br>Empty — click to paint!`;
         return;
+    }
+    // Calculate tile lock status
+    let lockInfo = '';
+    if (stored.updated_at) {
+        const updatedMs = new Date(toIso(stored.updated_at)).getTime();
+        const tileCooldown = (canvasBoardState?.settings?.tile_cooldown_seconds || 20) * 1000;
+        const unlockAt = updatedMs + tileCooldown;
+        const remaining = Math.ceil(Math.max(0, unlockAt - Date.now()) / 1000);
+        if (remaining > 0) {
+            lockInfo = `<br><span style="color:#f6ad55"><i class="fa-solid fa-lock"></i> Locked (${remaining}s)</span>`;
+        } else {
+            lockInfo = `<br><span style="color:#68d391"><i class="fa-solid fa-lock-open"></i> Can override</span>`;
+        }
     }
     meta.innerHTML = `
         Tile <strong>${tile.x}, ${tile.y}</strong><br>
         Color: ${stored.color_index}<br>
         By: ${esc(stored.username || 'unknown')}<br>
-        Updated: ${stored.updated_at ? new Date(toIso(stored.updated_at)).toLocaleString() : 'unknown'}
+        Updated: ${stored.updated_at ? new Date(toIso(stored.updated_at)).toLocaleString() : 'unknown'}${lockInfo}
     `;
 }
 
@@ -310,19 +323,32 @@ function updateCanvasCooldownText() {
     const el = document.getElementById('canvas-cooldown');
     if (!el) return;
     if (!currentUser) {
-        el.textContent = 'Cooldown: login required to paint';
+        el.innerHTML = '<span class="canvas-cd-text"><i class="fa-solid fa-lock"></i> Login required to paint</span>';
         return;
     }
     const cooldown = canvasBoardState?.cooldown;
     if (!cooldown) {
-        el.textContent = 'Cooldown: --';
+        el.innerHTML = '<span class="canvas-cd-text">--</span>';
         return;
     }
-    const seconds = Math.ceil(Math.max(0, cooldown.remaining_ms || 0) / 1000);
+    const totalMs = (cooldown.cooldown_seconds || 5) * 1000;
+    const remainMs = Math.max(0, cooldown.remaining_ms || 0);
+    const seconds = Math.ceil(remainMs / 1000);
+
+    // Decrease remaining_ms by ~500ms each tick (the timer fires every 500ms)
+    if (cooldown.remaining_ms > 0) {
+        cooldown.remaining_ms = Math.max(0, cooldown.remaining_ms - 500);
+    }
+
     if (seconds > 0) {
-        el.textContent = `Cooldown: ${seconds}s remaining`;
+        const pct = Math.min(100, (remainMs / totalMs) * 100);
+        el.innerHTML = `
+            <div class="canvas-cd-bar-track">
+                <div class="canvas-cd-bar-fill" style="width:${pct}%"></div>
+            </div>
+            <span class="canvas-cd-text"><i class="fa-solid fa-hourglass-half"></i> ${seconds}s</span>`;
     } else {
-        el.textContent = `Cooldown: ready (${cooldown.cooldown_seconds}s base, level ${cooldown.total_level})`;
+        el.innerHTML = `<span class="canvas-cd-text canvas-cd-ready"><i class="fa-solid fa-check-circle"></i> Ready! <span class="muted">(${cooldown.cooldown_seconds}s base, lv${cooldown.total_level})</span></span>`;
     }
 }
 

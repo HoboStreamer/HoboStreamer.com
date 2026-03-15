@@ -1070,10 +1070,90 @@ function _openScreenshotUploadDialog(blob, opts = {}) {
 
     modal.style.display = 'flex';
 
+    // Attach clipboard paste listener
+    _attachScreenshotClipboardHandler();
+
+    // Attach drag-drop handlers to upload zone
+    _attachScreenshotDragDrop();
+
     // Fetch and show daily limit info (non-blocking)
     const limitEl = document.getElementById('screenshot-limit-info');
     if (limitEl) limitEl.innerHTML = '<span style="opacity:0.4;font-size:0.8rem;">Loading limit…</span>';
     _fetchPasteLimitInfo().then(info => _renderLimitInfo(limitEl, info));
+}
+
+/* ── Clipboard paste handler for image upload ── */
+let _screenshotPasteHandler = null;
+
+function _attachScreenshotClipboardHandler() {
+    _detachScreenshotClipboardHandler();
+    _screenshotPasteHandler = (e) => {
+        const modal = document.getElementById('screenshot-upload-modal');
+        if (!modal || modal.style.display === 'none') return;
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const blob = item.getAsFile();
+                if (!blob) continue;
+                const preview = document.getElementById('screenshot-preview');
+                if (preview) {
+                    if (preview.src) URL.revokeObjectURL(preview.src);
+                    preview.src = URL.createObjectURL(blob);
+                    preview.style.display = 'block';
+                    preview._blob = blob;
+                    preview._fromCapture = false;
+                }
+                // Update upload zone to show "pasted" state
+                const zone = document.getElementById('screenshot-upload-zone');
+                if (zone) zone.style.display = 'none';
+                toast('Image pasted from clipboard', 'success');
+                return;
+            }
+        }
+    };
+    document.addEventListener('paste', _screenshotPasteHandler);
+}
+
+function _detachScreenshotClipboardHandler() {
+    if (_screenshotPasteHandler) {
+        document.removeEventListener('paste', _screenshotPasteHandler);
+        _screenshotPasteHandler = null;
+    }
+}
+
+/* ── Drag & drop handler for image upload zone ── */
+function _attachScreenshotDragDrop() {
+    const zone = document.getElementById('screenshot-upload-zone');
+    if (!zone || zone._ddAttached) return;
+    zone._ddAttached = true;
+
+    zone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', () => {
+        zone.classList.remove('drag-over');
+    });
+    zone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        zone.classList.remove('drag-over');
+        const file = e.dataTransfer?.files?.[0];
+        if (!file || !file.type.startsWith('image/')) {
+            toast('Please drop an image file', 'error');
+            return;
+        }
+        const preview = document.getElementById('screenshot-preview');
+        if (preview) {
+            if (preview.src) URL.revokeObjectURL(preview.src);
+            preview.src = URL.createObjectURL(file);
+            preview.style.display = 'block';
+            preview._blob = file;
+            preview._fromCapture = false;
+        }
+        zone.style.display = 'none';
+    });
 }
 
 function closeScreenshotModal() {
@@ -1081,6 +1161,10 @@ function closeScreenshotModal() {
     if (modal) modal.style.display = 'none';
     const preview = document.getElementById('screenshot-preview');
     if (preview?.src) { URL.revokeObjectURL(preview.src); preview.src = ''; }
+    // Reset upload zone visibility
+    const zone = document.getElementById('screenshot-upload-zone');
+    if (zone) zone.style.display = '';
+    _detachScreenshotClipboardHandler();
 }
 
 function onScreenshotFileSelect(input) {
