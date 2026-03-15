@@ -261,10 +261,11 @@ main#app { position: relative; z-index: 1; }
 /* ── Nav Scroll Arrows (visible when nav links overflow) ────── */
 .nav-scroll-btn {
     display: none;
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
+    position: sticky;
+    top: 0;
+    align-self: center;
     width: 28px;
+    min-width: 28px;
     height: 28px;
     align-items: center;
     justify-content: center;
