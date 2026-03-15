@@ -83,6 +83,11 @@ const gameRoutes = require('./game/routes');
 const gameServer = require('./game/game-server');
 const game = require('./game/game-engine');
 
+// Canvas (collaborative r/place-style game)
+const canvasService = require('./game/canvas-service');
+const canvasServer = require('./game/canvas-server');
+const canvasRoutes = require('./game/canvas-routes');
+
 // ── Express App ──────────────────────────────────────────────
 const app = express();
 const server = http.createServer(app);
@@ -234,6 +239,7 @@ app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
 app.use('/api/game', gameRoutes);
+app.use('/api/game/canvas', canvasRoutes);
 app.use('/api/meta', metaRoutes);
 app.use('/api/pastes', pasteRoutes);
 const ttsRoutes = require('./chat/tts-routes');
@@ -345,6 +351,8 @@ server.on('upgrade', (req, socket, head) => {
         callServer.handleUpgrade(req, socket, head);
     } else if (url.startsWith('/ws/game')) {
         gameServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/canvas')) {
+        canvasServer.handleUpgrade(req, socket, head);
     } else if (url.startsWith('/ws/robotstreamer-publish')) {
         robotStreamerService.handleUpgrade(req, socket, head);
     } else {
@@ -426,6 +434,11 @@ async function start() {
 
     // 4c. Initialize game WebSocket server
     gameServer.init(server);
+
+    // 4c2. Initialize canvas service + WebSocket
+    canvasService.initDb();
+    canvasServer.init();
+    console.log('[Server] Canvas game ready');
 
     // 4d. Initialize group call signaling server
     callServer.init(server);
@@ -521,6 +534,7 @@ async function start() {
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/control`);
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/call`);
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/game`);
+        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/canvas`);
         console.log(`[Server] Environment:  ${config.nodeEnv}`);
         console.log('');
         console.log('[Server] Ready. Happy camping! 🏕️');
@@ -709,6 +723,7 @@ function shutdown() {
     setTimeout(() => {
         restreamManager.stopViewerCountPolling();
         restreamManager.stopAll();
+        canvasServer.close();
         gameServer.close();
         callServer.close();
         chatServer.close();

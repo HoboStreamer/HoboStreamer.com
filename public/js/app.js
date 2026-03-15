@@ -11,6 +11,24 @@ let currentStreamData = null;
 let hoboAppMetaData = null;
 let hoboAppMetaPromise = null;
 
+/* ── Capability helpers ────────────────────────────────────── */
+function mergeUserWithCapabilities(user, capabilities) {
+    if (!user) return null;
+    return { ...user, capabilities: capabilities || user.capabilities || {} };
+}
+
+function getUserCapabilities(user = currentUser) {
+    return user?.capabilities || {};
+}
+
+function hasCapability(capability, user = currentUser) {
+    return !!getUserCapabilities(user)?.[capability];
+}
+
+function isStaffUser(user = currentUser) {
+    return hasCapability('can_access_staff_console', user);
+}
+
 // Reserved paths (not usernames)
 const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media', 'pastes', 'p', 'updates']);
 
@@ -226,7 +244,7 @@ async function doLogin() {
         if (!username || !password) return toast('Fill in all fields', 'error');
         const data = await api('/auth/login', { method: 'POST', body: { username, password } });
         localStorage.setItem('token', data.token);
-        currentUser = data.user;
+        currentUser = mergeUserWithCapabilities(data.user, data.capabilities);
         onAuthChange();
         if (typeof loadThemeFromServer === 'function') loadThemeFromServer();
         closeModal();
@@ -246,7 +264,7 @@ async function doRegister() {
         if (verification_key) body.verification_key = verification_key;
         const data = await api('/auth/register', { method: 'POST', body });
         localStorage.setItem('token', data.token);
-        currentUser = data.user;
+        currentUser = mergeUserWithCapabilities(data.user, data.capabilities);
         onAuthChange();
         if (typeof loadThemeFromServer === 'function') loadThemeFromServer();
         closeModal();
@@ -269,6 +287,8 @@ function logout() {
     localStorage.removeItem('token');
     currentUser = null;
     onAuthChange();
+    if (typeof destroyCall === 'function') destroyCall();
+    if (typeof destroyCanvasPage === 'function') destroyCanvasPage();
     if (['dashboard', 'admin', 'broadcast', 'settings'].includes(currentPage)) navigate('/');
     toast('Logged out', 'info');
 }
@@ -278,7 +298,7 @@ async function loadUser() {
     if (!tok) return;
     try {
         const data = await api('/auth/me');
-        currentUser = data.user || data;
+        currentUser = mergeUserWithCapabilities(data.user || data, data.capabilities);
     } catch {
         localStorage.removeItem('token');
     }
@@ -296,7 +316,7 @@ function onAuthChange() {
         user.style.display = 'flex';
         dash.style.display = '';
         broadcast.style.display = '';
-        admin.style.display = currentUser.capabilities?.admin_panel ? '' : 'none';
+        admin.style.display = (currentUser.capabilities?.admin_panel || hasCapability('can_access_staff_console')) ? '' : 'none';
         document.getElementById('nav-avatar').textContent = currentUser.username[0].toUpperCase();
         document.getElementById('nav-username').textContent = currentUser.username;
         loadBalance();
@@ -308,6 +328,9 @@ function onAuthChange() {
         admin.style.display = 'none';
     }
     document.getElementById('user-dropdown').classList.remove('show');
+
+    // Sync canvas auth state if canvas page is loaded
+    if (typeof syncCanvasAuthState === 'function') syncCanvasAuthState();
 
     try {
         window.dispatchEvent(new CustomEvent('hobo-auth-changed', {
@@ -433,7 +456,13 @@ function routeFromURL() {
         loadChatPage();
     } else if (segments[0] === 'game') {
         showPage('game');
-        loadGamePage();
+        if (segments[1] === 'adventure') {
+            loadGamePage();
+        } else if (typeof loadCanvasPage === 'function') {
+            loadCanvasPage();
+        } else {
+            loadGamePage();
+        }
     } else if (segments[0] === 'pastes') {
         showPage('pastes');
         loadPastesPage();
@@ -495,6 +524,19 @@ function showPage(page) {
     if (navPage) {
         const link = document.querySelector(`.nav-link[data-page="${navPage}"]`);
         if (link) link.classList.add('active');
+    }
+}
+
+/* ── Game Pane Switcher ───────────────────────────────────────── */
+function switchGamePane(pane) {
+    document.querySelectorAll('.game-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.pane === pane));
+    document.querySelectorAll('.game-pane').forEach(p => p.classList.remove('active'));
+    const target = document.getElementById(`game-pane-${pane}`);
+    if (target) target.classList.add('active');
+    if (pane === 'adventure') {
+        loadGamePage();
+    } else if (pane === 'canvas' && typeof loadCanvasPage === 'function') {
+        loadCanvasPage();
     }
 }
 

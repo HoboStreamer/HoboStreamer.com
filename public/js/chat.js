@@ -1484,6 +1484,11 @@ function ctxStreamBan(username, userId, anonId) {
 
 function ctxGlobalBan(username, userId) {
     dismissContextMenu();
+    // Prefer staff console ban UI if available (has reason/duration prompt + audit logging)
+    if (typeof staffBanUser === 'function') {
+        staffBanUser(userId, username, 'Banned via chat', 0);
+        return;
+    }
     if (!confirm(`⚠️ GLOBAL BAN: Ban ${username} from the entire site? This also IP-bans them.`)) return;
     api('/mod/global-ban', { method: 'POST', body: { user_id: userId, reason: 'Banned via chat' } })
         .then(() => toast(`${username} globally banned`, 'success'))

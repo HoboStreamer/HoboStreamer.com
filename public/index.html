@@ -2498,6 +2498,19 @@
 <!--  GAME — HoboGame Open-World Survival                       -->
 <!-- ═══════════════════════════════════════════════════════════ -->
     <section id="page-game" class="page">
+        <div class="game-shell">
+            <!-- Game Mode Tabs -->
+            <div class="game-mode-bar">
+                <button class="game-mode-btn active" data-pane="adventure" onclick="switchGamePane('adventure')">
+                    <i class="fa-solid fa-dragon"></i> Adventure
+                </button>
+                <button class="game-mode-btn" data-pane="canvas" onclick="switchGamePane('canvas')">
+                    <i class="fa-solid fa-palette"></i> Canvas
+                </button>
+            </div>
+
+            <!-- Adventure Pane (existing HoboGame) -->
+            <div class="game-pane active" id="game-pane-adventure">
         <div class="game-wrapper">
             <div class="game-canvas-container">
                 <!-- HUD overlay: status badges + action buttons -->
@@ -2556,6 +2569,67 @@
             </div>
             <!-- Controls hint hidden — game is fullscreen now -->
         </div>
+            </div><!-- /game-pane-adventure -->
+
+            <!-- Canvas Pane (collaborative r/place-style canvas) -->
+            <div class="game-pane" id="game-pane-canvas">
+                <div class="canvas-layout">
+                    <!-- Left Sidebar -->
+                    <div class="canvas-sidebar">
+                        <div class="canvas-card">
+                            <h3><i class="fa-solid fa-palette"></i> Palette</h3>
+                            <div class="canvas-palette" id="canvas-palette"></div>
+                            <div class="canvas-status" id="canvas-status">Select a color to place</div>
+                            <div class="canvas-cooldown" id="canvas-cooldown"></div>
+                            <div class="canvas-coords" id="canvas-coords">Hover over the canvas</div>
+                        </div>
+                        <div class="canvas-card">
+                            <h3><i class="fa-solid fa-circle-info"></i> Info</h3>
+                            <div class="canvas-hover" id="canvas-hover">Hover over a tile to see details</div>
+                        </div>
+                        <div class="canvas-card">
+                            <h3><i class="fa-solid fa-question-circle"></i> Controls</h3>
+                            <div class="canvas-help">
+                                <span><kbd>Click</kbd> Place tile</span>
+                                <span><kbd>Scroll</kbd> Zoom in/out</span>
+                                <span><kbd>Drag</kbd> Pan around</span>
+                                <span><kbd>R</kbd> Reset view</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Canvas Stage -->
+                    <div class="canvas-stage-wrap">
+                        <div class="canvas-toolbar">
+                            <div class="canvas-toolbar-left">
+                                <button class="btn btn-outline btn-sm" onclick="canvasResetView()" title="Reset View"><i class="fa-solid fa-expand"></i></button>
+                                <button class="btn btn-outline btn-sm" onclick="canvasToggleGrid()" title="Toggle Grid"><i class="fa-solid fa-border-all"></i></button>
+                            </div>
+                            <div class="canvas-toolbar-right">
+                                <span class="canvas-online" id="canvas-online"><i class="fa-solid fa-users"></i> 0 online</span>
+                            </div>
+                        </div>
+                        <div class="canvas-stage">
+                            <canvas id="canvas-board"></canvas>
+                            <div class="canvas-login-prompt" id="canvas-login-prompt" style="display:none">
+                                <i class="fa-solid fa-lock"></i> <a href="#" onclick="event.preventDefault();showModal('login')">Log in</a> or <a href="#" onclick="event.preventDefault();showModal('register')">register</a> to place tiles
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Right Sidebar -->
+                    <div class="canvas-sidebar canvas-sidebar-right">
+                        <div class="canvas-card">
+                            <h3><i class="fa-solid fa-clock-rotate-left"></i> Activity</h3>
+                            <div class="canvas-activity" id="canvas-activity">No recent activity</div>
+                        </div>
+                        <div class="canvas-card">
+                            <h3><i class="fa-solid fa-users"></i> Online</h3>
+                            <div class="canvas-presence" id="canvas-presence">No one here yet</div>
+                        </div>
+                    </div>
+                </div>
+            </div><!-- /game-pane-canvas -->
+
+        </div><!-- /game-shell -->
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════ -->
@@ -2848,6 +2922,9 @@
 <script src="/js/voice-channels.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>
 <script src="/js/game.js?v=2"></script>
+<script src="/js/canvas.js?v=1"></script>
+<script src="/js/staff-console.js?v=1"></script>
+<script src="/js/dashboard-moderation.js?v=1"></script>
 <script src="/js/pastes.js?v=1"></script>
 <script src="/js/messenger.js?v=1"></script>
 </body>

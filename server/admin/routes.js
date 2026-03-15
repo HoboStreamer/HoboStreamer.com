@@ -205,6 +205,14 @@ router.post('/users/:id/ban', (req, res) => {
             [req.params.id, reason || 'Banned by admin', req.user.id, expires]
         );
 
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: Number(req.params.id),
+            action_type: 'site_ban',
+            details: { reason: reason || 'Banned by admin', duration_hours: duration_hours || null },
+        });
+
         res.json({ message: 'User banned' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to ban user' });
@@ -216,6 +224,14 @@ router.delete('/users/:id/ban', (req, res) => {
     try {
         db.run('UPDATE users SET is_banned = 0, ban_reason = NULL WHERE id = ?', [req.params.id]);
         db.run('DELETE FROM bans WHERE user_id = ?', [req.params.id]);
+
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: Number(req.params.id),
+            action_type: 'site_unban',
+        });
+
         res.json({ message: 'User unbanned' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to unban user' });
@@ -362,7 +378,7 @@ router.delete('/settings/:key', (req, res) => {
 router.get('/moderators', (req, res) => {
     try {
         const mods = db.all(
-            "SELECT id, username, display_name, avatar_url, created_at, last_seen FROM users WHERE role = 'global_mod' ORDER BY username"
+            "SELECT id, username, display_name, avatar_url, created_at, last_seen FROM users WHERE role IN ('mod', 'global_mod') ORDER BY username"
         );
         res.json({ moderators: mods });
     } catch (err) {
@@ -382,6 +398,15 @@ router.post('/moderators', (req, res) => {
         if (user.role === 'global_mod') return res.status(400).json({ error: 'User is already a global moderator' });
 
         db.run("UPDATE users SET role = 'global_mod' WHERE id = ?", [user.id]);
+
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: user.id,
+            action_type: 'global_mod_promote',
+            details: { username: user.username },
+        });
+
         res.json({ message: `${user.username} promoted to global moderator` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to promote user' });
@@ -396,6 +421,15 @@ router.delete('/moderators/:id', (req, res) => {
         if (user.role !== 'global_mod') return res.status(400).json({ error: 'User is not a global moderator' });
 
         db.run("UPDATE users SET role = 'user' WHERE id = ?", [user.id]);
+
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: user.id,
+            action_type: 'global_mod_demote',
+            details: { username: user.username },
+        });
+
         res.json({ message: `${user.username} demoted to user` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to demote moderator' });

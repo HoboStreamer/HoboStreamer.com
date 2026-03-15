@@ -339,6 +339,36 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] channel_moderation_settings migration:', e.message); }
 
+    // Migrate: add extended channel moderation settings columns
+    try {
+        const cols = database.pragma('table_info(channel_moderation_settings)').map(c => c.name);
+        if (!cols.includes('allow_anonymous')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN allow_anonymous INTEGER DEFAULT 1');
+        if (!cols.includes('links_allowed')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN links_allowed INTEGER DEFAULT 1');
+        if (!cols.includes('account_age_gate_hours')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN account_age_gate_hours INTEGER DEFAULT 0');
+        if (!cols.includes('caps_percentage_limit')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN caps_percentage_limit INTEGER DEFAULT 0');
+        if (!cols.includes('aggressive_filter')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN aggressive_filter INTEGER DEFAULT 0');
+        if (!cols.includes('max_message_length')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN max_message_length INTEGER DEFAULT 500');
+    } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
+
+    // Migrate: create moderation_actions table for audit logging
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS moderation_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope_type TEXT NOT NULL DEFAULT 'site',
+            scope_id INTEGER,
+            actor_user_id INTEGER,
+            target_user_id INTEGER,
+            action_type TEXT NOT NULL,
+            details TEXT DEFAULT '{}',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_mod_actions_created ON moderation_actions(created_at DESC)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_mod_actions_actor ON moderation_actions(actor_user_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_mod_actions_scope ON moderation_actions(scope_type, scope_id)`);
+    } catch (e) { console.warn('[DB] moderation_actions migration:', e.message); }
+
     // Migrate: create pastes table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS pastes (
@@ -1437,6 +1467,12 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.slow_mode_seconds !== undefined) { updates.push('slow_mode_seconds = ?'); params.push(fields.slow_mode_seconds); }
         if (fields.followers_only !== undefined) { updates.push('followers_only = ?'); params.push(fields.followers_only ? 1 : 0); }
         if (fields.emote_only !== undefined) { updates.push('emote_only = ?'); params.push(fields.emote_only ? 1 : 0); }
+        if (fields.allow_anonymous !== undefined) { updates.push('allow_anonymous = ?'); params.push(fields.allow_anonymous ? 1 : 0); }
+        if (fields.links_allowed !== undefined) { updates.push('links_allowed = ?'); params.push(fields.links_allowed ? 1 : 0); }
+        if (fields.account_age_gate_hours !== undefined) { updates.push('account_age_gate_hours = ?'); params.push(Number(fields.account_age_gate_hours) || 0); }
+        if (fields.caps_percentage_limit !== undefined) { updates.push('caps_percentage_limit = ?'); params.push(Number(fields.caps_percentage_limit) || 0); }
+        if (fields.aggressive_filter !== undefined) { updates.push('aggressive_filter = ?'); params.push(fields.aggressive_filter ? 1 : 0); }
+        if (fields.max_message_length !== undefined) { updates.push('max_message_length = ?'); params.push(Math.max(50, Number(fields.max_message_length) || 500)); }
         if (updates.length > 0) {
             updates.push('updated_at = CURRENT_TIMESTAMP');
             params.push(channelId);
@@ -1729,6 +1765,85 @@ function getRecentPasteCommentsByIp(ip, seconds = 10) {
     `, [ip, seconds]);
 }
 
+// ── Moderation Action Logging ────────────────────────────────
+
+/**
+ * Log a moderation action for auditing.
+ * Used by canvas, chat moderation, bans, etc.
+ */
+function logModerationAction({ scope_type, scope_id, actor_user_id, target_user_id, action_type, details }) {
+    return run(`
+        INSERT INTO moderation_actions (scope_type, scope_id, actor_user_id, target_user_id, action_type, details)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `, [scope_type || 'site', scope_id || null, actor_user_id || null, target_user_id || null, action_type, JSON.stringify(details || {})]);
+}
+
+/**
+ * Get moderation actions with optional filters.
+ */
+function getModerationActions({ scopeType, scope_type, scopeId, scope_id, actor_user_id, target_user_id, limit = 50, offset = 0 } = {}) {
+    const conditions = [];
+    const params = [];
+    const st = scopeType || scope_type;
+    const si = scopeId || scope_id;
+    if (st) { conditions.push('ma.scope_type = ?'); params.push(st); }
+    if (si) { conditions.push('ma.scope_id = ?'); params.push(si); }
+    if (actor_user_id) { conditions.push('ma.actor_user_id = ?'); params.push(actor_user_id); }
+    if (target_user_id) { conditions.push('ma.target_user_id = ?'); params.push(target_user_id); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(limit, offset);
+    return all(`
+        SELECT ma.*, actor.username AS actor_username, target.username AS target_username
+        FROM moderation_actions ma
+        LEFT JOIN users actor ON ma.actor_user_id = actor.id
+        LEFT JOIN users target ON ma.target_user_id = target.id
+        ${where}
+        ORDER BY ma.created_at DESC
+        LIMIT ? OFFSET ?
+    `, params);
+}
+
+/**
+ * Get a single chat message by ID.
+ */
+function getChatMessageById(id) {
+    return get('SELECT * FROM chat_messages WHERE id = ?', [id]);
+}
+
+/**
+ * Delete a chat message by ID.
+ */
+function deleteChatMessage(id) {
+    return run('DELETE FROM chat_messages WHERE id = ?', [id]);
+}
+
+/**
+ * Search chat messages within a specific channel's streams.
+ */
+function searchChannelChatMessages(channelId, { query, userId, limit = 50, offset = 0 } = {}) {
+    const conditions = ['cm.stream_id IN (SELECT id FROM streams WHERE channel_id = ?)'];
+    const params = [channelId];
+    if (query) {
+        conditions.push('cm.message LIKE ?');
+        params.push(`%${query}%`);
+    }
+    if (userId) {
+        conditions.push('cm.user_id = ?');
+        params.push(userId);
+    }
+    params.push(limit, offset);
+    return {
+        messages: all(`
+            SELECT cm.*, u.username, u.display_name, u.avatar_url
+            FROM chat_messages cm
+            LEFT JOIN users u ON cm.user_id = u.id
+            WHERE ${conditions.join(' AND ')}
+            ORDER BY cm.created_at DESC
+            LIMIT ? OFFSET ?
+        `, params),
+    };
+}
+
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
@@ -1802,4 +1917,7 @@ module.exports = {
     getOrCreateAnonNum, loadAnonMappings,
     // Stream first chats (welcome messages)
     isFirstChatInChannel, recordFirstChat,
+    // Moderation Action Logging
+    logModerationAction, getModerationActions,
+    getChatMessageById, deleteChatMessage, searchChannelChatMessages,
 };

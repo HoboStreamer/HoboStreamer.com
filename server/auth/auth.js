@@ -89,6 +89,19 @@ function requireAdmin(req, res, next) {
 }
 
 /**
+ * Express middleware — requires staff (global_mod or admin)
+ * Wraps requireAuth + role check in one call for convenience.
+ */
+function requireStaff(req, res, next) {
+    requireAuth(req, res, () => {
+        if (!['global_mod', 'admin'].includes(req.user.role)) {
+            return res.status(403).json({ error: 'Staff access required' });
+        }
+        next();
+    });
+}
+
+/**
  * Express middleware — requires streamer or above role
  * Includes streamer, global_mod, admin.
  */
@@ -146,6 +159,7 @@ module.exports = {
     requireAuth,
     optionalAuth,
     requireAdmin,
+    requireStaff,
     requireStreamer,
     extractToken,
     extractWsToken,

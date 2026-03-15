@@ -84,6 +84,14 @@ router.post('/global-ban', permissions.requireGlobalMod, (req, res) => {
         // Immediately disconnect the user from chat
         chatServer.disconnectUser({ userId: targetUser.id, ip: resolvedIp });
 
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: targetUser.id,
+            action_type: 'global_ban',
+            details: { reason: banReason, duration_hours: duration_hours || null, ip: resolvedIp },
+        });
+
         res.json({ message: `${targetUser.username} globally banned` });
     } catch (err) {
         console.error('[Mod] Global ban error:', err.message);
@@ -125,6 +133,15 @@ router.post('/stream-ban', (req, res) => {
             // Disconnect from this stream's chat
             chatServer.disconnectUser({ userId: targetUser.id, ip: resolvedIp, streamId });
 
+            db.logModerationAction({
+                scope_type: 'stream',
+                scope_id: streamId,
+                actor_user_id: req.user.id,
+                target_user_id: targetUser.id,
+                action_type: 'stream_ban',
+                details: { reason: banReason, duration_hours: duration_hours || null },
+            });
+
             res.json({ message: `${targetUser.username} banned from stream` });
         } else {
             // Anon ban — look up IP from connected anon client
@@ -138,6 +155,14 @@ router.post('/stream-ban', (req, res) => {
 
             // Disconnect the anon user
             if (resolvedIp) chatServer.disconnectUser({ ip: resolvedIp, streamId });
+
+            db.logModerationAction({
+                scope_type: 'stream',
+                scope_id: streamId,
+                actor_user_id: req.user.id,
+                action_type: 'stream_ban_anon',
+                details: { anon_id, reason: banReason, duration_hours: duration_hours || null },
+            });
 
             res.json({ message: `${anon_id} banned from stream` });
         }
@@ -173,6 +198,16 @@ router.delete('/ban/:id', (req, res) => {
         }
 
         db.run('DELETE FROM bans WHERE id = ?', [req.params.id]);
+
+        db.logModerationAction({
+            scope_type: ban.stream_id ? 'stream' : 'site',
+            scope_id: ban.stream_id || undefined,
+            actor_user_id: req.user.id,
+            target_user_id: ban.user_id || undefined,
+            action_type: 'unban',
+            details: { ban_id: ban.id, original_reason: ban.reason },
+        });
+
         res.json({ message: 'Ban removed' });
     } catch (err) {
         console.error('[Mod] Unban error:', err.message);

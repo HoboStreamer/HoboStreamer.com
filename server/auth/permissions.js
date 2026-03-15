@@ -41,6 +41,12 @@ function isGlobalModOrAbove(user) {
     return roleRank(user?.role) >= ROLE_RANK.global_mod;
 }
 
+/**
+ * Alias for isGlobalModOrAbove — "staff" means admin or global_mod.
+ * Used by canvas and other systems that need a simple staff check.
+ */
+const isStaff = isGlobalModOrAbove;
+
 function isStreamer(user) {
     return roleRank(user?.role) >= ROLE_RANK.streamer;
 }
@@ -233,11 +239,23 @@ function getCapabilities(user) {
             view_all_logs: false,
             manage_own_channel: false,
             force_end_streams: false,
+            manage_canvas: false,
+            manage_canvas_settings: false,
+            can_access_staff_console: false,
+            can_manage_channels: false,
+            can_moderate_site_chat: false,
+            owned_channel_id: null,
+            moderated_channel_ids: [],
         };
     }
+
+    const ownedChannel = db.getChannelByUserId(user.id);
+    const moderatedChannels = db.getChannelsByModerator(user.id) || [];
+    const isStaffUser = isGlobalModOrAbove(user);
+
     return {
         admin_panel: canAccessAdminPanel(user),
-        moderate_global: isGlobalModOrAbove(user),
+        moderate_global: isStaffUser,
         manage_users: canManageUsers(user),
         manage_global_mods: canManageGlobalMods(user),
         manage_site_settings: canManageSiteSettings(user),
@@ -247,6 +265,13 @@ function getCapabilities(user) {
         view_all_logs: canViewOtherUserLogs(user),
         manage_own_channel: canManageOwnChannel(user),
         force_end_streams: canForceEndStreams(user),
+        manage_canvas: isStaffUser,
+        manage_canvas_settings: isAdmin(user),
+        can_access_staff_console: isStaffUser,
+        can_manage_channels: !!ownedChannel || moderatedChannels.length > 0 || isStaffUser,
+        can_moderate_site_chat: isStaffUser,
+        owned_channel_id: ownedChannel?.id || null,
+        moderated_channel_ids: moderatedChannels.map(ch => ch.id),
     };
 }
 
@@ -272,6 +297,9 @@ function requireGlobalMod(req, res, next) {
     next();
 }
 
+/** Alias for requireGlobalMod — used by canvas and other systems. */
+const requireStaff = requireGlobalMod;
+
 /**
  * Middleware: require streamer or above.
  */
@@ -287,6 +315,7 @@ module.exports = {
     isAdmin,
     isGlobalMod,
     isGlobalModOrAbove,
+    isStaff,
     isStreamer,
     isChannelMod,
     isChannelOwner,
@@ -314,5 +343,6 @@ module.exports = {
     // Middleware
     requireAdmin,
     requireGlobalMod,
+    requireStaff,
     requireStreamer,
 };

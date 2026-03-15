@@ -336,6 +336,65 @@ class ChatServer {
             return;
         }
 
+        // ── Channel moderation settings ──────────────────────
+        if (client.streamId) {
+            const chatSettings = this._getChannelChatSettings(client.streamId);
+            const isStaff = client.user && permissions.isGlobalModOrAbove(client.user);
+
+            // Max message length
+            const maxLen = Math.max(50, Number(chatSettings.max_message_length || 500));
+            if (text.length > maxLen) {
+                this.sendTo(ws, { type: 'system', message: `Message too long. Max ${maxLen} characters.` });
+                return;
+            }
+
+            // Anonymous not allowed
+            if (!client.user && !chatSettings.allow_anonymous) {
+                this.sendTo(ws, { type: 'system', message: 'This channel requires a logged-in account to chat.' });
+                return;
+            }
+
+            // Links disabled
+            if (chatSettings.links_allowed === 0 && /(https?:\/\/|www\.)/i.test(text) && !isStaff) {
+                this.sendTo(ws, { type: 'system', message: 'Links are disabled in this channel chat.' });
+                return;
+            }
+
+            // Followers only
+            if (chatSettings.followers_only && client.user && !isStaff) {
+                const stream = db.getStreamById(client.streamId);
+                if (stream && stream.user_id !== client.user.id && !db.isFollowing(client.user.id, stream.user_id)) {
+                    this.sendTo(ws, { type: 'system', message: 'This chat is currently followers-only.' });
+                    return;
+                }
+            }
+
+            // Account age gate
+            if (chatSettings.account_age_gate_hours && client.user && !isStaff) {
+                const ageMs = Date.now() - new Date(client.user.created_at).getTime();
+                if (ageMs < Number(chatSettings.account_age_gate_hours) * 3600000) {
+                    this.sendTo(ws, { type: 'system', message: `This chat requires accounts older than ${chatSettings.account_age_gate_hours} hour(s).` });
+                    return;
+                }
+            }
+
+            // Caps limit
+            if (chatSettings.caps_percentage_limit && text.length >= 8) {
+                const letters = text.replace(/[^a-z]/gi, '');
+                const caps = text.replace(/[^A-Z]/g, '');
+                if (letters.length >= 6 && (caps.length / letters.length) * 100 > Number(chatSettings.caps_percentage_limit)) {
+                    this.sendTo(ws, { type: 'system', message: 'Please ease up on the all-caps.' });
+                    return;
+                }
+            }
+
+            // Aggressive filter
+            if (chatSettings.aggressive_filter && !filterResult.safe) {
+                this.sendTo(ws, { type: 'system', message: 'Message blocked by channel moderation settings.' });
+                return;
+            }
+        }
+
         const username = client.user ? client.user.display_name : client.anonId;
         const coreUsername = client.user ? client.user.username : null;
         const role = client.user ? client.user.role : 'anon';
@@ -589,6 +648,7 @@ class ChatServer {
             case 'clear':
                 if (this.canModerate(client)) {
                     this.broadcastToStream(client.streamId, { type: 'clear' });
+                    this.logChatModeration(client, client.streamId ? 'clear_chat' : 'clear_global_chat');
                 } else {
                     this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });
                 }
@@ -626,6 +686,7 @@ class ChatServer {
                         type: 'system',
                         message: msg,
                     });
+                    this.logChatModeration(client, 'slowmode_update', { seconds });
                 } else {
                     this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });
                 }
@@ -689,6 +750,11 @@ class ChatServer {
             case 'ban': {
                 const targetUser = db.getUserByUsername(target);
                 if (targetUser) {
+                    // Prevent non-admins from banning admins
+                    if (permissions.isGlobalModOrAbove(targetUser) && targetUser.role === 'admin' && client.user.role !== 'admin') {
+                        this.sendTo(ws, { type: 'system', message: 'You cannot ban an admin.' });
+                        return;
+                    }
                     db.run(
                         `INSERT INTO bans (stream_id, user_id, reason, banned_by) VALUES (?, ?, ?, ?)`,
                         [client.streamId, targetUser.id, 'Banned by moderator', client.user.id]
@@ -697,6 +763,7 @@ class ChatServer {
                     this.broadcastToStream(client.streamId, {
                         type: 'system', message: `${target} has been banned.`
                     });
+                    this.logChatModeration(client, client.streamId ? 'channel_ban' : 'site_ban', { username: targetUser.username }, targetUser.id);
                 } else {
                     // Ban by anon ID
                     const anonTarget = this.findClientByAnonId(target, client.streamId);
@@ -707,6 +774,7 @@ class ChatServer {
                         );
                         this.sendTo(ws, { type: 'system', message: `${target} has been banned.` });
                     }
+                    this.logChatModeration(client, client.streamId ? 'channel_anon_ban' : 'site_anon_ban', { anon_id: target });
                 }
                 break;
             }
@@ -719,6 +787,7 @@ class ChatServer {
                         `INSERT INTO bans (stream_id, user_id, reason, banned_by, expires_at) VALUES (?, ?, ?, ?, ?)`,
                         [client.streamId, targetUser.id, `Timeout ${duration}s`, client.user.id, expires]
                     );
+                    this.logChatModeration(client, client.streamId ? 'channel_timeout' : 'site_timeout', { username: targetUser.username, duration }, targetUser.id);
                 }
                 this.sendTo(ws, { type: 'system', message: `${target} timed out for ${duration}s.` });
                 break;
@@ -728,6 +797,7 @@ class ChatServer {
                 if (targetUser) {
                     db.run('DELETE FROM bans WHERE user_id = ? AND (stream_id = ? OR stream_id IS NULL)',
                         [targetUser.id, client.streamId]);
+                    this.logChatModeration(client, client.streamId ? 'channel_unban' : 'site_unban', { username: targetUser.username }, targetUser.id);
                 }
                 this.sendTo(ws, { type: 'system', message: `${target} has been unbanned.` });
                 break;
@@ -1001,6 +1071,49 @@ class ChatServer {
             this.wss.clients.forEach(ws => ws.close());
             this.wss.close();
         }
+    }
+
+    /**
+     * Get channel moderation settings for a stream.
+     * Caches the channel lookup to avoid repeated DB queries.
+     */
+    _getChannelChatSettings(streamId) {
+        const defaults = {
+            slow_mode_seconds: 0, followers_only: 0, emote_only: 0,
+            allow_anonymous: 1, links_allowed: 1, account_age_gate_hours: 0,
+            caps_percentage_limit: 0, aggressive_filter: 0, max_message_length: 500,
+        };
+        if (!streamId) return defaults;
+        try {
+            const stream = db.getStreamById(streamId);
+            if (!stream) return defaults;
+            const channel = stream.channel_id ? db.getChannelById(stream.channel_id) : db.getChannelByUserId(stream.user_id);
+            if (!channel) return defaults;
+            return { ...defaults, ...db.getChannelModerationSettings(channel.id) };
+        } catch {
+            return defaults;
+        }
+    }
+
+    /**
+     * Log a moderation action from a chat command (/ban, /timeout, /clear, /slowmode).
+     * Non-critical — failures are silently ignored.
+     */
+    logChatModeration(client, actionType, details = {}, targetUserId = null) {
+        try {
+            const stream = client.streamId ? db.getStreamById(client.streamId) : null;
+            const channel = stream?.channel_id
+                ? db.getChannelById(stream.channel_id)
+                : stream ? db.getChannelByUserId(stream.user_id) : null;
+            db.logModerationAction({
+                scope_type: channel ? 'channel' : 'site',
+                scope_id: channel?.id || undefined,
+                actor_user_id: client.user?.id || undefined,
+                target_user_id: targetUserId || undefined,
+                action_type: actionType,
+                details: { stream_id: client.streamId || null, ...details },
+            });
+        } catch { /* non-critical */ }
     }
 }
 
