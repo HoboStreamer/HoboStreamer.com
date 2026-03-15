@@ -2927,43 +2927,183 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 }
 .vod-extra-details .detail-chip i { color: var(--accent); font-size: 0.75rem; }
 
-/* VOD Clip Creator Panel ───────────────────────────────────── */
-.vod-clip-panel {
-    background: rgba(22,22,26,0.85);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    padding: 16px 20px;
-    margin-top: 14px;
+/* VOD Clip Creator Modal ────────────────────────────────────── */
+.clip-modal-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+    display: flex; justify-content: center; align-items: center;
+    padding: 16px; animation: fadeIn 0.2s ease;
 }
-.vod-clip-header {
+.clip-modal {
+    background: var(--bg-card, #1e1e24); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 18px; width: 100%; max-width: 720px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6); overflow: hidden;
+    animation: modalSlideUp 0.25s ease;
+}
+@keyframes modalSlideUp {
+    from { opacity: 0; transform: translateY(24px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.clip-modal-header {
     display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 10px;
+    padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.07);
 }
-.vod-clip-header h4 {
-    margin: 0; font-size: 1rem; display: flex; align-items: center; gap: 8px;
+.clip-modal-header h3 {
+    margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;
 }
-.vod-clip-times {
-    display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;
+.clip-modal-close {
+    background: none; border: none; color: var(--text-secondary); cursor: pointer;
+    padding: 6px 8px; border-radius: 8px; font-size: 1.1rem; transition: all 0.15s;
 }
-.vod-clip-time-group {
-    display: flex; flex-direction: column; gap: 4px;
+.clip-modal-close:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+.clip-modal-body { padding: 16px 20px 12px; }
+.clip-modal-footer {
+    display: flex; justify-content: flex-end; gap: 10px;
+    padding: 12px 20px 16px; border-top: 1px solid rgba(255,255,255,0.07);
 }
-.vod-clip-time-group label {
-    font-size: 0.78rem; color: var(--text-secondary);
+
+/* Preview player */
+.clip-preview-wrap {
+    position: relative; border-radius: 12px; overflow: hidden;
+    background: #000; margin-bottom: 16px; aspect-ratio: 16/9;
+}
+.clip-preview-video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.clip-preview-badge {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(0,0,0,0.65); color: #fff; font-size: 0.72rem;
+    padding: 3px 8px; border-radius: 6px; pointer-events: none;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+}
+.clip-preview-play-btn {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.3); border: none; color: #fff; font-size: 2rem;
+    cursor: pointer; transition: background 0.2s; opacity: 0;
+}
+.clip-preview-wrap:hover .clip-preview-play-btn { opacity: 1; }
+.clip-preview-play-btn:hover { background: rgba(0,0,0,0.5); }
+
+/* Timeline section */
+.clip-timeline-section { margin-bottom: 16px; }
+.clip-timeline-label {
+    font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 8px;
+}
+.clip-timeline-wrap {
+    position: relative; padding: 12px 8px 20px; cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+}
+.clip-timeline-bar {
+    position: relative; height: 8px; border-radius: 4px;
+    background: rgba(255,255,255,0.1);
+}
+.clip-timeline-fill {
+    position: absolute; top: 0; height: 100%; border-radius: 4px;
+    background: linear-gradient(90deg, var(--accent, #c0965c), #dbb077);
+    opacity: 0.5; transition: left 0.05s, width 0.05s;
+    pointer-events: none;
+}
+.clip-handle {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 20px; height: 28px; cursor: ew-resize; z-index: 3;
+    display: flex; align-items: center; justify-content: center;
+    transition: left 0.05s;
+}
+.clip-handle-grip {
+    width: 12px; height: 22px; border-radius: 4px;
+    background: var(--accent, #c0965c); border: 2px solid rgba(255,255,255,0.35);
+    box-shadow: 0 1px 6px rgba(0,0,0,0.4);
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.clip-handle:hover .clip-handle-grip,
+.clip-handle:active .clip-handle-grip {
+    transform: scaleY(1.15); box-shadow: 0 2px 10px rgba(192,150,92,0.5);
+}
+.clip-handle-start .clip-handle-grip { border-radius: 4px 2px 2px 4px; }
+.clip-handle-end .clip-handle-grip { border-radius: 2px 4px 4px 2px; }
+.clip-playhead {
+    position: absolute; top: -4px; width: 2px; height: 16px;
+    background: #fff; border-radius: 1px; z-index: 2;
+    transform: translateX(-1px); display: none; pointer-events: none;
+    box-shadow: 0 0 4px rgba(255,255,255,0.5);
+}
+.clip-timeline-ticks {
+    position: relative; height: 14px; margin-top: 4px;
+}
+.clip-tick {
+    position: absolute; font-size: 0.65rem; color: var(--text-muted, #666);
+    transform: translateX(-50%); white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Time controls row */
+.clip-time-controls {
+    display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px;
+}
+.clip-time-field {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.clip-time-field label {
+    font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+}
+.clip-time-input-group {
     display: flex; align-items: center; gap: 4px;
 }
-.vod-clip-time-row {
-    display: flex; gap: 6px; align-items: center;
+.clip-time-display {
+    font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums;
+    padding: 4px 10px; min-width: 60px; text-align: center;
+    background: rgba(255,255,255,0.05); border-radius: 8px;
 }
-.vod-clip-time-row input {
-    width: 80px; text-align: center; font-variant-numeric: tabular-nums;
+.clip-nudge-btn {
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-secondary); cursor: pointer; border-radius: 6px;
+    padding: 4px 7px; font-size: 0.75rem; transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center;
 }
-.vod-clip-duration {
-    font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums;
-    padding: 4px 0;
+.clip-nudge-btn:hover { background: rgba(255,255,255,0.12); color: var(--text-primary); }
+.clip-nudge-btn.clip-nudge-sm { font-weight: 700; min-width: 26px; }
+.clip-set-btn {
+    background: none; border: none; color: var(--accent, #c0965c); cursor: pointer;
+    font-size: 0.72rem; padding: 2px 0; transition: opacity 0.15s; opacity: 0.75;
 }
-.vod-clip-actions {
-    margin-top: 12px; display: flex; gap: 8px;
+.clip-set-btn:hover { opacity: 1; text-decoration: underline; }
+
+/* Duration display */
+.clip-duration-display {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    min-width: 80px; padding-top: 18px;
+}
+.clip-duration-number {
+    font-size: 2rem; font-weight: 800; line-height: 1;
+    font-variant-numeric: tabular-nums; color: var(--accent, #c0965c);
+    transition: color 0.2s;
+}
+.clip-duration-number.clip-duration-over { color: #e53e3e; }
+.clip-duration-number.clip-duration-zero { color: var(--text-muted); }
+.clip-duration-label { font-size: 0.7rem; color: var(--text-secondary); }
+.clip-duration-bar-wrap {
+    width: 100%; height: 3px; border-radius: 2px;
+    background: rgba(255,255,255,0.08); margin-top: 4px; overflow: hidden;
+}
+.clip-duration-bar {
+    height: 100%; border-radius: 2px; transition: width 0.1s;
+    background: var(--accent, #c0965c);
+}
+
+/* Title input */
+.clip-title-section { margin-bottom: 4px; }
+.clip-title-section .form-input {
+    width: 100%; box-sizing: border-box;
+}
+
+/* Mobile responsive */
+@media (max-width: 600px) {
+    .clip-modal { max-width: 100%; border-radius: 14px; }
+    .clip-time-controls { flex-direction: column; align-items: stretch; gap: 8px; }
+    .clip-duration-display { flex-direction: row; gap: 8px; padding-top: 0; min-width: auto; }
+    .clip-duration-number { font-size: 1.3rem; }
+    .clip-time-field { flex-direction: column; }
+    .clip-handle { width: 28px; height: 36px; }
+    .clip-handle-grip { width: 16px; height: 28px; }
 }
 
 /* Chat Replay Sidebar ─────────────────────────────────────── */

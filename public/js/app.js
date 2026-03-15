@@ -1599,47 +1599,333 @@ async function loadVodPlayer(vodId) {
 /* ── VOD Clip Creator ─────────────────────────────────────────── */
 let _vpClipStart = 0;
 let _vpClipEnd = 0;
+let _clipDragging = null;      // 'start' | 'end' | null
+let _clipPreviewRAF = null;
+let _clipVideoDuration = 0;
+const CLIP_MAX_DURATION = 60;
 
+function openClipCreator() {
+    if (!currentUser) { toast('Login required to create clips', 'info'); return; }
+    const modal = document.getElementById('vp-clip-modal');
+    const video = document.getElementById('vp-video');
+    if (!modal || !video) return;
+
+    _clipVideoDuration = video.duration || 0;
+    if (!_clipVideoDuration || !isFinite(_clipVideoDuration)) {
+        toast('Video not loaded yet', 'error');
+        return;
+    }
+
+    // Pause the main video
+    video.pause();
+
+    // Initialize clip range: center on current position, 30s default
+    const cur = video.currentTime;
+    const halfDur = 15;
+    _vpClipStart = Math.max(0, cur - halfDur);
+    _vpClipEnd = Math.min(_clipVideoDuration, _vpClipStart + 30);
+    if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipEnd = _vpClipStart + CLIP_MAX_DURATION;
+
+    // Setup preview video
+    const preview = document.getElementById('clip-preview-video');
+    if (preview) {
+        const filename = video.src.split('/').pop().split('?')[0];
+        preview.src = `/api/vods/file/${filename}`;
+        preview.currentTime = _vpClipStart;
+        preview.muted = true;
+    }
+
+    // Build timeline ticks
+    _buildClipTimelineTicks();
+
+    modal.style.display = '';
+    document.body.style.overflow = 'hidden';
+
+    _updateClipCreatorUI();
+    _setupClipDragHandlers();
+    document.addEventListener('keydown', _clipModalKeyHandler);
+}
+
+/**
+ * Legacy alias — the HTML button still calls toggleVodClipPanel()
+ */
 function toggleVodClipPanel() {
-    const panel = document.getElementById('vp-clip-panel');
-    if (!panel) return;
-    const visible = panel.style.display !== 'none';
-    panel.style.display = visible ? 'none' : '';
-    if (!visible) {
-        // Initialize marks from current time
-        const video = document.getElementById('vp-video');
-        if (video) {
-            const cur = Math.floor(video.currentTime);
-            _vpClipStart = Math.max(0, cur - 15);
-            _vpClipEnd = Math.min(cur, _vpClipStart + 60);
-            _updateVodClipUI();
-        }
+    const modal = document.getElementById('vp-clip-modal');
+    if (modal && modal.style.display !== 'none') {
+        closeClipCreator();
+    } else {
+        openClipCreator();
     }
 }
 
-function setVodClipMark(which) {
+function closeClipCreator() {
+    const modal = document.getElementById('vp-clip-modal');
+    if (modal) modal.style.display = 'none';
+    document.body.style.overflow = '';
+
+    // Stop preview playback
+    const preview = document.getElementById('clip-preview-video');
+    if (preview) { preview.pause(); preview.removeAttribute('src'); preview.load(); }
+    if (_clipPreviewRAF) { cancelAnimationFrame(_clipPreviewRAF); _clipPreviewRAF = null; }
+
+    _teardownClipDragHandlers();
+    document.removeEventListener('keydown', _clipModalKeyHandler);
+}
+
+function _clipModalKeyHandler(e) {
+    if (e.key === 'Escape') { closeClipCreator(); e.stopPropagation(); }
+}
+
+function _buildClipTimelineTicks() {
+    const ticksEl = document.getElementById('clip-timeline-ticks');
+    if (!ticksEl || !_clipVideoDuration) return;
+    ticksEl.innerHTML = '';
+
+    // Determine tick interval based on duration
+    let interval;
+    if (_clipVideoDuration <= 60) interval = 10;
+    else if (_clipVideoDuration <= 300) interval = 30;
+    else if (_clipVideoDuration <= 1800) interval = 120;
+    else if (_clipVideoDuration <= 7200) interval = 300;
+    else interval = 600;
+
+    for (let t = 0; t <= _clipVideoDuration; t += interval) {
+        const pct = (t / _clipVideoDuration) * 100;
+        const tick = document.createElement('span');
+        tick.className = 'clip-tick';
+        tick.style.left = pct + '%';
+        tick.textContent = formatDuration(t);
+        ticksEl.appendChild(tick);
+    }
+}
+
+function _updateClipCreatorUI() {
+    if (!_clipVideoDuration) return;
+    const startPct = (_vpClipStart / _clipVideoDuration) * 100;
+    const endPct = (_vpClipEnd / _clipVideoDuration) * 100;
+    const duration = Math.max(0, _vpClipEnd - _vpClipStart);
+
+    // Timeline handles & fill
+    const handleStart = document.getElementById('clip-handle-start');
+    const handleEnd = document.getElementById('clip-handle-end');
+    const fill = document.getElementById('clip-timeline-fill');
+    if (handleStart) handleStart.style.left = startPct + '%';
+    if (handleEnd) handleEnd.style.left = endPct + '%';
+    if (fill) { fill.style.left = startPct + '%'; fill.style.width = (endPct - startPct) + '%'; }
+
+    // Time displays
+    const startDisp = document.getElementById('clip-start-display');
+    const endDisp = document.getElementById('clip-end-display');
+    if (startDisp) startDisp.textContent = formatDuration(Math.floor(_vpClipStart));
+    if (endDisp) endDisp.textContent = formatDuration(Math.floor(_vpClipEnd));
+
+    // Duration display
+    const durNum = document.getElementById('clip-duration-number');
+    const durBar = document.getElementById('clip-duration-bar');
+    const durSec = Math.floor(duration);
+    if (durNum) {
+        durNum.textContent = durSec;
+        durNum.classList.toggle('clip-duration-over', durSec > CLIP_MAX_DURATION);
+        durNum.classList.toggle('clip-duration-zero', durSec <= 0);
+    }
+    if (durBar) durBar.style.width = Math.min(100, (durSec / CLIP_MAX_DURATION) * 100) + '%';
+
+    // Create button state
+    const btn = document.getElementById('clip-create-btn');
+    if (btn) btn.disabled = durSec <= 0 || durSec > CLIP_MAX_DURATION;
+}
+
+function setClipMarkToCurrent(which) {
     const video = document.getElementById('vp-video');
     if (!video) return;
     const cur = video.currentTime;
     if (which === 'start') {
-        _vpClipStart = cur;
-        if (_vpClipEnd <= _vpClipStart) _vpClipEnd = Math.min(cur + 30, video.duration || cur + 30);
+        _vpClipStart = Math.max(0, cur);
+        if (_vpClipEnd <= _vpClipStart) _vpClipEnd = Math.min(_vpClipStart + 30, _clipVideoDuration);
+        if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipEnd = _vpClipStart + CLIP_MAX_DURATION;
     } else {
-        _vpClipEnd = cur;
-        if (_vpClipStart >= _vpClipEnd) _vpClipStart = Math.max(0, cur - 30);
+        _vpClipEnd = Math.min(cur, _clipVideoDuration);
+        if (_vpClipStart >= _vpClipEnd) _vpClipStart = Math.max(0, _vpClipEnd - 30);
+        if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipStart = _vpClipEnd - CLIP_MAX_DURATION;
     }
-    _updateVodClipUI();
+    _updateClipCreatorUI();
+    _seekClipPreview(_vpClipStart);
 }
 
-function _updateVodClipUI() {
-    const startEl = document.getElementById('vp-clip-start');
-    const endEl = document.getElementById('vp-clip-end');
-    const durEl = document.getElementById('vp-clip-duration');
-    if (startEl) startEl.value = formatDuration(Math.floor(_vpClipStart));
-    if (endEl) endEl.value = formatDuration(Math.floor(_vpClipEnd));
-    const dur = Math.max(0, Math.floor(_vpClipEnd - _vpClipStart));
-    if (durEl) durEl.textContent = dur + 's' + (dur > 60 ? ' (max 60s!)' : '');
-    if (durEl) durEl.style.color = dur > 60 || dur <= 0 ? '#e53e3e' : '';
+function nudgeClipMark(which, delta) {
+    if (which === 'start') {
+        _vpClipStart = Math.max(0, Math.min(_vpClipStart + delta, _clipVideoDuration));
+        if (_vpClipStart >= _vpClipEnd) _vpClipEnd = Math.min(_vpClipStart + 1, _clipVideoDuration);
+        if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipEnd = _vpClipStart + CLIP_MAX_DURATION;
+    } else {
+        _vpClipEnd = Math.max(0, Math.min(_vpClipEnd + delta, _clipVideoDuration));
+        if (_vpClipEnd <= _vpClipStart) _vpClipStart = Math.max(0, _vpClipEnd - 1);
+        if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipStart = _vpClipEnd - CLIP_MAX_DURATION;
+    }
+    _updateClipCreatorUI();
+    _seekClipPreview(which === 'start' ? _vpClipStart : _vpClipEnd - 1);
+}
+
+function _seekClipPreview(time) {
+    const preview = document.getElementById('clip-preview-video');
+    if (preview && preview.readyState >= 1) {
+        preview.currentTime = Math.max(0, time);
+    }
+}
+
+function toggleClipPreview() {
+    const preview = document.getElementById('clip-preview-video');
+    const btn = document.getElementById('clip-preview-play-btn');
+    if (!preview) return;
+
+    if (preview.paused) {
+        preview.currentTime = _vpClipStart;
+        preview.play().catch(() => {});
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+        _clipPreviewLoop();
+    } else {
+        preview.pause();
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-play"></i>';
+        if (_clipPreviewRAF) { cancelAnimationFrame(_clipPreviewRAF); _clipPreviewRAF = null; }
+    }
+}
+
+function _clipPreviewLoop() {
+    const preview = document.getElementById('clip-preview-video');
+    if (!preview || preview.paused) return;
+
+    // Update playhead position
+    const playhead = document.getElementById('clip-playhead');
+    if (playhead && _clipVideoDuration) {
+        const pct = (preview.currentTime / _clipVideoDuration) * 100;
+        playhead.style.left = pct + '%';
+        playhead.style.display = '';
+    }
+
+    // Stop at clip end
+    if (preview.currentTime >= _vpClipEnd) {
+        preview.pause();
+        preview.currentTime = _vpClipStart;
+        const btn = document.getElementById('clip-preview-play-btn');
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-play"></i>';
+        if (playhead) playhead.style.display = 'none';
+        _clipPreviewRAF = null;
+        return;
+    }
+
+    _clipPreviewRAF = requestAnimationFrame(_clipPreviewLoop);
+}
+
+/* -- Clip timeline drag handlers -- */
+let _clipDragBound = {};
+
+function _setupClipDragHandlers() {
+    const wrap = document.getElementById('clip-timeline-wrap');
+    if (!wrap) return;
+
+    const onMouseDown = (e) => {
+        const handle = e.target.closest('.clip-handle-start, .clip-handle-end');
+        if (!handle) {
+            // Click on timeline bar itself → move nearest handle
+            const rect = wrap.getBoundingClientRect();
+            const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const time = pct * _clipVideoDuration;
+            // Move whichever handle is closer
+            const distStart = Math.abs(time - _vpClipStart);
+            const distEnd = Math.abs(time - _vpClipEnd);
+            if (distStart <= distEnd) {
+                _vpClipStart = Math.max(0, time);
+                if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipEnd = _vpClipStart + CLIP_MAX_DURATION;
+            } else {
+                _vpClipEnd = Math.min(_clipVideoDuration, time);
+                if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipStart = _vpClipEnd - CLIP_MAX_DURATION;
+            }
+            _updateClipCreatorUI();
+            _seekClipPreview(_vpClipStart);
+            return;
+        }
+        _clipDragging = handle.classList.contains('clip-handle-start') ? 'start' : 'end';
+        e.preventDefault();
+    };
+
+    const onMouseMove = (e) => {
+        if (!_clipDragging) return;
+        const rect = wrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const time = pct * _clipVideoDuration;
+
+        if (_clipDragging === 'start') {
+            _vpClipStart = Math.max(0, Math.min(time, _vpClipEnd - 1));
+            if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipEnd = Math.min(_vpClipStart + CLIP_MAX_DURATION, _clipVideoDuration);
+        } else {
+            _vpClipEnd = Math.min(_clipVideoDuration, Math.max(time, _vpClipStart + 1));
+            if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipStart = Math.max(0, _vpClipEnd - CLIP_MAX_DURATION);
+        }
+        _updateClipCreatorUI();
+    };
+
+    const onMouseUp = () => {
+        if (_clipDragging) {
+            _seekClipPreview(_vpClipStart);
+            _clipDragging = null;
+        }
+    };
+
+    // Touch support
+    const onTouchStart = (e) => {
+        const handle = e.target.closest('.clip-handle-start, .clip-handle-end');
+        if (!handle) return;
+        _clipDragging = handle.classList.contains('clip-handle-start') ? 'start' : 'end';
+        e.preventDefault();
+    };
+
+    const onTouchMove = (e) => {
+        if (!_clipDragging) return;
+        const touch = e.touches[0];
+        const rect = wrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+        const time = pct * _clipVideoDuration;
+
+        if (_clipDragging === 'start') {
+            _vpClipStart = Math.max(0, Math.min(time, _vpClipEnd - 1));
+            if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipEnd = Math.min(_vpClipStart + CLIP_MAX_DURATION, _clipVideoDuration);
+        } else {
+            _vpClipEnd = Math.min(_clipVideoDuration, Math.max(time, _vpClipStart + 1));
+            if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipStart = Math.max(0, _vpClipEnd - CLIP_MAX_DURATION);
+        }
+        _updateClipCreatorUI();
+        e.preventDefault();
+    };
+
+    const onTouchEnd = () => {
+        if (_clipDragging) {
+            _seekClipPreview(_vpClipStart);
+            _clipDragging = null;
+        }
+    };
+
+    wrap.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    wrap.addEventListener('touchstart', onTouchStart, { passive: false });
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+
+    _clipDragBound = { wrap, onMouseDown, onMouseMove, onMouseUp, onTouchStart, onTouchMove, onTouchEnd };
+}
+
+function _teardownClipDragHandlers() {
+    const b = _clipDragBound;
+    if (b.wrap) {
+        b.wrap.removeEventListener('mousedown', b.onMouseDown);
+        b.wrap.removeEventListener('touchstart', b.onTouchStart);
+    }
+    document.removeEventListener('mousemove', b.onMouseMove);
+    document.removeEventListener('mouseup', b.onMouseUp);
+    document.removeEventListener('touchmove', b.onTouchMove);
+    document.removeEventListener('touchend', b.onTouchEnd);
+    _clipDragBound = {};
+    _clipDragging = null;
 }
 
 async function createVodClip() {
@@ -1649,10 +1935,10 @@ async function createVodClip() {
 
     const duration = _vpClipEnd - _vpClipStart;
     if (duration <= 0) { toast('End time must be after start time', 'error'); return; }
-    if (duration > 60) { toast('Clips are limited to 60 seconds', 'error'); return; }
+    if (duration > CLIP_MAX_DURATION) { toast('Clips are limited to 60 seconds', 'error'); return; }
 
-    const title = document.getElementById('vp-clip-title')?.value?.trim() || 'Untitled Clip';
-    const btn = document.getElementById('vp-clip-create-btn');
+    const title = document.getElementById('clip-title-input')?.value?.trim() || 'Untitled Clip';
+    const btn = document.getElementById('clip-create-btn');
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating…'; }
 
     try {
@@ -1666,13 +1952,10 @@ async function createVodClip() {
             }
         });
         toast('Clip created!', 'success');
-        // Hide panel and navigate to the new clip
-        const panel = document.getElementById('vp-clip-panel');
-        if (panel) panel.style.display = 'none';
+        closeClipCreator();
         if (result.clip?.id) {
             navigate(`/clip/${result.clip.id}`);
         } else {
-            // Reload VOD page to show new clip in grid
             loadVodPlayer(vodId);
         }
     } catch (err) {
