@@ -188,6 +188,67 @@ main#app { position: relative; z-index: 1; }
     color: var(--accent-light);
 }
 
+/* ── Nav Dropdown (Game → HoboGame / Canvas) ──────────────────── */
+.nav-dropdown {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.nav-dropdown .nav-link {
+    user-select: none;
+}
+
+.nav-dd-caret {
+    font-size: 0.6rem;
+    margin-left: 2px;
+    transition: transform 0.2s;
+}
+
+.nav-dropdown.open .nav-dd-caret {
+    transform: rotate(180deg);
+}
+
+.nav-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 170px;
+    background: var(--bg-tertiary, #1a1a2e);
+    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    border-radius: var(--radius, 8px);
+    box-shadow: var(--shadow-lg, 0 12px 28px rgba(0,0,0,0.4));
+    z-index: 1002;
+    overflow: hidden;
+    padding: 4px 0;
+}
+
+.nav-dropdown.open .nav-dropdown-menu {
+    display: block;
+}
+
+.nav-dropdown-menu a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    color: var(--text-primary, #e8e6e3);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+}
+
+.nav-dropdown-menu a:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.06));
+}
+
+.nav-dropdown-menu a i {
+    width: 18px;
+    text-align: center;
+    color: var(--text-secondary, #9a9a9a);
+}
+
 /* Live indicator on Go Live nav link */
 .nav-live-dot {
     font-size: 0.45rem; color: #e74c3c; margin-left: 4px;
@@ -1975,6 +2036,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 /* 1024px: Hamburger menu + hide nav links (catches Steam Deck & small laptops) */
 @media (max-width: 1024px) {
     .nav-link span { display: none; }
+    .nav-dd-caret { display: none; }
     .nav-link { padding: 8px 10px; position: relative; }
     .navbar { gap: 8px; padding: 0 8px; }
     .nav-brand { font-size: 1.1rem; }
@@ -2003,6 +2065,29 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     }
     .nav-links.show .nav-link span { display: inline; }
     .nav-links.show .nav-link[data-tooltip]::after { display: none; }
+
+    /* Nav dropdown in mobile: always show items inline, no floating menu */
+    .nav-links.show .nav-dropdown { width: 100%; }
+    .nav-links.show .nav-dropdown .nav-dd-caret { display: none; }
+    .nav-links.show .nav-dropdown-menu {
+        display: flex;
+        flex-direction: column;
+        position: static;
+        background: none;
+        border: none;
+        box-shadow: none;
+        padding: 0 0 0 18px;
+        gap: 4px;
+        margin-top: 4px;
+    }
+    .nav-links.show .nav-dropdown-menu a {
+        padding: 10px 14px;
+        border-radius: var(--radius, 8px);
+        border: 1px solid rgba(255,255,255,0.05);
+        background: rgba(255,255,255,0.03);
+    }
+    .nav-links.show .nav-dropdown > .nav-link { display: none; }
+
     /* Nav-right stays visible, pushed to end before hamburger */
     .nav-right { order: 9; margin-left: auto; gap: 6px; }
     /* Compact currency badges */
