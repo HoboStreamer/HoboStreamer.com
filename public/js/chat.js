@@ -512,6 +512,9 @@ function handleChatMessage(msg) {
             // Also update broadcast page viewer count element
             if (typeof updateViewerCountBroadcast === 'function') updateViewerCountBroadcast(msg.count);
             break;
+        case 'users-list':
+            renderChatUsersList(msg.users);
+            break;
         case 'auth':
             if (msg.authenticated) {
                 addSystemMessage(`Chatting as ${msg.username}`);
@@ -589,7 +592,7 @@ function handleChatMessage(msg) {
                     speakBroadcastTTS(msg.message || msg.text, msg.username);
                 }
             } else if (chatSettings.ttsEnabled) {
-                speakTTS(msg.message || msg.text, msg.voiceFX);
+                speakTTS(msg.message || msg.text, msg.voiceFX, msg.username);
             }
             break;
         case 'tts-audio':
@@ -1921,9 +1924,15 @@ function timeAgoShort(dateStr) {
 /* ── TTS ──────────────────────────────────────────────────────── */
 
 /** Browser-side TTS using SpeechSynthesis API (Self TTS / legacy fallback) */
-function speakTTS(text, voiceFX) {
+function speakTTS(text, voiceFX, username) {
     if (!('speechSynthesis' in window)) return;
-    const utter = new SpeechSynthesisUtterance(text);
+    // Replace URLs with TTS-friendly descriptions
+    let cleanText = text.replace(/(?:https?:\/\/)?(?:www\.)?([a-z0-9][-a-z0-9]*(?:\.[a-z]{2,})+)(?:[^\s]*)/gi, (m, domain) => {
+        const parts = domain.split('.');
+        const site = parts.length > 2 ? parts[parts.length - 2] : parts[0];
+        return username ? `(${username} sent a link to ${site})` : `(link to ${site})`;
+    });
+    const utter = new SpeechSynthesisUtterance(cleanText);
     utter.rate = voiceFX?.rate || 1;
     utter.pitch = voiceFX?.pitch || 1;
     utter.volume = (chatSettings.ttsVolume || 80) / 100;
@@ -2823,4 +2832,68 @@ function popoutStreamChat() {
         return;
     }
     popoutChat('stream', chatStreamId);
+}
+
+/* ── Chat Users List ──────────────────────────────────────────── */
+
+/** Current users data cache */
+let _chatUsersData = null;
+
+/**
+ * Toggle the chat users panel open/closed.
+ * On open, request the users list from the server.
+ */
+function toggleChatUsers(btn) {
+    // Find the nearest chat container and its users panel
+    const chatContainer = btn ? btn.closest('.chat-sidebar, .global-chat-container, .offline-global-chat') : null;
+    const panels = chatContainer
+        ? [chatContainer.querySelector('.chat-users-panel')]
+        : document.querySelectorAll('.chat-users-panel');
+
+    for (const panel of panels) {
+        if (!panel) continue;
+        const isOpen = panel.classList.toggle('open');
+        if (isOpen && chatWs && chatWs.readyState === WebSocket.OPEN) {
+            chatWs.send(JSON.stringify({ type: 'get-users' }));
+        }
+    }
+}
+
+/**
+ * Render the users list into all open panels.
+ */
+function renderChatUsersList(users) {
+    if (!users) return;
+    _chatUsersData = users;
+    const panels = document.querySelectorAll('.chat-users-panel');
+    for (const panel of panels) {
+        if (!panel.classList.contains('open')) continue;
+        const { logged = [], anonCount = 0 } = users;
+        const total = logged.length + anonCount;
+        let html = `<div class="chat-users-header"><span>Users — ${total}</span><button class="chat-users-close" onclick="closeChatUsersPanel(this)" title="Close"><i class="fa-solid fa-xmark"></i></button></div>`;
+        html += '<div class="chat-users-list">';
+        for (const u of logged) {
+            const avatar = u.avatar_url
+                ? `<img src="${esc(u.avatar_url)}" class="chat-users-avatar" alt="" loading="lazy">`
+                : `<div class="chat-users-avatar chat-users-avatar-default"><i class="fa-solid fa-user"></i></div>`;
+            const badge = u.role === 'admin' ? '<span class="chat-users-badge admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>'
+                : u.role === 'global_mod' ? '<span class="chat-users-badge mod" title="Moderator"><i class="fa-solid fa-shield"></i></span>'
+                : u.role === 'streamer' ? '<span class="chat-users-badge streamer" title="Streamer"><i class="fa-solid fa-video"></i></span>'
+                : '';
+            html += `<div class="chat-users-row"><a href="/${esc(u.username)}" class="chat-users-link" onclick="event.preventDefault(); if(typeof showPage==='function') showPage('/${esc(u.username)}')">${avatar}<span class="chat-users-name">${esc(u.display_name)}</span>${badge}</a></div>`;
+        }
+        if (anonCount > 0) {
+            html += `<div class="chat-users-row chat-users-anon"><div class="chat-users-avatar chat-users-avatar-default"><i class="fa-solid fa-user-secret"></i></div><span class="chat-users-name">${anonCount} anonymous viewer${anonCount !== 1 ? 's' : ''}</span></div>`;
+        }
+        if (total === 0) {
+            html += '<div class="chat-users-empty">No one here yet</div>';
+        }
+        html += '</div>';
+        panel.innerHTML = html;
+    }
+}
+
+function closeChatUsersPanel(btn) {
+    const panel = btn?.closest('.chat-users-panel');
+    if (panel) panel.classList.remove('open');
 }

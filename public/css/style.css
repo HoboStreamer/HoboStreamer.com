@@ -164,9 +164,11 @@ main#app { position: relative; z-index: 1; }
 
 .nav-links {
     display: flex; gap: 4px; flex: 1; min-width: 0;
-    overflow: visible;
+    overflow-x: auto; overflow-y: visible;
     align-items: center;
     scrollbar-width: none;
+    scroll-behavior: smooth;
+    position: relative;
 }
 .nav-links::-webkit-scrollbar { display: none; }
 .nav-link {
@@ -211,9 +213,7 @@ main#app { position: relative; z-index: 1; }
 
 .nav-dropdown-menu {
     display: none;
-    position: absolute;
-    top: 100%;
-    left: 0;
+    position: fixed;
     min-width: 180px;
     background: var(--bg-tertiary, #1a1a2e);
     border: 1px solid var(--border, rgba(255,255,255,0.08));
@@ -222,11 +222,9 @@ main#app { position: relative; z-index: 1; }
     z-index: 1002;
     overflow: hidden;
     padding: 4px 0;
-    /* Invisible bridge to prevent gap hover-out */
-    margin-top: 0;
 }
 
-/* Open on hover (desktop) or click */
+/* Open on hover (desktop) or click — JS positions the fixed menu */
 .nav-dropdown:hover .nav-dropdown-menu,
 .nav-dropdown.open .nav-dropdown-menu {
     display: block;
@@ -259,6 +257,34 @@ main#app { position: relative; z-index: 1; }
     color: var(--text-secondary, #9a9a9a);
     transition: color 0.15s;
 }
+
+/* ── Nav Scroll Arrows (visible when nav links overflow) ────── */
+.nav-scroll-btn {
+    display: none;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-tertiary, #1a1a2e);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 50%;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    cursor: pointer;
+    z-index: 10;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+.nav-scroll-btn:hover {
+    background: var(--accent, #c0965c);
+    color: #fff;
+}
+.nav-scroll-btn.visible { display: flex; }
+.nav-scroll-left { left: 0; }
+.nav-scroll-right { right: 0; }
 
 /* Live indicator on Go Live nav link */
 .nav-live-dot {
@@ -1184,6 +1210,52 @@ main#app { position: relative; z-index: 1; }
 .chat-settings-btn:hover { color: var(--text-primary); background: var(--bg-tertiary); }
 .mobile-chat-close { display: none; background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); transition: all 0.15s; }
 .mobile-chat-close:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+
+/* ── Chat Users Panel ────────────────────────────────────── */
+.chat-users-panel {
+    display: none; background: var(--bg-tertiary); border-bottom: 1px solid var(--border);
+    max-height: 280px; overflow-y: auto; font-size: 0.82rem;
+    animation: cspSlideDown 0.15s ease-out;
+}
+.chat-users-panel.open { display: block; }
+.chat-users-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; font-weight: 600; color: var(--text-secondary);
+    font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border); position: sticky; top: 0;
+    background: var(--bg-tertiary); z-index: 1;
+}
+.chat-users-close {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 2px 4px; border-radius: var(--radius-sm); font-size: 0.85rem;
+}
+.chat-users-close:hover { color: var(--text-primary); }
+.chat-users-list { padding: 4px 0; }
+.chat-users-row {
+    display: flex; align-items: center; gap: 8px; padding: 4px 12px;
+    transition: background 0.1s;
+}
+.chat-users-row:hover { background: var(--bg-secondary); }
+.chat-users-link {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--text-primary); text-decoration: none; width: 100%;
+}
+.chat-users-avatar {
+    width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+}
+.chat-users-avatar-default {
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-secondary); color: var(--text-muted); font-size: 0.65rem;
+}
+.chat-users-name { font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-users-badge {
+    font-size: 0.65rem; padding: 1px 4px; border-radius: 3px; flex-shrink: 0; margin-left: auto;
+}
+.chat-users-badge.admin { color: #ff6b6b; }
+.chat-users-badge.mod { color: #51cf66; }
+.chat-users-badge.streamer { color: #9775fa; }
+.chat-users-anon { color: var(--text-muted); }
+.chat-users-empty { padding: 16px 12px; text-align: center; color: var(--text-muted); }
 
 /* ── Chat Settings Panel ─────────────────────────────────── */
 .chat-settings-panel {

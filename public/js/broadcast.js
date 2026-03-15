@@ -4007,7 +4007,13 @@ function speakBroadcastTTS(text, username) {
     if (s.ttsMode === 'off') return;
     const maxQueue = parseInt(s.ttsQueue) || 0;
     if (maxQueue > 0 && ttsQueue.length >= maxQueue) return;
-    const fullText = s.ttsNames === 'on' && username ? `${username} says: ${text}` : text;
+    // Replace URLs with TTS-friendly descriptions
+    let cleanText = text.replace(/(?:https?:\/\/)?(?:www\.)?([a-z0-9][-a-z0-9]*(?:\.[a-z]{2,})+)(?:[^\s]*)/gi, (m, domain) => {
+        const parts = domain.split('.');
+        const site = parts.length > 2 ? parts[parts.length - 2] : parts[0];
+        return username ? `(${username} sent a link to ${site})` : `(link to ${site})`;
+    });
+    const fullText = s.ttsNames === 'on' && username ? `${username} says: ${cleanText}` : cleanText;
     ttsQueue.push(fullText); processTTSQueue();
 }
 

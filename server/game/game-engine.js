@@ -6,6 +6,7 @@
 const db = require('../db/database');
 const fs = require('fs');
 const path = require('path');
+const cosmeticsSystem = require('../monetization/cosmetics');
 const {
     ITEMS, RECIPES, STRUCTURES, CROPS, MONSTERS, RARITY_COLORS, BIOME_COLORS,
     FISH_TABLES, MINE_TABLES, WOOD_TABLES, WATER_ZONE_TABLES,
@@ -759,6 +760,11 @@ function getItemCount(userId, itemId) {
 function addItem(userId, itemId, qty = 1) {
     db.run(`INSERT INTO game_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)
             ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + ?`, [userId, itemId, qty, qty]);
+    // Auto-unlock hats as global cosmetics so they show as chat badges
+    const item = ITEMS[itemId];
+    if (item?.category === 'hats') {
+        try { cosmeticsSystem.unlockCosmetic(userId, itemId); } catch {}
+    }
 }
 
 function removeItem(userId, itemId, qty = 1) {

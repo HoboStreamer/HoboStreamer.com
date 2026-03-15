@@ -7,6 +7,7 @@ const express = require('express');
 const router = express.Router();
 const game = require('./game-engine');
 const db = require('../db/database');
+const cosmetics = require('../monetization/cosmetics');
 const { requireGameAuth } = require('./game-auth');
 
 router.use(requireGameAuth);
@@ -290,17 +291,35 @@ router.post('/dungeon/fight', (req, res) => {
 
 router.post('/equip', (req, res) => {
     try {
-        const result = game.equipItem(req.user.id, req.body.itemId);
+        const itemId = req.body.itemId;
+        const item = game.ITEMS?.[itemId];
+        // Hats are globally equipped cosmetics — sync to cosmetic system
+        if (item?.category === 'hats') {
+            // Auto-unlock as cosmetic if not already
+            if (!cosmetics.ownsCosmetic(req.user.id, itemId)) {
+                cosmetics.unlockCosmetic(req.user.id, itemId);
+            }
+            const cosResult = cosmetics.equipCosmetic(req.user.id, itemId);
+            if (cosResult.error) return res.json(cosResult);
+            // Update live player hat from cosmetic
+            const existing = game.getLivePlayers()[req.user.id];
+            if (existing) {
+                game.updateLivePlayer(req.user.id, { ...existing, equip_hat: itemId });
+            }
+            return res.json({ success: true, equipped: itemId, slot: 'equip_hat', global: true });
+        }
+        const result = game.equipItem(req.user.id, itemId);
         // Update live player state so other players see the new equipment
         if (result.success) {
             const player = game.getPlayer(req.user.id);
             const existing = game.getLivePlayers()[req.user.id];
             if (existing) {
+                const cosmeticProfile = cosmetics.getCosmeticProfile(req.user.id);
                 game.updateLivePlayer(req.user.id, {
                     ...existing,
                     equip_weapon: player.equip_weapon,
                     equip_armor: player.equip_armor,
-                    equip_hat: player.equip_hat,
+                    equip_hat: cosmeticProfile.hatFX?.itemId || null,
                     equip_pickaxe: player.equip_pickaxe,
                     equip_axe: player.equip_axe,
                     equip_rod: player.equip_rod,
@@ -314,17 +333,29 @@ router.post('/equip', (req, res) => {
 
 router.post('/unequip', (req, res) => {
     try {
-        const result = game.unequipItem(req.user.id, req.body.slot);
+        const slot = req.body.slot;
+        // Hats are globally equipped cosmetics — unequip from cosmetic system
+        if (slot === 'hats') {
+            cosmetics.unequipSlot(req.user.id, 'hat');
+            // Update live player hat
+            const existing = game.getLivePlayers()[req.user.id];
+            if (existing) {
+                game.updateLivePlayer(req.user.id, { ...existing, equip_hat: null });
+            }
+            return res.json({ success: true, slot: 'equip_hat', global: true });
+        }
+        const result = game.unequipItem(req.user.id, slot);
         // Update live player state so other players see the change
         if (result.success) {
             const player = game.getPlayer(req.user.id);
             const existing = game.getLivePlayers()[req.user.id];
             if (existing) {
+                const cosmeticProfile = cosmetics.getCosmeticProfile(req.user.id);
                 game.updateLivePlayer(req.user.id, {
                     ...existing,
                     equip_weapon: player.equip_weapon,
                     equip_armor: player.equip_armor,
-                    equip_hat: player.equip_hat,
+                    equip_hat: cosmeticProfile.hatFX?.itemId || null,
                     equip_pickaxe: player.equip_pickaxe,
                     equip_axe: player.equip_axe,
                     equip_rod: player.equip_rod,
