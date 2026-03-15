@@ -43,6 +43,14 @@ function createStreamState(streamData) {
         thumbnailCtx: null,
         statsPollPending: false,
         robotStreamer: null,
+        // Screen share + camera PiP composite state
+        _screenStream: null,       // raw getDisplayMedia stream
+        _cameraOverlayStream: null, // raw getUserMedia camera stream for PiP
+        _compositeCanvas: null,
+        _compositeCtx: null,
+        _compositeAnimFrame: null,
+        _cameraOverlayEnabled: false,
+    };
     };
 }
 
@@ -1786,6 +1794,7 @@ function syncSettingsUI() {
     setCheck('bc-serverReconnect', s.serverReconnect !== false);
     setVal('bc-allowSounds', s.allowSounds); setVal('bc-soundVolume', s.soundVolume);
     setCheck('bc-screenShare', s.screenShare);
+    _syncScreenShareUI();
     syncRobotStreamerUI();
 }
 
@@ -1922,6 +1931,8 @@ function cleanupStream(streamId) {
     // Stop media tracks (suppress recovery so ended events don't trigger it)
     stopTrackKeepalive(streamId);
     ss._suppressRecovery = true;
+    _cleanupComposite(ss);
+    if (ss._screenStream) { ss._screenStream.getTracks().forEach(t => t.stop()); ss._screenStream = null; }
     if (ss.localStream) { ss.localStream.getTracks().forEach(t => t.stop()); ss.localStream = null; }
     stopRobotStreamerRestream(streamId, { quiet: true }).catch(() => {});
     _cleanupSfuProduce(streamId);
@@ -2308,16 +2319,156 @@ async function startMediaCapture(streamId, opts = {}) {
     let videoConstraints, audioConstraints;
 
     if (s.screenShare) {
+        // Stop any previous composite resources
+        _cleanupComposite(ss);
+
         const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: res.w }, height: { ideal: res.h }, frameRate: { ideal: getBroadcastFrameRate() } }, audio: true });
-        videoConstraints = null;
+        ss._screenStream = screenStream;
+
+        // Handle user cancelling screen share picker (track ended immediately)
+        const screenTrack = screenStream.getVideoTracks()[0];
+        if (screenTrack) {
+            screenTrack.addEventListener('ended', () => {
+                // User clicked "Stop sharing" in browser UI — switch back to camera
+                if (broadcastState.settings.screenShare && !ss._suppressRecovery) {
+                    console.log('[Broadcast] Screen share ended by user/OS — switching back to camera');
+                    broadcastState.settings.screenShare = false; saveBroadcastSettings();
+                    _syncScreenShareUI();
+                    // Re-acquire camera
+                    const sid = broadcastState.activeStreamId;
+                    if (sid && ss === getStreamState(sid)) {
+                        ss._suppressRecovery = true;
+                        _cleanupComposite(ss);
+                        startMediaCapture(sid).then(() => {
+                            _replaceAllViewerTracks(sid);
+                            startVodRecording(sid);
+                            ss._suppressRecovery = false;
+                        }).catch(() => { ss._suppressRecovery = false; });
+                    }
+                }
+            }, { once: true });
+        }
+
+        // Get mic audio separately (screen audio is fallback)
         audioConstraints = buildAudioConstraints(s, forceAudio);
         let audioStream;
         try { audioStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false }); } catch { audioStream = null; }
-        const combined = new MediaStream();
-        screenStream.getVideoTracks().forEach(t => combined.addTrack(t));
-        if (audioStream) audioStream.getAudioTracks().forEach(t => combined.addTrack(t));
-        else screenStream.getAudioTracks().forEach(t => combined.addTrack(t));
-        ss.localStream = combined;
+
+        // If camera overlay is enabled, capture camera too and composite onto canvas
+        if (ss._cameraOverlayEnabled) {
+            let camStream;
+            try {
+                const camConstraints = { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: getBroadcastFrameRate() } };
+                if (forceCamera && forceCamera !== 'default') camConstraints.deviceId = forceCamera;
+                camStream = await _getUserMediaWithTimeout({ video: camConstraints, audio: false });
+            } catch (err) {
+                console.warn('[Broadcast] Camera overlay failed, proceeding without:', err.message);
+                camStream = null;
+            }
+            ss._cameraOverlayStream = camStream;
+
+            if (camStream) {
+                // Composite: screen + camera PiP on canvas
+                const canvas = document.createElement('canvas');
+                canvas.width = screenTrack.getSettings().width || res.w;
+                canvas.height = screenTrack.getSettings().height || res.h;
+                const ctx = canvas.getContext('2d');
+                ss._compositeCanvas = canvas;
+                ss._compositeCtx = ctx;
+
+                const screenVideo = document.createElement('video');
+                screenVideo.srcObject = screenStream;
+                screenVideo.muted = true;
+                screenVideo.playsInline = true;
+                screenVideo.play().catch(() => {});
+
+                const camVideo = document.createElement('video');
+                camVideo.srcObject = camStream;
+                camVideo.muted = true;
+                camVideo.playsInline = true;
+                camVideo.play().catch(() => {});
+
+                // Animate composite at broadcast framerate
+                const fps = getBroadcastFrameRate();
+                const frameInterval = 1000 / fps;
+                let lastDraw = 0;
+                const drawFrame = (ts) => {
+                    ss._compositeAnimFrame = requestAnimationFrame(drawFrame);
+                    if (ts - lastDraw < frameInterval) return;
+                    lastDraw = ts;
+                    // Update canvas size if screen resolution changes
+                    const sw = screenTrack.getSettings().width || canvas.width;
+                    const sh = screenTrack.getSettings().height || canvas.height;
+                    if (canvas.width !== sw) canvas.width = sw;
+                    if (canvas.height !== sh) canvas.height = sh;
+                    // Draw screen as background
+                    ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+                    // Draw camera PiP in bottom-right corner (20% of screen width)
+                    if (camVideo.videoWidth > 0) {
+                        const pipW = Math.round(canvas.width * 0.2);
+                        const pipH = Math.round(pipW * (camVideo.videoHeight / camVideo.videoWidth));
+                        const pipX = canvas.width - pipW - 16;
+                        const pipY = canvas.height - pipH - 16;
+                        // Rounded rectangle border
+                        const r = 10;
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.moveTo(pipX + r, pipY);
+                        ctx.lineTo(pipX + pipW - r, pipY);
+                        ctx.quadraticCurveTo(pipX + pipW, pipY, pipX + pipW, pipY + r);
+                        ctx.lineTo(pipX + pipW, pipY + pipH - r);
+                        ctx.quadraticCurveTo(pipX + pipW, pipY + pipH, pipX + pipW - r, pipY + pipH);
+                        ctx.lineTo(pipX + r, pipY + pipH);
+                        ctx.quadraticCurveTo(pipX, pipY + pipH, pipX, pipY + pipH - r);
+                        ctx.lineTo(pipX, pipY + r);
+                        ctx.quadraticCurveTo(pipX, pipY, pipX + r, pipY);
+                        ctx.closePath();
+                        ctx.clip();
+                        ctx.drawImage(camVideo, pipX, pipY, pipW, pipH);
+                        ctx.restore();
+                        // Border stroke
+                        ctx.save();
+                        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(pipX + r, pipY);
+                        ctx.lineTo(pipX + pipW - r, pipY);
+                        ctx.quadraticCurveTo(pipX + pipW, pipY, pipX + pipW, pipY + r);
+                        ctx.lineTo(pipX + pipW, pipY + pipH - r);
+                        ctx.quadraticCurveTo(pipX + pipW, pipY + pipH, pipX + pipW - r, pipY + pipH);
+                        ctx.lineTo(pipX + r, pipY + pipH);
+                        ctx.quadraticCurveTo(pipX, pipY + pipH, pipX, pipY + pipH - r);
+                        ctx.lineTo(pipX, pipY + r);
+                        ctx.quadraticCurveTo(pipX, pipY, pipX + r, pipY);
+                        ctx.closePath();
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                };
+                ss._compositeAnimFrame = requestAnimationFrame(drawFrame);
+
+                // Create composited MediaStream from canvas
+                const compositeStream = canvas.captureStream(fps);
+                // Add audio from mic (or screen audio fallback)
+                if (audioStream) audioStream.getAudioTracks().forEach(t => compositeStream.addTrack(t));
+                else screenStream.getAudioTracks().forEach(t => compositeStream.addTrack(t));
+                ss.localStream = compositeStream;
+            } else {
+                // Camera not available — screen-only
+                const combined = new MediaStream();
+                screenStream.getVideoTracks().forEach(t => combined.addTrack(t));
+                if (audioStream) audioStream.getAudioTracks().forEach(t => combined.addTrack(t));
+                else screenStream.getAudioTracks().forEach(t => combined.addTrack(t));
+                ss.localStream = combined;
+            }
+        } else {
+            // Screen share without camera overlay
+            const combined = new MediaStream();
+            screenStream.getVideoTracks().forEach(t => combined.addTrack(t));
+            if (audioStream) audioStream.getAudioTracks().forEach(t => combined.addTrack(t));
+            else screenStream.getAudioTracks().forEach(t => combined.addTrack(t));
+            ss.localStream = combined;
+        }
     } else {
         videoConstraints = {
             width: { ideal: res.w },
@@ -3945,25 +4096,96 @@ async function flipCamera() {
 
 async function toggleScreenShare() {
     broadcastState.settings.screenShare = !broadcastState.settings.screenShare; saveBroadcastSettings();
-    const el = document.getElementById('bc-screenShare'); if (el) el.checked = broadcastState.settings.screenShare;
+    _syncScreenShareUI();
     const ss = getActiveStreamState();
     const streamId = broadcastState.activeStreamId;
     if (ss && ss.localStream && streamId) {
         try {
             await uploadVodRecording(streamId, { finalizeStream: false });
-            ss._suppressRecovery = true; // prevent track.ended from triggering recovery
-            ss.localStream.getTracks().forEach(t => t.stop()); await startMediaCapture(streamId);
+            ss._suppressRecovery = true;
+            // Stop old tracks and composite
+            _cleanupComposite(ss);
+            ss.localStream.getTracks().forEach(t => t.stop());
+            await startMediaCapture(streamId);
             startVodRecording(streamId);
-            const nvt = ss.localStream.getVideoTracks()[0]; const nat = ss.localStream.getAudioTracks()[0];
-            for (const [, pc] of ss.viewerConnections) {
-                const vs = pc.getSenders().find(s => s.track?.kind === 'video'); if (vs && nvt) vs.replaceTrack(nvt);
-                const as = pc.getSenders().find(s => s.track?.kind === 'audio'); if (as && nat) as.replaceTrack(nat);
-            }
-            syncRobotStreamerTracks(streamId).catch(() => {});
+            _replaceAllViewerTracks(streamId);
             ss._suppressRecovery = false;
             toast(broadcastState.settings.screenShare ? 'Screen share on' : 'Camera on', 'success');
-        } catch (err) { ss._suppressRecovery = false; toast('Failed to switch: ' + err.message, 'error'); broadcastState.settings.screenShare = !broadcastState.settings.screenShare; saveBroadcastSettings(); }
+        } catch (err) {
+            ss._suppressRecovery = false;
+            toast('Failed to switch: ' + err.message, 'error');
+            broadcastState.settings.screenShare = !broadcastState.settings.screenShare; saveBroadcastSettings();
+            _syncScreenShareUI();
+        }
     }
+}
+
+/** Toggle camera PiP overlay during screen share */
+async function toggleCameraOverlay() {
+    const ss = getActiveStreamState();
+    const streamId = broadcastState.activeStreamId;
+    if (!ss || !broadcastState.settings.screenShare) {
+        toast('Camera overlay only works during screen share', 'info');
+        return;
+    }
+    ss._cameraOverlayEnabled = !ss._cameraOverlayEnabled;
+    const btn = document.getElementById('bc-btn-cam-overlay');
+    if (btn) btn.classList.toggle('bc-ctrl-btn-active', ss._cameraOverlayEnabled);
+    if (ss.localStream && streamId) {
+        try {
+            await uploadVodRecording(streamId, { finalizeStream: false });
+            ss._suppressRecovery = true;
+            _cleanupComposite(ss);
+            ss.localStream.getTracks().forEach(t => t.stop());
+            if (ss._screenStream) { ss._screenStream.getTracks().forEach(t => t.stop()); ss._screenStream = null; }
+            await startMediaCapture(streamId);
+            startVodRecording(streamId);
+            _replaceAllViewerTracks(streamId);
+            ss._suppressRecovery = false;
+            toast(ss._cameraOverlayEnabled ? 'Camera overlay on' : 'Camera overlay off', 'success');
+        } catch (err) {
+            ss._suppressRecovery = false;
+            ss._cameraOverlayEnabled = !ss._cameraOverlayEnabled;
+            if (btn) btn.classList.toggle('bc-ctrl-btn-active', ss._cameraOverlayEnabled);
+            toast('Failed to toggle camera overlay: ' + err.message, 'error');
+        }
+    }
+}
+
+/** Replace video+audio tracks on all viewer PeerConnections and SFU */
+function _replaceAllViewerTracks(streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss || !ss.localStream) return;
+    const nvt = ss.localStream.getVideoTracks()[0];
+    const nat = ss.localStream.getAudioTracks()[0];
+    for (const [, pc] of ss.viewerConnections) {
+        const vs = pc.getSenders().find(s => s.track?.kind === 'video' || s.track === null);
+        if (vs && nvt) vs.replaceTrack(nvt);
+        const as = pc.getSenders().find(s => s.track?.kind === 'audio');
+        if (as && nat) as.replaceTrack(nat);
+    }
+    syncRobotStreamerTracks(streamId).catch(() => {});
+}
+
+/** Cleanup composite canvas + camera overlay resources */
+function _cleanupComposite(ss) {
+    if (ss._compositeAnimFrame) { cancelAnimationFrame(ss._compositeAnimFrame); ss._compositeAnimFrame = null; }
+    if (ss._cameraOverlayStream) { ss._cameraOverlayStream.getTracks().forEach(t => t.stop()); ss._cameraOverlayStream = null; }
+    ss._compositeCanvas = null;
+    ss._compositeCtx = null;
+}
+
+/** Sync screen share button UI state */
+function _syncScreenShareUI() {
+    const active = broadcastState.settings.screenShare;
+    const el = document.getElementById('bc-screenShare');
+    if (el) el.checked = active;
+    const btn = document.getElementById('bc-btn-screenshare');
+    if (btn) btn.classList.toggle('bc-ctrl-btn-active', active);
+    // Show/hide camera overlay button
+    const camBtn = document.getElementById('bc-btn-cam-overlay');
+    if (camBtn) camBtn.style.display = active ? '' : 'none';
+    if (!active && camBtn) camBtn.classList.remove('bc-ctrl-btn-active');
 }
 
 function toggleBroadcastStats() { const el = document.getElementById('bc-stats-overlay'); if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none'; }
@@ -4152,10 +4374,25 @@ function initBroadcastSettingsListeners() {
         const el = document.getElementById(`bc-${key}`);
         if (el) el.addEventListener('change', () => updateBroadcastSetting(key, el.value));
     });
-    ['autoGain', 'echoCancellation', 'noiseSuppression', 'manualGainEnabled', 'force48kSampleRate', 'screenShare'].forEach(key => {
+    ['autoGain', 'echoCancellation', 'noiseSuppression', 'manualGainEnabled', 'force48kSampleRate'].forEach(key => {
         const el = document.getElementById(`bc-${key}`);
         if (el) el.addEventListener('change', () => updateBroadcastSetting(key, el.checked));
     });
+    // Screen share checkbox: toggle live if streaming, otherwise just save setting
+    const screenShareEl = document.getElementById('bc-screenShare');
+    if (screenShareEl) {
+        screenShareEl.addEventListener('change', () => {
+            const ss = getActiveStreamState();
+            if (ss && ss.localStream) {
+                // Revert the checkbox — toggleScreenShare() will set it properly
+                screenShareEl.checked = broadcastState.settings.screenShare;
+                toggleScreenShare();
+            } else {
+                updateBroadcastSetting('screenShare', screenShareEl.checked);
+                _syncScreenShareUI();
+            }
+        });
+    }
 }
 
 /* ── Live Clip Creator ──────────────────────────────────────── */
