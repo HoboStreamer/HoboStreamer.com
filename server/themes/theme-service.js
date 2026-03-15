@@ -956,27 +956,6 @@ function getThemeBySlug(slug) {
 }
 
 /**
- * Sanitize CSS variable values — reject dangerous patterns.
- */
-const CSS_FORBIDDEN = /url\s*\(|expression\s*\(|@import|javascript:|data:|behavior\s*:|binding\s*:/i;
-function sanitizeCssVariables(vars) {
-    if (!vars || typeof vars !== 'object') return {};
-    const clean = {};
-    for (const [key, value] of Object.entries(vars)) {
-        if (!key.startsWith('--')) continue; // only CSS custom properties
-        const v = String(value);
-        if (CSS_FORBIDDEN.test(v)) {
-            throw new Error(`Forbidden CSS value in ${key}`);
-        }
-        if (v.length > 200) {
-            throw new Error(`CSS value too long for ${key}`);
-        }
-        clean[key] = v;
-    }
-    return clean;
-}
-
-/**
  * Create a community theme.
  */
 function createTheme({ name, author_id, description, mode, variables, tags }) {
@@ -985,14 +964,13 @@ function createTheme({ name, author_id, description, mode, variables, tags }) {
     const existing = db.get('SELECT id FROM themes WHERE slug = ?', [slug]);
     if (existing) throw new Error('Theme name already taken');
 
+    const varsJson = typeof variables === 'string' ? variables : JSON.stringify(variables);
     const parsedVars = typeof variables === 'string' ? JSON.parse(variables) : variables;
-    const sanitized = sanitizeCssVariables(parsedVars);
-    const varsJson = JSON.stringify(sanitized);
 
     return db.run(
         `INSERT INTO themes (name, slug, author_id, description, mode, variables, preview_colors, is_builtin, is_public, tags)
          VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?)`,
-        [name, slug, author_id, description || '', mode || 'dark', varsJson, previewFromVars(sanitized), JSON.stringify(tags || [])]
+        [name, slug, author_id, description || '', mode || 'dark', varsJson, previewFromVars(parsedVars), JSON.stringify(tags || [])]
     );
 }
 
@@ -1016,11 +994,10 @@ function updateTheme(id, authorId, { name, description, mode, variables, tags })
     if (description !== undefined) { updates.push('description = ?'); params.push(description); }
     if (mode) { updates.push('mode = ?'); params.push(mode); }
     if (variables) {
+        const varsJson = typeof variables === 'string' ? variables : JSON.stringify(variables);
         const parsedVars = typeof variables === 'string' ? JSON.parse(variables) : variables;
-        const sanitized = sanitizeCssVariables(parsedVars);
-        const varsJson = JSON.stringify(sanitized);
         updates.push('variables = ?', 'preview_colors = ?');
-        params.push(varsJson, previewFromVars(sanitized));
+        params.push(varsJson, previewFromVars(parsedVars));
     }
     if (tags) { updates.push('tags = ?'); params.push(JSON.stringify(tags)); }
 

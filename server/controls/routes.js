@@ -79,18 +79,12 @@ router.post('/:streamId', requireAuth, (req, res) => {
         if (!label || !command) {
             return res.status(400).json({ error: 'Label and command required' });
         }
-        const cleanIcon = icon || 'fa-gamepad';
-        if (!/^fa-[a-z0-9-]+$/.test(cleanIcon)) {
-            return res.status(400).json({ error: 'Invalid icon class' });
-        }
-        const cleanLabel = String(label).replace(/<[^>]*>/g, '').slice(0, 50);
-        const cleanCommand = String(command).replace(/[<>"'`\\]/g, '').slice(0, 100);
 
         db.createControl({
             stream_id: parseInt(req.params.streamId),
-            label: cleanLabel,
-            command: cleanCommand,
-            icon: cleanIcon,
+            label,
+            command,
+            icon: icon || 'fa-gamepad',
             control_type: control_type || 'button',
             key_binding,
             cooldown_ms: cooldown_ms || 500,
@@ -115,14 +109,9 @@ router.put('/:streamId/:id', requireAuth, (req, res) => {
         const updates = [];
         const params = [];
 
-        if (label !== undefined) { updates.push('label = ?'); params.push(String(label).replace(/<[^>]*>/g, '').slice(0, 50)); }
-        if (command !== undefined) { updates.push('command = ?'); params.push(String(command).replace(/[<>"'`\\]/g, '').slice(0, 100)); }
-        if (icon !== undefined) {
-            if (!/^fa-[a-z0-9-]+$/.test(icon)) {
-                return res.status(400).json({ error: 'Invalid icon class' });
-            }
-            updates.push('icon = ?'); params.push(icon);
-        }
+        if (label !== undefined) { updates.push('label = ?'); params.push(label); }
+        if (command !== undefined) { updates.push('command = ?'); params.push(command); }
+        if (icon !== undefined) { updates.push('icon = ?'); params.push(icon); }
         if (control_type !== undefined) { updates.push('control_type = ?'); params.push(control_type); }
         if (key_binding !== undefined) { updates.push('key_binding = ?'); params.push(key_binding); }
         if (cooldown_ms !== undefined) { updates.push('cooldown_ms = ?'); params.push(cooldown_ms); }

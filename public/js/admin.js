@@ -3,127 +3,18 @@
    ═══════════════════════════════════════════════════════════════ */
 
 let currentAdminTab = 'users';
-const adminSecretStore = Object.create(null);
-
-function isSensitiveAdminSettingKey(key = '') {
-    return /(password|secret|token|private|credential|api[_-]?key|service[_-]?account|bearer|webhook)/i.test(String(key || ''));
-}
-
-function maskAdminSecret(value) {
-    const str = String(value ?? '');
-    if (!str) return '••••••••';
-    if (str.length <= 8) return '•'.repeat(str.length);
-    return `${str.slice(0, 4)}${'•'.repeat(Math.max(4, str.length - 8))}${str.slice(-4)}`;
-}
-
-function adminCopyText(text, successMessage = 'Copied to clipboard') {
-    const value = String(text ?? '');
-    if (!value) {
-        toast('Nothing to copy', 'error');
-        return Promise.resolve(false);
-    }
-
-    if (navigator.clipboard?.writeText) {
-        return navigator.clipboard.writeText(value)
-            .then(() => {
-                toast(successMessage, 'success');
-                return true;
-            })
-            .catch(() => adminCopyTextFallback(value, successMessage));
-    }
-
-    return adminCopyTextFallback(value, successMessage);
-}
-
-function adminCopyTextFallback(text, successMessage) {
-    try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        toast(successMessage, 'success');
-        return Promise.resolve(true);
-    } catch {
-        toast('Copy failed', 'error');
-        return Promise.resolve(false);
-    }
-}
-
-function copyAdminSecret(secretId) {
-    return adminCopyText(adminSecretStore[secretId], 'Secret copied to clipboard');
-}
-
-function toggleAdminSecret(secretId, button) {
-    const el = document.getElementById(secretId);
-    if (!el) return;
-
-    const visible = el.dataset.visible === 'true';
-    const nextVisible = !visible;
-    el.dataset.visible = nextVisible ? 'true' : 'false';
-    el.textContent = nextVisible ? String(adminSecretStore[secretId] ?? '') : maskAdminSecret(adminSecretStore[secretId]);
-    el.classList.toggle('is-masked', !nextVisible);
-
-    if (button) {
-        button.innerHTML = `<i class="fa-solid ${nextVisible ? 'fa-eye-slash' : 'fa-eye'}"></i>`;
-        button.title = nextVisible ? 'Hide value' : 'Reveal value';
-        button.setAttribute('aria-label', button.title);
-    }
-}
-
-function toggleAdminSensitiveInput(inputId, button) {
-    const input = document.getElementById(inputId);
-    if (!input) return;
-
-    const isTextarea = input.tagName === 'TEXTAREA';
-    const masked = isTextarea ? input.dataset.masked !== 'false' : input.type === 'password';
-    const nextMasked = !masked;
-
-    if (isTextarea) {
-        input.dataset.masked = nextMasked ? 'true' : 'false';
-        input.readOnly = nextMasked;
-        input.classList.toggle('is-masked', nextMasked);
-        if (!nextMasked) input.focus();
-    } else {
-        input.type = nextMasked ? 'password' : 'text';
-    }
-
-    if (button) {
-        button.innerHTML = `<i class="fa-solid ${nextMasked ? 'fa-eye' : 'fa-eye-slash'}"></i> ${nextMasked ? 'Reveal' : 'Hide'}`;
-        button.setAttribute('aria-pressed', String(!nextMasked));
-    }
-}
-
-function copyAdminSensitiveInput(inputId) {
-    const input = document.getElementById(inputId);
-    if (!input) return Promise.resolve(false);
-    return adminCopyText(input.value, 'Value copied to clipboard');
-}
 
 /**
  * Load admin panel.
  */
 async function loadAdmin() {
-    if (!currentUser || !currentUser.capabilities?.admin_panel) {
+    if (!currentUser || currentUser.role !== 'admin') {
         toast('Admin access required', 'error');
         return navigate('home');
     }
 
     await loadAdminStats();
-    // Global mods see only a subset of tabs
-    const isFullAdmin = currentUser.capabilities?.manage_users;
-    document.querySelectorAll('.admin-tabs .tab-btn').forEach(btn => {
-        const tab = btn.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
-        // Global mods can see: chat-logs, bans, moderators
-        const modTabs = ['chat-logs', 'bans', 'moderators'];
-        if (!isFullAdmin && tab && !modTabs.includes(tab)) {
-            btn.style.display = 'none';
-        } else {
-            btn.style.display = '';
-        }
-    });
-    switchAdminTab(isFullAdmin ? 'users' : 'chat-logs');
+    switchAdminTab('users');
 }
 
 /* ── Stats ─────────────────────────────────────────────────────── */
@@ -162,13 +53,11 @@ function switchAdminTab(tab) {
         case 'moderators': loadAdminModerators(); break;
         case 'chat-logs': loadAdminChatLogs(); break;
         case 'settings': loadAdminSettings(); break;
-        case 'tts': loadAdminTTS(); break;
         case 'verification': loadAdminVerificationKeys(); break;
         case 'streams': loadAdminStreams(); break;
         case 'cashouts': loadAdminCashouts(); break;
         case 'bans': loadAdminBans(); break;
         case 'vpn': loadAdminVPN(); break;
-        case 'pastes': loadAdminPastes(); break;
     }
 }
 
@@ -238,7 +127,7 @@ async function fetchAdminLogs() {
                     return `<tr>
                         <td style="white-space:nowrap;font-size:0.8rem">${ts}</td>
                         <td style="white-space:nowrap">
-                            <span style="color:${esc(m.profile_color || '#999')};cursor:pointer" onclick="showChatContextMenu(event)" data-username="${esc(m.display_name || m.username || 'anon')}" data-user-id="${esc(String(m.user_id || ''))}">${esc(m.display_name || m.username || 'anon')}</span>
+                            <span style="color:${m.profile_color || '#999'};cursor:pointer" onclick="showChatContextMenu(event)" data-username="${esc(m.display_name || m.username || 'anon')}" data-user-id="${m.user_id || ''}">${esc(m.display_name || m.username || 'anon')}</span>
                         </td>
                         <td style="word-break:break-word">${esc(m.message)}</td>
                         <td style="font-size:0.8rem">${m.stream_id || '-'}</td>
@@ -257,7 +146,7 @@ async function fetchAdminLogs() {
             ` : `<span class="muted" style="font-size:0.85rem">${total} results</span>`;
         }
     } catch (e) {
-        results.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+        results.innerHTML = `<p class="muted">Error: ${e.message}</p>`;
         if (pager) pager.innerHTML = '';
     }
 }
@@ -270,25 +159,19 @@ async function loadAdminUsers() {
         const data = await api('/admin/users');
         const users = data.users || [];
         c.innerHTML = `
-            <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem;color:var(--text-secondary)">
-                    <input type="checkbox" id="admin-show-emails" onchange="toggleAdminEmails(this.checked)" style="width:16px;height:16px;cursor:pointer">
-                    Show emails
-                </label>
-            </div>
             <table class="admin-table">
                 <thead><tr>
-                    <th>Username</th><th class="admin-email-col" style="display:none">Email</th><th>Role</th><th>Created</th><th>Actions</th>
+                    <th>Username</th><th>Email</th><th>Role</th><th>Created</th><th>Actions</th>
                 </tr></thead>
                 <tbody>${users.map(u => `
                     <tr>
                         <td>${esc(u.username)}</td>
-                        <td class="admin-email-col" style="display:none">${esc(u.email || '-')}</td>
+                        <td>${esc(u.email || '-')}</td>
                         <td>${esc(u.role)}</td>
                         <td>${new Date(u.created_at).toLocaleDateString()}</td>
                         <td>
                             <select onchange="changeUserRole('${u.id}', this.value)" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:2px 4px;border-radius:4px">
-                                ${['user','streamer','global_mod','admin'].map(r =>
+                                ${['user','streamer','mod','admin'].map(r =>
                                     `<option value="${r}" ${r===u.role?'selected':''}>${r}</option>`
                                 ).join('')}
                             </select>
@@ -299,13 +182,7 @@ async function loadAdminUsers() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
-}
-
-function toggleAdminEmails(show) {
-    document.querySelectorAll('.admin-email-col').forEach(el => {
-        el.style.display = show ? '' : 'none';
-    });
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
 }
 
 async function changeUserRole(userId, role) {
@@ -338,7 +215,7 @@ async function loadAdminModerators() {
                 <input type="text" id="mod-username-input" placeholder="Username to promote..."
                     style="flex:1;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:8px 12px;border-radius:6px;font-size:14px">
                 <button class="btn btn-primary" onclick="promoteModerator()">
-                    <i class="fa-solid fa-shield-halved"></i> Promote to Global Mod
+                    <i class="fa-solid fa-shield-halved"></i> Promote to Mod
                 </button>
             </div>
             ${mods.length ? `
@@ -360,7 +237,7 @@ async function loadAdminModerators() {
                     `).join('')}</tbody>
                 </table>
             ` : '<p class="muted">No global moderators yet</p>'}`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
 }
 
 async function promoteModerator() {
@@ -369,13 +246,13 @@ async function promoteModerator() {
     if (!username) return toast('Enter a username', 'error');
     try {
         await api('/admin/moderators', { method: 'POST', body: { username } });
-        toast(`${username} promoted to global moderator`, 'success');
+        toast(`${username} promoted to moderator`, 'success');
         loadAdminModerators();
     } catch (e) { toast(e.message, 'error'); }
 }
 
 async function demoteModerator(id, username) {
-    if (!confirm(`Demote ${username} from global moderator?`)) return;
+    if (!confirm(`Demote ${username} from moderator?`)) return;
     try {
         await api(`/admin/moderators/${id}`, { method: 'DELETE' });
         toast(`${username} demoted`, 'success');
@@ -425,32 +302,16 @@ async function loadAdminSettings() {
                                 <strong>${esc(s.key)}</strong>
                                 <br><small class="muted">${esc(s.description || '')}</small>
                             </label>
-                            ${isSensitiveAdminSettingKey(s.key) ? `
-                                <div class="admin-sensitive-field">
-                                    <input type="password" id="${id}" data-key="${esc(s.key)}" data-type="string"
-                                        value="${esc(s.value)}" autocomplete="off" spellcheck="false"
-                                        style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                                    <div class="admin-sensitive-actions">
-                                        <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('${id}', this)">
-                                            <i class="fa-solid fa-eye"></i> Reveal
-                                        </button>
-                                        <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('${id}')">
-                                            <i class="fa-solid fa-copy"></i> Copy
-                                        </button>
-                                    </div>
-                                </div>
-                            ` : `
-                                <input type="text" id="${id}" data-key="${esc(s.key)}" data-type="string"
-                                    value="${esc(s.value)}"
-                                    style="margin-top:4px;width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                            `}
+                            <input type="text" id="${id}" data-key="${esc(s.key)}" data-type="string"
+                                value="${esc(s.value)}"
+                                style="margin-top:4px;width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
                         </div>`;
                 }).join('')}
                 <button type="submit" class="btn btn-primary" style="justify-self:start;margin-top:8px">
                     <i class="fa-solid fa-floppy-disk"></i> Save Settings
                 </button>
             </form>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
 }
 
 async function saveAdminSettings(e) {
@@ -478,9 +339,6 @@ async function loadAdminVerificationKeys() {
     try {
         const data = await api('/admin/verification-keys');
         const keys = data.keys || [];
-        keys.forEach(k => {
-            adminSecretStore[`verification-key-${k.id}`] = k.key || '';
-        });
         c.innerHTML = `
             <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
                 <input type="text" id="vkey-username-input" placeholder="RS-Companion username to reserve..."
@@ -498,21 +356,14 @@ async function loadAdminVerificationKeys() {
                     </tr></thead>
                     <tbody>${keys.map(k => `
                         <tr>
-                            <td>
-                                <div class="admin-secret-inline">
-                                    <code id="verification-key-${k.id}" class="admin-secret-value is-masked" data-visible="false">${esc(maskAdminSecret(k.key))}</code>
-                                </div>
-                            </td>
+                            <td><code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:12px;user-select:all">${esc(k.key)}</code></td>
                             <td><strong>${esc(k.target_username)}</strong></td>
                             <td><span class="badge badge-${k.status === 'active' ? 'success' : k.status === 'used' ? 'info' : 'danger'}">${esc(k.status)}</span></td>
                             <td>${esc(k.note || '-')}</td>
                             <td>${new Date(k.created_at).toLocaleDateString()}</td>
                             <td>
                                 ${k.status === 'active' ? `
-                                    <button class="btn btn-small btn-outline" onclick="toggleAdminSecret('verification-key-${k.id}', this)" title="Reveal value" aria-label="Reveal value">
-                                        <i class="fa-solid fa-eye"></i>
-                                    </button>
-                                    <button class="btn btn-small btn-outline" onclick="copyVerificationKey('verification-key-${k.id}')" title="Copy key">
+                                    <button class="btn btn-small btn-outline" onclick="copyVerificationKey('${esc(k.key)}')" title="Copy key">
                                         <i class="fa-solid fa-copy"></i>
                                     </button>
                                     <button class="btn btn-small btn-danger" onclick="revokeVerificationKey('${k.id}')" title="Revoke">
@@ -524,7 +375,7 @@ async function loadAdminVerificationKeys() {
                     `).join('')}</tbody>
                 </table>
             ` : '<p class="muted">No verification keys generated yet</p>'}`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
 }
 
 async function generateVerificationKey() {
@@ -539,16 +390,27 @@ async function generateVerificationKey() {
             body: { target_username, note }
         });
         const key = data.key;
-        if (key?.id && key?.key) adminSecretStore[`verification-key-${key.id}`] = key.key;
-        toast('Verification key generated', 'success');
+        toast(`Key generated: ${key.key}`, 'success');
         usernameInput.value = '';
         noteInput.value = '';
         loadAdminVerificationKeys();
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function copyVerificationKey(secretId) {
-    await copyAdminSecret(secretId);
+async function copyVerificationKey(key) {
+    try {
+        await navigator.clipboard.writeText(key);
+        toast('Key copied to clipboard', 'success');
+    } catch {
+        // Fallback
+        const ta = document.createElement('textarea');
+        ta.value = key;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        toast('Key copied', 'success');
+    }
 }
 
 async function revokeVerificationKey(id) {
@@ -588,7 +450,7 @@ async function loadAdminStreams() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
 }
 
 async function forceEndStream(streamId) {
@@ -632,7 +494,7 @@ async function loadAdminCashouts() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
 }
 
 async function approveCashout(cashoutId) {
@@ -680,7 +542,7 @@ async function loadAdminBans() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
 }
 
 async function unbanUser(userId) {
@@ -724,7 +586,7 @@ async function loadAdminVPN() {
                     </tr>
                 `).join('')}</tbody>
             </table>`;
-    } catch (e) { c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`; }
+    } catch (e) { c.innerHTML = `<p class="muted">Error: ${e.message}</p>`; }
 }
 
 async function approveVPN(id) {
@@ -741,349 +603,4 @@ async function denyVPN(id) {
         toast('VPN denied', 'info');
         loadAdminVPN();
     } catch (e) { toast(e.message, 'error'); }
-}
-
-/* ── TTS Admin Panel ──────────────────────────────────────────── */
-async function loadAdminTTS() {
-    const c = document.getElementById('admin-content');
-    c.innerHTML = '<p class="muted">Loading TTS settings...</p>';
-    try {
-        const [settingsRes, voicesRes] = await Promise.all([
-            api('/tts/admin/settings'),
-            api('/tts/voices'),
-        ]);
-        const s = settingsRes.settings || {};
-        const voices = voicesRes.voices || [];
-
-        // Build voice options for default voice selector
-        const espeakVoices = voices.filter(v => v.engine === 'espeak-ng');
-        const googleVoices = voices.filter(v => v.engine === 'google-cloud');
-        const pollyVoices = voices.filter(v => v.engine === 'amazon-polly');
-
-        const voiceOptions = (arr) => arr.map(v =>
-            `<option value="${esc(v.id)}" ${v.id === s.defaultVoice ? 'selected' : ''}>${esc(v.name)} (${esc(v.rarity)})${v.available ? '' : ' ⚠️ unavailable'}</option>`
-        ).join('');
-
-        c.innerHTML = `
-            <form id="admin-tts-form" style="display:grid;gap:16px;max-width:700px">
-                <h3 style="margin:0"><i class="fa-solid fa-comment-dots"></i> TTS Configuration</h3>
-
-                <div class="bc-settings-group" style="padding:12px;border:1px solid var(--border);border-radius:8px">
-                    <div class="bc-settings-title" style="margin-bottom:8px"><i class="fa-solid fa-sliders"></i> General</div>
-                    <div style="display:grid;gap:10px">
-                        <label style="display:flex;align-items:center;gap:12px">
-                            <strong style="min-width:180px">TTS Enabled</strong>
-                            <input type="checkbox" id="tts-admin-enabled" ${s.enabled ? 'checked' : ''} style="width:18px;height:18px">
-                        </label>
-                        <label style="display:flex;align-items:center;gap:12px">
-                            <strong style="min-width:180px">Default Provider</strong>
-                            <select id="tts-admin-provider" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                                <option value="espeak-ng" ${s.provider === 'espeak-ng' ? 'selected' : ''}>espeak-ng (Local/Free)</option>
-                                <option value="google-cloud" ${s.provider === 'google-cloud' ? 'selected' : ''}>Google Cloud TTS</option>
-                                <option value="amazon-polly" ${s.provider === 'amazon-polly' ? 'selected' : ''}>Amazon Polly</option>
-                            </select>
-                        </label>
-                        <label style="display:flex;align-items:center;gap:12px">
-                            <strong style="min-width:180px">Default Voice</strong>
-                            <select id="tts-admin-default-voice" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                                <optgroup label="espeak-ng">${voiceOptions(espeakVoices)}</optgroup>
-                                <optgroup label="Google Cloud">${voiceOptions(googleVoices)}</optgroup>
-                                <optgroup label="Amazon Polly">${voiceOptions(pollyVoices)}</optgroup>
-                            </select>
-                        </label>
-                        <label style="display:flex;align-items:center;gap:12px">
-                            <strong style="min-width:180px">Max Message Length</strong>
-                            <input type="number" id="tts-admin-max-length" value="${s.maxLength || 200}" min="10" max="1000"
-                                style="width:100px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                        </label>
-                        <label style="display:flex;align-items:center;gap:12px">
-                            <strong style="min-width:180px">Max Queue Per User</strong>
-                            <input type="number" id="tts-admin-max-per-user" value="${s.maxQueuePerUser || 3}" min="1" max="50"
-                                style="width:100px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                        </label>
-                        <label style="display:flex;align-items:center;gap:12px">
-                            <strong style="min-width:180px">Max Queue Global</strong>
-                            <input type="number" id="tts-admin-max-global" value="${s.maxQueueGlobal || 20}" min="1" max="200"
-                                style="width:100px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                        </label>
-                    </div>
-                </div>
-
-                <div class="bc-settings-group" style="padding:12px;border:1px solid var(--border);border-radius:8px">
-                    <div class="bc-settings-title" style="margin-bottom:8px"><i class="fa-brands fa-google"></i> Google Cloud TTS</div>
-                    <div style="display:grid;gap:10px">
-                        <label>
-                            <strong>API Key</strong> <small class="muted">(simple auth — or use service account below)</small>
-                            <div class="admin-sensitive-field">
-                                <input type="password" id="tts-admin-google-api-key" value="${esc(s.googleApiKey || '')}" placeholder="AIza..." autocomplete="off" spellcheck="false"
-                                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                                <div class="admin-sensitive-actions">
-                                    <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('tts-admin-google-api-key', this)">
-                                        <i class="fa-solid fa-eye"></i> Reveal
-                                    </button>
-                                    <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('tts-admin-google-api-key')">
-                                        <i class="fa-solid fa-copy"></i> Copy
-                                    </button>
-                                </div>
-                            </div>
-                        </label>
-                        <label>
-                            <strong>Service Account JSON</strong> <small class="muted">(paste JSON or file path)</small>
-                            <div class="admin-sensitive-field">
-                                <textarea id="tts-admin-google-sa" rows="3" placeholder='{"type":"service_account","project_id":"...","private_key":"..."}' data-masked="true" readonly
-                                    class="admin-sensitive-textarea is-masked"
-                                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-family:monospace;font-size:12px">${esc(s.googleServiceAccount || '')}</textarea>
-                                <div class="admin-sensitive-actions">
-                                    <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('tts-admin-google-sa', this)">
-                                        <i class="fa-solid fa-eye"></i> Reveal
-                                    </button>
-                                    <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('tts-admin-google-sa')">
-                                        <i class="fa-solid fa-copy"></i> Copy
-                                    </button>
-                                </div>
-                            </div>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="bc-settings-group" style="padding:12px;border:1px solid var(--border);border-radius:8px">
-                    <div class="bc-settings-title" style="margin-bottom:8px"><i class="fa-brands fa-aws"></i> Amazon Polly</div>
-                    <div style="display:grid;gap:10px">
-                        <label>
-                            <strong>AWS Access Key ID</strong>
-                            <div class="admin-sensitive-field">
-                                <input type="password" id="tts-admin-aws-key" value="${esc(s.awsAccessKeyId || '')}" placeholder="AKIA..." autocomplete="off" spellcheck="false"
-                                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                                <div class="admin-sensitive-actions">
-                                    <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('tts-admin-aws-key', this)">
-                                        <i class="fa-solid fa-eye"></i> Reveal
-                                    </button>
-                                    <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('tts-admin-aws-key')">
-                                        <i class="fa-solid fa-copy"></i> Copy
-                                    </button>
-                                </div>
-                            </div>
-                        </label>
-                        <label>
-                            <strong>AWS Secret Access Key</strong>
-                            <div class="admin-sensitive-field">
-                                <input type="password" id="tts-admin-aws-secret" value="${esc(s.awsSecretAccessKey || '')}" placeholder="wJalr..." autocomplete="off" spellcheck="false"
-                                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                                <div class="admin-sensitive-actions">
-                                    <button type="button" class="btn btn-small btn-outline" onclick="toggleAdminSensitiveInput('tts-admin-aws-secret', this)">
-                                        <i class="fa-solid fa-eye"></i> Reveal
-                                    </button>
-                                    <button type="button" class="btn btn-small btn-outline" onclick="copyAdminSensitiveInput('tts-admin-aws-secret')">
-                                        <i class="fa-solid fa-copy"></i> Copy
-                                    </button>
-                                </div>
-                            </div>
-                        </label>
-                        <label style="display:flex;align-items:center;gap:12px">
-                            <strong style="min-width:180px">AWS Region</strong>
-                            <input type="text" id="tts-admin-aws-region" value="${esc(s.awsRegion || 'us-east-1')}" placeholder="us-east-1"
-                                style="width:200px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                        </label>
-                    </div>
-                </div>
-
-                <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button type="submit" class="btn btn-primary" onclick="saveAdminTTS(event)">
-                        <i class="fa-solid fa-floppy-disk"></i> Save TTS Settings
-                    </button>
-                    <button type="button" class="btn" onclick="testAdminTTSVoice()">
-                        <i class="fa-solid fa-volume-high"></i> Test Voice
-                    </button>
-                </div>
-
-                <div style="margin-top:8px">
-                    <h4><i class="fa-solid fa-microphone"></i> Available Voices (${voices.length})</h4>
-                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:300px;overflow-y:auto;padding:4px">
-                        ${voices.map(v => `
-                            <div style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;opacity:${v.available ? '1' : '0.5'};font-size:13px">
-                                <span>${v.emoji} <strong>${esc(v.name)}</strong></span>
-                                <br><small class="muted">${esc(v.engine)} · ${esc(v.rarity)}</small>
-                                ${!v.available ? '<br><small style="color:var(--warning)">⚠️ Not configured</small>' : ''}
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            </form>`;
-    } catch (e) {
-        c.innerHTML = `<p class="muted">Error loading TTS settings: ${esc(e.message)}</p>`;
-    }
-}
-
-async function saveAdminTTS(e) {
-    if (e) e.preventDefault();
-    try {
-        const settings = {
-            tts_enabled: document.getElementById('tts-admin-enabled').checked,
-            tts_provider: document.getElementById('tts-admin-provider').value,
-            tts_default_voice: document.getElementById('tts-admin-default-voice').value,
-            tts_max_length: parseInt(document.getElementById('tts-admin-max-length').value) || 200,
-            tts_max_queue_per_user: parseInt(document.getElementById('tts-admin-max-per-user').value) || 3,
-            tts_max_queue_global: parseInt(document.getElementById('tts-admin-max-global').value) || 20,
-            tts_google_api_key: document.getElementById('tts-admin-google-api-key').value,
-            tts_google_service_account: document.getElementById('tts-admin-google-sa').value,
-            tts_aws_access_key_id: document.getElementById('tts-admin-aws-key').value,
-            tts_aws_secret_access_key: document.getElementById('tts-admin-aws-secret').value,
-            tts_aws_region: document.getElementById('tts-admin-aws-region').value || 'us-east-1',
-        };
-        await api('/tts/admin/settings', { method: 'PUT', body: { settings } });
-        toast('TTS settings saved', 'success');
-    } catch (e) {
-        toast('Error saving TTS: ' + e.message, 'error');
-    }
-}
-
-async function testAdminTTSVoice() {
-    try {
-        const voiceId = document.getElementById('tts-admin-default-voice').value;
-        const result = await api('/tts/admin/test', {
-            method: 'POST',
-            body: { voiceId, text: 'Hello, this is a TTS voice test from HoboStreamer.' },
-        });
-        if (result.audio && result.mimeType) {
-            const binaryStr = atob(result.audio);
-            const bytes = new Uint8Array(binaryStr.length);
-            for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-            const blob = new Blob([bytes], { type: result.mimeType });
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            audio.volume = 0.8;
-            audio.onended = () => URL.revokeObjectURL(url);
-            audio.play();
-            toast(`Testing: ${result.voiceName || voiceId} (${result.engine})`, 'info');
-        } else {
-            toast('No audio returned — check provider config', 'warning');
-        }
-    } catch (e) {
-        toast('Test error: ' + e.message, 'error');
-    }
-}
-
-/* ── Pastes Admin Tab ──────────────────────────────────────────── */
-async function loadAdminPastes() {
-    const c = document.getElementById('admin-content');
-    c.innerHTML = '<p class="muted">Loading paste stats...</p>';
-    try {
-        const [statsData, configData] = await Promise.all([
-            api('/pastes/admin/stats'),
-            api('/pastes/config'),
-        ]);
-        const s = statsData.stats || {};
-        const cfg = configData || {};
-        c.innerHTML = `
-            <div class="admin-stats" style="margin-bottom:24px">
-                ${[
-                    { label: 'Total Pastes', value: s.total || 0, icon: 'fa-paste' },
-                    { label: 'Text Pastes', value: s.textPastes || 0, icon: 'fa-code' },
-                    { label: 'Screenshots', value: s.screenshots || 0, icon: 'fa-image' },
-                    { label: 'Forks', value: s.forks || 0, icon: 'fa-code-fork' },
-                    { label: 'Total Views', value: s.totalViews || 0, icon: 'fa-eye' },
-                    { label: 'Total Copies', value: s.totalCopies || 0, icon: 'fa-copy' },
-                    { label: 'Total Likes', value: s.totalLikes || 0, icon: 'fa-thumbs-up' },
-                ].map(stat => `
-                    <div class="admin-stat">
-                        <div class="admin-stat-value">${typeof stat.value === 'number' ? stat.value.toLocaleString() : stat.value}</div>
-                        <div class="admin-stat-label"><i class="fa-solid ${stat.icon}"></i> ${stat.label}</div>
-                    </div>
-                `).join('')}
-            </div>
-
-            <h3 style="margin-bottom:12px;"><i class="fa-solid fa-sliders"></i> Paste Limits</h3>
-            <form id="admin-paste-config-form" onsubmit="saveAdminPasteConfig(event)" style="display:grid;gap:10px;max-width:600px;margin-bottom:28px;">
-                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
-                    <label style="flex:1" for="pcfg-max-size-kb">
-                        <strong>Max paste size (KB)</strong>
-                        <br><small class="muted">Maximum text content size for pastes</small>
-                    </label>
-                    <input type="number" id="pcfg-max-size-kb" value="${cfg.maxSizeKb || 512}" min="1" max="102400"
-                        style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                </div>
-                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
-                    <label style="flex:1" for="pcfg-screenshot-max-mb">
-                        <strong>Max image size (MB)</strong>
-                        <br><small class="muted">Maximum upload size for screenshots / images</small>
-                    </label>
-                    <input type="number" id="pcfg-screenshot-max-mb" value="${cfg.screenshotMaxSizeMb || 8}" min="1" max="100"
-                        style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                </div>
-                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
-                    <label style="flex:1" for="pcfg-cooldown">
-                        <strong>Cooldown (seconds)</strong>
-                        <br><small class="muted">Minimum seconds between submissions</small>
-                    </label>
-                    <input type="number" id="pcfg-cooldown" value="${cfg.cooldownSeconds || 30}" min="0" max="3600"
-                        style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                </div>
-                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
-                    <label style="flex:1" for="pcfg-max-per-day">
-                        <strong>Max per user per day</strong>
-                        <br><small class="muted">0 = unlimited</small>
-                    </label>
-                    <input type="number" id="pcfg-max-per-day" value="${cfg.maxPerUserPerDay || 50}" min="0" max="10000"
-                        style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px">
-                </div>
-                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
-                    <label style="flex:1;cursor:pointer" for="pcfg-anon">
-                        <strong>Allow anonymous pastes</strong>
-                        <br><small class="muted">Let unauthenticated users create pastes</small>
-                    </label>
-                    <input type="checkbox" id="pcfg-anon" ${cfg.anonAllowed !== false ? 'checked' : ''}
-                        style="width:18px;height:18px;cursor:pointer">
-                </div>
-                <div class="setting-row" style="display:flex;align-items:center;gap:16px;padding:8px 0;border-bottom:1px solid var(--border)">
-                    <label style="flex:1;cursor:pointer" for="pcfg-image-upload">
-                        <strong>Allow image uploads</strong>
-                        <br><small class="muted">Enable screenshot & image upload feature</small>
-                    </label>
-                    <input type="checkbox" id="pcfg-image-upload" ${cfg.imageUploadEnabled !== false ? 'checked' : ''}
-                        style="width:18px;height:18px;cursor:pointer">
-                </div>
-                <button type="submit" class="btn btn-primary" style="justify-self:start;margin-top:4px">
-                    <i class="fa-solid fa-floppy-disk"></i> Save Paste Settings
-                </button>
-            </form>
-
-            <h3 style="margin-bottom:12px;"><i class="fa-solid fa-toolbox"></i> Actions</h3>
-            <div style="display:flex;gap:12px;flex-wrap:wrap;">
-                <button class="btn btn-danger" onclick="adminDeleteAllForks()">
-                    <i class="fa-solid fa-code-fork"></i> Delete All Forks (${s.forks || 0})
-                </button>
-            </div>
-        `;
-    } catch (e) {
-        c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
-    }
-}
-
-async function saveAdminPasteConfig(e) {
-    e.preventDefault();
-    const settings = {
-        paste_max_size_kb: document.getElementById('pcfg-max-size-kb').value,
-        paste_screenshot_max_size_mb: document.getElementById('pcfg-screenshot-max-mb').value,
-        paste_cooldown_seconds: document.getElementById('pcfg-cooldown').value,
-        paste_max_per_user_per_day: document.getElementById('pcfg-max-per-day').value,
-        paste_anon_allowed: document.getElementById('pcfg-anon').checked ? 'true' : 'false',
-        paste_image_upload_enabled: document.getElementById('pcfg-image-upload').checked ? 'true' : 'false',
-    };
-    try {
-        await api('/admin/settings', { method: 'PUT', body: { settings } });
-        toast('Paste settings saved', 'success');
-    } catch (err) {
-        toast(err.message || 'Failed to save paste settings', 'error');
-    }
-}
-
-async function adminDeleteAllForks() {
-    if (!confirm('Delete ALL forked pastes? This cannot be undone.')) return;
-    try {
-        const data = await api('/pastes/admin/forks', { method: 'DELETE' });
-        toast(`Deleted ${data.deleted || 0} forked paste(s)`, 'success');
-        loadAdminPastes(); // Refresh stats
-    } catch (e) {
-        toast(e.message || 'Failed to delete forks', 'error');
-    }
 }

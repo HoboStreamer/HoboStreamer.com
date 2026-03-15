@@ -7,9 +7,9 @@ const express = require('express');
 const router = express.Router();
 const game = require('./game-engine');
 const db = require('../db/database');
-const { requireGameAuth } = require('./game-auth');
+const { requireAuth } = require('../auth/auth');
 
-router.use(requireGameAuth);
+router.use(requireAuth);
 
 // ══════════════════════════════════════════════════════════════
 //  PLAYER
@@ -70,33 +70,15 @@ router.post('/npc/interact', (req, res) => {
         const { npcId } = req.body;
         if (!npcId) return res.json({ error: 'No NPC specified' });
         if (!game.isNearNPC(req.user.id, npcId)) return res.json({ error: 'Too far from NPC' });
-        const user = require('../db/database').getUserById(req.user.id);
+        const items = game.getShopItemsForNPC(npcId);
         const inv = game.getInventory(req.user.id);
+        const user = require('../db/database').getUserById(req.user.id);
         // Bank NPC returns bank data instead of shop
         if (npcId === 'banker') {
             const bank = game.getBank(req.user.id);
             return res.json({ success: true, npcId, type: 'bank', bank, inventory: inv, hobo_coins: user?.hobo_coins_balance || 0 });
         }
-        // Tag Master NPC returns tag shop data
-        if (npcId === 'tagmaster') {
-            const tags = require('./tags');
-            const guardianDefeated = tags.hasDefeatedGuardian(req.user.id);
-            const shopTags = guardianDefeated ? tags.getShopTags() : [];
-            const ownedTags = tags.getUserTags(req.user.id);
-            const equipped = tags.getEquippedTag(req.user.id);
-            return res.json({
-                success: true, npcId, type: 'tag_shop',
-                guardianDefeated, tags: shopTags, ownedTags, equipped,
-                guardian: !guardianDefeated ? tags.TAG_GUARDIAN : null,
-                hobo_coins: user?.hobo_coins_balance || 0,
-            });
-        }
-        const items = game.getShopItemsForNPC(npcId);
-        const player = game.getPlayer(req.user.id);
-        return res.json({ success: true, npcId, type: 'shop', items, inventory: inv, hobo_coins: user?.hobo_coins_balance || 0, playerLevels: {
-            mining: player.mining_level, fishing: player.fishing_level, woodcut: player.woodcut_level,
-            combat: player.combat_level, crafting: player.crafting_level,
-        }});
+        return res.json({ success: true, npcId, type: 'shop', items, inventory: inv, hobo_coins: user?.hobo_coins_balance || 0 });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -107,14 +89,7 @@ router.post('/npc/buy', (req, res) => {
         const result = game.buyItem(req.user.id, itemId, quantity || 1);
         if (result.error) return res.json(result);
         const user = require('../db/database').getUserById(req.user.id);
-        // Include inventory refresh and equip state for client update
-        const inventory = game.getInventory(req.user.id);
-        const player = game.getPlayer(req.user.id);
-        res.json({ ...result, hobo_coins: user?.hobo_coins_balance || 0, inventory,
-            equip_pickaxe: player.equip_pickaxe, equip_axe: player.equip_axe,
-            equip_rod: player.equip_rod, equip_weapon: player.equip_weapon,
-            equip_armor: player.equip_armor, equip_hat: player.equip_hat,
-        });
+        res.json({ ...result, hobo_coins: user?.hobo_coins_balance || 0 });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -312,30 +287,6 @@ router.post('/equip', (req, res) => {
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/unequip', (req, res) => {
-    try {
-        const result = game.unequipItem(req.user.id, req.body.slot);
-        // Update live player state so other players see the change
-        if (result.success) {
-            const player = game.getPlayer(req.user.id);
-            const existing = game.getLivePlayers()[req.user.id];
-            if (existing) {
-                game.updateLivePlayer(req.user.id, {
-                    ...existing,
-                    equip_weapon: player.equip_weapon,
-                    equip_armor: player.equip_armor,
-                    equip_hat: player.equip_hat,
-                    equip_pickaxe: player.equip_pickaxe,
-                    equip_axe: player.equip_axe,
-                    equip_rod: player.equip_rod,
-                });
-            }
-        }
-        res.json(result);
-    }
-    catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 router.post('/cosmetic/equip', (req, res) => {
     try { res.json(game.equipCosmetic(req.user.id, req.body.itemId)); }
     catch (e) { res.status(500).json({ error: e.message }); }
@@ -412,83 +363,6 @@ router.get('/achievements', (req, res) => {
         const data = game.getAchievements(req.user.id);
         res.json({ success: true, ...data });
     }
-    catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ══════════════════════════════════════════════════════════════
-//  DAILY QUESTS
-// ══════════════════════════════════════════════════════════════
-
-router.get('/daily-quests', (req, res) => {
-    try { res.json({ success: true, ...game.getDailyQuests(req.user.id) }); }
-    catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/daily-quests/claim', (req, res) => {
-    try { res.json(game.claimDailyQuest(req.user.id, req.body.questId)); }
-    catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ══════════════════════════════════════════════════════════════
-//  TAGS
-// ══════════════════════════════════════════════════════════════
-
-const tags = require('./tags');
-
-// Get the user's owned tags + equipped tag
-router.get('/tags', (req, res) => {
-    try {
-        const owned = tags.getUserTags(req.user.id);
-        const equipped = tags.getEquippedTag(req.user.id);
-        res.json({ success: true, tags: owned, equipped });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Get the tag shop catalog
-router.get('/tags/shop', (req, res) => {
-    try {
-        const shopTags = tags.getShopTags();
-        const guardianDefeated = tags.hasDefeatedGuardian(req.user.id);
-        const user = db.getUserById(req.user.id);
-        res.json({ success: true, tags: shopTags, guardianDefeated, hobo_coins: user?.hobo_coins_balance || 0 });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Get all tags (for wiki / catalog view)
-router.get('/tags/catalog', (req, res) => {
-    try { res.json({ success: true, tags: tags.getAllTags() }); }
-    catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Fight the Tag Guardian
-router.post('/tags/guardian/fight', (req, res) => {
-    try {
-        if (!game.isNearNPC(req.user.id, 'tagmaster')) return res.json({ error: 'You must be near the Tag Master\'s building!' });
-        const result = tags.fightGuardian(req.user.id);
-        res.json(result);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Buy a tag from the Tag Master
-router.post('/tags/buy', (req, res) => {
-    try {
-        if (!game.isNearNPC(req.user.id, 'tagmaster')) return res.json({ error: 'You must visit the Tag Master NPC!' });
-        const result = tags.buyTag(req.user.id, req.body.tagId);
-        if (result.error) return res.json(result);
-        const user = db.getUserById(req.user.id);
-        res.json({ ...result, hobo_coins: user?.hobo_coins_balance || 0 });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Equip a tag
-router.post('/tags/equip', (req, res) => {
-    try { res.json(tags.equipTag(req.user.id, req.body.tagId)); }
-    catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Unequip current tag
-router.post('/tags/unequip', (req, res) => {
-    try { res.json(tags.unequipTag(req.user.id)); }
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 

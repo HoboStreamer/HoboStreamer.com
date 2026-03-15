@@ -4,7 +4,6 @@
  * Accepts RTMP streams from OBS/FFmpeg and converts to HLS or relays.
  * Uses node-media-server for RTMP handling.
  */
-const EventEmitter = require('events');
 const config = require('../config');
 const db = require('../db/database');
 const recorder = require('../vod/recorder');
@@ -17,9 +16,8 @@ try {
     console.warn('[RTMP] Install with: npm install node-media-server');
 }
 
-class RTMPServer extends EventEmitter {
+class RTMPServer {
     constructor() {
-        super();
         this.nms = null;
         this.activeStreams = new Map(); // streamKey → { streamId, userId }
     }
@@ -40,7 +38,7 @@ class RTMPServer extends EventEmitter {
             },
             http: {
                 port: config.rtmp.port + 8000, // HTTP-FLV port (9935 by default)
-                allow_origin: config.nodeEnv === 'production' ? config.baseUrl : '*',
+                allow_origin: '*',
                 mediaroot: './data/media',
             },
             // NOTE: trans (HLS transcoding) disabled due to node-media-server
@@ -67,21 +65,6 @@ class RTMPServer extends EventEmitter {
             // Stream path format: /live/STREAM_KEY
             const parts = streamPath.split('/');
             const streamKey = parts[parts.length - 1];
-
-            if (!streamPath.startsWith('/live/') || !/^[a-zA-Z0-9_-]{8,128}$/.test(streamKey)) {
-                console.log(`[RTMP] Rejected malformed publish path: ${streamPath}`);
-                const session = this.nms.getSession(id);
-                if (session) session.reject();
-                return;
-            }
-
-            const existingActive = this.activeStreams.get(streamKey);
-            if (existingActive && existingActive.sessionId !== id) {
-                console.log(`[RTMP] Rejected duplicate publisher for stream key ${streamKey}`);
-                const session = this.nms.getSession(id);
-                if (session) session.reject();
-                return;
-            }
 
             const user = db.getUserByStreamKey(streamKey);
             if (!user) {
@@ -124,9 +107,6 @@ class RTMPServer extends EventEmitter {
             this.activeStreams.set(streamKey, { streamId, userId: user.id, sessionId: id });
             console.log(`[RTMP] Stream started: ${user.username} (stream ${streamId})`);
 
-            // Emit event for restream auto-start
-            this.emit('publish', { streamId, userId: user.id, streamKey });
-
             // Start server-side VOD recording via FFmpeg
             // Small delay to let NMS fully register the RTMP stream before FFmpeg pulls it
             setTimeout(() => {
@@ -143,17 +123,19 @@ class RTMPServer extends EventEmitter {
                 // Stop VOD recording first (SIGINT → FFmpeg writes trailer → finalize)
                 recorder.stopRecording(info.streamId);
 
-                // Emit event for restream cleanup
-                this.emit('unpublish', { streamId: info.streamId, userId: info.userId, streamKey });
-
                 db.endStream(info.streamId);
                 this.activeStreams.delete(streamKey);
                 console.log(`[RTMP] Stream ended: ${streamKey} (stream ${info.streamId})`);
             }
         });
 
-        this.nms.on('prePlay', () => {});
-        this.nms.on('donePlay', () => {});
+        this.nms.on('prePlay', (id, streamPath, args) => {
+            console.log(`[RTMP] Viewer connected: ${streamPath}`);
+        });
+
+        this.nms.on('donePlay', (id, streamPath, args) => {
+            console.log(`[RTMP] Viewer disconnected: ${streamPath}`);
+        });
 
         this.nms.run();
         console.log(`[RTMP] Server started on port ${config.rtmp.port}`);

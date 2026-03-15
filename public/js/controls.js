@@ -23,8 +23,8 @@ async function loadStreamControls(streamId) {
 
         panel.style.display = '';
         grid.innerHTML = controls.map(c => `
-            <button class="control-btn" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown) || 1}"
-                    onclick="sendControl(this.dataset.cmd, this, parseInt(this.dataset.cooldown))"
+            <button class="control-btn" data-cmd="${esc(c.command)}" data-cooldown="${c.cooldown || 1}"
+                    onclick="sendControl('${esc(c.command)}', this, ${c.cooldown || 1})"
                     title="${esc(c.command)}">
                 <i class="fa-solid ${esc(c.icon || 'fa-circle')}"></i>
                 <span>${esc(c.label || c.command)}</span>

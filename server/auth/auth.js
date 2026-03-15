@@ -4,6 +4,7 @@
 const jwt = require('jsonwebtoken');
 const config = require('../config');
 const db = require('../db/database');
+const { isAdmin, isGlobalMod, isStaff } = require('./permissions');
 
 /**
  * Generates a JWT token for a user
@@ -49,10 +50,6 @@ function requireAuth(req, res, next) {
     if (user.is_banned) {
         return res.status(403).json({ error: 'Account is banned', reason: user.ban_reason });
     }
-    // Reject tokens issued before a password change
-    if (user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
-        return res.status(401).json({ error: 'Token revoked — please log in again' });
-    }
 
     req.user = user;
     next();
@@ -66,10 +63,7 @@ function optionalAuth(req, res, next) {
     if (token) {
         const decoded = verifyToken(token);
         if (decoded) {
-            const user = db.getUserById(decoded.id);
-            if (user && !(user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000))) {
-                req.user = user;
-            }
+            req.user = db.getUserById(decoded.id);
         }
     }
     next();
@@ -77,11 +71,10 @@ function optionalAuth(req, res, next) {
 
 /**
  * Express middleware — requires admin role
- * @deprecated Prefer permissions.requireAdmin which doesn't wrap requireAuth
  */
 function requireAdmin(req, res, next) {
     requireAuth(req, res, () => {
-        if (req.user.role !== 'admin') {
+        if (!isAdmin(req.user)) {
             return res.status(403).json({ error: 'Admin access required' });
         }
         next();
@@ -89,12 +82,35 @@ function requireAdmin(req, res, next) {
 }
 
 /**
- * Express middleware — requires streamer or above role
- * Includes streamer, global_mod, admin.
+ * Express middleware — requires global moderator or admin role
+ */
+function requireGlobalMod(req, res, next) {
+    requireAuth(req, res, () => {
+        if (!isGlobalMod(req.user) && !isAdmin(req.user)) {
+            return res.status(403).json({ error: 'Global moderator access required' });
+        }
+        next();
+    });
+}
+
+/**
+ * Express middleware — requires any staff role
+ */
+function requireStaff(req, res, next) {
+    requireAuth(req, res, () => {
+        if (!isStaff(req.user)) {
+            return res.status(403).json({ error: 'Staff access required' });
+        }
+        next();
+    });
+}
+
+/**
+ * Express middleware — requires streamer or admin role
  */
 function requireStreamer(req, res, next) {
     requireAuth(req, res, () => {
-        if (!['streamer', 'global_mod', 'admin'].includes(req.user.role)) {
+        if (!['streamer', 'admin'].includes(req.user.role)) {
             return res.status(403).json({ error: 'Streamer access required' });
         }
         next();
@@ -102,7 +118,7 @@ function requireStreamer(req, res, next) {
 }
 
 /**
- * Extract JWT from Authorization header or cookie (HTTP requests only — no query param)
+ * Extract JWT from Authorization header or cookie
  */
 function extractToken(req) {
     // Check Authorization header: Bearer <token>
@@ -114,14 +130,11 @@ function extractToken(req) {
     if (req.cookies && req.cookies.token) {
         return req.cookies.token;
     }
+    // Check query param (for WebSocket upgrades)
+    if (req.query && req.query.token) {
+        return req.query.token;
+    }
     return null;
-}
-
-/**
- * Extract JWT from query parameter (WebSocket upgrade requests only)
- */
-function extractWsToken(req) {
-    return extractToken(req) || (req.query && req.query.token) || null;
 }
 
 /**
@@ -131,13 +144,7 @@ function authenticateWs(token) {
     if (!token) return null;
     const decoded = verifyToken(token);
     if (!decoded) return null;
-    const user = db.getUserById(decoded.id);
-    if (!user) return null;
-    // Reject tokens issued before a password change
-    if (user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
-        return null;
-    }
-    return user;
+    return db.getUserById(decoded.id);
 }
 
 module.exports = {
@@ -146,8 +153,9 @@ module.exports = {
     requireAuth,
     optionalAuth,
     requireAdmin,
+    requireGlobalMod,
+    requireStaff,
     requireStreamer,
     extractToken,
-    extractWsToken,
     authenticateWs,
 };

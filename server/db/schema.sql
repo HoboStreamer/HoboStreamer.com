@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT,
     avatar_url TEXT,
     bio TEXT DEFAULT '',
-    role TEXT DEFAULT 'user' CHECK(role IN ('user', 'streamer', 'global_mod', 'admin')),
+    role TEXT DEFAULT 'user' CHECK(role IN ('user', 'streamer', 'mod', 'global_mod', 'admin')),
     stream_key TEXT UNIQUE,
     hobo_bucks_balance REAL DEFAULT 0.00,
     hobo_coins_balance INTEGER DEFAULT 0,
@@ -38,26 +38,6 @@ CREATE TABLE IF NOT EXISTS channels (
     emote_sources TEXT DEFAULT '{"defaults":true,"custom":true,"ffz":true,"bttv":true,"7tv":true}',
     default_vod_visibility TEXT DEFAULT 'public' CHECK(default_vod_visibility IN ('public', 'unlisted', 'private')),
     default_clip_visibility TEXT DEFAULT 'public' CHECK(default_clip_visibility IN ('public', 'unlisted', 'private')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
--- RobotStreamer integrations (private per-streamer restream/chat bridge config)
-CREATE TABLE IF NOT EXISTS robotstreamer_integrations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL UNIQUE,
-    enabled INTEGER DEFAULT 0,
-    mirror_chat INTEGER DEFAULT 1,
-    token TEXT,
-    robot_id TEXT,
-    owner_id TEXT,
-    chat_url TEXT,
-    control_url TEXT,
-    rtc_sfu_url TEXT,
-    stream_name TEXT,
-    owner_name TEXT,
-    last_validated_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -271,6 +251,51 @@ CREATE TABLE IF NOT EXISTS bans (
     FOREIGN KEY (banned_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
+-- Channel moderators
+CREATE TABLE IF NOT EXISTS channel_moderators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    added_by INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(channel_id, user_id),
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Channel-specific moderation settings
+CREATE TABLE IF NOT EXISTS channel_moderation_settings (
+    channel_id INTEGER PRIMARY KEY,
+    slowmode_seconds INTEGER DEFAULT 0,
+    allow_anonymous INTEGER DEFAULT 1,
+    links_allowed INTEGER DEFAULT 1,
+    aggressive_filter INTEGER DEFAULT 0,
+    followers_only INTEGER DEFAULT 0,
+    account_age_gate_hours INTEGER DEFAULT 0,
+    caps_percentage_limit INTEGER DEFAULT 70,
+    max_message_length INTEGER DEFAULT 500,
+    updated_by INTEGER,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+    FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Moderation audit trail
+CREATE TABLE IF NOT EXISTS moderation_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_type TEXT NOT NULL DEFAULT 'site' CHECK(scope_type IN ('site', 'channel', 'canvas')),
+    scope_id INTEGER,
+    actor_user_id INTEGER,
+    target_user_id INTEGER,
+    action_type TEXT NOT NULL,
+    details TEXT DEFAULT '{}',
+    ip_address TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
 -- VPN approval queue
 CREATE TABLE IF NOT EXISTS vpn_approvals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -334,32 +359,12 @@ CREATE INDEX IF NOT EXISTS idx_vods_user_id ON vods(user_id);
 CREATE INDEX IF NOT EXISTS idx_clips_stream_id ON clips(stream_id);
 CREATE INDEX IF NOT EXISTS idx_clips_user_id ON clips(user_id);
 CREATE INDEX IF NOT EXISTS idx_bans_stream_id ON bans(stream_id);
-CREATE INDEX IF NOT EXISTS idx_cameras_stream_id ON cameras(stream_id);
-
--- Channel Moderators (per-channel mod assignments)
-CREATE TABLE IF NOT EXISTS channel_moderators (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    channel_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    added_by INTEGER NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(channel_id, user_id),
-    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE SET NULL
-);
 CREATE INDEX IF NOT EXISTS idx_channel_mods_channel ON channel_moderators(channel_id);
 CREATE INDEX IF NOT EXISTS idx_channel_mods_user ON channel_moderators(user_id);
-
--- Per-channel moderation settings (slow mode, etc.)
-CREATE TABLE IF NOT EXISTS channel_moderation_settings (
-    channel_id INTEGER PRIMARY KEY,
-    slow_mode_seconds INTEGER DEFAULT 0,
-    followers_only INTEGER DEFAULT 0,
-    emote_only INTEGER DEFAULT 0,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
-);
+CREATE INDEX IF NOT EXISTS idx_mod_actions_scope ON moderation_actions(scope_type, scope_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_mod_actions_actor ON moderation_actions(actor_user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_mod_actions_target ON moderation_actions(target_user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_cameras_stream_id ON cameras(stream_id);
 
 -- ═══════════════════════════════════════════════════════════════
 -- Site Settings (key/value store for platform configuration)

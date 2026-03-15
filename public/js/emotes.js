@@ -56,7 +56,7 @@ function parseEmotes(text) {
         const emote = emoteMap.get(token);
         if (emote) {
             const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
-            return `<img class="${cls}" src="${_escEmote(emote.url)}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
+            return `<img class="${cls}" src="${emote.url}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
         }
         return _escEmote(token);
     }).join('');
@@ -78,14 +78,11 @@ function _escEmote(str) {
  */
 function _getPickerEls(inputId) {
     const isBc = inputId && inputId.startsWith('bc-');
-    const isGlobal = inputId === 'global-chat-input';
-    const isOffline = inputId === 'offline-chat-input';
-    const prefix = isBc ? 'bc-' : isGlobal ? 'gc-' : isOffline ? 'oc-' : '';
     return {
-        picker: document.getElementById(prefix + 'emote-picker'),
-        grid:   document.getElementById(prefix + 'emote-picker-grid'),
-        search: prefix
-            ? document.querySelector('#' + prefix + 'emote-picker .emote-search')
+        picker: document.getElementById(isBc ? 'bc-emote-picker' : 'emote-picker'),
+        grid:   document.getElementById(isBc ? 'bc-emote-picker-grid' : 'emote-picker-grid'),
+        search: isBc
+            ? document.querySelector('#bc-emote-picker .emote-search')
             : document.getElementById('emote-search'),
     };
 }

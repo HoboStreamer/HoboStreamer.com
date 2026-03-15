@@ -10,18 +10,6 @@
 const http = require('http');
 const WebSocket = require('ws');
 
-const MAX_WS_BACKPRESSURE = 512 * 1024;
-
-function matchesStreamPath(url, streamKey) {
-    try {
-        const pathname = new URL(url || '/', 'http://localhost').pathname;
-        const parts = pathname.split('/').filter(Boolean);
-        return parts[0] === streamKey;
-    } catch {
-        return false;
-    }
-}
-
 class JSMPEGRelay {
     constructor() {
         /** @type {Map<string, { videoWss: WebSocket.Server, audioWss: WebSocket.Server, videoServer: http.Server, audioServer: http.Server }>} */
@@ -46,30 +34,17 @@ class JSMPEGRelay {
         this.nextVideoPort += 2;
         this.nextAudioPort += 2;
 
-        // Shared data tap set — restream manager registers callbacks here
-        const dataTaps = new Set();
-
         // ── Video relay ──────────────────────────────────────
-        const videoWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false, maxPayload: 64 * 1024 });
+        const videoWss = new WebSocket.Server({ noServer: true });
         const videoServer = http.createServer((req, res) => {
             // FFmpeg sends MPEG1 data via HTTP POST
-            req.socket.setNoDelay(true);
-            if (req.method === 'POST' && matchesStreamPath(req.url, streamKey)) {
+            if (req.method === 'POST' || req.url.includes(streamKey)) {
                 req.on('data', (chunk) => {
-                    // Broadcast to WebSocket viewers
-                    if (videoWss.clients.size > 0) {
-                        videoWss.clients.forEach(client => {
-                            if (client.readyState !== WebSocket.OPEN) return;
-                            if (client.bufferedAmount > MAX_WS_BACKPRESSURE) return;
-                            client.send(chunk, { binary: true, compress: false }, () => {});
-                        });
-                    }
-                    // Feed data taps (restream FFmpeg processes)
-                    if (dataTaps.size > 0) {
-                        for (const tap of dataTaps) {
-                            try { tap('video', chunk); } catch {}
+                    videoWss.clients.forEach(client => {
+                        if (client.readyState === WebSocket.OPEN) {
+                            client.send(chunk);
                         }
-                    }
+                    });
                 });
                 req.on('end', () => {
                     res.writeHead(200);
@@ -96,25 +71,15 @@ class JSMPEGRelay {
         });
 
         // ── Audio relay ──────────────────────────────────────
-        const audioWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false, maxPayload: 64 * 1024 });
+        const audioWss = new WebSocket.Server({ noServer: true });
         const audioServer = http.createServer((req, res) => {
-            req.socket.setNoDelay(true);
-            if (req.method === 'POST' && matchesStreamPath(req.url, streamKey)) {
+            if (req.method === 'POST' || req.url.includes(streamKey)) {
                 req.on('data', (chunk) => {
-                    // Broadcast to WebSocket viewers
-                    if (audioWss.clients.size > 0) {
-                        audioWss.clients.forEach(client => {
-                            if (client.readyState !== WebSocket.OPEN) return;
-                            if (client.bufferedAmount > MAX_WS_BACKPRESSURE) return;
-                            client.send(chunk, { binary: true, compress: false }, () => {});
-                        });
-                    }
-                    // Feed data taps (restream FFmpeg processes)
-                    if (dataTaps.size > 0) {
-                        for (const tap of dataTaps) {
-                            try { tap('audio', chunk); } catch {}
+                    audioWss.clients.forEach(client => {
+                        if (client.readyState === WebSocket.OPEN) {
+                            client.send(chunk);
                         }
-                    }
+                    });
                 });
                 req.on('end', () => {
                     res.writeHead(200);
@@ -138,34 +103,10 @@ class JSMPEGRelay {
 
         this.channels.set(streamKey, {
             videoWss, audioWss, videoServer, audioServer,
-            videoPort, audioPort,
-            dataTaps,
+            videoPort, audioPort
         });
 
         return { videoPort, audioPort };
-    }
-
-    /**
-     * Register a data tap for restreaming. Callback receives (type, chunk)
-     * where type is 'video' or 'audio' and chunk is a Buffer.
-     * @param {string} streamKey
-     * @param {function} callback - (type: 'video'|'audio', chunk: Buffer) => void
-     * @returns {boolean} true if channel exists and tap was registered
-     */
-    registerDataTap(streamKey, callback) {
-        const ch = this.channels.get(streamKey);
-        if (!ch) return false;
-        ch.dataTaps.add(callback);
-        return true;
-    }
-
-    /**
-     * Unregister a data tap.
-     */
-    unregisterDataTap(streamKey, callback) {
-        const ch = this.channels.get(streamKey);
-        if (!ch?.dataTaps) return;
-        ch.dataTaps.delete(callback);
     }
 
     /**
@@ -184,7 +125,6 @@ class JSMPEGRelay {
         const ch = this.channels.get(streamKey);
         if (!ch) return;
 
-        ch.dataTaps.clear();
         ch.videoWss.clients.forEach(c => c.close());
         ch.audioWss.clients.forEach(c => c.close());
         ch.videoServer.close();

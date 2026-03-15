@@ -12,42 +12,22 @@
  * Each stream has ONE broadcaster and MANY viewers.
  * The server acts as a signaling relay (not an SFU).
  */
-const { EventEmitter } = require('events');
 const WebSocket = require('ws');
 const { authenticateWs } = require('../auth/auth');
 const db = require('../db/database');
-const webrtcSFU = require('./webrtc-sfu');
 
-const WS_HEARTBEAT_MS = 30000;
-const MAX_SEND_BACKPRESSURE = 512 * 1024;
-
-class BroadcastServer extends EventEmitter {
+class BroadcastServer {
     constructor() {
-        super();
         this.wss = null;
         /** @type {Map<number, { broadcaster: WebSocket, viewers: Map<string, WebSocket> }>} streamId → room */
         this.rooms = new Map();
         /** @type {Map<WebSocket, { user: object|null, streamId: number, role: string, peerId: string }>} */
         this.clients = new Map();
         this.nextPeerId = 1;
-        this.heartbeatInterval = null;
     }
 
     init(server) {
-        this.wss = new WebSocket.Server({ noServer: true, maxPayload: 256 * 1024, perMessageDeflate: false });
-
-        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-        this.heartbeatInterval = setInterval(() => {
-            if (!this.wss) return;
-            this.wss.clients.forEach((ws) => {
-                if (ws.isAlive === false) {
-                    try { ws.terminate(); } catch {}
-                    return;
-                }
-                ws.isAlive = false;
-                try { ws.ping(); } catch {}
-            });
-        }, WS_HEARTBEAT_MS);
+        this.wss = new WebSocket.Server({ noServer: true });
 
         this.wss.on('connection', (ws, req) => {
             this.handleConnection(ws, req);
@@ -73,21 +53,10 @@ class BroadcastServer extends EventEmitter {
         const streamId = parseInt(url.searchParams.get('streamId'));
         const role = url.searchParams.get('role') || 'viewer'; // 'broadcaster' or 'viewer'
 
-        if (role !== 'broadcaster' && role !== 'viewer') {
-            ws.close(4004, 'Invalid role');
-            return;
-        }
-
         if (!streamId || isNaN(streamId)) {
             ws.close(4001, 'Missing streamId');
             return;
         }
-
-        ws.isAlive = true;
-        ws.on('pong', () => {
-            ws.isAlive = true;
-        });
-        try { ws._socket?.setNoDelay(true); } catch {}
 
         // Authenticate
         const user = authenticateWs(token);
@@ -130,22 +99,10 @@ class BroadcastServer extends EventEmitter {
             }
             room.broadcaster = ws;
             console.log(`[Broadcast] Broadcaster connected: stream ${streamId} (${user.username})`);
-            this.emit('broadcaster-connected', { streamId, userId: user.id });
 
             // Notify existing viewers to re-negotiate
             for (const [viewerPeerId, viewerWs] of room.viewers) {
                 this.safeSend(viewerWs, { type: 'broadcaster-ready', peerId: viewerPeerId });
-            }
-
-            // Drain any pending watchers that sent 'watch' while broadcaster was disconnected
-            if (room._pendingWatchers && room._pendingWatchers.size > 0) {
-                for (const pendingPeerId of room._pendingWatchers) {
-                    if (room.viewers.has(pendingPeerId)) {
-                        const viewerWs = room.viewers.get(pendingPeerId);
-                        this.safeSend(viewerWs, { type: 'broadcaster-ready', peerId: pendingPeerId });
-                    }
-                }
-                room._pendingWatchers.clear();
             }
         } else {
             room.viewers.set(peerId, ws);
@@ -206,18 +163,11 @@ class BroadcastServer extends EventEmitter {
 
             case 'watch':
                 // Viewer requests to watch — tell broadcaster to create offer for this viewer
-                if (client.role === 'viewer') {
-                    if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
-                        this.safeSend(room.broadcaster, {
-                            type: 'viewer-joined',
-                            peerId: client.peerId,
-                        });
-                    } else {
-                        // Broadcaster not connected — mark viewer as pending so they get
-                        // broadcaster-ready as soon as the broadcaster reconnects
-                        if (!room._pendingWatchers) room._pendingWatchers = new Set();
-                        room._pendingWatchers.add(client.peerId);
-                    }
+                if (client.role === 'viewer' && room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                    this.safeSend(room.broadcaster, {
+                        type: 'viewer-joined',
+                        peerId: client.peerId,
+                    });
                 }
                 break;
 
@@ -236,33 +186,6 @@ class BroadcastServer extends EventEmitter {
                         text: msg.text,
                         username: msg.username,
                     });
-                }
-                break;
-
-            // ── SFU Produce Signaling (for WebRTC → RTMP restreaming) ──
-            case 'sfu-get-capabilities':
-                if (client.role === 'broadcaster') {
-                    this._handleSfuGetCapabilities(ws, client);
-                }
-                break;
-            case 'sfu-create-transport':
-                if (client.role === 'broadcaster') {
-                    this._handleSfuCreateTransport(ws, client);
-                }
-                break;
-            case 'sfu-connect-transport':
-                if (client.role === 'broadcaster') {
-                    this._handleSfuConnectTransport(ws, client, msg);
-                }
-                break;
-            case 'sfu-produce':
-                if (client.role === 'broadcaster') {
-                    this._handleSfuProduce(ws, client, msg);
-                }
-                break;
-            case 'sfu-stop-produce':
-                if (client.role === 'broadcaster') {
-                    this._handleSfuStopProduce(ws, client);
                 }
                 break;
 
@@ -309,7 +232,7 @@ class BroadcastServer extends EventEmitter {
                 room.broadcaster = null;
                 console.log(`[Broadcast] Broadcaster disconnected: stream ${client.streamId}`);
 
-                // Start a grace timer — if broadcaster doesn't reconnect, end the stream cleanly
+                // Start a grace timer — if broadcaster doesn't reconnect in 30s, end the stream
                 if (room._disconnectTimer) clearTimeout(room._disconnectTimer);
                 room._disconnectTimer = setTimeout(() => {
                     // Check if broadcaster reconnected
@@ -317,12 +240,8 @@ class BroadcastServer extends EventEmitter {
                     if (currentRoom && !currentRoom.broadcaster) {
                         console.log(`[Broadcast] Broadcaster did not reconnect, ending stream ${client.streamId}`);
                         try {
+                            const db = require('../db/database');
                             db.endStream(client.streamId);
-                            const vodRoutes = require('../vod/routes');
-                            vodRoutes.finalizeVodRecording(client.streamId).catch((err) => {
-                                console.warn(`[Broadcast] Failed to finalize VOD for stale stream ${client.streamId}:`, err.message);
-                            });
-                            webrtcSFU.closeRoom(`stream-${client.streamId}`);
                         } catch (err) {
                             console.error('[Broadcast] Failed to end stale stream:', err.message);
                         }
@@ -331,7 +250,7 @@ class BroadcastServer extends EventEmitter {
                             this.safeSend(vWs, { type: 'stream-ended' });
                         }
                     }
-                }, 60000);
+                }, 30000);
 
                 // Notify all viewers (they may get a reconnection)
                 for (const [peerId, viewerWs] of room.viewers) {
@@ -339,7 +258,6 @@ class BroadcastServer extends EventEmitter {
                 }
             } else {
                 room.viewers.delete(client.peerId);
-                if (room._pendingWatchers) room._pendingWatchers.delete(client.peerId);
                 console.log(`[Broadcast] Viewer disconnected: stream ${client.streamId} (${client.peerId})`);
 
                 // Notify broadcaster
@@ -381,7 +299,7 @@ class BroadcastServer extends EventEmitter {
 
     safeSend(ws, data) {
         try {
-            if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+            if (ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify(data));
             }
         } catch {}
@@ -392,138 +310,12 @@ class BroadcastServer extends EventEmitter {
         return room ? room.viewers.size : 0;
     }
 
-    // ── SFU Produce Signaling (for WebRTC → RTMP restreaming) ────
-
-    /**
-     * Signal the broadcaster to start producing into the Mediasoup SFU.
-     * Called by the restream manager when a WebRTC restream is requested.
-     * @param {number} streamId
-     * @returns {boolean} true if signal was sent
-     */
-    requestSfuProduce(streamId) {
-        const room = this.rooms.get(streamId);
-        if (!room?.broadcaster || room.broadcaster.readyState !== WebSocket.OPEN) return false;
-        this.safeSend(room.broadcaster, { type: 'sfu-produce-request' });
-        return true;
-    }
-
-    /**
-     * Check if a broadcaster is connected for a stream.
-     * @param {number} streamId
-     * @returns {boolean}
-     */
-    isBroadcasterConnected(streamId) {
-        const room = this.rooms.get(streamId);
-        return !!(room?.broadcaster && room.broadcaster.readyState === WebSocket.OPEN);
-    }
-
-    async _handleSfuGetCapabilities(ws, client) {
-        try {
-            const roomId = `stream-${client.streamId}`;
-            const caps = await webrtcSFU.getRouterCapabilities(roomId);
-            this.safeSend(ws, { type: 'sfu-capabilities', rtpCapabilities: caps });
-        } catch (err) {
-            console.error('[Broadcast] SFU get-capabilities error:', err.message);
-            this.safeSend(ws, { type: 'sfu-error', error: err.message });
-        }
-    }
-
-    async _handleSfuCreateTransport(ws, client) {
-        try {
-            const roomId = `stream-${client.streamId}`;
-            const transport = await webrtcSFU.createTransport(roomId, `sfu-${client.peerId}`);
-            this.safeSend(ws, { type: 'sfu-transport-created', ...transport });
-        } catch (err) {
-            console.error('[Broadcast] SFU create-transport error:', err.message);
-            this.safeSend(ws, { type: 'sfu-error', error: err.message });
-        }
-    }
-
-    async _handleSfuConnectTransport(ws, client, msg) {
-        try {
-            const roomId = `stream-${client.streamId}`;
-            await webrtcSFU.connectTransport(
-                roomId, `sfu-${client.peerId}`, msg.transportId, msg.dtlsParameters
-            );
-            this.safeSend(ws, { type: 'sfu-transport-connected', transportId: msg.transportId });
-        } catch (err) {
-            console.error('[Broadcast] SFU connect-transport error:', err.message);
-            this.safeSend(ws, { type: 'sfu-error', error: err.message });
-        }
-    }
-
-    async _handleSfuProduce(ws, client, msg) {
-        try {
-            const roomId = `stream-${client.streamId}`;
-            const result = await webrtcSFU.produce(
-                roomId, `sfu-${client.peerId}`, msg.transportId, msg.kind, msg.rtpParameters
-            );
-            this.safeSend(ws, { type: 'sfu-produced', id: result.id, kind: msg.kind });
-        } catch (err) {
-            console.error('[Broadcast] SFU produce error:', err.message);
-            this.safeSend(ws, { type: 'sfu-error', error: err.message });
-        }
-    }
-
-    _handleSfuStopProduce(ws, client) {
-        // Close the SFU room producers for this broadcaster
-        // The room itself stays open — PlainTransport consumers will detect producer close
-        const roomId = `stream-${client.streamId}`;
-        const room = webrtcSFU.rooms?.get(roomId);
-        if (!room) return;
-
-        const peerId = `sfu-${client.peerId}`;
-        const toRemove = [];
-        for (const [id, { producer, peerId: pid }] of room.producers) {
-            if (pid === peerId) {
-                try { producer.close(); } catch {}
-                toRemove.push(id);
-            }
-        }
-        for (const id of toRemove) room.producers.delete(id);
-        if (toRemove.length) console.log(`[Broadcast] SFU: Closed ${toRemove.length} producer(s) for ${peerId}`);
-    }
-
-    /**
-     * Cleanly end a stream: close broadcaster WS, notify viewers, clear room.
-     * Called from DELETE /streams/:id and stale heartbeat cleanup.
-     */
-    endStream(streamId) {
-        const room = this.rooms.get(streamId);
-        if (!room) return;
-
-        // Cancel any pending disconnect timer
-        if (room._disconnectTimer) {
-            clearTimeout(room._disconnectTimer);
-            room._disconnectTimer = null;
-        }
-
-        // Close broadcaster WS
-        if (room.broadcaster) {
-            this.safeSend(room.broadcaster, { type: 'stream-ended' });
-            this.clients.delete(room.broadcaster);
-            try { room.broadcaster.close(4020, 'Stream ended'); } catch {}
-            room.broadcaster = null;
-        }
-
-        // Notify all viewers
-        for (const [, viewerWs] of room.viewers) {
-            this.safeSend(viewerWs, { type: 'stream-ended' });
-        }
-
-        this.rooms.delete(streamId);
-    }
-
     getTotalConnections() {
         return this.clients.size;
     }
 
     close() {
         if (this.wss) {
-            if (this.heartbeatInterval) {
-                clearInterval(this.heartbeatInterval);
-                this.heartbeatInterval = null;
-            }
             for (const ws of this.clients.keys()) {
                 try { ws.close(); } catch {}
             }

@@ -23,7 +23,6 @@ const config = require('../config');
 const router = express.Router();
 
 // ── Emote file upload via multer ─────────────────────────────
-const MIME_TO_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/avif': '.avif' };
 const emoteStorage = multer.diskStorage({
     destination: (req, file, cb) => {
         const emoteDir = path.resolve(config.emotes.path);
@@ -31,7 +30,7 @@ const emoteStorage = multer.diskStorage({
         cb(null, emoteDir);
     },
     filename: (req, file, cb) => {
-        const ext = MIME_TO_EXT[file.mimetype] || '.png';
+        const ext = path.extname(file.originalname) || '.png';
         cb(null, `emote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
 });
@@ -174,21 +173,20 @@ const DEFAULT_EMOTES = [
     { id: 'def-pog',       code: 'Pog',       url: 'https://cdn.frankerfacez.com/emote/210748/2',  source: 'defaults', animated: false },
     { id: 'def-poggers',   code: 'Poggers',   url: 'https://cdn.frankerfacez.com/emote/214681/2',  source: 'defaults', animated: false },
     // BTTV classics
-    { id: 'def-pogu',      code: 'PogU',      url: 'https://cdn.betterttv.net/emote/5e4e7a1f08b4447d56a92967/2x', source: 'defaults', animated: false },
+    { id: 'def-pogu',      code: 'PogU',      url: 'https://cdn.betterttv.net/emote/5e4e7a1f08b4447d56a92968/2x', source: 'defaults', animated: false },
     { id: 'def-peped',     code: 'PepeD',     url: 'https://cdn.betterttv.net/emote/5b1740221c5a6065a7bad4b5/2x', source: 'defaults', animated: true },
     { id: 'def-catjam',    code: 'catJAM',    url: 'https://cdn.betterttv.net/emote/5f1b0186cf6d2144653d2970/2x', source: 'defaults', animated: true },
     { id: 'def-sadge',     code: 'Sadge',     url: 'https://cdn.betterttv.net/emote/5e0fa9d40550d42106b8a489/2x', source: 'defaults', animated: false },
     { id: 'def-pepega',    code: 'Pepega',    url: 'https://cdn.betterttv.net/emote/5aca62163e290877a25481ad/2x', source: 'defaults', animated: false },
     { id: 'def-5head',     code: '5Head',     url: 'https://cdn.betterttv.net/emote/5d6096974932b21d9c332904/2x', source: 'defaults', animated: false },
-    { id: 'def-widehard',  code: 'widepeepohappy', url: 'https://cdn.betterttv.net/emote/5e1a76dd8af14b5f1b438c04/2x', source: 'defaults', animated: false },
-    { id: 'def-monkaw',    code: 'monkaW',    url: 'https://cdn.betterttv.net/emote/59ca6551b27c823d5b1fd872/2x', source: 'defaults', animated: false },
+    { id: 'def-widehard',  code: 'widepeepohappy', url: 'https://cdn.betterttv.net/emote/5c0e6fce3b15b62b30e79e8b/2x', source: 'defaults', animated: false },
+    { id: 'def-monkaw',    code: 'monkaW',    url: 'https://cdn.betterttv.net/emote/5a3801c3e0284f0522e915b3/2x', source: 'defaults', animated: false },
     { id: 'def-pepelaugh', code: 'PepeLaugh', url: 'https://cdn.betterttv.net/emote/5c548025009a2e73916b3a37/2x', source: 'defaults', animated: false },
-    { id: 'def-modtime',   code: 'modCheck',  url: 'https://cdn.betterttv.net/emote/5d7eefb7c0652668c9e4d394/2x', source: 'defaults', animated: true },
+    { id: 'def-modtime',   code: 'modCheck',  url: 'https://cdn.betterttv.net/emote/5eaa12a074046462f768a399/2x', source: 'defaults', animated: true },
     { id: 'def-clap',      code: 'CLAP',      url: 'https://cdn.betterttv.net/emote/55b6f480e66682f576dd94f5/2x', source: 'defaults', animated: false },
-    { id: 'def-gg',        code: 'GGEZ',      url: 'https://cdn.frankerfacez.com/emote/703645/2',  source: 'defaults', animated: false },
-    { id: 'def-based',     code: 'BASED',     url: 'https://cdn.frankerfacez.com/emote/768564/2',  source: 'defaults', animated: false },
+    { id: 'def-gg',        code: 'GGEZ',      url: 'https://cdn.frankerfacez.com/emote/411579/2',  source: 'defaults', animated: false },
+    { id: 'def-based',     code: 'BASED',     url: 'https://cdn.frankerfacez.com/emote/590105/2',  source: 'defaults', animated: false },
     { id: 'def-peepo',     code: 'peepoHappy', url: 'https://cdn.betterttv.net/emote/5a16ee718c22a247ead62d4a/2x', source: 'defaults', animated: false },
-    { id: 'def-mods',      code: 'MODS',      url: 'https://cdn.betterttv.net/emote/603451b77c74605395f3295d/2x', source: 'defaults', animated: true },
 ].map(e => ({ ...e, width: 28, height: 28 }));
 
 // ══════════════════════════════════════════════════════════════
@@ -438,7 +436,7 @@ router.get('/sources', requireAuth, (req, res) => {
     try {
         const channel = db.ensureChannel(req.user.id);
         let sources = { defaults: true, custom: true, ffz: true, bttv: true, '7tv': true };
-        try { sources = JSON.parse(channel.emote_sources || '{}'); } catch (err) { console.warn('[Emotes] Source parse error:', err.message); /* use defaults */ }
+        try { sources = JSON.parse(channel.emote_sources || '{}'); } catch { /* use defaults */ }
         // Ensure all keys exist
         for (const key of ['defaults', 'custom', 'ffz', 'bttv', '7tv']) {
             if (sources[key] === undefined) sources[key] = true;

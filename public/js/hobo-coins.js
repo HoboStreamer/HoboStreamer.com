@@ -74,19 +74,14 @@ async function loadRewardsPanel() {
 
         const html = !rewards.length
             ? '<p class="muted" style="padding:8px">No rewards configured for this channel</p>'
-            : rewards.map(r => {
-                const safeId = parseInt(r.id) || 0;
-                const safeCost = parseInt(r.cost) || 0;
-                const safeInput = r.requires_input ? 1 : 0;
-                return `
-                <button class="reward-btn" data-rid="${safeId}" data-title="${esc(r.title)}" data-cost="${safeCost}" data-input="${safeInput}"
-                        onclick="rewardClick(+this.dataset.rid, this.dataset.title, +this.dataset.cost, +this.dataset.input)"
-                        style="--reward-color:${esc(r.color || '#c0965c')}" title="${esc(r.description || r.title)}">
-                    <i class="fa-solid ${esc(r.icon || 'fa-star')}"></i>
+            : rewards.map(r => `
+                <button class="reward-btn" onclick="rewardClick(${r.id}, ${JSON.stringify(r.title).replace(/"/g, '&quot;')}, ${r.cost}, ${r.requires_input})"
+                        style="--reward-color:${r.color || '#c0965c'}" title="${esc(r.description || r.title)}">
+                    <i class="fa-solid ${r.icon || 'fa-star'}"></i>
                     <span class="reward-title">${esc(r.title)}</span>
-                    <span class="reward-cost"><i class="fa-solid fa-coins"></i> ${safeCost.toLocaleString()}</span>
+                    <span class="reward-cost"><i class="fa-solid fa-coins"></i> ${r.cost.toLocaleString()}</span>
                 </button>
-            `; }).join('');
+            `).join('');
 
         grids.forEach(g => { g.innerHTML = html; });
     } catch {
@@ -165,7 +160,7 @@ function handleCoinEarned(msg) {
 function renderRedemption(msg, container) {
     const el = document.createElement('div');
     el.className = 'chat-msg redemption';
-    el.innerHTML = `<i class="fa-solid fa-gem" style="color:${esc(msg.reward_color || 'var(--accent)')}"></i> <strong>${esc(msg.username || 'Someone')}</strong> redeemed <strong>${esc(msg.reward_title || 'a reward')}</strong>${msg.user_input ? `: ${esc(msg.user_input)}` : ''} <span class="muted">(${(msg.cost || 0).toLocaleString()} coins)</span>`;
+    el.innerHTML = `<i class="fa-solid fa-gem" style="color:${msg.reward_color || 'var(--accent)'}"></i> <strong>${esc(msg.username || 'Someone')}</strong> redeemed <strong>${esc(msg.reward_title || 'a reward')}</strong>${msg.user_input ? `: ${esc(msg.user_input)}` : ''} <span class="muted">(${(msg.cost || 0).toLocaleString()} coins)</span>`;
     container.appendChild(el);
     container.scrollTop = container.scrollHeight;
 }
@@ -266,8 +261,8 @@ async function loadDashRewards() {
         }
 
         list.innerHTML = rewards.map(r => `
-            <div class="dash-reward-card" style="--reward-color:${esc(r.color || '#c0965c')}">
-                <div class="dash-reward-icon"><i class="fa-solid ${esc(r.icon || 'fa-star')}"></i></div>
+            <div class="dash-reward-card" style="--reward-color:${r.color || '#c0965c'}">
+                <div class="dash-reward-icon"><i class="fa-solid ${r.icon || 'fa-star'}"></i></div>
                 <div class="dash-reward-info">
                     <strong>${esc(r.title)}</strong>
                     <span class="muted">${r.cost.toLocaleString()} coins${r.description ? ' — ' + esc(r.description) : ''}</span>
@@ -323,7 +318,7 @@ async function loadDashRedemptions() {
         list.innerHTML = items.map(r => `
             <div class="redemption-item">
                 <div class="redemption-info">
-                    <i class="fa-solid ${esc(r.icon || 'fa-star')}" style="color:${esc(r.color || 'var(--accent)')}"></i>
+                    <i class="fa-solid ${r.icon || 'fa-star'}" style="color:${r.color || 'var(--accent)'}"></i>
                     <strong>${esc(r.display_name || r.username)}</strong> redeemed
                     <strong>${esc(r.reward_title)}</strong>
                     <span class="muted">(${r.cost} coins)</span>

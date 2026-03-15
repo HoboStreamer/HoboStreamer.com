@@ -5,7 +5,6 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
 
 const DB_PATH = process.env.DB_PATH || './data/hobostreamer.db';
 const dbDir = path.dirname(path.resolve(DB_PATH));
@@ -54,10 +53,6 @@ function initDb() {
             database.exec(`ALTER TABLE users ADD COLUMN hobo_coins_balance INTEGER DEFAULT 0`);
             console.log('[DB] Added hobo_coins_balance column to users');
         }
-        if (!userCols.includes('token_valid_after')) {
-            database.exec(`ALTER TABLE users ADD COLUMN token_valid_after TEXT DEFAULT NULL`);
-            console.log('[DB] Added token_valid_after column to users');
-        }
     } catch (e) { console.warn('[DB] Migration note:', e.message); }
 
     // Migrate: create site_settings table if missing (old DB)
@@ -90,6 +85,59 @@ function initDb() {
         database.exec(`CREATE INDEX IF NOT EXISTS idx_vkeys_target ON verification_keys(target_username)`);
         database.exec(`CREATE INDEX IF NOT EXISTS idx_vkeys_status ON verification_keys(status)`);
     } catch (e) { console.warn('[DB] verification_keys migration:', e.message); }
+
+    // Migrate: channel moderation tables
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS channel_moderators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            added_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(channel_id, user_id),
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_channel_mods_channel ON channel_moderators(channel_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_channel_mods_user ON channel_moderators(user_id)`);
+
+        database.exec(`CREATE TABLE IF NOT EXISTS channel_moderation_settings (
+            channel_id INTEGER PRIMARY KEY,
+            slowmode_seconds INTEGER DEFAULT 0,
+            allow_anonymous INTEGER DEFAULT 1,
+            links_allowed INTEGER DEFAULT 1,
+            aggressive_filter INTEGER DEFAULT 0,
+            followers_only INTEGER DEFAULT 0,
+            account_age_gate_hours INTEGER DEFAULT 0,
+            caps_percentage_limit INTEGER DEFAULT 70,
+            max_message_length INTEGER DEFAULT 500,
+            updated_by INTEGER,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+    } catch (e) { console.warn('[DB] Channel moderation migration:', e.message); }
+
+    // Migrate: moderation action log
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS moderation_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope_type TEXT NOT NULL DEFAULT 'site' CHECK(scope_type IN ('site', 'channel', 'canvas')),
+            scope_id INTEGER,
+            actor_user_id INTEGER,
+            target_user_id INTEGER,
+            action_type TEXT NOT NULL,
+            details TEXT DEFAULT '{}',
+            ip_address TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_mod_actions_scope ON moderation_actions(scope_type, scope_id, created_at DESC)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_mod_actions_actor ON moderation_actions(actor_user_id, created_at DESC)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_mod_actions_target ON moderation_actions(target_user_id, created_at DESC)`);
+    } catch (e) { console.warn('[DB] Moderation action migration:', e.message); }
 
     // Migrate: make chat_messages.stream_id nullable (was NOT NULL, broke global chat saves)
     try {
@@ -136,86 +184,6 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] Channel visibility migration:', e.message); }
 
-    // Migrate: create RobotStreamer integration table if missing
-    try {
-        database.exec(`CREATE TABLE IF NOT EXISTS robotstreamer_integrations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL UNIQUE,
-            enabled INTEGER DEFAULT 0,
-            mirror_chat INTEGER DEFAULT 1,
-            token TEXT,
-            robot_id TEXT,
-            owner_id TEXT,
-            chat_url TEXT,
-            control_url TEXT,
-            rtc_sfu_url TEXT,
-            stream_name TEXT,
-            owner_name TEXT,
-            last_validated_at DATETIME,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )`);
-    } catch (e) { console.warn('[DB] RobotStreamer integration migration:', e.message); }
-
-    // Migrate: create restream_destinations table if missing
-    try {
-        database.exec(`CREATE TABLE IF NOT EXISTS restream_destinations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            platform TEXT NOT NULL CHECK(platform IN ('youtube', 'twitch', 'kick', 'custom')),
-            name TEXT,
-            server_url TEXT,
-            stream_key TEXT,
-            enabled INTEGER DEFAULT 1,
-            auto_start INTEGER DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )`);
-    } catch (e) { console.warn('[DB] Restream destinations migration:', e.message); }
-
-    // Migrate: add quality_preset column to restream_destinations
-    try {
-        const cols = database.pragma('table_info(restream_destinations)').map(c => c.name);
-        if (!cols.includes('quality_preset')) {
-            database.exec(`ALTER TABLE restream_destinations ADD COLUMN quality_preset TEXT DEFAULT 'auto'`);
-            console.log('[DB] Added quality_preset column to restream_destinations');
-        }
-    } catch (e) { console.warn('[DB] Restream quality_preset migration:', e.message); }
-
-    // Migrate: add custom encoding override columns to restream_destinations
-    try {
-        const cols = database.pragma('table_info(restream_destinations)').map(c => c.name);
-        const newCols = [
-            { name: 'custom_video_bitrate', def: 'INTEGER DEFAULT NULL' },
-            { name: 'custom_audio_bitrate', def: 'INTEGER DEFAULT NULL' },
-            { name: 'custom_fps', def: 'INTEGER DEFAULT NULL' },
-            { name: 'custom_encoder_preset', def: 'TEXT DEFAULT NULL' },
-        ];
-        for (const col of newCols) {
-            if (!cols.includes(col.name)) {
-                database.exec(`ALTER TABLE restream_destinations ADD COLUMN ${col.name} ${col.def}`);
-                console.log(`[DB] Added ${col.name} column to restream_destinations`);
-            }
-        }
-    } catch (e) { console.warn('[DB] Restream custom overrides migration:', e.message); }
-
-    // Migrate: add channel_url and chat_relay columns to restream_destinations
-    try {
-        const cols = database.pragma('table_info(restream_destinations)').map(c => c.name);
-        const newCols = [
-            { name: 'channel_url', def: 'TEXT DEFAULT NULL' },
-            { name: 'chat_relay', def: 'INTEGER DEFAULT 0' },
-        ];
-        for (const col of newCols) {
-            if (!cols.includes(col.name)) {
-                database.exec(`ALTER TABLE restream_destinations ADD COLUMN ${col.name} ${col.def}`);
-                console.log(`[DB] Added ${col.name} column to restream_destinations`);
-            }
-        }
-    } catch (e) { console.warn('[DB] Restream channel_url/chat_relay migration:', e.message); }
-
     // Migrate: create comments table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS comments (
@@ -236,14 +204,6 @@ function initDb() {
         database.exec(`CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_id)`);
     } catch (e) { console.warn('[DB] Comments migration:', e.message); }
 
-    // Migrate: create anon IP mapping table for persistent anon numbering
-    try {
-        database.exec(`CREATE TABLE IF NOT EXISTS anon_ip_mappings (
-            ip TEXT PRIMARY KEY,
-            anon_num INTEGER NOT NULL UNIQUE
-        )`);
-    } catch (e) { console.warn('[DB] anon_ip_mappings migration:', e.message); }
-
     // Seed default site settings if empty
     try {
         const settingsCount = database.prepare("SELECT COUNT(*) as c FROM site_settings").get().c;
@@ -263,187 +223,12 @@ function initDb() {
                 ['chat_slowmode_seconds', '0', 'Global chat slow mode (0=off)', 'number'],
                 ['max_emotes_per_user', '25', 'Max custom emotes per user', 'number'],
                 ['nsfw_enabled', 'true', 'Allow NSFW streams', 'boolean'],
-                // TTS settings
-                ['tts_enabled', 'true', 'Enable site-wide TTS system', 'boolean'],
-                ['tts_provider', 'espeak-ng', 'Default TTS provider (espeak-ng, google-cloud, amazon-polly)', 'string'],
-                ['tts_google_api_key', '', 'Google Cloud TTS API key', 'string'],
-                ['tts_google_service_account', '', 'Google Cloud service account JSON (paste full JSON or file path)', 'string'],
-                ['tts_aws_access_key_id', '', 'Amazon Polly AWS Access Key ID', 'string'],
-                ['tts_aws_secret_access_key', '', 'Amazon Polly AWS Secret Access Key', 'string'],
-                ['tts_aws_region', 'us-east-1', 'Amazon Polly AWS Region', 'string'],
-                ['tts_max_length', '200', 'Maximum TTS message length (characters)', 'number'],
-                ['tts_max_queue_per_user', '3', 'Maximum queued TTS messages per user', 'number'],
-                ['tts_max_queue_global', '20', 'Maximum global TTS queue size', 'number'],
-                ['tts_default_voice', 'gary', 'Default TTS voice ID', 'string'],
             ];
             const insert = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
             for (const [k, v, d, t] of defaults) insert.run(k, v, d, t);
             console.log('[DB] Default site settings seeded');
         }
-        // Always seed any NEW TTS settings that may be missing (for existing databases)
-        const ttsSeeds = [
-            ['tts_enabled', 'true', 'Enable site-wide TTS system', 'boolean'],
-            ['tts_provider', 'espeak-ng', 'Default TTS provider (espeak-ng, google-cloud, amazon-polly)', 'string'],
-            ['tts_google_api_key', '', 'Google Cloud TTS API key', 'string'],
-            ['tts_google_service_account', '', 'Google Cloud service account JSON (paste full JSON or file path)', 'string'],
-            ['tts_aws_access_key_id', '', 'Amazon Polly AWS Access Key ID', 'string'],
-            ['tts_aws_secret_access_key', '', 'Amazon Polly AWS Secret Access Key', 'string'],
-            ['tts_aws_region', 'us-east-1', 'Amazon Polly AWS Region', 'string'],
-            ['tts_max_length', '200', 'Maximum TTS message length (characters)', 'number'],
-            ['tts_max_queue_per_user', '3', 'Maximum queued TTS messages per user', 'number'],
-            ['tts_max_queue_global', '20', 'Maximum global TTS queue size', 'number'],
-            ['tts_default_voice', 'gary', 'Default TTS voice ID', 'string'],
-        ];
-        const seedInsert = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
-        for (const [k, v, d, t] of ttsSeeds) seedInsert.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
-
-    // Migrate: expand role CHECK to include global_mod, migrate 'mod' → 'global_mod'
-    try {
-        // SQLite cannot ALTER CHECK constraints, but we can migrate data.
-        // The schema.sql already has the new CHECK for fresh DBs.
-        // For existing DBs, just migrate any 'mod' users to 'global_mod'.
-        const modCount = database.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'mod'").get().c;
-        if (modCount > 0) {
-            database.exec("UPDATE users SET role = 'global_mod' WHERE role = 'mod'");
-            console.log(`[DB] Migrated ${modCount} mod(s) → global_mod`);
-        }
-    } catch (e) { console.warn('[DB] Role migration:', e.message); }
-
-    // Migrate: create channel_moderators table if missing
-    try {
-        database.exec(`CREATE TABLE IF NOT EXISTS channel_moderators (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            channel_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            added_by INTEGER NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(channel_id, user_id),
-            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE SET NULL
-        )`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_channel_mods_channel ON channel_moderators(channel_id)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_channel_mods_user ON channel_moderators(user_id)`);
-    } catch (e) { console.warn('[DB] channel_moderators migration:', e.message); }
-
-    // Migrate: create channel_moderation_settings table if missing
-    try {
-        database.exec(`CREATE TABLE IF NOT EXISTS channel_moderation_settings (
-            channel_id INTEGER PRIMARY KEY,
-            slow_mode_seconds INTEGER DEFAULT 0,
-            followers_only INTEGER DEFAULT 0,
-            emote_only INTEGER DEFAULT 0,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
-        )`);
-    } catch (e) { console.warn('[DB] channel_moderation_settings migration:', e.message); }
-
-    // Migrate: create pastes table if missing
-    try {
-        database.exec(`CREATE TABLE IF NOT EXISTS pastes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            slug TEXT UNIQUE NOT NULL,
-            user_id INTEGER,
-            type TEXT DEFAULT 'paste' CHECK(type IN ('paste', 'screenshot')),
-            title TEXT NOT NULL DEFAULT 'Untitled',
-            content TEXT,
-            language TEXT DEFAULT 'text',
-            visibility TEXT DEFAULT 'public' CHECK(visibility IN ('public', 'unlisted')),
-            stream_id INTEGER,
-            screenshot_path TEXT,
-            metadata TEXT,
-            burn_after_read INTEGER DEFAULT 0,
-            forked_from INTEGER,
-            pinned INTEGER DEFAULT 0,
-            views INTEGER DEFAULT 0,
-            ip_address TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
-            FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE SET NULL,
-            FOREIGN KEY (forked_from) REFERENCES pastes(id) ON DELETE SET NULL
-        )`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_slug ON pastes(slug)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_user ON pastes(user_id)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_visibility ON pastes(visibility)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_type ON pastes(type)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_created ON pastes(created_at)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_pastes_pinned ON pastes(pinned)`);
-    } catch (e) { console.warn('[DB] pastes migration:', e.message); }
-
-    // Migrate: add copies + likes columns to pastes, create paste_likes table
-    try {
-        const cols = database.prepare("PRAGMA table_info(pastes)").all().map(c => c.name);
-        if (!cols.includes('copies'))  database.exec("ALTER TABLE pastes ADD COLUMN copies INTEGER DEFAULT 0");
-        if (!cols.includes('likes'))   database.exec("ALTER TABLE pastes ADD COLUMN likes INTEGER DEFAULT 0");
-
-        database.exec(`CREATE TABLE IF NOT EXISTS paste_likes (
-            paste_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (paste_id, user_id),
-            FOREIGN KEY (paste_id) REFERENCES pastes(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )`);
-    } catch (e) { console.warn('[DB] paste_likes migration:', e.message); }
-
-    // Seed paste-related site settings
-    try {
-        const pasteSettings = [
-            ['paste_max_size_kb', '512', 'Maximum paste content size in KB', 'number'],
-            ['paste_screenshot_max_size_mb', '8', 'Maximum screenshot upload size in MB', 'number'],
-            ['paste_cooldown_seconds', '30', 'Cooldown between paste submissions in seconds', 'number'],
-            ['paste_max_per_user_per_day', '50', 'Maximum pastes per user per day (0 = unlimited)', 'number'],
-            ['paste_anon_allowed', 'true', 'Allow anonymous paste creation', 'boolean'],
-            ['paste_image_upload_enabled', 'true', 'Allow image uploads in pastes', 'boolean'],
-        ];
-        const seedPaste = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
-        for (const [k, v, d, t] of pasteSettings) seedPaste.run(k, v, d, t);
-    } catch (e) { console.warn('[DB] paste settings seed:', e.message); }
-
-    // Migrate: paste_comments table (separate from vod/clip comments — supports anon)
-    try {
-        database.exec(`CREATE TABLE IF NOT EXISTS paste_comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            paste_id INTEGER NOT NULL,
-            user_id INTEGER,
-            parent_id INTEGER,
-            anon_name TEXT,
-            message TEXT NOT NULL,
-            ip_address TEXT,
-            is_deleted INTEGER DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (paste_id) REFERENCES pastes(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
-            FOREIGN KEY (parent_id) REFERENCES paste_comments(id) ON DELETE CASCADE
-        )`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_paste_comments_paste ON paste_comments(paste_id)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_paste_comments_user ON paste_comments(user_id)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_paste_comments_parent ON paste_comments(parent_id)`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_paste_comments_ip ON paste_comments(ip_address)`);
-
-        // Seed paste comment settings
-        const commentSettings = [
-            ['paste_comment_cooldown_seconds', '10', 'Cooldown between paste comments in seconds', 'number'],
-            ['paste_comment_max_length', '2000', 'Maximum paste comment length in characters', 'number'],
-            ['paste_comment_anon_allowed', 'true', 'Allow anonymous comments on pastes', 'boolean'],
-        ];
-        const seedComment = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
-        for (const [k, v, d, t] of commentSettings) seedComment.run(k, v, d, t);
-    } catch (e) { console.warn('[DB] paste_comments migration:', e.message); }
-
-    // Migrate: stream_first_chats — tracks first-time chatters per streamer (for welcome messages)
-    try {
-        database.exec(`CREATE TABLE IF NOT EXISTS stream_first_chats (
-            chatter_key TEXT NOT NULL,
-            channel_user_id INTEGER NOT NULL,
-            first_chat_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (chatter_key, channel_user_id)
-        )`);
-        database.exec(`CREATE INDEX IF NOT EXISTS idx_sfc_channel ON stream_first_chats(channel_user_id)`);
-    } catch (e) { console.warn('[DB] stream_first_chats migration:', e.message); }
 
     console.log('[DB] Schema initialized');
     return database;
@@ -483,30 +268,6 @@ function createUser({ username, email, password_hash, display_name, stream_key }
          VALUES (?, ?, ?, ?, ?)`,
         [username, email || null, password_hash, display_name || username, stream_key]
     );
-}
-
-function getOrCreateAnonGameUser(anonId) {
-    const normalizedAnonId = String(anonId || 'anon0').trim().toLowerCase();
-    const safeAnonKey = normalizedAnonId.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'anon0';
-    const username = `__game_${safeAnonKey}`;
-
-    let user = getUserByUsername(username);
-    if (user) {
-        if (user.display_name !== normalizedAnonId) {
-            run('UPDATE users SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [normalizedAnonId, user.id]);
-            user = getUserById(user.id);
-        }
-        return user;
-    }
-
-    const passwordHash = `!anon-game:${safeAnonKey}:${crypto.randomBytes(12).toString('hex')}`;
-    run(
-        `INSERT OR IGNORE INTO users (username, password_hash, display_name, role)
-         VALUES (?, ?, ?, 'user')`,
-        [username, passwordHash, normalizedAnonId]
-    );
-
-    return getUserByUsername(username);
 }
 
 // ── Stream helpers ───────────────────────────────────────────
@@ -599,6 +360,10 @@ function getChannelByUserId(userId) {
     return get('SELECT * FROM channels WHERE user_id = ?', [userId]);
 }
 
+function getChannelById(id) {
+    return get('SELECT * FROM channels WHERE id = ?', [id]);
+}
+
 function getChannelByUsername(username) {
     return get(`
         SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.bio, u.stream_key
@@ -620,7 +385,7 @@ function updateChannel(userId, fields) {
     const updates = [];
     const params = [];
     for (const [key, val] of Object.entries(fields)) {
-        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'auto_record', 'offline_banner_url', 'panels', 'emote_sources'].includes(key)) {
+        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'auto_record', 'offline_banner_url', 'panels', 'emote_sources', 'default_vod_visibility', 'default_clip_visibility'].includes(key)) {
             updates.push(`${key} = ?`);
             params.push(['tags', 'panels', 'emote_sources'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
         }
@@ -641,96 +406,114 @@ function ensureChannel(userId) {
     return ch;
 }
 
-// ── RobotStreamer integration helpers ───────────────────────
-
-function getRobotStreamerIntegrationByUserId(userId) {
-    return get('SELECT * FROM robotstreamer_integrations WHERE user_id = ?', [userId]);
+function getChannelModerators(channelId) {
+    return all(`
+        SELECT cm.id, cm.channel_id, cm.user_id, cm.added_by, cm.created_at,
+               u.username, u.display_name, u.avatar_url, u.profile_color, u.last_seen
+        FROM channel_moderators cm
+        JOIN users u ON cm.user_id = u.id
+        WHERE cm.channel_id = ?
+        ORDER BY u.username COLLATE NOCASE
+    `, [channelId]);
 }
 
-function upsertRobotStreamerIntegration(userId, fields) {
-    const allowed = new Set([
-        'enabled',
-        'mirror_chat',
-        'token',
-        'robot_id',
-        'owner_id',
-        'chat_url',
-        'control_url',
-        'rtc_sfu_url',
-        'stream_name',
-        'owner_name',
-        'last_validated_at',
-    ]);
-    const existing = getRobotStreamerIntegrationByUserId(userId);
-    const filtered = Object.entries(fields || {}).filter(([key, val]) => allowed.has(key) && val !== undefined);
-
-    if (!filtered.length) return existing;
-
-    if (existing) {
-        const updates = [];
-        const params = [];
-        for (const [key, val] of filtered) {
-            updates.push(`${key} = ?`);
-            params.push(val);
-        }
-        updates.push('updated_at = CURRENT_TIMESTAMP');
-        params.push(userId);
-        run(`UPDATE robotstreamer_integrations SET ${updates.join(', ')} WHERE user_id = ?`, params);
-    } else {
-        const keys = ['user_id', ...filtered.map(([key]) => key), 'updated_at'];
-        const placeholders = keys.map(() => '?').join(', ');
-        const params = [userId, ...filtered.map(([, val]) => val), new Date().toISOString()];
-        run(
-            `INSERT INTO robotstreamer_integrations (${keys.join(', ')}) VALUES (${placeholders})`,
-            params,
-        );
-    }
-
-    return getRobotStreamerIntegrationByUserId(userId);
-}
-
-// ── Restream Destination helpers ─────────────────────────────
-
-function getRestreamDestinationsByUserId(userId) {
-    return all('SELECT * FROM restream_destinations WHERE user_id = ? ORDER BY created_at', [userId]);
-}
-
-function getRestreamDestinationById(id) {
-    return get('SELECT * FROM restream_destinations WHERE id = ?', [id]);
-}
-
-function createRestreamDestination(userId, fields) {
-    const result = run(
-        `INSERT INTO restream_destinations (user_id, platform, name, server_url, stream_key, enabled, auto_start, quality_preset,
-         custom_video_bitrate, custom_audio_bitrate, custom_fps, custom_encoder_preset, channel_url, chat_relay)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, fields.platform, fields.name || null, fields.server_url || null,
-         fields.stream_key || null, fields.enabled ?? 1, fields.auto_start ?? 0,
-         fields.quality_preset || 'auto',
-         fields.custom_video_bitrate ?? null, fields.custom_audio_bitrate ?? null,
-         fields.custom_fps ?? null, fields.custom_encoder_preset || null,
-         fields.channel_url || null, fields.chat_relay ? 1 : 0]
+function addChannelModerator(channelId, userId, addedBy) {
+    return run(
+        `INSERT OR IGNORE INTO channel_moderators (channel_id, user_id, added_by) VALUES (?, ?, ?)`,
+        [channelId, userId, addedBy || null]
     );
-    return get('SELECT * FROM restream_destinations WHERE id = ?', [result.lastInsertRowid]);
 }
 
-function updateRestreamDestination(id, fields) {
-    const allowed = new Set(['name', 'server_url', 'stream_key', 'enabled', 'auto_start', 'quality_preset',
-        'custom_video_bitrate', 'custom_audio_bitrate', 'custom_fps', 'custom_encoder_preset',
-        'channel_url', 'chat_relay']);
-    const filtered = Object.entries(fields || {}).filter(([key]) => allowed.has(key));
-    if (!filtered.length) return getRestreamDestinationById(id);
-
-    const updates = filtered.map(([key]) => `${key} = ?`);
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-    const params = [...filtered.map(([, val]) => val), id];
-
-    run(`UPDATE restream_destinations SET ${updates.join(', ')} WHERE id = ?`, params);
-    return getRestreamDestinationById(id);
+function removeChannelModerator(channelId, userId) {
+    return run('DELETE FROM channel_moderators WHERE channel_id = ? AND user_id = ?', [channelId, userId]);
 }
 
-function deleteRestreamDestination(id) {
-    return run('DELETE FROM restream_destinations WHERE id = ?', [id]);
+function isChannelModerator(channelId, userId) {
+    if (!channelId || !userId) return false;
+    const match = get('SELECT 1 FROM channel_moderators WHERE channel_id = ? AND user_id = ? LIMIT 1', [channelId, userId]);
+    return !!match;
+}
+
+function getChannelsByModerator(userId) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, 'moderator' AS access_role
+        FROM channel_moderators cm
+        JOIN channels c ON cm.channel_id = c.id
+        JOIN users u ON c.user_id = u.id
+        WHERE cm.user_id = ?
+        ORDER BY u.username COLLATE NOCASE
+    `, [userId]);
+}
+
+function getOwnedAndModeratedChannels(userId) {
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color,
+               CASE WHEN c.user_id = ? THEN 'owner' ELSE 'moderator' END AS access_role
+        FROM channels c
+        JOIN users u ON c.user_id = u.id
+        WHERE c.user_id = ?
+           OR c.id IN (SELECT channel_id FROM channel_moderators WHERE user_id = ?)
+        ORDER BY CASE WHEN c.user_id = ? THEN 0 ELSE 1 END, u.username COLLATE NOCASE
+    `, [userId, userId, userId, userId]);
+}
+
+function getChannelModerationSettings(channelId) {
+    let settings = get('SELECT * FROM channel_moderation_settings WHERE channel_id = ?', [channelId]);
+    if (!settings) {
+        run('INSERT OR IGNORE INTO channel_moderation_settings (channel_id) VALUES (?)', [channelId]);
+        settings = get('SELECT * FROM channel_moderation_settings WHERE channel_id = ?', [channelId]);
+    }
+    return settings;
+}
+
+function upsertChannelModerationSettings(channelId, fields, updatedBy) {
+    const allowed = [
+        'slowmode_seconds',
+        'allow_anonymous',
+        'links_allowed',
+        'aggressive_filter',
+        'followers_only',
+        'account_age_gate_hours',
+        'caps_percentage_limit',
+        'max_message_length',
+    ];
+    const existing = getChannelModerationSettings(channelId);
+    const merged = { ...existing };
+    for (const key of allowed) {
+        if (fields[key] !== undefined) {
+            merged[key] = fields[key];
+        }
+    }
+    run(`
+        INSERT INTO channel_moderation_settings (
+            channel_id, slowmode_seconds, allow_anonymous, links_allowed, aggressive_filter,
+            followers_only, account_age_gate_hours, caps_percentage_limit, max_message_length,
+            updated_by, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(channel_id) DO UPDATE SET
+            slowmode_seconds = excluded.slowmode_seconds,
+            allow_anonymous = excluded.allow_anonymous,
+            links_allowed = excluded.links_allowed,
+            aggressive_filter = excluded.aggressive_filter,
+            followers_only = excluded.followers_only,
+            account_age_gate_hours = excluded.account_age_gate_hours,
+            caps_percentage_limit = excluded.caps_percentage_limit,
+            max_message_length = excluded.max_message_length,
+            updated_by = excluded.updated_by,
+            updated_at = CURRENT_TIMESTAMP
+    `, [
+        channelId,
+        Number(merged.slowmode_seconds) || 0,
+        merged.allow_anonymous ? 1 : 0,
+        merged.links_allowed ? 1 : 0,
+        merged.aggressive_filter ? 1 : 0,
+        merged.followers_only ? 1 : 0,
+        Number(merged.account_age_gate_hours) || 0,
+        Number(merged.caps_percentage_limit) || 70,
+        Number(merged.max_message_length) || 500,
+        updatedBy || null,
+    ]);
+    return getChannelModerationSettings(channelId);
 }
 
 // ── Chat helpers ─────────────────────────────────────────────
@@ -781,6 +564,52 @@ function getUserChatHistory(userId, limit = 50, offset = 0) {
     const messages = all(sql, [userId, limit, offset]);
     const total = get('SELECT COUNT(*) as c FROM chat_messages WHERE user_id = ? AND is_deleted = 0', [userId])?.c || 0;
     return { messages, total };
+}
+
+function searchChannelChatMessages(channelUserId, { query, userId, limit = 50, offset = 0 }) {
+    let sql = `
+        SELECT cm.*, s.title AS stream_title, s.id AS stream_id, u.display_name, u.role, u.avatar_url, u.profile_color
+        FROM chat_messages cm
+        JOIN streams s ON cm.stream_id = s.id
+        LEFT JOIN users u ON cm.user_id = u.id
+        WHERE s.user_id = ? AND cm.is_deleted = 0
+    `;
+    const params = [channelUserId];
+
+    if (query) {
+        sql += ' AND cm.message LIKE ?';
+        params.push(`%${query}%`);
+    }
+    if (userId) {
+        sql += ' AND cm.user_id = ?';
+        params.push(userId);
+    }
+
+    const countSql = `
+        SELECT COUNT(*) AS c
+        FROM chat_messages cm
+        JOIN streams s ON cm.stream_id = s.id
+        WHERE s.user_id = ? AND cm.is_deleted = 0
+        ${query ? ' AND cm.message LIKE ?' : ''}
+        ${userId ? ' AND cm.user_id = ?' : ''}
+    `;
+    const total = get(countSql, params)?.c || 0;
+    sql += ' ORDER BY cm.timestamp DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    return { messages: all(sql, params), total };
+}
+
+function getChatMessageById(id) {
+    return get(`
+        SELECT cm.*, s.user_id AS stream_owner_id, s.channel_id
+        FROM chat_messages cm
+        LEFT JOIN streams s ON cm.stream_id = s.id
+        WHERE cm.id = ?
+    `, [id]);
+}
+
+function deleteChatMessage(id) {
+    return run('UPDATE chat_messages SET is_deleted = 1 WHERE id = ?', [id]);
 }
 
 function getUserProfile(userId) {
@@ -984,35 +813,6 @@ function getClipsOfUserStreams(userId) {
     `, [userId]);
 }
 
-function findDuplicateClip({ streamId = null, vodId = null, startTime = 0, endTime = 0, startWindow = 8, endWindow = 10, createdSinceMinutes = 10 }) {
-    const filters = [];
-    const params = [];
-
-    if (streamId) {
-        filters.push('c.stream_id = ?');
-        params.push(streamId);
-    }
-    if (vodId) {
-        filters.push('c.vod_id = ?');
-        params.push(vodId);
-    }
-    if (!filters.length) return null;
-
-    return get(`
-        SELECT c.*, u.username, u.display_name, u.avatar_url,
-               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
-        FROM clips c
-        JOIN users u ON c.user_id = u.id
-        LEFT JOIN streams s ON c.stream_id = s.id
-        WHERE (${filters.join(' OR ')})
-          AND ABS(COALESCE(c.start_time, 0) - ?) <= ?
-          AND ABS(COALESCE(c.end_time, 0) - ?) <= ?
-          AND c.created_at >= datetime('now', ?)
-        ORDER BY c.created_at DESC
-        LIMIT 1
-    `, [...params, startTime || 0, startWindow, endTime || 0, endWindow, `-${Math.max(1, createdSinceMinutes)} minutes`]);
-}
-
 // ── Control helpers ──────────────────────────────────────────
 
 function getStreamControls(streamId) {
@@ -1046,7 +846,7 @@ function getApiKeyByHash(hash) {
 function isUserBanned(userId, streamId) {
     const ban = get(`
         SELECT * FROM bans
-        WHERE user_id = ?
+        WHERE (user_id = ? OR stream_id IS NULL)
         AND (stream_id = ? OR stream_id IS NULL)
         AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
         LIMIT 1
@@ -1063,6 +863,57 @@ function isIpBanned(ip, streamId) {
         LIMIT 1
     `, [ip, streamId]);
     return !!ban;
+}
+
+function logModerationAction({ scope_type = 'site', scope_id = null, actor_user_id = null, target_user_id = null, action_type, details = {}, ip_address = null }) {
+    return run(
+        `INSERT INTO moderation_actions (scope_type, scope_id, actor_user_id, target_user_id, action_type, details, ip_address)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [scope_type, scope_id, actor_user_id, target_user_id, action_type, JSON.stringify(details || {}), ip_address]
+    );
+}
+
+function getModerationActions({ scopeType, scopeId, actorUserId, targetUserId, actionType, limit = 50, offset = 0 }) {
+    let sql = `
+        SELECT ma.*,
+               actor.username AS actor_username,
+               actor.display_name AS actor_display_name,
+               target.username AS target_username,
+               target.display_name AS target_display_name
+        FROM moderation_actions ma
+        LEFT JOIN users actor ON ma.actor_user_id = actor.id
+        LEFT JOIN users target ON ma.target_user_id = target.id
+        WHERE 1 = 1
+    `;
+    const params = [];
+    if (scopeType) {
+        sql += ' AND ma.scope_type = ?';
+        params.push(scopeType);
+    }
+    if (scopeId !== undefined && scopeId !== null && scopeId !== '') {
+        sql += ' AND ma.scope_id = ?';
+        params.push(scopeId);
+    }
+    if (actorUserId) {
+        sql += ' AND ma.actor_user_id = ?';
+        params.push(actorUserId);
+    }
+    if (targetUserId) {
+        sql += ' AND ma.target_user_id = ?';
+        params.push(targetUserId);
+    }
+    if (actionType) {
+        sql += ' AND ma.action_type = ?';
+        params.push(actionType);
+    }
+    sql += ' ORDER BY ma.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    const rows = all(sql, params);
+    return rows.map((row) => {
+        let details = row.details;
+        try { details = JSON.parse(row.details || '{}'); } catch { details = row.details; }
+        return { ...row, details };
+    });
 }
 
 // ── Cleanup ──────────────────────────────────────────────────
@@ -1375,376 +1226,21 @@ function getChatReplay(streamId, fromTime, toTime) {
     return all(sql, params);
 }
 
-// ── Channel lookup by ID ─────────────────────────────────────
-
-function getChannelById(id) {
-    return get('SELECT * FROM channels WHERE id = ?', [id]);
-}
-
-// ── Channel Moderators ───────────────────────────────────────
-
-function isChannelModerator(userId, channelId) {
-    const row = get('SELECT 1 FROM channel_moderators WHERE user_id = ? AND channel_id = ?', [userId, channelId]);
-    return !!row;
-}
-
-function addChannelModerator(channelId, userId, addedBy) {
-    return run(
-        'INSERT OR IGNORE INTO channel_moderators (channel_id, user_id, added_by) VALUES (?, ?, ?)',
-        [channelId, userId, addedBy]
-    );
-}
-
-function removeChannelModerator(channelId, userId) {
-    return run('DELETE FROM channel_moderators WHERE channel_id = ? AND user_id = ?', [channelId, userId]);
-}
-
-function getChannelModerators(channelId) {
-    return all(`
-        SELECT cm.id, cm.user_id, cm.added_by, cm.created_at,
-               u.username, u.display_name, u.avatar_url,
-               a.username as added_by_username
-        FROM channel_moderators cm
-        JOIN users u ON cm.user_id = u.id
-        LEFT JOIN users a ON cm.added_by = a.id
-        WHERE cm.channel_id = ?
-        ORDER BY cm.created_at ASC
-    `, [channelId]);
-}
-
-function getChannelsByModerator(userId) {
-    return all(`
-        SELECT cm.channel_id, c.title, c.user_id, u.username as owner_username
-        FROM channel_moderators cm
-        JOIN channels c ON cm.channel_id = c.id
-        JOIN users u ON c.user_id = u.id
-        WHERE cm.user_id = ?
-    `, [userId]);
-}
-
-// ── Channel Moderation Settings ──────────────────────────────
-
-function getChannelModerationSettings(channelId) {
-    return get('SELECT * FROM channel_moderation_settings WHERE channel_id = ?', [channelId])
-        || { channel_id: channelId, slow_mode_seconds: 0, followers_only: 0, emote_only: 0 };
-}
-
-function upsertChannelModerationSettings(channelId, fields) {
-    const existing = get('SELECT 1 FROM channel_moderation_settings WHERE channel_id = ?', [channelId]);
-    if (existing) {
-        const updates = [];
-        const params = [];
-        if (fields.slow_mode_seconds !== undefined) { updates.push('slow_mode_seconds = ?'); params.push(fields.slow_mode_seconds); }
-        if (fields.followers_only !== undefined) { updates.push('followers_only = ?'); params.push(fields.followers_only ? 1 : 0); }
-        if (fields.emote_only !== undefined) { updates.push('emote_only = ?'); params.push(fields.emote_only ? 1 : 0); }
-        if (updates.length > 0) {
-            updates.push('updated_at = CURRENT_TIMESTAMP');
-            params.push(channelId);
-            run(`UPDATE channel_moderation_settings SET ${updates.join(', ')} WHERE channel_id = ?`, params);
-        }
-    } else {
-        run(
-            'INSERT INTO channel_moderation_settings (channel_id, slow_mode_seconds, followers_only, emote_only) VALUES (?, ?, ?, ?)',
-            [channelId, fields.slow_mode_seconds || 0, fields.followers_only ? 1 : 0, fields.emote_only ? 1 : 0]
-        );
-    }
-    return getChannelModerationSettings(channelId);
-}
-
-// ── Paste helpers ────────────────────────────────────────────
-
-function createPaste({ slug, userId, type, title, content, language, visibility, streamId, screenshotPath, metadata, burnAfterRead, forkedFrom, ipAddress }) {
-    return run(
-        `INSERT INTO pastes (slug, user_id, type, title, content, language, visibility, stream_id, screenshot_path, metadata, burn_after_read, forked_from, ip_address)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [slug, userId || null, type || 'paste', title || 'Untitled', content || '', language || 'text',
-         visibility || 'public', streamId || null, screenshotPath || null, metadata || null,
-         burnAfterRead ? 1 : 0, forkedFrom || null, ipAddress || null]
-    );
-}
-
-function getPasteBySlug(slug) {
-    return get(`
-        SELECT p.*, u.username, u.avatar_url, u.display_name
-        FROM pastes p
-        LEFT JOIN users u ON p.user_id = u.id
-        WHERE p.slug = ?
-    `, [slug]);
-}
-
-function getPasteById(id) {
-    return get(`
-        SELECT p.*, u.username, u.avatar_url, u.display_name
-        FROM pastes p
-        LEFT JOIN users u ON p.user_id = u.id
-        WHERE p.id = ?
-    `, [id]);
-}
-
-function listPastes({ visibility = 'public', type, search, limit = 30, offset = 0 } = {}) {
-    let where = 'WHERE p.visibility = ?';
-    const params = [visibility];
-
-    if (type && type !== 'all') {
-        where += ' AND p.type = ?';
-        params.push(type);
-    }
-    if (search) {
-        where += ' AND (p.title LIKE ? OR p.content LIKE ?)';
-        params.push(`%${search}%`, `%${search}%`);
-    }
-
-    const total = get(`SELECT COUNT(*) as c FROM pastes p ${where}`, params).c;
-    const pastes = all(`
-        SELECT p.id, p.slug, p.user_id, p.type, p.title, p.language, p.visibility,
-               p.screenshot_path, p.burn_after_read, p.pinned, p.views, p.copies, p.likes, p.created_at,
-               u.username, u.avatar_url, u.display_name,
-               SUBSTR(p.content, 1, 220) as content
-        FROM pastes p
-        LEFT JOIN users u ON p.user_id = u.id
-        ${where}
-        ORDER BY p.pinned DESC, p.created_at DESC
-        LIMIT ? OFFSET ?
-    `, [...params, limit, offset]);
-
-    return { pastes, total };
-}
-
-function incrementPasteViews(slug) {
-    return run('UPDATE pastes SET views = views + 1 WHERE slug = ?', [slug]);
-}
-
-function updatePaste(slug, fields) {
-    const updates = [];
-    const params = [];
-    for (const [key, val] of Object.entries(fields)) {
-        if (['title', 'content', 'language', 'visibility', 'pinned', 'metadata'].includes(key)) {
-            updates.push(`${key} = ?`);
-            params.push(val);
-        }
-    }
-    if (updates.length === 0) return;
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-    params.push(slug);
-    return run(`UPDATE pastes SET ${updates.join(', ')} WHERE slug = ?`, params);
-}
-
-function deletePaste(slug) {
-    return run('DELETE FROM pastes WHERE slug = ?', [slug]);
-}
-
-function getUserPastes(userId, limit = 50) {
-    return all(`
-        SELECT id, slug, type, title, language, visibility, burn_after_read, pinned, views, copies, likes, created_at
-        FROM pastes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
-    `, [userId, limit]);
-}
-
-function likePaste(pasteId, userId) {
-    run('INSERT OR IGNORE INTO paste_likes (paste_id, user_id) VALUES (?, ?)', [pasteId, userId]);
-    run('UPDATE pastes SET likes = (SELECT COUNT(*) FROM paste_likes WHERE paste_id = ?) WHERE id = ?', [pasteId, pasteId]);
-    return get('SELECT likes FROM pastes WHERE id = ?', [pasteId]);
-}
-
-function unlikePaste(pasteId, userId) {
-    run('DELETE FROM paste_likes WHERE paste_id = ? AND user_id = ?', [pasteId, userId]);
-    run('UPDATE pastes SET likes = (SELECT COUNT(*) FROM paste_likes WHERE paste_id = ?) WHERE id = ?', [pasteId, pasteId]);
-    return get('SELECT likes FROM pastes WHERE id = ?', [pasteId]);
-}
-
-function hasUserLikedPaste(pasteId, userId) {
-    const row = get('SELECT 1 FROM paste_likes WHERE paste_id = ? AND user_id = ?', [pasteId, userId]);
-    return !!row;
-}
-
-function incrementPasteCopies(slug) {
-    return run('UPDATE pastes SET copies = copies + 1 WHERE slug = ?', [slug]);
-}
-
-function countUserPastesToday(userId, ip) {
-    if (userId) {
-        return get("SELECT COUNT(*) as c FROM pastes WHERE user_id = ? AND created_at > datetime('now', '-1 day')", [userId])?.c || 0;
-    }
-    if (ip) {
-        return get("SELECT COUNT(*) as c FROM pastes WHERE ip_address = ? AND created_at > datetime('now', '-1 day')", [ip])?.c || 0;
-    }
-    return 0;
-}
-
-/**
- * Get a user's total game level (sum of all skill levels).
- * Returns 0 if the user has no game profile.
- * Used for tiered paste/upload limits.
- */
-function getUserTotalGameLevel(userId) {
-    if (!userId) return 0;
-    const p = get('SELECT mining_xp, fishing_xp, woodcut_xp, farming_xp, combat_xp, crafting_xp, smithing_xp, agility_xp FROM game_players WHERE user_id = ?', [userId]);
-    if (!p) return 0;
-    const xpToLevel = (xp) => Math.floor(Math.sqrt((xp || 0) / 25)) + 1;
-    return xpToLevel(p.mining_xp) + xpToLevel(p.fishing_xp) + xpToLevel(p.woodcut_xp) +
-           xpToLevel(p.farming_xp) + xpToLevel(p.combat_xp) + xpToLevel(p.crafting_xp) +
-           xpToLevel(p.smithing_xp) + xpToLevel(p.agility_xp);
-}
-
-function getLastPasteTime(userId, ip) {
-    let row;
-    if (userId) {
-        row = get('SELECT created_at FROM pastes WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
-    } else if (ip) {
-        row = get('SELECT created_at FROM pastes WHERE ip_address = ? ORDER BY created_at DESC LIMIT 1', [ip]);
-    }
-    return row ? new Date(row.created_at + (row.created_at.includes('Z') ? '' : 'Z')).getTime() : 0;
-}
-
-function deleteAllForks() {
-    const forks = all('SELECT id, screenshot_path FROM pastes WHERE forked_from IS NOT NULL');
-    run('DELETE FROM pastes WHERE forked_from IS NOT NULL');
-    return forks.length;
-}
-
-function getPasteStats() {
-    const total = get('SELECT COUNT(*) as c FROM pastes')?.c || 0;
-    const textPastes = get("SELECT COUNT(*) as c FROM pastes WHERE type = 'paste'")?.c || 0;
-    const screenshots = get("SELECT COUNT(*) as c FROM pastes WHERE type = 'screenshot'")?.c || 0;
-    const forks = get('SELECT COUNT(*) as c FROM pastes WHERE forked_from IS NOT NULL')?.c || 0;
-    const totalViews = get('SELECT SUM(views) as s FROM pastes')?.s || 0;
-    const totalCopies = get('SELECT SUM(copies) as s FROM pastes')?.s || 0;
-    const totalLikes = get('SELECT SUM(likes) as s FROM pastes')?.s || 0;
-    return { total, textPastes, screenshots, forks, totalViews, totalCopies, totalLikes };
-}
-
-// ── Paste Comment helpers ────────────────────────────────────
-
-function createPasteComment({ paste_id, user_id, parent_id, anon_name, message, ip_address }) {
-    return run(
-        `INSERT INTO paste_comments (paste_id, user_id, parent_id, anon_name, message, ip_address)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [paste_id, user_id || null, parent_id || null, anon_name || null, message, ip_address || null]
-    );
-}
-
-function getPasteComments(pasteId, limit = 50, offset = 0) {
-    return all(`
-        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.role
-        FROM paste_comments c
-        LEFT JOIN users u ON c.user_id = u.id
-        WHERE c.paste_id = ? AND c.is_deleted = 0 AND c.parent_id IS NULL
-        ORDER BY c.created_at DESC
-        LIMIT ? OFFSET ?
-    `, [pasteId, limit, offset]);
-}
-
-function getPasteCommentReplies(parentId) {
-    return all(`
-        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.role
-        FROM paste_comments c
-        LEFT JOIN users u ON c.user_id = u.id
-        WHERE c.parent_id = ? AND c.is_deleted = 0
-        ORDER BY c.created_at ASC
-    `, [parentId]);
-}
-
-function getPasteCommentById(commentId) {
-    return get('SELECT * FROM paste_comments WHERE id = ?', [commentId]);
-}
-
-function getPasteCommentCount(pasteId) {
-    const row = get('SELECT COUNT(*) as count FROM paste_comments WHERE paste_id = ? AND is_deleted = 0', [pasteId]);
-    return row ? row.count : 0;
-}
-
-function deletePasteComment(commentId) {
-    return run('UPDATE paste_comments SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [commentId]);
-}
-
-// ── Anon IP Mapping ─────────────────────────────────
-
-/**
- * Get or assign a persistent anon number for a normalized IP.
- * Returns the existing number if the IP was seen before, or assigns
- * the next sequential number. Survives server restarts.
- */
-function getOrCreateAnonNum(ip) {
-    const existing = get('SELECT anon_num FROM anon_ip_mappings WHERE ip = ?', [ip]);
-    if (existing) return existing.anon_num;
-    const max = get('SELECT MAX(anon_num) as m FROM anon_ip_mappings');
-    const nextNum = (max?.m || 0) + 1;
-    try {
-        run('INSERT INTO anon_ip_mappings (ip, anon_num) VALUES (?, ?)', [ip, nextNum]);
-    } catch (e) {
-        // Race condition: another connection inserted first — re-read
-        const retry = get('SELECT anon_num FROM anon_ip_mappings WHERE ip = ?', [ip]);
-        if (retry) return retry.anon_num;
-        throw e;
-    }
-    return nextNum;
-}
-
-/**
- * Load all existing anon mappings (for in-memory cache warmup).
- * @returns {{ maxNum: number, mappings: Map<string, number> }}
- */
-function loadAnonMappings() {
-    const rows = all('SELECT ip, anon_num FROM anon_ip_mappings ORDER BY anon_num');
-    const mappings = new Map();
-    let maxNum = 0;
-    for (const row of rows) {
-        mappings.set(row.ip, row.anon_num);
-        if (row.anon_num > maxNum) maxNum = row.anon_num;
-    }
-    return { maxNum, mappings };
-}
-
-// ── Stream First Chats (Welcome Messages) ────────────────────
-
-/**
- * Check if a chatter has ever chatted in this streamer's channel.
- * @param {string} chatterKey - e.g. "user:42" or "anon:anon3" or "ext:[Twitch] foo"
- * @param {number} channelUserId - the streamer's user ID
- * @returns {boolean} true if this is their first time
- */
-function isFirstChatInChannel(chatterKey, channelUserId) {
-    const row = get(
-        'SELECT 1 FROM stream_first_chats WHERE chatter_key = ? AND channel_user_id = ?',
-        [chatterKey, channelUserId]
-    );
-    return !row;
-}
-
-/**
- * Record that a chatter has chatted in a streamer's channel.
- */
-function recordFirstChat(chatterKey, channelUserId) {
-    run(
-        'INSERT OR IGNORE INTO stream_first_chats (chatter_key, channel_user_id) VALUES (?, ?)',
-        [chatterKey, channelUserId]
-    );
-}
-
-function getRecentPasteCommentsByIp(ip, seconds = 10) {
-    return all(`
-        SELECT * FROM paste_comments
-        WHERE ip_address = ? AND created_at > datetime('now', '-' || ? || ' seconds')
-        ORDER BY created_at DESC
-    `, [ip, seconds]);
-}
-
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
-    getUserById, getUserByUsername, getUserByStreamKey, createUser, getOrCreateAnonGameUser,
+    getUserById, getUserByUsername, getUserByStreamKey, createUser,
     // Streams
     getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getStreamsByUserId,
     createStream, endStream, updateViewerCount,
     // Channels
-    getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
-    // RobotStreamer integration
-    getRobotStreamerIntegrationByUserId, upsertRobotStreamerIntegration,
-    // Restream destinations
-    getRestreamDestinationsByUserId, getRestreamDestinationById,
-    createRestreamDestination, updateRestreamDestination, deleteRestreamDestination,
+    getChannelById, getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
+    getChannelModerators, addChannelModerator, removeChannelModerator, isChannelModerator,
+    getChannelsByModerator, getOwnedAndModeratedChannels,
+    getChannelModerationSettings, upsertChannelModerationSettings,
     // Chat
-    saveChatMessage, searchChatMessages, getUserChatHistory,
+    saveChatMessage, searchChatMessages, getUserChatHistory, searchChannelChatMessages,
+    getChatMessageById, deleteChatMessage,
     // Profiles
     getUserProfile, updateUserAvatar,
     // Follows
@@ -1762,13 +1258,15 @@ module.exports = {
     // VODs
     createVod, getVodById, getVodsByUser, getPublicVods, getActiveVodByStream, getOrphanedRecordingVods,
     // Clips
-    createClip, getClipById, getClipsByUser, getPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
+    createClip, getClipById, getClipsByUser, getPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams,
     // Controls
     getStreamControls, createControl,
     // API Keys
     createApiKey, getApiKeyByHash,
     // Bans
     isUserBanned, isIpBanned,
+    // Moderation actions
+    logModerationAction, getModerationActions,
     // Emotes
     createEmote, getEmoteById, getEmotesByUser, getGlobalEmotes, getChannelEmotes,
     deleteEmote, getEmoteByCode, countUserEmotes,
@@ -1782,24 +1280,4 @@ module.exports = {
     deleteComment, updateComment,
     // Chat Replay
     getChatReplay,
-    // Channel lookup
-    getChannelById,
-    // Channel Moderators
-    isChannelModerator, addChannelModerator, removeChannelModerator,
-    getChannelModerators, getChannelsByModerator,
-    // Channel Moderation Settings
-    getChannelModerationSettings, upsertChannelModerationSettings,
-    // Pastes
-    createPaste, getPasteBySlug, getPasteById, listPastes,
-    incrementPasteViews, updatePaste, deletePaste, getUserPastes,
-    likePaste, unlikePaste, hasUserLikedPaste, incrementPasteCopies,
-    countUserPastesToday, getLastPasteTime, deleteAllForks, getPasteStats, getUserTotalGameLevel,
-    // Paste Comments
-    createPasteComment, getPasteComments, getPasteCommentReplies,
-    getPasteCommentById, getPasteCommentCount, deletePasteComment,
-    getRecentPasteCommentsByIp,
-    // Anon IP Mappings
-    getOrCreateAnonNum, loadAnonMappings,
-    // Stream first chats (welcome messages)
-    isFirstChatInChannel, recordFirstChat,
 };

@@ -21,86 +21,8 @@ const { requireAuth, requireStreamer, optionalAuth } = require('../auth/auth');
 const jsmpegRelay = require('./jsmpeg-relay');
 const webrtcSFU = require('./webrtc-sfu');
 const recorder = require('../vod/recorder');
-const robotStreamerService = require('../integrations/robotstreamer-service');
-const chatRelayService = require('../integrations/chat-relay-service');
 
 const router = express.Router();
-const ALLOWED_PROTOCOLS = new Set(['jsmpeg', 'webrtc', 'rtmp']);
-const ALLOWED_VISIBILITY = new Set(['public', 'unlisted', 'private']);
-const ALLOWED_CALL_MODES = new Set(['mic', 'mic+cam', 'cam+mic']);
-const MAX_TITLE_LENGTH = 140;
-const MAX_DESCRIPTION_LENGTH = 2000;
-const MAX_CATEGORY_LENGTH = 60;
-const MAX_TAGS = 10;
-const MAX_TAG_LENGTH = 32;
-const MAX_PANELS_LENGTH = 20000;
-
-function hasOwn(obj, key) {
-    return Object.prototype.hasOwnProperty.call(obj || {}, key);
-}
-
-function cleanText(value, { maxLength, allowEmpty = false } = {}) {
-    if (value === undefined) return undefined;
-    if (typeof value !== 'string') return null;
-    const cleaned = value.replace(/\s+/g, ' ').trim();
-    if (!cleaned) return allowEmpty ? '' : null;
-    return cleaned.slice(0, maxLength);
-}
-
-function cleanProtocol(value) {
-    if (value === undefined) return undefined;
-    if (typeof value !== 'string') return null;
-    const cleaned = value.trim().toLowerCase();
-    return ALLOWED_PROTOCOLS.has(cleaned) ? cleaned : null;
-}
-
-function cleanVisibility(value) {
-    if (value === undefined) return undefined;
-    if (typeof value !== 'string') return null;
-    const cleaned = value.trim().toLowerCase();
-    return ALLOWED_VISIBILITY.has(cleaned) ? cleaned : null;
-}
-
-function cleanCallMode(value) {
-    if (value === undefined) return undefined;
-    if (value === null || value === '') return null;
-    if (typeof value !== 'string') return null;
-    const cleaned = value.trim().toLowerCase();
-    return ALLOWED_CALL_MODES.has(cleaned) ? cleaned : null;
-}
-
-function cleanTags(tags) {
-    if (tags === undefined) return undefined;
-    if (!Array.isArray(tags)) return null;
-    const cleaned = [];
-    const seen = new Set();
-    for (const tag of tags) {
-        if (typeof tag !== 'string') continue;
-        const normalized = tag.replace(/\s+/g, ' ').trim().toLowerCase();
-        if (!normalized || normalized.length > MAX_TAG_LENGTH || seen.has(normalized)) continue;
-        seen.add(normalized);
-        cleaned.push(normalized);
-        if (cleaned.length >= MAX_TAGS) break;
-    }
-    return cleaned;
-}
-
-function cleanPanels(panels) {
-    if (panels === undefined) return undefined;
-    if (typeof panels === 'string') {
-        return panels.length <= MAX_PANELS_LENGTH ? panels : null;
-    }
-    try {
-        const serialized = JSON.stringify(panels ?? []);
-        return serialized.length <= MAX_PANELS_LENGTH ? serialized : null;
-    } catch {
-        return null;
-    }
-}
-
-function cleanBooleanFlag(value) {
-    return value === true || value === 1 || value === '1' || value === 'true';
-}
 
 // ── Get Channel by Username ──────────────────────────────────
 router.get('/channel/:username', optionalAuth, (req, res) => {
@@ -127,7 +49,6 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                 const user = db.getUserById(liveStream.user_id);
                 const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
                 liveStream.endpoint = {
-                    hlsUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
                     flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
                 };
             }
@@ -141,54 +62,10 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         const followerCount = db.getFollowerCount(channel.user_id);
         const isFollowing = req.user ? db.isFollowing(req.user.id, channel.user_id) : false;
 
-        // Include RS restream status for each live stream
-        const rsInfo = {};
-        for (const ls of liveStreams) {
-            const hasBridge = robotStreamerService.chatBridges.has(ls.id);
-            const hasPublish = robotStreamerService._activePublish?.has(ls.id);
-            if (hasBridge || hasPublish) {
-                const integration = db.getRobotStreamerIntegrationByUserId(ls.user_id);
-                rsInfo[ls.id] = {
-                    active: true,
-                    robot_id: integration?.robot_id || null,
-                    robot_name: integration?.stream_name || integration?.robot_id || 'RS Robot',
-                    chat_mirrored: hasBridge,
-                    video_restreamed: !!hasPublish,
-                };
-            }
-        }
-
-        // Include restream destination links (Twitch/Kick/YouTube) for live streams
-        let restreamLinks = null;
-        if (liveStreams.length > 0) {
-            const dests = db.getRestreamDestinationsByUserId(channel.user_id) || [];
-            const enabledWithUrl = dests.filter(d => d.enabled && d.channel_url);
-            if (enabledWithUrl.length > 0) {
-                const restreamManager = require('./restream-manager');
-                restreamLinks = enabledWithUrl.map(d => {
-                    // Check if this destination is actively streaming
-                    const streamStatuses = liveStreams.flatMap(ls => restreamManager.getStreamStatus(ls.id));
-                    const activeSession = streamStatuses.find(s => s.destId === d.id && (s.status === 'live' || s.status === 'starting'));
-                    const relayInfo = chatRelayService.getRelayInfo(liveStreams[0].id);
-                    const hasRelay = relayInfo?.some(r => r.destId === d.id);
-                    return {
-                        platform: d.platform,
-                        name: d.name,
-                        channel_url: d.channel_url,
-                        is_live: !!activeSession,
-                        chat_relayed: !!hasRelay,
-                        viewer_count: restreamManager.getCachedViewerCount(d.id),
-                    };
-                });
-            }
-        }
-
         res.json({
             channel: { ...channel, follower_count: followerCount, is_following: isFollowing },
             stream: liveStreams[0] || null,
             streams: liveStreams,
-            rs_restream: Object.keys(rsInfo).length ? rsInfo : null,
-            restream_links: restreamLinks,
             vods,
             clips,
         });
@@ -214,38 +91,20 @@ router.get('/channel', requireAuth, (req, res) => {
 router.put('/channel', requireAuth, (req, res) => {
     try {
         db.ensureChannel(req.user.id);
-        const { is_nsfw, auto_record } = req.body;
-        const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
-        const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
-        const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
-        const protocol = cleanProtocol(req.body.protocol);
-        const panels = cleanPanels(req.body.panels);
-        const defaultVodVisibility = cleanVisibility(req.body.default_vod_visibility);
-        const defaultClipVisibility = cleanVisibility(req.body.default_clip_visibility);
-
-        if ((hasOwn(req.body, 'title') && title === null)
-            || (hasOwn(req.body, 'description') && description === null)
-            || (hasOwn(req.body, 'category') && category === null)
-            || (hasOwn(req.body, 'protocol') && protocol === null)
-            || (hasOwn(req.body, 'panels') && panels === null)
-            || (hasOwn(req.body, 'default_vod_visibility') && defaultVodVisibility === null)
-            || (hasOwn(req.body, 'default_clip_visibility') && defaultClipVisibility === null)) {
-            return res.status(400).json({ error: 'Invalid channel settings' });
-        }
-
+        const { title, description, category, protocol, is_nsfw, auto_record, panels, default_vod_visibility, default_clip_visibility } = req.body;
         const fields = {};
         if (title !== undefined) fields.title = title;
         if (description !== undefined) fields.description = description;
         if (category !== undefined) fields.category = category;
         if (protocol !== undefined) fields.protocol = protocol;
-        if (is_nsfw !== undefined) fields.is_nsfw = cleanBooleanFlag(is_nsfw) ? 1 : 0;
-        if (auto_record !== undefined) fields.auto_record = cleanBooleanFlag(auto_record) ? 1 : 0;
-        if (panels !== undefined) fields.panels = panels;
-        if (defaultVodVisibility !== undefined) {
-            fields.default_vod_visibility = defaultVodVisibility;
+        if (is_nsfw !== undefined) fields.is_nsfw = is_nsfw ? 1 : 0;
+        if (auto_record !== undefined) fields.auto_record = auto_record ? 1 : 0;
+        if (panels !== undefined) fields.panels = typeof panels === 'string' ? panels : JSON.stringify(panels);
+        if (default_vod_visibility !== undefined && ['public', 'unlisted', 'private'].includes(default_vod_visibility)) {
+            fields.default_vod_visibility = default_vod_visibility;
         }
-        if (defaultClipVisibility !== undefined) {
-            fields.default_clip_visibility = defaultClipVisibility;
+        if (default_clip_visibility !== undefined && ['public', 'unlisted', 'private'].includes(default_clip_visibility)) {
+            fields.default_clip_visibility = default_clip_visibility;
         }
 
         if (Object.keys(fields).length > 0) {
@@ -298,52 +157,7 @@ router.get('/recent', (req, res) => {
         });
         res.json({ streams: enriched });
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to list recent streams' });
-    }
-});
-
-/* ── Voice Channels (global, non-stream) ───────────────────── */
-
-router.get('/voice-channels', (req, res) => {
-    try {
-        res.json({ channels: callServer.listChannels() });
-    } catch (err) {
-        console.error('[Streaming]', err.message);
-        res.status(500).json({ error: 'Failed to list voice channels' });
-    }
-});
-
-router.get('/voice-channels/:channelId', (req, res) => {
-    try {
-        const ch = callServer.getChannel(req.params.channelId);
-        if (!ch) return res.status(404).json({ error: 'Channel not found' });
-        res.json({ channel: ch });
-    } catch (err) {
-        console.error('[Streaming]', err.message);
-        res.status(500).json({ error: 'Failed to get voice channel' });
-    }
-});
-
-router.post('/voice-channels', requireAuth, (req, res) => {
-    try {
-        const { name, mode, maxParticipants } = req.body;
-        const ch = callServer.createChannel({ name, mode, createdBy: req.user.id, maxParticipants });
-        res.status(201).json({ channel: ch });
-    } catch (err) {
-        console.error('[Streaming]', err.message);
-        res.status(500).json({ error: 'Failed to create voice channel' });
-    }
-});
-
-router.delete('/voice-channels/:channelId', requireAuth, (req, res) => {
-    try {
-        const ok = callServer.deleteChannel(req.params.channelId, req.user.id);
-        if (!ok) return res.status(403).json({ error: 'Cannot delete this channel' });
-        res.json({ deleted: true });
-    } catch (err) {
-        console.error('[Streaming]', err.message);
-        res.status(500).json({ error: 'Failed to delete voice channel' });
     }
 });
 
@@ -365,7 +179,6 @@ router.get('/:id', optionalAuth, (req, res) => {
                 const config = require('../config');
                 const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
                 stream.endpoint = {
-                    hlsUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
                     flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
                 };
             }
@@ -388,21 +201,7 @@ router.get('/:id', optionalAuth, (req, res) => {
 // ── Start a New Stream (Go Live) ─────────────────────────────
 router.post('/', requireAuth, (req, res) => {
     try {
-        const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
-        const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
-        const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
-        const protocol = cleanProtocol(req.body.protocol);
-        const tags = cleanTags(req.body.tags);
-        const callMode = cleanCallMode(req.body.call_mode);
-
-        if ((hasOwn(req.body, 'title') && title === null)
-            || (hasOwn(req.body, 'description') && description === null)
-            || (hasOwn(req.body, 'category') && category === null)
-            || (hasOwn(req.body, 'protocol') && protocol === null)
-            || (hasOwn(req.body, 'tags') && tags === null)
-            || (hasOwn(req.body, 'call_mode') && callMode === null)) {
-            return res.status(400).json({ error: 'Invalid stream settings' });
-        }
+        const { title, description, category, protocol, is_nsfw, tags, call_mode } = req.body;
 
         const channel = db.ensureChannel(req.user.id);
 
@@ -410,17 +209,17 @@ router.post('/', requireAuth, (req, res) => {
             db.run('UPDATE users SET role = ? WHERE id = ?', ['streamer', req.user.id]);
         }
 
-        const streamProtocol = protocol || cleanProtocol(channel.protocol) || 'webrtc';
-        const streamCategory = category || cleanText(channel.category, { maxLength: MAX_CATEGORY_LENGTH }) || 'irl';
+        const streamProtocol = protocol || channel.protocol || 'webrtc';
+        const streamCategory = category || channel.category || 'irl';
 
         const result = db.createStream({
             user_id: req.user.id,
             channel_id: channel.id,
-            title: title || cleanText(channel.title, { maxLength: MAX_TITLE_LENGTH }) || `${req.user.display_name}'s Stream`,
-            description: description ?? cleanText(channel.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true }) ?? '',
+            title: title || channel.title || `${req.user.display_name}'s Stream`,
+            description: description || channel.description || '',
             category: streamCategory,
             protocol: streamProtocol,
-            is_nsfw: hasOwn(req.body, 'is_nsfw') ? cleanBooleanFlag(req.body.is_nsfw) : !!channel.is_nsfw,
+            is_nsfw: is_nsfw !== undefined ? is_nsfw : channel.is_nsfw,
         });
 
         const streamId = result.lastInsertRowid;
@@ -428,14 +227,13 @@ router.post('/', requireAuth, (req, res) => {
         // Initialize heartbeat
         db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
 
-        if (tags && tags.length > 0) {
+        if (tags) {
             db.run('UPDATE streams SET tags = ? WHERE id = ?', [JSON.stringify(tags), streamId]);
         }
 
-        // Set call mode if provided — create a stream voice channel
-        if (callMode) {
-            db.run('UPDATE streams SET call_mode = ? WHERE id = ?', [callMode, streamId]);
-            callServer.createStreamChannel(streamId, callMode, req.user.id);
+        // Set call mode if provided
+        if (call_mode && ['mic', 'mic+cam', 'cam+mic'].includes(call_mode)) {
+            db.run('UPDATE streams SET call_mode = ? WHERE id = ?', [call_mode, streamId]);
         }
 
         let endpoint = {};
@@ -451,12 +249,6 @@ router.post('/', requireAuth, (req, res) => {
         );
 
         const stream = db.getStreamById(streamId);
-        robotStreamerService.startForStream(stream).catch((rsErr) => {
-            console.warn(`[RS] Failed to start integration for stream ${streamId}:`, rsErr.message);
-        });
-        chatRelayService.startForStream(stream).catch((relayErr) => {
-            console.warn(`[ChatRelay] Failed to start relay for stream ${streamId}:`, relayErr.message);
-        });
         res.status(201).json({ stream, endpoint });
     } catch (err) {
         console.error('[Streams] Create error:', err.message);
@@ -473,25 +265,14 @@ router.put('/:id', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not your stream' });
         }
 
-        const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
-        const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
-        const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
-        const tags = cleanTags(req.body.tags);
-
-        if ((hasOwn(req.body, 'title') && title === null)
-            || (hasOwn(req.body, 'description') && description === null)
-            || (hasOwn(req.body, 'category') && category === null)
-            || (hasOwn(req.body, 'tags') && tags === null)) {
-            return res.status(400).json({ error: 'Invalid stream update' });
-        }
-
+        const { title, description, category, is_nsfw, tags } = req.body;
         const updates = [];
         const params = [];
 
         if (title !== undefined) { updates.push('title = ?'); params.push(title); }
         if (description !== undefined) { updates.push('description = ?'); params.push(description); }
         if (category !== undefined) { updates.push('category = ?'); params.push(category); }
-        if (hasOwn(req.body, 'is_nsfw')) { updates.push('is_nsfw = ?'); params.push(cleanBooleanFlag(req.body.is_nsfw) ? 1 : 0); }
+        if (is_nsfw !== undefined) { updates.push('is_nsfw = ?'); params.push(is_nsfw ? 1 : 0); }
         if (tags !== undefined) { updates.push('tags = ?'); params.push(JSON.stringify(tags)); }
 
         if (updates.length > 0) {
@@ -502,7 +283,6 @@ router.put('/:id', requireAuth, (req, res) => {
         const updated = db.getStreamById(req.params.id);
         res.json({ stream: updated });
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to update stream' });
     }
 });
@@ -536,19 +316,11 @@ router.delete('/:id', requireAuth, (req, res) => {
             webrtcSFU.closeRoom(`stream-${stream.id}`);
         }
 
-        // End any active group call / remove stream voice channel
-        callServer.removeStreamChannel(stream.id);
-
-        robotStreamerService.stopForStream(stream.id);
-        chatRelayService.stopForStream(stream.id);
-
-        // Close signaling room and notify viewers
-        const broadcastServer = require('./broadcast-server');
-        broadcastServer.endStream(stream.id);
+        // End any active group call
+        callServer.endCall(stream.id);
 
         res.json({ message: 'Stream ended' });
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to end stream' });
     }
 });
@@ -582,13 +354,12 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             const url = `http://${hostname}:${endpoint.videoPort}/${user.stream_key}/640/480/`;
             const urlHD = `http://${hostname}:${endpoint.videoPort}/${user.stream_key}/1280/720/`;
             const audioUrl = `http://${hostname}:${endpoint.audioPort}/${user.stream_key}/`;
-            const lowLatencyFlags = '-fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 -muxdelay 0.001 -flush_packets 1';
-            endpoint.ffmpegCommand = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
-            endpoint.ffmpegVideoOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 ${url}`;
-            endpoint.ffmpegScreen = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f x11grab -s 1920x1080 -r 20 -i :0.0 -thread_queue_size 512 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 450k -maxrate 450k -bufsize 900k -g 10 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
-            endpoint.ffmpegOBS = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video2 -thread_queue_size 512 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 450k -maxrate 450k -bufsize 900k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
-            endpoint.ffmpegAudioOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f alsa -i default -f mpegts -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${audioUrl}`;
-            endpoint.ffmpegHD = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 1280x720 -b:v 1200k -maxrate 1200k -bufsize 2400k -r 30 -g 15 -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 2 ${urlHD}`;
+            endpoint.ffmpegCommand = `ffmpeg -f v4l2 -i /dev/video0 -f alsa -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 1 -muxdelay 0.001 ${url}`;
+            endpoint.ffmpegVideoOnly = `ffmpeg -f v4l2 -i /dev/video0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -bf 0 -muxdelay 0.001 ${url}`;
+            endpoint.ffmpegScreen = `ffmpeg -f x11grab -s 1920x1080 -r 24 -i :0.0 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 500k -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 1 -muxdelay 0.001 ${url}`;
+            endpoint.ffmpegOBS = `ffmpeg -f v4l2 -i /dev/video2 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 500k -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 1 -muxdelay 0.001 ${url}`;
+            endpoint.ffmpegAudioOnly = `ffmpeg -f alsa -i default -f mpegts -codec:a mp2 -b:a 128k -ar 44100 -ac 1 ${audioUrl}`;
+            endpoint.ffmpegHD = `ffmpeg -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 -f alsa -i default -f mpegts -codec:v mpeg1video -s 1280x720 -b:v 1200k -r 30 -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 2 -muxdelay 0.001 ${urlHD}`;
         } else if (stream.protocol === 'webrtc') {
             endpoint = { roomId: `stream-${stream.id}`, signalingUrl: `/ws/broadcast?streamId=${stream.id}` };
         } else if (stream.protocol === 'rtmp') {
@@ -601,7 +372,6 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
 
         res.json({ endpoint, stream_key: user.stream_key });
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to get endpoint' });
     }
 });
@@ -619,7 +389,6 @@ router.post('/:id/heartbeat', requireAuth, (req, res) => {
         db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [stream.id]);
         res.json({ ok: true });
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Heartbeat failed' });
     }
 });
@@ -640,7 +409,6 @@ router.get('/:id/rtmp-status', requireAuth, (req, res) => {
         const receiving = rtmpServer.isReceiving(user.stream_key);
         res.json({ receiving });
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to check RTMP status' });
     }
 });
@@ -664,7 +432,6 @@ router.post('/:id/follow', requireAuth, (req, res) => {
             res.json({ following: true, count: db.getFollowerCount(stream.user_id) });
         }
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to follow/unfollow' });
     }
 });
@@ -688,7 +455,6 @@ router.post('/channel/:username/follow', requireAuth, (req, res) => {
             res.json({ following: true, count: db.getFollowerCount(user.id) });
         }
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to follow/unfollow' });
     }
 });
@@ -713,21 +479,18 @@ router.put('/:id/call', requireAuth, (req, res) => {
             return res.status(400).json({ error: 'Invalid call mode. Use: mic, mic+cam, cam+mic, or null to disable' });
         }
 
+        const previousMode = stream.call_mode || null;
         db.run('UPDATE streams SET call_mode = ? WHERE id = ?', [call_mode, stream.id]);
 
-        // Create or remove stream voice channel
-        const channelId = `stream-${stream.id}`;
-        if (call_mode) {
-            callServer.createStreamChannel(stream.id, call_mode, stream.user_id);
-        } else {
-            callServer.removeStreamChannel(stream.id);
+        // Any mode change resets the active room so everyone resyncs to the new settings.
+        if (previousMode !== call_mode) {
+            callServer.endCall(stream.id);
         }
 
         res.json({
             call_mode,
-            channelId: call_mode ? channelId : null,
-            participants: callServer.getParticipants(channelId),
-            participant_count: callServer.getParticipantCount(channelId),
+            participants: callServer.getParticipants(stream.id),
+            participant_count: callServer.getParticipantCount(stream.id),
         });
     } catch (err) {
         console.error('[Streams] Call mode error:', err.message);
@@ -739,16 +502,13 @@ router.get('/:id/call', optionalAuth, (req, res) => {
     try {
         const stream = db.getStreamById(req.params.id);
         if (!stream) return res.status(404).json({ error: 'Stream not found' });
-        const channelId = `stream-${stream.id}`;
 
         res.json({
             call_mode: stream.call_mode || null,
-            channelId: stream.call_mode ? channelId : null,
-            participants: callServer.getParticipants(channelId),
-            participant_count: callServer.getParticipantCount(channelId),
+            participants: callServer.getParticipants(stream.id),
+            participant_count: callServer.getParticipantCount(stream.id),
         });
     } catch (err) {
-        console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to get call status' });
     }
 });
