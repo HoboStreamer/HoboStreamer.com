@@ -4,7 +4,6 @@
  * POST /api/auth/login
  * GET  /api/auth/me
  * PUT  /api/auth/profile
- * POST /api/auth/change-password
  * POST /api/auth/avatar
  */
 const express = require('express');
@@ -15,60 +14,19 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db/database');
 const { generateToken, requireAuth } = require('./auth');
-const permissions = require('./permissions');
+const { buildCapabilities } = require('./permissions');
 const legacyMigration = require('../game/legacy-migration');
 
 const router = express.Router();
-
-function cleanOptionalString(value) {
-    if (value === undefined || value === null) return undefined;
-    return String(value).trim();
-}
-
-/** Strip HTML tags from a string */
-function stripHtml(str) {
-    return str.replace(/<[^>]*>/g, '');
-}
-
-/**
- * Sanitize display names — strip HTML, control chars, and characters that could
- * cause injection issues in HTML attributes / JS string contexts / URLs.
- */
-function sanitizeDisplayName(raw) {
-    if (!raw) return raw;
-    let s = stripHtml(raw);
-    // Remove characters dangerous in HTML/JS/URL contexts
-    s = s.replace(/[\\`'"<>(){};:/\[\]]/g, '');
-    // Collapse whitespace and trim
-    s = s.replace(/\s+/g, ' ').trim();
-    return s;
-}
-
-function isValidEmail(value) {
-    if (!value) return true;
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-function isAllowedAvatarUrl(value) {
-    if (!value) return true;
-    if (value.startsWith('/data/avatars/')) return true;
-    try {
-        const url = new URL(value);
-        return url.protocol === 'http:' || url.protocol === 'https:';
-    } catch {
-        return false;
-    }
-}
 
 // ── Avatar Upload Config ─────────────────────────────────────
 const avatarDir = path.resolve('./data/avatars');
 if (!fs.existsSync(avatarDir)) fs.mkdirSync(avatarDir, { recursive: true });
 
-const MIME_TO_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/avif': '.avif' };
 const avatarStorage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, avatarDir),
     filename: (req, file, cb) => {
-        const ext = MIME_TO_EXT[file.mimetype] || '.png';
+        const ext = path.extname(file.originalname) || '.png';
         cb(null, `avatar-${req.user.id}-${Date.now()}${ext}`);
     },
 });
@@ -84,11 +42,7 @@ const avatarUpload = multer({
 // ── Register ─────────────────────────────────────────────────
 router.post('/register', (req, res) => {
     try {
-        const username = cleanOptionalString(req.body.username);
-        const email = cleanOptionalString(req.body.email);
-        const password = typeof req.body.password === 'string' ? req.body.password : '';
-        let display_name = cleanOptionalString(req.body.display_name);
-        const verification_key = cleanOptionalString(req.body.verification_key);
+        const { username, email, password, display_name, verification_key } = req.body;
 
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password are required' });
@@ -99,20 +53,8 @@ router.post('/register', (req, res) => {
         if (!/^[a-zA-Z0-9_]+$/.test(username)) {
             return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
         }
-        if (/^anon\d*$/i.test(username)) {
-            return res.status(400).json({ error: 'That username is reserved for anonymous users' });
-        }
         if (password.length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
-        }
-        if (display_name) {
-            display_name = sanitizeDisplayName(display_name);
-        }
-        if (display_name && display_name.length > 60) {
-            return res.status(400).json({ error: 'Display name must be 1-60 characters' });
-        }
-        if (email && (!isValidEmail(email) || email.length > 254)) {
-            return res.status(400).json({ error: 'Invalid email address' });
         }
 
         // Check existing
@@ -171,16 +113,6 @@ router.post('/register', (req, res) => {
                     // Re-fetch user to include migrated coin balance
                     const updatedUser = db.getUserById(user.id);
                     if (updatedUser) user = updatedUser;
-
-                    // Grant tags for legacy migrated users
-                    try {
-                        const tags = require('../game/tags');
-                        tags.grantTag(user.id, 'legacy', 'migration');
-                        // Grant CFO tag specifically to Patrick
-                        if (username.toLowerCase() === 'patrick') {
-                            tags.grantTag(user.id, 'cfo', 'migration');
-                        }
-                    } catch (err) { console.warn('[Auth] Tags migration error:', err.message); /* non-critical */ }
                 }
             }
         }
@@ -190,6 +122,7 @@ router.post('/register', (req, res) => {
         res.status(201).json({
             token,
             user: sanitizeUser(user),
+            capabilities: buildCapabilities(user),
             ...(migrated && { migrated }),
         });
     } catch (err) {
@@ -201,8 +134,7 @@ router.post('/register', (req, res) => {
 // ── Login ────────────────────────────────────────────────────
 router.post('/login', (req, res) => {
     try {
-        const username = cleanOptionalString(req.body.username);
-        const password = typeof req.body.password === 'string' ? req.body.password : '';
+        const { username, password } = req.body;
 
         if (!username || !password) {
             return res.status(400).json({ error: 'Username and password required' });
@@ -225,7 +157,7 @@ router.post('/login', (req, res) => {
         db.run('UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
 
         const token = generateToken(user);
-        res.json({ token, user: sanitizeUser(user) });
+        res.json({ token, user: sanitizeUser(user), capabilities: buildCapabilities(user) });
     } catch (err) {
         console.error('[Auth] Login error:', err.message);
         res.status(500).json({ error: 'Login failed' });
@@ -234,42 +166,15 @@ router.post('/login', (req, res) => {
 
 // ── Get Current User ─────────────────────────────────────────
 router.get('/me', requireAuth, (req, res) => {
-    res.json({
-        user: sanitizeUser(req.user),
-        capabilities: permissions.getCapabilities(req.user),
-    });
+    res.json({ user: sanitizeUser(req.user), capabilities: buildCapabilities(req.user) });
 });
 
 // ── Update Profile ───────────────────────────────────────────
 router.put('/profile', requireAuth, (req, res) => {
     try {
-        let display_name = cleanOptionalString(req.body.display_name);
-        let bio = cleanOptionalString(req.body.bio);
-        const avatar_url = cleanOptionalString(req.body.avatar_url);
-        const email = cleanOptionalString(req.body.email);
-        const profile_color = cleanOptionalString(req.body.profile_color);
+        const { display_name, bio, avatar_url, email, profile_color } = req.body;
         const updates = [];
         const params = [];
-
-        // Strip HTML tags from free-text fields
-        if (display_name !== undefined) display_name = sanitizeDisplayName(display_name);
-        if (bio !== undefined) bio = stripHtml(bio);
-
-        if (display_name !== undefined && (display_name.length < 1 || display_name.length > 60)) {
-            return res.status(400).json({ error: 'Display name must be 1-60 characters' });
-        }
-        if (bio !== undefined && bio.length > 500) {
-            return res.status(400).json({ error: 'Bio must be 500 characters or fewer' });
-        }
-        if (email !== undefined && (!isValidEmail(email) || email.length > 254)) {
-            return res.status(400).json({ error: 'Invalid email address' });
-        }
-        if (profile_color !== undefined && profile_color !== '' && !/^#[0-9a-fA-F]{6}$/.test(profile_color)) {
-            return res.status(400).json({ error: 'Profile color must be a 6-digit hex color' });
-        }
-        if (avatar_url !== undefined && !isAllowedAvatarUrl(avatar_url)) {
-            return res.status(400).json({ error: 'Avatar URL must be http(s) or a local /data/avatars path' });
-        }
 
         if (display_name !== undefined) { updates.push('display_name = ?'); params.push(display_name); }
         if (bio !== undefined) { updates.push('bio = ?'); params.push(bio); }
@@ -286,40 +191,10 @@ router.put('/profile', requireAuth, (req, res) => {
 
         db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
         const updated = db.getUserById(req.user.id);
-        res.json({ user: sanitizeUser(updated) });
+        res.json({ user: sanitizeUser(updated), capabilities: buildCapabilities(updated) });
     } catch (err) {
         console.error('[Auth] Profile update error:', err.message);
         res.status(500).json({ error: 'Profile update failed' });
-    }
-});
-
-// ── Change Password ──────────────────────────────────────────
-router.post('/change-password', requireAuth, (req, res) => {
-    try {
-        const currentPassword = typeof req.body.current_password === 'string' ? req.body.current_password : '';
-        const newPassword = typeof req.body.new_password === 'string' ? req.body.new_password : '';
-
-        if (!currentPassword || !newPassword) {
-            return res.status(400).json({ error: 'Current and new password are required' });
-        }
-        if (newPassword.length < 6) {
-            return res.status(400).json({ error: 'New password must be at least 6 characters' });
-        }
-
-        const user = db.getUserById(req.user.id);
-        if (!user || !bcrypt.compareSync(currentPassword, user.password_hash)) {
-            return res.status(403).json({ error: 'Current password is incorrect' });
-        }
-
-        const newHash = bcrypt.hashSync(newPassword, 10);
-        db.run('UPDATE users SET password_hash = ?, token_valid_after = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newHash, user.id]);
-        // Issue a fresh token so the current session stays logged in
-        const { generateToken } = require('./auth');
-        const token = generateToken(user);
-        res.json({ success: true, token });
-    } catch (err) {
-        console.error('[Auth] Change password error:', err.message);
-        res.status(500).json({ error: 'Password change failed' });
     }
 });
 
@@ -362,7 +237,7 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) =>
         db.updateUserAvatar(req.user.id, avatarUrl);
 
         const updated = db.getUserById(req.user.id);
-        res.json({ user: sanitizeUser(updated), avatar_url: avatarUrl });
+        res.json({ user: sanitizeUser(updated), avatar_url: avatarUrl, capabilities: buildCapabilities(updated) });
     } catch (err) {
         if (req.file) try { fs.unlinkSync(req.file.path); } catch { }
         console.error('[Auth] Avatar upload error:', err.message);
@@ -390,7 +265,6 @@ function sanitizeUser(user, publicOnly = false) {
         hobo_bucks_balance: user.hobo_bucks_balance,
         hobo_coins_balance: user.hobo_coins_balance,
         created_at: user.created_at,
-        capabilities: permissions.getCapabilities(user),
     };
     if (!publicOnly) {
         safe.email = user.email;

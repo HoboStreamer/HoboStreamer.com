@@ -249,12 +249,6 @@ let deathDropAnims = [];       // animated items flying out from death point
 let gameConnected = false;
 let gameRunning = false;
 let gameLoopId = null;
-let gamePingTimer = null;
-let lastStateSeq = 0;
-let lastStateAt = 0;
-let pendingPingSentAt = 0;
-let networkStats = { rtt: 0, jitter: 0, stateRate: 0, packetSkips: 0, nearbyPlayers: 0 };
-let gameIdentity = { isAnon: false, anonId: null };
 
 // Camera (smooth lerp)
 let camX = 0, camY = 0;
@@ -266,16 +260,6 @@ const CAM_LERP = 0.12; // camera smoothing factor
 const keys = {};
 let mouseX = 0, mouseY = 0;
 let mouseWorldX = 0, mouseWorldY = 0;
-let frameDeltaMs = 16;
-let lastFrameAt = performance.now();
-
-// Movement physics
-let playerVelX = 0;
-let playerVelY = 0;
-let lastMoveSendAt = 0;
-let lastMoveSentX = 0;
-let lastMoveSentY = 0;
-const movementBodyStates = new Map();
 
 // Sprint
 let isSprinting = false;
@@ -307,20 +291,6 @@ let dodgeAnimTimer = 0;
 let dodgeAnimDx = 0, dodgeAnimDy = 0;
 let dodgeFlashTimer = 0;
 
-// Jump system (visual z-axis — purely client-side cosmetic)
-let jumpHeight = 0;          // Current height above ground (pixels)
-let jumpVelocity = 0;        // Vertical velocity (pixels/frame)
-const JUMP_STRENGTH = 6.8;   // Initial upward velocity
-const JUMP_GRAVITY = 0.38;   // Gravity pull per frame
-let isJumping = false;
-let jumpCooldownUntil = 0;
-const JUMP_COOLDOWN_MS = 350;
-let jumpSquashTimer = 0;     // Landing squash-stretch timer
-let jumpParticles = [];       // Dust particles on land
-
-// Gather/mining particle effects
-let gatherParticles = [];
-
 // Combo tracking (client mirror of server combos)
 let comboCount = 0;
 let comboTimer = 0;
@@ -350,7 +320,7 @@ let selectedStructure = null;
 let ghostTileX = 0, ghostTileY = 0;
 
 // Panels
-let activePanel = null; // 'inventory','bank','shop','crafting','skills','map','leaderboard','build','quests'
+let activePanel = null; // 'inventory','bank','shop','crafting','skills','map','leaderboard','build'
 let panelData = {};
 
 // Chat
@@ -424,12 +394,6 @@ let chests = {}; // chestId → { id, tier, x, y, emoji }
 // ── Achievement System ───────────────────────────────────────
 let myAchievements = [];     // [{ id, name, desc, reward, category, emoji, earned }]
 let achievementToasts = [];  // [{ text, emoji, timer }]
-
-// ── Daily Quests ─────────────────────────────────────────────
-let myDailyQuests = [];      // [{ id, name, desc, progress, target, completed, claimed, reward }]
-let dailyQuestMeta = { claimed: 0, total: 0, completed: 0, streak: 0, nextResetAt: null, date: '' };
-let dailyQuestLastSync = 0;
-const dailyQuestReadyNotified = new Set();
 
 // ── Fishing Mini-Game State (Toontown-style) ─────────────────
 const FISHING = {
@@ -589,30 +553,6 @@ function updateConnectionBadge(state) {
     else text.textContent = 'Offline';
 }
 
-function startGamePingLoop() {
-    if (gamePingTimer) clearInterval(gamePingTimer);
-    gamePingTimer = setInterval(() => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        pendingPingSentAt = Date.now();
-        sendWs({ type: 'ping', t: pendingPingSentAt });
-    }, 3000);
-}
-
-function stopGamePingLoop() {
-    if (gamePingTimer) {
-        clearInterval(gamePingTimer);
-        gamePingTimer = null;
-    }
-}
-
-function handleGamePong(msg) {
-    const echoedAt = Number(msg.echo || pendingPingSentAt || 0);
-    if (!echoedAt) return;
-    const rtt = Math.max(0, Date.now() - echoedAt);
-    networkStats.jitter = networkStats.rtt ? Math.round(networkStats.jitter * 0.7 + Math.abs(networkStats.rtt - rtt) * 0.3) : 0;
-    networkStats.rtt = Math.round(networkStats.rtt * 0.5 + rtt * 0.5);
-}
-
 // ══════════════════════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════════════════════
@@ -625,6 +565,11 @@ function loadGamePage() {
     gameCanvas.height = CAM_H;
     loadTheme();
 
+    if (!currentUser) {
+        document.getElementById('game-login-overlay').style.display = 'flex';
+        hideLoadingUI();
+        return;
+    }
     document.getElementById('game-login-overlay').style.display = 'none';
     if (!gameConnected) {
         showRandomTip();
@@ -636,41 +581,32 @@ function loadGamePage() {
 
 function connectGame() {
     const token = localStorage.getItem('token');
+    if (!token) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const query = token ? `?token=${encodeURIComponent(token)}` : '';
 
     updateLoadingUI('Connecting to HoboGame...', 'Opening WebSocket...', 20);
     updateConnectionBadge('connecting');
 
-    ws = new WebSocket(`${proto}://${location.host}/ws/game${query}`);
+    ws = new WebSocket(`${proto}://${location.host}/ws/game?token=${token}`);
     ws.onopen = () => {
         gameConnected = true;
-        lastStateSeq = 0;
-        lastStateAt = 0;
-        networkStats = { rtt: 0, jitter: 0, stateRate: 0, packetSkips: 0, nearbyPlayers: 0 };
         updateConnectionBadge('connected');
         updateLoadingUI('Connected!', 'Loading world data...', 50);
         addChatMsg('⚡ Connected to HoboGame');
-        startGamePingLoop();
     };
     ws.onclose = () => {
         gameConnected = false;
-        stopGamePingLoop();
         updateConnectionBadge('disconnected');
         addChatMsg('❌ Disconnected');
-        setTimeout(() => { if (currentPage === 'game') connectGame(); }, 3000);
+        setTimeout(() => { if (currentPage === 'game' && currentUser) connectGame(); }, 3000);
     };
     ws.onerror = () => {
-        stopGamePingLoop();
         updateConnectionBadge('disconnected');
         updateLoadingUI('Connection Error', 'Retrying in 3 seconds...', 0);
     };
     ws.onmessage = (e) => handleServerMsg(JSON.parse(e.data));
     // Save fog of war on page unload
-    if (!window._hoboGameBeforeUnloadBound) {
-        window._hoboGameBeforeUnloadBound = true;
-        window.addEventListener('beforeunload', () => saveExploredTiles());
-    }
+    window.addEventListener('beforeunload', () => saveExploredTiles());
 }
 
 function handleServerMsg(msg) {
@@ -731,7 +667,7 @@ function handleServerMsg(msg) {
         case 'game_chat':
             addChatMsg(`${msg.username}: ${msg.text}`);
             break;
-        case 'pong': handleGamePong(msg); break;
+        case 'pong': break;
     }
 }
 
@@ -739,14 +675,7 @@ function handleInit(msg) {
     updateLoadingUI('Loading World...', 'Generating terrain...', 60);
 
     myPlayer = msg.player;
-    gameIdentity = msg.identity || { isAnon: false, anonId: null };
     myUserId = myPlayer.user_id;
-    playerVelX = 0;
-    playerVelY = 0;
-    lastMoveSentX = myPlayer.x || 0;
-    lastMoveSentY = myPlayer.y || 0;
-    lastMoveSendAt = Date.now();
-    movementBodyStates.clear();
     worldSeed = msg.worldSeed;
     // Sync map dimensions from server
     MAP_W = msg.mapW || MAP_W;
@@ -767,12 +696,11 @@ function handleInit(msg) {
     serverWeaponStats = msg.weaponStats || {};
     serverFoodEffects = msg.foodEffects || {};
     updateWeaponCooldown();
-    // Weather, chests, achievements, quests from init
+    // Weather, chests, achievements from init
     if (msg.weather) currentWeather = msg.weather;
     chests = msg.chests || {};
     const achData = msg.achievements || {};
     myAchievements = achData.achievements || [];
-    applyDailyQuestData(msg.dailyQuests);
 
     // Load depleted nodes
     depletedNodes.clear();
@@ -791,29 +719,13 @@ function handleInit(msg) {
     setTimeout(() => hideLoadingUI(), 400);
 
     if (!gameRunning) { gameRunning = true; gameLoop(); }
-    const welcomeName = gameIdentity.isAnon ? (gameIdentity.anonId || myPlayer.display_name || 'anon') : (myPlayer.display_name || myPlayer.username || 'traveler');
-    addChatMsg(`🌍 Welcome to HoboGame, ${welcomeName}! Click resources to gather, E to pickup/interact. [1-9] hotbar, [I] inventory.`);
+    addChatMsg('🌍 Welcome to HoboGame! Click resources to gather, E to pickup/interact. [1-9] hotbar, [I] inventory.');
 
     // Pre-load inventory for hotbar population
     loadPanelData('inventory');
-    refreshDailyQuests(true);
 }
 
 function handleState(msg) {
-    if (typeof msg.seq === 'number') {
-        if (msg.seq <= lastStateSeq) return;
-        if (lastStateSeq && msg.seq > lastStateSeq + 1) networkStats.packetSkips += (msg.seq - lastStateSeq - 1);
-        lastStateSeq = msg.seq;
-    }
-
-    const now = Date.now();
-    if (lastStateAt) {
-        const delta = now - lastStateAt;
-        const rate = delta > 0 ? 1000 / delta : 0;
-        networkStats.stateRate = networkStats.stateRate ? (networkStats.stateRate * 0.75 + rate * 0.25) : rate;
-    }
-    lastStateAt = now;
-
     // Track previous positions for walking animation detection
     const newPlayers = msg.players || {};
     for (const [uid, p] of Object.entries(newPlayers)) {
@@ -822,20 +734,6 @@ function handleState(msg) {
         else { p._prevX = p.x; p._prevY = p.y; }
     }
     players = newPlayers;
-    networkStats.nearbyPlayers = Math.max(0, Object.keys(players).length - (myUserId ? 1 : 0));
-
-    if (myUserId != null && players[myUserId] && myPlayer) {
-        const serverSelf = players[myUserId];
-        const dx = serverSelf.x - myPlayer.x;
-        const dy = serverSelf.y - myPlayer.y;
-        const drift = Math.hypot(dx, dy);
-        if (drift > TILE * 2.5) {
-            myPlayer.x += dx * 0.45;
-            myPlayer.y += dy * 0.45;
-        }
-        if (serverSelf.hp != null) myPlayer.hp = serverSelf.hp;
-        if (serverSelf.max_hp != null) myPlayer.max_hp = serverSelf.max_hp;
-    }
     mobs = msg.mobs || {};
     groundItems = msg.groundItems || {};
     chests = msg.chests || {};
@@ -895,81 +793,8 @@ function generateMinimap() {
 function gameLoop() {
     if (!gameRunning) return;
     gameLoopId = requestAnimationFrame(gameLoop);
-    if (Date.now() - dailyQuestLastSync > 15000) refreshDailyQuests();
-    const now = performance.now();
-    frameDeltaMs = Math.min(40, Math.max(8, now - lastFrameAt || 16));
-    lastFrameAt = now;
     update();
     render();
-}
-
-function getMoveBodyState(id) {
-    let state = movementBodyStates.get(id);
-    if (!state) {
-        state = {
-            renderX: 0,
-            renderY: 0,
-            velX: 0,
-            velY: 0,
-            bob: 0,
-            bobVel: 0,
-            stridePhase: 0,
-            strideStrength: 0,
-            torsoLeanX: 0,
-            torsoLeanY: 0,
-            torsoRoll: 0,
-            headBob: 0,
-            breath: Math.random() * Math.PI * 2,
-            plantedFoot: 0,
-            lastX: 0,
-            lastY: 0,
-            initialized: false,
-        };
-        movementBodyStates.set(id, state);
-    }
-    return state;
-}
-
-function updateMoveBodyState(id, targetX, targetY, dt, options = {}) {
-    const state = getMoveBodyState(id);
-    const isRemote = !!options.isRemote;
-    if (!state.initialized) {
-        state.renderX = targetX;
-        state.renderY = targetY;
-        state.lastX = targetX;
-        state.lastY = targetY;
-        state.initialized = true;
-    }
-
-    const lerp = isRemote ? 0.24 : 0.55;
-    state.renderX += (targetX - state.renderX) * lerp;
-    state.renderY += (targetY - state.renderY) * lerp;
-
-    const vx = (state.renderX - state.lastX) / Math.max(1, dt);
-    const vy = (state.renderY - state.lastY) / Math.max(1, dt);
-    state.velX = state.velX * 0.72 + vx * 0.28;
-    state.velY = state.velY * 0.72 + vy * 0.28;
-
-    const speed = Math.hypot(state.velX, state.velY);
-    const moveAmount = Math.min(1, speed * 14);
-    state.strideStrength += (moveAmount - state.strideStrength) * 0.22;
-    state.stridePhase += (0.08 + state.strideStrength * 0.22) * (dt / 16);
-
-    const bobTarget = Math.sin(state.stridePhase) * (1.8 + state.strideStrength * 2.2);
-    state.bobVel += (bobTarget - state.bob) * 0.18;
-    state.bobVel *= 0.72;
-    state.bob += state.bobVel;
-    state.headBob = Math.sin(state.stridePhase * 2) * state.strideStrength * 1.4;
-
-    state.torsoLeanX += ((state.velX * 18) - state.torsoLeanX) * 0.18;
-    state.torsoLeanY += ((state.velY * 18) - state.torsoLeanY) * 0.18;
-    state.torsoRoll += ((Math.sin(state.stridePhase) * state.strideStrength * 0.12) - state.torsoRoll) * 0.2;
-    state.plantedFoot = Math.sin(state.stridePhase) >= 0 ? 1 : -1;
-    state.breath += 0.015 * (dt / 16);
-
-    state.lastX = state.renderX;
-    state.lastY = state.renderY;
-    return state;
 }
 
 function update() {
@@ -995,54 +820,6 @@ function update() {
     }
     if (dodgeFlashTimer > 0) dodgeFlashTimer -= 16;
 
-    // Jump physics (visual z-axis)
-    if (isJumping) {
-        jumpVelocity -= JUMP_GRAVITY;
-        jumpHeight += jumpVelocity;
-        if (jumpHeight <= 0) {
-            // Landing
-            jumpHeight = 0;
-            jumpVelocity = 0;
-            isJumping = false;
-            jumpSquashTimer = 8; // frames of squash on land
-            // Spawn dust particles
-            if (myPlayer) {
-                for (let i = 0; i < 6; i++) {
-                    const angle = (Math.PI * 2 / 6) * i + Math.random() * 0.5;
-                    jumpParticles.push({
-                        x: 0, y: 0,
-                        vx: Math.cos(angle) * (1.5 + Math.random() * 1.5),
-                        vy: Math.sin(angle) * (0.5 + Math.random()) - 0.5,
-                        life: 12 + Math.random() * 8,
-                        maxLife: 20,
-                        size: 2 + Math.random() * 2,
-                    });
-                }
-            }
-        }
-    }
-    if (jumpSquashTimer > 0) jumpSquashTimer--;
-    // Update jump dust particles
-    for (let i = jumpParticles.length - 1; i >= 0; i--) {
-        const p = jumpParticles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vx *= 0.92;
-        p.vy *= 0.92;
-        p.life--;
-        if (p.life <= 0) jumpParticles.splice(i, 1);
-    }
-    // Update gather/mining particles
-    for (let i = gatherParticles.length - 1; i >= 0; i--) {
-        const gp = gatherParticles[i];
-        gp.x += gp.vx;
-        gp.y += gp.vy;
-        gp.vy += 0.12; // gravity
-        gp.vx *= 0.96;
-        gp.life--;
-        if (gp.life <= 0) gatherParticles.splice(i, 1);
-    }
-
     // Combo display timer decay
     if (comboTimer > 0) {
         comboTimer -= 16;
@@ -1061,109 +838,50 @@ function update() {
     // Movement (disabled while fishing)
     if (FISHING.active) return;
 
-    const dtNorm = frameDeltaMs / 16;
-    const baseSpeed = 3.2;
-    const accelBase = 0.52;
+    const baseSpeed = 3;
     isSprinting = !!keys['ShiftLeft'] || !!keys['ShiftRight'];
-    let inputX = 0, inputY = 0;
-    if (keys['KeyW'] || keys['ArrowUp']) inputY -= 1;
-    if (keys['KeyS'] || keys['ArrowDown']) inputY += 1;
-    if (keys['KeyA'] || keys['ArrowLeft']) inputX -= 1;
-    if (keys['KeyD'] || keys['ArrowRight']) inputX += 1;
+    let dx = 0, dy = 0;
+    if (keys['KeyW'] || keys['ArrowUp']) dy -= 1;
+    if (keys['KeyS'] || keys['ArrowDown']) dy += 1;
+    if (keys['KeyA'] || keys['ArrowLeft']) dx -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
 
-    if (chatOpen) { inputX = 0; inputY = 0; }
-    if (inputX && inputY) {
-        const n = 1 / Math.sqrt(2);
-        inputX *= n;
-        inputY *= n;
-    }
+    if (dx || dy) {
+        if (chatOpen) return; // Don't move while chatting
 
-    const currentTileX = Math.floor(myPlayer.x / TILE);
-    const currentTileY = Math.floor(myPlayer.y / TILE);
-    const currentBiome = getBiomeAt(currentTileX, currentTileY, worldSeed);
-    const probeTX = Math.floor((myPlayer.x + playerVelX * 10 + inputX * TILE) / TILE);
-    const probeTY = Math.floor((myPlayer.y + playerVelY * 10 + inputY * TILE) / TILE);
-    const targetBiome = getBiomeAt(probeTX, probeTY, worldSeed) || currentBiome;
-    const inWater = targetBiome === 'water';
+        // Diagonal normalization
+        if (dx && dy) { const n = 1 / Math.sqrt(2); dx *= n; dy *= n; }
 
-    let maxSpeed = baseSpeed;
-    let accel = accelBase;
-    let drag = 0.76;
-    let anim = 'idle';
+        // Track facing direction
+        facingAngle = Math.atan2(dy, dx);
 
-    if (isSprinting && !inWater) {
-        maxSpeed *= SPRINT_MULT * (agilityBonuses.sprintSpeedMult || 1.0);
-        accel *= 1.15;
-    }
-    if (inWater) {
-        maxSpeed *= 0.48 * (agilityBonuses.swimSpeedMult || 1.0);
-        accel *= 0.68;
-        drag = 0.82;
-        anim = 'swim';
-    } else if (currentBiome === 'sand') {
-        maxSpeed *= 0.93;
-        drag = 0.8;
-    } else if (currentBiome === 'snow') {
-        maxSpeed *= 0.9;
-        drag = 0.84;
-    }
+        // Apply speed + sprint
+        let speed = baseSpeed;
+        if (isSprinting) speed *= SPRINT_MULT * (agilityBonuses.sprintSpeedMult || 1.0);
 
-    // Airborne: reduced drag (momentum preservation) + slight speed boost
-    if (isJumping) {
-        drag *= 0.92; // Less friction in the air
-        maxSpeed *= 1.08;
-    }
+        // Check target biome for swimming
+        const probeTX = Math.floor((myPlayer.x + dx * speed) / TILE);
+        const probeTY = Math.floor((myPlayer.y + dy * speed) / TILE);
+        const targetBiome = getBiomeAt(probeTX, probeTY, worldSeed);
 
-    if (inputX || inputY) {
-        playerVelX += inputX * accel * dtNorm;
-        playerVelY += inputY * accel * dtNorm;
-    } else {
-        playerVelX *= Math.pow(drag, dtNorm);
-        playerVelY *= Math.pow(drag, dtNorm);
-    }
+        let moveMult = 1;
+        let anim = isSprinting ? 'run' : 'walk';
+        if (targetBiome === 'water') {
+            moveMult = 0.45 * (agilityBonuses.swimSpeedMult || 1.0); // Swimming with agility bonus
+            anim = 'swim';
+        }
 
-    const velMag = Math.hypot(playerVelX, playerVelY);
-    if (velMag > maxSpeed) {
-        const s = maxSpeed / velMag;
-        playerVelX *= s;
-        playerVelY *= s;
-    }
-    if (!(inputX || inputY) && velMag < 0.035) {
-        playerVelX = 0;
-        playerVelY = 0;
-    }
+        const newX = Math.max(0, Math.min(MAP_W * TILE, myPlayer.x + dx * speed * moveMult));
+        const newY = Math.max(0, Math.min(MAP_H * TILE, myPlayer.y + dy * speed * moveMult));
 
-    if (inputX || inputY) facingAngle = Math.atan2(inputY, inputX);
-    else if (velMag > 0.05) facingAngle = Math.atan2(playerVelY, playerVelX);
-
-    const oldX = myPlayer.x;
-    const oldY = myPlayer.y;
-    const newX = Math.max(0, Math.min(MAP_W * TILE, myPlayer.x + playerVelX * dtNorm));
-    const newY = Math.max(0, Math.min(MAP_H * TILE, myPlayer.y + playerVelY * dtNorm));
-    myPlayer.x = newX;
-    myPlayer.y = newY;
-
-    const moved = Math.hypot(newX - oldX, newY - oldY);
-    if (anim !== 'swim') {
-        if (velMag > maxSpeed * 0.72 && isSprinting) anim = 'run';
-        else if (velMag > 0.08) anim = 'walk';
-    }
-
-    const shouldSendMove = moved > 0.05 && (
-        Math.abs(newX - lastMoveSentX) > 0.35 ||
-        Math.abs(newY - lastMoveSentY) > 0.35 ||
-        Date.now() - lastMoveSendAt > 90
-    );
-    if (shouldSendMove) {
-        lastMoveSendAt = Date.now();
-        lastMoveSentX = newX;
-        lastMoveSentY = newY;
-        sendWs({ type: 'move', x: newX, y: newY, animation: anim, sprinting: isSprinting && !inWater });
+        myPlayer.x = newX;
+        myPlayer.y = newY;
+        sendWs({ type: 'move', x: newX, y: newY, animation: anim, sprinting: isSprinting });
     }
 
     // Smooth camera lerp
-    camTargetX = Math.max(0, Math.min(MAP_W * TILE - CAM_W, myPlayer.x - CAM_W / 2 + playerVelX * 10));
-    camTargetY = Math.max(0, Math.min(MAP_H * TILE - CAM_H, myPlayer.y - CAM_H / 2 + playerVelY * 10));
+    camTargetX = Math.max(0, Math.min(MAP_W * TILE - CAM_W, myPlayer.x - CAM_W / 2));
+    camTargetY = Math.max(0, Math.min(MAP_H * TILE - CAM_H, myPlayer.y - CAM_H / 2));
     camX += (camTargetX - camX) * CAM_LERP;
     camY += (camTargetY - camY) * CAM_LERP;
     // Apply screen shake
@@ -1286,8 +1004,8 @@ function render() {
             const sx = tx * TILE - camX + TILE / 2;
             const sy = ty * TILE - camY + TILE / 2;
             ctx.globalAlpha = depleted ? 0.25 : 1;
-            if (node.type === 'tree') drawTree(ctx, sx, sy, tx, ty);
-            else if (node.type === 'rock') drawRock(ctx, sx, sy, node.ore, tx, ty);
+            if (node.type === 'tree') drawTree(ctx, sx, sy);
+            else if (node.type === 'rock') drawRock(ctx, sx, sy, node.ore);
             ctx.globalAlpha = 1;
 
             // Hover highlight when mouse is over a non-depleted node
@@ -1911,268 +1629,39 @@ function drawTownDecoration(ctx, deco, dx, dy) {
     }
 }
 
-// ── Seeded PRNG for deterministic per-node variation ──
-function nodeRng(tx, ty, i) {
-    let h = (tx * 374761 + ty * 668265 + i * 93481) | 0;
-    h = ((h >> 16) ^ h) * 0x45d9f3b | 0;
-    h = ((h >> 16) ^ h) * 0x45d9f3b | 0;
-    return ((h >> 16) ^ h & 0x7fffffff) / 0x7fffffff;
-}
-
-function drawTree(ctx, cx, cy, tx, ty) {
-    tx = tx || 0; ty = ty || 0;
-    const r0 = nodeRng(tx, ty, 0);
-    const r1 = nodeRng(tx, ty, 1);
-    const r2 = nodeRng(tx, ty, 2);
-    const r3 = nodeRng(tx, ty, 3);
-    const r4 = nodeRng(tx, ty, 4);
-    const r5 = nodeRng(tx, ty, 5);
-
-    const trunkH = 7 + r0 * 5;              // 7-12
-    const canopyR = 8 + r1 * 6;             // 8-14
-    const lean = (r2 - 0.5) * 3;             // slight lean
-    const treeHue = 100 + r3 * 35;          // 100-135 (green range)
-    const treeSat = 45 + r4 * 25;
-
-    ctx.save();
-    ctx.translate(cx + lean * 0.3, cy);
-
-    // Shadow on ground
-    ctx.fillStyle = 'rgba(0,0,0,0.13)';
+function drawTree(ctx, cx, cy) {
+    ctx.fillStyle = '#15803d';
     ctx.beginPath();
-    ctx.ellipse(0, 8, canopyR * 0.7, 3.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Trunk
-    const trunkW = 2 + r5 * 1.5;
-    ctx.fillStyle = `hsl(28, 45%, ${22 + r0 * 10}%)`;
-    ctx.beginPath();
-    ctx.moveTo(-trunkW, 6);
-    ctx.lineTo(-trunkW * 0.6 + lean * 0.2, 6 - trunkH);
-    ctx.lineTo(trunkW * 0.6 + lean * 0.2, 6 - trunkH);
-    ctx.lineTo(trunkW, 6);
+    ctx.moveTo(cx, cy - 12);
+    ctx.lineTo(cx - 9, cy + 6);
+    ctx.lineTo(cx + 9, cy + 6);
     ctx.closePath();
     ctx.fill();
-
-    // Canopy layers (2-3 overlapping circles for a lush look)
-    const layers = 2 + Math.floor(r2 * 2);
-    for (let i = 0; i < layers; i++) {
-        const ri = nodeRng(tx, ty, 10 + i);
-        const offsetX = (ri - 0.5) * canopyR * 0.5;
-        const offsetY = -trunkH - canopyR * 0.3 + i * 2.5;
-        const layerR = canopyR * (1 - i * 0.15);
-        const lightness = 28 + i * 6 + ri * 8;
-
-        ctx.fillStyle = `hsl(${treeHue}, ${treeSat}%, ${lightness}%)`;
-        ctx.beginPath();
-        ctx.ellipse(offsetX + lean * 0.15, offsetY, layerR, layerR * 0.8, 0, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    // Highlight on top canopy
-    ctx.fillStyle = `hsla(${treeHue + 10}, ${treeSat + 10}%, 55%, 0.35)`;
-    ctx.beginPath();
-    ctx.ellipse(lean * 0.15 - 2, -trunkH - canopyR * 0.45, canopyR * 0.4, canopyR * 0.35, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
+    ctx.fillStyle = '#78350f';
+    ctx.fillRect(cx - 2, cy + 6, 4, 6);
 }
 
-function drawRock(ctx, cx, cy, oreType, tx, ty) {
-    tx = tx || 0; ty = ty || 0;
+function drawRock(ctx, cx, cy, oreType) {
     const ore = ORE_NODE_TYPES[oreType] || ORE_NODE_TYPES.stone;
-    const t = Date.now() / 1000;
-
-    // Per-node deterministic random values
-    const r0 = nodeRng(tx, ty, 0);
-    const r1 = nodeRng(tx, ty, 1);
-    const r2 = nodeRng(tx, ty, 2);
-    const r3 = nodeRng(tx, ty, 3);
-    const r4 = nodeRng(tx, ty, 4);
-    const r5 = nodeRng(tx, ty, 5);
-    const r6 = nodeRng(tx, ty, 6);
-
-    ctx.save();
-    ctx.translate(cx, cy);
-
-    const isRare = ['gold', 'mithril', 'titanium', 'platinum', 'dragonite'].includes(oreType);
-    const isLegendary = ['dragonite', 'platinum'].includes(oreType);
-
-    // Outer glow for rare ores
-    if (isRare) {
-        const glowPulse = 0.3 + Math.sin(t * 2.2 + r0 * 6) * 0.15;
-        ctx.shadowColor = ore.highlight;
-        ctx.shadowBlur = isLegendary ? 14 + Math.sin(t * 3) * 4 : 8 + Math.sin(t * 2) * 3;
-        ctx.globalAlpha = glowPulse;
-        ctx.fillStyle = ore.highlight;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 13, 9, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
-    }
-
-    // Base rock shape — irregular polygon instead of simple ellipse
-    const rockPoints = [];
-    const numVertices = 6 + Math.floor(r0 * 3); // 6-8 vertices
-    const baseRx = 9 + r1 * 4;   // 9-13
-    const baseRy = 6 + r2 * 3;   // 6-9
-    for (let i = 0; i < numVertices; i++) {
-        const angle = (Math.PI * 2 / numVertices) * i;
-        const wobble = 0.75 + nodeRng(tx, ty, 20 + i) * 0.5;
-        rockPoints.push({
-            x: Math.cos(angle) * baseRx * wobble,
-            y: Math.sin(angle) * baseRy * wobble,
-        });
-    }
-
-    // Rock base gradient
-    const grad = ctx.createRadialGradient(-2, -2, 1, 0, 0, baseRx);
-    grad.addColorStop(0, ore.highlight);
-    grad.addColorStop(0.6, ore.color);
-    grad.addColorStop(1, darkenColor(ore.color, 0.6));
-    ctx.fillStyle = grad;
+    ctx.fillStyle = ore.color;
     ctx.beginPath();
-    ctx.moveTo(rockPoints[0].x, rockPoints[0].y);
-    for (let i = 1; i < rockPoints.length; i++) {
-        const prev = rockPoints[i - 1];
-        const curr = rockPoints[i];
-        const cpx = (prev.x + curr.x) / 2 + (nodeRng(tx, ty, 30 + i) - 0.5) * 2;
-        const cpy = (prev.y + curr.y) / 2 + (nodeRng(tx, ty, 40 + i) - 0.5) * 2;
-        ctx.quadraticCurveTo(cpx, cpy, curr.x, curr.y);
-    }
-    ctx.closePath();
+    ctx.ellipse(cx, cy, 10, 7, 0, 0, Math.PI * 2);
     ctx.fill();
-
-    // Rock outline / edge shading
-    ctx.strokeStyle = darkenColor(ore.color, 0.45);
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-
-    // Inner crack/vein lines for detail
-    ctx.strokeStyle = darkenColor(ore.color, 0.35);
-    ctx.lineWidth = 0.7;
-    const numCracks = 2 + Math.floor(r3 * 2);
-    for (let i = 0; i < numCracks; i++) {
-        const ri = nodeRng(tx, ty, 50 + i);
-        const ri2 = nodeRng(tx, ty, 60 + i);
-        const startAngle = ri * Math.PI * 2;
-        const len = 3 + ri2 * 5;
-        const sx = Math.cos(startAngle) * 2;
-        const sy = Math.sin(startAngle) * 1.5;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + Math.cos(startAngle + 0.3) * len, sy + Math.sin(startAngle + 0.3) * len * 0.6);
-        ctx.stroke();
-    }
-
-    // Specular highlight
-    ctx.fillStyle = `rgba(255,255,255,${0.15 + r4 * 0.1})`;
+    ctx.fillStyle = ore.highlight;
     ctx.beginPath();
-    ctx.ellipse(-2 + r5 * 2, -2 + r6 * 2, 3 + r4 * 2, 2 + r5, -0.4, 0, Math.PI * 2);
+    ctx.ellipse(cx - 3, cy - 2, 4, 3, -0.3, 0, Math.PI * 2);
     ctx.fill();
-
-    // ── Ore-specific decorations ──
+    // Ore type label for non-stone ores
     if (oreType && oreType !== 'stone') {
-        // Crystal/ore vein deposits on the rock face
-        const numCrystals = oreType === 'dragonite' ? 4 : oreType === 'platinum' || oreType === 'mithril' ? 3 : 2;
-        for (let i = 0; i < numCrystals; i++) {
-            const ci = nodeRng(tx, ty, 70 + i);
-            const ci2 = nodeRng(tx, ty, 80 + i);
-            const ci3 = nodeRng(tx, ty, 90 + i);
-            const angle = (Math.PI * 2 / numCrystals) * i + ci * 0.8;
-            const dist = 2 + ci2 * (baseRx * 0.45);
-            const csx = Math.cos(angle) * dist;
-            const csy = Math.sin(angle) * dist * 0.65;
-            const crystalH = 4 + ci3 * 4;
-            const crystalW = 2 + ci * 2;
-
-            // Crystal shape (pointed shard growing out of rock)
-            ctx.save();
-            ctx.translate(csx, csy);
-            ctx.rotate(angle + Math.PI * 0.5 + (ci - 0.5) * 0.5);
-
-            // Crystal body with gradient
-            const crystalGrad = ctx.createLinearGradient(0, 0, 0, -crystalH);
-            crystalGrad.addColorStop(0, ore.color);
-            crystalGrad.addColorStop(0.5, ore.highlight);
-            crystalGrad.addColorStop(1, lightenColor(ore.highlight, 0.3));
-            ctx.fillStyle = crystalGrad;
-            ctx.beginPath();
-            ctx.moveTo(-crystalW, 0);
-            ctx.lineTo(-crystalW * 0.3, -crystalH * 0.7);
-            ctx.lineTo(0, -crystalH);
-            ctx.lineTo(crystalW * 0.3, -crystalH * 0.7);
-            ctx.lineTo(crystalW, 0);
-            ctx.closePath();
-            ctx.fill();
-
-            // Crystal edge highlight
-            ctx.strokeStyle = `rgba(255,255,255,${0.3 + Math.sin(t * 1.5 + i * 2) * 0.15})`;
-            ctx.lineWidth = 0.6;
-            ctx.beginPath();
-            ctx.moveTo(-crystalW * 0.3, -crystalH * 0.7);
-            ctx.lineTo(0, -crystalH);
-            ctx.lineTo(crystalW * 0.3, -crystalH * 0.7);
-            ctx.stroke();
-
-            ctx.restore();
-        }
-
-        // Animated sparkle / shimmer for valuable ores
-        if (isRare) {
-            const sparkleCount = isLegendary ? 4 : 2;
-            for (let i = 0; i < sparkleCount; i++) {
-                const si = nodeRng(tx, ty, 100 + i);
-                const sparklePhase = t * (1.5 + si) + si * 10;
-                const sparkleAlpha = Math.max(0, Math.sin(sparklePhase)) * 0.8;
-                if (sparkleAlpha > 0.1) {
-                    const sx = (si - 0.5) * baseRx * 1.5;
-                    const sy = (nodeRng(tx, ty, 110 + i) - 0.5) * baseRy * 1.2;
-                    const sparkleSize = 1.5 + Math.sin(sparklePhase) * 1;
-                    ctx.fillStyle = `rgba(255,255,255,${sparkleAlpha.toFixed(2)})`;
-                    // Star sparkle shape
-                    ctx.beginPath();
-                    ctx.moveTo(sx, sy - sparkleSize);
-                    ctx.lineTo(sx + sparkleSize * 0.3, sy - sparkleSize * 0.3);
-                    ctx.lineTo(sx + sparkleSize, sy);
-                    ctx.lineTo(sx + sparkleSize * 0.3, sy + sparkleSize * 0.3);
-                    ctx.lineTo(sx, sy + sparkleSize);
-                    ctx.lineTo(sx - sparkleSize * 0.3, sy + sparkleSize * 0.3);
-                    ctx.lineTo(sx - sparkleSize, sy);
-                    ctx.lineTo(sx - sparkleSize * 0.3, sy - sparkleSize * 0.3);
-                    ctx.closePath();
-                    ctx.fill();
-                }
-            }
-        }
-
-        // Ore type label
         ctx.font = 'bold 7px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillStyle = ore.highlight;
-        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+        ctx.fillStyle = ore.color;
+        ctx.strokeStyle = '#000';
         ctx.lineWidth = 2;
-        ctx.strokeText(ore.name, 0, baseRy + 8);
-        ctx.fillText(ore.name, 0, baseRy + 8);
+        ctx.strokeText(ore.name, cx, cy + 15);
+        ctx.fillText(ore.name, cx, cy + 15);
         ctx.lineWidth = 1;
     }
-
-    ctx.restore();
-}
-
-// ── Color helper utilities for ore rendering ──
-function darkenColor(hex, amount) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgb(${Math.round(r * amount)},${Math.round(g * amount)},${Math.round(b * amount)})`;
-}
-function lightenColor(hex, amount) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgb(${Math.min(255, Math.round(r + (255 - r) * amount))},${Math.min(255, Math.round(g + (255 - g) * amount))},${Math.min(255, Math.round(b + (255 - b) * amount))})`;
 }
 
 function drawFishSpot(ctx, cx, cy) {
@@ -2219,27 +1708,21 @@ function drawStructure(ctx, s, sx, sy) {
 }
 
 function drawPlayer(ctx, p, px, py, isSelf) {
-    const bodyId = isSelf ? `self:${myUserId || 'local'}` : `remote:${p.userId || p.username || p.display_name || `${p.x},${p.y}`}`;
-    const bodyState = updateMoveBodyState(bodyId, px, py, frameDeltaMs, { isRemote: !isSelf });
-    const drawX = isSelf ? px : bodyState.renderX;
-    const groundY = isSelf ? py : bodyState.renderY;
-    // Jump offset — sprite rises while shadow stays at ground
-    const jOff = isSelf ? jumpHeight : 0;
-    const drawY = groundY - jOff;
-    // Landing squash-stretch: scaleX widens, scaleY compresses
-    const squashAmt = isSelf ? jumpSquashTimer / 8 : 0;
-    const jumpScaleX = 1 + squashAmt * 0.2;
-    const jumpScaleY = 1 - squashAmt * 0.15;
-
+    // Check if player is in water (swimming)
     const ptx = Math.floor((p.x ?? myPlayer?.x ?? 0) / TILE);
     const pty = Math.floor((p.y ?? myPlayer?.y ?? 0) / TILE);
     const inWater = worldSeed && getBiomeAt(ptx, pty, worldSeed) === 'water';
 
+    // Resolve held item emoji — for self, use active hotbar slot; for others, use equip priority
     let heldEmoji = null;
     if (isSelf) {
-        heldEmoji = hotbarSlots[activeHotbarSlot]?.emoji || null;
+        const activeSlot = hotbarSlots[activeHotbarSlot];
+        if (activeSlot) {
+            heldEmoji = activeSlot.emoji;
+        }
     }
     if (!heldEmoji && !isSelf) {
+        // Other players: show equipped item (weapon > pickaxe > axe > rod)
         const wep = p.equip_weapon;
         if (wep) {
             if (wep.includes('legendary') || wep.includes('dragonslayer')) heldEmoji = '🐲';
@@ -2249,178 +1732,117 @@ function drawPlayer(ctx, p, px, py, isSelf) {
             else if (wep.includes('stick')) heldEmoji = '🏏';
             else if (wep.includes('rock')) heldEmoji = '🪨';
             else heldEmoji = '🔪';
-        } else if (p.equip_pickaxe) heldEmoji = p.equip_pickaxe.includes('diamond') ? '💎' : p.equip_pickaxe.includes('gold') ? '✨' : '⛏️';
-        else if (p.equip_axe) heldEmoji = '🪓';
-        else if (p.equip_rod) heldEmoji = '🎣';
-    }
-
-    let aimAngle = isSelf ? facingAngle : Math.atan2((p.y ?? 0) - (p._prevY ?? p.y ?? 0), (p.x ?? 0) - (p._prevX ?? p.x ?? 0));
-    if (!Number.isFinite(aimAngle)) aimAngle = 0;
-    const forwardX = Math.cos(aimAngle);
-    const forwardY = Math.sin(aimAngle);
-    const rightX = -forwardY;
-    const rightY = forwardX;
-    const moveAmount = isSelf ? Math.min(1, Math.hypot(playerVelX, playerVelY) / 3.8) : bodyState.strideStrength;
-    const stride = Math.sin(bodyState.stridePhase) * (4 + moveAmount * 4.5);
-    const counterStride = Math.sin(bodyState.stridePhase + Math.PI) * (4 + moveAmount * 4.5);
-    const torsoX = drawX + bodyState.torsoLeanX * 0.15;
-    const torsoY = drawY + bodyState.torsoLeanY * 0.15 - 2 + bodyState.bob * 0.35;
-    const hipsX = torsoX - forwardX * 2;
-    const hipsY = torsoY + 7;
-    const baseFootY = drawY + 12;
-    const footColor = isSelf ? '#2563eb' : '#c62828';
-
-    const leftFoot = {
-        x: drawX + rightX * 5 + forwardX * stride,
-        y: baseFootY + rightY * 5 + forwardY * stride,
-        lift: Math.max(0, Math.sin(bodyState.stridePhase)) * (2 + moveAmount * 2.5),
-    };
-    const rightFoot = {
-        x: drawX - rightX * 5 + forwardX * counterStride,
-        y: baseFootY - rightY * 5 + forwardY * counterStride,
-        lift: Math.max(0, Math.sin(bodyState.stridePhase + Math.PI)) * (2 + moveAmount * 2.5),
-    };
-
-    // Shadow (stays at ground level, shrinks when airborne)
-    const shadowAlpha = Math.max(0.06, 0.22 - jOff * 0.006);
-    const shadowScale = Math.max(0.5, 1 - jOff * 0.018);
-    ctx.save();
-    ctx.fillStyle = `rgba(0,0,0,${shadowAlpha.toFixed(2)})`;
-    ctx.beginPath();
-    ctx.ellipse(drawX, groundY + 13, (10 + moveAmount * 2) * shadowScale, (4 + moveAmount) * shadowScale, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // Jump dust particles (rendered at ground level)
-    if (isSelf && jumpParticles.length > 0) {
-        for (const dp of jumpParticles) {
-            const alpha = (dp.life / dp.maxLife) * 0.6;
-            ctx.fillStyle = `rgba(180,160,130,${alpha.toFixed(2)})`;
-            ctx.beginPath();
-            ctx.arc(drawX + dp.x, groundY + 10 + dp.y, dp.size * (dp.life / dp.maxLife), 0, Math.PI * 2);
-            ctx.fill();
+        } else if (p.equip_pickaxe) {
+            if (p.equip_pickaxe.includes('diamond')) heldEmoji = '💎';
+            else if (p.equip_pickaxe.includes('gold')) heldEmoji = '✨';
+            else heldEmoji = '⛏️';
+        } else if (p.equip_axe) {
+            heldEmoji = '🪓';
+        } else if (p.equip_rod) {
+            heldEmoji = '🎣';
         }
     }
-    ctx.restore();
 
     if (inWater) {
-        const rippleTime = Date.now() / 220;
-        ctx.strokeStyle = 'rgba(96, 165, 250, 0.45)';
-        ctx.lineWidth = 1.3;
+        // Water ripple effect
+        const rippleTime = Date.now() / 300;
+        ctx.strokeStyle = 'rgba(96, 165, 250, 0.5)';
+        ctx.lineWidth = 1.5;
         for (let i = 0; i < 3; i++) {
-            const r = 10 + i * 5 + Math.sin(rippleTime + i + bodyState.stridePhase * 0.2) * 2;
+            const r = 10 + i * 5 + Math.sin(rippleTime + i) * 2;
             ctx.beginPath();
-            ctx.ellipse(drawX, drawY + 8, r, r * 0.36, 0, 0, Math.PI * 2);
+            ctx.ellipse(px, py + 8, r, r * 0.35, 0, 0, Math.PI * 2);
             ctx.stroke();
         }
+        // Body (half submerged)
         ctx.save();
-        ctx.translate(torsoX, torsoY + bodyState.headBob * 0.25);
-        ctx.rotate(bodyState.torsoRoll * 0.5);
         ctx.beginPath();
-        ctx.rect(-18, -28, 36, 30);
+        ctx.rect(px - 20, py - 30, 40, 34); // Clip to upper half
         ctx.clip();
         ctx.fillStyle = isSelf ? '#3b82f6' : '#ef4444';
         ctx.beginPath();
-        ctx.ellipse(0, 0, 11, 12.5, 0, 0, Math.PI * 2);
+        ctx.arc(px, py, 12, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
         ctx.stroke();
-        ctx.fillStyle = '#f8d2b4';
-        ctx.beginPath();
-        ctx.arc(0, -10, 5.5, 0, Math.PI * 2);
-        ctx.fill();
         ctx.restore();
-        ctx.fillStyle = 'rgba(96, 165, 250, 0.72)';
+        // Swimming indicator
+        ctx.fillStyle = 'rgba(96, 165, 250, 0.7)';
         ctx.font = '10px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('🏊 Swimming', drawX, drawY + 25);
+        ctx.fillText('🏊 Swimming', px, py + 25);
     } else {
-        // Apply squash-stretch on landing
-        if (squashAmt > 0.01) {
-            ctx.save();
-            ctx.translate(drawX, drawY + 12); // pivot at feet
-            ctx.scale(jumpScaleX, jumpScaleY);
-            ctx.translate(-drawX, -(drawY + 12));
-        }
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.beginPath();
+        ctx.ellipse(px, py + 12, 10, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
 
-        // Legs and feet
-        const drawLeg = (foot, side) => {
-            const kneeX = (hipsX + foot.x) * 0.5 + side * rightX * 1.4;
-            const kneeY = (hipsY + foot.y) * 0.5 + side * rightY * 1.4 - foot.lift;
-            ctx.strokeStyle = 'rgba(10,10,18,0.65)';
-            ctx.lineWidth = 2.1;
-            ctx.beginPath();
-            ctx.moveTo(hipsX + side * rightX * 2.5, hipsY + side * rightY * 2.5);
-            ctx.lineTo(kneeX, kneeY);
-            ctx.lineTo(foot.x, foot.y - foot.lift);
-            ctx.stroke();
-
+        // Walking feet — two small circles that alternate when moving
+        const isWalking = isSelf
+            ? (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'] || keys['ArrowUp'] || keys['ArrowDown'] || keys['ArrowLeft'] || keys['ArrowRight'])
+            : (p._prevX !== undefined && (Math.abs(p.x - p._prevX) > 0.3 || Math.abs(p.y - p._prevY) > 0.3));
+        const footCycle = Math.sin(Date.now() / 120) * 4.5; // oscillation for walking
+        const footColor = isSelf ? '#2563eb' : '#c62828';
+        const footY = py + 10;
+        if (isWalking) {
+            // Left foot
             ctx.fillStyle = footColor;
             ctx.beginPath();
-            ctx.ellipse(foot.x, foot.y - foot.lift, 4.7 + foot.lift * 0.16, 6.2 - foot.lift * 0.12, aimAngle, 0, Math.PI * 2);
+            ctx.ellipse(px - 6, footY + footCycle, 5, 6, 0, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+            ctx.strokeStyle = 'rgba(0,0,0,0.5)';
             ctx.lineWidth = 1;
             ctx.stroke();
-        };
-        drawLeg(leftFoot, 1);
-        drawLeg(rightFoot, -1);
+            // Right foot
+            ctx.beginPath();
+            ctx.ellipse(px + 6, footY - footCycle, 5, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        } else {
+            // Standing — feet side by side
+            ctx.fillStyle = footColor;
+            ctx.beginPath();
+            ctx.ellipse(px - 5, footY, 4.5, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.ellipse(px + 5, footY, 4.5, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        }
 
-        // Torso / body simulator
-        ctx.save();
-        ctx.translate(torsoX, torsoY + Math.sin(bodyState.breath) * 0.5);
-        ctx.rotate(bodyState.torsoRoll);
+        // Body
         ctx.fillStyle = isSelf ? '#3b82f6' : '#ef4444';
         ctx.beginPath();
-        ctx.ellipse(0, 0, 11.5, 13.2 - moveAmount * 0.6, 0, 0, Math.PI * 2);
+        ctx.arc(px, py, 12, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
         ctx.stroke();
+        // Equipped armor glow
         if (p.equip_armor) {
             const armorGlow = p.equip_armor.includes('dragon') ? 'rgba(220,38,38,0.5)' :
-                p.equip_armor.includes('plate') ? 'rgba(192,150,92,0.6)' :
-                p.equip_armor.includes('chain') ? 'rgba(168,162,158,0.5)' :
-                'rgba(192,150,92,0.3)';
+                              p.equip_armor.includes('plate') ? 'rgba(192,150,92,0.6)' :
+                              p.equip_armor.includes('chain') ? 'rgba(168,162,158,0.5)' :
+                              'rgba(192,150,92,0.3)';
             ctx.strokeStyle = armorGlow;
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.ellipse(0, 0, 14.5, 15.5, 0, 0, Math.PI * 2);
+            ctx.arc(px, py, 15, 0, Math.PI * 2);
             ctx.stroke();
         }
+    }
 
-        // Arms
-        const armSwing = Math.sin(bodyState.stridePhase + (heldEmoji ? Math.PI * 0.35 : 0)) * (3 + moveAmount * 3.5);
-        const leftHandX = -rightX * 5 + forwardX * (1 + armSwing);
-        const leftHandY = -rightY * 5 + forwardY * (1 + armSwing);
-        const rightHandX = rightX * 6 + forwardX * (4 - armSwing);
-        const rightHandY = rightY * 6 + forwardY * (4 - armSwing);
-        ctx.strokeStyle = 'rgba(10,10,18,0.55)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-rightX * 5, -rightY * 5 - 2);
-        ctx.lineTo(leftHandX, leftHandY - 1);
-        ctx.moveTo(rightX * 5, rightY * 5 - 2);
-        ctx.lineTo(rightHandX, rightHandY - 1);
-        ctx.stroke();
-
-        // Head
-        ctx.fillStyle = '#f8d2b4';
-        ctx.beginPath();
-        ctx.arc(forwardX * 1.2, -11 - bodyState.headBob * 0.25, 6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        if (heldEmoji) {
-            ctx.font = '14px serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(heldEmoji, rightHandX + forwardX * 2, rightHandY + forwardY * 2 - 2);
-        }
-        ctx.restore();
-
-        // Close squash-stretch transform
-        if (squashAmt > 0.01) ctx.restore();
+    // Held item (weapon/tool) — visible on all players
+    if (heldEmoji) {
+        const bob = Math.sin(Date.now() / 400) * 1.5;
+        ctx.font = '14px serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(heldEmoji, px + 15, py + 3 + bob);
     }
 
     // Hat above head
@@ -2432,7 +1854,7 @@ function drawPlayer(ctx, p, px, py, isSelf) {
                          p.equip_hat.includes('cowboy') ? '🤠' : '🧢';
         ctx.font = '12px serif';
         ctx.textAlign = 'center';
-        ctx.fillText(hatEmoji, drawX, drawY - 17);
+        ctx.fillText(hatEmoji, px, py - 16);
     }
 
     // Name
@@ -2440,9 +1862,9 @@ function drawPlayer(ctx, p, px, py, isSelf) {
     ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#000';
-    ctx.fillText(name, drawX + 1, drawY - (p.equip_hat ? 25 : 19));
+    ctx.fillText(name, px + 1, py - (p.equip_hat ? 25 : 19));
     ctx.fillStyle = '#fff';
-    ctx.fillText(name, drawX, drawY - (p.equip_hat ? 26 : 20));
+    ctx.fillText(name, px, py - (p.equip_hat ? 26 : 20));
 
     // HP bar
     const hp = p.hp ?? 100;
@@ -2451,9 +1873,9 @@ function drawPlayer(ctx, p, px, py, isSelf) {
         const bw = 30;
         const pct = hp / maxHp;
         ctx.fillStyle = '#333';
-        ctx.fillRect(drawX - bw / 2, drawY - 16, bw, 4);
+        ctx.fillRect(px - bw / 2, py - 16, bw, 4);
         ctx.fillStyle = pct > 0.5 ? '#4ade80' : pct > 0.25 ? '#fbbf24' : '#ef4444';
-        ctx.fillRect(drawX - bw / 2, drawY - 16, bw * pct, 4);
+        ctx.fillRect(px - bw / 2, py - 16, bw * pct, 4);
     }
 }
 
@@ -2564,16 +1986,6 @@ function drawEffects(ctx) {
         ctx.globalAlpha = 1;
         return true;
     });
-    // Draw gather/mining particles (world-space)
-    for (const gp of gatherParticles) {
-        const alpha = (gp.life / gp.maxLife);
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = gp.color;
-        ctx.beginPath();
-        ctx.arc(gp.x - camX, gp.y - camY, gp.size * alpha, 0, Math.PI * 2);
-        ctx.fill();
-    }
-    ctx.globalAlpha = 1;
 }
 
 // ── Weather Overlay ──────────────────────────────────────────
@@ -2775,33 +2187,6 @@ function drawHUD(ctx) {
     ctx.fillText(`${biomeName} (${tierNames[tier]})`, bx + 20, hudY + 12);
     hudY += bh + 6;
 
-    const trackedQuests = myDailyQuests.filter(q => !q.claimed).sort((a, b) => Number(b.completed) - Number(a.completed)).slice(0, 2);
-    if (trackedQuests.length) {
-        const trackerH = 18 + trackedQuests.length * 20;
-        ctx.fillStyle = 'rgba(0,0,0,0.62)';
-        ctx.fillRect(bx, hudY, 210, trackerH);
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 10px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(`📜 Daily Quests [G]`, bx + 6, hudY + 12);
-        trackedQuests.forEach((quest, index) => {
-            const qy = hudY + 18 + index * 20;
-            const pct = Math.max(0, Math.min(1, (quest.progress || 0) / Math.max(1, quest.target || 1)));
-            ctx.fillStyle = quest.completed ? '#86efac' : '#e5e7eb';
-            ctx.font = '10px sans-serif';
-            ctx.fillText(`${quest.emoji || '•'} ${quest.name}`, bx + 6, qy + 8);
-            ctx.fillStyle = 'rgba(255,255,255,0.12)';
-            ctx.fillRect(bx + 6, qy + 11, 150, 5);
-            ctx.fillStyle = quest.completed ? '#22c55e' : '#3b82f6';
-            ctx.fillRect(bx + 6, qy + 11, 150 * pct, 5);
-            ctx.fillStyle = quest.completed ? '#86efac' : '#cbd5e1';
-            ctx.textAlign = 'right';
-            ctx.fillText(`${Math.min(quest.progress || 0, quest.target || 0)}/${quest.target}`, bx + 200, qy + 14);
-            ctx.textAlign = 'left';
-        });
-        hudY += trackerH + 6;
-    }
-
     // Build mode indicator
     if (buildMode) {
         ctx.fillStyle = 'rgba(0,180,0,0.7)';
@@ -2820,7 +2205,7 @@ function drawHUD(ctx) {
     ctx.textAlign = 'center';
     const hints = chatOpen
         ? 'Type message... [Enter] Send  [Esc] Cancel'
-        : '[Click] Gather/Attack  [E] Pickup/Fish  [B] Build  [C] Craft  [G] Quests  [I] Inv  [K] Skills  [J] Achieve  [M] Map  [Space] Jump  [Q] Dodge';
+        : '[Click] Gather/Attack  [E] Pickup/Fish  [B] Build  [C] Craft  [I] Inv  [K] Skills  [J] Achieve  [M] Map  [Space] Dodge';
     ctx.fillText(hints, CAM_W / 2, CAM_H - 8);
 
     // Attack cooldown indicator (right of HUD bars)
@@ -2909,31 +2294,6 @@ function drawHUD(ctx) {
         ctx.font = '10px sans-serif';
         const wNames = { rain: '🌧️ Rain', storm: '⛈️ Storm', fog: '🌫️ Fog', snow: '❄️ Snow' };
         ctx.fillText(wNames[currentWeather.type] || currentWeather.type, CAM_W / 2 + 82, 14);
-    }
-
-    // Network / multiplayer stats
-    const netX = CAM_W - 150;
-    const netY = 136;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(netX, netY, 140, 48);
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(netX, netY, 140, 48);
-    const pingColor = networkStats.rtt <= 90 ? '#4ade80' : networkStats.rtt <= 170 ? '#fbbf24' : '#ef4444';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#e5e7eb';
-    ctx.fillText(`🌐 ${networkStats.nearbyPlayers || 0} nearby`, netX + 8, netY + 13);
-    ctx.fillStyle = pingColor;
-    ctx.fillText(`Ping ${Math.round(networkStats.rtt || 0)}ms`, netX + 8, netY + 27);
-    ctx.fillStyle = '#93c5fd';
-    ctx.fillText(`Tick ${Math.round(networkStats.stateRate || 0)}/s`, netX + 74, netY + 27);
-    ctx.fillStyle = '#cbd5e1';
-    ctx.fillText(`Jitter ${Math.round(networkStats.jitter || 0)}ms`, netX + 8, netY + 41);
-    if (networkStats.packetSkips > 0) {
-        ctx.fillStyle = '#fca5a5';
-        ctx.textAlign = 'right';
-        ctx.fillText(`Miss ${networkStats.packetSkips}`, netX + 132, netY + 41);
     }
 }
 
@@ -3136,66 +2496,8 @@ async function loadPanelData(name) {
             const data = await api('/game/achievements');
             myAchievements = data.achievements || [];
         }
-        else if (name === 'quests') {
-            await refreshDailyQuests(true);
-        }
         else if (name === 'build') {} // Build menu uses static data
     } catch (e) { addChatMsg('❌ Failed to load panel data'); }
-}
-
-function applyDailyQuestData(data, { notify = false } = {}) {
-    if (!data) return;
-    myDailyQuests = Array.isArray(data.quests) ? data.quests : [];
-    dailyQuestMeta = {
-        claimed: data.claimed || 0,
-        total: data.total || myDailyQuests.length,
-        completed: data.completed || 0,
-        streak: data.streak || 0,
-        nextResetAt: data.nextResetAt || null,
-        date: data.date || '',
-    };
-    panelData.quests = myDailyQuests;
-
-    for (const quest of myDailyQuests) {
-        if (quest.completed && !quest.claimed) {
-            if (notify && !dailyQuestReadyNotified.has(quest.id)) {
-                addChatMsg(`📜 Daily quest ready: ${quest.emoji || '✅'} ${quest.name}`);
-            }
-            dailyQuestReadyNotified.add(quest.id);
-        }
-        if (quest.claimed) dailyQuestReadyNotified.add(quest.id);
-    }
-}
-
-async function refreshDailyQuests(force = false) {
-    const now = Date.now();
-    if (!force && (now - dailyQuestLastSync) < 5000) return;
-    dailyQuestLastSync = now;
-    try {
-        const data = await api('/game/daily-quests');
-        if (data?.success) applyDailyQuestData(data, { notify: true });
-    } catch (_) {}
-}
-
-async function claimDailyQuest(questId) {
-    try {
-        const res = await api('/game/daily-quests/claim', { method: 'POST', body: JSON.stringify({ questId }) });
-        if (res.error) { addChatMsg(`❌ ${res.error}`); return; }
-        if (res.success) {
-            const rewardBits = [];
-            if (res.reward?.coins) rewardBits.push(`🪙 ${res.reward.coins}`);
-            if (res.reward?.item) {
-                const qty = res.reward.qty || 1;
-                rewardBits.push(`${qty}x ${res.reward.item}`);
-            }
-            addChatMsg(`✅ Daily quest claimed: ${res.quest?.emoji || '📜'} ${res.quest?.name}${rewardBits.length ? ` — ${rewardBits.join(', ')}` : ''}`);
-            if (res.daily) applyDailyQuestData(res.daily);
-            refreshCoins();
-            if (activePanel === 'inventory') loadPanelData('inventory');
-        }
-    } catch {
-        addChatMsg('❌ Failed to claim daily quest');
-    }
 }
 
 function drawPanel(ctx) {
@@ -3220,7 +2522,6 @@ function drawPanel(ctx) {
         shop:      { icon: '\uf07a', label: 'Shop' },          // fa-shopping-cart
         crafting:  { icon: '\uf6e3', label: 'Crafting' },      // fa-hammer
         skills:    { icon: '\uf201', label: 'Skills' },        // fa-chart-line
-        quests:    { icon: '\uf0ae', label: 'Daily Quests' },  // fa-tasks/list-check-ish
         map:       { icon: '\uf279', label: 'World Map' },     // fa-map
         leaderboard:{ icon: '\uf091', label: 'Leaderboard' },  // fa-trophy
         build:     { icon: '\uf1b3', label: 'Build Menu' },    // fa-cubes
@@ -3252,7 +2553,6 @@ function drawPanel(ctx) {
     else if (activePanel === 'shop' || activePanel === 'npc_shop') drawNPCShopPanel(ctx, px, contentY, pw);
     else if (activePanel === 'crafting') drawCraftingPanel(ctx, px, contentY, pw);
     else if (activePanel === 'skills') drawSkillsPanel(ctx, px, contentY, pw);
-    else if (activePanel === 'quests') drawQuestsPanel(ctx, px, contentY, pw);
     else if (activePanel === 'leaderboard') drawLeaderboardPanel(ctx, px, contentY, pw);
     else if (activePanel === 'build') drawBuildPanel(ctx, px, contentY, pw);
     else if (activePanel === 'map') drawMapPanel(ctx, px, contentY, pw);
@@ -3369,20 +2669,17 @@ function drawInventoryPanel(ctx, px, py, pw) {
     // ── Inventory Grid (Minecraft-style) ──
     const gridStartY = eqStartY + 3 * (EQUIP_SLOT + GAP) + 8;
 
-    // ── Coin Display (dedicated bar above backpack, full width to avoid overlap) ──
+    // ── Coin Display ──
     const coinAmount = myPlayer?.hobo_coins || 0;
-    const coinBarY = gridStartY - 16;
-    ctx.fillStyle = 'rgba(255,191,36,0.12)';
-    ctx.fillRect(px + 4, coinBarY, pw - 8, 14);
     ctx.font = 'bold 11px sans-serif';
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'right';
     ctx.fillStyle = '#fbbf24';
-    ctx.fillText(`🪙 ${coinAmount.toLocaleString()} Gold`, px + pw / 2, coinBarY + 11);
+    ctx.fillText(`🪙 ${coinAmount.toLocaleString()}`, px + pw - 10, gridStartY - 2);
 
     ctx.fillStyle = theme.accent || '#c0965c';
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(`BACKPACK (${items.length})`, px + 8, gridStartY + 2);
+    ctx.fillText(`BACKPACK (${items.length})`, px + 8, gridStartY - 2);
 
     // Calculate visible rows
     const gridW = COLS * (SLOT + GAP);
@@ -3460,48 +2757,6 @@ function drawInventoryPanel(ctx, px, py, pw) {
         ctx.globalAlpha = 1;
     }
 
-    // ── Tooltip on hover (equipment slots) ──
-    for (let ei = 0; ei < equipSlots.length; ei++) {
-        const row = ei % 3, col = Math.floor(ei / 3);
-        const sx = eqX + col * (EQUIP_SLOT + GAP);
-        const sy = eqStartY + row * (EQUIP_SLOT + GAP);
-        if (mouseX >= sx && mouseX <= sx + EQUIP_SLOT && mouseY >= sy && mouseY <= sy + EQUIP_SLOT) {
-            const equipped = myPlayer?.[equipSlots[ei].key];
-            if (equipped) {
-                const invItem = items.find(it => it.item_id === equipped);
-                const ttW = 150, ttH = 42;
-                let ttX = mouseX + 14, ttY = mouseY - 8;
-                if (ttX + ttW > px + pw) ttX = mouseX - ttW - 8;
-                ctx.fillStyle = 'rgba(10,10,15,0.95)';
-                ctx.fillRect(ttX, ttY, ttW, ttH);
-                ctx.strokeStyle = RARITY_COLORS[invItem?.rarity] || '#555';
-                ctx.lineWidth = 1;
-                ctx.strokeRect(ttX, ttY, ttW, ttH);
-                ctx.fillStyle = RARITY_COLORS[invItem?.rarity] || '#ddd';
-                ctx.font = 'bold 11px sans-serif';
-                ctx.textAlign = 'left';
-                ctx.fillText(`${invItem?.emoji || ''} ${invItem?.name || equipped}`, ttX + 6, ttY + 14);
-                ctx.fillStyle = '#fbbf24';
-                ctx.font = '9px sans-serif';
-                ctx.fillText('Click to unequip', ttX + 6, ttY + 30);
-            } else {
-                const ttW = 110, ttH = 18;
-                let ttX = mouseX + 14, ttY = mouseY - 8;
-                if (ttX + ttW > px + pw) ttX = mouseX - ttW - 8;
-                ctx.fillStyle = 'rgba(10,10,15,0.95)';
-                ctx.fillRect(ttX, ttY, ttW, ttH);
-                ctx.strokeStyle = '#444';
-                ctx.lineWidth = 1;
-                ctx.strokeRect(ttX, ttY, ttW, ttH);
-                ctx.fillStyle = '#888';
-                ctx.font = '9px sans-serif';
-                ctx.textAlign = 'left';
-                ctx.fillText(`${equipSlots[ei].name} — empty`, ttX + 6, ttY + 12);
-            }
-            break;
-        }
-    }
-
     // ── Tooltip on hover ──
     if (mouseX >= gridX && mouseX <= gridX + gridW && mouseY >= gridStartY && mouseY <= gridStartY + ROWS * (SLOT + GAP)) {
         const hCol = Math.floor((mouseX - gridX) / (SLOT + GAP));
@@ -3529,7 +2784,7 @@ function drawInventoryPanel(ctx, px, py, pw) {
             ctx.font = '9px sans-serif';
             const action = (['weapons', 'armor', 'hats', 'pickaxes', 'axes', 'rods'].includes(item.category)) ? 'Drag to equip slot' :
                 (item.category === 'consumable' || item.category === 'potion') ? 'Click to use' :
-                (item.category === 'name_effects' || item.category === 'particles' || item.category === 'voices') ? 'Click to unlock as global cosmetic' :
+                (item.category === 'name_effects' || item.category === 'particles' || item.category === 'voices') ? 'Click to activate globally' :
                 (item.item_id === 'fish_sonar') ? 'Click to ping' : '';
             if (action) ctx.fillText(action, ttX + 6, ttY + 42);
         }
@@ -3646,39 +2901,20 @@ function drawNPCShopPanel(ctx, px, py, pw) {
         items.slice(npcShopScroll, npcShopScroll + 13).forEach((item, i) => {
             const y = startY + i * 24;
             if (i % 2 === 0) { ctx.fillStyle = (theme.bgCard || '#1a1a20') + '44'; ctx.fillRect(px + 4, y, pw - 8, 22); }
-
-            // Check level requirement
-            const SKILL_MAP = { pickaxes: 'mining', axes: 'woodcut', rods: 'fishing', weapons: 'combat', armor: 'combat' };
-            const skillNeeded = SKILL_MAP[item.category];
-            const playerLvl = skillNeeded && npcShopData.playerLevels ? (npcShopData.playerLevels[skillNeeded] || 1) : 999;
-            const meetsLevel = !item.levelReq || playerLvl >= item.levelReq;
-
             const rarCol = RARITY_COLORS[item.rarity] || '#aaa';
-            ctx.fillStyle = meetsLevel ? rarCol : '#666';
+            ctx.fillStyle = rarCol;
             ctx.font = '12px sans-serif';
-            const nameText = `${item.emoji || '❓'} ${item.name}`;
-            ctx.fillText(nameText, px + 10, y + 15);
-            // Level requirement tag
-            if (item.levelReq && !meetsLevel) {
-                ctx.fillStyle = '#ef4444';
-                ctx.font = 'bold 8px sans-serif';
-                ctx.fillText(`Lv${item.levelReq}`, px + 10 + ctx.measureText(nameText).width + 4, y + 14);
-            } else if (item.levelReq) {
-                ctx.fillStyle = '#4ade80';
-                ctx.font = '8px sans-serif';
-                ctx.fillText(`Lv${item.levelReq}`, px + 10 + ctx.measureText(nameText).width + 4, y + 14);
-            }
+            ctx.fillText(`${item.emoji || '❓'} ${item.name}`, px + 10, y + 15);
             // Price
             const canAfford = (npcShopData.hobo_coins || 0) >= item.buyCost;
-            const canBuy = canAfford && meetsLevel;
             ctx.fillStyle = canAfford ? '#fbbf24' : '#ef4444';
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'right';
             ctx.fillText(`🪙${item.buyCost}`, px + pw - 48, y + 15);
             // Buy button
-            ctx.fillStyle = canBuy ? (theme.accent || '#c0965c') : (theme.textMuted || '#444');
+            ctx.fillStyle = canAfford ? (theme.accent || '#c0965c') : (theme.textMuted || '#444');
             ctx.fillRect(px + pw - 44, y + 2, 38, 18);
-            ctx.fillStyle = canBuy ? '#000' : '#888';
+            ctx.fillStyle = canAfford ? '#000' : '#888';
             ctx.font = 'bold 9px sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText('BUY', px + pw - 25, y + 14);
@@ -3888,86 +3124,6 @@ function drawSkillsPanel(ctx, px, py, pw) {
     ctx.font = '11px sans-serif';
     ctx.fillText(`Kills: ${p.total_monsters_killed || 0}  Deaths: ${p.total_deaths || 0}`, px + 10, statsY);
     ctx.fillText(`Built: ${p.structures_built || 0}  Gathered: ${p.resources_gathered || 0}`, px + 10, statsY + 16);
-}
-
-function drawQuestsPanel(ctx, px, py, pw) {
-    const quests = panelData.quests || myDailyQuests;
-    if (!quests.length) {
-        ctx.fillStyle = theme.textMuted || '#888';
-        ctx.font = '13px sans-serif';
-        ctx.fillText('Loading daily quests...', px + 10, py + 20);
-        return;
-    }
-
-    const resetMs = Math.max(0, new Date(dailyQuestMeta.nextResetAt || Date.now()).getTime() - Date.now());
-    const hrs = Math.floor(resetMs / 3600000);
-    const mins = Math.floor((resetMs % 3600000) / 60000);
-
-    ctx.fillStyle = 'rgba(20, 24, 36, 0.85)';
-    ctx.fillRect(px + 8, py + 6, pw - 16, 42);
-    ctx.strokeStyle = 'rgba(251,191,36,0.35)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(px + 8, py + 6, pw - 16, 42);
-    ctx.fillStyle = '#fbbf24';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(`📜 ${dailyQuestMeta.claimed || 0}/${dailyQuestMeta.total || quests.length} claimed`, px + 16, py + 22);
-    ctx.fillStyle = '#86efac';
-    ctx.font = '11px sans-serif';
-    ctx.fillText(`🔥 Streak ${dailyQuestMeta.streak || 0}`, px + 16, py + 37);
-    ctx.fillStyle = theme.textDim || '#aaa';
-    ctx.textAlign = 'right';
-    ctx.fillText(`Resets in ${hrs}h ${mins}m`, px + pw - 16, py + 30);
-
-    quests.forEach((quest, index) => {
-        const y = py + 58 + index * 102;
-        const claimed = !!quest.claimed;
-        const completed = !!quest.completed;
-        const cardColor = claimed ? 'rgba(34,197,94,0.12)' : completed ? 'rgba(251,191,36,0.12)' : 'rgba(30,30,40,0.6)';
-        ctx.fillStyle = cardColor;
-        ctx.fillRect(px + 8, y, pw - 16, 92);
-        ctx.strokeStyle = claimed ? 'rgba(34,197,94,0.4)' : completed ? 'rgba(251,191,36,0.35)' : 'rgba(255,255,255,0.08)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(px + 8, y, pw - 16, 92);
-
-        ctx.fillStyle = claimed ? '#86efac' : (completed ? '#fbbf24' : (theme.text || '#fff'));
-        ctx.font = 'bold 13px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${quest.emoji || '📜'} ${quest.name}`, px + 16, y + 18);
-
-        ctx.fillStyle = theme.textDim || '#aaa';
-        ctx.font = '10px sans-serif';
-        ctx.fillText(quest.desc, px + 16, y + 34);
-
-        const barX = px + 16, barY = y + 44, barW = pw - 130, barH = 10;
-        const pct = Math.max(0, Math.min(1, (quest.progress || 0) / Math.max(1, quest.target || 1)));
-        ctx.fillStyle = 'rgba(0,0,0,0.45)';
-        ctx.fillRect(barX, barY, barW, barH);
-        ctx.fillStyle = claimed ? '#22c55e' : completed ? '#fbbf24' : '#3b82f6';
-        ctx.fillRect(barX, barY, barW * pct, barH);
-        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-        ctx.strokeRect(barX, barY, barW, barH);
-
-        ctx.fillStyle = '#e5e7eb';
-        ctx.font = 'bold 10px sans-serif';
-        ctx.fillText(`${Math.min(quest.progress || 0, quest.target || 0)}/${quest.target}`, barX, barY + 23);
-
-        const rewardBits = [];
-        if (quest.reward?.coins) rewardBits.push(`🪙 ${quest.reward.coins}`);
-        if (quest.reward?.item) rewardBits.push(`${quest.reward.qty || 1}x ${(ITEMS[quest.reward.item] || {}).name || quest.reward.item}`);
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = '9px sans-serif';
-        ctx.fillText(`Reward: ${rewardBits.join(' • ')}`, barX, y + 80);
-
-        const btnX = px + pw - 88, btnY = y + 54, btnW = 64, btnH = 22;
-        ctx.fillStyle = claimed ? '#166534' : completed ? '#f59e0b' : '#334155';
-        ctx.fillRect(btnX, btnY, btnW, btnH);
-        ctx.fillStyle = claimed ? '#dcfce7' : completed ? '#111827' : '#94a3b8';
-        ctx.font = 'bold 10px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(claimed ? 'CLAIMED' : completed ? 'CLAIM' : 'IN PROGRESS', btnX + btnW / 2, btnY + 15);
-        ctx.textAlign = 'left';
-    });
 }
 
 function drawLeaderboardPanel(ctx, px, py, pw) {
@@ -4258,7 +3414,6 @@ function drawAchievementsPanel(ctx, px, py, pw) {
 function handleGatherResult(msg) {
     if (msg.error) { addChatMsg(`❌ ${msg.error}`); return; }
     if (!msg.success) return;
-    refreshDailyQuests();
     // Trigger swing animation for tool use
     swingAnim = 1;
     swingType = msg.action || 'attack';
@@ -4294,28 +3449,8 @@ function handleGatherResult(msg) {
         addChatMsg(`🎉 Level up! Now level ${msg.xp.newLevel}`);
         addFloatingText(myPlayer.x, myPlayer.y - 40, `⬆️ LEVEL ${msg.xp.newLevel}!`, '#fbbf24');
     }
-    if (msg.toolBroke) {
-        addChatMsg(`💥 Your ${msg.toolBroke} broke!`);
-        // Clear the broken tool from local player state
-        if (myPlayer) {
-            if (myPlayer.equip_pickaxe === msg.toolBroke) myPlayer.equip_pickaxe = null;
-            if (myPlayer.equip_axe === msg.toolBroke) myPlayer.equip_axe = null;
-            if (myPlayer.equip_rod === msg.toolBroke) myPlayer.equip_rod = null;
-        }
-    }
+    if (msg.toolBroke) addChatMsg(`💥 Your ${msg.toolBroke} broke!`);
     if (msg.stamina !== undefined) myPlayer.stamina = msg.stamina;
-
-    // ── Update client-side XP so skills panel reflects changes immediately ──
-    if (msg.xp && myPlayer) {
-        const skillMap = { mine: 'mining', chop: 'woodcut', punch: 'woodcut', fish: 'fishing' };
-        const skill = skillMap[msg.action] || 'mining';
-        const xpKey = `${skill}_xp`;
-        const lvlKey = `${skill}_level`;
-        if (msg.xp.xp !== undefined) myPlayer[xpKey] = msg.xp.xp;
-        if (msg.xp.newLevel) myPlayer[lvlKey] = msg.xp.newLevel;
-        else if (msg.xp.xp !== undefined) myPlayer[lvlKey] = Math.floor(Math.sqrt((msg.xp.xp) / 25)) + 1;
-    }
-
     lastGatherTime = Date.now();
 }
 
@@ -4324,53 +3459,13 @@ function handleGatherEffect(msg) {
     const wy = msg.tileY * TILE + TILE / 2;
     const icon = msg.action === 'punch' ? '👊' : msg.action === 'chop' ? '🪓' : msg.action === 'mine' ? '⛏️' : '🎣';
     addFloatingText(wx, wy, icon, '#fff');
-    // Mining particle burst
-    if (msg.action === 'mine' && msg.tileX !== undefined && msg.tileY !== undefined) {
-        const oreType = getOreNodeType(msg.tileX, msg.tileY, worldSeed,
-            getBiomeAt(msg.tileX, msg.tileY, worldSeed));
-        const ore = ORE_NODE_TYPES[oreType] || ORE_NODE_TYPES.stone;
-        for (let i = 0; i < 8; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 1.5 + Math.random() * 2.5;
-            gatherParticles.push({
-                x: wx, y: wy,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed - 1.5,
-                color: Math.random() > 0.5 ? ore.color : ore.highlight,
-                life: 15 + Math.random() * 10,
-                maxLife: 25,
-                size: 1.5 + Math.random() * 2,
-            });
-        }
-    }
-    // Chopping particle burst
-    if (msg.action === 'chop') {
-        for (let i = 0; i < 5; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 1 + Math.random() * 2;
-            gatherParticles.push({
-                x: wx, y: wy,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed - 1,
-                color: Math.random() > 0.5 ? '#78350f' : '#15803d',
-                life: 12 + Math.random() * 8,
-                maxLife: 20,
-                size: 1.5 + Math.random() * 1.5,
-            });
-        }
-    }
 }
 
 function handleBuildResult(msg) {
     if (msg.error) { addChatMsg(`❌ ${msg.error}`); return; }
     if (msg.success) {
-        refreshDailyQuests();
         addChatMsg(`✅ Built ${msg.structure?.type || 'structure'}!`);
         if (msg.xp?.leveledUp) addChatMsg(`🎉 Crafting level up! ${msg.xp.newLevel}`);
-        if (msg.xp && myPlayer) {
-            if (msg.xp.xp !== undefined) myPlayer.crafting_xp = msg.xp.xp;
-            if (msg.xp.newLevel) myPlayer.crafting_level = msg.xp.newLevel;
-        }
     }
 }
 
@@ -4408,7 +3503,6 @@ function handleMobAttackResult(msg) {
         addFloatingText(msg.mobX || myPlayer.x, (msg.mobY || myPlayer.y) - 20,
             `${msg.isCrit ? '💥' : ''}-${msg.dmg}`, msg.isCrit ? '#f59e0b' : '#fff');
         if (msg.killed) {
-            refreshDailyQuests();
             addChatMsg(`💀 Killed ${msg.mobName}! +${msg.xp?.gained || 0} XP, +${msg.gold} 🪙`);
             if (msg.loot) {
                 addChatMsg(`🎁 Loot: ${msg.loot.emoji || '📦'} ${msg.loot.name}`);
@@ -4418,11 +3512,6 @@ function handleMobAttackResult(msg) {
             shakeIntensity = 4;
             comboCount = 0; comboTimer = 0;
             if (myPlayer && msg.gold) myPlayer.hobo_coins = (myPlayer.hobo_coins || 0) + msg.gold;
-            // Update combat XP on client
-            if (msg.xp && myPlayer) {
-                if (msg.xp.xp !== undefined) myPlayer.combat_xp = msg.xp.xp;
-                if (msg.xp.newLevel) myPlayer.combat_level = msg.xp.newLevel;
-            }
         }
     }
 }
@@ -4494,7 +3583,6 @@ function handlePickupResult(msg) {
 function handleChestResult(msg) {
     if (msg.error) { addChatMsg(`❌ ${msg.error}`); return; }
     if (msg.success) {
-        refreshDailyQuests();
         delete chests[msg.chestId];
         const tierEmojis = { wooden: '📦', silver: '🥈', gold: '🥇', crystal: '💎' };
         const tierNames = { wooden: 'Wooden', silver: 'Silver', gold: 'Gold', crystal: 'Crystal' };
@@ -4543,8 +3631,6 @@ function handleRespawn(msg) {
     myPlayer.x = msg.x;
     myPlayer.y = msg.y;
     myPlayer.hp = myPlayer.max_hp || 100;
-    playerVelX = 0;
-    playerVelY = 0;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -4605,7 +3691,6 @@ function setupGameInput() {
             case 'KeyB': togglePanel('build'); buildMode = !buildMode; break;
             case 'KeyI': togglePanel('inventory'); break;
             case 'KeyK': togglePanel('skills'); break;
-            case 'KeyG': togglePanel('quests'); break;
             case 'KeyM': togglePanel('map'); break;
             case 'KeyL': togglePanel('leaderboard'); break;
             case 'KeyC': togglePanel('crafting'); break;
@@ -4622,22 +3707,6 @@ function setupGameInput() {
                 break;
             }
             case 'Space': {
-                // Jump (visual z-axis hop)
-                if (FISHING.active || chatOpen || isDead) break;
-                if (isJumping || Date.now() < jumpCooldownUntil) break;
-                const ptxJ = Math.floor(myPlayer.x / TILE);
-                const ptyJ = Math.floor(myPlayer.y / TILE);
-                const jBiome = worldSeed && getBiomeAt(ptxJ, ptyJ, worldSeed);
-                if (jBiome === 'water') break; // Can't jump in water
-                isJumping = true;
-                // Sprint-jump goes higher and farther
-                const sprintJumpBonus = isSprinting ? 1.35 : 1.0;
-                jumpVelocity = JUMP_STRENGTH * sprintJumpBonus;
-                jumpHeight = 0.1;
-                jumpCooldownUntil = Date.now() + JUMP_COOLDOWN_MS;
-                break;
-            }
-            case 'KeyQ': {
                 // Dodge roll
                 if (FISHING.active || chatOpen || isDead) break;
                 if (Date.now() < dodgeCooldownUntil) { addChatMsg('💨 Dodge on cooldown!'); break; }
@@ -4711,21 +3780,6 @@ function setupGameInput() {
                 return;
             }
 
-            if (activePanel === 'quests' && mouseX >= panelX && mouseX <= panelX + pw && mouseY >= panelY && mouseY <= panelY + ph) {
-                const contentY = panelY + 35;
-                const quests = panelData.quests || myDailyQuests;
-                quests.forEach((quest, index) => {
-                    if (!quest.completed || quest.claimed) return;
-                    const rowY = contentY + 58 + index * 102;
-                    const btnX = panelX + pw - 88;
-                    const btnY = rowY + 54;
-                    if (mouseX >= btnX && mouseX <= btnX + 64 && mouseY >= btnY && mouseY <= btnY + 22) {
-                        claimDailyQuest(quest.id);
-                    }
-                });
-                return;
-            }
-
             // Crafting panel clicks
             if (activePanel === 'crafting' && mouseX >= panelX && mouseX <= panelX + pw && mouseY >= panelY && mouseY <= panelY + ph) {
                 const contentY = panelY + 35;
@@ -4792,11 +3846,11 @@ function setupGameInput() {
                                 invGridHeldItem = null;
                             }
                         } else {
-                            // Not holding anything — unequip the item from this slot
+                            // Not holding anything — show equipped item info
                             if (myPlayer?.[equipSlots[i].key]) {
                                 const eqId = myPlayer[equipSlots[i].key];
                                 const eqItem = items.find(it => it.item_id === eqId);
-                                handleUnequipSlot(equipSlots[i].cat, eqId, eqItem);
+                                addChatMsg(`⚙️ ${eqItem?.emoji || '❓'} ${eqItem?.name || eqId} equipped`);
                             }
                         }
                         return;
@@ -5052,12 +4106,10 @@ async function craftRecipe(recipeId) {
     try {
         const res = await api('/game/craft', { method: 'POST', body: JSON.stringify({ recipeId }) });
         if (res.error) { addChatMsg(`❌ ${res.error}`); return; }
-        const craftedItem = res.output || res.item || {};
-        addChatMsg(`🔨 Crafted ${craftedItem.emoji || ''} ${craftedItem.name || recipeId}!`);
-        addFloatingText(myPlayer.x, myPlayer.y - 20, `+${craftedItem.emoji || '✨'} ${craftedItem.name || 'item'}`, RARITY_COLORS[craftedItem.rarity] || '#fff');
+        addChatMsg(`🔨 Crafted ${res.item?.emoji || ''} ${res.item?.name || recipeId}!`);
+        addFloatingText(myPlayer.x, myPlayer.y - 20, `+${res.item?.emoji || '✨'} ${res.item?.name || 'item'}`, RARITY_COLORS[res.item?.rarity] || '#fff');
         if (res.xp?.leveledUp) addChatMsg(`🎉 Crafting level up! ${res.xp.newLevel}`);
         if (res.recipeUnlocked) addChatMsg(`📜 New recipe unlocked: ${res.recipeUnlocked}`);
-        refreshDailyQuests();
         // Refresh crafting data
         loadPanelData('crafting');
     } catch (err) {
@@ -5081,20 +4133,6 @@ async function handleEquipDrop(item) {
         assignToHotbar(item);
         loadPanelData('inventory');
     } catch (err) { addChatMsg('❌ Equip failed'); }
-}
-
-// ── Unequip handler — remove item from equipment slot ──
-async function handleUnequipSlot(slotCategory, itemId, item) {
-    try {
-        const res = await api('/game/unequip', { method: 'POST', body: JSON.stringify({ slot: slotCategory }) });
-        if (res.error) { addChatMsg(`❌ ${res.error}`); return; }
-        addChatMsg(`🔓 Unequipped ${item?.emoji || ''} ${item?.name || itemId}`);
-        const EQUIP_SLOT_MAP = { weapons: 'equip_weapon', armor: 'equip_armor', hats: 'equip_hat', pickaxes: 'equip_pickaxe', axes: 'equip_axe', rods: 'equip_rod' };
-        const slotKey = EQUIP_SLOT_MAP[slotCategory];
-        if (myPlayer && slotKey) myPlayer[slotKey] = null;
-        if (slotCategory === 'weapons') updateWeaponCooldown();
-        loadPanelData('inventory');
-    } catch (err) { addChatMsg('❌ Unequip failed'); }
 }
 
 async function handleInventoryClick(item) {
@@ -5132,17 +4170,10 @@ async function handleInventoryClick(item) {
         doUseSonar();
     // Cosmetic items (name effects, particles, voices) → activate globally
     } else if (cat === 'name_effects' || cat === 'particles' || cat === 'voices') {
-        // Show confirmation since this converts the game item into a global cosmetic
-        addChatMsg(`🎨 ${item.emoji || ''} ${item.name} — Click again to unlock as global cosmetic`);
-        if (!handleInventoryClick._pendingActivate || handleInventoryClick._pendingActivate.id !== item.item_id || Date.now() - handleInventoryClick._pendingActivate.time > 3000) {
-            handleInventoryClick._pendingActivate = { id: item.item_id, time: Date.now() };
-            return;
-        }
-        handleInventoryClick._pendingActivate = null;
         try {
             const res = await api('/game/cosmetic/activate', { method: 'POST', body: JSON.stringify({ itemId: item.item_id }) });
             if (res.error) { addChatMsg(`❌ ${res.error}`); return; }
-            addChatMsg(`✅ ${res.message || `Unlocked ${item.name} as global cosmetic!`}`);
+            addChatMsg(`🎨 ${res.message || `Activated ${item.name} globally!`}`);
             loadPanelData('inventory');
         } catch (err) { addChatMsg('❌ Activation failed'); }
     } else {
@@ -5154,22 +4185,9 @@ async function npcBuyItem(itemId) {
     try {
         const res = await api('/game/npc/buy', { method: 'POST', body: JSON.stringify({ npcId: activeNPC, itemId, quantity: 1 }) });
         if (res.error) { addChatMsg(`❌ ${res.error}`); return; }
-        let msg = `🛒 Bought ${res.item?.emoji || ''} ${res.item?.name || itemId}!`;
-        if (res.autoEquipped) msg += ' (Auto-equipped! ✅)';
-        addChatMsg(msg);
+        addChatMsg(`🛒 Bought ${res.item?.emoji || ''} ${res.item?.name || itemId}!`);
         if (npcShopData) npcShopData.hobo_coins = res.hobo_coins;
-        if (myPlayer) {
-            myPlayer.hobo_coins = res.hobo_coins;
-            // Update equip state from server response
-            if (res.equip_pickaxe !== undefined) myPlayer.equip_pickaxe = res.equip_pickaxe;
-            if (res.equip_axe !== undefined) myPlayer.equip_axe = res.equip_axe;
-            if (res.equip_rod !== undefined) myPlayer.equip_rod = res.equip_rod;
-            if (res.equip_weapon !== undefined) myPlayer.equip_weapon = res.equip_weapon;
-            if (res.equip_armor !== undefined) myPlayer.equip_armor = res.equip_armor;
-            if (res.equip_hat !== undefined) myPlayer.equip_hat = res.equip_hat;
-        }
-        // Refresh inventory data so bought items show immediately
-        if (res.inventory) panelData.inventory = res.inventory;
+        if (myPlayer) myPlayer.hobo_coins = res.hobo_coins;
         updateCoinDisplay();
         // Refresh NPC data
         loadNPCData(activeNPC);
@@ -5890,8 +4908,6 @@ function handleFishResult(msg) {
         return;
     }
 
-    refreshDailyQuests();
-
     const loot = msg.loot;
     const rarCol = RARITY_COLORS[loot.rarity] || '#fff';
     const zoneName = { shallow: '🏖️ Shallow', river: '🏞️ River', deep: '🌊 Deep', arctic: '❄️ Arctic' }[msg.zone] || msg.zone;
@@ -6028,7 +5044,6 @@ function updateWeaponCooldown(speed) {
 
 function sendWs(data) {
     if (ws && ws.readyState === WebSocket.OPEN) {
-        if (ws.bufferedAmount > 256 * 1024) return;
         ws.send(JSON.stringify(data));
     }
 }

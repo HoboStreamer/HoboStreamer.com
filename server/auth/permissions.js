@@ -1,318 +1,110 @@
-/**
- * HoboStreamer — Capability & Scope Permission Layer
- *
- * Roles answer "who are you globally?"
- *   user, streamer, global_mod, admin
- *
- * Scope answers "where do you have power?"
- *   channel_moderators table for per-channel assignments
- *
- * Capability answers "what can you do?"
- *   This module exports every check so routes/WS never do raw role comparisons.
- *
- * UI never decides authority — the server does.
- */
-
 const db = require('../db/database');
 
-// ── Role hierarchy (higher = more power) ─────────────────────
-const ROLE_RANK = {
-    user: 0,
-    streamer: 1,
-    global_mod: 2,
-    admin: 3,
-};
-
-function roleRank(role) {
-    return ROLE_RANK[role] ?? 0;
-}
-
-// ── Core role checks ─────────────────────────────────────────
-
 function isAdmin(user) {
-    return user?.role === 'admin';
+    return !!user && user.role === 'admin';
 }
 
 function isGlobalMod(user) {
-    return user?.role === 'global_mod';
+    return !!user && (user.role === 'mod' || user.role === 'global_mod');
 }
 
-function isGlobalModOrAbove(user) {
-    return roleRank(user?.role) >= ROLE_RANK.global_mod;
+function isStaff(user) {
+    return isAdmin(user) || isGlobalMod(user);
 }
 
-function isStreamer(user) {
-    return roleRank(user?.role) >= ROLE_RANK.streamer;
+function canStream(user) {
+    return !!user && ['streamer', 'admin'].includes(user.role);
 }
 
-// ── Channel mod checks ──────────────────────────────────────
+function getStaffRole(user) {
+    if (isAdmin(user)) return 'admin';
+    if (isGlobalMod(user)) return 'global_mod';
+    return null;
+}
 
-/**
- * Is this user a channel moderator for the given channel?
- */
-function isChannelMod(user, channelId) {
+function getOwnedChannel(user) {
+    if (!user?.id) return null;
+    return db.getChannelByUserId(user.id) || null;
+}
+
+function getModeratedChannels(user) {
+    if (!user?.id) return [];
+    return db.getChannelsByModerator(user.id) || [];
+}
+
+function canManageChannel(user, channelId) {
     if (!user?.id || !channelId) return false;
-    return !!db.isChannelModerator(user.id, channelId);
-}
-
-/**
- * Is this user the owner of the given channel?
- */
-function isChannelOwner(user, channelId) {
-    if (!user?.id || !channelId) return false;
+    if (isStaff(user)) return true;
     const channel = db.getChannelById(channelId);
-    return channel?.user_id === user.id;
+    if (!channel) return false;
+    return channel.user_id === user.id || db.isChannelModerator(channelId, user.id);
 }
 
-/**
- * Does a stream belong to this user?
- */
-function isStreamOwner(user, streamId) {
-    if (!user?.id || !streamId) return false;
-    const stream = db.getStreamById(streamId);
-    return stream?.user_id === user.id;
-}
-
-/**
- * Get the channel_id for a given stream.
- */
-function getChannelIdForStream(streamId) {
-    if (!streamId) return null;
-    const stream = db.getStreamById(streamId);
-    return stream?.channel_id || null;
-}
-
-// ── Capability checks ────────────────────────────────────────
-
-/**
- * Can this user access the admin panel? (admin + global_mod)
- * Global mods see a subset of tabs (chat logs, bans).
- */
-function canAccessAdminPanel(user) {
-    return isGlobalModOrAbove(user);
-}
-
-/**
- * Can this user manage users (role changes, bans, etc.)? (admin only)
- */
-function canManageUsers(user) {
-    return isAdmin(user);
-}
-
-/**
- * Can this user manage (promote/demote) global mods? (admin only)
- */
-function canManageGlobalMods(user) {
-    return isAdmin(user);
-}
-
-/**
- * Can this user manage site settings? (admin only)
- */
-function canManageSiteSettings(user) {
-    return isAdmin(user);
-}
-
-/**
- * Can this user review cashouts? (admin only)
- */
-function canReviewCashouts(user) {
-    return isAdmin(user);
-}
-
-/**
- * Can this user review VPN queue? (admin only)
- */
-function canReviewVpn(user) {
-    return isAdmin(user);
-}
-
-/**
- * Can this user manage site-wide bans? (admin + global_mod)
- */
-function canManageSiteBans(user) {
-    return isGlobalModOrAbove(user);
-}
-
-/**
- * Can this user moderate a specific channel's chat?
- *
- * True for: admin, global_mod, channel owner, channel mod
- */
-function canModerateChannel(user, channelId) {
-    if (!user) return false;
-    if (isGlobalModOrAbove(user)) return true;
-    if (isChannelOwner(user, channelId)) return true;
-    return isChannelMod(user, channelId);
-}
-
-/**
- * Can this user moderate a specific stream's chat?
- *
- * Resolves stream → channel, then checks channel moderation.
- */
 function canModerateStream(user, streamId) {
-    if (!user) return false;
-    if (isGlobalModOrAbove(user)) return true;
-    if (isStreamOwner(user, streamId)) return true;
-    const channelId = getChannelIdForStream(streamId);
-    if (channelId && isChannelMod(user, channelId)) return true;
-    return false;
+    if (!user?.id || !streamId) return false;
+    if (isStaff(user)) return true;
+    const stream = db.getStreamById(streamId);
+    if (!stream) return false;
+    if (stream.user_id === user.id) return true;
+    const channel = stream.channel_id ? db.getChannelById(stream.channel_id) : db.getChannelByUserId(stream.user_id);
+    return !!channel && db.isChannelModerator(channel.id, user.id);
 }
 
-/**
- * Can this user moderate a call on a specific stream?
- * Same rules as chat moderation.
- */
-function canModerateCall(user, streamId) {
-    return canModerateStream(user, streamId);
-}
-
-/**
- * Can this user view chat logs?
- *
- * - admin / global_mod: all logs
- * - channel_mod: logs for their channels only (handled at route level)
- * - user: own logs only
- */
-function canViewChatLogs(user, scope = 'own') {
-    if (!user) return false;
-    if (isGlobalModOrAbove(user)) return true;
-    return scope === 'own';
-}
-
-/**
- * Can this user view another user's chat logs?
- */
-function canViewOtherUserLogs(user) {
-    return isGlobalModOrAbove(user);
-}
-
-/**
- * Can this user assign channel mods?
- *
- * Channel owner or admin.
- */
-function canAssignChannelMods(user, channelId) {
-    if (!user) return false;
-    if (isAdmin(user)) return true;
-    return isChannelOwner(user, channelId);
-}
-
-/**
- * Can this user manage their own stream/channel?
- */
-function canManageOwnChannel(user) {
-    return isStreamer(user);
-}
-
-/**
- * Can this user force-end any stream? (admin only)
- */
-function canForceEndStreams(user) {
-    return isAdmin(user);
-}
-
-// ── Capability map (returned to frontend via /api/auth/me) ───
-
-/**
- * Build a capabilities object to send to the client.
- * The frontend gates UI based on this, never raw roles.
- */
-function getCapabilities(user) {
+function buildCapabilities(user) {
     if (!user) {
         return {
-            admin_panel: false,
-            moderate_global: false,
-            manage_users: false,
-            manage_global_mods: false,
-            manage_site_settings: false,
-            manage_site_bans: false,
-            review_cashouts: false,
-            review_vpn: false,
-            view_all_logs: false,
-            manage_own_channel: false,
-            force_end_streams: false,
+            is_authenticated: false,
+            staff_role: null,
+            can_access_staff_console: false,
+            can_manage_users: false,
+            can_manage_settings: false,
+            can_manage_global_mods: false,
+            can_manage_verification_keys: false,
+            can_review_vpn_queue: false,
+            can_view_site_stats: false,
+            can_moderate_site_chat: false,
+            can_manage_canvas: false,
+            can_manage_canvas_settings: false,
+            can_manage_channels: false,
+            owned_channel_id: null,
+            moderated_channel_ids: [],
         };
     }
+
+    const ownedChannel = getOwnedChannel(user);
+    const moderatedChannels = getModeratedChannels(user);
+    const isAdminUser = isAdmin(user);
+    const isGlobalModUser = isGlobalMod(user);
+    const staffRole = getStaffRole(user);
+
     return {
-        admin_panel: canAccessAdminPanel(user),
-        moderate_global: isGlobalModOrAbove(user),
-        manage_users: canManageUsers(user),
-        manage_global_mods: canManageGlobalMods(user),
-        manage_site_settings: canManageSiteSettings(user),
-        manage_site_bans: canManageSiteBans(user),
-        review_cashouts: canReviewCashouts(user),
-        review_vpn: canReviewVpn(user),
-        view_all_logs: canViewOtherUserLogs(user),
-        manage_own_channel: canManageOwnChannel(user),
-        force_end_streams: canForceEndStreams(user),
+        is_authenticated: true,
+        staff_role: staffRole,
+        is_admin: isAdminUser,
+        is_global_mod: isGlobalModUser,
+        can_access_staff_console: !!staffRole,
+        can_manage_users: isAdminUser,
+        can_manage_settings: isAdminUser,
+        can_manage_global_mods: isAdminUser,
+        can_manage_verification_keys: isAdminUser,
+        can_review_vpn_queue: isAdminUser,
+        can_view_site_stats: !!staffRole,
+        can_moderate_site_chat: !!staffRole,
+        can_manage_canvas: !!staffRole,
+        can_manage_canvas_settings: isAdminUser,
+        can_manage_channels: !!ownedChannel || moderatedChannels.length > 0 || !!staffRole,
+        owned_channel_id: ownedChannel?.id || null,
+        moderated_channel_ids: moderatedChannels.map((channel) => channel.id),
     };
 }
 
-// ── Express middleware factories ─────────────────────────────
-
-/**
- * Middleware: require admin role.
- */
-function requireAdmin(req, res, next) {
-    if (!isAdmin(req.user)) {
-        return res.status(403).json({ error: 'Admin access required' });
-    }
-    next();
-}
-
-/**
- * Middleware: require global_mod or admin role.
- */
-function requireGlobalMod(req, res, next) {
-    if (!isGlobalModOrAbove(req.user)) {
-        return res.status(403).json({ error: 'Moderator access required' });
-    }
-    next();
-}
-
-/**
- * Middleware: require streamer or above.
- */
-function requireStreamer(req, res, next) {
-    if (!isStreamer(req.user)) {
-        return res.status(403).json({ error: 'Streamer access required' });
-    }
-    next();
-}
-
 module.exports = {
-    // Role checks
     isAdmin,
     isGlobalMod,
-    isGlobalModOrAbove,
-    isStreamer,
-    isChannelMod,
-    isChannelOwner,
-    isStreamOwner,
-    roleRank,
-
-    // Capability checks
-    canAccessAdminPanel,
-    canManageUsers,
-    canManageGlobalMods,
-    canManageSiteSettings,
-    canReviewCashouts,
-    canReviewVpn,
-    canManageSiteBans,
-    canModerateChannel,
+    isStaff,
+    canStream,
+    canManageChannel,
     canModerateStream,
-    canModerateCall,
-    canViewChatLogs,
-    canViewOtherUserLogs,
-    canAssignChannelMods,
-    canManageOwnChannel,
-    canForceEndStreams,
-    getCapabilities,
-
-    // Middleware
-    requireAdmin,
-    requireGlobalMod,
-    requireStreamer,
+    buildCapabilities,
+    getStaffRole,
 };

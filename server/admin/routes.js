@@ -27,14 +27,12 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db/database');
-const { requireAuth } = require('../auth/auth');
-const chatServer = require('../chat/chat-server');
-const permissions = require('../auth/permissions');
+const { requireAdmin } = require('../auth/auth');
 
 const router = express.Router();
 
 // All admin routes require admin role
-router.use(requireAuth, permissions.requireAdmin);
+router.use(requireAdmin);
 
 // ── Dashboard Stats ──────────────────────────────────────────
 router.get('/stats', (req, res) => {
@@ -120,69 +118,25 @@ router.get('/users', (req, res) => {
 // ── Update User ──────────────────────────────────────────────
 router.put('/users/:id', (req, res) => {
     try {
-        let { role, display_name, username } = req.body;
+        let { role, display_name } = req.body;
         const updates = [];
         const params = [];
 
-        if (role) {
-            const validRoles = ['user', 'streamer', 'global_mod', 'admin'];
-            if (!validRoles.includes(role)) {
-                return res.status(400).json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` });
-            }
-            updates.push('role = ?'); params.push(role);
+        if (role === 'global_mod') role = 'mod';
+        if (role && ['user', 'streamer', 'mod', 'admin'].includes(role)) {
+            updates.push('role = ?');
+            params.push(role);
         }
-        if (username) {
-            // Validate username format (same rules as registration)
-            username = String(username).trim();
-            if (username.length < 3 || username.length > 24) {
-                return res.status(400).json({ error: 'Username must be 3-24 characters' });
-            }
-            if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-                return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
-            }
-            if (/^anon\d*$/i.test(username)) {
-                return res.status(400).json({ error: 'That username is reserved for anonymous users' });
-            }
-            // Check uniqueness (case-insensitive)
-            const existing = db.getUserByUsername(username);
-            if (existing && String(existing.id) !== String(req.params.id)) {
-                return res.status(409).json({ error: 'Username already taken' });
-            }
-            updates.push('username = ?'); params.push(username);
-        }
-        if (display_name) {
-            // Sanitize display name — strip HTML + dangerous chars
-            display_name = display_name.replace(/<[^>]*>/g, '').replace(/[\\`'"<>(){};:/\[\]]/g, '').replace(/\s+/g, ' ').trim();
-            if (display_name.length < 1 || display_name.length > 60) {
-                return res.status(400).json({ error: 'Display name must be 1-60 characters' });
-            }
-            updates.push('display_name = ?'); params.push(display_name);
-        }
+        if (display_name) { updates.push('display_name = ?'); params.push(display_name); }
 
         if (updates.length > 0) {
             params.push(req.params.id);
             db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
         }
 
-        // If display_name or username changed, update denormalized chat_messages.username
-        // (chat_messages.username stores display_name at message creation time)
-        if (display_name || username) {
-            const freshUser = db.getUserById(req.params.id);
-            if (freshUser) {
-                const newChatName = freshUser.display_name || freshUser.username;
-                db.run('UPDATE chat_messages SET username = ? WHERE user_id = ?', [newChatName, req.params.id]);
-            }
-        }
-
         const user = db.getUserById(req.params.id);
         // Sanitize — never expose password_hash or stream_key
         const { password_hash, stream_key, ...safeUser } = user;
-
-        // Push real-time update to the affected user's chat connections
-        if (updates.length > 0) {
-            chatServer.sendUserUpdate(parseInt(req.params.id), safeUser);
-        }
-
         res.json({ user: safeUser });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update user' });
@@ -204,6 +158,13 @@ router.post('/users/:id/ban', (req, res) => {
             `INSERT INTO bans (user_id, reason, banned_by, expires_at) VALUES (?, ?, ?, ?)`,
             [req.params.id, reason || 'Banned by admin', req.user.id, expires]
         );
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: Number(req.params.id),
+            action_type: 'site_ban',
+            details: { reason: reason || 'Banned by admin', duration_hours: duration_hours || null },
+        });
 
         res.json({ message: 'User banned' });
     } catch (err) {
@@ -216,6 +177,12 @@ router.delete('/users/:id/ban', (req, res) => {
     try {
         db.run('UPDATE users SET is_banned = 0, ban_reason = NULL WHERE id = ?', [req.params.id]);
         db.run('DELETE FROM bans WHERE user_id = ?', [req.params.id]);
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: Number(req.params.id),
+            action_type: 'site_unban',
+        });
         res.json({ message: 'User unbanned' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to unban user' });
@@ -362,7 +329,7 @@ router.delete('/settings/:key', (req, res) => {
 router.get('/moderators', (req, res) => {
     try {
         const mods = db.all(
-            "SELECT id, username, display_name, avatar_url, created_at, last_seen FROM users WHERE role = 'global_mod' ORDER BY username"
+            "SELECT id, username, display_name, avatar_url, created_at, last_seen FROM users WHERE role IN ('mod', 'global_mod') ORDER BY username"
         );
         res.json({ moderators: mods });
     } catch (err) {
@@ -370,7 +337,7 @@ router.get('/moderators', (req, res) => {
     }
 });
 
-// ── Promote to Global Mod ────────────────────────────────────
+// ── Promote to Mod ───────────────────────────────────────────
 router.post('/moderators', (req, res) => {
     try {
         const { username } = req.body;
@@ -379,23 +346,37 @@ router.post('/moderators', (req, res) => {
         const user = db.getUserByUsername(username);
         if (!user) return res.status(404).json({ error: 'User not found' });
         if (user.role === 'admin') return res.status(400).json({ error: 'Cannot change admin role' });
-        if (user.role === 'global_mod') return res.status(400).json({ error: 'User is already a global moderator' });
+        if (['mod', 'global_mod'].includes(user.role)) return res.status(400).json({ error: 'User is already a moderator' });
 
-        db.run("UPDATE users SET role = 'global_mod' WHERE id = ?", [user.id]);
-        res.json({ message: `${user.username} promoted to global moderator` });
+        db.run("UPDATE users SET role = 'mod' WHERE id = ?", [user.id]);
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: user.id,
+            action_type: 'global_mod_promote',
+            details: { username: user.username },
+        });
+        res.json({ message: `${user.username} promoted to moderator` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to promote user' });
     }
 });
 
-// ── Demote Global Mod ────────────────────────────────────────
+// ── Demote Mod ───────────────────────────────────────────────
 router.delete('/moderators/:id', (req, res) => {
     try {
         const user = db.getUserById(req.params.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
-        if (user.role !== 'global_mod') return res.status(400).json({ error: 'User is not a global moderator' });
+        if (!['mod', 'global_mod'].includes(user.role)) return res.status(400).json({ error: 'User is not a moderator' });
 
         db.run("UPDATE users SET role = 'user' WHERE id = ?", [user.id]);
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: user.id,
+            action_type: 'global_mod_demote',
+            details: { username: user.username },
+        });
         res.json({ message: `${user.username} demoted to user` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to demote moderator' });

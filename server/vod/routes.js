@@ -30,67 +30,6 @@ const config = require('../config');
 const thumbService = require('../thumbnails/thumbnail-service');
 
 const router = express.Router();
-const CLIP_USER_COOLDOWN_MS = 2500;
-const CLIP_IP_COOLDOWN_MS = 1200;
-const CLIP_DUPLICATE_START_WINDOW_SEC = 8;
-const CLIP_DUPLICATE_END_WINDOW_SEC = 10;
-const CLIP_DUPLICATE_LOOKBACK_MINUTES = 10;
-const recentClipAttemptsByUser = new Map();
-const recentClipAttemptsByIp = new Map();
-
-function getRequesterIp(req) {
-    return req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
-}
-
-function pruneRecentAttempts(now = Date.now()) {
-    const cutoff = now - Math.max(CLIP_USER_COOLDOWN_MS, CLIP_IP_COOLDOWN_MS) - 5000;
-    for (const [key, ts] of recentClipAttemptsByUser) {
-        if (ts < cutoff) recentClipAttemptsByUser.delete(key);
-    }
-    for (const [key, ts] of recentClipAttemptsByIp) {
-        if (ts < cutoff) recentClipAttemptsByIp.delete(key);
-    }
-}
-
-function parseClipWindow(body) {
-    const startTime = Number.parseFloat(body?.start_time);
-    const endTime = Number.parseFloat(body?.end_time);
-    return {
-        startTime: Number.isFinite(startTime) ? startTime : 0,
-        endTime: Number.isFinite(endTime) ? endTime : 0,
-    };
-}
-
-function findExistingDuplicateClip({ streamId, vodId, startTime, endTime }) {
-    if ((!streamId && !vodId) || !Number.isFinite(startTime) || !Number.isFinite(endTime)) return null;
-    return db.findDuplicateClip({
-        streamId: streamId || null,
-        vodId: vodId || null,
-        startTime,
-        endTime,
-        startWindow: CLIP_DUPLICATE_START_WINDOW_SEC,
-        endWindow: CLIP_DUPLICATE_END_WINDOW_SEC,
-        createdSinceMinutes: CLIP_DUPLICATE_LOOKBACK_MINUTES,
-    });
-}
-
-function shouldThrottleClipRequest(req) {
-    const now = Date.now();
-    pruneRecentAttempts(now);
-
-    const userKey = req.user?.id ? `user:${req.user.id}` : null;
-    const ipKey = `ip:${getRequesterIp(req)}`;
-    const userLast = userKey ? recentClipAttemptsByUser.get(userKey) || 0 : 0;
-    const ipLast = recentClipAttemptsByIp.get(ipKey) || 0;
-
-    if ((userKey && (now - userLast) < CLIP_USER_COOLDOWN_MS) || (now - ipLast) < CLIP_IP_COOLDOWN_MS) {
-        return true;
-    }
-
-    if (userKey) recentClipAttemptsByUser.set(userKey, now);
-    recentClipAttemptsByIp.set(ipKey, now);
-    return false;
-}
 
 /**
  * Remux all existing WebM files that lack proper duration metadata.
@@ -188,95 +127,6 @@ function remuxForSeeking(filePath) {
 }
 
 /**
- * Probe a media file's start_time using ffprobe.
- * Returns the start time in seconds, or 0 if probing fails.
- */
-function probeStartTime(filePath) {
-    return new Promise((resolve) => {
-        const probe = spawn('ffprobe', [
-            '-v', 'quiet', '-print_format', 'json',
-            '-show_entries', 'format=start_time',
-            filePath,
-        ]);
-        let out = '';
-        probe.stdout.on('data', d => out += d);
-        probe.on('close', () => {
-            try {
-                const info = JSON.parse(out);
-                const startTime = parseFloat(info.format?.start_time || '0');
-                resolve(Number.isFinite(startTime) && startTime > 0 ? startTime : 0);
-            } catch { resolve(0); }
-        });
-        probe.on('error', () => resolve(0));
-        setTimeout(() => { try { probe.kill(); } catch {} resolve(0); }, 5000);
-    });
-}
-
-/**
- * Remux a clip file for playback — handles both seeking support and
- * timestamp rebasing for clips recorded after a long streaming session.
- *
- * MediaRecorder rolling-buffer clips can have cluster timestamps far
- * from zero (e.g. 7200s if clipped 2 hours into a stream). Browsers
- * show a black screen because there's no data at timestamp 0.
- *
- * Strategy:
- * 1. Copy-mode remux (fast, adds Cues for seeking)
- * 2. Probe the result's start_time
- * 3. If start_time > 5s, re-encode to reset timestamps to start from 0
- *    (clips are ≤30s so re-encoding is fast and guarantees correctness)
- */
-async function remuxClipFile(filePath) {
-    const ext = path.extname(filePath).toLowerCase();
-    if (ext !== '.webm') return false;
-
-    // Step 1: Copy-mode remux for Cues/seeking
-    const copyOk = await remuxForSeeking(filePath);
-
-    // Step 2: Probe the first timestamp
-    const startOffset = await probeStartTime(filePath);
-    if (startOffset <= 5) {
-        // Timestamps are fine — copy-mode remux is sufficient
-        return copyOk;
-    }
-
-    // Step 3: Timestamps are offset — re-encode to rebase to 0
-    console.log(`[Clips] Timestamp offset detected (${startOffset.toFixed(1)}s), re-encoding to fix: ${path.basename(filePath)}`);
-    return new Promise((resolve) => {
-        const tmpPath = filePath + '.rebase.webm';
-        const proc = spawn('ffmpeg', [
-            '-y', '-err_detect', 'ignore_err',
-            '-i', filePath,
-            '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0',
-            '-c:a', 'libopus', '-b:a', '128k',
-            tmpPath,
-        ], { stdio: ['ignore', 'ignore', 'pipe'] });
-        let stderr = '';
-        proc.stderr.on('data', d => stderr += d);
-        proc.on('close', (code) => {
-            if (code === 0 && fs.existsSync(tmpPath)) {
-                try {
-                    fs.renameSync(tmpPath, filePath);
-                    console.log(`[Clips] Re-encoded for timestamp fix: ${path.basename(filePath)}`);
-                    resolve(true);
-                } catch (err) {
-                    console.warn(`[Clips] Re-encode rename failed:`, err.message);
-                    try { fs.unlinkSync(tmpPath); } catch {}
-                    resolve(false);
-                }
-            } else {
-                console.warn(`[Clips] Re-encode failed (code ${code}): ${stderr.slice(-300)}`);
-                try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
-                resolve(false);
-            }
-        });
-        proc.on('error', () => resolve(false));
-        // Clips are ≤30s — 90s timeout is generous
-        setTimeout(() => { try { proc.kill(); } catch {} }, 90000);
-    });
-}
-
-/**
  * Create a seekable copy of a live-recording WebM file.
  * Writes to <filename>.seekable.webm WITHOUT touching the original growing file.
  * Debounced per file — only one remux runs at a time per recording.
@@ -340,13 +190,6 @@ function cleanupSeekableFile(filePath) {
 }
 
 // Multer storage for VOD uploads
-const VOD_MIME_TO_EXT = { 'video/webm': '.webm', 'video/mp4': '.mp4', 'video/x-matroska': '.mkv', 'video/ogg': '.ogg' };
-
-/** Strip codec params from MIME types like "video/webm;codecs=vp9,opus" → "video/webm" */
-function baseMediaType(mime) {
-    return (mime || '').split(';')[0].trim().toLowerCase();
-}
-
 const vodStorage = multer.diskStorage({
     destination: (req, file, cb) => {
         const vodDir = path.resolve(config.vod.path);
@@ -354,17 +197,13 @@ const vodStorage = multer.diskStorage({
         cb(null, vodDir);
     },
     filename: (req, file, cb) => {
-        const ext = VOD_MIME_TO_EXT[baseMediaType(file.mimetype)] || '.webm';
+        const ext = path.extname(file.originalname) || '.webm';
         cb(null, `vod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
 });
 const vodUpload = multer({
     storage: vodStorage,
     limits: { fileSize: config.vod.maxSizeMb * 1024 * 1024 },
-    fileFilter: (req, file, cb) => {
-        if (VOD_MIME_TO_EXT[baseMediaType(file.mimetype)]) cb(null, true);
-        else cb(new Error('Only WebM, MP4, MKV, and OGG video files are allowed'));
-    },
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -373,94 +212,9 @@ const vodUpload = multer({
 
 /**
  * Active VOD recordings tracked in memory.
- * streamId → { vodId, filePath, startTime, chunkCount, currentSegmentId, currentSegmentPath }
+ * streamId → { vodId, filePath, startTime, chunkCount }
  */
 const activeRecordings = new Map();
-
-function makeSegmentPath(filePath, segmentId) {
-    const base = filePath.replace(/\.webm$/, '');
-    return `${base}.seg-${segmentId}-${Date.now()}.webm`;
-}
-
-function getFileSizeSafe(filePath) {
-    try { return filePath && fs.existsSync(filePath) ? fs.statSync(filePath).size : 0; } catch { return 0; }
-}
-
-function getPendingSegmentFiles(filePath) {
-    const dir = path.dirname(filePath);
-    const base = path.basename(filePath).replace(/\.webm$/, '');
-    try {
-        return fs.readdirSync(dir)
-            .filter((name) => name.startsWith(`${base}.seg-`) && name.endsWith('.webm'))
-            .map((name) => path.join(dir, name))
-            .sort((a, b) => {
-                const am = /\.seg-(\d+)-(\d+)\.webm$/.exec(a);
-                const bm = /\.seg-(\d+)-(\d+)\.webm$/.exec(b);
-                const aSeg = parseInt(am?.[1] || '0', 10);
-                const bSeg = parseInt(bm?.[1] || '0', 10);
-                if (aSeg !== bSeg) return aSeg - bSeg;
-                const aTs = parseInt(am?.[2] || '0', 10);
-                const bTs = parseInt(bm?.[2] || '0', 10);
-                return aTs - bTs;
-            });
-    } catch {
-        return [];
-    }
-}
-
-function concatWebmFiles(basePath, appendPath) {
-    if (!appendPath || !fs.existsSync(appendPath)) return Promise.resolve(true);
-    if (!basePath || !fs.existsSync(basePath)) {
-        fs.renameSync(appendPath, basePath);
-        return Promise.resolve(true);
-    }
-
-    const listPath = `${basePath}.concat.${Date.now()}.txt`;
-    const tmpPath = `${basePath}.concat.tmp.webm`;
-    const escapedBase = basePath.replace(/'/g, `'\\''`);
-    const escapedAppend = appendPath.replace(/'/g, `'\\''`);
-    fs.writeFileSync(listPath, `file '${escapedBase}'\nfile '${escapedAppend}'\n`, 'utf8');
-
-    const runConcat = (args) => new Promise((resolve) => {
-        const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-        let stderr = '';
-        proc.stderr.on('data', (d) => stderr += d);
-        proc.on('close', (code) => resolve({ code, stderr }));
-        proc.on('error', () => resolve({ code: -1, stderr: 'spawn error' }));
-        setTimeout(() => { try { proc.kill(); } catch {} }, 120000);
-    });
-
-    return (async () => {
-        try {
-            let result = await runConcat(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-fflags', '+genpts', tmpPath]);
-            if (result.code !== 0 || !fs.existsSync(tmpPath)) {
-                result = await runConcat(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c:v', 'libvpx-vp9', '-crf', '32', '-b:v', '0', '-c:a', 'libopus', '-b:a', '128k', tmpPath]);
-            }
-            if (result.code === 0 && fs.existsSync(tmpPath)) {
-                fs.renameSync(tmpPath, basePath);
-                cleanupTempFile(appendPath);
-                cleanupTempFile(listPath);
-                return true;
-            }
-            cleanupTempFile(tmpPath);
-            cleanupTempFile(listPath);
-            return false;
-        } catch {
-            cleanupTempFile(tmpPath);
-            cleanupTempFile(listPath);
-            return false;
-        }
-    })();
-}
-
-async function mergePendingSegments(filePath) {
-    for (const segmentPath of getPendingSegmentFiles(filePath)) {
-        const ok = await concatWebmFiles(filePath, segmentPath);
-        if (!ok) {
-            console.warn(`[VOD] Failed to merge segment into ${path.basename(filePath)}: ${path.basename(segmentPath)}`);
-        }
-    }
-}
 
 /**
  * Upload a VOD chunk for a live stream.
@@ -470,7 +224,6 @@ async function mergePendingSegments(filePath) {
 router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), async (req, res) => {
     try {
         const streamId = parseInt(req.params.streamId);
-        const segmentId = Math.max(1, parseInt(req.body?.segmentId || req.query.segmentId || '1', 10) || 1);
         if (!req.file) return res.status(400).json({ error: 'No chunk data' });
 
         const stream = db.getStreamById(streamId);
@@ -491,8 +244,6 @@ router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), a
                     filePath: existingVod.file_path,
                     startTime: new Date(existingVod.created_at + 'Z').getTime(),
                     chunkCount: 0,
-                    currentSegmentId: segmentId,
-                    currentSegmentPath: existingVod.file_path,
                 };
                 activeRecordings.set(streamId, rec);
             }
@@ -524,33 +275,21 @@ router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), a
                 db.run('UPDATE vods SET is_public = 1 WHERE id = ?', [vodId]);
             }
 
-            rec = { vodId, filePath, startTime: Date.now(), chunkCount: 1, currentSegmentId: segmentId, currentSegmentPath: filePath };
+            rec = { vodId, filePath, startTime: Date.now(), chunkCount: 1 };
             activeRecordings.set(streamId, rec);
 
             console.log(`[VOD] Recording started: stream ${streamId} → vod ${vodId}`);
             return res.json({ vodId, chunkIndex: 0, status: 'created' });
         }
 
-        if (rec.currentSegmentId !== segmentId) {
-            if (rec.currentSegmentPath && rec.currentSegmentPath !== rec.filePath) {
-                await concatWebmFiles(rec.filePath, rec.currentSegmentPath);
-            }
-            rec.currentSegmentId = segmentId;
-            rec.currentSegmentPath = makeSegmentPath(rec.filePath, segmentId);
-            fs.copyFileSync(req.file.path, rec.currentSegmentPath);
-            cleanupTempFile(req.file.path);
-            rec.chunkCount++;
-        } else {
-            // Append chunk to existing file/segment
-            const targetPath = rec.currentSegmentPath || rec.filePath;
-            const chunkData = fs.readFileSync(req.file.path);
-            fs.appendFileSync(targetPath, chunkData);
-            cleanupTempFile(req.file.path);
-            rec.chunkCount++;
-        }
+        // Append chunk to existing file
+        const chunkData = fs.readFileSync(req.file.path);
+        fs.appendFileSync(rec.filePath, chunkData);
+        cleanupTempFile(req.file.path);
+        rec.chunkCount++;
 
         // Update file size and duration estimate in DB
-        const stat = { size: getFileSizeSafe(rec.filePath) + (rec.currentSegmentPath && rec.currentSegmentPath !== rec.filePath ? getFileSizeSafe(rec.currentSegmentPath) : 0) };
+        const stat = fs.statSync(rec.filePath);
         const elapsed = Math.round((Date.now() - rec.startTime) / 1000);
         db.run('UPDATE vods SET file_size = ?, duration_seconds = ? WHERE id = ?',
             [stat.size, elapsed, rec.vodId]);
@@ -649,11 +388,6 @@ async function finalizeVodRecording(streamId) {
         db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
         return db.getVodById(vodId);
     }
-
-    if (rec?.currentSegmentPath && rec.currentSegmentPath !== filePath) {
-        await concatWebmFiles(filePath, rec.currentSegmentPath);
-    }
-    await mergePendingSegments(filePath);
 
     // Remux for proper seeking support (fast copy-mode, no re-encode)
     await remuxForSeeking(filePath);
@@ -788,7 +522,7 @@ router.get('/:id', optionalAuth, (req, res) => {
         }
 
         // Track unique view by IP
-        const ip = req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
         const inserted = db.run(
             'INSERT OR IGNORE INTO content_views (content_type, content_id, ip) VALUES (?, ?, ?)',
             ['vod', vod.id, ip]
@@ -892,47 +626,14 @@ router.post('/:id/publish', requireAuth, (req, res) => {
 router.get('/file/:filename', optionalAuth, (req, res) => {
     try {
         const filename = path.basename(req.params.filename); // Prevent directory traversal
-        const vodPath = path.resolve(config.vod.path, filename);
-        const clipPath = path.resolve(config.vod.clipsPath, filename);
-        let filePath = vodPath;
-        let mediaRecord = null;
-        let mediaType = null;
+        let filePath = path.resolve(config.vod.path, filename);
 
-        if (fs.existsSync(vodPath)) {
-            mediaType = 'vod';
-            mediaRecord = db.get('SELECT id, user_id, is_public, is_recording, file_path FROM vods WHERE file_path = ?', [vodPath]);
-        } else if (fs.existsSync(clipPath)) {
-            filePath = clipPath;
-            mediaType = 'clip';
-            mediaRecord = db.get(
-                `SELECT c.id, c.user_id, c.is_public, c.file_path, s.user_id AS stream_owner_id, v.user_id AS vod_owner_id
-                 FROM clips c
-                 LEFT JOIN streams s ON c.stream_id = s.id
-                 LEFT JOIN vods v ON c.vod_id = v.id
-                 WHERE c.file_path = ?`,
-                [clipPath]
-            );
+        if (!fs.existsSync(filePath)) {
+            filePath = path.resolve(config.vod.clipsPath, filename);
         }
 
         if (!fs.existsSync(filePath)) {
             return res.status(404).json({ error: 'File not found' });
-        }
-
-        if (!mediaRecord) {
-            return res.status(404).json({ error: 'Media record not found' });
-        }
-
-        const isAdmin = req.user?.role === 'admin';
-        const isOwner = req.user && req.user.id === mediaRecord.user_id;
-        const canAccess = mediaType === 'vod'
-            ? !!mediaRecord.is_public || isOwner || isAdmin
-            : !!mediaRecord.is_public
-                || isOwner
-                || isAdmin
-                || (req.user && (req.user.id === mediaRecord.stream_owner_id || req.user.id === mediaRecord.vod_owner_id));
-
-        if (!canAccess) {
-            return res.status(403).json({ error: 'This media is private' });
         }
 
         // For live recordings, serve the seekable copy if it exists
@@ -1083,51 +784,10 @@ router.post('/upload', requireAuth, vodUpload.single('video'), async (req, res) 
 //  CLIP ROUTES (mounted under /api/vods but also at /api/clips)
 // ══════════════════════════════════════════════════════════════
 
-// Separate multer for clip uploads — more lenient MIME filter because
-// MediaRecorder Blobs can arrive with codec-qualified types, empty types,
-// or application/octet-stream depending on the browser/platform.
-const CLIP_ALLOWED_MIMES = new Set([
-    ...Object.keys(VOD_MIME_TO_EXT),
-    'application/octet-stream',  // some browsers / Electron builds
-    '',                          // empty MIME from Blob() without explicit type
-]);
-const clipUpload = multer({
-    storage: vodStorage,
-    limits: { fileSize: config.vod.maxSizeMb * 1024 * 1024 },
-    fileFilter: (req, file, cb) => {
-        const base = baseMediaType(file.mimetype);
-        if (CLIP_ALLOWED_MIMES.has(base) || base.startsWith('video/')) cb(null, true);
-        else cb(new Error('Only video files are allowed for clips'));
-    },
-});
-
 // ── Create Clip ──────────────────────────────────────────────
-router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) => {
+router.post('/clips', requireAuth, vodUpload.single('video'), async (req, res) => {
     try {
         const { vod_id, stream_id, start_time, end_time, title } = req.body;
-        const parsedStreamId = stream_id ? parseInt(stream_id, 10) : null;
-        const parsedVodId = vod_id ? parseInt(vod_id, 10) : null;
-        const { startTime, endTime } = parseClipWindow(req.body);
-
-        const duplicateClip = findExistingDuplicateClip({
-            streamId: parsedStreamId,
-            vodId: parsedVodId,
-            startTime,
-            endTime,
-        });
-        if (duplicateClip) {
-            if (req.file) cleanupTempFile(req.file.path);
-            return res.status(200).json({
-                clip: duplicateClip,
-                deduplicated: true,
-                message: 'A clip for that moment already exists. Reusing the existing clip.',
-            });
-        }
-
-        if (shouldThrottleClipRequest(req)) {
-            if (req.file) cleanupTempFile(req.file.path);
-            return res.status(429).json({ error: 'You are clipping too fast. Please wait a few seconds before making another clip.' });
-        }
 
         // Direct clip upload from browser (MediaRecorder clip)
         if (req.file) {
@@ -1137,11 +797,9 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             const clipPath = path.join(clipsDir, req.file.filename);
             fs.renameSync(req.file.path, clipPath);
 
-            // Remux clip: adds seeking support + rebases timestamps if offset
-            // (clips from long streams have cluster timestamps hours from zero)
-            const remuxOk = await remuxClipFile(clipPath);
-
-            // EBML header validation — first 4 bytes must be 1A 45 DF A3
+            // Remux WebM for proper seeking support + validate file is playable
+            const remuxOk = await remuxForSeeking(clipPath);
+            // Quick EBML header validation — first 4 bytes must be 1A 45 DF A3
             try {
                 const fd = fs.openSync(clipPath, 'r');
                 const hdr = Buffer.alloc(4);
@@ -1182,22 +840,22 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             }
             const stat = fs.statSync(clipPath);
 
-            const duration = endTime - startTime;
+            const duration = parseFloat(end_time || 0) - parseFloat(start_time || 0);
             const result = db.createClip({
-                stream_id: parsedStreamId,
+                stream_id: stream_id ? parseInt(stream_id) : null,
                 user_id: req.user.id,
                 title: title || 'Untitled Clip',
                 file_path: clipPath,
-                start_time: startTime,
-                end_time: endTime,
+                start_time: parseFloat(start_time || 0),
+                end_time: parseFloat(end_time || 0),
                 duration_seconds: duration > 0 ? duration : 0,
                 description: '',
             });
 
             // Apply streamer's default clip visibility (streamer = stream owner)
             const clipId = result.lastInsertRowid;
-            if (parsedStreamId) {
-                const clipStream = db.getStreamById(parsedStreamId);
+            if (stream_id) {
+                const clipStream = db.getStreamById(parseInt(stream_id));
                 if (clipStream) {
                     const streamerChannel = db.getChannelByUserId(clipStream.user_id);
                     if (streamerChannel && streamerChannel.default_clip_visibility === 'public') {
@@ -1222,14 +880,14 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             return res.status(400).json({ error: 'start_time and end_time required' });
         }
 
-        const duration = endTime - startTime;
+        const duration = end_time - start_time;
         if (duration <= 0 || duration > 60) {
             return res.status(400).json({ error: 'Clip must be 1-60 seconds' });
         }
 
         // If from VOD, extract the clip
-        if (parsedVodId) {
-            const vod = db.get('SELECT * FROM vods WHERE id = ?', [parsedVodId]);
+        if (vod_id) {
+            const vod = db.get('SELECT * FROM vods WHERE id = ?', [vod_id]);
             if (!vod || !vod.file_path || !fs.existsSync(vod.file_path)) {
                 return res.status(404).json({ error: 'VOD not found or file missing' });
             }
@@ -1244,7 +902,7 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             let ffStderr = '';
             const ffmpeg = spawn('ffmpeg', [
                 '-y',
-                '-ss', String(startTime),
+                '-ss', String(start_time),
                 '-i', vod.file_path,
                 '-t', String(duration),
                 '-c', 'copy',
@@ -1265,13 +923,13 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
                 }
 
                 const result = db.createClip({
-                    vod_id: parsedVodId,
-                    stream_id: parsedStreamId || vod.stream_id,
+                    vod_id,
+                    stream_id: stream_id || vod.stream_id,
                     user_id: req.user.id,
                     title: title || 'Untitled Clip',
                     file_path: clipPath,
-                    start_time: startTime,
-                    end_time: endTime,
+                    start_time,
+                    end_time,
                     duration_seconds: duration,
                     description: '',
                 });

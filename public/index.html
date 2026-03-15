@@ -5,11 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HoboStreamer — Live Streaming for Camp Culture</title>
     <meta name="description" content="HoboStreamer.com — Open source live streaming platform for stealth campers, nomads, and outdoor enthusiasts. Paired with HoboApp.">
-    <link rel="stylesheet" href="/css/style.css?v=7">
-    <link rel="stylesheet" href="/css/broadcast.css?v=3">
-    <link rel="stylesheet" href="/css/game.css?v=2">
-    <link rel="stylesheet" href="/css/cosmetics.css?v=2">
-    <link rel="stylesheet" href="/css/messenger.css?v=1">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/broadcast.css">
+    <link rel="stylesheet" href="/css/game.css">
+    <link rel="stylesheet" href="/css/cosmetics.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
 </head>
@@ -19,11 +18,11 @@
 <!--  NAVBAR                                                     -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <nav class="navbar">
-    <div class="nav-brand" onclick="navigate('/')" data-brand-tooltip="This platform is in early alpha — features may be incomplete, buggy, or change without notice. Data will likely be reset multiple times during the alpha phase. Thanks for testing!">
+    <div class="nav-brand" onclick="navigate('/')" data-brand-tooltip="This platform is in early alpha — features may be incomplete, buggy, or change without notice. Thanks for testing!">
         <i class="fa-solid fa-campground"></i>
         <span class="brand-text-wrap">
             <span class="alpha-badge">ALPHA</span>
-            <span class="brand-text"><span class="brand-hobo">Hobo</span><strong class="brand-streamer">Streamer</strong></span>
+            <span class="brand-text">Hobo<strong>Streamer</strong></span>
         </span>
     </div>
     <div class="nav-links">
@@ -35,9 +34,6 @@
         </a>
         <a href="#" onclick="event.preventDefault();navigate('/clips')" class="nav-link" data-page="clips" data-tooltip="Clips">
             <i class="fa-solid fa-scissors"></i> <span>Clips</span>
-        </a>
-        <a href="#" onclick="event.preventDefault();navigate('/pastes')" class="nav-link" data-page="pastes" data-tooltip="Pastes">
-            <i class="fa-solid fa-paste"></i> <span>Pastes</span>
         </a>
         <a href="#" onclick="event.preventDefault();navigate('/chat')" class="nav-link" data-page="chat" data-tooltip="Chat">
             <i class="fa-solid fa-comments"></i> <span>Chat</span>
@@ -51,8 +47,8 @@
         <a href="#" onclick="event.preventDefault();navigate('/dashboard')" class="nav-link" data-page="dashboard" id="nav-dashboard" style="display:none" data-tooltip="Dashboard">
             <i class="fa-solid fa-gauge-high"></i> <span>Dashboard</span>
         </a>
-        <a href="#" onclick="event.preventDefault();navigate('/admin')" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin">
-            <i class="fa-solid fa-shield-halved"></i> <span>Admin</span>
+        <a href="#" onclick="event.preventDefault();navigate('/admin')" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Staff">
+            <i class="fa-solid fa-shield-halved"></i> <span>Staff</span>
         </a>
     </div>
     <div class="nav-right">
@@ -85,8 +81,6 @@
                 <a onclick="showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
                 <a onclick="navigate('/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
                 <hr>
-                <a onclick="captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
-                <hr>
                 <a onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
             </div>
         </div>
@@ -111,18 +105,9 @@
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
                         <i class="fa-solid fa-broadcast-tower"></i> Start Streaming
                     </button>
-                    <button class="btn btn-outline btn-lg" onclick="navigate('/game')">
-                        <i class="fa-solid fa-gamepad"></i> Play Game
-                    </button>
-                    <a href="https://github.com/HoboStreamer/HoboStreamer.com" target="_blank" class="btn btn-outline btn-lg">
-                        <i class="fa-brands fa-github"></i> GitHub
+                    <a href="https://github.com/user/hobostreamer" target="_blank" class="btn btn-outline btn-lg">
+                        <i class="fa-brands fa-github"></i> Open Source
                     </a>
-                    <a href="https://discord.gg/M6MuRUaeJj" target="_blank" class="btn btn-outline btn-lg" rel="noopener noreferrer">
-                        <i class="fa-brands fa-discord"></i> Discord
-                    </a>
-                    <button class="btn btn-outline btn-lg" onclick="document.querySelector('.promo-bar').scrollIntoView({behavior:'smooth',block:'start'});setTimeout(()=>{if(!document.getElementById('hoboapp-popover').classList.contains('open'))toggleHoboAppPopover()},400);">
-                        <i class="fa-solid fa-campground"></i> HoboApp
-                    </button>
                 </div>
             </div>
         </div>
@@ -144,43 +129,12 @@
                         <i class="fa-solid fa-campground"></i>
                     </div>
                     <div>
-                        <h2>HoboApp <span class="hoboapp-version" id="hoboapp-version">Loading…</span></h2>
+                        <h2>HoboApp <span class="hoboapp-version">v2.0</span></h2>
                         <p class="hoboapp-tagline">Washington State Stealth Camp & Shelter Locator</p>
                     </div>
                 </div>
 
                 <p class="hoboapp-desc">A free, open-source desktop app that aggregates <strong>18 data sources</strong> into one interactive map — purpose-built for stealth campers, van dwellers, and nomads. <strong>307 hand-curated</strong> Washington State locations with stealth ratings.</p>
-
-                <div class="hoboapp-live-meta" id="hoboapp-live-meta">
-                    <div class="hoboapp-meta-card">
-                        <span class="hoboapp-meta-label">Latest version</span>
-                        <strong id="hoboapp-meta-version">Loading…</strong>
-                        <span class="hoboapp-meta-sub" id="hoboapp-meta-version-sub">Checking GitHub release/package data…</span>
-                    </div>
-                    <div class="hoboapp-meta-card">
-                        <span class="hoboapp-meta-label">Latest commit</span>
-                        <strong id="hoboapp-meta-commit">Loading…</strong>
-                        <span class="hoboapp-meta-sub" id="hoboapp-meta-commit-sub">Fetching latest commit…</span>
-                    </div>
-                    <div class="hoboapp-meta-card">
-                        <span class="hoboapp-meta-label">Last pushed</span>
-                        <strong id="hoboapp-meta-pushed">Loading…</strong>
-                        <span class="hoboapp-meta-sub" id="hoboapp-meta-pushed-sub">Syncing repository activity…</span>
-                    </div>
-                    <div class="hoboapp-meta-card">
-                        <span class="hoboapp-meta-label">GitHub stars</span>
-                        <strong id="hoboapp-meta-stars">—</strong>
-                        <span class="hoboapp-meta-sub" id="hoboapp-meta-stars-sub">Live from github.com/HoboStreamer/HoboApp</span>
-                    </div>
-                </div>
-
-                <div class="hoboapp-latest-change">
-                    <div class="hoboapp-latest-change-head">
-                        <strong>Latest change</strong>
-                        <a id="hoboapp-commit-link" href="https://github.com/HoboStreamer/HoboApp" target="_blank" rel="noopener">View on GitHub</a>
-                    </div>
-                    <p id="hoboapp-commit-message">Fetching latest HoboApp changes from GitHub…</p>
-                </div>
 
                 <!-- Feature Grid -->
                 <div class="hoboapp-features">
@@ -272,10 +226,10 @@
 
                 <!-- Download CTA -->
                 <div class="hoboapp-cta">
-                    <a href="https://github.com/HoboStreamer/HoboApp" target="_blank" rel="noopener" class="btn btn-primary btn-lg hoboapp-dl-btn">
+                    <a href="https://github.com/user/hoboapp" target="_blank" rel="noopener" class="btn btn-primary btn-lg hoboapp-dl-btn">
                         <i class="fa-brands fa-github"></i> Download on GitHub
                     </a>
-                    <p class="hoboapp-cta-sub" id="hoboapp-cta-sub"><i class="fa-solid fa-code-branch"></i> Free & open source &nbsp;·&nbsp; <i class="fa-brands fa-windows"></i> <i class="fa-brands fa-linux"></i> <i class="fa-brands fa-apple"></i> Windows, Linux & macOS</p>
+                    <p class="hoboapp-cta-sub"><i class="fa-solid fa-code-branch"></i> Free & open source &nbsp;·&nbsp; <i class="fa-brands fa-windows"></i> <i class="fa-brands fa-linux"></i> <i class="fa-brands fa-apple"></i> Windows, Linux & macOS</p>
                 </div>
             </div>
         </div>
@@ -292,21 +246,6 @@
                     <p>No one is streaming right now</p>
                     <p class="muted">Be the first to go live!</p>
                 </div>
-            </div>
-
-            <!-- HoboStreamer Changelog -->
-            <div class="section-header" style="margin-top:32px;">
-                <h2><i class="fa-solid fa-code-commit"></i> Recent Changes</h2>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    <button id="home-changelog-toggle" class="badge" onclick="toggleHomeChangelog()" style="cursor:pointer;border:none;background:var(--surface);padding:4px 10px;border-radius:6px;color:var(--text);font-size:0.78rem;">Show All</button>
-                    <a href="#" onclick="event.preventDefault();navigate('/updates')" class="badge" style="cursor:pointer;text-decoration:none;">View All</a>
-                </div>
-            </div>
-            <div id="home-changelog-wrapper" class="home-changelog-wrapper collapsed">
-                <div id="home-changelog" class="home-changelog">
-                    <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
-                </div>
-                <div class="home-changelog-fade" id="home-changelog-fade"></div>
             </div>
 
             <!-- Recently Online -->
@@ -353,8 +292,8 @@
 
     <!-- ── CHANNEL PAGE (/:username) ─────────────────────── -->
     <section id="page-channel" class="page">
-        <!-- Live Stream Tabs (this channel's concurrent streams) -->
-        <div class="live-stream-tabs" id="live-stream-tabs" style="display:none" role="tablist" aria-label="Live streams">
+        <!-- Live Stream Tabs (all live streams on platform) -->
+        <div class="live-stream-tabs" id="live-stream-tabs" style="display:none">
             <div class="live-tabs-scroll" id="live-tabs-scroll"></div>
         </div>
 
@@ -366,11 +305,6 @@
                         <div class="video-placeholder">
                             <i class="fa-solid fa-satellite-dish fa-3x"></i>
                             <p>Connecting to stream...</p>
-                        </div>
-                        <!-- Loading overlay shown during stream switching -->
-                        <div class="stream-switch-overlay" id="stream-switch-overlay">
-                            <div class="stream-switch-spinner"></div>
-                            <p>Switching stream…</p>
                         </div>
                         <canvas id="video-canvas"></canvas>
                         <video id="video-element" autoplay playsinline></video>
@@ -425,7 +359,6 @@
                                 </div>
                                 <p class="ch-stream-title" id="ch-stream-title">Stream Title</p>
                                 <p class="ch-stream-description muted" id="ch-stream-description" style="display:none"></p>
-                                <div class="ch-cumulative-viewers" id="ch-cumulative-viewers" style="display:none"></div>
                             </div>
                         </div>
                         <div class="ch-info-bar-right">
@@ -442,22 +375,136 @@
                         </div>
                         <div class="controls-grid" id="controls-grid"></div>
                     </div>
+                    <!-- Group Call Panel (Discord-style voice/video) -->
+                    <div class="call-panel" id="call-panel" style="display:none">
+                        <div class="call-panel-header">
+                            <div class="call-panel-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span id="call-mode-label">Group Call</span>
+                            </div>
+                            <div class="call-panel-header-right">
+                                <span class="call-count-badge" id="call-count-badge">0</span>
+                                <span class="call-connected-badge" id="call-connected-badge" style="display:none">
+                                    <i class="fa-solid fa-circle"></i> Connected
+                                </span>
+                            </div>
+                        </div>
+                        <!-- Join Area (shown when not in call) -->
+                        <div class="call-join-area" id="call-join-area">
+                            <p class="call-join-hint muted" id="call-join-hint">Join the voice chat to talk with the streamer and other viewers</p>
+                            <div class="call-device-selects">
+                                <div class="call-device-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Microphone</label>
+                                    <select id="call-mic-select" class="form-input form-input-sm">
+                                        <option value="default">Default Microphone</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group" id="call-cam-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
+                                    <select id="call-cam-select" class="form-input form-input-sm">
+                                        <option value="default">Default Camera</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="call-input-settings">
+                                <div class="call-device-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
+                                    <select id="call-input-mode" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
+                                        <option value="open">Open Mic</option>
+                                        <option value="ptt">Push to Talk</option>
+                                        <option value="vad">Voice Activation</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group call-ptt-group" id="call-ptt-group" style="display:none">
+                                    <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
+                                    <select id="call-ptt-key" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
+                                        <option value="Space">Space</option>
+                                        <option value="KeyV">V</option>
+                                        <option value="KeyT">T</option>
+                                        <option value="AltLeft">Left Alt</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group call-vad-group" id="call-vad-group" style="display:none">
+                                    <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
+                                    <input id="call-vad-threshold" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
+                                    <span class="call-threshold-value" id="call-vad-threshold-value">32%</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary call-join-btn" onclick="joinCall()">
+                                <i class="fa-solid fa-phone"></i> Join Call
+                            </button>
+                        </div>
+                        <!-- Active Call Area (shown when in call) -->
+                        <div class="call-active-area" id="call-active-area" style="display:none">
+                            <div class="call-participants-grid" id="call-participants-grid"></div>
+                            <div class="call-controls">
+                                <button class="call-ctrl-btn" id="call-btn-mute" onclick="toggleCallMute()" title="Mute">
+                                    <i class="fa-solid fa-microphone"></i>
+                                </button>
+                                <button class="call-ctrl-btn" id="call-btn-camera" onclick="toggleCallCamera()" title="Toggle Camera">
+                                    <i class="fa-solid fa-video"></i>
+                                </button>
+                                <button class="call-ctrl-btn call-ctrl-leave" onclick="leaveCall()" title="Leave Call">
+                                    <i class="fa-solid fa-phone-slash"></i>
+                                </button>
+                                <button class="call-ctrl-btn call-ctrl-end" id="call-btn-end" onclick="endCall()" title="End Call for Everyone" style="display:none">
+                                    <i class="fa-solid fa-xmark"></i> End
+                                </button>
+                            </div>
+                            <!-- Device switcher (visible while in call) -->
+                            <details class="call-device-switcher">
+                                <summary><i class="fa-solid fa-gear"></i> Input Devices</summary>
+                                <div class="call-device-selects call-device-selects-compact">
+                                    <div class="call-device-group">
+                                        <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Mic</label>
+                                        <select id="call-mic-switch" class="form-input form-input-sm" onchange="switchCallMic(this.value)">
+                                            <option value="default">Default Microphone</option>
+                                        </select>
+                                    </div>
+                                    <div class="call-device-group" id="call-cam-switch-group">
+                                        <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
+                                        <select id="call-cam-switch" class="form-input form-input-sm" onchange="switchCallCam(this.value)">
+                                            <option value="default">Default Camera</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="call-input-settings call-input-settings-compact">
+                                    <div class="call-device-group">
+                                        <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
+                                        <select id="call-input-mode-switch" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
+                                            <option value="open">Open Mic</option>
+                                            <option value="ptt">Push to Talk</option>
+                                            <option value="vad">Voice Activation</option>
+                                        </select>
+                                    </div>
+                                    <div class="call-device-group call-ptt-group" id="call-ptt-switch-group" style="display:none">
+                                        <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
+                                        <select id="call-ptt-key-switch" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
+                                            <option value="Space">Space</option>
+                                            <option value="KeyV">V</option>
+                                            <option value="KeyT">T</option>
+                                            <option value="AltLeft">Left Alt</option>
+                                        </select>
+                                    </div>
+                                    <div class="call-device-group call-vad-group" id="call-vad-switch-group" style="display:none">
+                                        <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
+                                        <input id="call-vad-threshold-switch" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
+                                        <span class="call-threshold-value" id="call-vad-threshold-value-switch">32%</span>
+                                    </div>
+                                </div>
+                                <div class="call-ptt-status" id="call-ptt-status" style="display:none">Hold <strong id="call-ptt-status-key">Space</strong> to talk</div>
+                            </details>
+                        </div>
+                        <div class="call-log" id="call-log"></div>
+                    </div>
                 </div>
                 <!-- Chat Sidebar -->
                 <div class="chat-sidebar" id="chat-sidebar">
                     <div class="chat-header">
                         <span>STREAM CHAT</span>
-                        <div class="chat-header-actions">
-                            <button class="chat-settings-btn" onclick="popoutStreamChat()" title="Pop Out Chat">
-                                <i class="fa-solid fa-up-right-from-square"></i>
-                            </button>
-                            <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
-                                <i class="fa-solid fa-gear"></i>
-                            </button>
-                            <button class="mobile-chat-close" onclick="toggleMobileChat()" title="Close Chat">
-                                <i class="fa-solid fa-xmark"></i>
-                            </button>
-                        </div>
+                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                            <i class="fa-solid fa-gear"></i>
+                        </button>
                     </div>
                     <div class="chat-messages" id="chat-messages"></div>
                     <div class="chat-input-area">
@@ -481,11 +528,8 @@
                             <button class="emote-picker-btn" onclick="toggleEmotePicker('chat-input')" title="Emotes">
                                 <i class="fa-solid fa-face-smile"></i>
                             </button>
-                            <textarea id="chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                                      rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
-                            <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
-                                <i class="fa-solid fa-volume-high"></i>
-                            </button>
+                            <input type="text" id="chat-input" placeholder="Send a message..." maxlength="500"
+                                   onkeydown="if(event.key==='Enter')sendChat()">
                             <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Coins">
                                 <i class="fa-solid fa-gem"></i>
                             </button>
@@ -510,11 +554,6 @@
                 </div>
             </div>
         </div>
-        <!-- Mobile Chat Toggle (FAB — visible only on small screens) -->
-        <button class="mobile-chat-toggle" id="mobile-chat-toggle" onclick="toggleMobileChat()" title="Toggle Chat">
-            <i class="fa-solid fa-comment"></i>
-            <span class="mobile-chat-badge" id="mobile-chat-badge" style="display:none">0</span>
-        </button>
 
         <!-- Offline Area -->
         <div class="ch-offline-area" id="ch-offline-area">
@@ -545,39 +584,18 @@
             <div class="offline-global-chat" id="offline-global-chat">
                 <div class="chat-header">
                     <span><i class="fa-solid fa-globe"></i> GLOBAL CHAT</span>
-                    <div class="chat-header-actions">
-                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
-                            <i class="fa-solid fa-gear"></i>
-                        </button>
-                        <button class="mobile-chat-close" onclick="toggleMobileChat()" title="Close Chat">
-                            <i class="fa-solid fa-xmark"></i>
-                        </button>
-                    </div>
+                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
                 </div>
                 <div class="chat-messages" id="offline-chat-messages"></div>
                 <div class="chat-input-area">
-                    <!-- Emote Picker -->
-                    <div id="oc-emote-picker" class="emote-picker" style="display:none">
-                        <div class="emote-picker-header">
-                            <input type="text" class="emote-search" placeholder="Search emotes..." oninput="onEmoteSearch(this.value)">
-                        </div>
-                        <div class="emote-picker-tabs">
-                            <button class="emote-tab-btn active" data-tab="all" onclick="renderEmotePicker('all')">All</button>
-                            <button class="emote-tab-btn" data-tab="defaults" onclick="renderEmotePicker('defaults')">Popular</button>
-                            <button class="emote-tab-btn" data-tab="channel" onclick="renderEmotePicker('channel')">Channel</button>
-                            <button class="emote-tab-btn" data-tab="global" onclick="renderEmotePicker('global')">Custom</button>
-                            <button class="emote-tab-btn" data-tab="ffz" onclick="renderEmotePicker('ffz')">FFZ</button>
-                            <button class="emote-tab-btn" data-tab="7tv" onclick="renderEmotePicker('7tv')">7TV</button>
-                            <button class="emote-tab-btn" data-tab="bttv" onclick="renderEmotePicker('bttv')">BTTV</button>
-                        </div>
-                        <div class="emote-picker-grid" id="oc-emote-picker-grid"></div>
-                    </div>
                     <div class="chat-input-row">
                         <button class="emote-picker-btn" onclick="toggleEmotePicker('offline-chat-input')" title="Emotes">
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
-                        <textarea id="offline-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                        <input type="text" id="offline-chat-input" placeholder="Send a message..." maxlength="500"
+                               onkeydown="if(event.key==='Enter')sendChat()">
                         <button class="chat-send-btn" onclick="sendChat()">
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
@@ -811,7 +829,6 @@
                                 <option value="building">Building/Craft</option>
                                 <option value="music">Music</option>
                                 <option value="gaming">Gaming</option>
-                                <option value="desktop">Desktop Stream</option>
                                 <option value="irl">IRL</option>
                                 <option value="other">Other</option>
                             </select>
@@ -974,22 +991,20 @@
     <!-- ── ADMIN PANEL ───────────────────────────────────── -->
     <section id="page-admin" class="page">
         <div class="container">
-            <h2><i class="fa-solid fa-shield-halved"></i> Admin Panel</h2>
+            <h2><i class="fa-solid fa-shield-halved"></i> Staff Console</h2>
 
             <div class="admin-stats" id="admin-stats"></div>
 
             <div class="admin-tabs">
                 <button class="tab-btn active" onclick="switchAdminTab('users')">Users</button>
-                <button class="tab-btn" onclick="switchAdminTab('moderators')">Global Mods</button>
+                <button class="tab-btn" onclick="switchAdminTab('moderators')">Moderators</button>
                 <button class="tab-btn" onclick="switchAdminTab('chat-logs')">Chat Logs</button>
                 <button class="tab-btn" onclick="switchAdminTab('settings')">Settings</button>
-                <button class="tab-btn" onclick="switchAdminTab('tts')">TTS</button>
                 <button class="tab-btn" onclick="switchAdminTab('verification')">Verification Keys</button>
                 <button class="tab-btn" onclick="switchAdminTab('streams')">Streams</button>
                 <button class="tab-btn" onclick="switchAdminTab('cashouts')">Cashouts</button>
                 <button class="tab-btn" onclick="switchAdminTab('bans')">Bans</button>
                 <button class="tab-btn" onclick="switchAdminTab('vpn')">VPN Queue</button>
-                <button class="tab-btn" onclick="switchAdminTab('pastes')">Pastes</button>
             </div>
             <div class="admin-content" id="admin-content"></div>
         </div>
@@ -1041,7 +1056,6 @@
                                 <option value="building">Building/Craft</option>
                                 <option value="music">Music</option>
                                 <option value="gaming">Gaming</option>
-                                <option value="desktop">Desktop Stream</option>
                                 <option value="irl" selected>IRL</option>
                                 <option value="other">Other</option>
                             </select>
@@ -1086,22 +1100,10 @@
 
                         <!-- Device selection for Browser WebRTC (visible when browser sub-method selected) -->
                         <div class="form-group" id="bc-create-devices" style="display:block">
-                            <div id="bc-perm-request" class="bc-perm-request">
-                                <p class="bc-perm-hint"><i class="fa-solid fa-shield-halved"></i> Your browser needs camera &amp; microphone access to list available devices and go live.</p>
-                                <button id="bc-perm-btn" class="btn btn-outline" type="button" style="touch-action:manipulation">
-                                    <i class="fa-solid fa-video"></i> Allow Camera &amp; Mic
-                                </button>
-                                <p id="bc-perm-debug" style="display:none;font-size:0.75rem;color:var(--text-secondary);margin-top:8px"></p>
-                            </div>
-                            <div id="bc-device-selects" style="display:none">
-                                <label>Camera</label>
-                                <select id="bc-create-camera" class="form-input"><option value="default">Default</option></select>
-                                <label style="margin-top:8px">Microphone</label>
-                                <select id="bc-create-audio" class="form-input"><option value="default">Default</option></select>
-                                <button class="btn btn-small btn-outline" type="button" onclick="requestMediaPermissions()" style="margin-top:8px" title="Refresh device list">
-                                    <i class="fa-solid fa-arrows-rotate"></i> Refresh Devices
-                                </button>
-                            </div>
+                            <label>Camera</label>
+                            <select id="bc-create-camera" class="form-input"><option value="default">Default</option></select>
+                            <label style="margin-top:8px">Microphone</label>
+                            <select id="bc-create-audio" class="form-input"><option value="default">Default</option></select>
                         </div>
 
                         <button class="btn btn-primary btn-lg" style="width:100%" id="bc-create-btn" onclick="createNewStream()">
@@ -1163,6 +1165,27 @@
                     </div>
 
                     <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                    <!-- Call controls for RTMP -->
+                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-rtmp" style="display:none">
+                        <div class="bc-call-header">
+                            <div class="bc-call-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span class="bc-call-status-text" id="bc-call-status-text-rtmp">Voice Chat — Off</span>
+                            </div>
+                            <span class="bc-call-count" id="bc-call-count-rtmp">0 in call</span>
+                        </div>
+                        <div class="bc-call-actions">
+                            <select id="bc-call-mode-select-rtmp" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
+                                <option value="">Disabled</option>
+                                <option value="mic">Voice Chat (mic only)</option>
+                                <option value="mic+cam">Voice + Camera</option>
+                                <option value="cam+mic">Video Call</option>
+                            </select>
+                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-rtmp" onclick="endBroadcastCall()" style="display:none">
+                                <i class="fa-solid fa-phone-slash"></i> End Call
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- JSMPEG Instructions Panel -->
@@ -1349,6 +1372,27 @@
                     </div>
 
                     <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                    <!-- Call controls for JSMPEG -->
+                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-jsmpeg" style="display:none">
+                        <div class="bc-call-header">
+                            <div class="bc-call-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span class="bc-call-status-text" id="bc-call-status-text-jsmpeg">Voice Chat — Off</span>
+                            </div>
+                            <span class="bc-call-count" id="bc-call-count-jsmpeg">0 in call</span>
+                        </div>
+                        <div class="bc-call-actions">
+                            <select id="bc-call-mode-select-jsmpeg" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
+                                <option value="">Disabled</option>
+                                <option value="mic">Voice Chat (mic only)</option>
+                                <option value="mic+cam">Voice + Camera</option>
+                                <option value="cam+mic">Video Call</option>
+                            </select>
+                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-jsmpeg" onclick="endBroadcastCall()" style="display:none">
+                                <i class="fa-solid fa-phone-slash"></i> End Call
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- WebRTC OBS (WHIP) Instructions Panel -->
@@ -1381,6 +1425,27 @@
                         <p class="muted"><i class="fa-solid fa-info-circle"></i> Requires OBS Studio 30.0 or newer. Older versions do not support WHIP.</p>
                     </div>
                     <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                    <!-- Call controls for WHIP -->
+                    <div class="bc-call-controls bc-call-controls-method" id="bc-call-controls-whip" style="display:none">
+                        <div class="bc-call-header">
+                            <div class="bc-call-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span class="bc-call-status-text" id="bc-call-status-text-whip">Voice Chat — Off</span>
+                            </div>
+                            <span class="bc-call-count" id="bc-call-count-whip">0 in call</span>
+                        </div>
+                        <div class="bc-call-actions">
+                            <select id="bc-call-mode-select-whip" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
+                                <option value="">Disabled</option>
+                                <option value="mic">Voice Chat (mic only)</option>
+                                <option value="mic+cam">Voice + Camera</option>
+                                <option value="cam+mic">Video Call</option>
+                            </select>
+                            <button class="btn btn-small btn-danger" id="bc-call-end-btn-whip" onclick="endBroadcastCall()" style="display:none">
+                                <i class="fa-solid fa-phone-slash"></i> End Call
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ═══ WebRTC Browser Broadcast (live controls) ═══ -->
@@ -1411,14 +1476,90 @@
                     <!-- Info bar -->
                     <div class="bc-info-bar" id="bc-info-bar" style="display:none">
                         <div class="bc-info-item">
-                            <i class="fa-solid fa-eye"></i> <strong id="bc-viewer-count">0</strong> total viewers
-                        </div>
-                        <div class="bc-info-item" id="bc-rs-viewer-count" style="display:none">
-                            <i class="fa-solid fa-robot"></i> <strong>0</strong> on RS
+                            <i class="fa-solid fa-eye"></i> <strong id="bc-viewer-count">0</strong> viewers
                         </div>
                         <div class="bc-info-item">
                             <i class="fa-solid fa-clock"></i> <strong id="bc-uptime">0:00:00</strong>
                         </div>
+                        <div class="bc-info-item" id="bc-protocol-badge"></div>
+                    </div>
+
+                    <!-- Group Call Controls (shared across all stream methods) -->
+                    <div class="bc-call-controls" id="bc-call-controls" style="display:none">
+                        <div class="bc-call-header">
+                            <div class="bc-call-header-left">
+                                <i class="fa-solid fa-headset"></i>
+                                <span class="bc-call-status-text" id="bc-call-status-text">Voice Chat — Off</span>
+                            </div>
+                            <span class="bc-call-count" id="bc-call-count">0 in call</span>
+                        </div>
+                        <div class="bc-call-actions">
+                            <select id="bc-call-mode-select" class="form-input form-input-sm" onchange="onCallModeChange(this.value)">
+                                <option value="">Disabled</option>
+                                <option value="mic">Voice Chat (mic only)</option>
+                                <option value="mic+cam">Voice + Camera</option>
+                                <option value="cam+mic">Video Call</option>
+                            </select>
+                            <button class="btn btn-small btn-danger" id="bc-call-end-btn" onclick="endBroadcastCall()" style="display:none">
+                                <i class="fa-solid fa-phone-slash"></i> End Call
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Broadcast Call Panel (streamer's view of call participants) -->
+                    <div class="bc-call-panel call-panel" id="bc-call-panel" style="display:none">
+                        <div class="call-participants-grid" id="bc-call-participants-grid"></div>
+                        <div class="call-controls">
+                            <button class="call-ctrl-btn" id="bc-call-btn-mute" onclick="toggleCallMute()" title="Mute">
+                                <i class="fa-solid fa-microphone"></i>
+                            </button>
+                            <button class="call-ctrl-btn" id="bc-call-btn-camera" onclick="toggleCallCamera()" title="Toggle Camera">
+                                <i class="fa-solid fa-video"></i>
+                            </button>
+                        </div>
+                        <details class="call-device-switcher">
+                            <summary><i class="fa-solid fa-gear"></i> Input Devices</summary>
+                            <div class="call-device-selects call-device-selects-compact">
+                                <div class="call-device-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-microphone"></i> Mic</label>
+                                    <select id="bc-call-mic-switch" class="form-input form-input-sm" onchange="switchCallMic(this.value)">
+                                        <option value="default">Default Microphone</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group" id="bc-call-cam-switch-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-video"></i> Camera</label>
+                                    <select id="bc-call-cam-switch" class="form-input form-input-sm" onchange="switchCallCam(this.value)">
+                                        <option value="default">Default Camera</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="call-input-settings call-input-settings-compact">
+                                <div class="call-device-group">
+                                    <label class="call-device-label"><i class="fa-solid fa-wave-square"></i> Input Mode</label>
+                                    <select id="bc-call-input-mode-switch" class="form-input form-input-sm" onchange="onCallInputModeChange(this.value)">
+                                        <option value="open">Open Mic</option>
+                                        <option value="ptt">Push to Talk</option>
+                                        <option value="vad">Voice Activation</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group call-ptt-group" id="bc-call-ptt-switch-group" style="display:none">
+                                    <label class="call-device-label"><i class="fa-solid fa-keyboard"></i> Push Key</label>
+                                    <select id="bc-call-ptt-key-switch" class="form-input form-input-sm" onchange="onCallPttKeyChange(this.value)">
+                                        <option value="Space">Space</option>
+                                        <option value="KeyV">V</option>
+                                        <option value="KeyT">T</option>
+                                        <option value="AltLeft">Left Alt</option>
+                                    </select>
+                                </div>
+                                <div class="call-device-group call-vad-group" id="bc-call-vad-switch-group" style="display:none">
+                                    <label class="call-device-label"><i class="fa-solid fa-sliders"></i> Activation Threshold</label>
+                                    <input id="bc-call-vad-threshold-switch" class="call-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="onCallVadThresholdChange(this.value)">
+                                    <span class="call-threshold-value" id="bc-call-vad-threshold-value-switch">32%</span>
+                                </div>
+                            </div>
+                            <div class="call-ptt-status" id="bc-call-ptt-status" style="display:none">Hold <strong id="bc-call-ptt-status-key">Space</strong> to talk</div>
+                        </details>
+                        <div class="call-log" id="bc-call-log"></div>
                     </div>
 
                     <!-- Live controls (visible when streaming) -->
@@ -1442,22 +1583,9 @@
                             </button>
                         </div>
 
-                        <!-- Restream Control Panel (visible when destinations configured + streaming) -->
-                        <div class="bc-restream-control" id="bc-restream-control" style="display:none"></div>
-
                         <!-- TTS Settings -->
                         <div class="bc-settings-group">
                             <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">TTS Mode</span>
-                                <div class="bc-setting-control">
-                                    <select id="bc-ttsMode">
-                                        <option value="site-wide">Site-Wide TTS (Server Voices)</option>
-                                        <option value="self">Self TTS (Browser Voices)</option>
-                                        <option value="off">Off</option>
-                                    </select>
-                                </div>
-                            </div>
                             <div class="bc-setting-row">
                                 <span class="bc-setting-label">TTS Volume</span>
                                 <div class="bc-setting-control"><input type="range" id="bc-ttsVolume" min="0" max="1000" step="50"></div>
@@ -1538,198 +1666,6 @@
                             <div class="bc-setting-row">
                                 <span class="bc-setting-label">Notification Volume</span>
                                 <div class="bc-setting-control"><input type="range" id="bc-notificationVolume" min="0" max="1000" step="50"></div>
-                            </div>
-                        </div>
-
-                        <!-- RobotStreamer Integration -->
-                        <!-- Restream Destinations -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
-
-                            <!-- Active destination list (dynamically populated) -->
-                            <div id="bc-restream-destinations"></div>
-
-                            <!-- Add Destination button -->
-                            <div class="bc-setting-row" id="bc-restream-add-btn-row">
-                                <button class="bc-ctrl-btn" type="button" onclick="showAddRestreamDestination()">
-                                    <i class="fa-solid fa-plus"></i> Add Destination
-                                </button>
-                            </div>
-
-                            <!-- Add Destination form (hidden by default) -->
-                            <div id="bc-restream-add-form" style="display:none">
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Platform</span>
-                                    <div class="bc-setting-control">
-                                        <select id="bc-restream-platform" onchange="onRestreamPlatformChange()">
-                                            <option value="youtube">YouTube</option>
-                                            <option value="twitch">Twitch</option>
-                                            <option value="kick">Kick</option>
-                                            <option value="custom">Custom RTMP</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Name</span>
-                                    <div class="bc-setting-control">
-                                        <input type="text" id="bc-restream-name" placeholder="My Channel">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row" id="bc-restream-url-row">
-                                    <span class="bc-setting-label">Server URL</span>
-                                    <div class="bc-setting-control">
-                                        <input type="text" id="bc-restream-url" placeholder="rtmp://a.rtmp.youtube.com/live2">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Stream Key</span>
-                                    <div class="bc-setting-control">
-                                        <input type="password" id="bc-restream-key" placeholder="Paste your stream key">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Auto-Start</span>
-                                    <div class="bc-setting-control">
-                                        <label class="bc-toggle"><input type="checkbox" id="bc-restream-autostart"><span class="bc-toggle-slider"></span></label>
-                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Start restream automatically when you go live</span>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Channel URL</span>
-                                    <div class="bc-setting-control">
-                                        <input type="text" id="bc-restream-channel-url" placeholder="https://twitch.tv/yourname">
-                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Viewable channel link (shown on live page). Kick chatroom ID is auto-detected for chat relay.</span>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Relay Chat</span>
-                                    <div class="bc-setting-control">
-                                        <label class="bc-toggle"><input type="checkbox" id="bc-restream-chat-relay"><span class="bc-toggle-slider"></span></label>
-                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Mirror chat from this platform into your HoboStreamer chat</span>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Quality</span>
-                                    <div class="bc-setting-control">
-                                        <select id="bc-restream-quality">
-                                            <option value="auto">Auto (per-platform default)</option>
-                                            <option value="low">Low (720p 1500k)</option>
-                                            <option value="medium">Medium (720p 2500k)</option>
-                                            <option value="high">High (720p 4000k)</option>
-                                            <option value="ultra">Ultra (1080p 6000k)</option>
-                                            <option value="source">Source (native 8000k)</option>
-                                        </select>
-                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Encoding quality for JSMPEG/WebRTC streams (RTMP uses codec copy)</span>
-                                    </div>
-                                </div>
-                                <!-- Advanced Encoding Overrides (collapsible) -->
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label" style="cursor:pointer;user-select:none" onclick="document.getElementById('bc-restream-advanced').style.display = document.getElementById('bc-restream-advanced').style.display === 'none' ? '' : 'none'">
-                                        <i class="fa-solid fa-sliders"></i> Advanced <span style="font-size:0.7rem;color:var(--text-secondary)">(click to expand)</span>
-                                    </span>
-                                </div>
-                                <div id="bc-restream-advanced" style="display:none">
-                                    <div class="bc-setting-row">
-                                        <span class="bc-setting-label">Video Bitrate</span>
-                                        <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
-                                            <input type="number" id="bc-restream-custom-vbr" placeholder="Auto" min="500" max="50000" step="100" style="width:90px">
-                                            <span style="font-size:0.75rem;color:var(--text-secondary)">kbps (blank = use preset)</span>
-                                        </div>
-                                    </div>
-                                    <div class="bc-setting-row">
-                                        <span class="bc-setting-label">Audio Bitrate</span>
-                                        <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
-                                            <input type="number" id="bc-restream-custom-abr" placeholder="Auto" min="32" max="512" step="16" style="width:90px">
-                                            <span style="font-size:0.75rem;color:var(--text-secondary)">kbps (blank = use preset)</span>
-                                        </div>
-                                    </div>
-                                    <div class="bc-setting-row">
-                                        <span class="bc-setting-label">FPS</span>
-                                        <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
-                                            <input type="number" id="bc-restream-custom-fps" placeholder="Auto" min="15" max="120" step="1" style="width:90px">
-                                            <span style="font-size:0.75rem;color:var(--text-secondary)">(blank = use preset, typically 30)</span>
-                                        </div>
-                                    </div>
-                                    <div class="bc-setting-row">
-                                        <span class="bc-setting-label">Encoder Speed</span>
-                                        <div class="bc-setting-control">
-                                            <select id="bc-restream-custom-encoder" style="width:130px">
-                                                <option value="">Auto (use preset)</option>
-                                                <option value="ultrafast">Ultrafast</option>
-                                                <option value="superfast">Superfast</option>
-                                                <option value="veryfast">Veryfast</option>
-                                                <option value="faster">Faster</option>
-                                                <option value="fast">Fast</option>
-                                                <option value="medium">Medium</option>
-                                                <option value="slow">Slow</option>
-                                            </select>
-                                            <span style="font-size:0.65rem;color:var(--text-secondary);margin-left:6px">Slower = better quality, more CPU</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Actions</span>
-                                    <div class="bc-setting-control" style="display:flex;gap:8px">
-                                        <button class="bc-ctrl-btn" type="button" onclick="saveRestreamDestination()">
-                                            <i class="fa-solid fa-floppy-disk"></i> Save
-                                        </button>
-                                        <button class="bc-ctrl-btn" type="button" onclick="cancelAddRestreamDestination()">
-                                            <i class="fa-solid fa-xmark"></i> Cancel
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <p class="bc-call-explainer" style="margin-top:8px">
-                                Restream to YouTube, Twitch, Kick, or any custom RTMP server. Works with all streaming methods (RTMP, JSMPEG, WebRTC). RTMP uses codec copy (no re-encoding); JSMPEG and WebRTC are re-encoded to H.264/AAC using the quality preset above.
-                            </p>
-
-                            <!-- RobotStreamer subsection -->
-                            <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:12px">
-                                <div class="bc-settings-subtitle" style="font-size:0.85rem;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px">
-                                    <i class="fa-solid fa-robot"></i> RobotStreamer (WebRTC)
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Enable RS Restream</span>
-                                    <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsEnabled"><span class="bc-toggle-slider"></span></label></div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Mirror RS Chat</span>
-                                    <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsMirrorChat"><span class="bc-toggle-slider"></span></label></div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">RS Token</span>
-                                    <div class="bc-setting-control">
-                                        <input type="password" id="bc-rsToken" placeholder="Paste your robotstreamer-token cookie or JWT">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Robot ID / URL</span>
-                                    <div class="bc-setting-control">
-                                        <input type="text" id="bc-rsRobotInput" placeholder="1837 or https://robotstreamer.com/robot/1837">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Detected Robots</span>
-                                    <div class="bc-setting-control">
-                                        <select id="bc-rsRobotSelect">
-                                            <option value="">Validate to load your RobotStreamer streams</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Actions</span>
-                                    <div class="bc-setting-control" style="display:flex;gap:8px;flex-wrap:wrap">
-                                        <button class="bc-ctrl-btn" type="button" onclick="validateRobotStreamerIntegration()">
-                                            <i class="fa-solid fa-plug-circle-check"></i> Validate
-                                        </button>
-                                        <button class="bc-ctrl-btn" type="button" onclick="saveRobotStreamerIntegration()">
-                                            <i class="fa-solid fa-floppy-disk"></i> Save
-                                        </button>
-                                    </div>
-                                </div>
-                                <p class="bc-call-explainer" id="bc-rsStatus">RobotStreamer restreaming requires browser WebRTC broadcasting. Configure your token and robot, then go live.</p>
-                                <p class="bc-call-explainer" id="bc-rsLiveStatus">RobotStreamer restream is idle.</p>
                             </div>
                         </div>
 
@@ -1819,13 +1755,6 @@
                                 </div>
                             </div>
                             <div class="bc-setting-row">
-                                <span class="bc-setting-label">Server Reconnect</span>
-                                <div class="bc-setting-control">
-                                    <label class="bc-toggle"><input type="checkbox" id="bc-serverReconnect" checked onchange="updateBroadcastSetting('serverReconnect', this.checked)"><span class="bc-toggle-slider"></span></label>
-                                    <span class="bc-setting-hint" style="font-size:11px;color:var(--text-muted);margin-left:8px">Auto-reconnect stream after server restart</span>
-                                </div>
-                            </div>
-                            <div class="bc-setting-row">
                                 <span class="bc-setting-label">Allow Sounds</span>
                                 <div class="bc-setting-control">
                                     <select id="bc-allowSounds"><option value="false" selected>Off</option><option value="true">On</option></select>
@@ -1844,14 +1773,9 @@
             <div class="chat-sidebar" id="bc-chat-sidebar" style="display:none">
                 <div class="chat-header">
                     <span>STREAM CHAT</span>
-                    <div class="chat-header-actions">
-                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
-                            <i class="fa-solid fa-gear"></i>
-                        </button>
-                        <button class="mobile-chat-close" onclick="toggleBroadcastMobileChat()" title="Close Chat">
-                            <i class="fa-solid fa-xmark"></i>
-                        </button>
-                    </div>
+                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
                 </div>
                 <div class="chat-messages" id="bc-chat-messages"></div>
                 <div class="chat-input-area">
@@ -1875,11 +1799,8 @@
                         <button class="emote-picker-btn" onclick="toggleEmotePicker('bc-chat-input')" title="Emotes">
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
-                        <textarea id="bc-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
-                        <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
-                            <i class="fa-solid fa-volume-high"></i>
-                        </button>
+                        <input type="text" id="bc-chat-input" placeholder="Send a message..." maxlength="500"
+                               onkeydown="if(event.key==='Enter')sendChat()">
                         <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Coins">
                             <i class="fa-solid fa-gem"></i>
                         </button>
@@ -1903,12 +1824,6 @@
                 </div>
             </div>
         </div>
-
-        <!-- Mobile Chat Toggle FAB for Broadcast page (visible only on small screens when live) -->
-        <button class="mobile-chat-toggle bc-mobile-chat-fab" id="bc-mobile-chat-toggle" onclick="toggleBroadcastMobileChat()" title="Toggle Chat" style="display:none">
-            <i class="fa-solid fa-comment"></i>
-            <span class="mobile-chat-badge" id="bc-mobile-chat-badge" style="display:none">0</span>
-        </button>
     </section>
 
     <!-- ── SETTINGS ──────────────────────────────────────── -->
@@ -2216,251 +2131,31 @@
         </div>
     </section>
 
-    <!-- ── GLOBAL CHAT + VOICE CHANNELS PAGE ──────────────── -->
+    <!-- ── GLOBAL CHAT PAGE ────────────────────────────── -->
     <section id="page-chat" class="page">
-        <div class="chat-voice-layout">
-            <!-- ── Left: Voice Channels ── -->
-            <div class="vc-sidebar">
-                <div class="vc-sidebar-header">
-                    <h3><i class="fa-solid fa-headset"></i> Voice Channels</h3>
-                    <button class="vc-create-btn" onclick="vcShowCreateModal()" title="Create Channel">
-                        <i class="fa-solid fa-plus"></i>
-                    </button>
-                </div>
-                <div class="vc-channel-list" id="vc-channel-list">
-                    <!-- Populated by voice-channels.js -->
-                </div>
-
-                <!-- ── Device Setup Panel (shown before joining) ── -->
-                <div class="vc-setup-panel" id="vc-setup-panel" style="display:none">
-                    <div class="vc-setup-header">
-                        <span class="vc-setup-title" id="vc-setup-title">Setup Audio</span>
-                        <button class="vc-setup-close" onclick="vcCancelSetup()" title="Cancel"><i class="fa-solid fa-xmark"></i></button>
-                    </div>
-                    <div class="vc-setup-preview">
-                        <div class="vc-setup-avatar" id="vc-setup-avatar">
-                            <div class="vc-mic-level" id="vc-mic-level"></div>
-                        </div>
-                        <div class="vc-setup-meter">
-                            <div class="vc-meter-bar" id="vc-meter-bar"></div>
-                        </div>
-                    </div>
-                    <div class="vc-setup-devices">
-                        <div class="vc-device-group">
-                            <label><i class="fa-solid fa-microphone"></i> Microphone</label>
-                            <select id="vc-mic-select" class="form-input form-input-sm">
-                                <option value="default">Default Microphone</option>
-                            </select>
-                        </div>
-                        <div class="vc-device-group" id="vc-cam-group">
-                            <label><i class="fa-solid fa-video"></i> Camera</label>
-                            <select id="vc-cam-select" class="form-input form-input-sm">
-                                <option value="default">Default Camera</option>
-                            </select>
-                            <label class="vc-cam-off-toggle" id="vc-cam-off-toggle">
-                                <input type="checkbox" id="vc-start-cam-off" checked>
-                                <span>Start with camera off</span>
-                            </label>
-                        </div>
-                    </div>
-                    <div class="vc-setup-input-mode">
-                        <div class="vc-device-group">
-                            <label><i class="fa-solid fa-wave-square"></i> Input Mode</label>
-                            <select id="vc-input-mode" class="form-input form-input-sm" onchange="vcOnInputModeChange(this.value)">
-                                <option value="open">Open Mic</option>
-                                <option value="ptt">Push to Talk</option>
-                                <option value="vad">Voice Activation</option>
-                            </select>
-                        </div>
-                        <div class="vc-device-group vc-ptt-group" id="vc-ptt-group" style="display:none">
-                            <label><i class="fa-solid fa-keyboard"></i> Push Key</label>
-                            <select id="vc-ptt-key" class="form-input form-input-sm" onchange="vcOnPttKeyChange(this.value)">
-                                <option value="Space">Space</option>
-                                <option value="KeyV">V</option>
-                                <option value="KeyT">T</option>
-                                <option value="KeyB">B</option>
-                                <option value="KeyX">X</option>
-                                <option value="AltLeft">Left Alt</option>
-                                <option value="AltRight">Right Alt</option>
-                                <option value="ControlLeft">Left Ctrl</option>
-                                <option value="ShiftLeft">Left Shift</option>
-                                <option value="Mouse3">Mouse Middle</option>
-                                <option value="Mouse4">Mouse Button 4</option>
-                                <option value="Mouse5">Mouse Button 5</option>
-                            </select>
-                        </div>
-                        <div class="vc-device-group vc-vad-group" id="vc-vad-group" style="display:none">
-                            <label><i class="fa-solid fa-sliders"></i> Sensitivity</label>
-                            <input id="vc-vad-threshold" class="vc-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="vcOnVadChange(this.value)">
-                            <span id="vc-vad-value">32%</span>
-                        </div>
-                    </div>
-                    <div class="vc-setup-actions">
-                        <button class="btn btn-secondary vc-test-btn" id="vc-test-btn" onclick="vcToggleTest()">
-                            <i class="fa-solid fa-play"></i> Test Mic
-                        </button>
-                        <button class="btn btn-primary vc-join-btn" onclick="vcJoinFromSetup()">
-                            <i class="fa-solid fa-headset"></i> Join Channel
-                        </button>
-                    </div>
-                </div>
-
-                <!-- ── Connected Panel (shown when in a voice channel) ── -->
-                <div class="vc-connected-panel" id="vc-connected-panel" style="display:none">
-                    <div class="vc-connected-header">
-                        <div class="vc-connected-info">
-                            <span class="vc-connected-badge"><i class="fa-solid fa-circle"></i> Voice Connected</span>
-                            <span class="vc-connected-channel" id="vc-connected-channel">Public</span>
-                        </div>
-                        <div class="vc-connected-status" id="vc-connected-status" style="display:none; color:#f87171; font-size:0.8rem; padding:4px 8px;"></div>
-                    </div>
-                    <div class="vc-participants-grid" id="vc-participants-grid"></div>
-                    <div class="vc-controls">
-                        <button class="vc-ctrl-btn" id="vc-btn-mute" onclick="vcToggleMute()" title="Mute">
-                            <i class="fa-solid fa-microphone"></i>
-                        </button>
-                        <button class="vc-ctrl-btn" id="vc-btn-camera" onclick="vcToggleCamera()" title="Toggle Camera">
-                            <i class="fa-solid fa-video"></i>
-                        </button>
-                        <button class="vc-ctrl-btn" id="vc-btn-screen" onclick="vcToggleScreenShare()" title="Share Screen" style="display:none">
-                            <i class="fa-solid fa-display"></i>
-                        </button>
-                        <button class="vc-ctrl-btn vc-ctrl-settings" id="vc-btn-settings" onclick="vcToggleSettings()" title="Settings">
-                            <i class="fa-solid fa-gear"></i>
-                        </button>
-                        <button class="vc-ctrl-btn vc-ctrl-leave" onclick="vcLeave()" title="Disconnect">
-                            <i class="fa-solid fa-phone-slash"></i>
-                        </button>
-                    </div>
-                    <!-- In-call settings (toggled) -->
-                    <div class="vc-incall-settings" id="vc-incall-settings" style="display:none">
-                        <div class="vc-device-group">
-                            <label><i class="fa-solid fa-microphone"></i> Mic</label>
-                            <select id="vc-mic-switch" class="form-input form-input-sm" onchange="vcSwitchMic(this.value)">
-                                <option value="default">Default</option>
-                            </select>
-                        </div>
-                        <div class="vc-device-group" id="vc-cam-switch-group">
-                            <label><i class="fa-solid fa-video"></i> Camera</label>
-                            <select id="vc-cam-switch" class="form-input form-input-sm" onchange="vcSwitchCam(this.value)">
-                                <option value="default">Default</option>
-                            </select>
-                        </div>
-                        <div class="vc-device-group">
-                            <label><i class="fa-solid fa-wave-square"></i> Input Mode</label>
-                            <select id="vc-input-mode-switch" class="form-input form-input-sm" onchange="vcOnInputModeChange(this.value)">
-                                <option value="open">Open Mic</option>
-                                <option value="ptt">Push to Talk</option>
-                                <option value="vad">Voice Activation</option>
-                            </select>
-                        </div>
-                        <div class="vc-device-group vc-ptt-group" id="vc-ptt-switch-group" style="display:none">
-                            <label><i class="fa-solid fa-keyboard"></i> Push Key</label>
-                            <select id="vc-ptt-key-switch" class="form-input form-input-sm" onchange="vcOnPttKeyChange(this.value)">
-                                <option value="Space">Space</option>
-                                <option value="KeyV">V</option>
-                                <option value="KeyT">T</option>
-                                <option value="KeyB">B</option>
-                                <option value="KeyX">X</option>
-                                <option value="AltLeft">Left Alt</option>
-                                <option value="AltRight">Right Alt</option>
-                                <option value="ControlLeft">Left Ctrl</option>
-                                <option value="ShiftLeft">Left Shift</option>
-                                <option value="Mouse3">Mouse Middle</option>
-                                <option value="Mouse4">Mouse Button 4</option>
-                                <option value="Mouse5">Mouse Button 5</option>
-                            </select>
-                        </div>
-                        <div class="vc-device-group vc-vad-group" id="vc-vad-switch-group" style="display:none">
-                            <label><i class="fa-solid fa-sliders"></i> Sensitivity</label>
-                            <input id="vc-vad-threshold-switch" class="vc-threshold-slider" type="range" min="5" max="80" step="1" value="32" oninput="vcOnVadChange(this.value)">
-                            <span id="vc-vad-switch-value">32%</span>
-                        </div>
-                        <div class="vc-ptt-status" id="vc-ptt-status" style="display:none">Hold <strong id="vc-ptt-status-key">Space</strong> to talk</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ── Right: Global Chat ── -->
+        <div class="global-chat-layout">
             <div class="global-chat-main">
                 <div class="global-chat-header">
                     <div>
-                        <h2><i class="fa-solid fa-comments"></i> <span id="chat-mode-title">Global Chat</span></h2>
-                        <p class="muted" id="chat-mode-subtitle">Live messages from all streams and the lobby</p>
+                        <h2><i class="fa-solid fa-comments"></i> Global Chat</h2>
+                        <p class="muted">Live messages from all streams and the lobby</p>
                     </div>
-                    <div class="chat-header-controls">
-                        <select id="chat-mode-select" class="form-input form-input-sm chat-mode-select" onchange="onChatModeChange(this.value)">
-                            <option value="global">Global</option>
-                            <option value="voice" id="chat-mode-voice-opt" disabled>Voice Call</option>
-                        </select>
-                        <button class="chat-settings-btn" onclick="popoutGlobalChat()" title="Pop Out Chat">
-                            <i class="fa-solid fa-up-right-from-square"></i>
-                        </button>
-                        <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
-                            <i class="fa-solid fa-gear"></i>
-                        </button>
-                    </div>
+                    <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
                 </div>
                 <div class="global-chat-messages" id="global-chat-messages"></div>
                 <div class="chat-input-area">
-                    <!-- Emote Picker -->
-                    <div id="gc-emote-picker" class="emote-picker" style="display:none">
-                        <div class="emote-picker-header">
-                            <input type="text" class="emote-search" placeholder="Search emotes..." oninput="onEmoteSearch(this.value)">
-                        </div>
-                        <div class="emote-picker-tabs">
-                            <button class="emote-tab-btn active" data-tab="all" onclick="renderEmotePicker('all')">All</button>
-                            <button class="emote-tab-btn" data-tab="defaults" onclick="renderEmotePicker('defaults')">Popular</button>
-                            <button class="emote-tab-btn" data-tab="channel" onclick="renderEmotePicker('channel')">Channel</button>
-                            <button class="emote-tab-btn" data-tab="global" onclick="renderEmotePicker('global')">Custom</button>
-                            <button class="emote-tab-btn" data-tab="ffz" onclick="renderEmotePicker('ffz')">FFZ</button>
-                            <button class="emote-tab-btn" data-tab="7tv" onclick="renderEmotePicker('7tv')">7TV</button>
-                            <button class="emote-tab-btn" data-tab="bttv" onclick="renderEmotePicker('bttv')">BTTV</button>
-                        </div>
-                        <div class="emote-picker-grid" id="gc-emote-picker-grid"></div>
-                    </div>
                     <div class="chat-input-row">
                         <button class="emote-picker-btn" onclick="toggleEmotePicker('global-chat-input')" title="Emotes">
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
-                        <textarea id="global-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                        <input type="text" id="global-chat-input" placeholder="Send a message..." maxlength="500"
+                               onkeydown="if(event.key==='Enter')sendChat()">
                         <button class="chat-send-btn" onclick="sendChat()">
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
                     </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Create Channel Modal -->
-        <div class="vc-modal-overlay" id="vc-create-modal" style="display:none" onclick="if(event.target===this)vcHideCreateModal()">
-            <div class="modal-box">
-                <div class="modal-header">
-                    <h3>Create Voice Channel</h3>
-                    <button class="modal-close" onclick="vcHideCreateModal()"><i class="fa-solid fa-xmark"></i></button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label>Channel Name</label>
-                        <input type="text" id="vc-create-name" class="form-input" placeholder="e.g. Chill Zone" maxlength="40">
-                    </div>
-                    <div class="form-group">
-                        <label>Mode</label>
-                        <select id="vc-create-mode" class="form-input">
-                            <option value="mic">Voice Only</option>
-                            <option value="mic+cam" selected>Voice + Camera</option>
-                            <option value="cam+mic">Video Call</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Max Participants</label>
-                        <input type="number" id="vc-create-max" class="form-input" value="15" min="2" max="15">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="vcHideCreateModal()">Cancel</button>
-                    <button class="btn btn-primary" onclick="vcCreateChannel()">Create</button>
                 </div>
             </div>
         </div>
@@ -2532,10 +2227,10 @@
                             <div class="game-promo-feat"><span class="gpf-icon">🏆</span><span>Level 6 skills, compete on global leaderboards</span></div>
                         </div>
                         <button class="btn btn-primary btn-lg" onclick="showModal('register')" style="margin-top:16px">
-                            <i class="fa-solid fa-user-plus"></i> Register for a Permanent Account
+                            <i class="fa-solid fa-user-plus"></i> Register to Play — It's Free!
                         </button>
                         <p class="muted" style="margin-top:8px">
-                            You can also jump in instantly as your current anon number, or <a href="#" onclick="event.preventDefault();showModal('login')">log in</a> to continue an existing character.
+                            Already have an account? <a href="#" onclick="event.preventDefault();showModal('login')">Log In</a>
                         </p>
                     </div>
                 </div>
@@ -2557,177 +2252,6 @@
             <!-- Controls hint hidden — game is fullscreen now -->
         </div>
     </section>
-
-    <!-- ═══════════════════════════════════════════════════════════ -->
-    <!--  UPDATES / CHANGELOG                                        -->
-    <!-- ═══════════════════════════════════════════════════════════ -->
-    <section id="page-updates" class="page">
-        <div class="content-container">
-            <div class="page-header">
-                <h1><i class="fa-solid fa-code-commit"></i> Updates</h1>
-                <p class="page-subtitle">Recent changes and patch notes from the <a href="https://github.com/HoboStreamer/HoboStreamer.com" target="_blank">GitHub repository</a>.</p>
-            </div>
-            <div id="updates-list" class="updates-list">
-                <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
-            </div>
-        </div>
-    </section>
-
-    <!-- ═══════════════════════════════════════════════════════════ -->
-    <!--  PASTES INDEX                                               -->
-    <!-- ═══════════════════════════════════════════════════════════ -->
-    <section id="page-pastes" class="page">
-        <div class="content-container">
-            <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-                <div>
-                    <h1><i class="fa-solid fa-paste"></i> Pastes &amp; Images</h1>
-                    <p class="page-subtitle">Share code, notes, prompts, and images with the community. <span id="pastes-count"></span></p>
-                </div>
-                <div style="display:flex;gap:8px;">
-                    <button class="btn btn-primary" onclick="openNewPasteModal()"><i class="fa-solid fa-plus"></i> New Paste</button>
-                    <button class="btn btn-outline" onclick="openImageUpload()"><i class="fa-solid fa-cloud-arrow-up"></i> Upload Image</button>
-                </div>
-            </div>
-
-            <div class="pastes-toolbar">
-                <div class="pastes-filters">
-                    <button class="btn btn-sm pastes-filter-btn active" data-filter="all" onclick="filterPastes('all')">All</button>
-                    <button class="btn btn-sm pastes-filter-btn" data-filter="paste" onclick="filterPastes('paste')"><i class="fa-solid fa-code"></i> Pastes</button>
-                    <button class="btn btn-sm pastes-filter-btn" data-filter="screenshot" onclick="filterPastes('screenshot')"><i class="fa-solid fa-image"></i> Images</button>
-                </div>
-                <div class="pastes-search">
-                    <input type="text" id="pastes-search-input" placeholder="Search pastes…" onkeydown="if(event.key==='Enter')searchPastes()">
-                    <button class="btn btn-sm btn-outline" onclick="searchPastes()"><i class="fa-solid fa-search"></i></button>
-                </div>
-            </div>
-
-            <div class="pastes-grid" id="pastes-grid">
-                <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
-            </div>
-            <div id="pastes-pagination" class="pastes-pagination"></div>
-        </div>
-    </section>
-
-    <!-- ═══════════════════════════════════════════════════════════ -->
-    <!--  PASTE VIEWER                                               -->
-    <!-- ═══════════════════════════════════════════════════════════ -->
-    <section id="page-paste-viewer" class="page">
-        <div class="content-container">
-            <div class="paste-viewer-nav">
-                <button class="btn btn-outline btn-sm" onclick="navigate('/pastes')"><i class="fa-solid fa-arrow-left"></i> All Pastes</button>
-            </div>
-            <div id="paste-viewer-content">
-                <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Paste Create Modal -->
-    <div id="paste-create-modal" class="paste-modal-overlay" style="display:none" onclick="if(event.target===this)closePasteModal()">
-        <div class="paste-modal" onclick="event.stopPropagation()">
-            <div class="paste-modal-header">
-                <h2 id="paste-modal-title"><i class="fa-solid fa-paste"></i> New Paste</h2>
-                <button class="paste-modal-close" onclick="closePasteModal()">&times;</button>
-            </div>
-            <div class="paste-modal-body">
-                <input type="hidden" id="paste-create-slug" value="">
-                <div class="form-group">
-                    <label>Title</label>
-                    <input type="text" id="paste-create-title" placeholder="Untitled" class="form-input" maxlength="200">
-                </div>
-                <div class="form-row">
-                    <div class="form-group" style="flex:1">
-                        <label>Language</label>
-                        <select id="paste-create-lang" class="form-input">
-                            <option value="auto">Auto-detect</option>
-                            <option value="text">Plain Text</option>
-                            <option value="javascript">JavaScript</option>
-                            <option value="python">Python</option>
-                            <option value="html">HTML</option>
-                            <option value="css">CSS</option>
-                            <option value="sql">SQL</option>
-                            <option value="bash">Bash</option>
-                            <option value="json">JSON</option>
-                            <option value="markdown">Markdown</option>
-                            <option value="rust">Rust</option>
-                            <option value="go">Go</option>
-                            <option value="php">PHP</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="flex:1">
-                        <label>Visibility</label>
-                        <select id="paste-create-visibility" class="form-input">
-                            <option value="public">Public</option>
-                            <option value="unlisted">Unlisted</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="display:flex;align-items:flex-end;gap:6px;">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="paste-create-burn"> Burn after read
-                        </label>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Content <span id="paste-line-count" style="opacity:0.5;font-weight:normal;margin-left:8px;"></span></label>
-                    <textarea id="paste-create-content" class="form-input paste-textarea" placeholder="Paste your content here…" oninput="_updatePasteLineCount()" spellcheck="false"></textarea>
-                </div>
-            </div>
-            <div class="paste-modal-footer">
-                <div id="paste-limit-info" style="flex:1;"></div>
-                <button class="btn btn-outline" onclick="closePasteModal()">Cancel</button>
-                <button class="btn btn-primary" id="paste-submit-btn" onclick="submitPaste()"><i class="fa-solid fa-paper-plane"></i> Create Paste</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Image / Screenshot Upload Modal -->
-    <div id="screenshot-upload-modal" class="paste-modal-overlay" style="display:none" onclick="if(event.target===this)closeScreenshotModal()">
-        <div class="paste-modal" onclick="event.stopPropagation()">
-            <div class="paste-modal-header">
-                <h2 id="image-upload-modal-title"><i class="fa-solid fa-cloud-arrow-up"></i> Upload Image</h2>
-                <button class="paste-modal-close" onclick="closeScreenshotModal()">&times;</button>
-            </div>
-            <div class="paste-modal-body">
-                <div class="screenshot-preview-area">
-                    <img id="screenshot-preview" style="display:none;max-width:100%;border-radius:8px;border:1px solid var(--border);" alt="Preview">
-                    <div class="screenshot-upload-zone" id="screenshot-upload-zone">
-                        <label for="screenshot-file-input" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;padding:32px;">
-                            <i class="fa-solid fa-cloud-arrow-up" style="font-size:2rem;opacity:0.5;"></i>
-                            <span>Click to upload or drag an image</span>
-                            <span style="font-size:0.75rem;opacity:0.5;">PNG, JPEG, WebP, or GIF — max 8 MB</span>
-                        </label>
-                        <input type="file" id="screenshot-file-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none" onchange="onScreenshotFileSelect(this)">
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top:12px;">
-                    <label>Title</label>
-                    <input type="text" id="screenshot-title" placeholder="Image title" class="form-input" maxlength="200">
-                </div>
-                <div class="form-group">
-                    <label>Description (optional)</label>
-                    <textarea id="screenshot-desc" class="form-input" rows="2" placeholder="What does this show?"></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group" style="flex:1">
-                        <label>Visibility</label>
-                        <select id="screenshot-visibility" class="form-input">
-                            <option value="public">Public</option>
-                            <option value="unlisted">Unlisted</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="flex:1" id="screenshot-page-url-group">
-                        <label>Page URL</label>
-                        <input type="text" id="screenshot-page-url" class="form-input" readonly>
-                    </div>
-                </div>
-            </div>
-            <div class="paste-modal-footer">
-                <div id="screenshot-limit-info" style="flex:1;"></div>
-                <button class="btn btn-outline" onclick="closeScreenshotModal()">Cancel</button>
-                <button class="btn btn-primary" id="screenshot-submit-btn" onclick="submitScreenshot()"><i class="fa-solid fa-upload"></i> Upload</button>
-            </div>
-        </div>
-    </div>
 
 </main>
 
@@ -2753,8 +2277,8 @@
     <div class="footer-content">
         <span class="footer-brand"><i class="fa-solid fa-campground"></i> HoboStreamer</span>
         <span class="footer-divider">&middot;</span>
-        <a href="https://github.com/HoboStreamer/HoboStreamer.com" target="_blank"><i class="fa-brands fa-github"></i></a>
-        <a href="https://discord.gg/M6MuRUaeJj" target="_blank"><i class="fa-brands fa-discord"></i></a>
+        <a href="https://github.com/user/hobostreamer" target="_blank"><i class="fa-brands fa-github"></i></a>
+        <a href="https://discord.gg/hobostreamer" target="_blank"><i class="fa-brands fa-discord"></i></a>
         <span class="footer-divider">&middot;</span>
         <span class="footer-copy">Open Source & Community Driven</span>
     </div>
@@ -2793,62 +2317,23 @@
 </div>
 
 <!-- Scripts -->
-<script src="/js/theme-engine.js?v=2"></script>
-<script src="/js/app.js?v=4"></script>
-<script src="/js/stream-player.js?v=4"></script>
-<script src="/js/emotes.js?v=2"></script>
-<script src="/js/chat.js?v=8"></script>
-<script src="/js/controls.js?v=2"></script>
-<script src="/js/dashboard.js?v=2"></script>
-<script src="/js/admin.js?v=3"></script>
-<!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
-<div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
-    <div class="fcw-header" onmousedown="fcwStartDrag(event)">
-        <span><i class="fa-solid fa-comments"></i> Global Chat</span>
-        <div class="fcw-header-btns">
-            <button onclick="fcwMinimize()" title="Minimize"><i class="fa-solid fa-minus"></i></button>
-            <button onclick="fcwClose()" title="Close"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-    </div>
-    <div class="fcw-body">
-        <div class="fcw-messages" id="fcw-messages"></div>
-        <div class="fcw-input-area">
-            <textarea id="fcw-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                      rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
-            <button class="chat-send-btn" onclick="fcwSendChat()">
-                <i class="fa-solid fa-paper-plane"></i>
-            </button>
-        </div>
-    </div>
-</div>
-<button id="floating-chat-fab" class="floating-chat-fab" onclick="fcwToggle()" title="Open Global Chat" style="display:none">
-    <i class="fa-solid fa-comments"></i>
-    <span id="fcw-unread-badge" class="fcw-unread-badge" style="display:none">0</span>
-</button>
-
-<!-- ── Mini Voice Channel Indicator (shows when connected & not on Chat tab) ── -->
-<div id="vc-mini-bar" class="vc-mini-bar" style="display:none">
-    <span class="vc-mini-status"><i class="fa-solid fa-circle vc-mini-dot"></i> Voice Connected</span>
-    <span class="vc-mini-channel" id="vc-mini-channel-name">Public</span>
-    <div class="vc-mini-controls">
-        <button class="vc-mini-btn" id="vc-mini-mute" onclick="vcToggleMute()" title="Mute">
-            <i class="fa-solid fa-microphone"></i>
-        </button>
-        <button class="vc-mini-btn vc-mini-leave" onclick="vcLeave()" title="Disconnect">
-            <i class="fa-solid fa-phone-slash"></i>
-        </button>
-    </div>
-</div>
-
-<script src="/js/hobo-bucks.js?v=2"></script>
-<script src="/js/hobo-coins.js?v=2"></script>
-<script src="/js/cosmetics-ui.js?v=2"></script>
-<script src="/js/broadcast.js?v=8"></script>
-<script src="/js/call.js?v=3"></script>
-<script src="/js/voice-channels.js?v=2"></script>
-<script src="/js/settings.js?v=2"></script>
-<script src="/js/game.js?v=2"></script>
-<script src="/js/pastes.js?v=1"></script>
-<script src="/js/messenger.js?v=1"></script>
+<script src="/js/theme-engine.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/stream-player.js"></script>
+<script src="/js/emotes.js"></script>
+<script src="/js/chat.js"></script>
+<script src="/js/controls.js"></script>
+<script src="/js/dashboard.js"></script>
+<script src="/js/dashboard-moderation.js"></script>
+<script src="/js/admin.js"></script>
+<script src="/js/staff-console.js"></script>
+<script src="/js/hobo-bucks.js"></script>
+<script src="/js/hobo-coins.js"></script>
+<script src="/js/cosmetics-ui.js"></script>
+<script src="/js/broadcast.js"></script>
+<script src="/js/call.js"></script>
+<script src="/js/settings.js"></script>
+<script src="/js/game.js"></script>
+<script src="/js/canvas.js"></script>
 </body>
 </html>

@@ -85,13 +85,7 @@ const VAR_GROUPS = [
     { label: 'Borders & Shadows', icon: 'fa-border-all', vars: ['--border','--border-light','--shadow','--shadow-lg'] },
 ];
 
-/* ── Sanitize a CSS variable value ───────────────────────────────── */
-const UNSAFE_CSS_RE = /url\s*\(|expression\s*\(|javascript\s*:|@import|behavior\s*:|\bvar\s*\(/i;
-function sanitizeCssValue(v) {
-    return UNSAFE_CSS_RE.test(v) ? '' : v;
-}
-
-/* ── Apply a set of CSS variables to :root ──────────────── */
+/* ── Apply a set of CSS variables to :root ────────────────────── */
 function applyVariables(vars) {
     const root = document.documentElement;
     // Start from defaults, layer theme vars, then custom overrides
@@ -101,8 +95,7 @@ function applyVariables(vars) {
 
     for (const [key, value] of Object.entries(merged)) {
         if (key.startsWith('--')) {
-            const safe = sanitizeCssValue(value);
-            if (safe) root.style.setProperty(key, safe);
+            root.style.setProperty(key, value);
         }
     }
 }
@@ -235,10 +228,8 @@ async function resetTheme() {
 
 /* ── Apply custom variable override (live editor) ─────────── */
 function setCustomVar(varName, value) {
-    const safe = sanitizeCssValue(value);
-    if (!safe) return;
-    customOverrides[varName] = safe;
-    document.documentElement.style.setProperty(varName, safe);
+    customOverrides[varName] = value;
+    document.documentElement.style.setProperty(varName, value);
 }
 
 /* ── Save custom theme ─────────────────────────────────────── */

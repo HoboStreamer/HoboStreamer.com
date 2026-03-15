@@ -62,23 +62,17 @@ const clipRoutes = require('./vod/clips-routes');
 const commentRoutes = require('./vod/comments-routes');
 const controlRoutes = require('./controls/routes');
 const adminRoutes = require('./admin/routes');
-const { requireAuth } = require('./auth/auth');
-const permissions = require('./auth/permissions');
-const robotStreamerRoutes = require('./integrations/routes');
+const modRoutes = require('./admin/mod-routes');
+const channelModRoutes = require('./admin/channel-mod-routes');
 const thumbnailRoutes = require('./thumbnails/routes');
 const thumbnailService = require('./thumbnails/thumbnail-service');
 const themeRoutes = require('./themes/routes');
 const emoteRoutes = require('./emotes/routes');
-const metaRoutes = require('./meta/routes');
-const pasteRoutes = require('./pastes/routes');
-const robotStreamerService = require('./integrations/robotstreamer-service');
-const chatRelayService = require('./integrations/chat-relay-service');
-
-// Restream
-const restreamRoutes = require('./streaming/restream-routes');
-const restreamManager = require('./streaming/restream-manager');
 
 // Game
+const canvasRoutes = require('./game/canvas-routes');
+const canvasServer = require('./game/canvas-server');
+const canvasService = require('./game/canvas-service');
 const gameRoutes = require('./game/routes');
 const gameServer = require('./game/game-server');
 const game = require('./game/game-engine');
@@ -87,103 +81,32 @@ const game = require('./game/game-engine');
 const app = express();
 const server = http.createServer(app);
 
-function normalizeOrigin(origin) {
-    if (!origin || typeof origin !== 'string') return null;
-    try {
-        return new URL(origin).origin;
-    } catch {
-        return null;
-    }
-}
-
-function getAllowedOrigins() {
-    const allowed = new Set();
-    const baseOrigin = normalizeOrigin(config.baseUrl);
-    if (baseOrigin) allowed.add(baseOrigin);
-
-    if (config.nodeEnv !== 'production') {
-        [
-            'http://localhost:3000',
-            'http://127.0.0.1:3000',
-            'http://localhost:5173',
-            'http://127.0.0.1:5173',
-        ].forEach(origin => allowed.add(origin));
-    }
-
-    return allowed;
-}
-
-const allowedOrigins = getAllowedOrigins();
-
 // ── Middleware ────────────────────────────────────────────────
-app.set('trust proxy', 2); // Two hops: Cloudflare → nginx → Node
-
 app.use(helmet({
     contentSecurityPolicy: false, // Allow inline scripts for dev
     crossOriginEmbedderPolicy: false,
 }));
 app.use(cors({
-    origin(origin, callback) {
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.has(origin)) return callback(null, true);
-        return callback(new Error('Origin not allowed by CORS'));
-    },
+    origin: config.nodeEnv === 'production' ? config.baseUrl : '*',
     credentials: true,
 }));
 app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '256kb' }));
+app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use((err, req, res, next) => {
-    if (err && err.message === 'Origin not allowed by CORS') {
-        return res.status(403).json({ error: 'Origin not allowed' });
-    }
-    next(err);
-});
 
 // Rate limiting
 const apiLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 120,
-    standardHeaders: true,
-    legacyHeaders: false,
     message: { error: 'Too many requests, slow down partner' },
 });
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skipSuccessfulRequests: true,
-    message: { error: 'Too many auth attempts, please try again later' },
-});
-const uploadLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 40,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many upload requests, please slow down' },
-});
 app.use('/api/', apiLimiter);
-app.use('/api/auth/login', authLimiter);
-app.use('/api/auth/register', authLimiter);
-app.use('/api/auth/avatar', uploadLimiter);
-app.use('/api/thumbnails/live', uploadLimiter);
-app.use('/api/vods/upload', uploadLimiter);
-// Only rate-limit VOD upload chunk endpoint, not the read-only /live poll
-app.use('/api/vods/stream/:streamId/chunk', uploadLimiter);
-app.use('/api/vods/stream/:streamId/finalize', uploadLimiter);
-app.use('/api/vods/clips', uploadLimiter);
 
 // ── Static Files ─────────────────────────────────────────────
-// JS/CSS/HTML: no-cache + tell Cloudflare CDN not to cache at edge
-// Browsers revalidate with etag (304 Not Modified), CDN always fetches fresh from origin
-const noCacheHeaders = (res) => { res.setHeader('Cache-Control', 'no-cache'); res.setHeader('CDN-Cache-Control', 'no-store'); };
-app.use('/js', express.static(path.join(__dirname, '../public/js'), { maxAge: 0, etag: true, lastModified: true, setHeaders: noCacheHeaders }));
-app.use('/css', express.static(path.join(__dirname, '../public/css'), { maxAge: 0, etag: true, lastModified: true, setHeaders: noCacheHeaders }));
-app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, filePath) => { if (filePath.endsWith('.html')) noCacheHeaders(res); } }));
+app.use(express.static(path.join(__dirname, '../public')));
 
 // Ensure data directories exist
-['./data', './data/vods', './data/clips', './data/media', './data/thumbnails', './data/emotes', './data/avatars', './data/pastes', './data/pastes/screenshots'].forEach(dir => {
+['./data', './data/vods', './data/clips', './data/media', './data/thumbnails', './data/emotes', './data/avatars'].forEach(dir => {
     const fullPath = path.resolve(dir);
     if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
 });
@@ -191,28 +114,8 @@ app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, fi
 // Serve VOD/media files
 app.use('/media', express.static(path.resolve('./data/media')));
 
-// Map file extensions to forced image MIME types
-const IMAGE_EXT_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.svg': 'image/svg+xml' };
-
-// Serve avatar files (force image Content-Type, prevent XSS via spoofed extensions)
-app.use('/data/avatars', express.static(path.resolve('./data/avatars'), {
-    setHeaders: (res, filePath) => {
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Content-Disposition', 'inline');
-        const ext = path.extname(filePath).toLowerCase();
-        if (IMAGE_EXT_MIME[ext]) res.setHeader('Content-Type', IMAGE_EXT_MIME[ext]);
-    },
-}));
-
-// Serve paste screenshots (force image Content-Type, prevent XSS via spoofed extensions)
-app.use('/data/pastes/screenshots', express.static(path.resolve('./data/pastes/screenshots'), {
-    setHeaders: (res, filePath) => {
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Content-Disposition', 'inline');
-        const ext = path.extname(filePath).toLowerCase();
-        if (IMAGE_EXT_MIME[ext]) res.setHeader('Content-Type', IMAGE_EXT_MIME[ext]);
-    },
-}));
+// Serve avatar files
+app.use('/data/avatars', express.static(path.resolve('./data/avatars')));
 
 // ── API Routes ───────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
@@ -226,20 +129,13 @@ app.use('/api/clips', clipRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/controls', controlRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/mod', require('./admin/mod-routes'));
-app.use('/api/channels', require('./admin/channel-mod-routes'));
-app.use('/api/robotstreamer', robotStreamerRoutes);
-app.use('/api/restream', restreamRoutes);
+app.use('/api/mod', modRoutes);
+app.use('/api/channels', channelModRoutes);
 app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
+app.use('/api/game/canvas', canvasRoutes);
 app.use('/api/game', gameRoutes);
-app.use('/api/meta', metaRoutes);
-app.use('/api/pastes', pasteRoutes);
-const ttsRoutes = require('./chat/tts-routes');
-app.use('/api/tts', ttsRoutes);
-const dmRoutes = require('./chat/dm-routes');
-app.use('/api/dm', dmRoutes);
 
 // ── Health Check ─────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
@@ -252,60 +148,6 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// ── Updates / Changelog ──────────────────────────────────────
-const { execSync } = require('child_process');
-const REPO_DIR = path.resolve(__dirname, '..');
-
-/**
- * GET /api/updates — returns recent git commit history for the updates page.
- * Query params: ?limit=30 (default 30, max 100)
- */
-app.get('/api/updates', (req, res) => {
-    try {
-        const limit = Math.min(Math.max(parseInt(req.query.limit) || 30, 1), 100);
-        const raw = execSync(
-            `git --no-pager log --pretty=format:'%H||%h||%s||%an||%aI' -${limit}`,
-            { cwd: REPO_DIR, encoding: 'utf8', timeout: 5000 }
-        );
-        const commits = raw.trim().split('\n').filter(Boolean).map(line => {
-            const [hash, short, subject, author, date] = line.split('||');
-            return { hash, short, subject, author, date };
-        });
-        res.json({ commits });
-    } catch (err) {
-        console.error('[Updates] git log error:', err.message);
-        res.status(500).json({ error: 'Failed to read update history' });
-    }
-});
-
-/**
- * POST /api/admin/broadcast — admin sends a message to all chat clients.
- * Body: { type: 'system'|'server_restart'|'update', message, summary, url }
- */
-app.post('/api/admin/broadcast', requireAuth, permissions.requireAdmin, (req, res) => {
-    try {
-        const { type = 'system', message, summary, url } = req.body;
-        if (!message && !summary) return res.status(400).json({ error: 'message or summary required' });
-        chatServer.broadcastAll({
-            type,
-            message: message || summary,
-            summary,
-            url,
-            timestamp: new Date().toISOString(),
-        });
-        res.json({ ok: true, clients: chatServer.getTotalConnections() });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ── OBS Overlay Widgets ──────────────────────────────────────
-// Modular system: /obs/<widget>/<username>
-// Each widget is a standalone HTML page designed for OBS browser sources.
-app.get('/obs/chat/:username', (req, res) => {
-    res.sendFile(path.join(__dirname, '../public/obs/chat.html'));
-});
-
 // ── SPA Fallback ─────────────────────────────────────────────
 app.get('*', (req, res) => {
     // Don't serve HTML for API routes
@@ -315,25 +157,9 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// ── Global Error Handler ─────────────────────────────────────
-app.use((err, req, res, _next) => {
-    // Multer file-filter / size-limit errors → 400
-    if (err.name === 'MulterError' || (err.message && err.message.includes('file'))) {
-        return res.status(400).json({ error: err.message || 'File upload error' });
-    }
-    console.error('[Server] Unhandled route error:', err.message || err);
-    if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
-});
-
 // ── WebSocket Upgrade Handler ────────────────────────────────
 server.on('upgrade', (req, socket, head) => {
     const url = req.url || '';
-    const origin = normalizeOrigin(req.headers.origin);
-
-    if (origin && !allowedOrigins.has(origin)) {
-        socket.destroy();
-        return;
-    }
 
     if (url.startsWith('/ws/chat')) {
         chatServer.handleUpgrade(req, socket, head);
@@ -343,10 +169,10 @@ server.on('upgrade', (req, socket, head) => {
         controlServer.handleUpgrade(req, socket, head);
     } else if (url.startsWith('/ws/call')) {
         callServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/canvas')) {
+        canvasServer.handleUpgrade(req, socket, head);
     } else if (url.startsWith('/ws/game')) {
         gameServer.handleUpgrade(req, socket, head);
-    } else if (url.startsWith('/ws/robotstreamer-publish')) {
-        robotStreamerService.handleUpgrade(req, socket, head);
     } else {
         socket.destroy();
     }
@@ -365,12 +191,6 @@ async function start() {
     db.initDb();
     // Initialize cosmetics tables
     cosmeticsModule.ensureTables();
-    // Initialize tags tables
-    const tagsModule = require('./game/tags');
-    tagsModule.ensureTagTables();
-    // Initialize DM tables
-    const dm = require('./chat/dm');
-    dm.ensureTables();
     // Migrate: add last_heartbeat column if missing
     try { db.run("ALTER TABLE streams ADD COLUMN last_heartbeat DATETIME"); console.log('[DB] Added last_heartbeat column'); } catch { /* already exists */ }
     // Migrate: add theme_id to users table if missing
@@ -413,6 +233,7 @@ async function start() {
 
     // 2b. Initialize game database
     game.initGameDb();
+    canvasService.initDb();
     console.log('[Server] Game engine ready');
 
     // 3. Initialize chat server
@@ -427,28 +248,11 @@ async function start() {
     // 4c. Initialize game WebSocket server
     gameServer.init(server);
 
-    // 4d. Initialize group call signaling server
+    // 4d. Initialize canvas WebSocket server
+    canvasServer.init(server);
+
+    // 4e. Initialize group call signaling server
     callServer.init(server);
-
-    for (const stream of db.getLiveStreams()) {
-        robotStreamerService.startForStream(stream).catch((err) => {
-            console.warn(`[RS] Restore failed for stream ${stream.id}:`, err.message);
-        });
-        chatRelayService.startForStream(stream).catch((err) => {
-            console.warn(`[ChatRelay] Restore failed for stream ${stream.id}:`, err.message);
-        });
-    }
-
-    // 4e. Refresh heartbeats for streams surviving a server restart
-    // After a deploy/restart, is_live=1 streams have stale heartbeats from before
-    // the server went down. Without this, the stale-stream cleanup (every 60s) would
-    // kill them before the broadcaster's client can reconnect and resume heartbeating.
-    // This gives broadcasters a fresh 5-minute window to reconnect.
-    const survivingStreams = db.all('SELECT id FROM streams WHERE is_live = 1');
-    if (survivingStreams.length > 0) {
-        db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE is_live = 1');
-        console.log(`[Server] Refreshed heartbeats for ${survivingStreams.length} surviving stream(s) — broadcasters have 5 min to reconnect`);
-    }
 
     // 5. Initialize WebRTC SFU (may fail if mediasoup not installed)
     try {
@@ -473,45 +277,6 @@ async function start() {
         console.warn('[Server] RTMP server not available:', err.message);
     }
 
-    // 6b. Hook RTMP events for auto-start/stop restreams
-    rtmpServer.on('publish', ({ streamId, userId, streamKey }) => {
-        restreamManager.autoStartForStream(streamId, userId, { protocol: 'rtmp', streamKey }).catch(err => {
-            console.warn(`[Restream] RTMP auto-start error for stream ${streamId}:`, err.message);
-        });
-    });
-    rtmpServer.on('unpublish', ({ streamId }) => {
-        restreamManager.stopAllForStream(streamId);
-    });
-
-    // 6c. Hook WebRTC SFU events for auto-start restreams
-    // When a broadcaster produces into the SFU (triggered by restream request),
-    // the first video producer signals that media is available for restreaming.
-    webrtcSFU.on('producer-added', ({ roomId, kind }) => {
-        if (kind !== 'video') return; // Only trigger on video producer
-        const match = roomId.match(/^stream-(\d+)$/);
-        if (!match) return;
-        const streamId = parseInt(match[1]);
-        const stream = db.getStreamById(streamId);
-        if (!stream?.is_live || stream.protocol !== 'webrtc') return;
-        restreamManager.autoStartForStream(streamId, stream.user_id, { protocol: 'webrtc' }).catch(err => {
-            console.warn(`[Restream] WebRTC auto-start error for stream ${streamId}:`, err.message);
-        });
-    });
-
-    // 6d. Hook broadcaster connection for WebRTC restream resume
-    // When a broadcaster connects (or reconnects after server restart), resume ALL enabled
-    // restreams — not just auto_start ones. If the stream is live, all restreams should run.
-    broadcastServer.on('broadcaster-connected', ({ streamId, userId }) => {
-        const stream = db.getStreamById(streamId);
-        if (!stream?.is_live || stream.protocol !== 'webrtc') return;
-        restreamManager.resumeForStream(streamId, userId, { protocol: 'webrtc' }).catch(err => {
-            console.warn(`[Restream] Broadcaster-connect resume error for stream ${streamId}:`, err.message);
-        });
-    });
-
-    // 6e. Start periodic viewer count polling for restream destinations
-    restreamManager.startViewerCountPolling();
-
     // 7. Start HTTP server
     server.listen(config.port, config.host, () => {
         console.log('');
@@ -520,119 +285,32 @@ async function start() {
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/broadcast`);
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/control`);
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/call`);
+        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/canvas`);
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/game`);
         console.log(`[Server] Environment:  ${config.nodeEnv}`);
         console.log('');
         console.log('[Server] Ready. Happy camping! 🏕️');
         console.log('');
-
-        // Broadcast recent git changes to all chat clients after startup.
-        // Uses a retry loop — clients reconnect with backoff after a restart,
-        // so a single 5s broadcast misses most of them. We broadcast at 5s,
-        // 15s, and 30s intervals, tracking which clients already received it.
-        // The message is also persisted to chat_messages so it shows in history.
-        const _changelogSentTo = new Set();
-        let _changelogBroadcasts = 0;
-        const _changelogMaxBroadcasts = 3;
-        const _changelogDelays = [5000, 15000, 30000];
-
-        function broadcastChangelog() {
-            try {
-                const raw = execSync(
-                    `git --no-pager log --pretty=format:'%H||%h||%s||%an||%aI' -10`,
-                    { cwd: REPO_DIR, encoding: 'utf8', timeout: 5000 }
-                );
-                const commits = raw.trim().split('\n').filter(Boolean).map(line => {
-                    const [hash, short, subject, author, date] = line.split('||');
-                    return { hash, short, subject, author, date };
-                });
-                if (commits.length === 0) return;
-
-                const top3 = commits.slice(0, 3).map(c => c.subject).join(' · ');
-                const payload = {
-                    type: 'update',
-                    summary: `Server updated — ${top3}`,
-                    commits,
-                    url: '/updates',
-                    timestamp: new Date().toISOString(),
-                };
-                const msg = JSON.stringify(payload);
-
-                // Persist to chat_messages on the FIRST broadcast only
-                if (_changelogBroadcasts === 0) {
-                    try {
-                        const summaryText = `🚀 Server updated — ${top3}`;
-                        db.saveChatMessage({
-                            stream_id: null,
-                            user_id: null,
-                            anon_id: null,
-                            username: 'HoboStreamer',
-                            message: summaryText,
-                            message_type: 'system',
-                            is_global: true,
-                        });
-                    } catch (dbErr) {
-                        console.warn('[Server] Failed to persist changelog to chat:', dbErr.message);
-                    }
-                }
-
-                // Send only to clients that haven't received it yet
-                let newRecipients = 0;
-                for (const [ws, client] of chatServer.clients) {
-                    const clientKey = client.user?.id ? `u:${client.user.id}` : `a:${client.anonId || ws._socket?.remoteAddress}`;
-                    if (_changelogSentTo.has(clientKey)) continue;
-                    if (ws.readyState === 1 /* WebSocket.OPEN */ && ws.bufferedAmount <= 256 * 1024) {
-                        ws.send(msg);
-                        _changelogSentTo.add(clientKey);
-                        newRecipients++;
-                    }
-                }
-
-                _changelogBroadcasts++;
-                console.log(`[Server] Changelog broadcast #${_changelogBroadcasts}: ${newRecipients} new recipients (${_changelogSentTo.size} total, ${chatServer.getTotalConnections()} connected)`);
-
-                // Schedule next broadcast if we haven't hit the max
-                if (_changelogBroadcasts < _changelogMaxBroadcasts) {
-                    const nextDelay = (_changelogDelays[_changelogBroadcasts] || 30000) - (_changelogDelays[_changelogBroadcasts - 1] || 0);
-                    setTimeout(broadcastChangelog, nextDelay);
-                }
-            } catch (err) {
-                console.warn('[Server] Failed to broadcast startup changelog:', err.message);
-            }
-        }
-
-        setTimeout(broadcastChangelog, _changelogDelays[0]);
     });
 
     // 8. Start stale stream heartbeat cleanup (every 60 seconds)
-    let heartbeatCleanupRunning = false;
-    const maintenanceInterval = setInterval(() => {
-        if (heartbeatCleanupRunning) return;
-        heartbeatCleanupRunning = true;
+    setInterval(() => {
         try {
             const staleStreams = db.all(
                 `SELECT id, user_id, protocol FROM streams
                  WHERE is_live = 1
                  AND (
-                     (last_heartbeat IS NOT NULL AND last_heartbeat < datetime('now', '-5 minutes'))
-                     OR (last_heartbeat IS NULL AND started_at < datetime('now', '-6 minutes'))
+                     (last_heartbeat IS NOT NULL AND last_heartbeat < datetime('now', '-2 minutes'))
+                     OR (last_heartbeat IS NULL AND started_at < datetime('now', '-3 minutes'))
                  )`
             );
             for (const stream of staleStreams) {
-                console.log(`[Heartbeat] Ending stale stream ${stream.id} (no heartbeat for 5+ minutes)`);
+                console.log(`[Heartbeat] Ending stale stream ${stream.id} (no heartbeat for 2+ minutes)`);
                 db.endStream(stream.id);
                 // Auto-finalize any active VOD recording for this stream
                 vodRoutes.finalizeVodRecording(stream.id).catch(err => {
                     console.warn(`[VOD] Auto-finalize failed for stale stream ${stream.id}:`, err.message);
                 });
-                // Stop RS chat bridge for this stream (prevents zombie bridges)
-                robotStreamerService.stopForStream(stream.id);
-                // Stop chat relay bridges for this stream
-                chatRelayService.stopForStream(stream.id);
-                // Stop any active restreams for this stream
-                restreamManager.stopAllForStream(stream.id);
-                // Close signaling room and notify viewers
-                broadcastServer.endStream(stream.id);
                 const user = db.getUserById(stream.user_id);
                 if (stream.protocol === 'jsmpeg' && user) {
                     jsmpegRelay.destroyChannel(user.stream_key);
@@ -665,9 +343,7 @@ async function start() {
                  WHERE s.is_live = 1 AND s.protocol = 'rtmp'`
             );
             for (const rs of rtmpStreams) {
-                if (!rtmpServer.isReceiving(rs.stream_key)) continue;
-                if (!thumbnailService.shouldRefreshLiveThumbnail(rs.id, 120000)) continue;
-                thumbnailService.generateLiveStreamThumbnail(rs.id, rs.stream_key, { minAgeMs: 120000 }).catch(() => {});
+                thumbnailService.generateLiveStreamThumbnail(rs.id, rs.stream_key).catch(() => {});
             }
 
             // Generate server-side thumbnails for JSMPEG streams (broadcaster uses FFmpeg, no browser preview)
@@ -677,7 +353,6 @@ async function start() {
                  WHERE s.is_live = 1 AND s.protocol = 'jsmpeg'`
             );
             for (const js of jsmpegStreams) {
-                if (!thumbnailService.shouldRefreshLiveThumbnail(js.id, 120000)) continue;
                 const channelInfo = jsmpegRelay.getChannelInfo(js.stream_key);
                 if (channelInfo && channelInfo.videoPort) {
                     thumbnailService.generateJSMPEGThumbnail(js.id, channelInfo.videoPort).catch(() => {});
@@ -685,48 +360,32 @@ async function start() {
             }
         } catch (err) {
             console.error('[Heartbeat] Cleanup error:', err.message);
-        } finally {
-            heartbeatCleanupRunning = false;
         }
     }, 60000);
-    if (typeof maintenanceInterval.unref === 'function') maintenanceInterval.unref();
 }
 
 // ── Graceful Shutdown ────────────────────────────────────────
 function shutdown() {
     console.log('\n[Server] Shutting down...');
 
-    // Notify all chat clients before closing connections
-    try {
-        chatServer.broadcastAll({
-            type: 'server_restart',
-            message: '⚙️ Chat server restarting — you will be reconnected automatically.',
-            timestamp: new Date().toISOString(),
-        });
-    } catch { /* non-critical */ }
+    gameServer.close();
+    canvasServer.close();
+    callServer.close();
+    chatServer.close();
+    controlServer.close();
+    broadcastServer.close();
+    jsmpegRelay.closeAll();
+    webrtcSFU.closeAll();
+    rtmpServer.stop();
+    db.close();
 
-    // Small delay to let the message reach clients before closing sockets
-    setTimeout(() => {
-        restreamManager.stopViewerCountPolling();
-        restreamManager.stopAll();
-        gameServer.close();
-        callServer.close();
-        chatServer.close();
-        controlServer.close();
-        broadcastServer.close();
-        jsmpegRelay.closeAll();
-        webrtcSFU.closeAll();
-        rtmpServer.stop();
-        db.close();
+    server.close(() => {
+        console.log('[Server] Goodbye! 🎒');
+        process.exit(0);
+    });
 
-        server.close(() => {
-            console.log('[Server] Goodbye! 🎒');
-            process.exit(0);
-        });
-
-        // Force exit after 5s
-        setTimeout(() => process.exit(1), 5000);
-    }, 300);
+    // Force exit after 5s
+    setTimeout(() => process.exit(1), 5000);
 }
 
 process.on('SIGTERM', shutdown);

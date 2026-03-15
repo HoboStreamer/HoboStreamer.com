@@ -26,7 +26,7 @@ class ControlServer {
      * Initialize the control WebSocket server
      */
     init(server) {
-        this.wss = new WebSocket.Server({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
+        this.wss = new WebSocket.Server({ noServer: true });
 
         this.wss.on('connection', (ws, req) => {
             this.handleConnection(ws, req);

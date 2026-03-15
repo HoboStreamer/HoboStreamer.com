@@ -14,98 +14,33 @@ const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 const { authenticateWs } = require('../auth/auth');
-const permissions = require('../auth/permissions');
+const { canModerateStream, isStaff } = require('../auth/permissions');
 const wordFilter = require('./word-filter');
 const cosmetics = require('../monetization/cosmetics');
-const ttsEngine = require('./tts-engine');
-
-const WS_HEARTBEAT_MS = 30000;
-const MAX_SEND_BACKPRESSURE = 256 * 1024;
-const RATE_LIMIT_CACHE_TTL_MS = 10 * 60 * 1000;
 
 class ChatServer {
     constructor() {
         this.wss = null;
         /** @type {Map<WebSocket, { user: object|null, anonId: string, streamId: number|null, ip: string }>} */
         this.clients = new Map();
-        /** @type {Map<string, number>} IP → sequential anon number (warm cache, backed by DB) */
+        /** @type {Map<string, number>} IP → sequential anon number */
         this.anonMap = new Map();
         this.nextAnonId = 1;
-        this._anonDbLoaded = false;
-        /** @type {Map<string, number>} `${ip}:${streamId}` → last message time (rate limiting) */
+        /** @type {Map<string, number>} IP → last message time (rate limiting) */
         this.rateLimits = new Map();
-        this.DEFAULT_RATE_LIMIT_MS = 1000; // 1 message per second
-        /** @type {Map<number, number>} streamId → slow mode ms (0 = off, default rate limit applies) */
-        this.slowModeByStream = new Map();
-        this.heartbeatInterval = null;
-        /** @type {Map<number, number>} streamId → current TTS queue size */
-        this.ttsQueueSize = new Map();
-        /** @type {Map<string, number>} `${streamId}:${userId}` → user's TTS queue count */
-        this.ttsUserCounts = new Map();
-    }
-
-    normalizeIp(ip) {
-        let normalized = String(ip || 'unknown').trim();
-        if (!normalized) normalized = 'unknown';
-        if (normalized === '::1') return '127.0.0.1';
-        if (normalized.startsWith('::ffff:')) return normalized.slice(7);
-        return normalized;
-    }
-
-    /**
-     * Extract the real client IP from Express/WS request.
-     * Prefers CF-Connecting-IP (set by Cloudflare, unforgeable through proxy),
-     * then X-Forwarded-For first entry, then socket remote address.
-     */
-    getClientIp(req) {
-        const raw = req.headers?.['cf-connecting-ip']
-            || req.headers?.['x-forwarded-for']?.split(',')[0]?.trim()
-            || req.socket?.remoteAddress
-            || req.connection?.remoteAddress
-            || 'unknown';
-        return this.normalizeIp(raw);
-    }
-
-    /**
-     * Warm the in-memory anonMap from DB on first use.
-     * This ensures anon numbers survive server restarts.
-     */
-    _loadAnonMappings() {
-        if (this._anonDbLoaded) return;
-        this._anonDbLoaded = true;
-        try {
-            const { maxNum, mappings } = db.loadAnonMappings();
-            for (const [ip, num] of mappings) {
-                this.anonMap.set(ip, num);
-            }
-            this.nextAnonId = maxNum + 1;
-            if (mappings.size > 0) {
-                console.log(`[Chat] Loaded ${mappings.size} persistent anon mappings (next: anon${this.nextAnonId})`);
-            }
-        } catch (e) {
-            console.warn('[Chat] Failed to load anon mappings from DB:', e.message);
-        }
+        this.RATE_LIMIT_MS = 1000; // 1 message per second
     }
 
     getAnonIdForIp(ip) {
-        this._loadAnonMappings();
-        const anonKey = this.normalizeIp(ip);
+        const anonKey = ip || 'unknown';
         if (!this.anonMap.has(anonKey)) {
-            // Persist to DB so it survives restarts
-            try {
-                const num = db.getOrCreateAnonNum(anonKey);
-                this.anonMap.set(anonKey, num);
-                if (num >= this.nextAnonId) this.nextAnonId = num + 1;
-            } catch (e) {
-                // Fallback: use in-memory only
-                this.anonMap.set(anonKey, this.nextAnonId++);
-            }
+            this.anonMap.set(anonKey, this.nextAnonId++);
         }
         return `anon${this.anonMap.get(anonKey)}`;
     }
 
     getAnonIdForConnection(ip, streamId = null) {
-        const anonKey = this.normalizeIp(ip);
+        const anonKey = ip || 'unknown';
         for (const [, info] of this.clients) {
             if (info.ip !== anonKey || !info.anonId) continue;
             if (streamId == null || info.streamId === streamId) {
@@ -119,31 +54,10 @@ class ChatServer {
      * Attach to an existing HTTP server for WebSocket upgrade
      */
     init(server) {
-        this.wss = new WebSocket.Server({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
+        this.wss = new WebSocket.Server({ noServer: true });
 
         // Word filter
         wordFilter.load();
-
-        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-        this.heartbeatInterval = setInterval(() => {
-            if (!this.wss) return;
-
-            const now = Date.now();
-            for (const [ip, lastSeen] of this.rateLimits.entries()) {
-                if ((now - lastSeen) > RATE_LIMIT_CACHE_TTL_MS) {
-                    this.rateLimits.delete(ip);
-                }
-            }
-
-            this.wss.clients.forEach((ws) => {
-                if (ws.isAlive === false) {
-                    try { ws.terminate(); } catch {}
-                    return;
-                }
-                ws.isAlive = false;
-                try { ws.ping(); } catch {}
-            });
-        }, WS_HEARTBEAT_MS);
 
         this.wss.on('connection', (ws, req) => {
             this.handleConnection(ws, req);
@@ -170,26 +84,10 @@ class ChatServer {
      * Handle a new chat connection
      */
     handleConnection(ws, req) {
-        const ip = this.getClientIp(req);
-
-        // Diagnostic: log IP resolution chain for first few connections
-        if (this.anonMap.size < 20) {
-            console.log('[Chat] IP resolution — cf-connecting-ip:', req.headers?.['cf-connecting-ip'] || '(none)',
-                '| x-forwarded-for:', req.headers?.['x-forwarded-for'] || '(none)',
-                '| x-real-ip:', req.headers?.['x-real-ip'] || '(none)',
-                '| socket:', req.socket?.remoteAddress || '(none)',
-                '| resolved:', ip);
-        }
-
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
         const urlParams = new URL(req.url, 'http://localhost').searchParams;
         const token = urlParams.get('token');
         const streamId = parseInt(urlParams.get('stream')) || null;
-
-        ws.isAlive = true;
-        ws.on('pong', () => {
-            ws.isAlive = true;
-        });
-        try { ws._socket?.setNoDelay(true); } catch {}
 
         // Authenticate (optional — anon if no token)
         const user = authenticateWs(token);
@@ -221,8 +119,8 @@ class ChatServer {
             try {
                 const msg = JSON.parse(data.toString());
                 this.handleMessage(ws, msg);
-            } catch (err) {
-                console.warn('[Chat] Malformed message from', ws._clientIp || 'unknown', ':', err.message);
+            } catch {
+                // Ignore malformed messages
             }
         });
 
@@ -231,8 +129,7 @@ class ChatServer {
             this.broadcastUserCount(streamId);
         });
 
-        ws.on('error', (err) => {
-            console.warn('[Chat] WebSocket error for', ws._clientIp || 'unknown', ':', err.message);
+        ws.on('error', () => {
             this.clients.delete(ws);
         });
     }
@@ -247,15 +144,13 @@ class ChatServer {
         // Rate limiting (only for chat messages, not join/leave)
         if (msg.type === 'chat') {
             const now = Date.now();
-            const rateKey = `${client.ip}:${client.streamId || 'global'}`;
-            const lastMsg = this.rateLimits.get(rateKey) || 0;
-            const streamSlowMs = this.slowModeByStream.get(client.streamId) || 0;
-            const effectiveLimit = Math.max(this.DEFAULT_RATE_LIMIT_MS, streamSlowMs);
-            if (now - lastMsg < effectiveLimit) {
+            const rateLimitKey = this.getRateLimitKey(client);
+            const lastMsg = this.rateLimits.get(rateLimitKey) || 0;
+            if (now - lastMsg < this.getSlowmodeMs(client)) {
                 this.sendTo(ws, { type: 'system', message: 'Slow down! You are sending messages too fast.' });
                 return;
             }
-            this.rateLimits.set(rateKey, now);
+            this.rateLimits.set(rateLimitKey, now);
         }
 
         switch (msg.type) {
@@ -281,15 +176,12 @@ class ChatServer {
                 }
                 // Send identity confirmation so the client knows who it is
                 const displayName = client.user ? (client.user.display_name || client.user.username) : client.anonId;
-                const streamSlowSec = client.streamId ? Math.round((this.slowModeByStream.get(client.streamId) || 0) / 1000) : 0;
                 this.sendTo(ws, {
                     type: 'auth',
                     authenticated: !!client.user,
                     username: displayName,
-                    core_username: client.user?.username || null,
                     role: client.user ? client.user.role : 'anon',
                     user_id: client.user?.id || null,
-                    slowmode_seconds: streamSlowSec,
                 });
                 break;
             }
@@ -306,7 +198,45 @@ class ChatServer {
      */
     handleChatMessage(ws, client, msg) {
         let text = (msg.message || '').trim();
-        if (!text || text.length > 500) return;
+        if (!text) return;
+
+        const chatSettings = this.getChatSettings(client);
+        const maxLength = Math.max(50, Number(chatSettings.max_message_length || 500));
+        if (text.length > maxLength) {
+            this.sendTo(ws, { type: 'system', message: `Message too long. Max ${maxLength} characters.` });
+            return;
+        }
+
+        if (client.streamId && !client.user && !chatSettings.allow_anonymous) {
+            this.sendTo(ws, { type: 'system', message: 'This channel requires a logged-in account to chat.' });
+            return;
+        }
+        if (client.streamId && chatSettings.links_allowed === 0 && /(https?:\/\/|www\.)/i.test(text)) {
+            this.sendTo(ws, { type: 'system', message: 'Links are disabled in this channel chat.' });
+            return;
+        }
+        if (client.streamId && chatSettings.followers_only && client.user) {
+            const stream = db.getStreamById(client.streamId);
+            if (stream && stream.user_id !== client.user.id && !db.isFollowing(client.user.id, stream.user_id) && !isStaff(client.user)) {
+                this.sendTo(ws, { type: 'system', message: 'This chat is currently followers-only.' });
+                return;
+            }
+        }
+        if (client.streamId && chatSettings.account_age_gate_hours && client.user && !isStaff(client.user)) {
+            const ageMs = Date.now() - new Date(client.user.created_at).getTime();
+            if (ageMs < Number(chatSettings.account_age_gate_hours) * 3600000) {
+                this.sendTo(ws, { type: 'system', message: `This chat requires accounts older than ${chatSettings.account_age_gate_hours} hour(s).` });
+                return;
+            }
+        }
+        if (client.streamId && chatSettings.caps_percentage_limit && text.length >= 8) {
+            const letters = text.replace(/[^a-z]/gi, '');
+            const caps = text.replace(/[^A-Z]/g, '');
+            if (letters.length >= 6 && (caps.length / letters.length) * 100 > Number(chatSettings.caps_percentage_limit)) {
+                this.sendTo(ws, { type: 'system', message: 'Please ease up on the all-caps.' });
+                return;
+            }
+        }
 
         // ── Chat commands ────────────────────────────────────
         if (text.startsWith('/')) {
@@ -317,6 +247,10 @@ class ChatServer {
         // ── Word filter ──────────────────────────────────────
         const filterResult = wordFilter.check(text);
         if (!filterResult.safe) {
+            if (client.streamId && chatSettings.aggressive_filter) {
+                this.sendTo(ws, { type: 'system', message: 'Message blocked by channel moderation settings.' });
+                return;
+            }
             text = filterResult.filtered;
         }
 
@@ -337,16 +271,11 @@ class ChatServer {
         }
 
         const username = client.user ? client.user.display_name : client.anonId;
-        const coreUsername = client.user ? client.user.username : null;
         const role = client.user ? client.user.role : 'anon';
-
-        // Voice channel tagging — clients can tag messages with the voice channel they're in
-        const voiceChannelId = (typeof msg.voiceChannelId === 'string' && msg.voiceChannelId) ? msg.voiceChannelId : null;
 
         const chatMsg = {
             type: 'chat',
             username,
-            core_username: coreUsername,
             user_id: client.user?.id || null,
             anon_id: client.anonId,
             role,
@@ -359,9 +288,6 @@ class ChatServer {
             timestamp: new Date().toISOString(),
         };
 
-        // Preserve voice channel tag so clients can filter voice-call messages
-        if (voiceChannelId) chatMsg.voiceChannelId = voiceChannelId;
-
         // Attach cosmetic data for chat rendering
         if (client.user?.id) {
             try {
@@ -370,13 +296,6 @@ class ChatServer {
                 if (cosmeticProfile.particleFX) chatMsg.particleFX = cosmeticProfile.particleFX;
                 if (cosmeticProfile.hatFX) chatMsg.hatFX = cosmeticProfile.hatFX;
                 if (cosmeticProfile.voiceFX) chatMsg.voiceFX = cosmeticProfile.voiceFX;
-            } catch { /* non-critical */ }
-
-            // Attach equipped tag for chat rendering
-            try {
-                const tags = require('../game/tags');
-                const tagProfile = tags.getTagProfile(client.user.id);
-                if (tagProfile) chatMsg.tag = tagProfile;
             } catch { /* non-critical */ }
         }
 
@@ -409,39 +328,12 @@ class ChatServer {
             } catch { /* non-critical */ }
         }
 
-        // Welcome first-time chatters in this streamer's channel
-        if (client.streamId) {
-            try {
-                const stream = db.getStreamById(client.streamId);
-                if (stream?.user_id) {
-                    const chatterKey = client.user ? `user:${client.user.id}` : `anon:${client.anonId}`;
-                    if (db.isFirstChatInChannel(chatterKey, stream.user_id)) {
-                        db.recordFirstChat(chatterKey, stream.user_id);
-                        const welcomeName = client.user?.display_name || client.user?.username || client.anonId || 'stranger';
-                        this.broadcastToStream(client.streamId, {
-                            type: 'system',
-                            message: `Welcome ${welcomeName} to the chat! 👋`,
-                            timestamp: new Date().toISOString(),
-                        });
-                    }
-                }
-            } catch { /* non-critical */ }
-        }
-
         // Broadcast to appropriate audience
         if (client.streamId) {
             // Stream-specific chat
             this.broadcastToStream(client.streamId, chatMsg);
             // Also forward to global chat clients so the global feed sees all activity
             this.forwardToGlobal(client.streamId, chatMsg);
-
-            // Trigger server-side TTS synthesis (async, non-blocking)
-            this.synthesizeAndBroadcastTTS(
-                client.streamId,
-                username,
-                text,
-                chatMsg.voiceFX
-            );
         } else {
             // Global chat
             this.broadcastGlobal(chatMsg);
@@ -461,8 +353,8 @@ class ChatServer {
             case 'help':
                 this.sendTo(ws, {
                     type: 'system',
-                    message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /me <action>, /paste <content>` +
-                        (this.canModerate(client)
+                    message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /w <user> <msg>, /me <action>` +
+                        (this.isMod(client)
                             ? `\nMod: /ban <user>, /unban <user>, /timeout <user> [seconds], /clear, /slow <seconds>`
                             : ''),
                 });
@@ -477,30 +369,17 @@ class ChatServer {
                     const ttsMsg = {
                         type: 'tts',
                         username: client.user?.display_name || client.anonId,
-                        core_username: client.user?.username || null,
                         message: args,
                         timestamp: new Date().toISOString(),
                     };
                     // Attach voice cosmetic if equipped
-                    let voiceFX = null;
                     if (client.user?.id) {
                         try {
                             const cp = cosmetics.getCosmeticProfile(client.user.id);
-                            if (cp.voiceFX) {
-                                ttsMsg.voiceFX = cp.voiceFX;
-                                voiceFX = cp.voiceFX;
-                            }
+                            if (cp.voiceFX) ttsMsg.voiceFX = cp.voiceFX;
                         } catch { /* non-critical */ }
                     }
                     this.broadcastToStream(client.streamId, ttsMsg);
-
-                    // Also synthesize server-side TTS for site-wide mode
-                    this.synthesizeAndBroadcastTTS(
-                        client.streamId,
-                        ttsMsg.username,
-                        args,
-                        voiceFX
-                    );
                 }
                 break;
 
@@ -552,7 +431,20 @@ class ChatServer {
             case 'w':
             case 'whisper':
             case 'msg': {
-                this.sendTo(ws, { type: 'system', message: 'Whispers have been replaced by DMs! Click the message icon in the navbar to open Messenger.' });
+                const targetName = argParts[0];
+                const whisperMsg = argParts.slice(1).join(' ');
+                if (!targetName || !whisperMsg) {
+                    this.sendTo(ws, { type: 'system', message: 'Usage: /w <username> <message>' });
+                    break;
+                }
+                const targetWs = this.findWsByUsername(targetName, client.streamId);
+                if (targetWs) {
+                    const senderName = client.user?.display_name || client.anonId;
+                    this.sendTo(targetWs, { type: 'system', message: `[Whisper from ${senderName}]: ${whisperMsg}` });
+                    this.sendTo(ws, { type: 'system', message: `[Whisper to ${targetName}]: ${whisperMsg}` });
+                } else {
+                    this.sendTo(ws, { type: 'system', message: `User "${targetName}" not found in chat.` });
+                }
                 break;
             }
 
@@ -565,7 +457,6 @@ class ChatServer {
                 this.broadcastToStream(client.streamId, {
                     type: 'chat',
                     username,
-                    core_username: client.user?.username || null,
                     role: client.user?.role || 'anon',
                     message: `* ${username} ${args}`,
                     is_action: true,
@@ -587,83 +478,42 @@ class ChatServer {
                 break;
 
             case 'clear':
-                if (this.canModerate(client)) {
-                    this.broadcastToStream(client.streamId, { type: 'clear' });
+                if (this.isMod(client)) {
+                    if (client.streamId) {
+                        this.broadcastToStream(client.streamId, { type: 'clear' });
+                    } else {
+                        this.broadcastGlobal({ type: 'clear' });
+                    }
+                    this.logChatModeration(client, client.streamId ? 'clear_chat' : 'clear_global_chat');
                 } else {
                     this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });
                 }
                 break;
 
             case 'slow': {
-                if (this.canModerate(client)) {
-                    let seconds;
-                    if (args === 'off' || args === 'disable' || args === '0') {
-                        seconds = 0;
-                    } else {
-                        seconds = parseInt(args);
-                        if (!Number.isFinite(seconds) || seconds < 0) seconds = 3;
-                    }
-                    // Per-stream slow mode (not global)
+                if (this.isMod(client)) {
+                    const seconds = parseInt(args) || 3;
                     if (client.streamId) {
-                        this.slowModeByStream.set(client.streamId, seconds > 0 ? seconds * 1000 : 0);
-                        // Persist to DB
-                        try {
-                            const stream = db.getStreamById(client.streamId);
-                            if (stream?.channel_id) {
-                                db.upsertChannelModerationSettings(stream.channel_id, { slow_mode_seconds: seconds });
-                            }
-                        } catch { /* non-critical */ }
+                        const stream = db.getStreamById(client.streamId);
+                        const channel = stream?.channel_id ? db.getChannelById(stream.channel_id) : stream ? db.getChannelByUserId(stream.user_id) : null;
+                        if (channel) {
+                            db.upsertChannelModerationSettings(channel.id, { slowmode_seconds: seconds }, client.user.id);
+                            this.broadcastToStream(client.streamId, {
+                                type: 'system',
+                                message: `Slow mode: ${seconds}s between messages`,
+                            });
+                            this.logChatModeration(client, 'slowmode_update', { seconds, channel_id: channel.id });
+                        }
+                    } else if (isStaff(client.user)) {
+                        db.setSetting('chat_slowmode_seconds', seconds);
+                        this.broadcastGlobal({
+                            type: 'system',
+                            message: `Global slow mode: ${seconds}s between messages`,
+                        });
+                        this.logChatModeration(client, 'global_slowmode_update', { seconds });
                     }
-                    // Dedicated slowmode event so clients can show/hide UI
-                    this.broadcastToStream(client.streamId, {
-                        type: 'slowmode',
-                        seconds,
-                    });
-                    const msg = seconds > 0
-                        ? `Slow mode enabled: ${seconds}s between messages`
-                        : 'Slow mode disabled.';
-                    this.broadcastToStream(client.streamId, {
-                        type: 'system',
-                        message: msg,
-                    });
                 } else {
                     this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });
-                }
-                break;
-            }
-
-            case 'paste': {
-                // /paste <content> — create a quick paste from chat
-                if (!args.trim()) {
-                    this.sendTo(ws, { type: 'system', message: 'Usage: /paste <content to share>' });
-                    break;
-                }
-                try {
-                    const crypto = require('crypto');
-                    const slug = crypto.randomBytes(6).toString('base64url').slice(0, 8);
-                    const title = `Chat paste by ${client.username || client.displayName || 'anon'}`;
-                    const userId = client.userId || null;
-                    db.createPaste({
-                        slug,
-                        userId,
-                        type: 'paste',
-                        title,
-                        content: args.trim(),
-                        language: 'auto',
-                        visibility: 'public',
-                        streamId: client.streamId || null,
-                        ipAddress: client.ip || null,
-                    });
-                    const siteUrl = process.env.SITE_URL || '';
-                    const pasteUrl = `${siteUrl}/p/${slug}`;
-                    // Show link to everyone in stream
-                    this.broadcastToStream(client.streamId, {
-                        type: 'system',
-                        message: `📋 ${client.displayName || client.username || 'Anonymous'} shared a paste: ${pasteUrl}`,
-                    });
-                } catch (err) {
-                    console.error('[Chat] /paste error:', err);
-                    this.sendTo(ws, { type: 'system', message: 'Failed to create paste.' });
                 }
                 break;
             }
@@ -677,7 +527,7 @@ class ChatServer {
      * Handle mod actions (ban, unban, timeout)
      */
     handleModAction(ws, client, action, args) {
-        if (!this.canModerate(client)) {
+        if (!this.isMod(client)) {
             this.sendTo(ws, { type: 'system', message: 'You do not have permission.' });
             return;
         }
@@ -689,6 +539,10 @@ class ChatServer {
             case 'ban': {
                 const targetUser = db.getUserByUsername(target);
                 if (targetUser) {
+                    if (isStaff(client.user) && targetUser.role === 'admin' && client.user.role !== 'admin') {
+                        this.sendTo(ws, { type: 'system', message: 'You cannot ban an admin.' });
+                        return;
+                    }
                     db.run(
                         `INSERT INTO bans (stream_id, user_id, reason, banned_by) VALUES (?, ?, ?, ?)`,
                         [client.streamId, targetUser.id, 'Banned by moderator', client.user.id]
@@ -697,6 +551,7 @@ class ChatServer {
                     this.broadcastToStream(client.streamId, {
                         type: 'system', message: `${target} has been banned.`
                     });
+                    this.logChatModeration(client, client.streamId ? 'channel_ban' : 'site_ban', { username: targetUser.username }, targetUser.id);
                 } else {
                     // Ban by anon ID
                     const anonTarget = this.findClientByAnonId(target, client.streamId);
@@ -706,6 +561,7 @@ class ChatServer {
                             [client.streamId, anonTarget.ip, target, 'Banned by moderator', client.user.id]
                         );
                         this.sendTo(ws, { type: 'system', message: `${target} has been banned.` });
+                        this.logChatModeration(client, client.streamId ? 'channel_anon_ban' : 'site_anon_ban', { anon_id: target, ip: anonTarget.ip });
                     }
                 }
                 break;
@@ -719,6 +575,7 @@ class ChatServer {
                         `INSERT INTO bans (stream_id, user_id, reason, banned_by, expires_at) VALUES (?, ?, ?, ?, ?)`,
                         [client.streamId, targetUser.id, `Timeout ${duration}s`, client.user.id, expires]
                     );
+                    this.logChatModeration(client, client.streamId ? 'channel_timeout' : 'site_timeout', { username: targetUser.username, duration }, targetUser.id);
                 }
                 this.sendTo(ws, { type: 'system', message: `${target} timed out for ${duration}s.` });
                 break;
@@ -728,6 +585,7 @@ class ChatServer {
                 if (targetUser) {
                     db.run('DELETE FROM bans WHERE user_id = ? AND (stream_id = ? OR stream_id IS NULL)',
                         [targetUser.id, client.streamId]);
+                    this.logChatModeration(client, client.streamId ? 'channel_unban' : 'site_unban', { username: targetUser.username }, targetUser.id);
                 }
                 this.sendTo(ws, { type: 'system', message: `${target} has been unbanned.` });
                 break;
@@ -736,73 +594,66 @@ class ChatServer {
     }
 
     // ── Helper methods ───────────────────────────────────────
-    /**
-     * Synthesize TTS audio for a chat message and broadcast to stream.
-     * Runs asynchronously — does not block message delivery.
-     */
-    async synthesizeAndBroadcastTTS(streamId, username, text, voiceFX) {
-        try {
-            const settings = ttsEngine.getTTSSettings();
-            if (!settings.enabled) return;
 
-            // Queue limit checks
-            const limits = ttsEngine.getQueueLimits();
-            const globalCount = this.ttsQueueSize.get(streamId) || 0;
-            if (globalCount >= limits.maxGlobal) return;
-
-            // Determine voice ID from equipped cosmetic
-            let voiceId = settings.defaultVoice;
-            if (voiceFX?.itemId) {
-                // Check if this cosmetic voice exists in the TTS engine catalog
-                if (ttsEngine.VOICE_CATALOG[voiceFX.itemId]) {
-                    voiceId = voiceFX.itemId;
-                }
-            }
-
-            // Increment queue counter
-            this.ttsQueueSize.set(streamId, globalCount + 1);
-
-            const result = await ttsEngine.synthesize(text, voiceId);
-
-            // Decrement queue counter
-            const current = this.ttsQueueSize.get(streamId) || 1;
-            this.ttsQueueSize.set(streamId, Math.max(0, current - 1));
-
-            if (!result) return;
-
-            // Broadcast TTS audio to all clients in the stream
-            this.broadcastToStream(streamId, {
-                type: 'tts-audio',
-                username,
-                message: text,
-                audio: result.audio,
-                mimeType: result.mimeType,
-                engine: result.engine,
-                voiceName: result.voiceName,
-                voiceId: result.voiceId,
-                fallback: result.fallback || false,
-                timestamp: new Date().toISOString(),
-            });
-        } catch (err) {
-            // Ensure queue counter is decremented on error
-            const current = this.ttsQueueSize.get(streamId) || 1;
-            this.ttsQueueSize.set(streamId, Math.max(0, current - 1));
-            console.error('[TTS] Synthesis broadcast error:', err.message);
-        }
-    }
-    /**
-     * Can this client moderate their current stream's chat?
-     * Uses the permission layer: admin, global_mod, stream owner, or channel mod.
-     * Streamers do NOT get mod powers in other people's chats.
-     */
-    canModerate(client) {
-        if (!client.user) return false;
-        return permissions.canModerateStream(client.user, client.streamId);
-    }
-
-    /** @deprecated Use canModerate(client) — kept temporarily for any external callers */
     isMod(client) {
-        return this.canModerate(client);
+        if (!client.user) return false;
+        if (!client.streamId) return isStaff(client.user);
+        return canModerateStream(client.user, client.streamId);
+    }
+
+    getRateLimitKey(client) {
+        return `${client.streamId || 'global'}:${client.user?.id || client.ip}`;
+    }
+
+    getChatSettings(client) {
+        if (!client.streamId) {
+            return {
+                slowmode_seconds: Number(db.getSetting('chat_slowmode_seconds') || 0),
+                allow_anonymous: 1,
+                links_allowed: 1,
+                aggressive_filter: 0,
+                followers_only: 0,
+                account_age_gate_hours: 0,
+                caps_percentage_limit: 90,
+                max_message_length: 500,
+            };
+        }
+
+        const stream = db.getStreamById(client.streamId);
+        const channel = stream?.channel_id ? db.getChannelById(stream.channel_id) : stream ? db.getChannelByUserId(stream.user_id) : null;
+        return channel ? db.getChannelModerationSettings(channel.id) : {
+            slowmode_seconds: 0,
+            allow_anonymous: 1,
+            links_allowed: 1,
+            aggressive_filter: 0,
+            followers_only: 0,
+            account_age_gate_hours: 0,
+            caps_percentage_limit: 70,
+            max_message_length: 500,
+        };
+    }
+
+    getSlowmodeMs(client) {
+        const settings = this.getChatSettings(client);
+        const seconds = Number(settings.slowmode_seconds || 0);
+        return Math.max(1000, seconds > 0 ? seconds * 1000 : this.RATE_LIMIT_MS);
+    }
+
+    logChatModeration(client, actionType, details = {}, targetUserId = null) {
+        const stream = client.streamId ? db.getStreamById(client.streamId) : null;
+        const channel = stream?.channel_id ? db.getChannelById(stream.channel_id) : stream ? db.getChannelByUserId(stream.user_id) : null;
+        db.logModerationAction({
+            scope_type: channel ? 'channel' : 'site',
+            scope_id: channel?.id || null,
+            actor_user_id: client.user?.id || null,
+            target_user_id: targetUserId,
+            action_type: actionType,
+            details: {
+                stream_id: client.streamId || null,
+                ...details,
+            },
+            ip_address: client.ip,
+        });
     }
 
     findClientByAnonId(anonId, streamId) {
@@ -812,33 +663,6 @@ class ChatServer {
             }
         }
         return null;
-    }
-
-    /**
-     * Find the IP address of a connected user by user ID.
-     * Returns the IP from their most recent connection, or null if not connected.
-     */
-    getConnectedUserIp(userId) {
-        for (const [, info] of this.clients) {
-            if (info.user?.id === userId) return info.ip;
-        }
-        return null;
-    }
-
-    /**
-     * Disconnect all WebSocket clients for a given user ID or IP.
-     * Used after banning to immediately kick them.
-     */
-    disconnectUser({ userId, ip, streamId } = {}) {
-        for (const [ws, info] of this.clients) {
-            const matchUser = userId && info.user?.id === userId;
-            const matchIp = ip && info.ip === ip;
-            const matchStream = streamId ? info.streamId === streamId : true;
-            if ((matchUser || matchIp) && matchStream) {
-                this.sendTo(ws, { type: 'system', message: 'You have been banned.' });
-                try { ws.close(1000, 'banned'); } catch {}
-            }
-        }
     }
 
     findWsByUsername(name, streamId) {
@@ -852,7 +676,7 @@ class ChatServer {
     }
 
     sendTo(ws, data) {
-        if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+        if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(data));
         }
     }
@@ -860,7 +684,7 @@ class ChatServer {
     broadcastToStream(streamId, data) {
         const msg = JSON.stringify(data);
         for (const [ws, client] of this.clients) {
-            if (client.streamId === streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+            if (client.streamId === streamId && ws.readyState === WebSocket.OPEN) {
                 ws.send(msg);
             }
         }
@@ -869,7 +693,7 @@ class ChatServer {
     broadcastGlobal(data) {
         const msg = JSON.stringify(data);
         for (const [ws, client] of this.clients) {
-            if (!client.streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+            if (!client.streamId && ws.readyState === WebSocket.OPEN) {
                 ws.send(msg);
             }
         }
@@ -896,7 +720,7 @@ class ChatServer {
         }
         const globalMsg = JSON.stringify({ ...data, stream_channel: streamUsername });
         for (const [ws, client] of this.clients) {
-            if (!client.streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+            if (!client.streamId && ws.readyState === WebSocket.OPEN) {
                 ws.send(globalMsg);
             }
         }
@@ -934,70 +758,8 @@ class ChatServer {
         return this.clients.size;
     }
 
-    /**
-     * Send a DM payload to all WebSocket connections belonging to a given user ID.
-     * Used by the DM REST API for real-time delivery.
-     */
-    sendDm(userId, data) {
-        const payload = JSON.stringify(data);
-        for (const [ws, client] of this.clients) {
-            if (client.user?.id === userId && ws.readyState === WebSocket.OPEN) {
-                try {
-                    if (ws.bufferedAmount < MAX_SEND_BACKPRESSURE) {
-                        ws.send(payload);
-                    }
-                } catch { /* non-critical */ }
-            }
-        }
-    }
-
-    /**
-     * Push a profile/identity update to all chat connections belonging to a user.
-     * Refreshes cached client.user so subsequent messages use the new info.
-     */
-    sendUserUpdate(userId, userData) {
-        const freshUser = db.getUserById(userId);
-        const payload = JSON.stringify({
-            type: 'user-updated',
-            user: {
-                id: userData.id,
-                username: userData.username,
-                display_name: userData.display_name,
-                role: userData.role,
-                avatar_url: userData.avatar_url,
-                profile_color: userData.profile_color,
-            },
-        });
-        for (const [ws, client] of this.clients) {
-            if (client.user?.id === userId && ws.readyState === WebSocket.OPEN) {
-                // Refresh cached user object so future messages use new name
-                if (freshUser) client.user = freshUser;
-                try {
-                    if (ws.bufferedAmount < MAX_SEND_BACKPRESSURE) ws.send(payload);
-                } catch { /* non-critical */ }
-            }
-        }
-    }
-
-    /**
-     * Broadcast a message to ALL connected chat clients (every stream + global).
-     * Used for server-wide announcements (restarts, updates).
-     */
-    broadcastAll(data) {
-        const msg = JSON.stringify(data);
-        for (const [ws] of this.clients) {
-            if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
-                ws.send(msg);
-            }
-        }
-    }
-
     close() {
         if (this.wss) {
-            if (this.heartbeatInterval) {
-                clearInterval(this.heartbeatInterval);
-                this.heartbeatInterval = null;
-            }
             this.wss.clients.forEach(ws => ws.close());
             this.wss.close();
         }

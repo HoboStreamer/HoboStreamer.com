@@ -1,116 +1,179 @@
-/**
- * HoboStreamer — Channel Moderator Routes
- *
- * Manage per-channel mod assignments.
- *
- * GET    /api/channels/:id/mods           - List channel mods
- * POST   /api/channels/:id/mods           - Add channel mod (channel owner or admin)
- * DELETE /api/channels/:id/mods/:userId   - Remove channel mod
- * GET    /api/channels/:id/moderation     - Get channel moderation settings
- * PUT    /api/channels/:id/moderation     - Update channel moderation settings
- */
 const express = require('express');
 const db = require('../db/database');
 const { requireAuth } = require('../auth/auth');
-const permissions = require('../auth/permissions');
+const { canManageChannel, isStaff } = require('../auth/permissions');
 
-const router = express.Router({ mergeParams: true });
+const router = express.Router();
 
-// ── List channel mods ────────────────────────────────────────
-router.get('/:channelId/mods', requireAuth, (req, res) => {
+router.use(requireAuth);
+
+function parseBoolean(value, fallback) {
+    if (value === undefined) return fallback;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+        return !['0', 'false', 'off', 'no'].includes(value.toLowerCase());
+    }
+    return fallback;
+}
+
+function requireChannelAccess(req, res, next) {
+    const channelId = parseInt(req.params.channelId, 10);
+    if (!channelId) return res.status(400).json({ error: 'Invalid channel ID' });
+    const channel = db.getChannelById(channelId);
+    if (!channel) return res.status(404).json({ error: 'Channel not found' });
+    if (!canManageChannel(req.user, channelId)) {
+        return res.status(403).json({ error: 'Channel moderation access required' });
+    }
+    req.channel = channel;
+    next();
+}
+
+router.get('/moderation/mine', (req, res) => {
     try {
-        const channelId = parseInt(req.params.channelId);
-        const channel = db.getChannelById(channelId);
-        if (!channel) return res.status(404).json({ error: 'Channel not found' });
-
-        const mods = db.getChannelModerators(channelId);
-        res.json({ moderators: mods, channel_id: channelId });
+        const channels = db.getOwnedAndModeratedChannels(req.user.id).map((channel) => ({
+            ...channel,
+            moderation_settings: db.getChannelModerationSettings(channel.id),
+            moderators: db.getChannelModerators(channel.id),
+        }));
+        res.json({ channels });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to list channel moderators' });
+        res.status(500).json({ error: 'Failed to load channel moderation access' });
     }
 });
 
-// ── Add channel mod ──────────────────────────────────────────
-router.post('/:channelId/mods', requireAuth, (req, res) => {
+router.get('/:channelId/moderators', requireChannelAccess, (req, res) => {
+    res.json({ moderators: db.getChannelModerators(req.channel.id) });
+});
+
+router.post('/:channelId/moderators', requireChannelAccess, (req, res) => {
     try {
-        const channelId = parseInt(req.params.channelId);
-        const channel = db.getChannelById(channelId);
-        if (!channel) return res.status(404).json({ error: 'Channel not found' });
-
-        if (!permissions.canAssignChannelMods(req.user, channelId)) {
-            return res.status(403).json({ error: 'Only the channel owner or an admin can add moderators' });
-        }
-
-        const { username } = req.body;
+        const username = (req.body.username || '').trim();
         if (!username) return res.status(400).json({ error: 'Username is required' });
-
-        const targetUser = db.getUserByUsername(username);
-        if (!targetUser) return res.status(404).json({ error: 'User not found' });
-
-        if (targetUser.id === channel.user_id) {
-            return res.status(400).json({ error: 'Channel owner is already a moderator' });
+        const user = db.getUserByUsername(username);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (user.id === req.channel.user_id) {
+            return res.status(400).json({ error: 'Channel owner does not need moderator status' });
         }
-
-        db.addChannelModerator(channelId, targetUser.id, req.user.id);
-        res.json({ message: `${targetUser.username} added as channel moderator` });
+        db.addChannelModerator(req.channel.id, user.id, req.user.id);
+        db.logModerationAction({
+            scope_type: 'channel',
+            scope_id: req.channel.id,
+            actor_user_id: req.user.id,
+            target_user_id: user.id,
+            action_type: 'channel_mod_add',
+            details: { channel_id: req.channel.id, username: user.username },
+        });
+        res.status(201).json({ moderators: db.getChannelModerators(req.channel.id) });
     } catch (err) {
         res.status(500).json({ error: 'Failed to add channel moderator' });
     }
 });
 
-// ── Remove channel mod ───────────────────────────────────────
-router.delete('/:channelId/mods/:userId', requireAuth, (req, res) => {
+router.delete('/:channelId/moderators/:userId', requireChannelAccess, (req, res) => {
     try {
-        const channelId = parseInt(req.params.channelId);
-        const userId = parseInt(req.params.userId);
-        const channel = db.getChannelById(channelId);
-        if (!channel) return res.status(404).json({ error: 'Channel not found' });
-
-        if (!permissions.canAssignChannelMods(req.user, channelId)) {
-            return res.status(403).json({ error: 'Only the channel owner or an admin can remove moderators' });
-        }
-
-        db.removeChannelModerator(channelId, userId);
-        res.json({ message: 'Channel moderator removed' });
+        const targetUserId = parseInt(req.params.userId, 10);
+        const target = db.getUserById(targetUserId);
+        if (!target) return res.status(404).json({ error: 'User not found' });
+        db.removeChannelModerator(req.channel.id, targetUserId);
+        db.logModerationAction({
+            scope_type: 'channel',
+            scope_id: req.channel.id,
+            actor_user_id: req.user.id,
+            target_user_id: targetUserId,
+            action_type: 'channel_mod_remove',
+            details: { channel_id: req.channel.id, username: target.username },
+        });
+        res.json({ moderators: db.getChannelModerators(req.channel.id) });
     } catch (err) {
         res.status(500).json({ error: 'Failed to remove channel moderator' });
     }
 });
 
-// ── Get channel moderation settings ──────────────────────────
-router.get('/:channelId/moderation', requireAuth, (req, res) => {
+router.get('/:channelId/moderation/settings', requireChannelAccess, (req, res) => {
     try {
-        const channelId = parseInt(req.params.channelId);
-        const channel = db.getChannelById(channelId);
-        if (!channel) return res.status(404).json({ error: 'Channel not found' });
-
-        const settings = db.getChannelModerationSettings(channelId);
-        res.json({ settings });
+        res.json({ settings: db.getChannelModerationSettings(req.channel.id) });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to get moderation settings' });
+        res.status(500).json({ error: 'Failed to load channel moderation settings' });
     }
 });
 
-// ── Update channel moderation settings ───────────────────────
-router.put('/:channelId/moderation', requireAuth, (req, res) => {
+router.put('/:channelId/moderation/settings', requireChannelAccess, (req, res) => {
     try {
-        const channelId = parseInt(req.params.channelId);
-        const channel = db.getChannelById(channelId);
-        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+        const nextSettings = db.upsertChannelModerationSettings(req.channel.id, {
+            slowmode_seconds: Number(req.body.slowmode_seconds ?? req.body.slowmodeSeconds ?? 0),
+            allow_anonymous: parseBoolean(req.body.allow_anonymous ?? req.body.allowAnonymous, true),
+            links_allowed: parseBoolean(req.body.links_allowed ?? req.body.linksAllowed, true),
+            aggressive_filter: parseBoolean(req.body.aggressive_filter ?? req.body.aggressiveFilter, false),
+            followers_only: parseBoolean(req.body.followers_only ?? req.body.followersOnly, false),
+            account_age_gate_hours: Number(req.body.account_age_gate_hours ?? req.body.accountAgeGateHours ?? 0),
+            caps_percentage_limit: Number(req.body.caps_percentage_limit ?? req.body.capsPercentageLimit ?? 70),
+            max_message_length: Number(req.body.max_message_length ?? req.body.maxMessageLength ?? 500),
+        }, req.user.id);
 
-        if (!permissions.canModerateChannel(req.user, channelId)) {
-            return res.status(403).json({ error: 'Permission denied' });
-        }
-
-        const { slow_mode_seconds, followers_only, emote_only } = req.body;
-        const settings = db.upsertChannelModerationSettings(channelId, {
-            slow_mode_seconds: slow_mode_seconds !== undefined ? Math.max(0, parseInt(slow_mode_seconds) || 0) : undefined,
-            followers_only,
-            emote_only,
+        db.logModerationAction({
+            scope_type: 'channel',
+            scope_id: req.channel.id,
+            actor_user_id: req.user.id,
+            action_type: 'channel_settings_update',
+            details: nextSettings,
         });
-        res.json({ settings });
+        res.json({ settings: nextSettings });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to update moderation settings' });
+        res.status(500).json({ error: 'Failed to save channel moderation settings' });
+    }
+});
+
+router.get('/:channelId/moderation/logs', requireChannelAccess, (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        res.json({
+            actions: db.getModerationActions({
+                scopeType: 'channel',
+                scopeId: req.channel.id,
+                limit,
+                offset,
+            }),
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load channel moderation log' });
+    }
+});
+
+router.get('/:channelId/moderation/chat-search', requireChannelAccess, (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const q = (req.query.q || '').trim();
+        const userId = req.query.user_id ? parseInt(req.query.user_id, 10) : null;
+        const result = db.searchChannelChatMessages(req.channel.user_id, { query: q, userId, limit, offset });
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to search channel chat' });
+    }
+});
+
+router.post('/:channelId/moderation/messages/:messageId/delete', requireChannelAccess, (req, res) => {
+    try {
+        const messageId = parseInt(req.params.messageId, 10);
+        const message = db.getChatMessageById(messageId);
+        if (!message) return res.status(404).json({ error: 'Message not found' });
+        if (message.stream_owner_id !== req.channel.user_id && !isStaff(req.user)) {
+            return res.status(403).json({ error: 'Message is outside this channel scope' });
+        }
+        db.deleteChatMessage(messageId);
+        db.logModerationAction({
+            scope_type: 'channel',
+            scope_id: req.channel.id,
+            actor_user_id: req.user.id,
+            target_user_id: message.user_id,
+            action_type: 'channel_message_delete',
+            details: { message_id: messageId, stream_id: message.stream_id },
+        });
+        res.json({ message: 'Message deleted' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to delete message' });
     }
 });
 
