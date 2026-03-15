@@ -299,7 +299,39 @@ function startJSMPEG(wsUrl, canvas, placeholder, bufferProfile = getJsmpegBuffer
             audioBufferSize: bufferProfile.audioBufferSize,
             preserveDrawingBuffer: true,
             onSourceEstablished: () => {
-                console.log('[JSMPEG] Source established — waiting for first frames before clip recording');
+                console.log('[JSMPEG] Source established — applying saved volume and checking audio context');
+                // Apply saved volume
+                const savedVol = getSavedVolume();
+                if (player && player.audioOut && player.audioOut.gain) {
+                    player.audioOut.gain.value = savedVol / 100;
+                }
+                // Check if AudioContext is suspended (autoplay policy)
+                const audioCtx = player?.audioOut?.context || player?.audioOut?.destination?.context;
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    console.warn('[JSMPEG] AudioContext suspended — showing unmute overlay');
+                    // Show unmute overlay on the canvas container
+                    const container = document.getElementById('video-container');
+                    if (container && !document.getElementById('unmute-overlay')) {
+                        const overlay = document.createElement('div');
+                        overlay.id = 'unmute-overlay';
+                        overlay.style.cssText = 'position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(0,0,0,0.45);transition:background 0.2s;';
+                        overlay.innerHTML = `
+                            <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+                                <div style="width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.6);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);transition:transform 0.15s,background 0.15s;">
+                                    <i class="fa-solid fa-play" style="font-size:1.8rem;color:#fff;margin-left:4px;"></i>
+                                </div>
+                                <span style="color:#fff;font-size:0.9rem;opacity:0.85;text-shadow:0 1px 4px rgba(0,0,0,0.6);">Click to enable audio</span>
+                            </div>`;
+                        overlay.addEventListener('click', () => {
+                            audioCtx.resume().then(() => {
+                                console.log('[JSMPEG] AudioContext resumed by user click');
+                            }).catch(() => {});
+                            overlay.remove();
+                        }, { once: true });
+                        container.appendChild(overlay);
+                    }
+                }
+
                 // Delay clip recording start so JSMpeg has time to decode & render
                 // frames. Using an offscreen 2D canvas avoids WebGL captureStream issues.
                 _jsmpegClipSetupTimer = setTimeout(() => {
@@ -611,18 +643,26 @@ async function handleViewerOffer(msg, ws, video) {
         if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
     };
 
-    // Debounced play() — coalesces multiple ontrack calls
+    // Debounced play() — attempts unmuted playback first, falls back to muted + overlay
     const tryPlay = () => {
         if (_playPending || !player || player.pc !== pc) return;
         _playPending = true;
         if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
+
+        // Attempt to play with audio — set saved volume before playing
+        const savedVol = getSavedVolume();
+        video.muted = false;
+        video.volume = Math.max(0.01, savedVol / 100); // nonzero so browser treats as unmuted
+
         video.play().then(() => {
             _playPending = false;
-            console.log('[Player] Playback started');
+            console.log('[Player] Playback started with audio');
+            // Remove any stale unmute overlay
+            document.getElementById('unmute-overlay')?.remove();
         }).catch((err) => {
             _playPending = false;
             if (err.name === 'NotAllowedError') {
-                // Browser blocked autoplay — mute and retry
+                // Browser blocked unmuted autoplay — mute and retry, show overlay
                 console.warn('[Player] Autoplay blocked, muting and retrying');
                 video.muted = true;
                 video.play().then(() => {
@@ -649,6 +689,8 @@ async function handleViewerOffer(msg, ws, video) {
             }
         });
     };
+
+    let _hasPlayingFired = false; // track if onPlaying already ran
 
     pc.ontrack = (e) => {
         console.log('[Player] Got remote track:', e.track.kind);
@@ -685,24 +727,27 @@ async function handleViewerOffer(msg, ws, video) {
         // Show the video element now that we have tracks
         video.style.display = 'block';
 
-        // Hide the placeholder once video actually renders frames
-        const onPlaying = () => {
-            video.removeEventListener('playing', onPlaying);
-            _hasVideoFrames = true;
-            if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
-            const ph = document.querySelector('.video-placeholder');
-            if (ph) {
-                ph.style.display = 'none';
-                // Reset error content so stale "try refreshing" text doesn't
-                // reappear on the next transient disconnect.
-                ph.innerHTML = `
-                    <i class="fa-solid fa-satellite-dish fa-3x"></i>
-                    <p>Connecting to stream...</p>`;
-            }
-            // Remove the unmute overlay if somehow it lingered
-            document.getElementById('unmute-overlay')?.remove();
-        };
-        video.addEventListener('playing', onPlaying);
+        // Hide the placeholder once video actually renders frames (only register once)
+        if (!_hasPlayingFired) {
+            const onPlaying = () => {
+                video.removeEventListener('playing', onPlaying);
+                _hasPlayingFired = true;
+                _hasVideoFrames = true;
+                if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
+                const ph = document.querySelector('.video-placeholder');
+                if (ph) {
+                    ph.style.display = 'none';
+                    ph.innerHTML = `
+                        <i class="fa-solid fa-satellite-dish fa-3x"></i>
+                        <p>Connecting to stream...</p>`;
+                }
+                // Only remove unmute overlay if video is actually playing with audio
+                if (!video.muted) {
+                    document.getElementById('unmute-overlay')?.remove();
+                }
+            };
+            video.addEventListener('playing', onPlaying);
+        }
 
         // Video stall detection — if no frames render within 8s of getting tracks, re-watch
         if (!player._stallTimer && !_hasVideoFrames) {
@@ -1315,7 +1360,11 @@ function setupVideoControls() {
     // Restore persisted volume (or default 75)
     const savedVol = getSavedVolume();
     volSlider.value = savedVol;
-    setVolume(savedVol / 100);
+    // For WebRTC, tryPlay() in handleViewerOffer sets volume + handles autoplay policy.
+    // For JSMPEG, onSourceEstablished handles it. For HLS, set it here.
+    if (playerType === 'hls') {
+        setVolume(savedVol / 100);
+    }
 
     let muted = savedVol === 0;
     let playing = true;
@@ -1375,6 +1424,12 @@ function setupVideoControls() {
             ? '<i class="fa-solid fa-volume-xmark"></i>'
             : '<i class="fa-solid fa-volume-high"></i>';
         setVolume(muted ? 0 : volSlider.value / 100);
+        // User interacted — remove unmute overlay if unmuting
+        if (!muted) {
+            const vid = document.getElementById('video-element');
+            if (vid && vid.muted) { vid.muted = false; vid.play().catch(() => {}); }
+            document.getElementById('unmute-overlay')?.remove();
+        }
     };
 
     volSlider.oninput = () => {
@@ -1384,6 +1439,12 @@ function setupVideoControls() {
         btnVol.innerHTML = muted
             ? '<i class="fa-solid fa-volume-xmark"></i>'
             : '<i class="fa-solid fa-volume-high"></i>';
+        // User interacted — remove unmute overlay and ensure unmuted
+        if (v > 0) {
+            const vid = document.getElementById('video-element');
+            if (vid && vid.muted) { vid.muted = false; vid.play().catch(() => {}); }
+            document.getElementById('unmute-overlay')?.remove();
+        }
     };
 
     btnFull.onclick = () => {
@@ -1864,8 +1925,8 @@ function _clearStreamError() {
 }
 
 /**
- * Show a click-to-unmute overlay when autoplay policy forced muted playback.
- * One tap unmutes and removes the overlay.
+ * Show a click-to-play overlay when autoplay policy forced muted playback.
+ * One tap unmutes, restores volume, and removes the overlay.
  */
 function showUnmuteOverlay(video) {
     // Don't duplicate
@@ -1874,20 +1935,34 @@ function showUnmuteOverlay(video) {
     if (!container) return;
     const overlay = document.createElement('div');
     overlay.id = 'unmute-overlay';
-    overlay.style.cssText = 'position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(0,0,0,0.35);';
-    overlay.innerHTML = '<div style="background:rgba(0,0,0,0.7);padding:14px 28px;border-radius:10px;color:#fff;font-size:1.1rem;display:flex;align-items:center;gap:10px;"><i class="fa-solid fa-volume-xmark" style="font-size:1.4rem"></i> Tap to unmute</div>';
+    overlay.style.cssText = 'position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(0,0,0,0.45);transition:background 0.2s;';
+    overlay.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+            <div style="width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.6);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);transition:transform 0.15s,background 0.15s;">
+                <i class="fa-solid fa-play" style="font-size:1.8rem;color:#fff;margin-left:4px;"></i>
+            </div>
+            <span style="color:#fff;font-size:0.9rem;opacity:0.85;text-shadow:0 1px 4px rgba(0,0,0,0.6);">Click to enable audio</span>
+        </div>`;
+    // Hover effect on the play circle
+    const circle = overlay.querySelector('div > div');
+    overlay.addEventListener('mouseenter', () => { if (circle) { circle.style.transform = 'scale(1.1)'; circle.style.background = 'rgba(255,255,255,0.25)'; } });
+    overlay.addEventListener('mouseleave', () => { if (circle) { circle.style.transform = ''; circle.style.background = ''; } });
     overlay.addEventListener('click', () => {
         video.muted = false;
-        // Restore volume from slider (in case autoplay set it to 0)
+        // Restore volume from saved preference / slider
         const slider = document.getElementById('volume-slider');
-        const vol = slider ? slider.value / 100 : 0.75;
+        const savedVol = getSavedVolume();
+        const vol = savedVol > 0 ? savedVol / 100 : (slider ? slider.value / 100 : 0.75);
         video.volume = vol;
+        if (slider) slider.value = Math.round(vol * 100);
         overlay.remove();
-        // Sync the volume button + slider UI
+        // Sync the volume button icon
         const volBtn = document.getElementById('btn-volume');
         if (volBtn) volBtn.innerHTML = vol === 0
             ? '<i class="fa-solid fa-volume-xmark"></i>'
             : '<i class="fa-solid fa-volume-high"></i>';
+        // Try playing again now that user has interacted
+        video.play().catch(() => {});
     }, { once: true });
     container.appendChild(overlay);
 }
