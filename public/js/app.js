@@ -8,11 +8,26 @@ let currentUser = null;
 let currentPage = 'home';
 let currentStreamId = null;
 let currentStreamData = null;
-let hoboAppMetaData = null;
-let hoboAppMetaPromise = null;
+
+function mergeUserWithCapabilities(user, capabilities) {
+    if (!user) return null;
+    return { ...user, capabilities: capabilities || user.capabilities || {} };
+}
+
+function getUserCapabilities(user = currentUser) {
+    return user?.capabilities || {};
+}
+
+function hasCapability(capability, user = currentUser) {
+    return !!getUserCapabilities(user)?.[capability];
+}
+
+function isStaffUser(user = currentUser) {
+    return hasCapability('can_access_staff_console', user);
+}
 
 // Reserved paths (not usernames)
-const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media', 'pastes', 'p', 'updates']);
+const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media']);
 
 /* ── API helpers ──────────────────────────────────────────────── */
 function authHeaders() {
@@ -44,10 +59,7 @@ function toast(msg, type = 'info') {
     const icons = { success: 'fa-check-circle', error: 'fa-circle-exclamation', info: 'fa-info-circle' };
     const el = document.createElement('div');
     el.className = `toast ${type}`;
-    const icon = document.createElement('i');
-    icon.className = `fa-solid ${icons[type] || icons.info}`;
-    el.appendChild(icon);
-    el.appendChild(document.createTextNode(` ${msg == null ? '' : String(msg)}`));
+    el.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${msg}`;
     c.appendChild(el);
     setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 4000);
 }
@@ -59,7 +71,6 @@ function toggleHoboAppPopover() {
     if (!popover) return;
     const isOpen = popover.classList.toggle('open');
     if (link) link.classList.toggle('open', isOpen);
-    if (isOpen) void loadHoboAppMeta();
 }
 // Close popover when clicking outside
 document.addEventListener('click', (e) => {
@@ -70,94 +81,6 @@ document.addEventListener('click', (e) => {
     const link = document.querySelector('.promo-bar-link');
     if (link) link.classList.remove('open');
 });
-
-function setText(id, text) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
-}
-
-function renderHoboAppMeta(data) {
-    if (!data) return;
-
-    const version = data.displayVersion || data.packageVersion || 'Unknown';
-    const latestRelease = data.latestRelease;
-    const latestCommit = data.latestCommit || {};
-    const repo = data.repo || {};
-
-    setText('hoboapp-version', version);
-    setText('hoboapp-meta-version', version);
-    setText(
-        'hoboapp-meta-version-sub',
-        latestRelease?.publishedAt
-            ? `Released ${timeAgo(latestRelease.publishedAt)} · ${formatDateTime(latestRelease.publishedAt)}`
-            : data.packageVersion
-                ? `Package version on ${repo.defaultBranch || 'main'}`
-                : 'No tagged release yet'
-    );
-
-    setText('hoboapp-meta-commit', latestCommit.shortSha || 'Unknown');
-    setText(
-        'hoboapp-meta-commit-sub',
-        latestCommit.committedAt
-            ? `Committed ${timeAgo(latestCommit.committedAt)} · ${formatDateTime(latestCommit.committedAt)}`
-            : 'Latest commit time unavailable'
-    );
-
-    setText('hoboapp-meta-pushed', repo.pushedAt ? timeAgo(repo.pushedAt) : 'Unknown');
-    setText(
-        'hoboapp-meta-pushed-sub',
-        repo.pushedAt ? formatDateTime(repo.pushedAt) : 'Repository push time unavailable'
-    );
-
-    setText('hoboapp-meta-stars', Number(repo.stars || 0).toLocaleString());
-    setText('hoboapp-meta-stars-sub', `${Number(repo.forks || 0).toLocaleString()} forks · ${Number(repo.openIssues || 0).toLocaleString()} open issues`);
-    setText('hoboapp-commit-message', latestCommit.message || 'Latest commit message unavailable');
-
-    const commitLink = document.getElementById('hoboapp-commit-link');
-    if (commitLink) commitLink.href = latestCommit.htmlUrl || repo.htmlUrl || 'https://github.com/HoboStreamer/HoboApp';
-
-    const ctaSub = document.getElementById('hoboapp-cta-sub');
-    if (ctaSub) {
-        ctaSub.innerHTML = `<i class="fa-solid fa-code-branch"></i> Latest push ${esc(repo.pushedAt ? timeAgo(repo.pushedAt) : 'unknown')} &nbsp;·&nbsp; <i class="fa-solid fa-code-commit"></i> ${esc(latestCommit.shortSha || 'n/a')} &nbsp;·&nbsp; <i class="fa-brands fa-windows"></i> <i class="fa-brands fa-linux"></i> <i class="fa-brands fa-apple"></i> Windows, Linux & macOS`;
-    }
-}
-
-function renderHoboAppMetaError(message = 'Unable to load HoboApp GitHub data right now') {
-    setText('hoboapp-version', 'GitHub offline');
-    setText('hoboapp-meta-version', 'Unavailable');
-    setText('hoboapp-meta-version-sub', message);
-    setText('hoboapp-meta-commit', 'Unavailable');
-    setText('hoboapp-meta-commit-sub', 'Could not fetch latest commit');
-    setText('hoboapp-meta-pushed', 'Unavailable');
-    setText('hoboapp-meta-pushed-sub', 'Could not fetch repository activity');
-    setText('hoboapp-meta-stars', '—');
-    setText('hoboapp-meta-stars-sub', 'GitHub metadata unavailable');
-    setText('hoboapp-commit-message', message);
-}
-
-async function loadHoboAppMeta(force = false) {
-    if (!force && hoboAppMetaData) {
-        renderHoboAppMeta(hoboAppMetaData);
-        return hoboAppMetaData;
-    }
-    if (!force && hoboAppMetaPromise) return hoboAppMetaPromise;
-
-    hoboAppMetaPromise = api('/meta/hoboapp')
-        .then((data) => {
-            hoboAppMetaData = data;
-            renderHoboAppMeta(data);
-            return data;
-        })
-        .catch((error) => {
-            renderHoboAppMetaError(error?.message || 'Failed to load latest HoboApp GitHub info');
-            throw error;
-        })
-        .finally(() => {
-            hoboAppMetaPromise = null;
-        });
-
-    return hoboAppMetaPromise;
-}
 
 /* ── Modal ────────────────────────────────────────────────────── */
 function showModal(id) {
@@ -226,7 +149,7 @@ async function doLogin() {
         if (!username || !password) return toast('Fill in all fields', 'error');
         const data = await api('/auth/login', { method: 'POST', body: { username, password } });
         localStorage.setItem('token', data.token);
-        currentUser = data.user;
+        currentUser = mergeUserWithCapabilities(data.user, data.capabilities);
         onAuthChange();
         if (typeof loadThemeFromServer === 'function') loadThemeFromServer();
         closeModal();
@@ -246,7 +169,7 @@ async function doRegister() {
         if (verification_key) body.verification_key = verification_key;
         const data = await api('/auth/register', { method: 'POST', body });
         localStorage.setItem('token', data.token);
-        currentUser = data.user;
+        currentUser = mergeUserWithCapabilities(data.user, data.capabilities);
         onAuthChange();
         if (typeof loadThemeFromServer === 'function') loadThemeFromServer();
         closeModal();
@@ -278,7 +201,7 @@ async function loadUser() {
     if (!tok) return;
     try {
         const data = await api('/auth/me');
-        currentUser = data.user || data;
+        currentUser = mergeUserWithCapabilities(data.user || data, data.capabilities);
     } catch {
         localStorage.removeItem('token');
     }
@@ -296,7 +219,7 @@ function onAuthChange() {
         user.style.display = 'flex';
         dash.style.display = '';
         broadcast.style.display = '';
-        admin.style.display = currentUser.capabilities?.admin_panel ? '' : 'none';
+        admin.style.display = hasCapability('can_access_staff_console') ? '' : 'none';
         document.getElementById('nav-avatar').textContent = currentUser.username[0].toUpperCase();
         document.getElementById('nav-username').textContent = currentUser.username;
         loadBalance();
@@ -308,15 +231,7 @@ function onAuthChange() {
         admin.style.display = 'none';
     }
     document.getElementById('user-dropdown').classList.remove('show');
-
-    try {
-        window.dispatchEvent(new CustomEvent('hobo-auth-changed', {
-            detail: {
-                user: currentUser || null,
-                token: localStorage.getItem('token') || null,
-            },
-        }));
-    } catch {}
+    if (typeof syncCanvasAuthState === 'function') syncCanvasAuthState();
 }
 
 async function loadBalance() {
@@ -341,23 +256,18 @@ function toggleUserMenu() {
     document.getElementById('user-dropdown').classList.toggle('show');
 }
 
-function closeMobileNav() {
-    document.querySelector('.nav-links')?.classList.remove('show');
-}
-
 function toggleMobileNav() {
     document.querySelector('.nav-links').classList.toggle('show');
 }
 
 /* ── SPA Router (URL-based) ───────────────────────────────────── */
 function navigate(urlPath, replace = false) {
-    closeMobileNav();
-
     // Clean up existing page state (destroy player, disconnect chat, etc.)
     if (typeof destroyPlayer === 'function') destroyPlayer();
     if (typeof destroyChat === 'function') destroyChat();
+    if (typeof destroyCall === 'function') destroyCall();
+    if (typeof destroyCanvasPage === 'function') destroyCanvasPage();
     if (typeof stopCoinHeartbeat === 'function') stopCoinHeartbeat();
-    if (typeof stopStreamStatusPoll === 'function') stopStreamStatusPoll();
     clearInterval(uptimeInterval);
 
     // Clean up live VOD poll timer
@@ -433,38 +343,21 @@ function routeFromURL() {
         loadChatPage();
     } else if (segments[0] === 'game') {
         showPage('game');
-        loadGamePage();
-    } else if (segments[0] === 'pastes') {
-        showPage('pastes');
-        loadPastesPage();
-        // Handle ?edit=slug
-        const editSlug = new URLSearchParams(window.location.search).get('edit');
-        if (editSlug) {
-            api(`/pastes/${editSlug}`).then(data => {
-                if (data.paste) openNewPasteModal({
-                    title: data.paste.title,
-                    content: data.paste.content,
-                    language: data.paste.language,
-                    visibility: data.paste.visibility,
-                    slug: editSlug,
-                });
-            }).catch(() => {});
+        if (segments[1] === 'adventure') {
+            loadGamePage();
+        } else if (typeof loadCanvasPage === 'function') {
+            loadCanvasPage();
+        } else {
+            loadGamePage();
         }
-    } else if (segments[0] === 'updates') {
-        showPage('updates');
-        loadUpdatesPage();
-    } else if (segments[0] === 'p' && segments[1]) {
-        showPage('paste-viewer');
-        loadPasteViewer(segments[1]);
     } else if (segments[0] === 'stream' && segments[1]) {
         // Legacy stream URL: /stream/:id
         showPage('stream');
         openStream(segments[1]);
     } else if (segments.length === 1 && !RESERVED.has(segments[0])) {
-        // Channel page: /:username?stream=ID
+        // Channel page: /:username
         showPage('channel');
-        const streamParam = new URLSearchParams(window.location.search).get('stream');
-        loadChannelPage(segments[0], streamParam ? parseInt(streamParam) : null);
+        loadChannelPage(segments[0]);
     } else {
         // 404 fallback
         showPage('home');
@@ -490,7 +383,7 @@ function showPage(page) {
     }
 
     // Highlight nav link
-    const pageToNav = { home: 'home', vods: 'vods', clips: 'clips', broadcast: 'broadcast', dashboard: 'dashboard', admin: 'admin', chat: 'chat', game: 'game', pastes: 'pastes', 'paste-viewer': 'pastes' };
+    const pageToNav = { home: 'home', vods: 'vods', clips: 'clips', broadcast: 'broadcast', dashboard: 'dashboard', admin: 'admin', chat: 'chat', game: 'game' };
     const navPage = pageToNav[page];
     if (navPage) {
         const link = document.querySelector(`.nav-link[data-page="${navPage}"]`);
@@ -500,9 +393,6 @@ function showPage(page) {
 
 /* ── Home Page ────────────────────────────────────────────────── */
 async function loadHome() {
-    void loadHoboAppMeta();
-    void loadHomeChangelog();
-
     try {
         const liveData = await api('/streams');
         const streams = liveData.streams || [];
@@ -524,11 +414,8 @@ function renderStreamGrid(containerId, streams, isLive) {
         if (!isLive) c.innerHTML = '<div class="empty-state"><p class="muted">No recent streams</p></div>';
         return;
     }
-    c.innerHTML = streams.map(s => {
-        // Navigate to channel with ?stream=ID so multi-stream channels open the right feed
-        const navUrl = isLive && s.id ? `/${esc(s.username)}?stream=${s.id}` : `/${esc(s.username)}`;
-        return `
-        <div class="stream-card" onclick="navigate('${navUrl}')">
+    c.innerHTML = streams.map(s => `
+        <div class="stream-card" onclick="navigate('/${esc(s.username)}${isLive && s.id ? '?stream=' + s.id : ''}')">
             <div class="stream-card-thumb">
                 ${thumbImg(s.thumbnail_url, 'fa-campground', s.title)}
                 ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
@@ -544,8 +431,8 @@ function renderStreamGrid(containerId, streams, isLive) {
                 </div>
                 ${s.category ? `<div class="stream-card-tags"><span class="stream-card-tag">${esc(s.category)}</span></div>` : ''}
             </div>
-        </div>`;
-    }).join('');
+        </div>
+    `).join('');
 }
 
 /* ── Channel Page (/:username) ────────────────────────────────── */
@@ -559,7 +446,7 @@ function loadChatPage() {
     loadGlobalChatHistory();
 }
 
-async function loadChannelPage(username, preferredStreamId = null) {
+async function loadChannelPage(username) {
     try {
         currentChannelUsername = username;
         const data = await api(`/streams/channel/${username}`);
@@ -568,8 +455,12 @@ async function loadChannelPage(username, preferredStreamId = null) {
         const vods = data.vods || [];
         const clips = data.clips || [];
         const liveStreams = streams.filter(s => s && s.is_live);
-        const rsRestream = data.rs_restream || {};
-        const restreamLinks = data.restream_links || null;
+
+        // Check if a specific stream was requested via ?stream= query param
+        const urlStreamId = new URLSearchParams(window.location.search).get('stream');
+        const requestedStream = urlStreamId
+            ? liveStreams.find(s => String(s.id) === urlStreamId)
+            : null;
 
         // Follow button helper
         const setupFollowBtn = (btn) => {
@@ -599,41 +490,12 @@ async function loadChannelPage(username, preferredStreamId = null) {
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
 
-            // Pick the preferred stream:
-            // 1. URL ?stream=ID (deep link / shared link)
-            // 2. Last viewed stream in this session (sessionStorage)
-            // 3. Highest viewer count stream (default)
-            let targetStream;
-            if (preferredStreamId) {
-                targetStream = liveStreams.find(s => s.id === preferredStreamId);
-            }
-            if (!targetStream) {
-                const lastId = getLastStream(username);
-                if (lastId) targetStream = liveStreams.find(s => s.id === lastId);
-            }
-            if (!targetStream) {
-                targetStream = liveStreams.reduce((best, s) =>
-                    (s.viewer_count || 0) > (best.viewer_count || 0) ? s : best
-                , liveStreams[0]);
-                // Clean up stale ?stream= param — the requested stream isn't live
-                if (preferredStreamId && targetStream) {
-                    history.replaceState(null, '', `/${username}?stream=${targetStream.id}`);
-                }
-            }
+            // Load live stream tabs (all live streams across platform)
+            const targetStream = requestedStream || liveStreams[0];
+            loadLiveStreamTabs(username, targetStream.id);
 
-            // Remember selection and update URL
-            rememberLastStream(username, targetStream.id);
-            if (!preferredStreamId && liveStreams.length > 1) {
-                history.replaceState(null, '', `/${username}?stream=${targetStream.id}`);
-            }
-
-            loadLiveStreamTabs(username, targetStream.id, liveStreams, rsRestream);
-
-            // Activate the selected stream
+            // Activate the requested stream (or first if none specified)
             activateChannelStream(targetStream);
-
-            // Show cumulative viewers across all streams
-            updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
         } else {
             // ── OFFLINE STATE ──
             document.getElementById('ch-live-area').style.display = 'none';
@@ -652,12 +514,8 @@ async function loadChannelPage(username, preferredStreamId = null) {
             initChat(null);
             loadGlobalChatHistory();
 
-            // Hide stream tabs on offline channels
-            const tabsC = document.getElementById('live-stream-tabs');
-            if (tabsC) tabsC.style.display = 'none';
-
-            // Poll for when streamer comes online
-            startOfflineStatusPoll(username);
+            // Still load tabs if other streams are live
+            loadLiveStreamTabs(username, null);
         }
 
         // VODs section
@@ -738,273 +596,75 @@ async function loadChannelPage(username, preferredStreamId = null) {
 }
 
 /**
- * Format uptime from a started_at timestamp to a short human string (e.g. "2h 14m").
+ * Load tabs for all live streams across the platform.
+ * Highlights the current stream tab.
  */
-function formatUptime(startedAt) {
-    if (!startedAt) return '';
-    const start = new Date(startedAt.replace ? startedAt.replace(' ', 'T') + 'Z' : startedAt).getTime();
-    if (isNaN(start)) return '';
-    const d = Date.now() - start;
-    if (d < 0) return '';
-    const h = Math.floor(d / 3600000);
-    const m = Math.floor((d % 3600000) / 60000);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-/**
- * Show/hide the stream switch loading overlay on the video container.
- */
-function showStreamSwitchOverlay(show) {
-    const el = document.getElementById('stream-switch-overlay');
-    if (!el) return;
-    if (show) {
-        el.classList.add('visible');
-    } else {
-        el.classList.remove('visible');
-    }
-}
-
-/**
- * Remember the last viewed stream for a channel (sessionStorage).
- */
-function rememberLastStream(username, streamId) {
-    try { sessionStorage.setItem(`last-stream:${username}`, String(streamId)); } catch {}
-}
-function getLastStream(username) {
-    try { const v = sessionStorage.getItem(`last-stream:${username}`); return v ? parseInt(v) : null; } catch { return null; }
-}
-
-/**
- * Auto-scroll the active tab into view within the tab bar.
- */
-function scrollActiveTabIntoView() {
-    const active = document.querySelector('.live-tab.active');
-    if (active) active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-}
-
-/**
- * Copy the current stream-specific URL to clipboard.
- */
-function shareStreamUrl() {
-    const url = window.location.href;
-    navigator.clipboard.writeText(url).then(
-        () => toast('Stream link copied!', 'success'),
-        () => toast('Failed to copy link', 'error')
-    );
-}
-
-/**
- * Load tabs for the current channel's live streams.
- * Shows tabs when the channel has multiple concurrent streams.
- * Each tab shows: number badge, live dot, title, protocol badge, RS icon, viewers, uptime.
- * Supports keyboard navigation (arrow keys) between tabs.
- */
-function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = [], rsRestream = {}) {
+async function loadLiveStreamTabs(currentUsername, activeStreamId) {
     const tabsContainer = document.getElementById('live-stream-tabs');
     const tabsScroll = document.getElementById('live-tabs-scroll');
-    const pageEl = document.getElementById('page-channel');
     if (!tabsContainer || !tabsScroll) return;
 
-    // Only show tabs if the channel has more than one concurrent live stream
-    const filtered = channelStreams.filter(s =>
-        !s.username || s.username.toLowerCase() === currentUsername.toLowerCase()
-    );
-    if (filtered.length <= 1) {
+    try {
+        const data = await api('/streams');
+        const allLive = data.streams || [];
+
+        if (allLive.length === 0) {
+            tabsContainer.style.display = 'none';
+            return;
+        }
+
+        tabsContainer.style.display = '';
+        tabsScroll.innerHTML = allLive.map(s => {
+            const isActive = s.id === activeStreamId;
+            const avatarLetter = (s.username || '?')[0].toUpperCase();
+            const title = esc(s.title || 'Untitled Stream');
+            const truncTitle = title.length > 30 ? title.slice(0, 28) + '…' : title;
+            return `<button class="live-tab ${isActive ? 'active' : ''}"
+                        onclick="switchToLiveStream('${esc(s.username)}', ${s.id}, this)"
+                        data-stream-id="${s.id}" data-username="${esc(s.username)}" title="${title}">
+                <span class="live-tab-dot"></span>
+                <span class="live-tab-avatar">${avatarLetter}</span>
+                <span>${esc(s.username)}: ${truncTitle}</span>
+                ${s.protocol ? protocolBadge(s.protocol) : ''}
+                <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>
+            </button>`;
+        }).join('');
+    } catch (e) {
+        console.error('Failed to load live stream tabs:', e);
         tabsContainer.style.display = 'none';
-        if (pageEl) pageEl.classList.remove('has-live-tabs');
-        return;
-    }
-
-    tabsContainer.style.display = '';
-    if (pageEl) pageEl.classList.add('has-live-tabs');
-
-    // Calculate total viewers for the summary
-    const totalViewers = filtered.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
-
-    tabsScroll.innerHTML = filtered.map((s, idx) => {
-        const isActive = s.id === activeStreamId;
-        const title = s.title || `Stream ${idx + 1}`;
-        const viewers = s.viewer_count || 0;
-        const uptime = formatUptime(s.started_at);
-        const protoTag = s.protocol ? `<span class="live-tab-proto">${s.protocol.toUpperCase()}</span>` : '';
-        const rsTag = rsRestream[s.id] ? '<span class="live-tab-rs" title="Also on RobotStreamer"><i class="fa-solid fa-robot"></i></span>' : '';
-        const uptimeTag = uptime ? `<span class="live-tab-uptime"><i class="fa-solid fa-clock"></i> ${uptime}</span>` : '';
-        const sep = idx > 0 ? '<span class="live-tab-separator" aria-hidden="true"></span>' : '';
-        return `${sep}<button class="live-tab ${isActive ? 'active' : ''}"
-                    onclick="switchToLiveStream('${esc(currentUsername)}', ${s.id}, this)"
-                    data-stream-id="${s.id}" data-username="${esc(currentUsername)}"
-                    role="tab" aria-selected="${isActive}" tabindex="${isActive ? '0' : '-1'}"
-                    title="${esc(title)} — ${viewers} viewer${viewers !== 1 ? 's' : ''}${uptime ? ' — Live for ' + uptime : ''} (${s.protocol || 'unknown'})">
-            <span class="live-tab-num">${idx + 1}</span>
-            <span class="live-tab-dot"></span>
-            <span class="live-tab-title">${esc(title)}</span>
-            <span class="live-tab-meta">
-                ${protoTag}${rsTag}
-                <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${viewers}</span>
-                ${uptimeTag}
-            </span>
-        </button>`;
-    }).join('') +
-    `<span class="live-tabs-summary" title="${totalViewers} viewers across ${filtered.length} streams">
-        <i class="fa-solid fa-tower-broadcast"></i> <strong>${filtered.length}</strong> streams &middot;
-        <i class="fa-solid fa-eye"></i> <strong>${totalViewers}</strong> total
-    </span>`;
-
-    // Auto-scroll active tab into view after render
-    requestAnimationFrame(scrollActiveTabIntoView);
-
-    // Setup keyboard navigation (arrow keys between tabs)
-    setupTabKeyboardNav(tabsScroll, currentUsername);
-}
-
-/**
- * Keyboard navigation for stream tabs — left/right arrows move between tabs.
- */
-function setupTabKeyboardNav(container, username) {
-    // Remove old listener if any
-    if (container._tabKeyHandler) container.removeEventListener('keydown', container._tabKeyHandler);
-    container._tabKeyHandler = (e) => {
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-        const tabs = Array.from(container.querySelectorAll('.live-tab'));
-        if (!tabs.length) return;
-        const currentIdx = tabs.findIndex(t => t === document.activeElement);
-        if (currentIdx === -1) return;
-        e.preventDefault();
-        const nextIdx = e.key === 'ArrowRight'
-            ? (currentIdx + 1) % tabs.length
-            : (currentIdx - 1 + tabs.length) % tabs.length;
-        tabs[currentIdx].setAttribute('tabindex', '-1');
-        tabs[nextIdx].setAttribute('tabindex', '0');
-        tabs[nextIdx].focus();
-    };
-    container.addEventListener('keydown', container._tabKeyHandler);
-}
-
-/**
- * Update cumulative viewer display below the video player.
- * Shows total viewers across all streams, RS restream indicator, and share button.
- */
-function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = null) {
-    const el = document.getElementById('ch-cumulative-viewers');
-    if (!el) return;
-
-    const hasRs = Object.keys(rsRestream).length > 0;
-    const hasRestream = restreamLinks?.length > 0;
-
-    if (liveStreams.length <= 1 && !hasRs && !hasRestream) {
-        el.style.display = 'none';
-        return;
-    }
-
-    const total = liveStreams.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
-    const streamCount = liveStreams.length;
-
-    let html = '';
-    if (streamCount > 1) {
-        html += `<span class="ch-viewer-total"><i class="fa-solid fa-layer-group"></i> <strong>${total}</strong> viewer${total !== 1 ? 's' : ''} across <strong>${streamCount}</strong> streams</span>`;
-    }
-
-    // RS restream badges — link to robotstreamer.com/robot/{id} when robot_id available
-    for (const [, rs] of Object.entries(rsRestream)) {
-        if (rs.active) {
-            const label = 'RS Restream';
-            if (rs.robot_id) {
-                const rsUrl = `https://robotstreamer.com/robot/${esc(rs.robot_id)}`;
-                html += `<a href="${rsUrl}" target="_blank" rel="noopener" class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}"><i class="fa-solid fa-robot"></i> ${label}</a>`;
-            } else {
-                html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}"><i class="fa-solid fa-robot"></i> ${label}</span>`;
-            }
-        }
-    }
-
-    // Restream platform link badges (Twitch/Kick/YouTube) with viewer counts
-    if (hasRestream) {
-        const platformIcons = { twitch: 'fa-brands fa-twitch', kick: 'fa-brands fa-kickstarter-k', youtube: 'fa-brands fa-youtube', custom: 'fa-solid fa-globe' };
-        const platformColors = { twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', custom: '#888' };
-        for (const link of restreamLinks) {
-            const icon = platformIcons[link.platform] || platformIcons.custom;
-            const color = platformColors[link.platform] || platformColors.custom;
-            const liveDot = link.is_live ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#e91916;margin-right:4px;animation:pulse-live 1.5s infinite"></span>' : '';
-            const name = esc(link.name || link.platform);
-            const viewerStr = link.viewer_count != null ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${link.viewer_count}` : '';
-            html += `<a href="${esc(link.channel_url)}" target="_blank" rel="noopener" class="ch-restream-badge" style="color:${color}" title="${link.is_live ? 'Live on' : 'Also on'} ${name}${link.viewer_count != null ? ' (' + link.viewer_count + ' viewers)' : ''}">${liveDot}<i class="${icon}"></i> ${name}${viewerStr}</a>`;
-        }
-    }
-
-    // Share button (copies stream-specific URL)
-    if (streamCount > 1) {
-        html += `<button class="ch-share-stream" onclick="shareStreamUrl()" title="Copy link to this specific stream"><i class="fa-solid fa-link"></i> Share stream</button>`;
-    }
-
-    if (html) {
-        el.innerHTML = html;
-        el.style.display = '';
-    } else {
-        el.style.display = 'none';
     }
 }
 
 /**
- * Switch to a different live stream within the same channel.
- * Shows loading overlay, destroys current player, fetches fresh data, initializes new stream.
+ * Switch to a different live stream (possibly different user/channel).
+ * Navigates to that user's channel page and activates their stream.
  */
 function switchToLiveStream(username, streamId, btn) {
-    // If switching to a different channel, navigate there with stream preference
+    // If switching to a different channel, navigate there with the specific stream
     if (username !== currentChannelUsername) {
         navigate('/' + username + '?stream=' + streamId);
         return;
     }
 
-    // Don't re-switch to the already active stream
-    if (streamId === currentStreamId) return;
-
-    // Update tab UI immediately — highlight the target tab
+    // Same channel, just switch the stream (multi-protocol case)
     const tabsScroll = document.getElementById('live-tabs-scroll');
     if (tabsScroll) {
-        tabsScroll.querySelectorAll('.live-tab').forEach(t => {
-            const isTarget = parseInt(t.dataset.streamId) === streamId;
-            t.classList.toggle('active', isTarget);
-            t.setAttribute('aria-selected', String(isTarget));
-            t.setAttribute('tabindex', isTarget ? '0' : '-1');
-        });
+        tabsScroll.querySelectorAll('.live-tab').forEach(t => t.classList.remove('active'));
     }
-    if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    if (btn) btn.classList.add('active');
 
-    // Show loading overlay
-    showStreamSwitchOverlay(true);
-
-    // Destroy current player before fetching the new stream
-    if (typeof destroyPlayer === 'function') destroyPlayer();
-
-    // Fetch the full stream data (with endpoint info) from the /channel API
-    api(`/streams/channel/${username}`).then(data => {
-        const streams = data.streams || [];
-        const target = streams.find(s => s.id === streamId && s.is_live);
-        if (target) {
-            activateChannelStream(target);
-            // Update URL to reflect stream selection (without full nav)
-            history.replaceState(null, '', `/${username}?stream=${streamId}`);
-            // Remember for return visits
-            rememberLastStream(username, streamId);
-            // Update cumulative viewers with fresh data
-            const liveStreams = streams.filter(s => s && s.is_live);
-            updateCumulativeViewers(liveStreams, data.rs_restream || {}, data.restream_links || null);
-            // Refresh tabs with latest viewer counts
-            loadLiveStreamTabs(username, streamId, liveStreams, data.rs_restream || {});
-        } else {
-            toast('Stream is no longer live', 'error');
-        }
-    }).catch(() => toast('Failed to load stream', 'error'))
-      .finally(() => showStreamSwitchOverlay(false));
+    api(`/streams/${streamId}`).then(data => {
+        const s = data.stream || data;
+        if (s && s.is_live) activateChannelStream(s);
+        else toast('Stream is no longer live', 'error');
+    }).catch(() => toast('Failed to load stream', 'error'));
 }
 
 function activateChannelStream(stream) {
-    // Avoid no-op reactivation of same stream (prevents double-init bugs)
-    const isSameStream = currentStreamId === stream.id;
     currentStreamId = stream.id;
     currentStreamData = stream;
     document.getElementById('ch-stream-title').textContent = stream.title || 'Untitled Stream';
-    // Protocol badge on live channel page (moved from tabs to info bar)
+    // Protocol badge on live channel page
     const chProtoEl = document.getElementById('ch-protocol-badge');
     if (chProtoEl) chProtoEl.innerHTML = stream.protocol ? protocolBadge(stream.protocol) : '';
     // Description on live channel page
@@ -1014,105 +674,12 @@ function activateChannelStream(stream) {
         chDescEl.textContent = desc;
         chDescEl.style.display = desc ? '' : 'none';
     }
-    // Always destroy before init to prevent stale player state
-    if (typeof destroyPlayer === 'function') destroyPlayer();
     if (typeof initPlayer === 'function') initPlayer(stream);
     if (typeof initChat === 'function') initChat(stream.id);
     if (typeof loadStreamControls === 'function') loadStreamControls(stream.id);
     if (typeof startCoinHeartbeat === 'function') startCoinHeartbeat(stream.id);
+    if (typeof initCallPanel === 'function') initCallPanel(stream);
     startUptime(stream.started_at);
-
-    // Start polling for stream status changes
-    startStreamStatusPoll(stream);
-}
-
-/* ── Stream Status Polling — auto-detect online/offline ──────── */
-let _streamPollTimer = null;
-const STREAM_POLL_INTERVAL = 15000; // 15 seconds
-
-function stopStreamStatusPoll() {
-    if (_streamPollTimer) { clearInterval(_streamPollTimer); _streamPollTimer = null; }
-}
-
-function startStreamStatusPoll(stream) {
-    stopStreamStatusPoll();
-    if (!currentChannelUsername) return;
-    const username = currentChannelUsername;
-
-    _streamPollTimer = setInterval(async () => {
-        // Stop polling if user navigated away from the channel page
-        if (currentChannelUsername !== username) { stopStreamStatusPoll(); return; }
-        try {
-            const data = await api(`/streams/channel/${username}`);
-            const streams = data.streams || (data.stream ? [data.stream] : []);
-            const liveStreams = streams.filter(s => s && s.is_live);
-
-            if (liveStreams.length === 0 && currentStreamId) {
-                // Stream went offline — show offline state
-                stopStreamStatusPoll();
-                loadChannelPage(username);
-                return;
-            }
-
-            if (liveStreams.length > 0 && !currentStreamId) {
-                // Stream came online — switch to live state
-                stopStreamStatusPoll();
-                loadChannelPage(username);
-                return;
-            }
-
-            // Check if current stream is still live
-            const current = liveStreams.find(s => s.id === currentStreamId);
-            const rsRestream = data.rs_restream || {};
-            const restreamLinks = data.restream_links || null;
-            if (!current && liveStreams.length > 0) {
-                // Current stream ended, but others are live — auto-switch to best
-                const best = liveStreams.reduce((b, s) =>
-                    (s.viewer_count || 0) > (b.viewer_count || 0) ? s : b
-                , liveStreams[0]);
-                const bestTitle = best.title || 'another stream';
-                loadLiveStreamTabs(username, best.id, liveStreams, rsRestream);
-                activateChannelStream(best);
-                updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
-                rememberLastStream(username, best.id);
-                history.replaceState(null, '', `/${username}?stream=${best.id}`);
-                toast(`Stream ended — switched to "${bestTitle}"`, 'info');
-                return;
-            }
-
-            // Update tabs with fresh viewer counts and uptime
-            if (liveStreams.length > 1) {
-                loadLiveStreamTabs(username, currentStreamId, liveStreams, rsRestream);
-            } else {
-                // Single stream — ensure tabs are hidden
-                const tabsC = document.getElementById('live-stream-tabs');
-                if (tabsC) tabsC.style.display = 'none';
-                const pageEl = document.getElementById('page-channel');
-                if (pageEl) pageEl.classList.remove('has-live-tabs');
-            }
-
-            // Update cumulative viewers
-            updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
-        } catch { /* silent — network error, retry next interval */ }
-    }, STREAM_POLL_INTERVAL);
-}
-
-// Start offline poll — detects when a channel comes online
-function startOfflineStatusPoll(username) {
-    stopStreamStatusPoll();
-    _streamPollTimer = setInterval(async () => {
-        if (currentChannelUsername !== username) { stopStreamStatusPoll(); return; }
-        try {
-            const data = await api(`/streams/channel/${username}`);
-            const streams = data.streams || (data.stream ? [data.stream] : []);
-            const liveStreams = streams.filter(s => s && s.is_live);
-            if (liveStreams.length > 0) {
-                stopStreamStatusPoll();
-                loadChannelPage(username);
-                toast(`${username} is now live!`, 'success');
-            }
-        } catch { /* silent */ }
-    }, STREAM_POLL_INTERVAL);
 }
 
 async function toggleChannelFollow(username) {
@@ -1263,7 +830,7 @@ async function loadClipsPage() {
         const data = await api('/clips');
         const clips = data.clips || [];
         if (!clips.length) {
-            grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-scissors fa-3x"></i><p>No public clips yet</p><p class="muted">Viewers can create clips during live streams using the clip button</p></div>';
+            grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-scissors fa-3x"></i><p>No public clips yet</p><p class="muted">Viewers can create clips during live streams or from finished VODs</p></div>';
             return;
         }
         grid.innerHTML = clips.map(cl => `
@@ -1290,6 +857,103 @@ async function loadClipsPage() {
 }
 
 /* ── VOD Player ───────────────────────────────────────────────── */
+function renderVodClipGrid(clips = []) {
+    const clipsGrid = document.getElementById('vp-clips-grid');
+    if (!clipsGrid) return;
+    if (!clips.length) {
+        clipsGrid.innerHTML = '<p class="muted">No clips from this stream</p>';
+        return;
+    }
+    clipsGrid.innerHTML = clips.map(cl => `
+        <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
+            <div class="stream-card-thumb">
+                ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title)}
+                <span class="stream-card-viewers">${formatDuration(cl.duration_seconds)}</span>
+            </div>
+            <div class="stream-card-info">
+                <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function canCreateClipsFromVod(vod, user = currentUser) {
+    if (!vod || !vod.file_path || vod.is_recording || vod.is_private) return false;
+    if (vod.is_public) return true;
+    return !!user && (user.id === vod.user_id || user.role === 'admin');
+}
+
+function getVodClipRange(currentTime, totalDuration, clipLength = 30) {
+    const duration = Math.max(0, Number(totalDuration) || 0);
+    if (!duration) return null;
+
+    let clipEnd = Math.max(0, Math.min(duration, Number(currentTime) || 0));
+    if (clipEnd < Math.min(15, duration)) {
+        clipEnd = Math.min(duration, clipLength);
+    }
+
+    const clipStart = Math.max(0, clipEnd - clipLength);
+    if ((clipEnd - clipStart) < 1) return null;
+
+    return {
+        start: Number(clipStart.toFixed(2)),
+        end: Number(clipEnd.toFixed(2)),
+        duration: Number((clipEnd - clipStart).toFixed(2)),
+    };
+}
+
+function openNewClipTitlePrompt(clipId) {
+    if (!clipId) return;
+    if (typeof window.promptClipTitle === 'function') {
+        window.promptClipTitle(clipId);
+        return;
+    }
+    editClipTitle(clipId);
+}
+
+async function createVodClip(vod, currentTime) {
+    if (!currentUser) {
+        showModal('login');
+        return;
+    }
+    if (!canCreateClipsFromVod(vod, currentUser)) {
+        toast('This VOD cannot be clipped right now', 'info');
+        return;
+    }
+
+    const range = getVodClipRange(currentTime, vod.duration_seconds || vod.duration || 0);
+    if (!range) {
+        toast('Seek to the part you want to clip first', 'info');
+        return;
+    }
+
+    try {
+        toast(`Creating clip from ${formatDuration(range.start)} to ${formatDuration(range.end)}...`, 'info');
+
+        const data = await api('/vods/clips', {
+            method: 'POST',
+            body: {
+                vod_id: vod.id,
+                stream_id: vod.stream_id || null,
+                title: `Clip from ${vod.title || 'VOD'}`,
+                start_time: range.start,
+                end_time: range.end,
+            },
+        });
+
+        const newClip = data.clip;
+        if (newClip) {
+            window._vpClips = [newClip, ...(window._vpClips || []).filter(cl => cl.id !== newClip.id)];
+            renderVodClipGrid(window._vpClips);
+            openNewClipTitlePrompt(newClip.id);
+        }
+
+        toast(`Clip created! (${Math.round(range.duration)}s)`, 'success');
+    } catch (e) {
+        toast(e.message || 'Failed to create clip', 'error');
+    }
+}
+
 async function loadVodPlayer(vodId) {
     try {
         // Clean up any previous live VOD poll
@@ -1312,8 +976,10 @@ async function loadVodPlayer(vodId) {
         const v = data.vod;
         const clips = data.clips || [];
 
-        // Store for comments
+        // Store for comments / clip actions
         window._vpVodId = v.id;
+        window._vpVodData = v;
+        window._vpClips = clips;
 
         document.getElementById('vp-title').textContent = v.title || 'Video';
         document.getElementById('vp-streamer').textContent = v.display_name || v.username || 'Unknown';
@@ -1458,35 +1124,33 @@ async function loadVodPlayer(vodId) {
             streamerLink.onclick = () => navigate(`/${v.username}`);
         }
 
-        // Show delete button if user is the VOD owner or admin
+        // Show clip / delete actions for this VOD
         const vpActions = document.getElementById('vp-actions');
-        if (vpActions && currentUser) {
-            let canDelete = (v.user_id === currentUser.id) || currentUser.capabilities?.moderate_global;
-            if (canDelete) {
-                vpActions.style.display = '';
-                vpActions.innerHTML = `<button class="btn btn-danger btn-small" onclick="deleteVodFromPlayer(${v.id})"><i class="fa-solid fa-trash"></i> Delete Video</button>`;
-            } else {
-                vpActions.style.display = 'none';
+        if (vpActions) {
+            const canDelete = !!currentUser && ((v.user_id === currentUser.id) || (currentUser.role === 'admin'));
+            const canShowClipAction = canCreateClipsFromVod(v, currentUser) || (!currentUser && canCreateClipsFromVod(v, null));
+            const buttons = [];
+
+            if (canShowClipAction) {
+                buttons.push(`
+                    <button class="btn btn-primary btn-small" onclick="createVodClip(window._vpVodData, document.getElementById('vp-video')?.currentTime || 0)">
+                        <i class="fa-solid fa-scissors"></i> ${currentUser ? 'Clip Last 30s' : 'Log In to Clip'}
+                    </button>
+                `);
             }
+
+            if (canDelete) {
+                buttons.push(`<button class="btn btn-danger btn-small" onclick="deleteVodFromPlayer(${v.id})"><i class="fa-solid fa-trash"></i> Delete Video</button>`);
+            }
+
+            vpActions.innerHTML = buttons.length
+                ? `<div style="display:flex;gap:8px;flex-wrap:wrap">${buttons.join('')}</div>`
+                : '';
+            vpActions.style.display = buttons.length ? '' : 'none';
         }
 
         // Clips for this VOD
-        const clipsGrid = document.getElementById('vp-clips-grid');
-        if (clips.length) {
-            clipsGrid.innerHTML = clips.map(cl => `
-                <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
-                    <div class="stream-card-thumb">
-                        ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title)}
-                        <span class="stream-card-viewers">${formatDuration(cl.duration_seconds)}</span>
-                    </div>
-                    <div class="stream-card-info">
-                        <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
-                    </div>
-                </div>
-            `).join('');
-        } else {
-            clipsGrid.innerHTML = '<p class="muted">No clips from this stream</p>';
-        }
+        renderVodClipGrid(window._vpClips);
 
         // Load comments
         loadComments('vod', v.id, 'vp');
@@ -1613,7 +1277,7 @@ async function loadClipPlayer(clipId) {
         // Show delete button if user is clip creator, stream owner, or admin
         const clpActions = document.getElementById('clp-actions');
         if (clpActions && currentUser) {
-            let canDelete = (cl.user_id === currentUser.id) || currentUser.capabilities?.moderate_global;
+            let canDelete = (cl.user_id === currentUser.id) || (currentUser.role === 'admin');
             let isStreamOwner = false;
             // Check if current user owns the stream this clip is from
             if (cl.stream_id) {
@@ -1628,11 +1292,11 @@ async function loadClipPlayer(clipId) {
 
             let actionsHtml = '';
             // Edit title — clip creator or admin
-            if (cl.user_id === currentUser.id || currentUser.capabilities?.moderate_global) {
+            if (cl.user_id === currentUser.id || currentUser.role === 'admin') {
                 actionsHtml += `<button class="btn btn-small" onclick="editClipTitle(${cl.id})"><i class="fa-solid fa-pen"></i> Edit Title</button> `;
             }
             // Publish/unpublish toggle — only for stream owner or admin
-            if (isStreamOwner || currentUser.capabilities?.moderate_global) {
+            if (isStreamOwner || currentUser.role === 'admin') {
                 if (cl.is_public) {
                     actionsHtml += `<button class="btn btn-small" onclick="toggleClipVisibility(${cl.id}, false)"><i class="fa-solid fa-eye-slash"></i> Make Unlisted</button>`;
                 } else {
@@ -1845,7 +1509,7 @@ function renderComment(c, contentType, contentId) {
     const color = c.profile_color || '#c0965c';
     const name = c.display_name || c.username || 'Unknown';
     const isOwn = currentUser && (c.user_id === currentUser.id);
-    const isAdmin = currentUser && currentUser.capabilities?.moderate_global;
+    const isAdmin = currentUser && (currentUser.role === 'admin');
     const edited = c.updated_at && c.updated_at !== c.created_at;
 
     let actionsHtml = '';
@@ -1991,22 +1655,7 @@ function timeAgo(dateStr) {
 function esc(str) {
     const d = document.createElement('div');
     d.textContent = str;
-    return d.innerHTML.replace(/'/g, '&#39;');
-}
-
-/**
- * Escape a string for safe interpolation inside a JS string literal
- * within an HTML attribute (e.g. onclick="fn('${escJs(val)}')" ).
- * Escapes backslash, single/double quotes, backticks, and angle brackets.
- */
-function escJs(str) {
-    return String(str ?? '')
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")  
-        .replace(/"/g, '\\"')
-        .replace(/`/g, '\\`')
-        .replace(/</g, '\\x3c')
-        .replace(/>/g, '\\x3e');
+    return d.innerHTML;
 }
 
 /**
@@ -2393,108 +2042,8 @@ function setupCustomVideoControls(prefix) {
     video.addEventListener('timeupdate', updateProgress);
 }
 
-let _userLoaded = false;
-
-/* ── Updates / Changelog Page ─────────────────────────────────── */
-async function loadUpdatesPage() {
-    const container = document.getElementById('updates-list');
-    if (!container) return;
-    container.innerHTML = '<div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>';
-
-    try {
-        const data = await api('/updates?limit=50');
-        if (!data.commits || data.commits.length === 0) {
-            container.innerHTML = '<p style="opacity:0.6;text-align:center;padding:32px 0;">No updates found.</p>';
-            return;
-        }
-
-        // Group commits by date
-        const groups = {};
-        for (const c of data.commits) {
-            const day = new Date(c.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-            if (!groups[day]) groups[day] = [];
-            groups[day].push(c);
-        }
-
-        let html = '';
-        for (const [day, commits] of Object.entries(groups)) {
-            html += `<div class="updates-day">
-                <h3 class="updates-day-header">${esc(day)}</h3>
-                <div class="updates-day-commits">`;
-            for (const c of commits) {
-                const time = new Date(c.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                html += `<div class="update-entry">
-                    <a class="update-hash" href="https://github.com/HoboStreamer/HoboStreamer.com/commit/${c.hash}" target="_blank" title="View on GitHub">${esc(c.short)}</a>
-                    <span class="update-subject">${esc(c.subject)}</span>
-                    <span class="update-meta">${esc(c.author)} &middot; ${esc(time)}</span>
-                </div>`;
-            }
-            html += '</div></div>';
-        }
-        container.innerHTML = html;
-    } catch (err) {
-        container.innerHTML = `<p style="color:var(--error);text-align:center;padding:32px 0;">Failed to load updates.</p>`;
-    }
-}
-
-async function loadHomeChangelog(attempt = 0) {
-    const container = document.getElementById('home-changelog');
-    if (!container) return;
-
-    try {
-        const data = await api('/updates?limit=15');
-        if (!data.commits || data.commits.length === 0) {
-            container.innerHTML = '<p style="opacity:0.5;text-align:center;padding:16px 0;">No recent changes.</p>';
-            return;
-        }
-
-        // Group commits by date (same pattern as updates page)
-        const groups = {};
-        for (const c of data.commits) {
-            const day = new Date(c.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-            if (!groups[day]) groups[day] = [];
-            groups[day].push(c);
-        }
-
-        let html = '';
-        for (const [day, commits] of Object.entries(groups)) {
-            html += `<div class="updates-day">
-                <h3 class="updates-day-header">${esc(day)}</h3>
-                <div class="updates-day-commits">`;
-            for (const c of commits) {
-                const time = new Date(c.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                html += `<div class="update-entry">
-                    <a class="update-hash" href="https://github.com/HoboStreamer/HoboStreamer.com/commit/${c.hash}" target="_blank" title="View on GitHub">${esc(c.short)}</a>
-                    <span class="update-subject">${esc(c.subject)}</span>
-                    <span class="update-meta">${esc(c.author)} &middot; ${esc(time)}</span>
-                </div>`;
-            }
-            html += '</div></div>';
-        }
-        container.innerHTML = html;
-    } catch {
-        // Retry up to 2 times with increasing delay (handles Cloudflare challenge timing)
-        if (attempt < 2) {
-            setTimeout(() => loadHomeChangelog(attempt + 1), (attempt + 1) * 3000);
-        } else {
-            container.innerHTML = '<p style="opacity:0.5;text-align:center;padding:16px 0;">Failed to load changelog.</p>';
-        }
-    }
-}
-
-/* Toggle collapsible changelog on homepage */
-function toggleHomeChangelog() {
-    const wrapper = document.getElementById('home-changelog-wrapper');
-    const btn = document.getElementById('home-changelog-toggle');
-    if (!wrapper || !btn) return;
-    const expanded = wrapper.classList.toggle('expanded');
-    wrapper.classList.toggle('collapsed', !expanded);
-    btn.textContent = expanded ? 'Show Less' : 'Show All';
-}
-
 document.addEventListener('DOMContentLoaded', async () => {
     await loadUser();
-    _userLoaded = true;
     onAuthChange();
 
     // Load theme from server if logged in (localStorage already applied instantly)
@@ -2506,12 +2055,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     routeFromURL();
 });
 
-// Handle browser back/forward — wait for auth to be resolved first
+// Handle browser back/forward
 window.addEventListener('popstate', () => {
-    if (_userLoaded) {
-        routeFromURL();
-    }
-    // If auth hasn't loaded yet, DOMContentLoaded handler will call routeFromURL()
+    routeFromURL();
 });
 
 // Intercept link clicks to use SPA navigation
@@ -2519,9 +2065,5 @@ document.addEventListener('click', (e) => {
     // Close user dropdown
     if (!e.target.closest('.nav-avatar-wrap') && !e.target.closest('.user-dropdown')) {
         document.getElementById('user-dropdown')?.classList.remove('show');
-    }
-
-    if (!e.target.closest('.nav-links') && !e.target.closest('.nav-hamburger')) {
-        closeMobileNav();
     }
 });
