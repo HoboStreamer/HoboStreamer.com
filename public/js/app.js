@@ -550,17 +550,24 @@ function checkNavOverflow() {
     const hasOverflow = nl.scrollWidth > nl.clientWidth + 2;
     const left = document.getElementById('nav-scroll-left');
     const right = document.getElementById('nav-scroll-right');
-    if (left) left.classList.toggle('visible', hasOverflow && nl.scrollLeft > 4);
-    if (right) right.classList.toggle('visible', hasOverflow && nl.scrollLeft < nl.scrollWidth - nl.clientWidth - 4);
+    const atStart = nl.scrollLeft <= 1;
+    const atEnd = nl.scrollLeft >= nl.scrollWidth - nl.clientWidth - 1;
+    if (left) left.classList.toggle('visible', hasOverflow && !atStart);
+    if (right) right.classList.toggle('visible', hasOverflow && !atEnd);
 }
 
 function scrollNavLinks(dir) {
     const nl = document.querySelector('.nav-links');
     if (!nl) return;
     nl.scrollBy({ left: dir * 160, behavior: 'smooth' });
-    // Re-check after scroll animation settles
-    setTimeout(checkNavOverflow, 200);
-    setTimeout(checkNavOverflow, 400);
+    // Poll until scroll settles (smooth scroll can take 300-600ms)
+    let checks = 0;
+    let lastPos = nl.scrollLeft;
+    const poll = setInterval(() => {
+        checkNavOverflow();
+        if (nl.scrollLeft === lastPos || ++checks > 12) clearInterval(poll);
+        lastPos = nl.scrollLeft;
+    }, 60);
 }
 
 // Position fixed dropdown menus below their triggers
