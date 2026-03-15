@@ -46,9 +46,12 @@ async function loadEmotes(streamId) {
     }
 }
 
-/* ── Parse emote codes in a message string → HTML ─────────────── */
+/* ── URL detection regex ───────────────────────────────────────── */
+const _URL_RE = /^(https?:\/\/[^\s<>"'`]+|www\.[^\s<>"'`]+\.[^\s<>"'`]+)$/i;
+
+/* ── Parse emote codes + linkify URLs in a message string → HTML ── */
 function parseEmotes(text) {
-    if (!emotesLoaded || emoteMap.size === 0) return _escEmote(text);
+    if (!emotesLoaded || emoteMap.size === 0) return _linkifyPlain(text);
 
     const tokens = text.split(/(\s+)/);
     return tokens.map(token => {
@@ -58,10 +61,43 @@ function parseEmotes(text) {
             const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
             return `<img class="${cls}" src="${_escEmote(emote.url)}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
         }
+        if (_URL_RE.test(token)) return _makeChatLink(token);
         return _escEmote(token);
     }).join('');
 }
 
+/** Linkify plain text (fallback when emotes not loaded) */
+function _linkifyPlain(text) {
+    return text.split(/(\s+)/).map(token => {
+        if (/^\s+$/.test(token)) return token;
+        if (_URL_RE.test(token)) return _makeChatLink(token);
+        return _escEmote(token);
+    }).join('');
+}
+
+/** Build a clickable chat link element string */
+function _makeChatLink(raw) {
+    // Strip trailing punctuation that's unlikely to be part of the URL
+    let url = raw;
+    let trailing = '';
+    const trailingMatch = url.match(/[)}\].,;:!?]+$/);
+    if (trailingMatch) {
+        const stripped = trailingMatch[0];
+        const openParens = (url.match(/\(/g) || []).length;
+        const closeParens = (url.match(/\)/g) || []).length;
+        if (closeParens > openParens && stripped.includes(')')) {
+            trailing = stripped;
+            url = url.slice(0, -stripped.length);
+        } else if (!stripped.includes(')')) {
+            trailing = stripped;
+            url = url.slice(0, -stripped.length);
+        }
+    }
+    const href = url.startsWith('www.') ? 'https://' + url : url;
+    const escaped = _escEmote(url);
+    const escapedHref = _escEmote(href);
+    return `<a class="chat-link" href="${escapedHref}" data-url="${escapedHref}" onclick="handleChatLinkClick(event)" oncontextmenu="showLinkContextMenu(event)" title="${escapedHref}">${escaped}</a>${_escEmote(trailing)}`;
+}
 function _escEmote(str) {
     const d = document.createElement('div');
     d.textContent = str;
