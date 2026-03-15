@@ -1500,6 +1500,49 @@
                             <button class="bc-ctrl-btn" onclick="cancelTTS()">
                                 <i class="fa-solid fa-ban"></i> Reset TTS
                             </button>
+                            <button class="bc-ctrl-btn" id="bc-btn-clip" onclick="toggleBroadcastClipPanel()">
+                                <i class="fa-solid fa-scissors"></i> Clip
+                            </button>
+                        </div>
+
+                        <!-- Live Clip Panel -->
+                        <div id="bc-clip-panel" class="vod-clip-panel" style="display:none">
+                            <div class="vod-clip-header">
+                                <h4><i class="fa-solid fa-scissors"></i> Create Clip</h4>
+                                <button class="btn btn-small btn-outline" onclick="toggleBroadcastClipPanel()"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                            <p class="muted" style="font-size:0.82rem;margin:0 0 10px">Mark a start and end time from your stream (max 60 seconds). The clip is extracted from the server-side recording.</p>
+                            <div class="vod-clip-times">
+                                <div class="vod-clip-time-group">
+                                    <label><i class="fa-solid fa-play"></i> Start</label>
+                                    <div class="vod-clip-time-row">
+                                        <input type="text" id="bc-clip-start" class="form-input form-input-sm" value="0:00" readonly>
+                                        <button class="btn btn-small btn-outline" onclick="setBroadcastClipMark('start')"><i class="fa-solid fa-location-dot"></i> Set</button>
+                                    </div>
+                                </div>
+                                <div class="vod-clip-time-group">
+                                    <label><i class="fa-solid fa-stop"></i> End</label>
+                                    <div class="vod-clip-time-row">
+                                        <input type="text" id="bc-clip-end" class="form-input form-input-sm" value="0:00" readonly>
+                                        <button class="btn btn-small btn-outline" onclick="setBroadcastClipMark('end')"><i class="fa-solid fa-location-dot"></i> Set</button>
+                                    </div>
+                                </div>
+                                <div class="vod-clip-time-group">
+                                    <label>Duration</label>
+                                    <span class="vod-clip-duration" id="bc-clip-duration">0s</span>
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top:10px">
+                                <input type="text" id="bc-clip-title" class="form-input" placeholder="Clip title (optional)" maxlength="200">
+                            </div>
+                            <div class="vod-clip-actions">
+                                <button class="btn btn-outline" onclick="setBroadcastClipLast30()">
+                                    <i class="fa-solid fa-clock-rotate-left"></i> Last 30s
+                                </button>
+                                <button class="btn btn-primary" id="bc-clip-create-btn" onclick="createBroadcastClip()">
+                                    <i class="fa-solid fa-scissors"></i> Create Clip
+                                </button>
+                            </div>
                         </div>
 
                         <!-- Restream Control Panel (visible when destinations configured + streaming) -->

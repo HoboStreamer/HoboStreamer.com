@@ -4158,6 +4158,125 @@ function initBroadcastSettingsListeners() {
     });
 }
 
+/* ── Live Clip Creator ──────────────────────────────────────── */
+
+let _bcClipStart = 0;
+let _bcClipEnd = 0;
+
+/** Get the current stream uptime in seconds */
+function _getBroadcastUptimeSeconds() {
+    const ss = getActiveStreamState();
+    if (!ss || !ss.startedAt) return 0;
+    let raw = ss.startedAt;
+    if (typeof raw === 'string' && !raw.includes('T')) raw = raw.replace(' ', 'T') + 'Z';
+    const start = new Date(raw).getTime();
+    if (isNaN(start)) return 0;
+    return Math.max(0, (Date.now() - start) / 1000);
+}
+
+function toggleBroadcastClipPanel() {
+    const panel = document.getElementById('bc-clip-panel');
+    if (!panel) return;
+    const btn = document.getElementById('bc-btn-clip');
+    const visible = panel.style.display !== 'none';
+    panel.style.display = visible ? 'none' : 'block';
+    if (btn) btn.classList.toggle('bc-ctrl-btn-active', !visible);
+    if (!visible) {
+        // Initialize marks: last 30s by default
+        const now = _getBroadcastUptimeSeconds();
+        _bcClipEnd = Math.floor(now);
+        _bcClipStart = Math.max(0, _bcClipEnd - 30);
+        _updateBroadcastClipUI();
+    }
+}
+
+function setBroadcastClipMark(which) {
+    const now = Math.floor(_getBroadcastUptimeSeconds());
+    if (which === 'start') {
+        _bcClipStart = now;
+        if (_bcClipEnd <= _bcClipStart) _bcClipEnd = Math.min(_bcClipStart + 30, Math.floor(_getBroadcastUptimeSeconds()));
+    } else {
+        _bcClipEnd = now;
+        if (_bcClipStart >= _bcClipEnd) _bcClipStart = Math.max(0, _bcClipEnd - 30);
+    }
+    _updateBroadcastClipUI();
+}
+
+function setBroadcastClipLast30() {
+    const now = Math.floor(_getBroadcastUptimeSeconds());
+    _bcClipEnd = now;
+    _bcClipStart = Math.max(0, now - 30);
+    _updateBroadcastClipUI();
+}
+
+function _formatClipTime(s) {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+function _updateBroadcastClipUI() {
+    const startEl = document.getElementById('bc-clip-start');
+    const endEl = document.getElementById('bc-clip-end');
+    const durEl = document.getElementById('bc-clip-duration');
+    if (startEl) startEl.value = _formatClipTime(_bcClipStart);
+    if (endEl) endEl.value = _formatClipTime(_bcClipEnd);
+    const dur = _bcClipEnd - _bcClipStart;
+    if (durEl) {
+        durEl.textContent = `${dur}s`;
+        durEl.style.color = (dur > 60 || dur <= 0) ? '#e74c3c' : '';
+    }
+}
+
+async function createBroadcastClip() {
+    const ss = getActiveStreamState();
+    if (!ss) return showToast('No active stream', 'error');
+    if (!ss.vodId) return showToast('VOD recording not ready yet — wait a few seconds after going live', 'error');
+
+    const duration = _bcClipEnd - _bcClipStart;
+    if (duration <= 0) return showToast('End time must be after start time', 'error');
+    if (duration > 60) return showToast('Clip cannot exceed 60 seconds', 'error');
+    if (_bcClipStart < 0) return showToast('Invalid start time', 'error');
+
+    const title = document.getElementById('bc-clip-title')?.value?.trim() || 'Untitled Clip';
+    const btn = document.getElementById('bc-clip-create-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating…'; }
+
+    try {
+        const res = await fetch('/api/vods/clips', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                vod_id: ss.vodId,
+                stream_id: ss.streamData?.id,
+                start_time: _bcClipStart,
+                end_time: _bcClipEnd,
+                title,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to create clip');
+
+        showToast(`Clip created! "${title}"`, 'success');
+
+        // Reset panel
+        const titleInput = document.getElementById('bc-clip-title');
+        if (titleInput) titleInput.value = '';
+        // Update marks to current time
+        const now = Math.floor(_getBroadcastUptimeSeconds());
+        _bcClipEnd = now;
+        _bcClipStart = Math.max(0, now - 30);
+        _updateBroadcastClipUI();
+    } catch (err) {
+        console.error('[Clip] Error:', err);
+        showToast(err.message || 'Failed to create clip', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-scissors"></i> Create Clip'; }
+    }
+}
+
+/* ── /Live Clip Creator ────────────────────────────────────── */
+
 document.addEventListener('DOMContentLoaded', () => {
     initBroadcastSettingsListeners();
 
