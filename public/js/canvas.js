@@ -17,103 +17,14 @@ let canvasUiTimer = null;
 let canvasBitmap = null;
 let canvasBitmapCtx = null;
 let canvasBoundEvents = false;
-const originalLoadGamePage = window.loadGamePage;
 
-function ensureGameShell() {
-    const page = document.getElementById('page-game');
-    if (!page || page.dataset.canvasEnhanced === 'true') return;
-    const adventureMarkup = page.innerHTML;
-    page.innerHTML = `
-        <div class="game-shell">
-            <div class="game-mode-bar">
-                <button class="game-mode-btn active" id="game-mode-canvas" onclick="navigate('/game')">
-                    <i class="fa-solid fa-brush"></i> Canvas
-                </button>
-                <button class="game-mode-btn" id="game-mode-adventure" onclick="navigate('/game/adventure')">
-                    <i class="fa-solid fa-mountain-sun"></i> Adventure
-                </button>
-            </div>
-            <div class="game-pane active" id="game-pane-canvas">
-                <div class="canvas-layout">
-                    <aside class="canvas-sidebar">
-                        <div class="canvas-card">
-                            <h3><i class="fa-solid fa-globe"></i> Hobo Place</h3>
-                            <p class="muted">A persistent 512x512 board. Click to paint, or use arrow keys plus space.</p>
-                            <div class="canvas-status" id="canvas-status-text">Loading board...</div>
-                            <div class="canvas-cooldown" id="canvas-cooldown-text">Cooldown: --</div>
-                            <div class="canvas-coords" id="canvas-coords-text">Tile: --, --</div>
-                        </div>
-                        <div class="canvas-card">
-                            <h3><i class="fa-solid fa-palette"></i> Palette</h3>
-                            <div class="canvas-palette" id="canvas-palette"></div>
-                        </div>
-                        <div class="canvas-card">
-                            <h3><i class="fa-solid fa-magnifying-glass-location"></i> Tile Info</h3>
-                            <div class="canvas-hover" id="canvas-hover-meta">Hover a tile to inspect it.</div>
-                        </div>
-                        <div class="canvas-card">
-                            <h3><i class="fa-solid fa-bolt"></i> Controls</h3>
-                            <div class="canvas-help">
-                                <div><strong>Click</strong> Paint selected color</div>
-                                <div><strong>Wheel</strong> Zoom</div>
-                                <div><strong>Right drag</strong> Pan</div>
-                                <div><strong>Arrows</strong> Move cursor</div>
-                                <div><strong>Space</strong> Place at cursor</div>
-                                <div><strong>R</strong> Reset camera</div>
-                            </div>
-                        </div>
-                    </aside>
-                    <div class="canvas-stage-wrap">
-                        <div class="canvas-toolbar">
-                            <div class="canvas-toolbar-left">
-                                <button class="btn btn-outline btn-small" onclick="resetCanvasCamera()"><i class="fa-solid fa-crosshairs"></i> Reset View</button>
-                                <button class="btn btn-outline btn-small" onclick="centerCanvasCursor()"><i class="fa-solid fa-location-crosshairs"></i> Center Cursor</button>
-                            </div>
-                            <div class="canvas-toolbar-right">
-                                <span class="badge" id="canvas-online-count">0 online</span>
-                                <span class="badge" id="canvas-board-mode">Live</span>
-                            </div>
-                        </div>
-                        <div class="canvas-stage" id="canvas-stage">
-                            <canvas id="canvas-board" width="1200" height="800"></canvas>
-                            <div class="canvas-login-prompt" id="canvas-login-prompt" style="display:none">
-                                <strong>Login to paint.</strong> You can still watch the board live.
-                            </div>
-                        </div>
-                    </div>
-                    <aside class="canvas-sidebar canvas-sidebar-right">
-                        <div class="canvas-card">
-                            <h3><i class="fa-solid fa-clock-rotate-left"></i> Recent Activity</h3>
-                            <div class="canvas-activity" id="canvas-activity-list"></div>
-                        </div>
-                        <div class="canvas-card">
-                            <h3><i class="fa-solid fa-users"></i> Active Cursors</h3>
-                            <div class="canvas-presence" id="canvas-presence-list"></div>
-                        </div>
-                        <div class="canvas-card">
-                            <h3><i class="fa-solid fa-shield-halved"></i> Board Rules</h3>
-                            <div class="canvas-help">
-                                <div>Logged-in accounts place tiles.</div>
-                                <div>Cooldown scales with your HoboGame total level.</div>
-                                <div>Fresh accounts are clamped to 12 seconds.</div>
-                                <div>Changed tiles stay locked for 20 seconds.</div>
-                            </div>
-                        </div>
-                    </aside>
-                </div>
-            </div>
-            <div class="game-pane" id="game-pane-adventure">${adventureMarkup}</div>
-        </div>
-    `;
-    page.dataset.canvasEnhanced = 'true';
-}
-
-function setGameMode(mode) {
-    ensureGameShell();
-    document.getElementById('game-pane-canvas')?.classList.toggle('active', mode === 'canvas');
-    document.getElementById('game-pane-adventure')?.classList.toggle('active', mode === 'adventure');
-    document.getElementById('game-mode-canvas')?.classList.toggle('active', mode === 'canvas');
-    document.getElementById('game-mode-adventure')?.classList.toggle('active', mode === 'adventure');
+/* Helper: ensure timestamp string is valid ISO for Date() parsing */
+function toIso(ts) {
+    if (!ts) return ts;
+    if (typeof ts === 'string' && !ts.includes('T') && ts.includes(' ')) {
+        return ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z');
+    }
+    return ts;
 }
 
 function buildCanvasPalette(colors) {
@@ -255,12 +166,12 @@ function canvasTileFromPoint(clientX, clientY) {
 
 function updateCanvasHover(tile) {
     canvasHover = tile;
-    const meta = document.getElementById('canvas-hover-meta');
-    const coords = document.getElementById('canvas-coords-text');
-    if (coords) coords.textContent = tile ? `Tile: ${tile.x}, ${tile.y}` : 'Tile: --, --';
+    const meta = document.getElementById('canvas-hover');
+    const coords = document.getElementById('canvas-coords');
+    if (coords) coords.textContent = tile ? `Tile: ${tile.x}, ${tile.y}` : 'Hover over the canvas';
     if (!meta) return;
     if (!tile) {
-        meta.textContent = 'Hover a tile to inspect it.';
+        meta.textContent = 'Hover over a tile to see details';
         return;
     }
     const stored = canvasTiles.get(`${tile.x},${tile.y}`);
@@ -279,7 +190,7 @@ function updateCanvasHover(tile) {
 function pushCanvasActivity(entries) {
     const next = (entries || []).filter((entry) => entry.action_type !== 'blocked');
     canvasActivity = [...next, ...canvasActivity].slice(0, 60);
-    const list = document.getElementById('canvas-activity-list');
+    const list = document.getElementById('canvas-activity');
     if (!list) return;
     if (!canvasActivity.length) {
         list.innerHTML = '<div class="muted">No activity yet.</div>';
@@ -298,9 +209,9 @@ function pushCanvasActivity(entries) {
 }
 
 function renderCanvasPresence() {
-    const list = document.getElementById('canvas-presence-list');
-    const count = document.getElementById('canvas-online-count');
-    if (count) count.textContent = `${canvasPresence.length} online`;
+    const list = document.getElementById('canvas-presence');
+    const count = document.getElementById('canvas-online');
+    if (count) count.innerHTML = `<i class="fa-solid fa-users"></i> ${canvasPresence.length} online`;
     if (!list) return;
     if (!canvasPresence.length) {
         list.innerHTML = '<div class="muted">No active cursors.</div>';
@@ -315,16 +226,14 @@ function renderCanvasPresence() {
 }
 
 function renderCanvasBoardMode() {
-    const el = document.getElementById('canvas-board-mode');
-    const status = document.getElementById('canvas-status-text');
-    if (!el || !canvasBoardState) return;
+    const status = document.getElementById('canvas-status');
+    if (!status || !canvasBoardState) return;
     const mode = canvasBoardState.settings?.frozen ? 'Frozen' : canvasBoardState.settings?.read_only ? 'Read Only' : 'Live';
-    el.textContent = mode;
-    if (status) status.textContent = `Board status: ${mode}`;
+    status.textContent = `Board status: ${mode}`;
 }
 
 function updateCanvasCooldownText() {
-    const el = document.getElementById('canvas-cooldown-text');
+    const el = document.getElementById('canvas-cooldown');
     if (!el) return;
     if (!currentUser) {
         el.textContent = 'Cooldown: login required to paint';
@@ -408,7 +317,7 @@ function attachCanvasEvents() {
 }
 
 function handleCanvasHotkeys(event) {
-    if (currentPage !== 'game' || !document.getElementById('game-pane-canvas')?.classList.contains('active')) return;
+    if (currentPage !== 'canvas') return;
     if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return;
     let moved = false;
     if (event.key === 'ArrowLeft') { canvasCursor.x = Math.max(0, canvasCursor.x - 1); moved = true; }
@@ -497,8 +406,6 @@ function connectCanvasSocket() {
 }
 
 async function loadCanvasPage() {
-    ensureGameShell();
-    setGameMode('canvas');
     syncCanvasAuthState();
     canvasPageBootstrapped = true;
     try {
@@ -527,9 +434,3 @@ window.resetCanvasCamera = resetCanvasCamera;
 window.centerCanvasCursor = centerCanvasCursor;
 window.selectCanvasColor = selectCanvasColor;
 window.syncCanvasAuthState = syncCanvasAuthState;
-
-window.loadGamePage = function wrappedLoadGamePage(...args) {
-    ensureGameShell();
-    setGameMode('adventure');
-    return originalLoadGamePage ? originalLoadGamePage.apply(this, args) : undefined;
-};

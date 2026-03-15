@@ -30,7 +30,7 @@ function isStaffUser(user = currentUser) {
 }
 
 // Reserved paths (not usernames)
-const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'chat', 'api', 'ws', 'media', 'pastes', 'p', 'updates']);
+const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'canvas', 'chat', 'api', 'ws', 'media', 'pastes', 'p', 'updates']);
 
 /* ── API helpers ──────────────────────────────────────────────── */
 function authHeaders() {
@@ -379,6 +379,7 @@ function navigate(urlPath, replace = false) {
     // Clean up existing page state (destroy player, disconnect chat, etc.)
     if (typeof destroyPlayer === 'function') destroyPlayer();
     if (typeof destroyChat === 'function') destroyChat();
+    if (typeof destroyCanvasPage === 'function') destroyCanvasPage();
     if (typeof stopCoinHeartbeat === 'function') stopCoinHeartbeat();
     if (typeof stopStreamStatusPoll === 'function') stopStreamStatusPoll();
     clearInterval(uptimeInterval);
@@ -456,13 +457,10 @@ function routeFromURL() {
         loadChatPage();
     } else if (segments[0] === 'game') {
         showPage('game');
-        if (segments[1] === 'adventure') {
-            loadGamePage();
-        } else if (typeof loadCanvasPage === 'function') {
-            loadCanvasPage();
-        } else {
-            loadGamePage();
-        }
+        loadGamePage();
+    } else if (segments[0] === 'canvas') {
+        showPage('canvas');
+        if (typeof loadCanvasPage === 'function') loadCanvasPage();
     } else if (segments[0] === 'pastes') {
         showPage('pastes');
         loadPastesPage();
@@ -506,10 +504,10 @@ function showPage(page) {
     const el = document.getElementById(`page-${page}`);
     if (el) el.classList.add('active');
 
-    // Game: hide footer only, keep navbar visible; other pages restore both
+    // Game/Canvas: hide footer only, keep navbar visible; other pages restore both
     const navbar = document.querySelector('.navbar');
     const footer = document.querySelector('.footer');
-    if (page === 'game') {
+    if (page === 'game' || page === 'canvas') {
         if (footer) footer.style.display = 'none';
         document.body.style.overflow = 'hidden';
     } else {
@@ -519,7 +517,7 @@ function showPage(page) {
     }
 
     // Highlight nav link
-    const pageToNav = { home: 'home', vods: 'vods', clips: 'clips', broadcast: 'broadcast', dashboard: 'dashboard', admin: 'admin', chat: 'chat', game: 'game', pastes: 'pastes', 'paste-viewer': 'pastes' };
+    const pageToNav = { home: 'home', vods: 'vods', clips: 'clips', broadcast: 'broadcast', dashboard: 'dashboard', admin: 'admin', chat: 'chat', game: 'game', canvas: 'game', pastes: 'pastes', 'paste-viewer': 'pastes' };
     const navPage = pageToNav[page];
     if (navPage) {
         const link = document.querySelector(`.nav-link[data-page="${navPage}"]`);
@@ -527,18 +525,23 @@ function showPage(page) {
     }
 }
 
-/* ── Game Pane Switcher ───────────────────────────────────────── */
-function switchGamePane(pane) {
-    document.querySelectorAll('.game-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.pane === pane));
-    document.querySelectorAll('.game-pane').forEach(p => p.classList.remove('active'));
-    const target = document.getElementById(`game-pane-${pane}`);
-    if (target) target.classList.add('active');
-    if (pane === 'adventure') {
-        loadGamePage();
-    } else if (pane === 'canvas' && typeof loadCanvasPage === 'function') {
-        loadCanvasPage();
-    }
+/* ── Nav Dropdown Helpers ──────────────────────────────────────── */
+function toggleNavDropdown(id) {
+    const dd = document.getElementById(id);
+    if (!dd) return;
+    const wasOpen = dd.classList.contains('open');
+    closeNavDropdowns();
+    if (!wasOpen) dd.classList.add('open');
 }
+
+function closeNavDropdowns() {
+    document.querySelectorAll('.nav-dropdown.open').forEach(d => d.classList.remove('open'));
+}
+
+// Close nav dropdowns when clicking outside
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.nav-dropdown')) closeNavDropdowns();
+});
 
 /* ── Home Page ────────────────────────────────────────────────── */
 async function loadHome() {
