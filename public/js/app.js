@@ -558,8 +558,9 @@ function scrollNavLinks(dir) {
     const nl = document.querySelector('.nav-links');
     if (!nl) return;
     nl.scrollBy({ left: dir * 160, behavior: 'smooth' });
-    // Re-check after scroll animation
-    setTimeout(checkNavOverflow, 350);
+    // Re-check after scroll animation settles
+    setTimeout(checkNavOverflow, 200);
+    setTimeout(checkNavOverflow, 400);
 }
 
 // Position fixed dropdown menus below their triggers

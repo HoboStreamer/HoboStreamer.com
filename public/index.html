@@ -26,9 +26,10 @@
             <span class="brand-text"><span class="brand-hobo">Hobo</span><strong class="brand-streamer">Streamer</strong></span>
         </span>
     </div>
-    <div class="nav-links">
+    <div class="nav-links-wrap">
         <button class="nav-scroll-btn nav-scroll-left" id="nav-scroll-left" onclick="scrollNavLinks(-1)" title="Scroll left"><i class="fa-solid fa-chevron-left"></i></button>
-        <a href="#" onclick="event.preventDefault();navigate('/')" class="nav-link active" data-page="home" data-tooltip="Live">
+        <div class="nav-links">
+            <a href="#" onclick="event.preventDefault();navigate('/')" class="nav-link active" data-page="home" data-tooltip="Live">
             <i class="fa-solid fa-fire"></i> <span>Live</span>
         </a>
         <a href="#" onclick="event.preventDefault();navigate('/vods')" class="nav-link" data-page="vods" data-tooltip="Videos">
@@ -65,6 +66,7 @@
         <a href="#" onclick="event.preventDefault();navigate('/admin')" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin">
             <i class="fa-solid fa-shield-halved"></i> <span>Admin</span>
         </a>
+        </div>
         <button class="nav-scroll-btn nav-scroll-right" id="nav-scroll-right" onclick="scrollNavLinks(1)" title="Scroll right"><i class="fa-solid fa-chevron-right"></i></button>
     </div>
     <div class="nav-right">

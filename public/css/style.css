@@ -162,13 +162,17 @@ main#app { position: relative; z-index: 1; }
 }
 .nav-brand[data-brand-tooltip]:hover::after { opacity: 1; }
 
+.nav-links-wrap {
+    display: flex; align-items: center; flex: 1; min-width: 0;
+    position: relative;
+}
+
 .nav-links {
     display: flex; gap: 4px; flex: 1; min-width: 0;
     overflow-x: auto; overflow-y: visible;
     align-items: center;
     scrollbar-width: none;
     scroll-behavior: smooth;
-    position: relative;
 }
 .nav-links::-webkit-scrollbar { display: none; }
 .nav-link {
@@ -261,9 +265,6 @@ main#app { position: relative; z-index: 1; }
 /* ── Nav Scroll Arrows (visible when nav links overflow) ────── */
 .nav-scroll-btn {
     display: none;
-    position: sticky;
-    top: 0;
-    align-self: center;
     width: 28px;
     min-width: 28px;
     height: 28px;
@@ -284,8 +285,6 @@ main#app { position: relative; z-index: 1; }
     color: #fff;
 }
 .nav-scroll-btn.visible { display: flex; }
-.nav-scroll-left { left: 0; }
-.nav-scroll-right { right: 0; }
 
 /* Live indicator on Go Live nav link */
 .nav-live-dot {
@@ -2127,6 +2126,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .nav-brand i { font-size: 1.2rem; }
 
     .nav-links { display: none; }
+    .nav-links-wrap .nav-scroll-btn { display: none !important; }
     .nav-hamburger { display: flex; order: 10; }
     .nav-links.show {
         display: flex; flex-direction: column;
