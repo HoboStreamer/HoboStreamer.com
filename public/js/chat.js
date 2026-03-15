@@ -178,12 +178,19 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
     if (!messages) return;
     if (clear) messages.innerHTML = '';
 
-    if (streamId) await loadChatHistory(streamId);
-    else await loadGlobalChatHistory();
+    _loadingHistory = true;
+    try {
+        if (streamId) await loadChatHistory(streamId);
+        else await loadGlobalChatHistory();
+    } finally {
+        _loadingHistory = false;
+    }
 
     applyChatSettings();
     // Always scroll to the bottom after loading history
     scrollChatToBottom();
+    // Also scroll the floating chat widget if it's open
+    _fcwScrollToBottom();
 }
 
 /**
@@ -794,9 +801,15 @@ function addChatMessage(msg) {
 
     container.appendChild(el);
     if (chatSettings.autoScroll) {
-        scrollChat();
-        // If user is scrolled up, show the new-messages indicator instead
-        if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
+        if (_loadingHistory) {
+            // During history loading, force-scroll without the nearBottom guard
+            // to avoid false "user scrolled up" detection from rapid DOM appends
+            scrollChatToBottom();
+        } else {
+            scrollChat();
+            // If user is scrolled up, show the new-messages indicator instead
+            if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
+        }
     }
 
     // Mirror message to floating chat widget (for non-chat pages)
@@ -1905,6 +1918,7 @@ function getRoleColor(role) {
 
 let _chatUserScrolledUp = false;
 let _chatUnreadCount = 0;
+let _loadingHistory = false;
 
 function scrollChat() {
     const { messages: container } = getChatEl();
@@ -2767,6 +2781,12 @@ function fcwSendChat() {
     input.focus();
 }
 
+/** Scroll the floating chat widget to bottom */
+function _fcwScrollToBottom() {
+    const container = document.getElementById('fcw-messages');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
 /** Mirror a chat message to the floating widget */
 function _fcwAddMessage(msg) {
     const container = document.getElementById('fcw-messages');
@@ -2784,9 +2804,13 @@ function _fcwAddMessage(msg) {
     // Trim old messages
     while (container.children.length > 200) container.removeChild(container.firstChild);
 
-    // Auto-scroll
-    const isScrolledDown = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
-    if (isScrolledDown) container.scrollTop = container.scrollHeight;
+    // Auto-scroll: force during history load, otherwise only when near bottom
+    if (_loadingHistory) {
+        container.scrollTop = container.scrollHeight;
+    } else {
+        const isScrolledDown = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+        if (isScrolledDown) container.scrollTop = container.scrollHeight;
+    }
 
     // Increment unread if widget is closed and not on chat page
     if (!_fcwOpen) {
