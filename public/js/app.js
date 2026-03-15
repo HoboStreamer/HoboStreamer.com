@@ -543,6 +543,52 @@ document.addEventListener('click', (e) => {
     if (!e.target.closest('.nav-dropdown')) closeNavDropdowns();
 });
 
+/* ── Nav Scroll Overflow Detection ─────────────────────────────── */
+function checkNavOverflow() {
+    const nl = document.querySelector('.nav-links');
+    if (!nl) return;
+    const hasOverflow = nl.scrollWidth > nl.clientWidth + 2;
+    const left = document.getElementById('nav-scroll-left');
+    const right = document.getElementById('nav-scroll-right');
+    if (left) left.classList.toggle('visible', hasOverflow && nl.scrollLeft > 4);
+    if (right) right.classList.toggle('visible', hasOverflow && nl.scrollLeft < nl.scrollWidth - nl.clientWidth - 4);
+}
+
+function scrollNavLinks(dir) {
+    const nl = document.querySelector('.nav-links');
+    if (!nl) return;
+    nl.scrollBy({ left: dir * 160, behavior: 'smooth' });
+    // Re-check after scroll animation
+    setTimeout(checkNavOverflow, 350);
+}
+
+// Position fixed dropdown menus below their triggers
+function positionNavDropdownMenu(dropdown) {
+    const menu = dropdown?.querySelector('.nav-dropdown-menu');
+    const trigger = dropdown?.querySelector('.nav-link');
+    if (!menu || !trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    menu.style.top = `${rect.bottom}px`;
+    menu.style.left = `${rect.left}px`;
+}
+
+// Observe hover/open to position dropdown menus
+document.querySelectorAll('.nav-dropdown').forEach(dd => {
+    dd.addEventListener('mouseenter', () => positionNavDropdownMenu(dd));
+    dd.addEventListener('click', () => positionNavDropdownMenu(dd));
+});
+
+// Listen for scroll and resize to update nav overflow arrows
+{
+    const nl = document.querySelector('.nav-links');
+    if (nl) {
+        nl.addEventListener('scroll', checkNavOverflow, { passive: true });
+        new ResizeObserver(checkNavOverflow).observe(nl);
+    }
+    // Also check on login (new nav items may appear)
+    window.addEventListener('load', () => setTimeout(checkNavOverflow, 500));
+}
+
 /* ── Home Page ────────────────────────────────────────────────── */
 async function loadHome() {
     void loadHoboAppMeta();

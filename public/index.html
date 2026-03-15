@@ -27,6 +27,7 @@
         </span>
     </div>
     <div class="nav-links">
+        <button class="nav-scroll-btn nav-scroll-left" id="nav-scroll-left" onclick="scrollNavLinks(-1)" title="Scroll left"><i class="fa-solid fa-chevron-left"></i></button>
         <a href="#" onclick="event.preventDefault();navigate('/')" class="nav-link active" data-page="home" data-tooltip="Live">
             <i class="fa-solid fa-fire"></i> <span>Live</span>
         </a>
@@ -64,6 +65,7 @@
         <a href="#" onclick="event.preventDefault();navigate('/admin')" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin">
             <i class="fa-solid fa-shield-halved"></i> <span>Admin</span>
         </a>
+        <button class="nav-scroll-btn nav-scroll-right" id="nav-scroll-right" onclick="scrollNavLinks(1)" title="Scroll right"><i class="fa-solid fa-chevron-right"></i></button>
     </div>
     <div class="nav-right">
         <div id="nav-auth-anon">
@@ -458,6 +460,9 @@
                     <div class="chat-header">
                         <span>STREAM CHAT</span>
                         <div class="chat-header-actions">
+                            <button class="chat-settings-btn" onclick="toggleChatUsers(this)" title="Users">
+                                <i class="fa-solid fa-users"></i>
+                            </button>
                             <button class="chat-settings-btn" onclick="popoutStreamChat()" title="Pop Out Chat">
                                 <i class="fa-solid fa-up-right-from-square"></i>
                             </button>
@@ -469,6 +474,7 @@
                             </button>
                         </div>
                     </div>
+                    <div class="chat-users-panel"></div>
                     <div class="chat-messages" id="chat-messages"></div>
                     <div class="chat-input-area">
                         <!-- Emote Picker -->
@@ -556,6 +562,9 @@
                 <div class="chat-header">
                     <span><i class="fa-solid fa-globe"></i> GLOBAL CHAT</span>
                     <div class="chat-header-actions">
+                        <button class="chat-settings-btn" onclick="toggleChatUsers(this)" title="Users">
+                            <i class="fa-solid fa-users"></i>
+                        </button>
                         <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
                             <i class="fa-solid fa-gear"></i>
                         </button>
@@ -564,6 +573,7 @@
                         </button>
                     </div>
                 </div>
+                <div class="chat-users-panel"></div>
                 <div class="chat-messages" id="offline-chat-messages"></div>
                 <div class="chat-input-area">
                     <!-- Emote Picker -->
@@ -1855,6 +1865,9 @@
                 <div class="chat-header">
                     <span>STREAM CHAT</span>
                     <div class="chat-header-actions">
+                        <button class="chat-settings-btn" onclick="toggleChatUsers(this)" title="Users">
+                            <i class="fa-solid fa-users"></i>
+                        </button>
                         <button class="chat-settings-btn" onclick="toggleChatSettings(this)" title="Chat Settings">
                             <i class="fa-solid fa-gear"></i>
                         </button>
@@ -1863,6 +1876,7 @@
                         </button>
                     </div>
                 </div>
+                <div class="chat-users-panel"></div>
                 <div class="chat-messages" id="bc-chat-messages"></div>
                 <div class="chat-input-area">
                     <!-- Emote Picker (broadcast) -->
@@ -2403,6 +2417,9 @@
                             <option value="global">Global</option>
                             <option value="voice" id="chat-mode-voice-opt" disabled>Voice Call</option>
                         </select>
+                        <button class="chat-settings-btn" onclick="toggleChatUsers(this)" title="Users">
+                            <i class="fa-solid fa-users"></i>
+                        </button>
                         <button class="chat-settings-btn" onclick="popoutGlobalChat()" title="Pop Out Chat">
                             <i class="fa-solid fa-up-right-from-square"></i>
                         </button>
@@ -2411,6 +2428,7 @@
                         </button>
                     </div>
                 </div>
+                <div class="chat-users-panel"></div>
                 <div class="global-chat-messages" id="global-chat-messages"></div>
                 <div class="chat-input-area">
                     <!-- Emote Picker -->

@@ -4558,6 +4558,9 @@ function setupGameInput() {
 
     document.addEventListener('keydown', (e) => {
         if (currentPage !== 'game') return;
+        // Don't capture keys when typing in DOM inputs (floating chat widget, etc)
+        const tag = e.target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
         keys[e.code] = true;
 
         // Chat input mode
@@ -4649,7 +4652,10 @@ function setupGameInput() {
         }
     });
 
-    document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+    document.addEventListener('keyup', (e) => {
+        // Always clear key state on up (even if focus changed mid-press)
+        keys[e.code] = false;
+    });
 
     const canvas = document.getElementById('game-canvas');
     if (canvas) {

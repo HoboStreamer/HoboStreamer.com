@@ -213,8 +213,9 @@ class ChatServer {
             timestamp: new Date().toISOString(),
         });
 
-        // Send user count update
+        // Send user count + users list update
         this.broadcastUserCount(streamId);
+        this.broadcastUsersList(streamId);
 
         // ── Message handler ──────────────────────────────────
         ws.on('message', (data) => {
@@ -229,6 +230,7 @@ class ChatServer {
         ws.on('close', () => {
             this.clients.delete(ws);
             this.broadcastUserCount(streamId);
+            this.broadcastUsersList(streamId);
         });
 
         ws.on('error', (err) => {
@@ -296,9 +298,43 @@ class ChatServer {
             case 'leave_stream':
                 client.streamId = null;
                 break;
+            case 'get-users':
+                this.sendTo(ws, { type: 'users-list', users: this.getUserList(client.streamId) });
+                break;
             default:
                 break;
         }
+    }
+
+    /**
+     * Build a deduplicated list of users in a given stream (or global if null).
+     * Returns { logged: [{username, display_name, avatar_url, role}], anonCount: N }
+     */
+    getUserList(streamId) {
+        const seen = new Set();
+        const logged = [];
+        let anonCount = 0;
+        for (const [, c] of this.clients) {
+            if (c.streamId !== streamId) continue;
+            if (c.user) {
+                if (seen.has(c.user.id)) continue;
+                seen.add(c.user.id);
+                logged.push({
+                    username: c.user.username,
+                    display_name: c.user.display_name || c.user.username,
+                    avatar_url: c.user.avatar_url || null,
+                    role: c.user.role,
+                });
+            } else if (c.anonId) {
+                if (seen.has(c.anonId)) continue;
+                seen.add(c.anonId);
+                anonCount++;
+            }
+        }
+        // Sort: admins first, then mods, then alphabetical
+        const rolePriority = { admin: 0, global_mod: 1, streamer: 2, user: 3 };
+        logged.sort((a, b) => (rolePriority[a.role] ?? 9) - (rolePriority[b.role] ?? 9) || a.display_name.localeCompare(b.display_name));
+        return { logged, anonCount };
     }
 
     /**
@@ -832,7 +868,7 @@ class ChatServer {
             // Increment queue counter
             this.ttsQueueSize.set(streamId, globalCount + 1);
 
-            const result = await ttsEngine.synthesize(text, voiceId);
+            const result = await ttsEngine.synthesize(text, voiceId, username);
 
             // Decrement queue counter
             const current = this.ttsQueueSize.get(streamId) || 1;
@@ -984,6 +1020,26 @@ class ChatServer {
         if (streamId) {
             try { db.updateViewerCount(streamId, count); } catch {}
         }
+    }
+
+    /**
+     * Push the current users list to all clients in a stream/global.
+     * Throttled to avoid flooding on rapid join/leave bursts.
+     */
+    broadcastUsersList(streamId) {
+        const key = `users-${streamId ?? 'global'}`;
+        if (this._usersListTimers?.has(key)) return; // already scheduled
+        if (!this._usersListTimers) this._usersListTimers = new Map();
+        this._usersListTimers.set(key, setTimeout(() => {
+            this._usersListTimers.delete(key);
+            const users = this.getUserList(streamId);
+            const data = JSON.stringify({ type: 'users-list', users });
+            for (const [ws, client] of this.clients) {
+                if (client.streamId === streamId && ws.readyState === WebSocket.OPEN) {
+                    try { ws.send(data); } catch {}
+                }
+            }
+        }, 500));
     }
 
     /**

@@ -398,8 +398,23 @@ function synthesizeEspeak(text, voiceDef) {
 }
 
 // ── Sanitize text ─────────────────────────────────────────────
-function sanitize(text, maxLen) {
+/**
+ * Replace URLs with TTS-friendly descriptions.
+ * "check youtube.com/watch?v=abc" → "check (link to youtube)"
+ */
+function replaceUrlsForTTS(text, username) {
+    // Match full URLs (http/https) and bare domain.tld patterns
+    return text.replace(/(?:https?:\/\/)?(?:www\.)?([a-z0-9][-a-z0-9]*(?:\.[a-z]{2,})+)(?:[^\s]*)/gi, (match, domain) => {
+        // Extract the base domain name (e.g. "youtube" from "youtube.com")
+        const parts = domain.split('.');
+        const siteName = parts.length > 2 ? parts[parts.length - 2] : parts[0];
+        return username ? `(${username} sent a link to ${siteName})` : `(link to ${siteName})`;
+    });
+}
+
+function sanitize(text, maxLen, username) {
     let clean = String(text || '').replace(/[<>]/g, '').replace(/[\x00-\x1f]/g, ' ').trim();
+    clean = replaceUrlsForTTS(clean, username);
     if (maxLen && clean.length > maxLen) clean = clean.slice(0, maxLen);
     return clean;
 }
@@ -409,14 +424,15 @@ function sanitize(text, maxLen) {
  * Synthesize TTS audio for a chat message.
  * @param {string} text - The text to speak
  * @param {string} [voiceId] - Voice ID from VOICE_CATALOG (defaults to site setting)
+ * @param {string} [username] - Username for link replacement context
  * @returns {Promise<{audio: string, mimeType: string, engine: string, voiceName: string, voiceId: string} | null>}
  *   Returns null if TTS is disabled or voice is browser-only
  */
-async function synthesize(text, voiceId) {
+async function synthesize(text, voiceId, username) {
     const settings = getTTSSettings();
     if (!settings.enabled) return null;
 
-    const cleanText = sanitize(text, settings.maxLength);
+    const cleanText = sanitize(text, settings.maxLength, username);
     if (!cleanText) return null;
 
     const vid = voiceId || settings.defaultVoice;

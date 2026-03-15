@@ -6,6 +6,7 @@
 const { WebSocketServer, WebSocket } = require('ws');
 const db = require('../db/database');
 const game = require('./game-engine');
+const cosmetics = require('../monetization/cosmetics');
 const { resolveGameIdentity, getRequestIp } = require('./game-auth');
 const TICK_RATE = 100; // ms (10 Hz)
 const HEARTBEAT_TICKS = 30;
@@ -81,6 +82,11 @@ class GameServer {
         // Enrich with HoboCoins from shared users table
         const user = db.getUserById(userId);
         player.hobo_coins = user?.hobo_coins_balance || 0;
+
+        // Hat is driven by globally equipped cosmetic, not game inventory
+        const cosmeticProfile = cosmetics.getCosmeticProfile(userId);
+        const globalHat = cosmeticProfile.hatFX?.itemId || null;
+        player.equip_hat = globalHat;
 
         game.updateLivePlayer(userId, {
             x: player.x, y: player.y, username,
