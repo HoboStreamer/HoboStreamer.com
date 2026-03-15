@@ -17,6 +17,10 @@ let canvasUiTimer = null;
 let canvasBitmap = null;
 let canvasBitmapCtx = null;
 let canvasBoundEvents = false;
+let canvasShowGrid = true;
+let canvasResizeObserver = null;
+let canvasPlacedCount = 0;
+let canvasLastPlaceTime = 0;
 
 /* Helper: ensure timestamp string is valid ISO for Date() parsing */
 function toIso(ts) {
@@ -27,12 +31,47 @@ function toIso(ts) {
     return ts;
 }
 
+/* ── Canvas Sizing — CRITICAL for correct tile coords ── */
+function resizeCanvasBoard() {
+    const canvas = document.getElementById('canvas-board');
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(rect.width * dpr);
+    const h = Math.round(rect.height * dpr);
+    if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        queueCanvasRender();
+    }
+}
+
+const PALETTE_NAMES = [
+    'Background', 'White', 'Light Gray', 'Dark Gray', 'Black',
+    'Pink', 'Red', 'Orange', 'Yellow', 'Lime',
+    'Green', 'Cyan', 'Blue', 'Indigo', 'Purple',
+    'Brown', 'Beige', 'Maroon', 'Teal', 'Navy',
+    'Coral', 'Gold', 'Mint', 'Lavender', 'Salmon',
+    'Sky Blue', 'Rose', 'Olive', 'Slate', 'Crimson',
+    'Sand', 'Forest'
+];
+
 function buildCanvasPalette(colors) {
     const palette = document.getElementById('canvas-palette');
     if (!palette) return;
-    palette.innerHTML = (colors || []).map((color, index) => `
-        <button class="canvas-swatch ${index === canvasSelectedColor ? 'active' : ''}" style="background:${color}" onclick="selectCanvasColor(${index})" title="${color}"></button>
-    `).join('');
+    palette.innerHTML = (colors || []).map((color, index) => {
+        if (index === 0) return ''; // skip background color
+        const name = PALETTE_NAMES[index] || `Color ${index}`;
+        const active = index === canvasSelectedColor;
+        return `<button class="canvas-swatch ${active ? 'active' : ''}" style="background:${color}" onclick="selectCanvasColor(${index})" title="${name} (${color})"></button>`;
+    }).join('');
+    // Update selected color preview
+    const preview = document.getElementById('canvas-color-preview');
+    if (preview && colors) {
+        const selColor = colors[canvasSelectedColor] || colors[1];
+        const selName = PALETTE_NAMES[canvasSelectedColor] || `Color ${canvasSelectedColor}`;
+        preview.innerHTML = `<span class="canvas-preview-dot" style="background:${selColor}"></span> ${selName}`;
+    }
 }
 
 function selectCanvasColor(index) {
@@ -44,17 +83,23 @@ function selectCanvasColor(index) {
 function resetCanvasCamera() {
     const canvas = document.getElementById('canvas-board');
     if (!canvas || !canvasBoardState) return;
-    canvasZoom = Math.max(1, Math.min(canvas.width / canvasBoardState.board.width, canvas.height / canvasBoardState.board.height));
-    canvasOffsetX = Math.floor((canvas.width - canvasBoardState.board.width * canvasZoom) / 2);
-    canvasOffsetY = Math.floor((canvas.height - canvasBoardState.board.height * canvasZoom) / 2);
+    const dpr = window.devicePixelRatio || 1;
+    const cw = canvas.width / dpr;
+    const ch = canvas.height / dpr;
+    canvasZoom = Math.max(1, Math.min(cw / canvasBoardState.board.width, ch / canvasBoardState.board.height));
+    canvasOffsetX = Math.floor((cw - canvasBoardState.board.width * canvasZoom) / 2);
+    canvasOffsetY = Math.floor((ch - canvasBoardState.board.height * canvasZoom) / 2);
     queueCanvasRender();
 }
 
 function centerCanvasCursor() {
     const canvas = document.getElementById('canvas-board');
     if (!canvas || !canvasBoardState) return;
-    canvasOffsetX = Math.floor(canvas.width / 2 - (canvasCursor.x + 0.5) * canvasZoom);
-    canvasOffsetY = Math.floor(canvas.height / 2 - (canvasCursor.y + 0.5) * canvasZoom);
+    const dpr = window.devicePixelRatio || 1;
+    const cw = canvas.width / dpr;
+    const ch = canvas.height / dpr;
+    canvasOffsetX = Math.floor(cw / 2 - (canvasCursor.x + 0.5) * canvasZoom);
+    canvasOffsetY = Math.floor(ch / 2 - (canvasCursor.y + 0.5) * canvasZoom);
     queueCanvasRender();
 }
 
@@ -112,54 +157,83 @@ function renderCanvasBoard() {
     const canvas = document.getElementById('canvas-board');
     if (!canvas || !canvasBitmap || !canvasBoardState) return;
     const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const cw = canvas.width / dpr;
+    const ch = canvas.height / dpr;
+    ctx.clearRect(0, 0, cw, ch);
     ctx.fillStyle = '#0f1318';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, cw, ch);
     ctx.drawImage(canvasBitmap, canvasOffsetX, canvasOffsetY, canvasBitmap.width * canvasZoom, canvasBitmap.height * canvasZoom);
 
-    if (canvasZoom >= 8) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-        ctx.lineWidth = 1;
-        for (let x = 0; x <= canvasBitmap.width; x += 1) {
+    // Grid lines at high zoom
+    if (canvasShowGrid && canvasZoom >= 6) {
+        ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.15, (canvasZoom - 6) * 0.02)})`;
+        ctx.lineWidth = 0.5;
+        const startX = Math.max(0, Math.floor(-canvasOffsetX / canvasZoom));
+        const endX = Math.min(canvasBitmap.width, Math.ceil((cw - canvasOffsetX) / canvasZoom));
+        const startY = Math.max(0, Math.floor(-canvasOffsetY / canvasZoom));
+        const endY = Math.min(canvasBitmap.height, Math.ceil((ch - canvasOffsetY) / canvasZoom));
+        for (let x = startX; x <= endX; x++) {
             const drawX = Math.round(canvasOffsetX + x * canvasZoom) + 0.5;
             ctx.beginPath();
-            ctx.moveTo(drawX, canvasOffsetY);
-            ctx.lineTo(drawX, canvasOffsetY + canvasBitmap.height * canvasZoom);
+            ctx.moveTo(drawX, Math.max(0, canvasOffsetY));
+            ctx.lineTo(drawX, Math.min(ch, canvasOffsetY + canvasBitmap.height * canvasZoom));
             ctx.stroke();
         }
-        for (let y = 0; y <= canvasBitmap.height; y += 1) {
+        for (let y = startY; y <= endY; y++) {
             const drawY = Math.round(canvasOffsetY + y * canvasZoom) + 0.5;
             ctx.beginPath();
-            ctx.moveTo(canvasOffsetX, drawY);
-            ctx.lineTo(canvasOffsetX + canvasBitmap.width * canvasZoom, drawY);
+            ctx.moveTo(Math.max(0, canvasOffsetX), drawY);
+            ctx.lineTo(Math.min(cw, canvasOffsetX + canvasBitmap.width * canvasZoom), drawY);
             ctx.stroke();
         }
     }
 
+    // Cursor highlight — show selected color as ghost
     const cursorX = canvasOffsetX + canvasCursor.x * canvasZoom;
     const cursorY = canvasOffsetY + canvasCursor.y * canvasZoom;
+    const palette = canvasBoardState.board.palette;
+    if (palette[canvasSelectedColor]) {
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = palette[canvasSelectedColor];
+        ctx.fillRect(cursorX, cursorY, canvasZoom, canvasZoom);
+        ctx.globalAlpha = 1;
+    }
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2;
-    ctx.strokeRect(cursorX, cursorY, canvasZoom, canvasZoom);
+    ctx.strokeRect(cursorX + 1, cursorY + 1, canvasZoom - 2, canvasZoom - 2);
 
-    canvasPresence.forEach((entry, index) => {
+    // Other users' cursors
+    canvasPresence.forEach((entry) => {
         if (!entry.cursor) return;
         const px = canvasOffsetX + (entry.cursor.x + 0.5) * canvasZoom;
         const py = canvasOffsetY + (entry.cursor.y + 0.5) * canvasZoom;
         ctx.beginPath();
-        ctx.fillStyle = index === 0 ? '#ffd15c' : '#7ecbff';
+        ctx.fillStyle = '#7ecbff';
         ctx.arc(px, py, Math.max(3, Math.min(6, canvasZoom / 2)), 0, Math.PI * 2);
         ctx.fill();
+        // Username label at high zoom
+        if (canvasZoom >= 4 && entry.username) {
+            ctx.font = `${Math.min(11, canvasZoom * 0.8)}px sans-serif`;
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.fillText(entry.username, px + canvasZoom * 0.5 + 4, py + 3);
+        }
     });
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 function canvasTileFromPoint(clientX, clientY) {
     const canvas = document.getElementById('canvas-board');
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const x = Math.floor((clientX - rect.left - canvasOffsetX) / canvasZoom);
-    const y = Math.floor((clientY - rect.top - canvasOffsetY) / canvasZoom);
+    // Use CSS coordinates (not canvas pixel coords)
+    const cssX = clientX - rect.left;
+    const cssY = clientY - rect.top;
+    const x = Math.floor((cssX - canvasOffsetX) / canvasZoom);
+    const y = Math.floor((cssY - canvasOffsetY) / canvasZoom);
     if (!canvasBoardState || x < 0 || y < 0 || x >= canvasBoardState.board.width || y >= canvasBoardState.board.height) return null;
     return { x, y };
 }
@@ -262,7 +336,8 @@ async function fetchCanvasState() {
     renderCanvasBoardMode();
     pushCanvasActivity([]);
     syncCanvasAuthState();
-    if (!canvasZoom || !canvasOffsetX || !canvasOffsetY) resetCanvasCamera();
+    resizeCanvasBoard();
+    resetCanvasCamera();
     queueCanvasRender();
     updateCanvasCooldownText();
 }
@@ -274,16 +349,21 @@ function attachCanvasEvents() {
     if (!canvas) return;
 
     canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+    /* ── Mouse events ── */
     canvas.addEventListener('mousedown', (event) => {
-        if (event.button === 2) {
+        if (event.button === 2 || event.button === 1) {
+            event.preventDefault();
             canvasPanning = true;
             canvasDragStart = { x: event.clientX, y: event.clientY, ox: canvasOffsetX, oy: canvasOffsetY };
+            canvas.style.cursor = 'grabbing';
             return;
         }
         const tile = canvasTileFromPoint(event.clientX, event.clientY);
         if (!tile) return;
         canvasCursor = tile;
         updateCanvasHover(tile);
+        sendCanvasCursor();
         if (event.button === 0) placeCanvasTile(tile.x, tile.y);
         queueCanvasRender();
     });
@@ -295,17 +375,22 @@ function attachCanvasEvents() {
             return;
         }
         const tile = canvasTileFromPoint(event.clientX, event.clientY);
+        if (tile) canvasCursor = tile;
         updateCanvasHover(tile);
+        queueCanvasRender();
     });
     window.addEventListener('mouseup', () => {
-        canvasPanning = false;
-        canvasDragStart = null;
+        if (canvasPanning) {
+            canvasPanning = false;
+            canvasDragStart = null;
+            canvas.style.cursor = 'crosshair';
+        }
     });
     canvas.addEventListener('wheel', (event) => {
         event.preventDefault();
         const tileBefore = canvasTileFromPoint(event.clientX, event.clientY);
         const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
-        canvasZoom = Math.max(1, Math.min(24, canvasZoom * factor));
+        canvasZoom = Math.max(0.5, Math.min(40, canvasZoom * factor));
         if (tileBefore) {
             const rect = canvas.getBoundingClientRect();
             canvasOffsetX = event.clientX - rect.left - tileBefore.x * canvasZoom;
@@ -313,6 +398,85 @@ function attachCanvasEvents() {
         }
         queueCanvasRender();
     }, { passive: false });
+
+    /* ── Touch events (mobile pinch-zoom + pan + tap-to-place) ── */
+    let touchIds = [];
+    let lastTouchDist = 0;
+    let lastTouchMid = { x: 0, y: 0 };
+    let touchMoved = false;
+
+    canvas.addEventListener('touchstart', (event) => {
+        event.preventDefault();
+        const touches = event.touches;
+        touchMoved = false;
+        if (touches.length === 1) {
+            canvasPanning = true;
+            canvasDragStart = { x: touches[0].clientX, y: touches[0].clientY, ox: canvasOffsetX, oy: canvasOffsetY };
+        }
+        if (touches.length === 2) {
+            canvasPanning = false;
+            canvasDragStart = null;
+            const dx = touches[1].clientX - touches[0].clientX;
+            const dy = touches[1].clientY - touches[0].clientY;
+            lastTouchDist = Math.hypot(dx, dy);
+            lastTouchMid = { x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 };
+        }
+        touchIds = Array.from(touches).map(t => t.identifier);
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (event) => {
+        event.preventDefault();
+        const touches = event.touches;
+        if (touches.length === 1 && canvasPanning && canvasDragStart) {
+            const dx = touches[0].clientX - canvasDragStart.x;
+            const dy = touches[0].clientY - canvasDragStart.y;
+            if (Math.abs(dx) > 4 || Math.abs(dy) > 4) touchMoved = true;
+            canvasOffsetX = canvasDragStart.ox + dx;
+            canvasOffsetY = canvasDragStart.oy + dy;
+            queueCanvasRender();
+        }
+        if (touches.length === 2) {
+            touchMoved = true;
+            const dx = touches[1].clientX - touches[0].clientX;
+            const dy = touches[1].clientY - touches[0].clientY;
+            const dist = Math.hypot(dx, dy);
+            const mid = { x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 };
+            if (lastTouchDist > 0) {
+                const scale = dist / lastTouchDist;
+                const oldZoom = canvasZoom;
+                canvasZoom = Math.max(0.5, Math.min(40, canvasZoom * scale));
+                const rect = canvas.getBoundingClientRect();
+                const cx = mid.x - rect.left;
+                const cy = mid.y - rect.top;
+                canvasOffsetX = cx - (cx - canvasOffsetX) * (canvasZoom / oldZoom) + (mid.x - lastTouchMid.x);
+                canvasOffsetY = cy - (cy - canvasOffsetY) * (canvasZoom / oldZoom) + (mid.y - lastTouchMid.y);
+            }
+            lastTouchDist = dist;
+            lastTouchMid = mid;
+            queueCanvasRender();
+        }
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', (event) => {
+        event.preventDefault();
+        // Tap-to-place: if single touch ended without moving
+        if (!touchMoved && event.changedTouches.length === 1 && event.touches.length === 0) {
+            const t = event.changedTouches[0];
+            const tile = canvasTileFromPoint(t.clientX, t.clientY);
+            if (tile) {
+                canvasCursor = tile;
+                updateCanvasHover(tile);
+                sendCanvasCursor();
+                placeCanvasTile(tile.x, tile.y);
+                queueCanvasRender();
+            }
+        }
+        canvasPanning = false;
+        canvasDragStart = null;
+        lastTouchDist = 0;
+        touchIds = Array.from(event.touches).map(t => t.identifier);
+    }, { passive: false });
+
     window.addEventListener('keydown', handleCanvasHotkeys);
 }
 
@@ -358,6 +522,18 @@ async function placeCanvasTile(x, y) {
             applyCanvasTiles([result.tile]);
             canvasBoardState.cooldown = result.cooldown;
             updateCanvasCooldownText();
+            canvasPlacedCount++;
+            canvasLastPlaceTime = Date.now();
+            // Visual feedback — flash the stage border
+            const stage = document.querySelector('.canvas-stage');
+            if (stage) {
+                stage.classList.remove('canvas-place-flash');
+                void stage.offsetWidth; // force reflow
+                stage.classList.add('canvas-place-flash');
+            }
+            // Update placed counter badge
+            const counter = document.getElementById('canvas-place-count');
+            if (counter) counter.textContent = `${canvasPlacedCount} placed`;
             queueCanvasRender();
         }
     } catch (error) {
@@ -408,6 +584,16 @@ function connectCanvasSocket() {
 async function loadCanvasPage() {
     syncCanvasAuthState();
     canvasPageBootstrapped = true;
+    // Set up ResizeObserver for DPR-correct canvas sizing
+    const canvas = document.getElementById('canvas-board');
+    if (canvas && !canvasResizeObserver) {
+        canvasResizeObserver = new ResizeObserver(() => {
+            resizeCanvasBoard();
+            queueCanvasRender();
+        });
+        canvasResizeObserver.observe(canvas);
+    }
+    resizeCanvasBoard();
     try {
         await fetchCanvasState();
         attachCanvasEvents();
@@ -422,10 +608,21 @@ async function loadCanvasPage() {
 function destroyCanvasPage() {
     clearInterval(canvasUiTimer);
     canvasUiTimer = null;
+    if (canvasResizeObserver) {
+        canvasResizeObserver.disconnect();
+        canvasResizeObserver = null;
+    }
     if (canvasSocket) {
         canvasSocket.close();
         canvasSocket = null;
     }
+}
+
+function canvasToggleGrid() {
+    canvasShowGrid = !canvasShowGrid;
+    const btn = document.getElementById('canvas-grid-btn');
+    if (btn) btn.classList.toggle('active', canvasShowGrid);
+    queueCanvasRender();
 }
 
 window.loadCanvasPage = loadCanvasPage;
@@ -434,3 +631,5 @@ window.resetCanvasCamera = resetCanvasCamera;
 window.centerCanvasCursor = centerCanvasCursor;
 window.selectCanvasColor = selectCanvasColor;
 window.syncCanvasAuthState = syncCanvasAuthState;
+window.canvasToggleGrid = canvasToggleGrid;
+window.resizeCanvasBoard = resizeCanvasBoard;

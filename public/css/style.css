@@ -164,7 +164,7 @@ main#app { position: relative; z-index: 1; }
 
 .nav-links {
     display: flex; gap: 4px; flex: 1; min-width: 0;
-    overflow-x: auto; overflow-y: visible;
+    overflow: visible;
     align-items: center;
     scrollbar-width: none;
 }
@@ -204,6 +204,7 @@ main#app { position: relative; z-index: 1; }
     transition: transform 0.2s;
 }
 
+.nav-dropdown:hover .nav-dd-caret,
 .nav-dropdown.open .nav-dd-caret {
     transform: rotate(180deg);
 }
@@ -211,9 +212,9 @@ main#app { position: relative; z-index: 1; }
 .nav-dropdown-menu {
     display: none;
     position: absolute;
-    top: calc(100% + 4px);
+    top: 100%;
     left: 0;
-    min-width: 170px;
+    min-width: 180px;
     background: var(--bg-tertiary, #1a1a2e);
     border: 1px solid var(--border, rgba(255,255,255,0.08));
     border-radius: var(--radius, 8px);
@@ -221,8 +222,12 @@ main#app { position: relative; z-index: 1; }
     z-index: 1002;
     overflow: hidden;
     padding: 4px 0;
+    /* Invisible bridge to prevent gap hover-out */
+    margin-top: 0;
 }
 
+/* Open on hover (desktop) or click */
+.nav-dropdown:hover .nav-dropdown-menu,
 .nav-dropdown.open .nav-dropdown-menu {
     display: block;
 }
@@ -241,12 +246,18 @@ main#app { position: relative; z-index: 1; }
 
 .nav-dropdown-menu a:hover {
     background: var(--bg-hover, rgba(255,255,255,0.06));
+    color: var(--accent-light, #dbb077);
+}
+
+.nav-dropdown-menu a:hover i {
+    color: var(--accent, #c0965c);
 }
 
 .nav-dropdown-menu a i {
     width: 18px;
     text-align: center;
     color: var(--text-secondary, #9a9a9a);
+    transition: color 0.15s;
 }
 
 /* Live indicator on Go Live nav link */

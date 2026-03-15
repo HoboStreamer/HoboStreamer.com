@@ -2577,6 +2577,7 @@
             <div class="canvas-sidebar">
                 <div class="canvas-card">
                     <h3><i class="fa-solid fa-palette"></i> Palette</h3>
+                    <div id="canvas-color-preview" class="canvas-color-preview"></div>
                     <div class="canvas-palette" id="canvas-palette"></div>
                     <div class="canvas-status" id="canvas-status">Select a color to place</div>
                     <div class="canvas-cooldown" id="canvas-cooldown"></div>
@@ -2589,9 +2590,11 @@
                 <div class="canvas-card">
                     <h3><i class="fa-solid fa-question-circle"></i> Controls</h3>
                     <div class="canvas-help">
-                        <span><kbd>Click</kbd> Place tile</span>
-                        <span><kbd>Scroll</kbd> Zoom in/out</span>
-                        <span><kbd>Drag</kbd> Pan around</span>
+                        <span><kbd>Click</kbd> / <kbd>Tap</kbd> Place tile</span>
+                        <span><kbd>Right-drag</kbd> / <kbd>Drag</kbd> Pan around</span>
+                        <span><kbd>Scroll</kbd> / <kbd>Pinch</kbd> Zoom in/out</span>
+                        <span><kbd>Arrows</kbd> Move cursor</span>
+                        <span><kbd>Space</kbd> / <kbd>Enter</kbd> Place at cursor</span>
                         <span><kbd>R</kbd> Reset view</span>
                     </div>
                 </div>
@@ -2601,8 +2604,11 @@
                 <div class="canvas-toolbar">
                     <div class="canvas-toolbar-left">
                         <button class="btn btn-outline btn-sm" onclick="resetCanvasCamera()" title="Reset View"><i class="fa-solid fa-expand"></i></button>
+                        <button class="btn btn-outline btn-sm active" id="canvas-grid-btn" onclick="canvasToggleGrid()" title="Toggle Grid"><i class="fa-solid fa-border-all"></i></button>
+                        <button class="btn btn-outline btn-sm" onclick="centerCanvasCursor()" title="Go to Cursor"><i class="fa-solid fa-crosshairs"></i></button>
                     </div>
                     <div class="canvas-toolbar-right">
+                        <span class="canvas-place-count" id="canvas-place-count"></span>
                         <span class="canvas-online" id="canvas-online"><i class="fa-solid fa-users"></i> 0 online</span>
                     </div>
                 </div>
