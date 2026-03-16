@@ -293,6 +293,21 @@ Useful starting points:
 
 ---
 
+## Hobo Network
+
+HoboStreamer is part of the **Hobo Network** — a multi-domain platform sharing one identity system.
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| **HoboStreamer** | [hobostreamer.com](https://hobostreamer.com) | Live streaming platform |
+| **HoboTools** | [hobo.tools](https://hobo.tools) | Central hub, SSO, utilities |
+| **HoboQuest** | [hobo.quest](https://hobo.quest) | Community MMORPG & canvas |
+| **HoboMaps** | [maps.hobo.tools](https://maps.hobo.tools) | Camp & shelter locator |
+
+See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full multi-domain design.
+
+---
+
 ## License
 
 See [LICENSE](LICENSE).

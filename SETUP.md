@@ -978,7 +978,225 @@ If you want the short version, the high-level order is:
 
 ---
 
-## 27. References behind this setup
+## 27. Hobo Network — Multi-Domain Setup
+
+HoboStreamer is part of the **Hobo Network**, a multi-domain platform sharing one identity system. See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full design.
+
+### Domains
+
+| Domain | Service | Port |
+|--------|---------|------|
+| `hobostreamer.com` | HoboStreamer (streaming) | 3000 |
+| `hobo.tools` + `*.hobo.tools` | HoboTools (SSO + hub) | 3100 |
+| `hobo.quest` | HoboQuest (games) | 3200 |
+
+### Cloudflare DNS Records
+
+Add these DNS records in Cloudflare for each domain:
+
+```
+# hobo.tools (new domain)
+hobo.tools        A    <server-ip>    Proxied
+*.hobo.tools      A    <server-ip>    Proxied
+
+# hobo.quest (new domain)
+hobo.quest        A    <server-ip>    Proxied
+www.hobo.quest    A    <server-ip>    Proxied
+```
+
+Set SSL/TLS to **Full (strict)** on both new domains (same as hobostreamer.com).
+
+### Nginx Vhosts
+
+Copy the nginx configs to your server:
+
+```bash
+sudo cp /opt/hobo-tools/deploy/nginx/hobo.tools.conf /etc/nginx/sites-available/
+sudo cp /opt/hobo-quest/deploy/nginx/hobo.quest.conf /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/hobo.tools.conf /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/hobo.quest.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### Systemd Services
+
+```bash
+sudo cp /opt/hobo-tools/deploy/systemd/hobo-tools.service /etc/systemd/system/
+sudo cp /opt/hobo-quest/deploy/systemd/hobo-quest.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now hobo-tools
+sudo systemctl enable --now hobo-quest
+```
+
+### RSA Keys for SSO
+
+Generate on the server (hobo-tools holds the private key):
+
+```bash
+mkdir -p /opt/hobo-tools/data/keys
+openssl genrsa -out /opt/hobo-tools/data/keys/private.pem 2048
+openssl rsa -in /opt/hobo-tools/data/keys/private.pem -pubout -out /opt/hobo-tools/data/keys/public.pem
+
+# Copy public key to other services
+mkdir -p /opt/hobo-quest/data/keys
+cp /opt/hobo-tools/data/keys/public.pem /opt/hobo-quest/data/keys/
+mkdir -p /opt/hobostreamer/data/keys
+cp /opt/hobo-tools/data/keys/public.pem /opt/hobostreamer/data/keys/
+```
+
+### Firewall
+
+No new ports needed — all three services listen on localhost only and are proxied through Nginx on port 80. Cloudflare handles TLS.
+
+### Deploy
+
+Clone the repos to `/opt/`:
+
+```bash
+# If using a monorepo:
+cd /opt && git clone <repo> hobo
+ln -s /opt/hobo/hobo-tools /opt/hobo-tools
+ln -s /opt/hobo/hobo-quest /opt/hobo-quest
+
+# Install deps for each service
+cd /opt/hobo-tools && npm install --production
+cd /opt/hobo-quest && npm install --production
+```
+
+---
+
+## 28. Notification System & Email Alerts
+
+HoboTools provides a unified notification system for all Hobo Network services. See also the [HoboTools README](../hobo-tools/README.md) for full API documentation.
+
+### How It Works
+
+1. Services push notifications to hobo.tools via internal API (`POST /internal/notifications/push`)
+2. hobo.tools stores them in SQLite with priority, category, and optional rich content
+3. Client-side JS polls every 15 seconds, shows toasts, updates bell badge, plays sounds
+4. **CRITICAL** notifications are emailed via Amazon SES (if configured)
+
+### Priority Levels
+
+| Priority | Toast | Sound | Email |
+|----------|-------|-------|-------|
+| `low` | No | No | No |
+| `normal` | Yes (5s) | Subtle chime | No |
+| `high` | Yes (8s) | Attention tone | No |
+| `critical` | Sticky (manual dismiss) | Urgent alert | **Yes** |
+
+### Pushing Notifications from HoboStreamer
+
+Add this to any HoboStreamer endpoint or event handler:
+
+```js
+const INTERNAL_KEY = process.env.INTERNAL_API_KEY;
+const HOBOTOOLS_URL = process.env.HOBOTOOLS_URL || 'http://127.0.0.1:3100';
+
+async function pushNotification(userId, type, data = {}) {
+  await fetch(`${HOBOTOOLS_URL}/internal/notifications/push`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': INTERNAL_KEY
+    },
+    body: JSON.stringify({ userId, type, data })
+  });
+}
+
+// Example: notify user of a new follower
+pushNotification(targetUserId, 'new_follower', { actorName: followerUsername });
+```
+
+### Integrating the Notification UI
+
+Add the shared scripts to any service page:
+
+```html
+<script src="https://hobo.tools/shared/navbar.js"></script>
+<script src="https://hobo.tools/shared/notification-ui.js"></script>
+<script src="https://hobo.tools/shared/account-switcher.js"></script>
+<script src="https://hobo.tools/shared/user-card.js"></script>
+
+<script>
+  // After user authenticates:
+  HoboNavbar.init({ service: 'hobostreamer', user, token });
+  HoboNotifications.init({
+    token: accessToken,
+    apiBase: 'https://hobo.tools',
+    mountTo: HoboNavbar.getBellMount()
+  });
+  HoboAccountSwitcher.init({ apiBase: 'https://hobo.tools' });
+</script>
+```
+
+---
+
+## 29. Amazon SES Email Setup (Optional)
+
+SES delivers email alerts for CRITICAL notifications (moderation actions, system failures, etc.). This is optional — the notification system works fully without it.
+
+### AWS Setup
+
+1. **AWS Console → SES → Verified Identities**
+   - Add your domain: `hobo.tools`
+   - SES provides 3 CNAME records for DKIM verification
+
+2. **Cloudflare DNS → Add DKIM Records**
+   ```
+   # SES provides these — example format:
+   <selector1>._domainkey.hobo.tools  CNAME  <selector1>.dkim.amazonses.com
+   <selector2>._domainkey.hobo.tools  CNAME  <selector2>.dkim.amazonses.com
+   <selector3>._domainkey.hobo.tools  CNAME  <selector3>.dkim.amazonses.com
+   ```
+
+3. **Add SPF/DMARC Records** (recommended)
+   ```
+   hobo.tools  TXT  "v=spf1 include:amazonses.com ~all"
+   _dmarc.hobo.tools  TXT  "v=DMARC1; p=quarantine; rua=mailto:dmarc@hobo.tools"
+   ```
+
+4. **AWS Console → IAM → Create User**
+   - Attach policy: `AmazonSESFullAccess`
+   - Create access key → copy Key ID and Secret
+
+5. **Request Production Access** (new SES accounts start in sandbox mode)
+   - AWS Console → SES → Account Dashboard → Request Production Access
+   - Until approved, you can only send to verified email addresses
+
+### Configure on hobo.tools
+
+**Option A: Environment variables** (`.env`)
+```env
+AWS_SES_REGION=us-east-1
+AWS_SES_ACCESS_KEY_ID=AKIA...
+AWS_SES_SECRET_ACCESS_KEY=wJal...
+SES_FROM_EMAIL=noreply@hobo.tools
+SES_FROM_NAME=Hobo Network
+```
+
+**Option B: Admin panel** (runtime configuration)
+1. Log in as admin at `hobo.tools`
+2. Navigate to Admin → SES Configuration
+3. Enter credentials and test with "Send Test Email"
+
+### Verify
+
+```bash
+# Check SES status via admin health endpoint
+curl -H "Authorization: Bearer <admin-token>" https://hobo.tools/api/admin/health | jq '.ses'
+# Expected: {"enabled": true, "hasClient": true, "region": "us-east-1"}
+
+# Send test email
+curl -X POST https://hobo.tools/api/admin/ses/test \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com"}'
+```
+
+---
+
+## 30. References behind this setup
 
 This guide was aligned with current public guidance from:
 
@@ -986,10 +1204,11 @@ This guide was aligned with current public guidance from:
 - Cloudflare documentation for `CF-Connecting-IP` and restoring original visitor IPs
 - Cloudflare documentation for **Full (strict)** mode
 - current Certbot installation and Nginx integration guidance
+- AWS SES Developer Guide for domain verification and DKIM setup
 
 ---
 
-## 28. Summary
+## 31. Summary
 
 For OVH + Ubuntu 25.04, the best HoboStreamer deployment pattern is:
 
@@ -1002,5 +1221,7 @@ For OVH + Ubuntu 25.04, the best HoboStreamer deployment pattern is:
 - Cloudflare real-IP restoration in Nginx
 - `systemd`, `ufw`, `fail2ban`
 - only one streaming protocol exposed at a time unless you have a real need for more
+- Unified notification system via hobo.tools with optional Amazon SES for critical email alerts
+- Multi-domain identity with SSO, anonymous users, and multi-account switching
 
 See also [README.md](README.md) and [deploy](deploy).
