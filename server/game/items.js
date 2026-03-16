@@ -2,6 +2,7 @@
  * HoboGame — Item Catalog, Structures, World Generation, Shared Utilities
  * Rust-style open-world survival game
  */
+const { fishingLevelWeightMult, junkLevelMult } = require('./fishing-level-bonus');
 
 // ── Map Constants ────────────────────────────────────────────
 const MAP_W = 512;
@@ -571,18 +572,20 @@ const FISH_JUNK = [
     { id: 'fish_tin_can', weight: 8 },
 ];
 
-// Build zone loot tables dynamically from FISH_SPECIES + rod tier
-function buildFishTable(zone, rodTier) {
+// Build zone loot tables dynamically from FISH_SPECIES + rod tier + player level
+function buildFishTable(zone, rodTier, fishingLevel = 1, totalLevel = 0) {
     const table = [];
     for (const [fishId, spec] of Object.entries(FISH_SPECIES)) {
         if (spec.rodTier > rodTier) continue;
         if (!spec.zones.includes(zone)) continue;
-        table.push({ id: fishId, weight: spec.rarityWeight });
+        const lvlMult = fishingLevelWeightMult(fishingLevel, spec.rodTier);
+        table.push({ id: fishId, weight: Math.round(spec.rarityWeight * lvlMult) });
     }
-    // Add junk (reduced by rod tier)
-    const junkMult = Math.max(0.2, 1 - rodTier * 0.18);
+    // Add junk (reduced by rod tier, further reduced by fishing/total level)
+    const rodJunkMult = Math.max(0.2, 1 - rodTier * 0.18);
+    const lvlJunkMult = junkLevelMult(fishingLevel, totalLevel);
     for (const junk of FISH_JUNK) {
-        table.push({ id: junk.id, weight: Math.max(1, Math.round(junk.weight * junkMult)) });
+        table.push({ id: junk.id, weight: Math.max(1, Math.round(junk.weight * rodJunkMult * lvlJunkMult)) });
     }
     return table;
 }
