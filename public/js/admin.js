@@ -169,6 +169,7 @@ function switchAdminTab(tab) {
         case 'bans': loadAdminBans(); break;
         case 'vpn': loadAdminVPN(); break;
         case 'pastes': loadAdminPastes(); break;
+        case 'data': loadAdminData(); break;
     }
 }
 
@@ -1085,5 +1086,258 @@ async function adminDeleteAllForks() {
         loadAdminPastes(); // Refresh stats
     } catch (e) {
         toast(e.message || 'Failed to delete forks', 'error');
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Data / Storage Management Tab
+   ═══════════════════════════════════════════════════════════════ */
+
+function fmtBytes(bytes) {
+    if (!bytes || bytes < 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    let val = bytes;
+    while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+    return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function storagePctClass(pct) {
+    if (pct >= 90) return 'danger';
+    if (pct >= 75) return 'warning';
+    return 'ok';
+}
+
+function fmtDuration(sec) {
+    if (!sec) return '—';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
+}
+
+async function loadAdminData() {
+    const c = document.getElementById('admin-content');
+    c.innerHTML = '<p class="muted"><i class="fa-solid fa-spinner fa-spin"></i> Analyzing storage...</p>';
+    try {
+        const data = await api('/admin/storage');
+        const d = data.disk || {};
+        const usePct = d.total ? ((d.used / d.total) * 100).toFixed(1) : 0;
+        const dataPct = d.total ? ((data.dataTotal.bytes / d.total) * 100).toFixed(1) : 0;
+        const pctClass = storagePctClass(parseFloat(usePct));
+
+        // Sort breakdown by size descending
+        const breakdown = (data.breakdown || []).sort((a, b) => b.bytes - a.bytes);
+        const maxBreakdown = Math.max(...breakdown.map(b => b.bytes), 1);
+
+        c.innerHTML = `
+            <!-- Disk Overview -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:28px">
+                <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px">
+                    <h3 style="margin-bottom:14px;"><i class="fa-solid fa-hard-drive"></i> Disk Usage</h3>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px">
+                        <span>${fmtBytes(d.used)} used of ${fmtBytes(d.total)}</span>
+                        <span class="storage-pct-${pctClass}" style="font-weight:700">${usePct}%</span>
+                    </div>
+                    <div style="background:var(--bg-tertiary);border-radius:6px;height:18px;overflow:hidden;position:relative">
+                        <div style="background:var(--storage-bar-${pctClass}, var(--accent));height:100%;width:${usePct}%;border-radius:6px;transition:width .5s"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:13px;color:var(--text-secondary)">
+                        <span><i class="fa-solid fa-check-circle"></i> ${fmtBytes(d.available)} available</span>
+                        <span>Mount: ${esc(d.mount || '/')}</span>
+                    </div>
+                    ${parseFloat(usePct) >= 85 ? `<div style="margin-top:12px;padding:10px 14px;border-radius:8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);font-size:13px;color:#f87171"><i class="fa-solid fa-triangle-exclamation"></i> <strong>Warning:</strong> Disk usage is ${usePct}%. Consider cleaning up old VODs or expanding storage.</div>` : ''}
+                </div>
+                <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px">
+                    <h3 style="margin-bottom:14px;"><i class="fa-solid fa-database"></i> Data Summary</h3>
+                    <div class="admin-stats" style="margin:0">
+                        ${[
+                            { label: 'Total Data', value: fmtBytes(data.dataTotal?.bytes || 0), icon: 'fa-folder-open' },
+                            { label: 'Files', value: (data.dataTotal?.files || 0).toLocaleString(), icon: 'fa-file' },
+                            { label: 'Database', value: fmtBytes(data.database?.bytes || 0), icon: 'fa-database' },
+                            { label: 'Data % of Disk', value: dataPct + '%', icon: 'fa-chart-pie' },
+                            { label: 'VODs (DB)', value: (data.vodStats?.count || 0).toLocaleString(), icon: 'fa-video' },
+                            { label: 'Clips (DB)', value: (data.clipStats?.count || 0).toLocaleString(), icon: 'fa-film' },
+                        ].map(s => `
+                            <div class="admin-stat">
+                                <div class="admin-stat-value">${s.value}</div>
+                                <div class="admin-stat-label"><i class="fa-solid ${s.icon}"></i> ${s.label}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Per-directory breakdown -->
+            <h3 style="margin-bottom:14px;"><i class="fa-solid fa-folder-tree"></i> Storage Breakdown</h3>
+            <div style="display:grid;gap:8px;margin-bottom:28px">
+                ${breakdown.map(b => {
+                    const pct = maxBreakdown > 0 ? ((b.bytes / maxBreakdown) * 100).toFixed(1) : 0;
+                    return `
+                        <div style="display:grid;grid-template-columns:140px 1fr 100px 80px;align-items:center;gap:12px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+                            <span style="font-weight:600;font-size:14px"><i class="fa-solid ${b.icon}" style="width:20px;text-align:center;margin-right:6px;color:var(--accent)"></i>${esc(b.name)}</span>
+                            <div style="background:var(--bg-tertiary);border-radius:4px;height:12px;overflow:hidden">
+                                <div style="background:var(--accent);height:100%;width:${pct}%;border-radius:4px;transition:width .4s"></div>
+                            </div>
+                            <span style="text-align:right;font-weight:600;font-size:13px">${fmtBytes(b.bytes)}</span>
+                            <span style="text-align:right;font-size:12px;color:var(--text-muted)">${b.files.toLocaleString()} files</span>
+                        </div>
+                    `;
+                }).join('')}
+                <div style="display:grid;grid-template-columns:140px 1fr 100px 80px;align-items:center;gap:12px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+                    <span style="font-weight:600;font-size:14px"><i class="fa-solid fa-database" style="width:20px;text-align:center;margin-right:6px;color:var(--accent)"></i>Database</span>
+                    <div style="background:var(--bg-tertiary);border-radius:4px;height:12px;overflow:hidden">
+                        <div style="background:var(--accent);height:100%;width:${maxBreakdown > 0 ? (((data.database?.bytes || 0) / maxBreakdown) * 100).toFixed(1) : 0}%;border-radius:4px"></div>
+                    </div>
+                    <span style="text-align:right;font-weight:600;font-size:13px">${fmtBytes(data.database?.bytes || 0)}</span>
+                    <span style="text-align:right;font-size:12px;color:var(--text-muted)">1 file</span>
+                </div>
+            </div>
+
+            <!-- VOD Management -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+                <h3><i class="fa-solid fa-video"></i> VOD Management</h3>
+                <div style="display:flex;gap:8px">
+                    <select id="admin-vod-sort" onchange="loadAdminVodTable()" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:13px">
+                        <option value="size">Sort by Size</option>
+                        <option value="date">Sort by Date</option>
+                        <option value="duration">Sort by Duration</option>
+                        <option value="user">Sort by User</option>
+                    </select>
+                    <button class="btn btn-danger btn-sm" onclick="adminBulkDeleteVods()" id="admin-vod-bulk-btn" disabled>
+                        <i class="fa-solid fa-trash-can"></i> Delete Selected
+                    </button>
+                </div>
+            </div>
+            <div id="admin-vod-table"><p class="muted">Loading VODs...</p></div>
+        `;
+
+        // Add CSS variables for storage bar colors
+        const style = document.createElement('style');
+        style.textContent = `
+            :root { --storage-bar-ok: #22c55e; --storage-bar-warning: #f59e0b; --storage-bar-danger: #ef4444; }
+            .storage-pct-ok { color: #22c55e; } .storage-pct-warning { color: #f59e0b; } .storage-pct-danger { color: #ef4444; }
+        `;
+        if (!document.getElementById('admin-storage-styles')) { style.id = 'admin-storage-styles'; document.head.appendChild(style); }
+
+        loadAdminVodTable();
+    } catch (e) {
+        c.innerHTML = `<p class="muted">Error loading storage data: ${esc(e.message)}</p>`;
+    }
+}
+
+async function loadAdminVodTable() {
+    const container = document.getElementById('admin-vod-table');
+    if (!container) return;
+    const sort = document.getElementById('admin-vod-sort')?.value || 'size';
+    container.innerHTML = '<p class="muted"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</p>';
+
+    try {
+        const data = await api(`/admin/storage/vods?sort=${sort}&order=desc&limit=100`);
+        const vods = data.vods || [];
+        const userSummary = data.userSummary || [];
+
+        if (vods.length === 0) {
+            container.innerHTML = '<p class="muted">No VODs found.</p>';
+            return;
+        }
+
+        let html = '';
+
+        // User summary
+        if (userSummary.length > 0) {
+            html += `<div style="margin-bottom:18px;padding:14px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px">
+                <strong style="font-size:13px;color:var(--text-secondary)"><i class="fa-solid fa-users"></i> Top Users by Storage</strong>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+                    ${userSummary.slice(0, 10).map(u => `
+                        <span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:6px;font-size:12px">
+                            <strong>${esc(u.username)}</strong>: ${fmtBytes(u.totalSize)} (${u.vodCount} VODs)
+                        </span>
+                    `).join('')}
+                </div>
+            </div>`;
+        }
+
+        // VOD table
+        html += `<div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead>
+                    <tr style="border-bottom:2px solid var(--border);text-align:left">
+                        <th style="padding:8px 6px;width:32px"><input type="checkbox" id="admin-vod-select-all" onchange="adminToggleAllVods(this.checked)" style="cursor:pointer"></th>
+                        <th style="padding:8px 6px">Title</th>
+                        <th style="padding:8px 6px">User</th>
+                        <th style="padding:8px 6px;text-align:right">Size</th>
+                        <th style="padding:8px 6px;text-align:right">Duration</th>
+                        <th style="padding:8px 6px">Date</th>
+                        <th style="padding:8px 6px;text-align:center">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${vods.map(v => {
+                        const age = v.created_at ? timeAgo(v.created_at) : '—';
+                        const statusIcons = [
+                            v.is_recording ? '<i class="fa-solid fa-circle" style="color:#ef4444" title="Recording"></i>' : '',
+                            v.is_public ? '<i class="fa-solid fa-globe" style="color:#22c55e" title="Public"></i>' : '<i class="fa-solid fa-lock" style="color:#f59e0b" title="Private"></i>',
+                            !v.fileExists ? '<i class="fa-solid fa-triangle-exclamation" style="color:#ef4444" title="File missing on disk!"></i>' : '',
+                        ].filter(Boolean).join(' ');
+                        return `
+                            <tr style="border-bottom:1px solid var(--border)" data-vod-id="${v.id}">
+                                <td style="padding:8px 6px"><input type="checkbox" class="admin-vod-cb" value="${v.id}" onchange="adminUpdateVodSelection()" style="cursor:pointer"></td>
+                                <td style="padding:8px 6px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(v.title || '')}">${esc(v.title || '(untitled)')}</td>
+                                <td style="padding:8px 6px">${esc(v.username)}</td>
+                                <td style="padding:8px 6px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${fmtBytes(v.diskSize || v.file_size || 0)}</td>
+                                <td style="padding:8px 6px;text-align:right;color:var(--text-secondary)">${fmtDuration(v.duration_seconds)}</td>
+                                <td style="padding:8px 6px;color:var(--text-secondary)" title="${esc(v.created_at || '')}">${age}</td>
+                                <td style="padding:8px 6px;text-align:center">${statusIcons}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>`;
+
+        if (data.total > 100) {
+            html += `<p class="muted" style="margin-top:12px;font-size:12px">Showing top 100 of ${data.total.toLocaleString()} VODs.</p>`;
+        }
+
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+}
+
+function adminToggleAllVods(checked) {
+    document.querySelectorAll('.admin-vod-cb').forEach(cb => { cb.checked = checked; });
+    adminUpdateVodSelection();
+}
+
+function adminUpdateVodSelection() {
+    const selected = document.querySelectorAll('.admin-vod-cb:checked');
+    const btn = document.getElementById('admin-vod-bulk-btn');
+    if (btn) {
+        btn.disabled = selected.length === 0;
+        btn.innerHTML = selected.length > 0
+            ? `<i class="fa-solid fa-trash-can"></i> Delete Selected (${selected.length})`
+            : '<i class="fa-solid fa-trash-can"></i> Delete Selected';
+    }
+}
+
+async function adminBulkDeleteVods() {
+    const ids = [...document.querySelectorAll('.admin-vod-cb:checked')].map(cb => parseInt(cb.value));
+    if (ids.length === 0) return;
+    if (!confirm(`Permanently delete ${ids.length} VOD(s) and their files from disk? This cannot be undone.`)) return;
+
+    try {
+        const data = await api('/admin/storage/vods/bulk', { method: 'DELETE', body: { ids } });
+        const msg = `Deleted ${data.deleted} VOD(s), freed ${fmtBytes(data.freed || 0)}`;
+        toast(msg, 'success');
+        if (data.errors?.length) {
+            console.warn('[Admin] Bulk delete errors:', data.errors);
+            toast(`${data.errors.length} error(s) during deletion`, 'warning');
+        }
+        // Refresh both the overview and VOD table
+        loadAdminData();
+    } catch (e) {
+        toast(e.message || 'Bulk delete failed', 'error');
     }
 }

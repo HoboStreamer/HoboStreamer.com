@@ -23,9 +23,15 @@
  * GET    /api/admin/verification-keys      - List verification keys
  * POST   /api/admin/verification-keys      - Generate a verification key
  * DELETE /api/admin/verification-keys/:id  - Revoke a verification key
+ * GET    /api/admin/storage                - Disk usage & per-directory breakdown
+ * GET    /api/admin/storage/vods           - Detailed VOD file listing
+ * DELETE /api/admin/storage/vods/bulk      - Bulk-delete VODs by ID
  */
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
 const db = require('../db/database');
 const { requireAuth } = require('../auth/auth');
 const chatServer = require('../chat/chat-server');
@@ -503,6 +509,229 @@ router.delete('/verification-keys/:id', (req, res) => {
         res.json({ message: 'Verification key revoked' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to revoke key' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Storage / Data Management
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Recursively compute total size (bytes) and file count for a directory.
+ * Returns { bytes, files }.
+ */
+function dirStats(dirPath) {
+    let bytes = 0, files = 0;
+    try {
+        const resolved = path.resolve(dirPath);
+        if (!fs.existsSync(resolved)) return { bytes: 0, files: 0 };
+        const entries = fs.readdirSync(resolved, { withFileTypes: true });
+        for (const entry of entries) {
+            const full = path.join(resolved, entry.name);
+            if (entry.isDirectory()) {
+                const sub = dirStats(full);
+                bytes += sub.bytes;
+                files += sub.files;
+            } else if (entry.isFile()) {
+                try {
+                    bytes += fs.statSync(full).size;
+                    files++;
+                } catch { /* permission / race */ }
+            }
+        }
+    } catch { /* dir doesn't exist or inaccessible */ }
+    return { bytes, files };
+}
+
+/**
+ * Get disk usage for the volume containing a path.
+ * Returns { total, used, available } in bytes.
+ */
+function diskUsage(targetPath) {
+    try {
+        const resolved = path.resolve(targetPath);
+        // `df -B1` gives bytes; last line of output has the numbers
+        const output = execSync(`df -B1 "${resolved}" 2>/dev/null | tail -1`, { encoding: 'utf8' });
+        const parts = output.trim().split(/\s+/);
+        // Format: Filesystem 1B-blocks Used Available Use% Mounted
+        if (parts.length >= 6) {
+            return {
+                total: parseInt(parts[1], 10) || 0,
+                used: parseInt(parts[2], 10) || 0,
+                available: parseInt(parts[3], 10) || 0,
+                usePct: parts[4] || '0%',
+                mount: parts[5] || '/',
+            };
+        }
+    } catch { /* not Linux / df not available */ }
+    return { total: 0, used: 0, available: 0, usePct: '0%', mount: '/' };
+}
+
+// ── GET /api/admin/storage ───────────────────────────────────
+// Full disk overview + per-directory breakdown
+router.get('/storage', (req, res) => {
+    try {
+        const dataRoot = path.resolve('./data');
+        const disk = diskUsage(dataRoot);
+
+        // Per-directory breakdown
+        const directories = [
+            { name: 'VODs',       path: './data/vods',                icon: 'fa-video' },
+            { name: 'Clips',      path: './data/clips',               icon: 'fa-film' },
+            { name: 'Thumbnails', path: './data/thumbnails',          icon: 'fa-image' },
+            { name: 'Avatars',    path: './data/avatars',             icon: 'fa-user-circle' },
+            { name: 'Emotes',     path: './data/emotes',              icon: 'fa-face-smile' },
+            { name: 'Media',      path: './data/media',               icon: 'fa-photo-film' },
+            { name: 'Pastes',     path: './data/pastes',              icon: 'fa-paste' },
+        ];
+
+        const breakdown = directories.map(d => {
+            const stats = dirStats(d.path);
+            return { name: d.name, icon: d.icon, bytes: stats.bytes, files: stats.files };
+        });
+
+        // Database file size
+        let dbBytes = 0;
+        try { dbBytes = fs.statSync(path.resolve('./data/hobostreamer.db')).size; } catch {}
+
+        // Total data directory
+        const dataTotal = dirStats(dataRoot);
+
+        // VOD stats from DB
+        const vodDbStats = db.get(`
+            SELECT COUNT(*) as count,
+                   COALESCE(SUM(file_size), 0) as totalSize,
+                   COALESCE(MIN(created_at), '') as oldest,
+                   COALESCE(MAX(created_at), '') as newest
+            FROM vods
+        `) || {};
+
+        // Clip stats from DB
+        const clipDbStats = db.get(`
+            SELECT COUNT(*) as count
+            FROM clips
+        `) || {};
+
+        res.json({
+            disk,
+            dataTotal: { bytes: dataTotal.bytes, files: dataTotal.files },
+            database: { bytes: dbBytes },
+            breakdown,
+            vodStats: vodDbStats,
+            clipStats: clipDbStats,
+        });
+    } catch (err) {
+        console.error('[Admin] Storage error:', err.message);
+        res.status(500).json({ error: 'Failed to analyze storage' });
+    }
+});
+
+// ── GET /api/admin/storage/vods ──────────────────────────────
+// Detailed VOD listing with file sizes, owner info, age
+router.get('/storage/vods', (req, res) => {
+    try {
+        const sort = req.query.sort || 'size'; // size, date, user
+        const order = req.query.order === 'asc' ? 'ASC' : 'DESC';
+        const limit = Math.min(parseInt(req.query.limit || '100'), 500);
+        const offset = parseInt(req.query.offset || '0');
+
+        let orderBy;
+        switch (sort) {
+            case 'date': orderBy = `v.created_at ${order}`; break;
+            case 'user': orderBy = `u.username ${order}, v.file_size DESC`; break;
+            case 'duration': orderBy = `v.duration_seconds ${order}`; break;
+            default:      orderBy = `v.file_size ${order}`; break;
+        }
+
+        const vods = db.all(`
+            SELECT v.id, v.title, v.file_path, v.file_size, v.duration_seconds,
+                   v.is_public, v.is_recording, v.created_at,
+                   v.stream_id, u.username, u.display_name, u.id as user_id
+            FROM vods v
+            JOIN users u ON v.user_id = u.id
+            ORDER BY ${orderBy}
+            LIMIT ? OFFSET ?
+        `, [limit, offset]);
+
+        const total = db.get('SELECT COUNT(*) as c FROM vods').c;
+
+        // Verify which files actually exist on disk
+        const enriched = vods.map(v => {
+            let diskSize = 0;
+            let exists = false;
+            if (v.file_path) {
+                try {
+                    const stat = fs.statSync(path.resolve(v.file_path));
+                    diskSize = stat.size;
+                    exists = true;
+                } catch { /* file missing */ }
+            }
+            return { ...v, diskSize, fileExists: exists };
+        });
+
+        // Per-user summary
+        const userSummary = db.all(`
+            SELECT u.username, u.id as user_id, COUNT(v.id) as vodCount,
+                   COALESCE(SUM(v.file_size), 0) as totalSize
+            FROM vods v JOIN users u ON v.user_id = u.id
+            GROUP BY v.user_id
+            ORDER BY totalSize DESC
+            LIMIT 20
+        `);
+
+        res.json({ vods: enriched, total, userSummary });
+    } catch (err) {
+        console.error('[Admin] VOD storage error:', err.message);
+        res.status(500).json({ error: 'Failed to list VOD storage' });
+    }
+});
+
+// ── DELETE /api/admin/storage/vods/bulk ──────────────────────
+// Bulk delete VODs by array of IDs
+router.delete('/storage/vods/bulk', (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'ids array required' });
+        }
+        if (ids.length > 200) {
+            return res.status(400).json({ error: 'Max 200 VODs per bulk delete' });
+        }
+
+        let deleted = 0, freed = 0, errors = [];
+        for (const id of ids) {
+            try {
+                const vod = db.get('SELECT * FROM vods WHERE id = ?', [id]);
+                if (!vod) { errors.push(`VOD ${id} not found`); continue; }
+
+                // Delete file from disk
+                if (vod.file_path) {
+                    const filePath = path.resolve(vod.file_path);
+                    if (fs.existsSync(filePath)) {
+                        const size = fs.statSync(filePath).size;
+                        fs.unlinkSync(filePath);
+                        freed += size;
+                    }
+                    // Also remove .seekable variant if exists
+                    const seekable = filePath.replace(/(\.[^.]+)$/, '.seekable$1');
+                    if (fs.existsSync(seekable)) {
+                        freed += fs.statSync(seekable).size;
+                        fs.unlinkSync(seekable);
+                    }
+                }
+
+                db.run('DELETE FROM vods WHERE id = ?', [id]);
+                deleted++;
+            } catch (err) {
+                errors.push(`VOD ${id}: ${err.message}`);
+            }
+        }
+
+        console.log(`[Admin] Bulk VOD delete by ${req.user.username}: ${deleted}/${ids.length} deleted, ${(freed / 1048576).toFixed(1)} MB freed`);
+        res.json({ deleted, freed, errors: errors.length ? errors : undefined });
+    } catch (err) {
+        console.error('[Admin] Bulk VOD delete error:', err.message);
+        res.status(500).json({ error: 'Bulk delete failed' });
     }
 });
 
