@@ -49,10 +49,10 @@
                 <i class="fa-solid fa-gamepad"></i> <span>Game</span> <i class="fa-solid fa-caret-down nav-dd-caret"></i>
             </a>
             <div class="nav-dropdown-menu">
-                <a href="#" onclick="event.preventDefault();closeNavDropdowns();navigate('/game')">
+                <a href="https://hobo.quest/game" onclick="closeNavDropdowns()">
                     <i class="fa-solid fa-dragon"></i> HoboGame
                 </a>
-                <a href="#" onclick="event.preventDefault();closeNavDropdowns();navigate('/canvas')">
+                <a href="https://hobo.quest/canvas" onclick="closeNavDropdowns()">
                     <i class="fa-solid fa-palette"></i> Canvas
                 </a>
             </div>
@@ -125,9 +125,9 @@
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
                         <i class="fa-solid fa-broadcast-tower"></i> Start Streaming
                     </button>
-                    <button class="btn btn-outline btn-lg" onclick="navigate('/game')">
+                    <a href="https://hobo.quest/game" class="btn btn-outline btn-lg">
                         <i class="fa-solid fa-gamepad"></i> Play Game
-                    </button>
+                    </a>
                     <a href="https://github.com/HoboStreamer/HoboStreamer.com" target="_blank" class="btn btn-outline btn-lg">
                         <i class="fa-brands fa-github"></i> GitHub
                     </a>
