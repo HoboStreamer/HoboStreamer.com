@@ -215,7 +215,7 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) =>
 const HOBO_TOOLS_BASE = process.env.HOBO_TOOLS_URL || 'https://hobo.tools';
 const HOBO_CLIENT_ID = process.env.HOBO_OAUTH_CLIENT_ID || 'hobostreamer';
 const HOBO_CLIENT_SECRET = process.env.HOBO_OAUTH_CLIENT_SECRET || '';
-const HOBO_REDIRECT_URI = `${process.env.BASE_URL || 'https://hobostreamer.com'}/api/auth/callback`;
+const HOBO_REDIRECT_URI = `${(process.env.BASE_URL || 'https://hobostreamer.com').toLowerCase()}/api/auth/callback`;
 
 // ── Initiate OAuth Login (redirect to hobo.tools) ───────────
 router.get('/sso/login', (req, res) => {
