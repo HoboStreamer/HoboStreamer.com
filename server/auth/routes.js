@@ -1,23 +1,26 @@
 /**
  * HoboStreamer — Auth Routes
- * POST /api/auth/register
- * POST /api/auth/login
- * GET  /api/auth/me
- * PUT  /api/auth/profile
- * POST /api/auth/change-password
- * POST /api/auth/avatar
+ * All authentication is via Hobo.Tools OAuth2 SSO.
+ * No local login/register — users sign in at hobo.tools.
+ *
+ * GET  /api/auth/sso/login    — Redirect to hobo.tools OAuth
+ * GET  /api/auth/callback     — OAuth callback
+ * GET  /api/auth/me           — Current user
+ * PUT  /api/auth/profile      — Update profile
+ * POST /api/auth/avatar       — Upload avatar
+ * GET  /api/auth/stream-key
+ * POST /api/auth/stream-key/regenerate
+ * GET  /api/auth/user/:username
+ * GET  /api/auth/sso/status
  */
 const express = require('express');
-const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const db = require('../db/database');
-const { generateToken, requireAuth } = require('./auth');
+const { requireAuth } = require('./auth');
 const permissions = require('./permissions');
-const legacyMigration = require('../game/legacy-migration');
-const ipUtils = require('../admin/ip-utils');
 
 const router = express.Router();
 
@@ -82,167 +85,14 @@ const avatarUpload = multer({
     },
 });
 
-// ── Register ─────────────────────────────────────────────────
-router.post('/register', (req, res) => {
-    try {
-        const username = cleanOptionalString(req.body.username);
-        const email = cleanOptionalString(req.body.email);
-        const password = typeof req.body.password === 'string' ? req.body.password : '';
-        let display_name = cleanOptionalString(req.body.display_name);
-        const verification_key = cleanOptionalString(req.body.verification_key);
-
-        if (!username || !password) {
-            return res.status(400).json({ error: 'Username and password are required' });
-        }
-        if (username.length < 3 || username.length > 24) {
-            return res.status(400).json({ error: 'Username must be 3-24 characters' });
-        }
-        if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-            return res.status(400).json({ error: 'Username can only contain letters, numbers, and underscores' });
-        }
-        if (/^anon\d*$/i.test(username)) {
-            return res.status(400).json({ error: 'That username is reserved for anonymous users' });
-        }
-        if (password.length < 6) {
-            return res.status(400).json({ error: 'Password must be at least 6 characters' });
-        }
-        if (display_name) {
-            display_name = sanitizeDisplayName(display_name);
-        }
-        if (display_name && display_name.length > 60) {
-            return res.status(400).json({ error: 'Display name must be 1-60 characters' });
-        }
-        if (email && (!isValidEmail(email) || email.length > 254)) {
-            return res.status(400).json({ error: 'Invalid email address' });
-        }
-
-        // Check existing
-        if (db.getUserByUsername(username)) {
-            return res.status(409).json({ error: 'Username already taken' });
-        }
-
-        // Check if username is reserved (has an active verification key)
-        const reserved = db.isUsernameReserved(username);
-        if (reserved) {
-            if (!verification_key) {
-                return res.status(403).json({
-                    error: 'This username is reserved. A verification key is required to claim it.',
-                    reserved: true,
-                });
-            }
-            // Validate the key
-            const vk = db.getVerificationKeyByKey(verification_key);
-            if (!vk || vk.status !== 'active') {
-                return res.status(403).json({ error: 'Invalid or expired verification key' });
-            }
-            if (vk.target_username.toLowerCase() !== username.toLowerCase()) {
-                return res.status(403).json({ error: 'This verification key is for a different username' });
-            }
-        }
-
-        // Check if registration is open
-        const regOpen = db.getSetting('registration_open');
-        if (regOpen === false) {
-            return res.status(403).json({ error: 'Registration is currently closed' });
-        }
-
-        const password_hash = bcrypt.hashSync(password, 10);
-        const stream_key = uuidv4().replace(/-/g, '');
-
-        const result = db.createUser({
-            username,
-            email: email || null,
-            password_hash,
-            display_name: display_name || username,
-            stream_key,
-        });
-
-        let user = db.getUserById(result.lastInsertRowid);
-
-        // If a verification key was used, redeem it and migrate legacy data
-        let migrated = null;
-        if (verification_key && reserved) {
-            db.redeemVerificationKey(verification_key, user.id);
-
-            // Auto-migrate RS-Companion game data for legacy users
-            if (legacyMigration.isAvailable()) {
-                const migration = legacyMigration.migrateUser(db.getDb(), user.id, username);
-                if (migration.success) {
-                    migrated = migration.message;
-                    // Re-fetch user to include migrated coin balance
-                    const updatedUser = db.getUserById(user.id);
-                    if (updatedUser) user = updatedUser;
-
-                    // Grant tags for legacy migrated users
-                    try {
-                        const tags = require('../game/tags');
-                        tags.grantTag(user.id, 'legacy', 'migration');
-                        // Grant CFO tag specifically to Patrick
-                        if (username.toLowerCase() === 'patrick') {
-                            tags.grantTag(user.id, 'cfo', 'migration');
-                        }
-                    } catch (err) { console.warn('[Auth] Tags migration error:', err.message); /* non-critical */ }
-                }
-            }
-        }
-
-        const token = generateToken(user);
-
-        // Log IP on registration
-        try {
-            const geo = ipUtils.enrichIp(req.ip);
-            db.logIp({ userId: user.id, ip: req.ip, action: 'register', geo, userAgent: req.headers['user-agent'] });
-        } catch (e) { /* non-critical */ }
-
-        res.status(201).json({
-            token,
-            user: sanitizeUser(user),
-            ...(migrated && { migrated }),
-        });
-    } catch (err) {
-        console.error('[Auth] Register error:', err.message);
-        res.status(500).json({ error: 'Registration failed' });
-    }
+// ── Register (disabled — use hobo.tools) ─────────────────────
+router.post('/register', (_req, res) => {
+    res.status(410).json({ error: 'Local registration is no longer available. Please sign in with Hobo Network.' });
 });
 
-// ── Login ────────────────────────────────────────────────────
-router.post('/login', (req, res) => {
-    try {
-        const username = cleanOptionalString(req.body.username);
-        const password = typeof req.body.password === 'string' ? req.body.password : '';
-
-        if (!username || !password) {
-            return res.status(400).json({ error: 'Username and password required' });
-        }
-
-        const user = db.getUserByUsername(username);
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        if (!bcrypt.compareSync(password, user.password_hash)) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        if (user.is_banned) {
-            return res.status(403).json({ error: 'Account is banned', reason: user.ban_reason });
-        }
-
-        // Update last seen
-        db.run('UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
-
-        // Log IP on login
-        try {
-            const geo = ipUtils.enrichIp(req.ip);
-            db.logIp({ userId: user.id, ip: req.ip, action: 'login', geo, userAgent: req.headers['user-agent'] });
-        } catch (e) { /* non-critical */ }
-
-        const token = generateToken(user);
-        res.json({ token, user: sanitizeUser(user) });
-    } catch (err) {
-        console.error('[Auth] Login error:', err.message);
-        res.status(500).json({ error: 'Login failed' });
-    }
+// ── Login (disabled — use hobo.tools) ────────────────────────
+router.post('/login', (_req, res) => {
+    res.status(410).json({ error: 'Local login is no longer available. Please sign in with Hobo Network.' });
 });
 
 // ── Get Current User ─────────────────────────────────────────
@@ -306,34 +156,9 @@ router.put('/profile', requireAuth, (req, res) => {
     }
 });
 
-// ── Change Password ──────────────────────────────────────────
-router.post('/change-password', requireAuth, (req, res) => {
-    try {
-        const currentPassword = typeof req.body.current_password === 'string' ? req.body.current_password : '';
-        const newPassword = typeof req.body.new_password === 'string' ? req.body.new_password : '';
-
-        if (!currentPassword || !newPassword) {
-            return res.status(400).json({ error: 'Current and new password are required' });
-        }
-        if (newPassword.length < 6) {
-            return res.status(400).json({ error: 'New password must be at least 6 characters' });
-        }
-
-        const user = db.getUserById(req.user.id);
-        if (!user || !bcrypt.compareSync(currentPassword, user.password_hash)) {
-            return res.status(403).json({ error: 'Current password is incorrect' });
-        }
-
-        const newHash = bcrypt.hashSync(newPassword, 10);
-        db.run('UPDATE users SET password_hash = ?, token_valid_after = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newHash, user.id]);
-        // Issue a fresh token so the current session stays logged in
-        const { generateToken } = require('./auth');
-        const token = generateToken(user);
-        res.json({ success: true, token });
-    } catch (err) {
-        console.error('[Auth] Change password error:', err.message);
-        res.status(500).json({ error: 'Password change failed' });
-    }
+// ── Change Password (disabled — managed on hobo.tools) ──────
+router.post('/change-password', (_req, res) => {
+    res.status(410).json({ error: 'Password management has moved to hobo.tools.' });
 });
 
 // ── Get Stream Key ───────────────────────────────────────────
@@ -388,50 +213,9 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) =>
 // ═══════════════════════════════════════════════════════════════
 
 const HOBO_TOOLS_BASE = process.env.HOBO_TOOLS_URL || 'https://hobo.tools';
-const HOBO_TOOLS_INTERNAL = process.env.HOBO_TOOLS_INTERNAL || 'http://127.0.0.1:3100';
-const HOBO_INTERNAL_KEY = process.env.HOBO_INTERNAL_KEY || '';
 const HOBO_CLIENT_ID = process.env.HOBO_OAUTH_CLIENT_ID || 'hobostreamer';
 const HOBO_CLIENT_SECRET = process.env.HOBO_OAUTH_CLIENT_SECRET || '';
 const HOBO_REDIRECT_URI = `${process.env.BASE_URL || 'https://hobostreamer.com'}/api/auth/callback`;
-
-// ── Get Hobo Network Token for Linked Users ──────────────────
-// Returns a hobo.tools JWT if the user has a linked hobo.tools account.
-// Used by the frontend to call cross-service APIs (notifications, etc.)
-router.get('/hobo-token', requireAuth, async (req, res) => {
-    try {
-        const linked = db.getDb().prepare(
-            "SELECT service_user_id FROM linked_accounts WHERE user_id = ? AND service = 'hobotools'"
-        ).get(req.user.id);
-        if (!linked) return res.json({ ok: false, reason: 'no_linked_account' });
-        if (!HOBO_INTERNAL_KEY) return res.json({ ok: false, reason: 'internal_key_not_configured' });
-
-        // Request a token from hobo.tools internal API
-        const http = require('http');
-        const tokenData = await new Promise((resolve, reject) => {
-            const body = JSON.stringify({ user_id: parseInt(linked.service_user_id) });
-            const url = new URL(`${HOBO_TOOLS_INTERNAL}/internal/issue-token`);
-            const reqOpts = {
-                hostname: url.hostname, port: url.port, path: url.pathname,
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Internal-Key': HOBO_INTERNAL_KEY },
-            };
-            const httpReq = http.request(reqOpts, (httpRes) => {
-                let data = '';
-                httpRes.on('data', chunk => data += chunk);
-                httpRes.on('end', () => { try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid response')); } });
-            });
-            httpReq.on('error', reject);
-            httpReq.write(body);
-            httpReq.end();
-        });
-
-        if (!tokenData.token) return res.json({ ok: false, reason: 'token_issue_failed' });
-        res.json({ ok: true, token: tokenData.token });
-    } catch (err) {
-        console.error('[Auth] hobo-token error:', err.message);
-        res.json({ ok: false, reason: 'error' });
-    }
-});
 
 // ── Initiate OAuth Login (redirect to hobo.tools) ───────────
 router.get('/sso/login', (req, res) => {
@@ -561,20 +345,22 @@ router.get('/callback', async (req, res) => {
             console.log(`[Auth/SSO] New local account created for hobo.tools user ${ssoUser.username} (hobo-tools id:${hoboToolsId}, local id:${localUser.id})`);
         }
 
-        // Issue a local token
-        const token = generateToken(localUser);
-        const hoboToolsToken = tokenData.access_token || '';
+        // Use the hobo.tools token directly (no more local tokens)
+        const hoboToolsToken = tokenData.access_token;
+        if (!hoboToolsToken) {
+            return res.status(500).send('No access token in response');
+        }
 
         // Set cookie and redirect to home
-        res.cookie('token', token, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: true });
+        res.cookie('token', hoboToolsToken, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: true });
 
         // Return HTML that stores token in localStorage and redirects
         res.send(`<!DOCTYPE html>
 <html><head><title>Logging in...</title></head>
 <body>
 <script>
-    localStorage.setItem('token', ${JSON.stringify(token)});
-    localStorage.setItem('hobo_token', ${JSON.stringify(hoboToolsToken)});
+    localStorage.setItem('token', ${JSON.stringify(hoboToolsToken)});
+    localStorage.removeItem('hobo_token');
     window.location.href = '/';
 </script>
 <noscript><a href="/">Click here to continue</a></noscript>

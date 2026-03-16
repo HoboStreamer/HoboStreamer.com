@@ -65,26 +65,9 @@ async function saveSettingsProfile() {
     }
 }
 
-async function changePassword() {
-    const current = document.getElementById('set-current-password').value;
-    const newPass = document.getElementById('set-new-password').value;
-    const confirm = document.getElementById('set-confirm-password').value;
-
-    if (!current || !newPass) return toast('Fill in all password fields', 'error');
-    if (newPass.length < 6) return toast('New password must be at least 6 characters', 'error');
-    if (newPass !== confirm) return toast('Passwords do not match', 'error');
-
-    try {
-        const data = await api('/auth/change-password', { method: 'POST', body: { current_password: current, new_password: newPass } });
-        // Server returns a fresh token — store it so the current session stays authenticated
-        if (data.token) localStorage.setItem('token', data.token);
-        toast('Password changed', 'success');
-        document.getElementById('set-current-password').value = '';
-        document.getElementById('set-new-password').value = '';
-        document.getElementById('set-confirm-password').value = '';
-    } catch (e) {
-        toast(e.message || 'Failed to change password', 'error');
-    }
+// Password management handled on hobo.tools
+function changePassword() {
+    window.open('https://hobo.tools/my', '_blank');
 }
 
 /* ── Broadcaster Tab ──────────────────────────────────────────── */

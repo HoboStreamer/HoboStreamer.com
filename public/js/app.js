@@ -183,50 +183,19 @@ function showModal(id) {
     const content = document.getElementById('modal-content');
     const templates = {
         login: `
-            <h3><i class="fa-solid fa-right-to-bracket"></i> Login</h3>
-            <div class="form-group">
-                <label>Username</label>
-                <input type="text" id="modal-login-user" class="form-input" placeholder="Username">
-            </div>
-            <div class="form-group">
-                <label>Password</label>
-                <input type="password" id="modal-login-pass" class="form-input" placeholder="Password"
-                       onkeydown="if(event.key==='Enter')doLogin()">
-            </div>
-            <button class="btn btn-primary btn-lg" onclick="doLogin()" style="width:100%;margin-top:8px">
-                <i class="fa-solid fa-right-to-bracket"></i> Login
-            </button>
-            <div style="text-align:center;margin:12px 0 8px;color:var(--text-muted);font-size:12px">or</div>
+            <h3><i class="fa-solid fa-right-to-bracket"></i> Sign In</h3>
+            <p style="color:var(--text-muted);margin-bottom:16px">Sign in with your Hobo Network account to continue.</p>
             <a href="/api/auth/sso/login" class="btn btn-lg" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#c0965c,#a07840);color:#fff;text-decoration:none;border:none;cursor:pointer">
                 <i class="fa-solid fa-network-wired"></i> Sign in with Hobo Network
-            </a>`,
+            </a>
+            <p style="text-align:center;margin-top:12px;font-size:12px;color:var(--text-muted)">Don't have an account? One will be created when you sign in.</p>`,
         register: `
             <h3><i class="fa-solid fa-user-plus"></i> Sign Up</h3>
-            <div class="form-group">
-                <label>Username</label>
-                <input type="text" id="modal-reg-user" class="form-input" placeholder="Username">
-            </div>
-            <div class="form-group">
-                <label>Email (optional)</label>
-                <input type="email" id="modal-reg-email" class="form-input" placeholder="Email">
-            </div>
-            <div class="form-group">
-                <label>Password</label>
-                <input type="password" id="modal-reg-pass" class="form-input" placeholder="Password (min 6)">
-            </div>
-            <div class="form-group" id="reg-vkey-group">
-                <label><i class="fa-solid fa-key"></i> Registration Code <span class="muted" style="font-weight:normal">(optional)</span></label>
-                <input type="text" id="modal-reg-vkey" class="form-input" placeholder="HOBO-XXXX-XXXX-XXXX"
-                       style="text-transform:uppercase;letter-spacing:1px">
-                <small class="muted">Have an RS-Companion account? Enter your code to port your XP, coins, inventory & stats.</small>
-            </div>
-            <button class="btn btn-primary btn-lg" onclick="doRegister()" style="width:100%;margin-top:8px">
-                <i class="fa-solid fa-user-plus"></i> Create Account
-            </button>
-            <div style="text-align:center;margin:12px 0 8px;color:var(--text-muted);font-size:12px">or</div>
+            <p style="color:var(--text-muted);margin-bottom:16px">Create your account on the Hobo Network.</p>
             <a href="/api/auth/sso/login" class="btn btn-lg" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#c0965c,#a07840);color:#fff;text-decoration:none;border:none;cursor:pointer">
                 <i class="fa-solid fa-network-wired"></i> Sign in with Hobo Network
-            </a>`,
+            </a>
+            <p style="text-align:center;margin-top:12px;font-size:12px;color:var(--text-muted)">Registration is handled on hobo.tools</p>`,
         donate: hoboBucksDonateModal(),
         'buy-funds': hoboBucksBuyModal(),
         cashout: hoboBucksCashoutModal(),
@@ -245,57 +214,12 @@ function closeModal() {
 }
 
 /* ── Auth ──────────────────────────────────────────────────────── */
-async function doLogin() {
-    try {
-        const username = document.getElementById('modal-login-user').value.trim();
-        const password = document.getElementById('modal-login-pass').value;
-        if (!username || !password) return toast('Fill in all fields', 'error');
-        const data = await api('/auth/login', { method: 'POST', body: { username, password } });
-        localStorage.setItem('token', data.token);
-        currentUser = mergeUserWithCapabilities(data.user, data.capabilities);
-        onAuthChange();
-        if (typeof loadThemeFromServer === 'function') loadThemeFromServer();
-        closeModal();
-        toast(`Welcome back, ${currentUser.username}!`, 'success');
-        // Fetch hobo.tools token for cross-service notifications
-        fetchHoboToken();
-    } catch (e) { toast(e.message || 'Login failed', 'error'); }
-}
-
-async function doRegister() {
-    try {
-        const username = document.getElementById('modal-reg-user').value.trim();
-        const email = document.getElementById('modal-reg-email').value.trim();
-        const password = document.getElementById('modal-reg-pass').value;
-        const verification_key = document.getElementById('modal-reg-vkey')?.value.trim() || '';
-        if (!username || !password) return toast('Username & password required', 'error');
-        if (password.length < 6) return toast('Password must be at least 6 characters', 'error');
-        const body = { username, email, password };
-        if (verification_key) body.verification_key = verification_key;
-        const data = await api('/auth/register', { method: 'POST', body });
-        localStorage.setItem('token', data.token);
-        currentUser = mergeUserWithCapabilities(data.user, data.capabilities);
-        onAuthChange();
-        if (typeof loadThemeFromServer === 'function') loadThemeFromServer();
-        closeModal();
-        if (data.migrated) {
-            toast(`Account created! ${data.migrated}`, 'success');
-        } else {
-            toast(`Account created! Welcome, ${currentUser.username}`, 'success');
-        }
-    } catch (e) {
-        // Show verification key field if username is reserved
-        if (e.data?.reserved) {
-            const vkeyGroup = document.getElementById('reg-vkey-group');
-            if (vkeyGroup) vkeyGroup.style.display = '';
-        }
-        toast(e.message || 'Registration failed', 'error');
-    }
-}
+// Local login/register removed — all auth goes through Hobo Network SSO
+function doLogin() { window.location.href = '/api/auth/sso/login'; }
+function doRegister() { window.location.href = '/api/auth/sso/login'; }
 
 function logout() {
     localStorage.removeItem('token');
-    localStorage.removeItem('hobo_token');
     currentUser = null;
     onAuthChange();
     if (typeof destroyCall === 'function') destroyCall();
@@ -314,22 +238,9 @@ async function loadUser() {
     try {
         const data = await api('/auth/me');
         currentUser = mergeUserWithCapabilities(data.user || data, data.capabilities);
-        // Ensure hobo.tools token is available for cross-service notifications
-        if (!localStorage.getItem('hobo_token')) fetchHoboToken();
     } catch {
         localStorage.removeItem('token');
     }
-}
-
-/** Fetch a hobo.tools JWT via the local proxy (for linked accounts). */
-async function fetchHoboToken() {
-    try {
-        const data = await api('/auth/hobo-token');
-        if (data.token) {
-            localStorage.setItem('hobo_token', data.token);
-            document.dispatchEvent(new Event('hobostreamer-login'));
-        }
-    } catch { /* not linked or not available — silent */ }
 }
 
 function onAuthChange() {

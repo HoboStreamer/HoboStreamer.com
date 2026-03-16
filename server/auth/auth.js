@@ -1,13 +1,13 @@
 /**
  * HoboStreamer — JWT Auth Middleware
- * Supports dual auth:
- *   1. Local HS256 tokens (legacy / direct login)
- *   2. Hobo.Tools RS256 tokens (SSO via OAuth2)
+ * All authentication is handled via Hobo.Tools RS256 tokens.
+ * Users sign in on hobo.tools and are redirected back via OAuth2.
+ * Local user records are resolved via linked_accounts.
  */
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
-const config = require('../config');
+const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 
 // ── Hobo.Tools Public Key (RS256 verification) ──────────────
@@ -15,7 +15,6 @@ let hoboToolsPublicKey = null;
 const HOBO_TOOLS_ISSUER = 'https://hobo.tools';
 
 function loadHoboToolsPublicKey() {
-    // Try loading from shared location or env
     const keyPaths = [
         process.env.HOBO_TOOLS_PUBLIC_KEY,
         path.resolve('./data/keys/hobo-tools-public.pem'),
@@ -31,81 +30,98 @@ function loadHoboToolsPublicKey() {
             }
         } catch { /* try next */ }
     }
-    console.warn('[Auth] ⚠️  hobo.tools public key not found — SSO login will be unavailable');
+    console.error('[Auth] ❌ hobo.tools public key not found — authentication will NOT work!');
 }
 loadHoboToolsPublicKey();
 
 /**
- * Generates a local HS256 JWT token for a user
- */
-function generateToken(user) {
-    return jwt.sign(
-        { id: user.id, username: user.username, role: user.role },
-        config.jwt.secret,
-        { expiresIn: config.jwt.expiresIn }
-    );
-}
-
-/**
- * Verifies a JWT token — tries local HS256 first, then hobo.tools RS256
- * Returns { decoded, source: 'local' | 'hobotools' } or null
+ * Verify a hobo.tools RS256 JWT token.
+ * Returns decoded payload or null.
  */
 function verifyToken(token) {
-    // Try local HS256
+    if (!hoboToolsPublicKey) return null;
     try {
-        const decoded = jwt.verify(token, config.jwt.secret);
-        return { decoded, source: 'local' };
-    } catch { /* not a local token */ }
-
-    // Try hobo.tools RS256
-    if (hoboToolsPublicKey) {
-        try {
-            const decoded = jwt.verify(token, hoboToolsPublicKey, {
-                algorithms: ['RS256'],
-                issuer: HOBO_TOOLS_ISSUER,
-            });
-            return { decoded, source: 'hobotools' };
-        } catch { /* not a hobo.tools token either */ }
+        return jwt.verify(token, hoboToolsPublicKey, {
+            algorithms: ['RS256'],
+            issuer: HOBO_TOOLS_ISSUER,
+        });
+    } catch {
+        return null;
     }
-
-    return null;
 }
 
 /**
  * Resolve a hobo.tools user to a local HoboStreamer user.
- * Looks up linked_accounts first, falls back to username match.
- * Returns the local user or null.
+ * Checks linked_accounts first, falls back to username match,
+ * auto-creates a local account if none found.
  */
 function resolveHoboToolsUser(decoded) {
-    const hoboToolsId = decoded.sub || decoded.id;
+    const hoboToolsId = String(decoded.sub || decoded.id);
 
     // Check linked_accounts for existing link
     const linked = db.getDb().prepare(
         "SELECT * FROM linked_accounts WHERE service = 'hobotools' AND service_user_id = ?"
-    ).get(String(hoboToolsId));
+    ).get(hoboToolsId);
 
     if (linked) {
         return db.getUserById(linked.user_id);
     }
 
     // Try matching by username (case-insensitive)
-    const user = db.getUserByUsername(decoded.username);
+    let user = db.getUserByUsername(decoded.username);
     if (user) {
         // Auto-link this user to the hobo.tools account
         try {
             db.getDb().prepare(
                 "INSERT OR IGNORE INTO linked_accounts (service, service_user_id, service_username, user_id) VALUES ('hobotools', ?, ?, ?)"
-            ).run(String(hoboToolsId), decoded.username, user.id);
+            ).run(hoboToolsId, decoded.username, user.id);
+            console.log(`[Auth] Auto-linked ${decoded.username} to hobo.tools id ${hoboToolsId}`);
         } catch { /* already linked */ }
         return user;
     }
 
-    return null;
+    // Auto-create a local user for this hobo.tools account
+    try {
+        const stream_key = uuidv4().replace(/-/g, '');
+        const result = db.createUser({
+            username: decoded.username,
+            email: null,
+            password_hash: '$sso$' + require('crypto').randomBytes(32).toString('hex'),
+            display_name: decoded.display_name || decoded.username,
+            stream_key,
+        });
+        user = db.getUserById(result.lastInsertRowid);
+
+        // Sync profile fields from token claims
+        const updates = [];
+        const params = [];
+        if (decoded.avatar_url) { updates.push('avatar_url = ?'); params.push(decoded.avatar_url); }
+        if (decoded.profile_color) { updates.push('profile_color = ?'); params.push(decoded.profile_color); }
+        if (decoded.role && ['user', 'streamer', 'global_mod', 'admin'].includes(decoded.role)) {
+            updates.push('role = ?'); params.push(decoded.role);
+        }
+        if (updates.length > 0) {
+            params.push(user.id);
+            db.getDb().prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+            user = db.getUserById(user.id);
+        }
+
+        // Create linked_accounts entry
+        db.getDb().prepare(
+            "INSERT OR IGNORE INTO linked_accounts (user_id, service, service_user_id, service_username) VALUES (?, 'hobotools', ?, ?)"
+        ).run(user.id, hoboToolsId, decoded.username);
+
+        console.log(`[Auth] Auto-created local account for hobo.tools user ${decoded.username} (local id: ${user.id})`);
+        return user;
+    } catch (err) {
+        console.error(`[Auth] Failed to auto-create user for ${decoded.username}:`, err.message);
+        return null;
+    }
 }
 
 /**
- * Express middleware — requires valid JWT
- * Attaches req.user with full user record
+ * Express middleware — requires valid hobo.tools JWT
+ * Resolves to local user via linked_accounts (auto-creates if needed).
  */
 function requireAuth(req, res, next) {
     const token = extractToken(req);
@@ -113,36 +129,21 @@ function requireAuth(req, res, next) {
         return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const result = verifyToken(token);
-    if (!result) {
+    const decoded = verifyToken(token);
+    if (!decoded) {
         return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
-    const { decoded, source } = result;
-    let user;
-
-    if (source === 'hobotools') {
-        user = resolveHoboToolsUser(decoded);
-        if (!user) {
-            return res.status(401).json({ error: 'No linked HoboStreamer account. Please complete setup first.' });
-        }
-    } else {
-        user = db.getUserById(decoded.id);
-    }
-
+    const user = resolveHoboToolsUser(decoded);
     if (!user) {
-        return res.status(401).json({ error: 'User not found' });
+        return res.status(401).json({ error: 'Unable to resolve account' });
     }
     if (user.is_banned) {
         return res.status(403).json({ error: 'Account is banned', reason: user.ban_reason });
     }
-    // Reject tokens issued before a password change (local tokens only)
-    if (source === 'local' && user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
-        return res.status(401).json({ error: 'Token revoked — please log in again' });
-    }
 
     req.user = user;
-    req.authSource = source;
+    req.authSource = 'hobotools';
     next();
 }
 
@@ -152,24 +153,12 @@ function requireAuth(req, res, next) {
 function optionalAuth(req, res, next) {
     const token = extractToken(req);
     if (token) {
-        const result = verifyToken(token);
-        if (result) {
-            const { decoded, source } = result;
-            let user;
-
-            if (source === 'hobotools') {
-                user = resolveHoboToolsUser(decoded);
-            } else {
-                user = db.getUserById(decoded.id);
-                // Check token_valid_after for local tokens
-                if (user && user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
-                    user = null;
-                }
-            }
-
-            if (user) {
+        const decoded = verifyToken(token);
+        if (decoded) {
+            const user = resolveHoboToolsUser(decoded);
+            if (user && !user.is_banned) {
                 req.user = user;
-                req.authSource = source;
+                req.authSource = 'hobotools';
             }
         }
     }
@@ -178,7 +167,6 @@ function optionalAuth(req, res, next) {
 
 /**
  * Express middleware — requires admin role
- * @deprecated Prefer permissions.requireAdmin which doesn't wrap requireAuth
  */
 function requireAdmin(req, res, next) {
     requireAuth(req, res, () => {
@@ -191,7 +179,6 @@ function requireAdmin(req, res, next) {
 
 /**
  * Express middleware — requires staff (global_mod or admin)
- * Wraps requireAuth + role check in one call for convenience.
  */
 function requireStaff(req, res, next) {
     requireAuth(req, res, () => {
@@ -204,7 +191,6 @@ function requireStaff(req, res, next) {
 
 /**
  * Express middleware — requires streamer or above role
- * Includes streamer, global_mod, admin.
  */
 function requireStreamer(req, res, next) {
     requireAuth(req, res, () => {
@@ -216,15 +202,13 @@ function requireStreamer(req, res, next) {
 }
 
 /**
- * Extract JWT from Authorization header or cookie (HTTP requests only — no query param)
+ * Extract JWT from Authorization header or cookie
  */
 function extractToken(req) {
-    // Check Authorization header: Bearer <token>
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
         return authHeader.slice(7);
     }
-    // Check cookie
     if (req.cookies && req.cookies.token) {
         return req.cookies.token;
     }
@@ -232,7 +216,7 @@ function extractToken(req) {
 }
 
 /**
- * Extract JWT from query parameter (WebSocket upgrade requests only)
+ * Extract JWT from query parameter (WebSocket upgrade requests)
  */
 function extractWsToken(req) {
     return extractToken(req) || (req.query && req.query.token) || null;
@@ -243,22 +227,9 @@ function extractWsToken(req) {
  */
 function authenticateWs(token) {
     if (!token) return null;
-    const result = verifyToken(token);
-    if (!result) return null;
-
-    const { decoded, source } = result;
-    let user;
-
-    if (source === 'hobotools') {
-        user = resolveHoboToolsUser(decoded);
-    } else {
-        user = db.getUserById(decoded.id);
-        if (user && user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
-            return null;
-        }
-    }
-
-    return user;
+    const decoded = verifyToken(token);
+    if (!decoded) return null;
+    return resolveHoboToolsUser(decoded);
 }
 
 /**
@@ -269,7 +240,6 @@ function reloadHoboToolsKey() {
 }
 
 module.exports = {
-    generateToken,
     verifyToken,
     requireAuth,
     optionalAuth,

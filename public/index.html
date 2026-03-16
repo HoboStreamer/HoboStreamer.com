@@ -71,12 +71,9 @@
     </div>
     <div class="nav-right">
         <div id="nav-auth-anon">
-            <button class="btn btn-outline" onclick="showModal('login')">
-                <i class="fa-solid fa-right-to-bracket"></i> Login
-            </button>
-            <button class="btn btn-primary" onclick="showModal('register')">
-                <i class="fa-solid fa-user-plus"></i> Sign Up
-            </button>
+            <a href="/api/auth/sso/login" class="btn btn-primary" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none">
+                <i class="fa-solid fa-network-wired"></i> Sign In
+            </a>
         </div>
         <div id="nav-auth-user" style="display:none">
             <span class="nav-balance" id="nav-balance" title="Hobo Bucks balance" onclick="showModal('buy-funds')">
@@ -2142,28 +2139,11 @@
                         </div>
                     </div>
                     <div class="settings-card">
-                        <h3><i class="fa-solid fa-lock"></i> Change Password</h3>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Current Password</span>
-                            <div class="settings-row-content">
-                                <input type="password" id="set-current-password" placeholder="Current password">
-                            </div>
-                        </div>
-                        <div class="settings-row">
-                            <span class="settings-row-label">New Password</span>
-                            <div class="settings-row-content">
-                                <input type="password" id="set-new-password" placeholder="New password (min 6 chars)">
-                            </div>
-                        </div>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Confirm</span>
-                            <div class="settings-row-content">
-                                <input type="password" id="set-confirm-password" placeholder="Confirm new password">
-                            </div>
-                        </div>
-                        <button class="btn btn-outline" onclick="changePassword()" style="margin-top:8px">
-                            <i class="fa-solid fa-key"></i> Update Password
-                        </button>
+                        <h3><i class="fa-solid fa-lock"></i> Password &amp; Security</h3>
+                        <p style="color:var(--text-muted);margin:8px 0 12px">Your account is managed by the Hobo Network.</p>
+                        <a href="https://hobo.tools/my" class="btn btn-outline" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Manage Account on hobo.tools
+                        </a>
                     </div>
                     <div class="settings-save-bar">
                         <button class="btn btn-primary" onclick="saveSettingsProfile()">
@@ -3107,32 +3087,21 @@
 <script src="https://hobo.tools/shared/notification-ui.js"></script>
 <script>
 // Initialize Hobo Network notifications when user is logged in
+// (the auth token IS the hobo.tools RS256 JWT now — no separate hobo_token)
 (function initHoboNotifications() {
-    const hoboToken = localStorage.getItem('hobo_token');
-    if (!hoboToken) return;
+    const token = localStorage.getItem('token');
+    if (!token) return;
 
     const mount = document.getElementById('hobo-bell-mount');
     if (!mount || !window.HoboNotifications) return;
 
     HoboNotifications.init({
-        token: hoboToken,
+        token: token,
         apiBase: 'https://hobo.tools',
         soundBase: 'https://hobo.tools/assets/sounds',
     });
     mount.appendChild(HoboNotifications.createBell());
 })();
-
-// Re-init after login (SPA login won't reload the page)
-document.addEventListener('hobostreamer-login', () => {
-    const hoboToken = localStorage.getItem('hobo_token');
-    if (hoboToken && window.HoboNotifications) {
-        HoboNotifications.setToken(hoboToken);
-        const mount = document.getElementById('hobo-bell-mount');
-        if (mount && !mount.querySelector('.hobo-bell')) {
-            mount.appendChild(HoboNotifications.createBell());
-        }
-    }
-});
 </script>
 </body>
 </html>
