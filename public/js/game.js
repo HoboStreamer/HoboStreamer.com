@@ -5503,9 +5503,11 @@ function updateFishing() {
                 F.reelRoundResult = '';
                 // Sweet spot randomized each round, speed based on zone difficulty
                 const zoneSpeed = { shallow: 0.012, river: 0.016, deep: 0.022, arctic: 0.02 };
-                F.reelBarSpeed = zoneSpeed[F.zone] || 0.016;
+                const _rodCfg = getRodFishingConfig(myPlayer?.equip_rod);
+                F._rodCfg = _rodCfg; // cache for subsequent rounds
+                F.reelBarSpeed = (zoneSpeed[F.zone] || 0.016) * _rodCfg.speedMult;
                 F.reelSweetSpot = 0.3 + Math.random() * 0.4;
-                F.reelSweetWidth = 0.28;
+                F.reelSweetWidth = 0.28 + _rodCfg.sweetSpotBonus;
                 addChatMsg('🎣 Fish on! Click when the bar is in the green zone!');
             } else {
                 // Missed — brief result then exit
@@ -5522,7 +5524,7 @@ function updateFishing() {
             F.reelResultTimer--;
             if (F.reelResultTimer <= 0) {
                 F.reelRound++;
-                if (F.reelRound >= 3) {
+                if (F.reelRound >= (F._rodCfg || ROD_FISHING_DEFAULT).roundsNeeded) {
                     // Done reeling — send result to server
                     F.phase = 'result';
                     F.resultTimer = 150;
@@ -5530,11 +5532,12 @@ function updateFishing() {
                     lastFishTime = Date.now();
                 } else {
                     // Next round — harder
+                    const _rc = F._rodCfg || ROD_FISHING_DEFAULT;
                     F.reelClicked = false;
                     F.reelRoundResult = '';
-                    F.reelBarSpeed += 0.005;
+                    F.reelBarSpeed += _rc.speedIncPerRound;
                     F.reelSweetSpot = 0.25 + Math.random() * 0.5;
-                    F.reelSweetWidth = Math.max(0.15, F.reelSweetWidth - 0.04);
+                    F.reelSweetWidth = Math.max(0.15, F.reelSweetWidth - _rc.sweetShrinkPerRound);
                 }
             }
         } else {
@@ -5709,11 +5712,12 @@ function renderReelBar(ctx) {
     ctx.fillStyle = '#e0e0e0';
     ctx.font = 'bold 16px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`🎣 REEL IT IN! Round ${F.reelRound + 1}/3`, CAM_W / 2, barY - 50);
+    const _totalRounds = (F._rodCfg || ROD_FISHING_DEFAULT).roundsNeeded;
+    ctx.fillText(`🎣 REEL IT IN! Round ${F.reelRound + 1}/${_totalRounds}`, CAM_W / 2, barY - 50);
 
     // Score dots
-    for (let i = 0; i < 3; i++) {
-        const dotX = CAM_W / 2 - 30 + i * 30;
+    for (let i = 0; i < _totalRounds; i++) {
+        const dotX = CAM_W / 2 - (_totalRounds - 1) * 15 + i * 30;
         const dotY = barY - 30;
         ctx.fillStyle = i < F.reelScore ? '#22c55e' : (i === F.reelRound && F.reelRoundResult === 'miss' ? '#ef4444' : '#555');
         ctx.beginPath();
