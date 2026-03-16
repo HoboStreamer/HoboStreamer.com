@@ -257,6 +257,8 @@ async function doLogin() {
         if (typeof loadThemeFromServer === 'function') loadThemeFromServer();
         closeModal();
         toast(`Welcome back, ${currentUser.username}!`, 'success');
+        // Fetch hobo.tools token for cross-service notifications
+        fetchHoboToken();
     } catch (e) { toast(e.message || 'Login failed', 'error'); }
 }
 
@@ -293,10 +295,15 @@ async function doRegister() {
 
 function logout() {
     localStorage.removeItem('token');
+    localStorage.removeItem('hobo_token');
     currentUser = null;
     onAuthChange();
     if (typeof destroyCall === 'function') destroyCall();
     if (typeof destroyCanvasPage === 'function') destroyCanvasPage();
+    // Clear notification bell
+    if (window.HoboNotifications) HoboNotifications.setToken(null);
+    const bellMount = document.getElementById('hobo-bell-mount');
+    if (bellMount) bellMount.innerHTML = '';
     if (['dashboard', 'admin', 'broadcast', 'settings'].includes(currentPage)) navigate('/');
     toast('Logged out', 'info');
 }
@@ -307,9 +314,22 @@ async function loadUser() {
     try {
         const data = await api('/auth/me');
         currentUser = mergeUserWithCapabilities(data.user || data, data.capabilities);
+        // Ensure hobo.tools token is available for cross-service notifications
+        if (!localStorage.getItem('hobo_token')) fetchHoboToken();
     } catch {
         localStorage.removeItem('token');
     }
+}
+
+/** Fetch a hobo.tools JWT via the local proxy (for linked accounts). */
+async function fetchHoboToken() {
+    try {
+        const data = await api('/auth/hobo-token');
+        if (data.token) {
+            localStorage.setItem('hobo_token', data.token);
+            document.dispatchEvent(new Event('hobostreamer-login'));
+        }
+    } catch { /* not linked or not available — silent */ }
 }
 
 function onAuthChange() {

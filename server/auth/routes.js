@@ -388,9 +388,50 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) =>
 // ═══════════════════════════════════════════════════════════════
 
 const HOBO_TOOLS_BASE = process.env.HOBO_TOOLS_URL || 'https://hobo.tools';
+const HOBO_TOOLS_INTERNAL = process.env.HOBO_TOOLS_INTERNAL || 'http://127.0.0.1:3100';
+const HOBO_INTERNAL_KEY = process.env.HOBO_INTERNAL_KEY || '';
 const HOBO_CLIENT_ID = process.env.HOBO_OAUTH_CLIENT_ID || 'hobostreamer';
 const HOBO_CLIENT_SECRET = process.env.HOBO_OAUTH_CLIENT_SECRET || '';
 const HOBO_REDIRECT_URI = `${process.env.BASE_URL || 'https://hobostreamer.com'}/api/auth/callback`;
+
+// ── Get Hobo Network Token for Linked Users ──────────────────
+// Returns a hobo.tools JWT if the user has a linked hobo.tools account.
+// Used by the frontend to call cross-service APIs (notifications, etc.)
+router.get('/hobo-token', requireAuth, async (req, res) => {
+    try {
+        const linked = db.getDb().prepare(
+            "SELECT service_user_id FROM linked_accounts WHERE user_id = ? AND service = 'hobotools'"
+        ).get(req.user.id);
+        if (!linked) return res.json({ ok: false, reason: 'no_linked_account' });
+        if (!HOBO_INTERNAL_KEY) return res.json({ ok: false, reason: 'internal_key_not_configured' });
+
+        // Request a token from hobo.tools internal API
+        const http = require('http');
+        const tokenData = await new Promise((resolve, reject) => {
+            const body = JSON.stringify({ user_id: parseInt(linked.service_user_id) });
+            const url = new URL(`${HOBO_TOOLS_INTERNAL}/internal/issue-token`);
+            const reqOpts = {
+                hostname: url.hostname, port: url.port, path: url.pathname,
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Internal-Key': HOBO_INTERNAL_KEY },
+            };
+            const httpReq = http.request(reqOpts, (httpRes) => {
+                let data = '';
+                httpRes.on('data', chunk => data += chunk);
+                httpRes.on('end', () => { try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid response')); } });
+            });
+            httpReq.on('error', reject);
+            httpReq.write(body);
+            httpReq.end();
+        });
+
+        if (!tokenData.token) return res.json({ ok: false, reason: 'token_issue_failed' });
+        res.json({ ok: true, token: tokenData.token });
+    } catch (err) {
+        console.error('[Auth] hobo-token error:', err.message);
+        res.json({ ok: false, reason: 'error' });
+    }
+});
 
 // ── Initiate OAuth Login (redirect to hobo.tools) ───────────
 router.get('/sso/login', (req, res) => {
@@ -522,6 +563,7 @@ router.get('/callback', async (req, res) => {
 
         // Issue a local token
         const token = generateToken(localUser);
+        const hoboToolsToken = tokenData.access_token || '';
 
         // Set cookie and redirect to home
         res.cookie('token', token, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: true });
@@ -532,6 +574,7 @@ router.get('/callback', async (req, res) => {
 <body>
 <script>
     localStorage.setItem('token', ${JSON.stringify(token)});
+    localStorage.setItem('hobo_token', ${JSON.stringify(hoboToolsToken)});
     window.location.href = '/';
 </script>
 <noscript><a href="/">Click here to continue</a></noscript>

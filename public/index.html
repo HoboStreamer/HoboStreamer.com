@@ -85,6 +85,7 @@
             <span class="nav-coins" id="nav-coins" title="Hobo Coins — Click to open inventory" onclick="openCosmeticsModal()">
                 <i class="fa-solid fa-coins"></i> <span id="nav-coins-amount">0</span>
             </span>
+            <span id="hobo-bell-mount" style="display:inline-flex;align-items:center"></span>
             <div class="nav-avatar-wrap" onclick="toggleUserMenu()">
                 <div class="nav-avatar" id="nav-avatar">?</div>
                 <span id="nav-username"></span>
@@ -98,6 +99,7 @@
                 <a onclick="showModal('stream-key')"><i class="fa-solid fa-key"></i> Stream Key</a>
                 <a onclick="showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
                 <a onclick="navigate('/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
+                <a href="https://hobo.tools/my" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
                 <hr>
                 <a onclick="captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
                 <hr>
@@ -3100,5 +3102,37 @@
 <script src="/js/dashboard-moderation.js?v=1"></script>
 <script src="/js/pastes.js?v=1"></script>
 <script src="/js/messenger.js?v=1"></script>
+
+<!-- ── Hobo Network shared libs (notifications, account sync) ── -->
+<script src="https://hobo.tools/shared/notification-ui.js"></script>
+<script>
+// Initialize Hobo Network notifications when user is logged in
+(function initHoboNotifications() {
+    const hoboToken = localStorage.getItem('hobo_token');
+    if (!hoboToken) return;
+
+    const mount = document.getElementById('hobo-bell-mount');
+    if (!mount || !window.HoboNotifications) return;
+
+    HoboNotifications.init({
+        token: hoboToken,
+        apiBase: 'https://hobo.tools',
+        soundBase: 'https://hobo.tools/assets/sounds',
+    });
+    mount.appendChild(HoboNotifications.createBell());
+})();
+
+// Re-init after login (SPA login won't reload the page)
+document.addEventListener('hobostreamer-login', () => {
+    const hoboToken = localStorage.getItem('hobo_token');
+    if (hoboToken && window.HoboNotifications) {
+        HoboNotifications.setToken(hoboToken);
+        const mount = document.getElementById('hobo-bell-mount');
+        if (mount && !mount.querySelector('.hobo-bell')) {
+            mount.appendChild(HoboNotifications.createBell());
+        }
+    }
+});
+</script>
 </body>
 </html>
