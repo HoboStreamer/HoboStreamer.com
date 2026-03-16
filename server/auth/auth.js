@@ -1,12 +1,42 @@
 /**
  * HoboStreamer — JWT Auth Middleware
+ * Supports dual auth:
+ *   1. Local HS256 tokens (legacy / direct login)
+ *   2. Hobo.Tools RS256 tokens (SSO via OAuth2)
  */
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 const db = require('../db/database');
 
+// ── Hobo.Tools Public Key (RS256 verification) ──────────────
+let hoboToolsPublicKey = null;
+const HOBO_TOOLS_ISSUER = 'https://hobo.tools';
+
+function loadHoboToolsPublicKey() {
+    // Try loading from shared location or env
+    const keyPaths = [
+        process.env.HOBO_TOOLS_PUBLIC_KEY,
+        path.resolve('./data/keys/hobo-tools-public.pem'),
+        '/opt/hobo/hobo-tools/data/keys/public.pem',
+    ].filter(Boolean);
+
+    for (const p of keyPaths) {
+        try {
+            if (fs.existsSync(p)) {
+                hoboToolsPublicKey = fs.readFileSync(p, 'utf8');
+                console.log(`[Auth] Loaded hobo.tools public key from ${p}`);
+                return;
+            }
+        } catch { /* try next */ }
+    }
+    console.warn('[Auth] ⚠️  hobo.tools public key not found — SSO login will be unavailable');
+}
+loadHoboToolsPublicKey();
+
 /**
- * Generates a JWT token for a user
+ * Generates a local HS256 JWT token for a user
  */
 function generateToken(user) {
     return jwt.sign(
@@ -17,14 +47,60 @@ function generateToken(user) {
 }
 
 /**
- * Verifies a JWT token and returns the decoded payload
+ * Verifies a JWT token — tries local HS256 first, then hobo.tools RS256
+ * Returns { decoded, source: 'local' | 'hobotools' } or null
  */
 function verifyToken(token) {
+    // Try local HS256
     try {
-        return jwt.verify(token, config.jwt.secret);
-    } catch {
-        return null;
+        const decoded = jwt.verify(token, config.jwt.secret);
+        return { decoded, source: 'local' };
+    } catch { /* not a local token */ }
+
+    // Try hobo.tools RS256
+    if (hoboToolsPublicKey) {
+        try {
+            const decoded = jwt.verify(token, hoboToolsPublicKey, {
+                algorithms: ['RS256'],
+                issuer: HOBO_TOOLS_ISSUER,
+            });
+            return { decoded, source: 'hobotools' };
+        } catch { /* not a hobo.tools token either */ }
     }
+
+    return null;
+}
+
+/**
+ * Resolve a hobo.tools user to a local HoboStreamer user.
+ * Looks up linked_accounts first, falls back to username match.
+ * Returns the local user or null.
+ */
+function resolveHoboToolsUser(decoded) {
+    const hoboToolsId = decoded.sub || decoded.id;
+
+    // Check linked_accounts for existing link
+    const linked = db.getDb().prepare(
+        "SELECT * FROM linked_accounts WHERE service = 'hobotools' AND service_user_id = ?"
+    ).get(String(hoboToolsId));
+
+    if (linked) {
+        return db.getUserById(linked.user_id);
+    }
+
+    // Try matching by username (case-insensitive)
+    const user = db.getUserByUsername(decoded.username);
+    if (user) {
+        // Auto-link this user to the hobo.tools account
+        try {
+            db.getDb().prepare(
+                "INSERT OR IGNORE INTO linked_accounts (service, service_user_id, service_username, user_id) VALUES ('hobotools', ?, ?, ?)"
+            ).run(String(hoboToolsId), decoded.username, user.id);
+        } catch { /* already linked */ }
+        return user;
+    }
+
+    return null;
 }
 
 /**
@@ -37,24 +113,36 @@ function requireAuth(req, res, next) {
         return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const decoded = verifyToken(token);
-    if (!decoded) {
+    const result = verifyToken(token);
+    if (!result) {
         return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
-    const user = db.getUserById(decoded.id);
+    const { decoded, source } = result;
+    let user;
+
+    if (source === 'hobotools') {
+        user = resolveHoboToolsUser(decoded);
+        if (!user) {
+            return res.status(401).json({ error: 'No linked HoboStreamer account. Please complete setup first.' });
+        }
+    } else {
+        user = db.getUserById(decoded.id);
+    }
+
     if (!user) {
         return res.status(401).json({ error: 'User not found' });
     }
     if (user.is_banned) {
         return res.status(403).json({ error: 'Account is banned', reason: user.ban_reason });
     }
-    // Reject tokens issued before a password change
-    if (user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
+    // Reject tokens issued before a password change (local tokens only)
+    if (source === 'local' && user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
         return res.status(401).json({ error: 'Token revoked — please log in again' });
     }
 
     req.user = user;
+    req.authSource = source;
     next();
 }
 
@@ -64,11 +152,24 @@ function requireAuth(req, res, next) {
 function optionalAuth(req, res, next) {
     const token = extractToken(req);
     if (token) {
-        const decoded = verifyToken(token);
-        if (decoded) {
-            const user = db.getUserById(decoded.id);
-            if (user && !(user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000))) {
+        const result = verifyToken(token);
+        if (result) {
+            const { decoded, source } = result;
+            let user;
+
+            if (source === 'hobotools') {
+                user = resolveHoboToolsUser(decoded);
+            } else {
+                user = db.getUserById(decoded.id);
+                // Check token_valid_after for local tokens
+                if (user && user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
+                    user = null;
+                }
+            }
+
+            if (user) {
                 req.user = user;
+                req.authSource = source;
             }
         }
     }
@@ -142,15 +243,29 @@ function extractWsToken(req) {
  */
 function authenticateWs(token) {
     if (!token) return null;
-    const decoded = verifyToken(token);
-    if (!decoded) return null;
-    const user = db.getUserById(decoded.id);
-    if (!user) return null;
-    // Reject tokens issued before a password change
-    if (user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
-        return null;
+    const result = verifyToken(token);
+    if (!result) return null;
+
+    const { decoded, source } = result;
+    let user;
+
+    if (source === 'hobotools') {
+        user = resolveHoboToolsUser(decoded);
+    } else {
+        user = db.getUserById(decoded.id);
+        if (user && user.token_valid_after && decoded.iat < Math.floor(new Date(user.token_valid_after + 'Z').getTime() / 1000)) {
+            return null;
+        }
     }
+
     return user;
+}
+
+/**
+ * Reload the hobo.tools public key (e.g., after key rotation)
+ */
+function reloadHoboToolsKey() {
+    loadHoboToolsPublicKey();
 }
 
 module.exports = {
@@ -164,4 +279,6 @@ module.exports = {
     extractToken,
     extractWsToken,
     authenticateWs,
+    reloadHoboToolsKey,
+    resolveHoboToolsUser,
 };
