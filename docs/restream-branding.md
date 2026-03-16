@@ -6,8 +6,10 @@
 **Logo motif:** Tent + campfire + broadcast signal waves  
 **Tagline:** "Live Streaming for Camp Culture"  
 **URL:** `https://hobostreamer.com`  
+**HoboTools:** `https://hobo.tools`  
+**HoboQuest:** `https://hobo.quest`  
 **Discord:** `https://discord.gg/M6MuRUaeJj`  
-**GitHub:** `https://github.com/HoboStreamer/HoboStreamer.com`
+**GitHub:** `https://github.com/HoboStreamer`
 
 ---
 
@@ -62,7 +64,7 @@ This is the most important panel — it should be the first one visitors see.
 🏕️ This stream is rebroadcast from HoboStreamer.com — a free, open-source streaming platform built for outdoor culture.
 
 👉 Watch the FULL experience at:
-   https://hobostreamer.com
+   https://HoboStreamer.com/Goosely
 
 ✅ No ads, no subs, no paywalls
 ✅ Interactive chat with emotes & cosmetics
@@ -143,32 +145,54 @@ Chat with the community, suggest features, report bugs, or just hang out.
 #### Description Text
 
 ```
-🛠️ HoboStreamer is fully open source.
+🛠️ HoboStreamer, HoboTools, HoboQuest, and all Hobo community creations are fully open source:
+https://GitHub.com/HoboStreamer
 
 The entire platform — streaming server, chat, game, everything — is on GitHub. Run your own instance, contribute, or just read the code.
 
-⭐ https://github.com/HoboStreamer/HoboStreamer.com
+⭐ https://github.com/HoboStreamer
 
 Built with Node.js, WebSockets, SQLite, FFmpeg, and mediasoup.
 ```
 
 ---
 
-### Panel 6: "HoboApp" (Optional Cross-Promo)
+### Panel 6: "HoboTools"
 
 #### Header Image Prompt
 
-> **Prompt:** A streaming panel header banner (320×100 pixels). Dark background (#1e1e24). A tiny map pin / campground icon on the left in gold-amber. Bold text "HOBOAPP" in gold, with smaller subtitle "Camp Locator" in white below. A faint topographic map line pattern in the background at very low opacity. Clean flat design.
+> **Prompt:** A streaming panel header banner (320×100 pixels). Dark background (#1e1e24). A pickaxe or multi-tool icon on the left in gold-amber (#c0965c). Bold text "HOBO.TOOLS" in gold, with smaller subtitle "Nomadic Toolkit & Utilities" in white below. Clean flat design, high contrast.
 
 #### Description Text
 
 ```
-🗺️ HoboApp — Stealth Camp & Shelter Locator
+⛏️ HoboTools — Nomadic Toolkit & Utilities
 
-A free desktop app with 300+ hand-curated stealth camping locations in Washington State. 18 data sources on one interactive map.
+The ultimate toolkit for the hobo community — calculators, guides, resource maps, and utilities built by nomads, for nomads.
 
-📥 https://github.com/HoboStreamer/HoboApp
-   Windows · Linux · macOS
+100% free, open source, and community-driven.
+
+→ https://Hobo.Tools/
+```
+
+---
+
+### Panel 7: "HoboQuest"
+
+#### Header Image Prompt
+
+> **Prompt:** A streaming panel header banner (320×100 pixels). Dark background (#1e1e24). A scroll or quest compass icon on the left in gold-amber (#c0965c). Bold text "HOBO.QUEST" in gold, with smaller subtitle "Community MMORPG & Canvas" in white below. A faint fantasy map texture in the background at very low opacity. Clean flat design.
+
+#### Description Text
+
+```
+📜 HoboQuest — Community MMORPG & Canvas
+
+A custom-built browser-based MMORPG and collaborative canvas made by the hobo community. Explore, quest, and create together — no downloads required.
+
+100% free, open source, and community-driven.
+
+→ https://Hobo.Quest/
 ```
 
 ---
@@ -178,7 +202,7 @@ A free desktop app with 300+ hand-curated stealth camping locations in Washingto
 ### Twitch Bio (300 char max)
 
 ```
-🏕️ Rebroadcast from HoboStreamer.com — free open-source streaming for stealth campers & nomads. Better quality + interactive chat + browser game on the real site → hobostreamer.com | Discord: discord.gg/M6MuRUaeJj
+🏕️ Rebroadcast from HoboStreamer.com — free open-source streaming for stealth campers & nomads. Better quality + interactive chat + browser game on the real site → hobostreamer.com | hobo.tools | hobo.quest | Discord: discord.gg/M6MuRUaeJj
 ```
 
 ### Kick Bio
@@ -198,9 +222,10 @@ For the best experience — better quality, lower latency, interactive chat, cus
 🔗 https://hobostreamer.com
 
 HoboStreamer is 100% free, open source, and community-driven.
-📂 Source code: https://github.com/HoboStreamer/HoboStreamer.com
+📂 Source code: https://github.com/HoboStreamer
 💬 Discord: https://discord.gg/M6MuRUaeJj
-🗺️ HoboApp (camp locator): https://github.com/HoboStreamer/HoboApp
+⛏️ HoboTools: https://hobo.tools
+📜 HoboQuest: https://hobo.quest
 ```
 
 ---
