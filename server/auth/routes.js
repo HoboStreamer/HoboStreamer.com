@@ -383,6 +383,174 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) =>
     }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// Hobo.Tools OAuth2 SSO Integration
+// ═══════════════════════════════════════════════════════════════
+
+const HOBO_TOOLS_BASE = process.env.HOBO_TOOLS_URL || 'https://hobo.tools';
+const HOBO_CLIENT_ID = process.env.HOBO_OAUTH_CLIENT_ID || 'hobostreamer';
+const HOBO_CLIENT_SECRET = process.env.HOBO_OAUTH_CLIENT_SECRET || '';
+const HOBO_REDIRECT_URI = `${process.env.BASE_URL || 'https://hobostreamer.com'}/api/auth/callback`;
+
+// ── Initiate OAuth Login (redirect to hobo.tools) ───────────
+router.get('/sso/login', (req, res) => {
+    const state = require('crypto').randomBytes(16).toString('hex');
+    // Store state in a short-lived cookie for CSRF protection
+    res.cookie('oauth_state', state, { httpOnly: true, maxAge: 5 * 60 * 1000, sameSite: 'Lax', secure: true });
+
+    const params = new URLSearchParams({
+        client_id: HOBO_CLIENT_ID,
+        redirect_uri: HOBO_REDIRECT_URI,
+        response_type: 'code',
+        scope: 'profile theme',
+        state,
+    });
+    res.redirect(`${HOBO_TOOLS_BASE}/oauth/authorize?${params.toString()}`);
+});
+
+// ── OAuth Callback (exchange code for token) ─────────────────
+router.get('/callback', async (req, res) => {
+    try {
+        const { code, state } = req.query;
+        if (!code) return res.status(400).send('Missing authorization code');
+
+        // Validate CSRF state
+        const savedState = req.cookies?.oauth_state;
+        if (savedState && savedState !== state) {
+            return res.status(403).send('Invalid state parameter');
+        }
+        res.clearCookie('oauth_state');
+
+        // Exchange code for tokens
+        const https = require('https');
+        const tokenData = await new Promise((resolve, reject) => {
+            const body = JSON.stringify({
+                grant_type: 'authorization_code',
+                client_id: HOBO_CLIENT_ID,
+                client_secret: HOBO_CLIENT_SECRET,
+                code,
+                redirect_uri: HOBO_REDIRECT_URI,
+            });
+
+            const url = new URL(`${HOBO_TOOLS_BASE}/oauth/token`);
+            const reqOpts = {
+                hostname: url.hostname,
+                port: url.port || 443,
+                path: url.pathname,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(body),
+                },
+            };
+
+            const httpReq = https.request(reqOpts, (httpRes) => {
+                let data = '';
+                httpRes.on('data', chunk => data += chunk);
+                httpRes.on('end', () => {
+                    try { resolve(JSON.parse(data)); }
+                    catch { reject(new Error('Invalid token response')); }
+                });
+            });
+            httpReq.on('error', reject);
+            httpReq.write(body);
+            httpReq.end();
+        });
+
+        if (tokenData.error) {
+            console.error('[Auth/SSO] Token exchange failed:', tokenData.error_description || tokenData.error);
+            return res.status(400).send(`OAuth error: ${tokenData.error_description || tokenData.error}`);
+        }
+
+        const ssoUser = tokenData.user;
+        if (!ssoUser) {
+            return res.status(400).send('No user data in token response');
+        }
+
+        // Find or create local user linked to this hobo.tools account
+        const hoboToolsId = String(ssoUser.id);
+
+        // Check linked_accounts first
+        let localUser = null;
+        const linked = db.getDb().prepare(
+            "SELECT user_id FROM linked_accounts WHERE service = 'hobotools' AND service_user_id = ?"
+        ).get(hoboToolsId);
+
+        if (linked) {
+            localUser = db.getUserById(linked.user_id);
+        }
+
+        // Try matching by username
+        if (!localUser) {
+            localUser = db.getUserByUsername(ssoUser.username);
+            if (localUser) {
+                // Auto-link
+                db.getDb().prepare(
+                    "INSERT OR IGNORE INTO linked_accounts (user_id, service, service_user_id, service_username) VALUES (?, 'hobotools', ?, ?)"
+                ).run(localUser.id, hoboToolsId, ssoUser.username);
+            }
+        }
+
+        // Create new local user if none found
+        if (!localUser) {
+            const stream_key = uuidv4().replace(/-/g, '');
+            const result = db.createUser({
+                username: ssoUser.username,
+                email: ssoUser.email || null,
+                password_hash: '$sso$' + require('crypto').randomBytes(32).toString('hex'), // placeholder, can't login with password
+                display_name: ssoUser.display_name || ssoUser.username,
+                stream_key,
+            });
+            localUser = db.getUserById(result.lastInsertRowid);
+
+            // Sync optional fields from hobo.tools
+            if (ssoUser.avatar_url) db.updateUserAvatar(localUser.id, ssoUser.avatar_url);
+            if (ssoUser.bio) db.getDb().prepare('UPDATE users SET bio = ? WHERE id = ?').run(ssoUser.bio, localUser.id);
+            if (ssoUser.role && ['user', 'streamer', 'global_mod', 'admin'].includes(ssoUser.role)) {
+                db.getDb().prepare('UPDATE users SET role = ? WHERE id = ?').run(ssoUser.role, localUser.id);
+            }
+            if (ssoUser.profile_color) db.getDb().prepare('UPDATE users SET profile_color = ? WHERE id = ?').run(ssoUser.profile_color, localUser.id);
+
+            // Link to hobo.tools
+            db.getDb().prepare(
+                "INSERT OR IGNORE INTO linked_accounts (user_id, service, service_user_id, service_username) VALUES (?, 'hobotools', ?, ?)"
+            ).run(localUser.id, hoboToolsId, ssoUser.username);
+
+            localUser = db.getUserById(localUser.id); // re-fetch
+            console.log(`[Auth/SSO] New local account created for hobo.tools user ${ssoUser.username} (hobo-tools id:${hoboToolsId}, local id:${localUser.id})`);
+        }
+
+        // Issue a local token
+        const token = generateToken(localUser);
+
+        // Set cookie and redirect to home
+        res.cookie('token', token, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: true });
+
+        // Return HTML that stores token in localStorage and redirects
+        res.send(`<!DOCTYPE html>
+<html><head><title>Logging in...</title></head>
+<body>
+<script>
+    localStorage.setItem('token', ${JSON.stringify(token)});
+    window.location.href = '/';
+</script>
+<noscript><a href="/">Click here to continue</a></noscript>
+</body></html>`);
+    } catch (err) {
+        console.error('[Auth/SSO] Callback error:', err);
+        res.status(500).send('OAuth login failed. Please try again.');
+    }
+});
+
+// ── SSO Status (for client-side detection) ───────────────────
+router.get('/sso/status', (req, res) => {
+    res.json({
+        enabled: !!HOBO_CLIENT_SECRET,
+        provider: 'hobo.tools',
+        loginUrl: `${HOBO_TOOLS_BASE}/oauth/authorize`,
+    });
+});
+
 router.use((err, req, res, next) => {
     if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({ error: 'File too large (max 512KB)' });

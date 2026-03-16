@@ -91,6 +91,22 @@ function initDb() {
         database.exec(`CREATE INDEX IF NOT EXISTS idx_vkeys_status ON verification_keys(status)`);
     } catch (e) { console.warn('[DB] verification_keys migration:', e.message); }
 
+    // Migrate: create linked_accounts table for hobo.tools SSO
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS linked_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            service TEXT NOT NULL,
+            service_user_id TEXT NOT NULL,
+            service_username TEXT,
+            linked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(service, service_user_id)
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_linked_service ON linked_accounts(service, service_user_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_linked_user ON linked_accounts(user_id)`);
+    } catch (e) { console.warn('[DB] linked_accounts migration:', e.message); }
+
     // Migrate: make chat_messages.stream_id nullable (was NOT NULL, broke global chat saves)
     try {
         const cmCols = database.prepare("PRAGMA table_info('chat_messages')").all();

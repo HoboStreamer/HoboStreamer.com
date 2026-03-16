@@ -195,7 +195,11 @@ function showModal(id) {
             </div>
             <button class="btn btn-primary btn-lg" onclick="doLogin()" style="width:100%;margin-top:8px">
                 <i class="fa-solid fa-right-to-bracket"></i> Login
-            </button>`,
+            </button>
+            <div style="text-align:center;margin:12px 0 8px;color:var(--text-muted);font-size:12px">or</div>
+            <a href="/api/auth/sso/login" class="btn btn-lg" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#c0965c,#a07840);color:#fff;text-decoration:none;border:none;cursor:pointer">
+                <i class="fa-solid fa-network-wired"></i> Sign in with Hobo Network
+            </a>`,
         register: `
             <h3><i class="fa-solid fa-user-plus"></i> Sign Up</h3>
             <div class="form-group">
@@ -218,7 +222,11 @@ function showModal(id) {
             </div>
             <button class="btn btn-primary btn-lg" onclick="doRegister()" style="width:100%;margin-top:8px">
                 <i class="fa-solid fa-user-plus"></i> Create Account
-            </button>`,
+            </button>
+            <div style="text-align:center;margin:12px 0 8px;color:var(--text-muted);font-size:12px">or</div>
+            <a href="/api/auth/sso/login" class="btn btn-lg" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#c0965c,#a07840);color:#fff;text-decoration:none;border:none;cursor:pointer">
+                <i class="fa-solid fa-network-wired"></i> Sign in with Hobo Network
+            </a>`,
         donate: hoboBucksDonateModal(),
         'buy-funds': hoboBucksBuyModal(),
         cashout: hoboBucksCashoutModal(),
