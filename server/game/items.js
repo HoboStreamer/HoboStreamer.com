@@ -206,10 +206,12 @@ function getResourceNodeAt(tx, ty, seed) {
     const h = hashNoise(tx, ty, seed + 99999);
     // Forest: dense trees
     if (biome === 'forest' && h < 0.22) return { type: 'tree' };
-    // Grass: scattered trees + occasional rocks
+    // Grass: scattered trees + occasional rocks + riverbank fishing spots
     if (biome === 'grass') {
         if (h < 0.08) return { type: 'tree' };
         if (h > 0.95) return { type: 'rock', ore: getOreNodeType(tx, ty, seed, biome) };
+        const hRiver = hashNoise(tx, ty, seed + 22222);
+        if (hRiver < 0.05) return { type: 'fish_spot' }; // riverbank fishing marker
     }
     // Hills: rocks + rare trees
     if (biome === 'hills') {
@@ -223,8 +225,12 @@ function getResourceNodeAt(tx, ty, seed) {
         if (h < 0.10) return { type: 'fish_spot' };
         if (h > 0.92) return { type: 'tree' };
     }
-    // Snow: rocks + rare gems
-    if (biome === 'snow' && h < 0.10) return { type: 'rock', ore: getOreNodeType(tx, ty, seed, biome) };
+    // Snow: rocks + rare gems + arctic ice fishing spots
+    if (biome === 'snow') {
+        if (h < 0.10) return { type: 'rock', ore: getOreNodeType(tx, ty, seed, biome) };
+        const hArctic = hashNoise(tx, ty, seed + 33333);
+        if (hArctic < 0.05) return { type: 'fish_spot' }; // arctic fishing marker
+    }
     // Desert: rocks + dead trees
     if (biome === 'desert') {
         if (h < 0.07) return { type: 'rock', ore: getOreNodeType(tx, ty, seed, biome) };
