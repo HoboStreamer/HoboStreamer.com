@@ -961,123 +961,237 @@ main#app { position: relative; z-index: 1; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   FOUNDER STORY
+   FOUNDER STORY — Timeline Layout
    ═══════════════════════════════════════════════════════════════ */
 .founder-story {
     margin: 16px 0 34px;
-    border: 1px solid rgba(192,150,92,0.16);
-    border-radius: 18px;
+    border: 1px solid rgba(192,150,92,0.13);
+    border-radius: 20px;
     background:
-        radial-gradient(circle at top right, rgba(52,152,219,0.08), transparent 28%),
-        linear-gradient(135deg, rgba(192,150,92,0.08), rgba(255,255,255,0.02));
-    box-shadow: 0 18px 42px rgba(0,0,0,0.18);
+        radial-gradient(ellipse at 20% 0%, rgba(192,150,92,0.10), transparent 50%),
+        radial-gradient(ellipse at 80% 100%, rgba(52,152,219,0.07), transparent 45%),
+        linear-gradient(180deg, rgba(18,18,24,0.95), rgba(12,12,16,0.98));
+    box-shadow: 0 24px 64px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.04);
     overflow: hidden;
+    position: relative;
 }
-.founder-story-shell {
-    display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.95fr);
-    gap: 24px;
-    padding: clamp(20px, 4vw, 34px);
-}
-.founder-story-copy h2 {
-    font-size: clamp(1.6rem, 3vw, 2.45rem);
-    line-height: 1.08;
-    letter-spacing: -0.03em;
-    margin-bottom: 14px;
+
+/* ── Header ───────────────────────────────────────────────── */
+.founder-story-header {
+    padding: clamp(28px, 5vw, 48px) clamp(20px, 4vw, 42px) 0;
+    text-align: center;
 }
 .founder-story-eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 14px;
-    padding: 7px 12px;
+    margin-bottom: 18px;
+    padding: 7px 14px;
     border-radius: 999px;
     background: rgba(192,150,92,0.12);
     border: 1px solid rgba(192,150,92,0.22);
     color: var(--accent-light);
-    font-size: 0.74rem;
+    font-size: 0.72rem;
     font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+}
+.founder-story-header h2 {
+    font-size: clamp(1.65rem, 3.5vw, 2.65rem);
+    line-height: 1.10;
+    letter-spacing: -0.03em;
+    margin: 0 0 12px;
+    color: var(--text-primary);
+}
+.founder-story-subtitle {
+    color: var(--text-secondary);
+    font-size: 1rem;
+    max-width: 520px;
+    margin: 0 auto;
+    line-height: 1.6;
+}
+
+/* ── Timeline ─────────────────────────────────────────────── */
+.founder-timeline {
+    position: relative;
+    padding: 36px clamp(20px, 4vw, 42px) 12px;
+    margin-left: 32px;
+}
+/* Vertical line */
+.founder-timeline::before {
+    content: '';
+    position: absolute;
+    left: clamp(20px, 4vw, 42px);
+    top: 36px;
+    bottom: 32px;
+    width: 2px;
+    background: linear-gradient(180deg,
+        rgba(192,150,92,0.5),
+        rgba(52,152,219,0.4) 30%,
+        rgba(231,76,60,0.3) 55%,
+        rgba(46,204,113,0.4) 75%,
+        rgba(231,76,60,0.5));
+}
+
+.timeline-chapter {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    gap: 0 22px;
+    margin-bottom: 32px;
+    position: relative;
+}
+.timeline-marker {
+    display: flex;
+    justify-content: center;
+    padding-top: 2px;
+    position: relative;
+    z-index: 2;
+}
+.timeline-marker span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    color: #fff;
+    box-shadow: 0 0 18px rgba(0,0,0,0.35);
+}
+.timeline-marker .marker-note {
+    font-size: 0.9rem;
+}
+
+/* Chapter-specific marker colours */
+.timeline-shed .timeline-marker span   { background: linear-gradient(135deg, #8b6914, #c0965c); }
+.timeline-grind .timeline-marker span  { background: linear-gradient(135deg, #1a5276, #3498db); }
+.timeline-music .timeline-marker span  { background: linear-gradient(135deg, #922b21, #e74c3c); }
+.timeline-leap .timeline-marker span   { background: linear-gradient(135deg, #1e8449, #2ecc71); }
+.timeline-now .timeline-marker span    { background: linear-gradient(135deg, #b03a2e, #e74c3c); box-shadow: 0 0 22px rgba(231,76,60,0.35); }
+
+.timeline-body {
+    padding-bottom: 8px;
+}
+.timeline-era {
+    display: inline-block;
+    margin-bottom: 8px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.68rem;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
 }
-.founder-story-lead {
-    font-size: 1rem;
-    color: var(--text-primary);
-}
-.founder-story-copy p {
-    color: var(--text-secondary);
-    font-size: 0.96rem;
-    line-height: 1.8;
-    margin-bottom: 14px;
-    max-width: 760px;
-}
-.founder-story-copy strong,
-.founder-story-copy em {
-    color: var(--text-primary);
-}
-.founder-story-quote {
-    margin-top: 18px;
-    padding: 18px 18px 18px 20px;
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.03);
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-}
-.founder-story-quote i {
-    color: var(--accent);
-    font-size: 1.1rem;
-    margin-top: 2px;
-}
-.founder-story-quote p {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: 0.98rem;
-    line-height: 1.65;
-}
-.founder-story-rail {
-    display: grid;
-    gap: 12px;
-}
-.story-card {
-    position: relative;
-    padding: 18px 18px 16px;
-    border-radius: 14px;
-    border: 1px solid var(--border);
-    background: rgba(18,18,24,0.72);
-    backdrop-filter: blur(10px);
-}
-.story-step {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 42px;
-    height: 28px;
+.timeline-shed .timeline-era   { background: rgba(192,150,92,0.14); color: #c0965c; }
+.timeline-grind .timeline-era  { background: rgba(52,152,219,0.12); color: #5dade2; }
+.timeline-music .timeline-era  { background: rgba(231,76,60,0.12);  color: #ec7063; }
+.timeline-leap .timeline-era   { background: rgba(46,204,113,0.12); color: #58d68d; }
+.timeline-now .timeline-era    { background: rgba(231,76,60,0.14);  color: #ec7063; }
+
+.timeline-body h3 {
+    font-size: clamp(1.05rem, 2vw, 1.32rem);
+    line-height: 1.25;
     margin-bottom: 10px;
-    padding: 0 10px;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    color: #fff;
-    background: linear-gradient(135deg, var(--accent-dark), var(--accent));
-}
-.story-card h3 {
-    font-size: 1rem;
-    margin-bottom: 6px;
     color: var(--text-primary);
 }
-.story-card p {
-    margin: 0;
+.timeline-body p {
     color: var(--text-secondary);
-    font-size: 0.86rem;
-    line-height: 1.6;
+    font-size: 0.94rem;
+    line-height: 1.82;
+    margin-bottom: 12px;
+    max-width: 700px;
 }
-.story-card-origin { border-color: rgba(192,150,92,0.2); }
-.story-card-work { border-color: rgba(52,152,219,0.18); }
-.story-card-leap { border-color: rgba(46,204,113,0.18); }
-.story-card-now { border-color: rgba(231,76,60,0.18); }
+.timeline-body strong {
+    color: var(--text-primary);
+}
+.timeline-mission {
+    color: var(--accent-light) !important;
+    font-weight: 600;
+    font-size: 1rem !important;
+}
+
+/* ── YouTube Link Card ────────────────────────────────────── */
+.timeline-yt-link {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 14px;
+    padding: 16px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(231,76,60,0.22);
+    background: linear-gradient(135deg, rgba(231,76,60,0.08), rgba(192,24,24,0.04));
+    text-decoration: none;
+    transition: all 0.25s ease;
+}
+.timeline-yt-link:hover {
+    border-color: rgba(231,76,60,0.45);
+    background: linear-gradient(135deg, rgba(231,76,60,0.14), rgba(192,24,24,0.08));
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(231,76,60,0.15);
+}
+.timeline-yt-link > .fa-youtube {
+    font-size: 1.8rem;
+    color: #e74c3c;
+    flex-shrink: 0;
+}
+.timeline-yt-link div {
+    flex: 1;
+    min-width: 0;
+}
+.timeline-yt-link strong {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.92rem;
+    margin-bottom: 2px;
+}
+.timeline-yt-link span {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+.timeline-yt-link > .fa-arrow-up-right-from-square {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    flex-shrink: 0;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+.timeline-yt-link:hover > .fa-arrow-up-right-from-square {
+    opacity: 1;
+    color: #e74c3c;
+}
+
+/* ── Pull Quote ───────────────────────────────────────────── */
+.founder-story-pullquote {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    margin: 12px clamp(20px, 4vw, 42px) 0;
+    padding: 26px 28px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    margin-bottom: 0;
+    padding-bottom: clamp(28px, 5vw, 42px);
+}
+.founder-story-pullquote > i {
+    color: var(--accent);
+    font-size: 1.3rem;
+    flex-shrink: 0;
+    margin-top: 3px;
+    opacity: 0.7;
+}
+.founder-story-pullquote blockquote {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    color: var(--text-primary);
+    font-size: 1.06rem;
+    line-height: 1.72;
+    font-style: italic;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+}
 
 /* ═══════════════════════════════════════════════════════════════
    HOME — RECENT PASTES
@@ -1180,9 +1294,16 @@ main#app { position: relative; z-index: 1; }
 @media (max-width: 640px) {
     .hero-tagline { white-space: normal; }
     .hero-rotate-wrap { min-width: 0; }
-    .founder-story-shell { grid-template-columns: 1fr; gap: 18px; }
-    .founder-story-copy p { font-size: 0.92rem; }
-    .founder-story-quote { padding: 15px 14px 15px 16px; }
+    .founder-timeline { margin-left: 0; padding-left: clamp(16px, 3vw, 24px); padding-right: clamp(16px, 3vw, 24px); }
+    .founder-timeline::before { left: clamp(16px, 3vw, 24px); }
+    .timeline-chapter { grid-template-columns: 40px 1fr; gap: 0 14px; }
+    .timeline-marker span { width: 32px; height: 32px; font-size: 0.65rem; }
+    .timeline-body h3 { font-size: 1rem; }
+    .timeline-body p { font-size: 0.88rem; }
+    .timeline-yt-link { padding: 12px 14px; gap: 10px; }
+    .timeline-yt-link > .fa-youtube { font-size: 1.4rem; }
+    .founder-story-pullquote { padding: 20px 18px; gap: 12px; }
+    .founder-story-pullquote blockquote { font-size: 0.94rem; }
     .home-pastes-list { grid-template-columns: 1fr; }
     .home-paste-media { height: 136px; }
 }
