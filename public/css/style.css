@@ -491,6 +491,7 @@ main#app { position: relative; z-index: 1; }
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     padding: 32px 24px;
+    overflow: hidden;
 }
 .network-hub-header {
     display: flex; align-items: center; gap: 14px; justify-content: center;
@@ -508,7 +509,9 @@ main#app { position: relative; z-index: 1; }
     font-size: 0.82rem; color: var(--text-secondary); margin: 3px 0 0;
 }
 .network-hub-grid {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
     max-width: 960px; margin: 0 auto;
 }
 .network-card {
@@ -524,6 +527,11 @@ main#app { position: relative; z-index: 1; }
     transform: translateY(-2px);
     box-shadow: 0 4px 20px rgba(0,0,0,0.3);
 }
+.network-card-featured {
+    border-color: rgba(231,76,60,0.25);
+    background: rgba(231,76,60,0.04);
+}
+.network-card-featured:hover { border-color: rgba(231,76,60,0.5); }
 .network-card-icon {
     width: 40px; height: 40px; border-radius: 10px;
     background: color-mix(in srgb, var(--card-accent, var(--accent)) 12%, transparent);
@@ -547,13 +555,27 @@ main#app { position: relative; z-index: 1; }
 }
 .network-card:hover .network-card-arrow { opacity: 1; transform: translateX(3px); }
 
+@media (max-width: 960px) {
+    .network-hub-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+}
 @media (max-width: 768px) {
     .network-hub-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
     .network-hub { padding: 24px 16px; }
     .network-hub-header { flex-direction: column; gap: 8px; }
+    .network-card-info span { white-space: normal; }
 }
 @media (max-width: 480px) {
-    .network-hub-grid { grid-template-columns: 1fr; }
+    .network-hub-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .network-hub { padding: 20px 12px; }
+    .network-card { padding: 12px; gap: 10px; }
+    .network-card-icon { width: 36px; height: 36px; font-size: 1rem; border-radius: 8px; }
+    .network-card-info strong { font-size: 0.8rem; }
+    .network-card-info span { font-size: 0.68rem; }
+    .network-card-arrow { display: none; }
+}
+@media (max-width: 360px) {
+    .network-hub-grid { grid-template-columns: 1fr; gap: 8px; }
+    .network-hub { padding: 16px 10px; }
 }
 
 /* ── HoboApp Popover ─────────────────────────────────────────── */
@@ -893,7 +915,7 @@ main#app { position: relative; z-index: 1; }
     background: linear-gradient(135deg, rgba(192,150,92,0.12), rgba(52,152,219,0.09));
     border: 1px solid rgba(192,150,92,0.18);
     border-radius: var(--radius-lg);
-    padding: 36px 30px;
+    padding: clamp(20px, 4vw, 36px) clamp(16px, 3vw, 30px);
     margin: 24px 0 32px;
     text-align: center;
     box-shadow: 0 12px 32px rgba(0,0,0,0.18);
@@ -926,6 +948,8 @@ main#app { position: relative; z-index: 1; }
 @media (max-width: 600px) {
     .home-cta-step-arrow { display: none; }
     .home-cta-steps { gap: 12px; }
+    .home-cta-text h3 { font-size: 1.15rem; }
+    .home-cta-text p { font-size: 0.88rem; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
