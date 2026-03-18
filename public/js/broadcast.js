@@ -253,6 +253,12 @@ let broadcastState = {
         manualGainEnabled: false, manualGain: 100, force48kSampleRate: false,
         forceCamera: 'default', broadcastRes: '720', broadcastFps: '30', broadcastCodec: 'auto',
         broadcastBps: '2500', broadcastBpsMin: '500', broadcastLimit: 'restart', screenShare: false,
+        // Screen share capture preferences (hints to getDisplayMedia)
+        screenCaptureSource: 'auto',        // 'auto' | 'monitor' | 'window' | 'browser'
+        screenSystemAudio: 'include',        // 'include' | 'exclude' | 'auto'
+        screenSelfBrowser: 'exclude',        // 'exclude' | 'include'
+        screenSurfaceSwitching: 'include',   // 'include' | 'exclude'
+        screenPreferCurrentTab: false,       // whether to bias toward the current tab
         serverReconnect: true,
         allowSounds: 'false', soundVolume: 800,
     },
@@ -1318,6 +1324,33 @@ function selectBrowserSource(src) {
     document.querySelectorAll('[data-bsrc]').forEach(el => el.classList.toggle('selected', el.dataset.bsrc === src));
     _syncBrowserSourceUI();
 }
+/** Select screen capture source type from the visual picker buttons */
+function selectScreenCaptureSource(source) {
+    updateBroadcastSetting('screenCaptureSource', source);
+    // Update visual picker buttons
+    document.querySelectorAll('#bc-source-picker .bc-source-btn').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.source === source);
+    });
+    // Also sync the settings panel dropdown + create-form dropdown
+    const settingsEl = document.getElementById('bc-screenCaptureSource');
+    if (settingsEl) settingsEl.value = source;
+    const createEl = document.getElementById('bc-screenCaptureSource-create');
+    if (createEl) createEl.value = source;
+}
+/** Sync screen share capture option dropdowns in the create form to match settings */
+function _syncScreenShareCreateOptions() {
+    const s = broadcastState.settings;
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const setCheck = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
+    // Sync picker buttons
+    document.querySelectorAll('#bc-source-picker .bc-source-btn').forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.source === (s.screenCaptureSource || 'auto'));
+    });
+    setVal('bc-screenSystemAudio-create', s.screenSystemAudio || 'include');
+    setVal('bc-screenSelfBrowser-create', s.screenSelfBrowser || 'exclude');
+    setVal('bc-screenSurfaceSwitching-create', s.screenSurfaceSwitching || 'include');
+    setCheck('bc-screenPreferCurrentTab-create', s.screenPreferCurrentTab || false);
+}
 /** Show/hide the correct device pickers based on current method/sub/source selection */
 function _syncBrowserSourceUI() {
     const isBrowser = broadcastState.selectedMethod === 'webrtc' && broadcastState.selectedWebRTCSub === 'browser';
@@ -1326,7 +1359,10 @@ function _syncBrowserSourceUI() {
     const screenSetup = document.getElementById('bc-screen-share-setup');
     if (srcChoice) srcChoice.style.display = isBrowser ? 'block' : 'none';
     if (camDevices) camDevices.style.display = (isBrowser && broadcastState.selectedBrowserSource === 'camera') ? 'block' : 'none';
-    if (screenSetup) screenSetup.style.display = (isBrowser && broadcastState.selectedBrowserSource === 'screen') ? 'block' : 'none';
+    if (screenSetup) {
+        screenSetup.style.display = (isBrowser && broadcastState.selectedBrowserSource === 'screen') ? 'block' : 'none';
+        if (isBrowser && broadcastState.selectedBrowserSource === 'screen') _syncScreenShareCreateOptions();
+    }
 }
 
 /* ── Create New Stream ───────────────────────────────────────── */
@@ -1950,6 +1986,12 @@ function syncSettingsUI() {
     setVal('bc-allowSounds', s.allowSounds); setVal('bc-soundVolume', s.soundVolume);
     setVal('bc-forceAudio', s.forceAudio || 'default');
     setCheck('bc-screenShare', s.screenShare);
+    // Screen share capture settings
+    setVal('bc-screenCaptureSource', s.screenCaptureSource || 'auto');
+    setVal('bc-screenSystemAudio', s.screenSystemAudio || 'include');
+    setVal('bc-screenSelfBrowser', s.screenSelfBrowser || 'exclude');
+    setVal('bc-screenSurfaceSwitching', s.screenSurfaceSwitching || 'include');
+    setCheck('bc-screenPreferCurrentTab', s.screenPreferCurrentTab || false);
     _syncCameraSelectionUI(s.forceCamera || _getPreferredCameraId(), { persist: false });
     _syncScreenShareUI();
     syncRobotStreamerUI();
@@ -2461,6 +2503,69 @@ if (typeof window !== 'undefined') {
 /* ── Per-Stream Media Capture ────────────────────────────────── */
 
 /**
+ * Build getDisplayMedia() constraints from the user's screen share settings.
+ * Modular helper — each constraint is independent so partial browser support is fine.
+ * @param {object} [resolution] - {w, h} — video resolution to request
+ * @returns {MediaStreamConstraints}
+ */
+function _buildDisplayMediaConstraints(resolution) {
+    const s = broadcastState.settings;
+    const res = resolution || { w: 1280, h: 720 };
+
+    const videoConstraints = {
+        width: { ideal: res.w },
+        height: { ideal: res.h },
+        frameRate: { ideal: getBroadcastFrameRate() },
+    };
+
+    // Display surface preference: which type of source the picker should prefer
+    // 'auto' = let browser decide (no constraint), 'monitor'|'window'|'browser' = hint
+    if (s.screenCaptureSource && s.screenCaptureSource !== 'auto') {
+        videoConstraints.displaySurface = s.screenCaptureSource;
+    }
+
+    // Audio: system/tab audio capture
+    let audioConstraint = true; // default: request audio
+    if (s.screenSystemAudio === 'exclude') {
+        audioConstraint = false;
+    } else if (s.screenSystemAudio === 'include') {
+        // Some browsers support systemAudio constraint on the top-level
+        audioConstraint = { systemAudio: 'include' };
+    }
+    // 'auto' leaves it as `true` (let browser decide)
+
+    const constraints = { video: videoConstraints, audio: audioConstraint };
+
+    // Self browser surface: whether the current tab appears in the picker
+    // 'exclude' prevents accidentally capturing your own broadcast page
+    if (s.screenSelfBrowser === 'exclude') {
+        constraints.selfBrowserSurface = 'exclude';
+    } else if (s.screenSelfBrowser === 'include') {
+        constraints.selfBrowserSurface = 'include';
+    }
+
+    // Surface switching: allow changing the shared surface while live (browser support varies)
+    if (s.screenSurfaceSwitching === 'include') {
+        constraints.surfaceSwitching = 'include';
+    } else if (s.screenSurfaceSwitching === 'exclude') {
+        constraints.surfaceSwitching = 'exclude';
+    }
+
+    // Prefer current tab (useful for tab capture workflows)
+    if (s.screenPreferCurrentTab) {
+        constraints.preferCurrentTab = true;
+    }
+
+    // Mono audio hint for screen audio (reduces bandwidth)
+    if (constraints.audio && typeof constraints.audio === 'object') {
+        constraints.audio.channelCount = { ideal: 2 };
+    }
+
+    console.log('[Broadcast] Display media constraints:', JSON.stringify(constraints));
+    return constraints;
+}
+
+/**
  * Start media capture for a specific stream.
  * @param {number} streamId
  * @param {object} [opts] - Optional device overrides
@@ -2481,7 +2586,22 @@ async function startMediaCapture(streamId, opts = {}) {
         // Stop any previous composite resources
         _cleanupComposite(ss);
 
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { width: { ideal: res.w }, height: { ideal: res.h }, frameRate: { ideal: getBroadcastFrameRate() } }, audio: true });
+        const displayConstraints = _buildDisplayMediaConstraints(res);
+        let screenStream;
+        try {
+            screenStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+        } catch (err) {
+            // Some browsers don't support all constraint keys — retry with minimal constraints
+            if (err.name === 'TypeError' || err.name === 'OverconstrainedError') {
+                console.warn('[Broadcast] getDisplayMedia constraints not fully supported, retrying with minimal:', err.message);
+                screenStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { width: { ideal: res.w }, height: { ideal: res.h }, frameRate: { ideal: getBroadcastFrameRate() } },
+                    audio: s.screenSystemAudio !== 'exclude',
+                });
+            } else {
+                throw err; // permission denied, user cancelled, etc — let caller handle
+            }
+        }
         ss._screenStream = screenStream;
 
         // Handle user cancelling screen share picker (track ended immediately)
@@ -4806,6 +4926,15 @@ function initBroadcastSettingsListeners() {
                 _syncScreenShareUI();
             }
         });
+    }
+    // Screen share capture preference dropdowns
+    ['screenCaptureSource', 'screenSystemAudio', 'screenSelfBrowser', 'screenSurfaceSwitching'].forEach(key => {
+        const el = document.getElementById(`bc-${key}`);
+        if (el) el.addEventListener('change', () => updateBroadcastSetting(key, el.value));
+    });
+    const screenPreferEl = document.getElementById('bc-screenPreferCurrentTab');
+    if (screenPreferEl) {
+        screenPreferEl.addEventListener('change', () => updateBroadcastSetting('screenPreferCurrentTab', screenPreferEl.checked));
     }
 }
 

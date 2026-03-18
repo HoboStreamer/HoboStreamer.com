@@ -212,6 +212,126 @@
     background: rgba(255,255,255,0.02);
 }
 
+/* ── Screen Capture Source Picker ────────────────────────────── */
+.bc-source-picker {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.bc-source-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 10px 6px 8px;
+    background: var(--surface, rgba(255,255,255,0.04));
+    border: 2px solid var(--border);
+    border-radius: var(--radius, 8px);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.78rem;
+    text-align: center;
+    min-height: 72px;
+}
+
+.bc-source-btn i {
+    font-size: 1.2rem;
+    margin-bottom: 2px;
+}
+
+.bc-source-btn span {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+}
+
+.bc-source-btn small {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    line-height: 1.1;
+}
+
+.bc-source-btn:hover {
+    border-color: var(--accent);
+    background: rgba(255,255,255,0.06);
+}
+
+.bc-source-btn.selected {
+    border-color: var(--accent);
+    background: rgba(var(--accent-rgb, 241,196,15), 0.12);
+    color: var(--accent);
+}
+
+.bc-source-btn.selected i,
+.bc-source-btn.selected span {
+    color: var(--accent);
+}
+
+/* ── Screen Share Advanced Options ───────────────────────────── */
+.bc-screen-advanced {
+    border: 1px solid var(--border);
+    border-radius: var(--radius, 8px);
+    background: rgba(255,255,255,0.02);
+    padding: 0;
+}
+
+.bc-screen-advanced summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+    list-style: none;
+}
+
+.bc-screen-advanced summary::-webkit-details-marker { display: none; }
+.bc-screen-advanced summary::before {
+    content: '\f054';
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+    font-size: 0.7rem;
+    transition: transform 0.2s ease;
+}
+.bc-screen-advanced[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.bc-screen-advanced summary:hover {
+    color: var(--text-primary);
+}
+
+.bc-screen-advanced-inner {
+    padding: 8px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bc-screen-opt-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bc-screen-opt-row > label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.form-input-sm {
+    padding: 6px 10px;
+    font-size: 0.82rem;
+}
+
+/* ── Screen Share Device Toggles ─────────────────────────────── */
 .bc-screen-device-toggle {
     display: flex;
     align-items: center;
@@ -238,6 +358,13 @@
     color: var(--accent);
     width: 18px;
     text-align: center;
+}
+
+/* ── Responsive: Source Picker ───────────────────────────────── */
+@media (max-width: 480px) {
+    .bc-source-picker {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
 
 /* ── PiP Drag Handle (in video preview) ──────────────────────── */

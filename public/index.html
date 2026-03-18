@@ -6,7 +6,7 @@
     <title>HoboStreamer — Live Streaming for Camp Culture</title>
     <meta name="description" content="HoboStreamer.com — Open source live streaming platform for stealth campers, nomads, and outdoor enthusiasts. Paired with HoboApp.">
     <link rel="stylesheet" href="/css/style.css?v=12">
-    <link rel="stylesheet" href="/css/broadcast.css?v=3">
+    <link rel="stylesheet" href="/css/broadcast.css?v=4">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -1241,9 +1241,71 @@
                         <!-- ═ Screen Share mode: info + optional devices ═ -->
                         <div class="form-group" id="bc-screen-share-setup" style="display:none">
                             <div class="bc-screen-share-info">
-                                <p class="bc-perm-hint"><i class="fa-solid fa-display"></i> You'll be prompted to pick a screen, window, or tab when you click Create Stream.</p>
-                                <p class="bc-perm-hint" style="margin-bottom:4px"><i class="fa-solid fa-volume-up"></i> Desktop/system audio will be captured if your browser supports it.</p>
+                                <p class="bc-perm-hint"><i class="fa-solid fa-display"></i> Choose what to share and configure capture options below.</p>
                             </div>
+
+                            <!-- Capture Source Preference -->
+                            <div class="bc-screen-capture-options">
+                                <label style="margin-top:10px;font-weight:500;font-size:0.85rem">Capture Source</label>
+                                <div class="bc-source-picker" id="bc-source-picker">
+                                    <button type="button" class="bc-source-btn selected" data-source="auto" onclick="selectScreenCaptureSource('auto')">
+                                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                        <span>Auto</span>
+                                        <small>Browser decides</small>
+                                    </button>
+                                    <button type="button" class="bc-source-btn" data-source="monitor" onclick="selectScreenCaptureSource('monitor')">
+                                        <i class="fa-solid fa-desktop"></i>
+                                        <span>Screen</span>
+                                        <small>Entire display</small>
+                                    </button>
+                                    <button type="button" class="bc-source-btn" data-source="window" onclick="selectScreenCaptureSource('window')">
+                                        <i class="fa-regular fa-window-maximize"></i>
+                                        <span>Window</span>
+                                        <small>Single app</small>
+                                    </button>
+                                    <button type="button" class="bc-source-btn" data-source="browser" onclick="selectScreenCaptureSource('browser')">
+                                        <i class="fa-solid fa-globe"></i>
+                                        <span>Tab</span>
+                                        <small>Browser tab</small>
+                                    </button>
+                                </div>
+
+                                <!-- Advanced capture options (collapsible) -->
+                                <details class="bc-screen-advanced" style="margin-top:10px">
+                                    <summary><i class="fa-solid fa-sliders"></i> Advanced Capture Options</summary>
+                                    <div class="bc-screen-advanced-inner">
+                                        <div class="bc-screen-opt-row">
+                                            <label>System Audio</label>
+                                            <select id="bc-screenSystemAudio-create" class="form-input form-input-sm" onchange="updateBroadcastSetting('screenSystemAudio', this.value)">
+                                                <option value="include">Include (capture tab/system audio)</option>
+                                                <option value="auto">Auto (let browser decide)</option>
+                                                <option value="exclude">Exclude (mic only, no system audio)</option>
+                                            </select>
+                                        </div>
+                                        <div class="bc-screen-opt-row">
+                                            <label>This Tab in Picker</label>
+                                            <select id="bc-screenSelfBrowser-create" class="form-input form-input-sm" onchange="updateBroadcastSetting('screenSelfBrowser', this.value)">
+                                                <option value="exclude">Exclude (hide this tab from picker)</option>
+                                                <option value="include">Include (show this tab in picker)</option>
+                                            </select>
+                                        </div>
+                                        <div class="bc-screen-opt-row">
+                                            <label>Surface Switching</label>
+                                            <select id="bc-screenSurfaceSwitching-create" class="form-input form-input-sm" onchange="updateBroadcastSetting('screenSurfaceSwitching', this.value)">
+                                                <option value="include">Allow (switch source while live)</option>
+                                                <option value="exclude">Disallow (lock to initial source)</option>
+                                            </select>
+                                        </div>
+                                        <div class="bc-screen-opt-row">
+                                            <label class="bc-toggle-label">
+                                                <input type="checkbox" id="bc-screenPreferCurrentTab-create" onchange="updateBroadcastSetting('screenPreferCurrentTab', this.checked)">
+                                                Prefer current tab
+                                            </label>
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>
+
                             <div id="bc-screen-optional-devices">
                                 <div class="bc-screen-device-toggle" style="margin-top:10px">
                                     <label class="bc-toggle-label">
@@ -1960,6 +2022,49 @@
                             <div class="bc-setting-row">
                                 <span class="bc-setting-label">Screen Share</span>
                                 <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-screenShare"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Capture Source</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-screenCaptureSource">
+                                        <option value="auto">Auto (browser decides)</option>
+                                        <option value="monitor">Entire Screen</option>
+                                        <option value="window">Application Window</option>
+                                        <option value="browser">Browser Tab</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">System Audio</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-screenSystemAudio">
+                                        <option value="include">Include</option>
+                                        <option value="auto">Auto</option>
+                                        <option value="exclude">Exclude</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">This Tab in Picker</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-screenSelfBrowser">
+                                        <option value="exclude">Exclude</option>
+                                        <option value="include">Include</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Surface Switching</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-screenSurfaceSwitching">
+                                        <option value="include">Allow</option>
+                                        <option value="exclude">Disallow</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Prefer Current Tab</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-screenPreferCurrentTab"><span class="bc-toggle-slider"></span></label></div>
                             </div>
                             <div class="bc-setting-row">
                                 <span class="bc-setting-label">Resolution</span>
@@ -3023,7 +3128,7 @@
 <script src="/js/hobo-bucks.js?v=2"></script>
 <script src="/js/hobo-coins.js?v=2"></script>
 <script src="/js/cosmetics-ui.js?v=2"></script>
-<script src="/js/broadcast.js?v=8"></script>
+<script src="/js/broadcast.js?v=9"></script>
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>
