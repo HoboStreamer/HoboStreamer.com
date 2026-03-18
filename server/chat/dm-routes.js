@@ -179,25 +179,6 @@ router.post('/conversations/:id/messages', (req, res) => {
             return res.status(400).json({ error: 'Message required' });
         }
 
-        // ── Anti-spam hardening ──────────────────────────────
-        // New account restriction
-        const accountCheck = dm.isAccountTooNew(req.user.id, 5);
-        if (accountCheck.tooNew) {
-            return res.status(403).json({ error: `Your account is too new to send DMs. Please wait ${accountCheck.minutesRemaining} more minute(s).` });
-        }
-
-        // Content spam detection
-        const spamCheck = dm.checkMessageSpam(message);
-        if (spamCheck.isSpam) {
-            return res.status(400).json({ error: `Message blocked: ${spamCheck.reason}` });
-        }
-
-        // Duplicate message detection (same text within 30s)
-        if (dm.isDuplicateMessage(convId, req.user.id, message, 30)) {
-            return res.status(429).json({ error: 'Duplicate message — please wait before sending the same message again.' });
-        }
-        // ─────────────────────────────────────────────────────
-
         const msg = dm.sendMessage(convId, req.user.id, message);
         if (!msg) return res.status(400).json({ error: 'Failed to send' });
 

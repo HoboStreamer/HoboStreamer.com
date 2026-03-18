@@ -5,6 +5,10 @@
  * Can be converted back to game items for trading.
  */
 const db = require('../db/database');
+const http = require('http');
+
+// hobo-quest internal API base (server-to-server on localhost)
+const HOBO_QUEST_API = 'http://127.0.0.1:3200';
 
 // ── Cosmetic Catalog (defines all cosmetics and their CSS/rendering data) ───
 const COSMETICS = {
@@ -214,34 +218,65 @@ function unequipSlot(userId, slot) {
     return { success: true, slot };
 }
 
+// ── Helper: call hobo-quest internal API ─────────────────────
+function questApi(method, path, body) {
+    return new Promise((resolve, reject) => {
+        const data = body ? JSON.stringify(body) : null;
+        const req = http.request(`${HOBO_QUEST_API}${path}`, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Internal-Secret': 'hobo-internal-2026',
+                ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
+            },
+            timeout: 5000,
+        }, (res) => {
+            let chunks = '';
+            res.on('data', (c) => chunks += c);
+            res.on('end', () => {
+                try { resolve(JSON.parse(chunks)); } catch { resolve({}); }
+            });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('hobo-quest timeout')); });
+        if (data) req.write(data);
+        req.end();
+    });
+}
+
 // ── Activate: consume game item → unlock global cosmetic ─────
-function activateFromGame(userId, itemId) {
+async function activateFromGame(userId, itemId) {
     const cosmetic = COSMETICS[itemId];
     if (!cosmetic) return { error: 'This item has no global cosmetic' };
     if (ownsCosmetic(userId, itemId)) return { error: 'Already unlocked globally' };
 
-    // Check game inventory (uses game db directly)
-    const d = db.getDb();
-    const inv = d.prepare('SELECT quantity FROM game_inventory WHERE user_id = ? AND item_id = ?').get(userId, itemId);
-    if (!inv || inv.quantity < 1) return { error: 'You don\'t have this item in your game inventory' };
-
-    // Consume 1 from game inventory
-    if (inv.quantity === 1) {
-        d.prepare('DELETE FROM game_inventory WHERE user_id = ? AND item_id = ?').run(userId, itemId);
-    } else {
-        d.prepare('UPDATE game_inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(userId, itemId);
+    // Ask hobo-quest to check & consume game inventory item
+    try {
+        const result = await questApi('POST', '/api/internal/inventory/consume', { userId, itemId, quantity: 1 });
+        if (result.error) return { error: result.error };
+    } catch {
+        return { error: 'Game server unavailable — try again later' };
     }
 
-    // Unlock the cosmetic
+    // Unlock the cosmetic in hobostreamer's DB
+    const d = db.getDb();
     d.prepare('INSERT OR IGNORE INTO user_cosmetics (user_id, item_id, category) VALUES (?, ?, ?)').run(userId, itemId, cosmetic.category);
     return { success: true, message: `Unlocked ${cosmetic.name} globally!`, item: cosmetic };
 }
 
 // ── Deactivate: revoke global cosmetic → add back to game inventory ──
-function deactivateToGame(userId, itemId) {
+async function deactivateToGame(userId, itemId) {
     const cosmetic = COSMETICS[itemId];
     if (!cosmetic) return { error: 'Unknown cosmetic' };
     if (!ownsCosmetic(userId, itemId)) return { error: 'You don\'t own this cosmetic' };
+
+    // Add item back to hobo-quest game inventory
+    try {
+        const result = await questApi('POST', '/api/internal/inventory/add', { userId, itemId, quantity: 1 });
+        if (result.error) return { error: result.error };
+    } catch {
+        return { error: 'Game server unavailable — try again later' };
+    }
 
     const d = db.getDb();
     // Unequip if equipped
@@ -249,8 +284,6 @@ function deactivateToGame(userId, itemId) {
     d.prepare('DELETE FROM user_equipped WHERE user_id = ? AND slot = ? AND item_id = ?').run(userId, slot, itemId);
     // Remove from cosmetics
     d.prepare('DELETE FROM user_cosmetics WHERE user_id = ? AND item_id = ?').run(userId, itemId);
-    // Add back to game inventory
-    d.prepare('INSERT INTO game_inventory (user_id, item_id, quantity) VALUES (?, ?, 1) ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + 1').run(userId, itemId);
 
     return { success: true, message: `Converted ${cosmetic.name} back to game item` };
 }

@@ -386,8 +386,8 @@ function routeFromURL() {
         showPage('broadcast');
         loadBroadcastPage();
     } else if (segments[0] === 'admin') {
-        showPage('admin');
-        loadAdmin();
+        window.location.href = 'https://hobo.tools/admin';
+        return;
     } else if (segments[0] === 'themes') {
         showPage('themes');
         loadThemesPage();
@@ -395,11 +395,11 @@ function routeFromURL() {
         showPage('chat');
         loadChatPage();
     } else if (segments[0] === 'game') {
-        showPage('game');
-        loadGamePage();
+        window.location.href = 'https://hobo.quest/game';
+        return;
     } else if (segments[0] === 'canvas') {
-        showPage('canvas');
-        if (typeof loadCanvasPage === 'function') loadCanvasPage();
+        window.location.href = 'https://hobo.quest/canvas';
+        return;
     } else if (segments[0] === 'pastes') {
         showPage('pastes');
         loadPastesPage();
@@ -537,9 +537,36 @@ document.querySelectorAll('.nav-dropdown').forEach(dd => {
 }
 
 /* ── Home Page ────────────────────────────────────────────────── */
+const HERO_ROTATE_WORDS = [
+    'stealth campers', 'nomads', 'outdoor enthusiasts',
+    'nerds', 'IRL streamers', 'desktop gamers', 'hobos',
+    'van dwellers', 'digital nomads', 'backpackers',
+    'overlanders', 'thru-hikers', 'urban explorers',
+    'tinkerers', 'makers', 'coders',
+];
+let _heroRotateIdx = 0;
+let _heroRotateTimer = null;
+
+function startHeroRotation() {
+    const el = document.getElementById('hero-rotate');
+    if (!el) return;
+    _heroRotateIdx = 0;
+    el.textContent = HERO_ROTATE_WORDS[0];
+    el.classList.add('visible');
+    if (_heroRotateTimer) clearInterval(_heroRotateTimer);
+    _heroRotateTimer = setInterval(() => {
+        el.classList.remove('visible');
+        setTimeout(() => {
+            _heroRotateIdx = (_heroRotateIdx + 1) % HERO_ROTATE_WORDS.length;
+            el.textContent = HERO_ROTATE_WORDS[_heroRotateIdx];
+            el.classList.add('visible');
+        }, 400);
+    }, 3000);
+}
+
 async function loadHome() {
-    void loadHoboAppMeta();
     void loadHomeChangelog();
+    startHeroRotation();
 
     try {
         const liveData = await api('/streams');
@@ -554,6 +581,157 @@ async function loadHome() {
         const recentData = await api('/streams/recent');
         renderStreamGrid('stream-grid-recent', recentData.streams || [], false);
     } catch { /* silent */ }
+
+    // Load recent clips
+    loadHomeClips();
+    // Load recent pastes
+    loadHomePastes();
+    // Load HoboQuest leaderboards
+    loadHomeLeaderboards();
+    // Load Canvas preview
+    loadHomeCanvas();
+}
+
+async function loadHomeClips() {
+    try {
+        const data = await api('/clips?limit=8');
+        const clips = data.clips || [];
+        const header = document.getElementById('home-clips-header');
+        const grid = document.getElementById('home-clips-grid');
+        if (!clips.length) { if (header) header.style.display = 'none'; return; }
+        if (header) header.style.display = '';
+        grid.innerHTML = clips.map(c => `
+            <div class="stream-card" onclick="navigate('/clip/${c.id}')">
+                <div class="stream-card-thumb">
+                    ${thumbImg(c.thumbnail_url, 'fa-scissors', c.title, `/api/thumbnails/generate/clip/${c.id}`)}
+                    <span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${c.view_count || 0}</span>
+                    ${c.duration_seconds ? `<span class="stream-card-duration">${formatDuration(c.duration_seconds)}</span>` : ''}
+                </div>
+                <div class="stream-card-info">
+                    <div class="stream-card-title">${esc(c.title || 'Untitled Clip')}</div>
+                    <div class="stream-card-streamer">
+                        <span class="stream-card-avatar">${(c.username || '?')[0].toUpperCase()}</span>
+                        ${esc(c.username || 'Anonymous')}
+                        <span class="muted" style="margin-left:auto;font-size:0.75rem">${timeAgo(c.created_at)}</span>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    } catch { /* silent */ }
+}
+
+async function loadHomePastes() {
+    try {
+        const data = await api('/pastes?limit=6');
+        const pastes = data.pastes || [];
+        const header = document.getElementById('home-pastes-header');
+        const list = document.getElementById('home-pastes-list');
+        if (!pastes.length) { if (header) header.style.display = 'none'; return; }
+        if (header) header.style.display = '';
+        list.innerHTML = pastes.map(p => {
+            const icon = p.type === 'screenshot' ? 'fa-image' : (p.language && p.language !== 'plaintext' ? 'fa-code' : 'fa-file-lines');
+            const preview = p.type === 'paste' ? esc((p.content || '').slice(0, 220)).replace(/\n{3,}/g, '\n\n') : '';
+            const media = p.type === 'screenshot' && p.screenshot_url
+                ? `<div class="home-paste-media"><img src="${esc(p.screenshot_url)}" alt="${esc(p.title || 'Screenshot paste')}" loading="lazy"><span class="home-paste-type">Image</span></div>`
+                : `<div class="home-paste-media"><div class="home-paste-snippet">${preview || esc(p.title || 'Untitled paste')}</div><div class="home-paste-icon"><i class="fa-solid ${icon}"></i></div><span class="home-paste-type">${p.language && p.language !== 'plaintext' ? esc(p.language) : 'Text'}</span></div>`;
+            return `
+            <a class="home-paste-card" href="/p/${esc(p.slug)}" onclick="event.preventDefault();navigate('/p/${esc(p.slug)}')">
+                ${media}
+                <div class="home-paste-body">
+                <div class="home-paste-info">
+                    <div class="home-paste-title">${esc(p.title || 'Untitled')}</div>
+                    ${p.type === 'paste' && preview ? `<div class="home-paste-preview">${preview}</div>` : ''}
+                    <div class="home-paste-meta">
+                        ${p.username ? esc(p.username) : 'Anonymous'}
+                        ${p.language && p.language !== 'plaintext' ? ` · <span class="home-paste-lang">${esc(p.language)}</span>` : ''}
+                        · ${timeAgo(p.created_at)}
+                    </div>
+                </div>
+                </div>
+            </a>`;
+        }).join('');
+    } catch { /* silent */ }
+}
+
+async function loadHomeLeaderboards() {
+    try {
+        const boards = ['total_level', 'combat', 'mining', 'fishing'];
+        const results = await Promise.all(boards.map(b =>
+            fetch(`https://hobo.quest/api/game/leaderboard/${b}`).then(r => r.json()).catch(() => ({ entries: [] }))
+        ));
+        const header = document.getElementById('home-quest-header');
+        const container = document.getElementById('home-leaderboards');
+        const hasData = results.some(r => r.entries && r.entries.length);
+        if (!hasData) { if (header) header.style.display = 'none'; return; }
+        if (header) header.style.display = '';
+
+        const labels = { total_level: 'Total Level', combat: 'Combat', mining: 'Mining', fishing: 'Fishing' };
+        const icons = { total_level: 'fa-star', combat: 'fa-sword', mining: 'fa-gem', fishing: 'fa-fish' };
+        container.innerHTML = boards.map((board, i) => {
+            const entries = (results[i].entries || []).slice(0, 5);
+            if (!entries.length) return '';
+            return `
+            <div class="home-lb-card">
+                <div class="home-lb-title"><i class="fa-solid ${icons[board] || 'fa-trophy'}"></i> ${labels[board]}</div>
+                <div class="home-lb-entries">
+                    ${entries.map((e, rank) => `
+                        <div class="home-lb-row">
+                            <span class="home-lb-rank">${rank + 1}</span>
+                            <span class="home-lb-name">${esc(e.display_name || e.username || 'Unknown')}</span>
+                            <span class="home-lb-score">${typeof e.score === 'number' ? e.score.toLocaleString() : e.score}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>`;
+        }).join('');
+    } catch { /* silent */ }
+}
+
+async function loadHomeCanvas() {
+    try {
+        const data = await fetch('https://hobo.quest/api/game/canvas/state').then(r => r.json());
+        const header = document.getElementById('home-canvas-header');
+        const container = document.getElementById('home-canvas-preview');
+        if (!data || !data.board) { if (header) header.style.display = 'none'; return; }
+        if (header) header.style.display = '';
+
+        const tiles = data.tiles || [];
+        const recentActions = data.recent_actions || [];
+        const uniqueArtists = new Set(tiles.map(t => t.user_id).filter(Boolean)).size;
+        const width = data.board.width || 64;
+        const height = data.board.height || 64;
+        const palette = data.board.palette || ['#000000'];
+
+        // Render a mini canvas preview
+        const scale = 4;
+        container.innerHTML = `
+            <div class="home-canvas-wrap">
+                <canvas id="home-canvas-mini" width="${width * scale}" height="${height * scale}" style="image-rendering:pixelated;border-radius:var(--radius);border:1px solid var(--border);max-width:100%;"></canvas>
+                <div class="home-canvas-stats">
+                    <div class="home-canvas-stat"><strong>${tiles.length.toLocaleString()}</strong> <span>pixels placed</span></div>
+                    <div class="home-canvas-stat"><strong>${uniqueArtists.toLocaleString()}</strong> <span>artists</span></div>
+                    <div class="home-canvas-stat"><strong>${width}×${height}</strong> <span>board size</span></div>
+                    <div class="home-canvas-stat"><strong>${recentActions.length}</strong> <span>recent actions</span></div>
+                </div>
+                <a href="https://hobo.quest/canvas" class="btn btn-outline" style="margin-top:12px;">
+                    <i class="fa-solid fa-palette"></i> Open Canvas
+                </a>
+            </div>
+        `;
+
+        // Draw tiles on the mini canvas
+        const canvas = document.getElementById('home-canvas-mini');
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = palette[0] || '#000';
+            ctx.fillRect(0, 0, width * scale, height * scale);
+            for (const tile of tiles) {
+                const color = palette[tile.color_index] || '#fff';
+                ctx.fillStyle = color;
+                ctx.fillRect(tile.x * scale, tile.y * scale, scale, scale);
+            }
+        }
+    } catch { /* silent */ }
 }
 
 function renderStreamGrid(containerId, streams, isLive) {
@@ -563,22 +741,34 @@ function renderStreamGrid(containerId, streams, isLive) {
         return;
     }
     c.innerHTML = streams.map(s => {
-        // Navigate to channel with ?stream=ID so multi-stream channels open the right feed
-        const navUrl = isLive && s.id ? `/${esc(s.username)}?stream=${s.id}` : `/${esc(s.username)}`;
+        // Navigate to channel with ?stream=ID for live, VOD for recent if available, else channel
+        let navUrl;
+        if (isLive && s.id) {
+            navUrl = `/${esc(s.username)}?stream=${s.id}`;
+        } else if (!isLive && s.vod_id && s.vod_is_public) {
+            navUrl = `/vod/${s.vod_id}`;
+        } else {
+            navUrl = `/${esc(s.username)}`;
+        }
+        const thumb = (!isLive && s.vod_thumbnail_url) ? s.vod_thumbnail_url : s.thumbnail_url;
+        const duration = !isLive && s.vod_duration ? `<span class="stream-card-duration">${formatDuration(s.vod_duration)}</span>` : '';
+        const endedAgo = !isLive && s.ended_at ? `<span class="stream-card-ago">${timeAgo(s.ended_at)}</span>` : '';
         return `
         <div class="stream-card" onclick="navigate('${navUrl}')">
             <div class="stream-card-thumb">
-                ${thumbImg(s.thumbnail_url, 'fa-campground', s.title)}
+                ${thumbImg(thumb, 'fa-campground', s.title, !isLive && s.vod_id ? `/api/thumbnails/generate/vod/${s.vod_id}` : null)}
                 ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
                 ${s.protocol ? protocolBadge(s.protocol) : ''}
                 ${s.is_nsfw ? '<span class="stream-card-nsfw">NSFW</span>' : ''}
-                <span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>
+                ${isLive ? `<span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>` : ''}
+                ${duration}
             </div>
             <div class="stream-card-info">
                 <div class="stream-card-title">${esc(s.title || 'Untitled Stream')}</div>
                 <div class="stream-card-streamer">
                     <span class="stream-card-avatar">${(s.username || '?')[0].toUpperCase()}</span>
                     ${esc(s.username || 'Anonymous')}
+                    ${endedAgo}
                 </div>
                 ${s.category ? `<div class="stream-card-tags"><span class="stream-card-tag">${esc(s.category)}</span></div>` : ''}
             </div>
@@ -712,7 +902,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
                         liveVodHtml += `
                             <div class="stream-card" onclick="navigate('/vod/${v.id}')" style="border:2px solid var(--accent);position:relative">
                                 <div class="stream-card-thumb">
-                                    ${thumbImg(v.thumbnail_url, 'fa-video', v.title)}
+                                    ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
                                     <span class="stream-card-nsfw" style="background:#e53e3e;animation:pulse 2s infinite">● RECORDING</span>
                                     <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || 0)}</span>
                                 </div>
@@ -731,7 +921,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
             vodsGrid.innerHTML = liveVodHtml + vods.map(v => `
                 <div class="stream-card" onclick="navigate('/vod/${v.id}')">
                     <div class="stream-card-thumb">
-                        ${thumbImg(v.thumbnail_url, 'fa-video', v.title)}
+                        ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
                         ${!v.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
                         ${v.stream_protocol ? protocolBadge(v.stream_protocol) : ''}
                         <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || v.duration)}</span>
@@ -753,7 +943,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
             clipsGrid.innerHTML = clips.map(cl => `
                 <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
                     <div class="stream-card-thumb">
-                        ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title)}
+                        ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
                         ${!cl.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">UNLISTED</span>' : ''}
                         ${cl.stream_protocol ? protocolBadge(cl.stream_protocol) : ''}
                         <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(cl.duration_seconds)}</span>
@@ -1271,7 +1461,7 @@ async function loadVodsPage() {
         grid.innerHTML = vods.map(v => `
             <div class="stream-card" onclick="navigate('/vod/${v.id}')">
                 <div class="stream-card-thumb">
-                    ${thumbImg(v.thumbnail_url, 'fa-video', v.title)}
+                    ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
                     ${!v.is_public && v.user_id === myId ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
                     ${v.stream_protocol ? protocolBadge(v.stream_protocol) : ''}
                     <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || v.duration)}</span>
@@ -1307,7 +1497,7 @@ async function loadClipsPage() {
         grid.innerHTML = clips.map(cl => `
             <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
                 <div class="stream-card-thumb">
-                    ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title)}
+                    ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
                     ${cl.stream_protocol ? protocolBadge(cl.stream_protocol) : ''}
                     <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(cl.duration_seconds)}</span>
                 </div>
@@ -1514,7 +1704,7 @@ async function loadVodPlayer(vodId) {
             clipsGrid.innerHTML = clips.map(cl => `
                 <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
                     <div class="stream-card-thumb">
-                        ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title)}
+                        ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
                         <span class="stream-card-viewers">${formatDuration(cl.duration_seconds)}</span>
                     </div>
                     <div class="stream-card-info">
@@ -2468,9 +2658,32 @@ function escJs(str) {
  * @param {string} [alt] - alt text for the image
  * @returns {string} HTML string
  */
-function thumbImg(thumbnailUrl, fallbackIcon, alt) {
-    if (thumbnailUrl) {
-        return `<img src="${esc(thumbnailUrl)}" alt="${esc(alt || '')}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display=''">
+async function handleThumbnailError(img) {
+    if (!img) return;
+    img.onerror = null;
+    const fallback = img.nextElementSibling;
+    const regenerateUrl = img.dataset.regenerateUrl;
+    if (regenerateUrl && !img.dataset.regenerateTried) {
+        img.dataset.regenerateTried = '1';
+        try {
+            const res = await fetch(regenerateUrl, { method: 'POST', credentials: 'include' });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.thumbnail_url) {
+                img.src = `${data.thumbnail_url}${data.thumbnail_url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+                img.style.display = '';
+                if (fallback) fallback.style.display = 'none';
+                return;
+            }
+        } catch {}
+    }
+    img.style.display = 'none';
+    if (fallback) fallback.style.display = '';
+}
+
+function thumbImg(thumbnailUrl, fallbackIcon, alt, regenerateUrl = null) {
+    if (thumbnailUrl || regenerateUrl) {
+        const src = thumbnailUrl || '/api/thumbnails/__missing__';
+        return `<img src="${esc(src)}" alt="${esc(alt || '')}" loading="lazy" data-regenerate-url="${esc(regenerateUrl || '')}" onerror="handleThumbnailError(this)">
                 <i class="fa-solid ${fallbackIcon}" style="display:none"></i>`;
     }
     return `<i class="fa-solid ${fallbackIcon}"></i>`;

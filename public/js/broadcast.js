@@ -50,6 +50,12 @@ function createStreamState(streamData) {
         _compositeCtx: null,
         _compositeAnimFrame: null,
         _cameraOverlayEnabled: false,
+        // PiP position/size (fraction of canvas, 0-1 range) — draggable/resizable
+        _pipX: 0.78,  // fractional X (top-left of PiP)
+        _pipY: 0.72,  // fractional Y
+        _pipW: 0.20,  // fractional width (20% of canvas)
+        _pipDragging: false,
+        _pipResizing: false,
     };
 }
 
@@ -238,6 +244,7 @@ let broadcastState = {
     activeStreamId: null,
     selectedMethod: 'webrtc',
     selectedWebRTCSub: 'browser',
+    selectedBrowserSource: 'camera', // 'camera' or 'screen'
 
     // Settings (persisted to localStorage) — global across all streams
     settings: {
@@ -1153,6 +1160,7 @@ async function resumeStreamView(stream) {
         showBrowserBroadcast();
         populateDeviceLists(); populateTTSVoices(); syncSettingsUI();
         ensureBroadcastChat(stream.id);
+        if (typeof refreshChatTTSContext === 'function') refreshChatTTSContext();
         startHeartbeat(stream.id);
         await startMediaCapture(stream.id); connectSignaling(stream.id); maybeStartRsRestream(stream.id); startVodRecording(stream.id);
         startGlobalDisplayTimers();
@@ -1170,6 +1178,7 @@ async function resumeStreamView(stream) {
         startHeartbeat(stream.id);
         startGlobalDisplayTimers();
         ensureBroadcastChat(stream.id);
+        if (typeof refreshChatTTSContext === 'function') refreshChatTTSContext();
         showBroadcastCallControls(); updateBroadcastCallUI();
         startRestreamStatusPolling();
     } else if (stream.protocol === 'jsmpeg') {
@@ -1182,6 +1191,7 @@ async function resumeStreamView(stream) {
         startHeartbeat(stream.id);
         startGlobalDisplayTimers();
         ensureBroadcastChat(stream.id);
+        if (typeof refreshChatTTSContext === 'function') refreshChatTTSContext();
         showBroadcastCallControls(); updateBroadcastCallUI();
         startRestreamStatusPolling();
     }
@@ -1296,15 +1306,27 @@ function selectStreamMethod(method) {
     document.querySelectorAll('.bc-method-card').forEach(el => el.classList.toggle('selected', el.dataset.method === method));
     const sub = document.getElementById('bc-webrtc-sub');
     if (sub) sub.style.display = method === 'webrtc' ? 'block' : 'none';
-    // Show/hide device pickers (only for WebRTC Browser)
-    const devicesEl = document.getElementById('bc-create-devices');
-    if (devicesEl) devicesEl.style.display = (method === 'webrtc' && broadcastState.selectedWebRTCSub === 'browser') ? 'block' : 'none';
+    _syncBrowserSourceUI();
 }
 function selectWebRTCSub(sub) {
     broadcastState.selectedWebRTCSub = sub;
-    document.querySelectorAll('.bc-method-card-sm').forEach(el => el.classList.toggle('selected', el.dataset.sub === sub));
-    const devicesEl = document.getElementById('bc-create-devices');
-    if (devicesEl) devicesEl.style.display = sub === 'browser' ? 'block' : 'none';
+    document.querySelectorAll('[data-sub]').forEach(el => el.classList.toggle('selected', el.dataset.sub === sub));
+    _syncBrowserSourceUI();
+}
+function selectBrowserSource(src) {
+    broadcastState.selectedBrowserSource = src;
+    document.querySelectorAll('[data-bsrc]').forEach(el => el.classList.toggle('selected', el.dataset.bsrc === src));
+    _syncBrowserSourceUI();
+}
+/** Show/hide the correct device pickers based on current method/sub/source selection */
+function _syncBrowserSourceUI() {
+    const isBrowser = broadcastState.selectedMethod === 'webrtc' && broadcastState.selectedWebRTCSub === 'browser';
+    const srcChoice = document.getElementById('bc-browser-source-choice');
+    const camDevices = document.getElementById('bc-create-devices');
+    const screenSetup = document.getElementById('bc-screen-share-setup');
+    if (srcChoice) srcChoice.style.display = isBrowser ? 'block' : 'none';
+    if (camDevices) camDevices.style.display = (isBrowser && broadcastState.selectedBrowserSource === 'camera') ? 'block' : 'none';
+    if (screenSetup) screenSetup.style.display = (isBrowser && broadcastState.selectedBrowserSource === 'screen') ? 'block' : 'none';
 }
 
 /* ── Create New Stream ───────────────────────────────────────── */
@@ -1314,6 +1336,21 @@ async function createNewStream() {
     const category = document.getElementById('bc-category')?.value || 'irl';
     const method = broadcastState.selectedMethod;
     if (!title) return toast('Stream title is required', 'error');
+
+    const isBrowserStream = method === 'webrtc' && broadcastState.selectedWebRTCSub === 'browser';
+    const isScreenMode = isBrowserStream && broadcastState.selectedBrowserSource === 'screen';
+
+    // Auto-request camera/mic permissions if user hasn't clicked "Allow Camera & Mic" yet (camera mode only)
+    if (isBrowserStream && !isScreenMode) {
+        const permReq = document.getElementById('bc-perm-request');
+        if (permReq && permReq.style.display !== 'none') {
+            await requestMediaPermissions();
+            // If permissions failed, bc-perm-request will still be visible — abort
+            if (permReq.style.display !== 'none') {
+                return; // requestMediaPermissions() already showed the error toast
+            }
+        }
+    }
 
     // Stop any existing browser WebRTC streams to prevent camera contention.
     // Without this, old streams fight with the new one over the camera device,
@@ -1336,9 +1373,15 @@ async function createNewStream() {
     const existingEl = document.getElementById('bc-existing-streams');
     if (existingEl) existingEl.style.display = '';
 
-    // Read device selection from create form
+    // Read device selection from create form (camera mode)
     const createCamera = document.getElementById('bc-create-camera')?.value || 'default';
     const createAudio = document.getElementById('bc-create-audio')?.value || 'default';
+
+    // Read screen share device selections
+    const screenMicEnabled = document.getElementById('bc-screen-mic-enabled')?.checked ?? true;
+    const screenCamEnabled = document.getElementById('bc-screen-cam-enabled')?.checked ?? false;
+    const screenAudio = document.getElementById('bc-screen-audio')?.value || 'default';
+    const screenCamera = document.getElementById('bc-screen-camera')?.value || 'default';
 
     try {
         const data = await api('/streams', { method: 'POST', body: { title, description, protocol: method, category, nsfw: false } });
@@ -1357,10 +1400,33 @@ async function createNewStream() {
         // Build/refresh tabs with new stream active
         await buildBroadcastTabs(streamData.id);
 
-        if (method === 'webrtc' && broadcastState.selectedWebRTCSub === 'browser') {
+        if (isBrowserStream) {
+            // Set screen share mode before media capture
+            if (isScreenMode) {
+                broadcastState.settings.screenShare = true;
+                ss._cameraOverlayEnabled = screenCamEnabled;
+                saveBroadcastSettings();
+            } else {
+                broadcastState.settings.screenShare = false;
+                saveBroadcastSettings();
+            }
+
             showBrowserBroadcast(); populateDeviceLists(); populateTTSVoices(); syncSettingsUI();
+            _syncScreenShareUI();
             ensureBroadcastChat(streamData.id);
-            await startMediaCapture(streamData.id, { cameraId: createCamera, audioId: createAudio });
+
+            if (isScreenMode) {
+                // Screen share capture options
+                const captureOpts = {
+                    audioId: screenMicEnabled ? screenAudio : null,
+                    cameraId: screenCamEnabled ? screenCamera : null,
+                    skipMic: !screenMicEnabled,
+                };
+                await startMediaCapture(streamData.id, captureOpts);
+            } else {
+                await startMediaCapture(streamData.id, { cameraId: createCamera, audioId: createAudio });
+            }
+
             connectSignaling(streamData.id);
             maybeStartRsRestream(streamData.id);
             startHeartbeat(streamData.id); startVodRecording(streamData.id);
@@ -1369,6 +1435,8 @@ async function createNewStream() {
             showBroadcastCallControls(); updateBroadcastCallUI();
             updateRsRestreamSlotUI();
             startRestreamStatusPolling();
+            // Show/hide screen share live controls
+            _syncScreenShareLiveControls(ss);
             toast('You are now LIVE!', 'success');
         } else if (method === 'webrtc' && broadcastState.selectedWebRTCSub === 'obs') {
             showWHIPInstructions(streamData); startHeartbeat(streamData.id);
@@ -1583,10 +1651,75 @@ async function populateDeviceLists() {
             if (d.kind === 'videoinput') camSelect.appendChild(opt);
             if (d.kind === 'audioinput') audioSelect.appendChild(opt.cloneNode(true));
         });
-        if (broadcastState.settings.forceCamera !== 'default') camSelect.value = broadcastState.settings.forceCamera;
+        const preferredCamera = broadcastState.settings.forceCamera || localStorage.getItem('bc-last-camera') || 'default';
+        _syncCameraSelectionUI(preferredCamera, { persist: false });
         if (broadcastState.settings.forceAudio !== 'default') audioSelect.value = broadcastState.settings.forceAudio;
         if (tempStream) tempStream.getTracks().forEach(t => t.stop());
     } catch (err) { console.warn('Could not enumerate devices:', err.message); }
+}
+
+function _getPreferredCameraId() {
+    return broadcastState.settings.forceCamera || localStorage.getItem('bc-last-camera') || 'default';
+}
+
+function _setSelectValueIfPresent(select, value) {
+    if (!select) return;
+    const normalized = value || 'default';
+    const hasExact = Array.from(select.options || []).some(opt => opt.value === normalized);
+    select.value = hasExact ? normalized : 'default';
+}
+
+function _syncCameraSelectionUI(cameraId, { persist = true } = {}) {
+    const normalized = cameraId || 'default';
+    _setSelectValueIfPresent(document.getElementById('bc-forceCamera'), normalized);
+    _setSelectValueIfPresent(document.getElementById('bc-create-camera'), normalized);
+    _setSelectValueIfPresent(document.getElementById('bc-screen-camera'), normalized);
+    broadcastState.settings.forceCamera = normalized;
+    if (persist) {
+        saveBroadcastSettings();
+        try { localStorage.setItem('bc-last-camera', normalized); } catch {}
+    }
+}
+
+function _describeCameraRole(device, index = 0) {
+    const label = String(device?.label || '').toLowerCase();
+    if (label.includes('back') || label.includes('rear') || label.includes('environment') || label.includes('world')) {
+        return { icon: 'fa-solid fa-camera', title: 'Rear Camera', detail: 'Best for outward-facing mobile video.' };
+    }
+    if (label.includes('front') || label.includes('user') || label.includes('face') || label.includes('facetime')) {
+        return { icon: 'fa-solid fa-user', title: 'Front Camera', detail: 'Best for selfie-style streaming.' };
+    }
+    if (label.includes('external') || label.includes('usb') || label.includes('webcam') || label.includes('obs')) {
+        return { icon: 'fa-solid fa-video', title: 'External Camera', detail: 'Detected as an external or USB camera.' };
+    }
+    return { icon: 'fa-solid fa-camera-retro', title: `Camera ${index + 1}`, detail: 'Available video input device.' };
+}
+
+function _getCameraFacingHint(device) {
+    const label = String(device?.label || '').toLowerCase();
+    if (label.includes('back') || label.includes('rear') || label.includes('environment') || label.includes('world')) return 'environment';
+    if (label.includes('front') || label.includes('user') || label.includes('face') || label.includes('facetime')) return 'user';
+    return null;
+}
+
+async function _enumerateBroadcastVideoInputs({ ensureLabels = false } = {}) {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    let tempStream = null;
+    try {
+        let devices = await navigator.mediaDevices.enumerateDevices();
+        const missingLabels = devices.filter(d => d.kind === 'videoinput').some(d => !d.label);
+        if (ensureLabels && missingLabels && navigator.mediaDevices?.getUserMedia) {
+            try {
+                tempStream = await _getUserMediaWithTimeout({ video: true, audio: false }, 8000);
+                devices = await navigator.mediaDevices.enumerateDevices();
+            } catch (err) {
+                console.warn('[Broadcast] Could not refresh camera labels:', err.message);
+            }
+        }
+        return devices.filter(d => d.kind === 'videoinput');
+    } finally {
+        if (tempStream) tempStream.getTracks().forEach(t => t.stop());
+    }
 }
 
 /**
@@ -1735,12 +1868,8 @@ function _populateCreateDeviceDropdowns(devices) {
             opt.textContent = d.label || `Camera ${d.deviceId.slice(0, 8)}`;
             camSelect.appendChild(opt);
         });
-        // Restore saved camera selection
-        const savedCam = localStorage.getItem('bc-last-camera');
-        if (savedCam && camSelect.querySelector(`option[value="${CSS.escape(savedCam)}"]`)) {
-            camSelect.value = savedCam;
-        }
-        camSelect.onchange = () => localStorage.setItem('bc-last-camera', camSelect.value);
+        _syncCameraSelectionUI(_getPreferredCameraId(), { persist: false });
+        camSelect.onchange = () => _syncCameraSelectionUI(camSelect.value);
     }
     if (audioSelect) {
         audioSelect.innerHTML = '<option value="default">Default</option>';
@@ -1756,6 +1885,33 @@ function _populateCreateDeviceDropdowns(devices) {
             audioSelect.value = savedMic;
         }
         audioSelect.onchange = () => localStorage.setItem('bc-last-audio', audioSelect.value);
+    }
+
+    // Also populate screen share device selects (same device lists)
+    const screenAudioSelect = document.getElementById('bc-screen-audio');
+    if (screenAudioSelect) {
+        screenAudioSelect.innerHTML = '<option value="default">Default Microphone</option>';
+        devices.filter(d => d.kind === 'audioinput').forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.deviceId;
+            opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
+            screenAudioSelect.appendChild(opt);
+        });
+        const savedMic = localStorage.getItem('bc-last-audio');
+        if (savedMic && screenAudioSelect.querySelector(`option[value="${CSS.escape(savedMic)}"]`)) {
+            screenAudioSelect.value = savedMic;
+        }
+    }
+    const screenCamSelect = document.getElementById('bc-screen-camera');
+    if (screenCamSelect) {
+        screenCamSelect.innerHTML = '<option value="default">Default Camera</option>';
+        devices.filter(d => d.kind === 'videoinput').forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.deviceId;
+            opt.textContent = d.label || `Camera ${d.deviceId.slice(0, 8)}`;
+            screenCamSelect.appendChild(opt);
+        });
+        _syncCameraSelectionUI(_getPreferredCameraId(), { persist: false });
     }
 }
 
@@ -1792,7 +1948,9 @@ function syncSettingsUI() {
     setVal('bc-broadcastBpsMin', s.broadcastBpsMin); setVal('bc-broadcastLimit', s.broadcastLimit);
     setCheck('bc-serverReconnect', s.serverReconnect !== false);
     setVal('bc-allowSounds', s.allowSounds); setVal('bc-soundVolume', s.soundVolume);
+    setVal('bc-forceAudio', s.forceAudio || 'default');
     setCheck('bc-screenShare', s.screenShare);
+    _syncCameraSelectionUI(s.forceCamera || _getPreferredCameraId(), { persist: false });
     _syncScreenShareUI();
     syncRobotStreamerUI();
 }
@@ -1996,6 +2154,8 @@ function cleanupStream(streamId) {
         // Close any background broadcast chat WS now that we're no longer live
         if (typeof destroyBgBroadcastChat === 'function') destroyBgBroadcastChat();
     }
+
+    if (typeof refreshChatTTSContext === 'function') refreshChatTTSContext();
 
     updateBroadcastMobileChatFab();
     updateRsRestreamSlotUI();
@@ -2312,7 +2472,7 @@ async function startMediaCapture(streamId, opts = {}) {
     if (!ss) return;
     const s = broadcastState.settings;
     const forceCamera = opts.cameraId || s.forceCamera;
-    const forceAudio = opts.audioId || s.forceAudio;
+    const forceAudio = (opts.skipMic) ? null : (opts.audioId || s.forceAudio);
     const resMap = { '360': { w: 640, h: 360 }, '480': { w: 854, h: 480 }, '720': { w: 1280, h: 720 }, '1080': { w: 1920, h: 1080 }, '1440': { w: 2560, h: 1440 } };
     const res = resMap[s.broadcastRes] || resMap['720'];
     let videoConstraints, audioConstraints;
@@ -2333,6 +2493,7 @@ async function startMediaCapture(streamId, opts = {}) {
                     console.log('[Broadcast] Screen share ended by user/OS — switching back to camera');
                     broadcastState.settings.screenShare = false; saveBroadcastSettings();
                     _syncScreenShareUI();
+                    _syncScreenShareLiveControls(ss);
                     // Re-acquire camera
                     const sid = broadcastState.activeStreamId;
                     if (sid && ss === getStreamState(sid)) {
@@ -2348,10 +2509,38 @@ async function startMediaCapture(streamId, opts = {}) {
             }, { once: true });
         }
 
-        // Get mic audio separately (screen audio is fallback)
-        audioConstraints = buildAudioConstraints(s, forceAudio);
-        let audioStream;
-        try { audioStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false }); } catch { audioStream = null; }
+        // Get mic audio separately (unless skipped). Desktop audio comes from getDisplayMedia.
+        let micStream = null;
+        if (forceAudio !== null) {
+            audioConstraints = buildAudioConstraints(s, forceAudio);
+            try { micStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false }); } catch { micStream = null; }
+        }
+        ss._micEnabled = forceAudio !== null;
+
+        // Mix desktop audio + mic audio if both are available
+        const screenAudioTracks = screenStream.getAudioTracks();
+        let finalAudioTrack = null;
+        if (micStream && screenAudioTracks.length > 0) {
+            // Mix both via AudioContext
+            try {
+                const mixCtx = new AudioContext();
+                const dest = mixCtx.createMediaStreamDestination();
+                const desktopSource = mixCtx.createMediaStreamSource(new MediaStream(screenAudioTracks));
+                desktopSource.connect(dest);
+                const micSource = mixCtx.createMediaStreamSource(micStream);
+                micSource.connect(dest);
+                finalAudioTrack = dest.stream.getAudioTracks()[0];
+                ss._mixAudioContext = mixCtx;
+                ss._micStream = micStream;
+            } catch {
+                finalAudioTrack = micStream.getAudioTracks()[0] || screenAudioTracks[0];
+            }
+        } else if (micStream) {
+            finalAudioTrack = micStream.getAudioTracks()[0];
+            ss._micStream = micStream;
+        } else if (screenAudioTracks.length > 0) {
+            finalAudioTrack = screenAudioTracks[0];
+        }
 
         // If camera overlay is enabled, capture camera too and composite onto canvas
         if (ss._cameraOverlayEnabled) {
@@ -2367,105 +2556,19 @@ async function startMediaCapture(streamId, opts = {}) {
             ss._cameraOverlayStream = camStream;
 
             if (camStream) {
-                // Composite: screen + camera PiP on canvas
-                const canvas = document.createElement('canvas');
-                canvas.width = screenTrack.getSettings().width || res.w;
-                canvas.height = screenTrack.getSettings().height || res.h;
-                const ctx = canvas.getContext('2d');
-                ss._compositeCanvas = canvas;
-                ss._compositeCtx = ctx;
-
-                const screenVideo = document.createElement('video');
-                screenVideo.srcObject = screenStream;
-                screenVideo.muted = true;
-                screenVideo.playsInline = true;
-                screenVideo.play().catch(() => {});
-
-                const camVideo = document.createElement('video');
-                camVideo.srcObject = camStream;
-                camVideo.muted = true;
-                camVideo.playsInline = true;
-                camVideo.play().catch(() => {});
-
-                // Animate composite at broadcast framerate
-                const fps = getBroadcastFrameRate();
-                const frameInterval = 1000 / fps;
-                let lastDraw = 0;
-                const drawFrame = (ts) => {
-                    ss._compositeAnimFrame = requestAnimationFrame(drawFrame);
-                    if (ts - lastDraw < frameInterval) return;
-                    lastDraw = ts;
-                    // Update canvas size if screen resolution changes
-                    const sw = screenTrack.getSettings().width || canvas.width;
-                    const sh = screenTrack.getSettings().height || canvas.height;
-                    if (canvas.width !== sw) canvas.width = sw;
-                    if (canvas.height !== sh) canvas.height = sh;
-                    // Draw screen as background
-                    ctx.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
-                    // Draw camera PiP in bottom-right corner (20% of screen width)
-                    if (camVideo.videoWidth > 0) {
-                        const pipW = Math.round(canvas.width * 0.2);
-                        const pipH = Math.round(pipW * (camVideo.videoHeight / camVideo.videoWidth));
-                        const pipX = canvas.width - pipW - 16;
-                        const pipY = canvas.height - pipH - 16;
-                        // Rounded rectangle border
-                        const r = 10;
-                        ctx.save();
-                        ctx.beginPath();
-                        ctx.moveTo(pipX + r, pipY);
-                        ctx.lineTo(pipX + pipW - r, pipY);
-                        ctx.quadraticCurveTo(pipX + pipW, pipY, pipX + pipW, pipY + r);
-                        ctx.lineTo(pipX + pipW, pipY + pipH - r);
-                        ctx.quadraticCurveTo(pipX + pipW, pipY + pipH, pipX + pipW - r, pipY + pipH);
-                        ctx.lineTo(pipX + r, pipY + pipH);
-                        ctx.quadraticCurveTo(pipX, pipY + pipH, pipX, pipY + pipH - r);
-                        ctx.lineTo(pipX, pipY + r);
-                        ctx.quadraticCurveTo(pipX, pipY, pipX + r, pipY);
-                        ctx.closePath();
-                        ctx.clip();
-                        ctx.drawImage(camVideo, pipX, pipY, pipW, pipH);
-                        ctx.restore();
-                        // Border stroke
-                        ctx.save();
-                        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-                        ctx.lineWidth = 2;
-                        ctx.beginPath();
-                        ctx.moveTo(pipX + r, pipY);
-                        ctx.lineTo(pipX + pipW - r, pipY);
-                        ctx.quadraticCurveTo(pipX + pipW, pipY, pipX + pipW, pipY + r);
-                        ctx.lineTo(pipX + pipW, pipY + pipH - r);
-                        ctx.quadraticCurveTo(pipX + pipW, pipY + pipH, pipX + pipW - r, pipY + pipH);
-                        ctx.lineTo(pipX + r, pipY + pipH);
-                        ctx.quadraticCurveTo(pipX, pipY + pipH, pipX, pipY + pipH - r);
-                        ctx.lineTo(pipX, pipY + r);
-                        ctx.quadraticCurveTo(pipX, pipY, pipX + r, pipY);
-                        ctx.closePath();
-                        ctx.stroke();
-                        ctx.restore();
-                    }
-                };
-                ss._compositeAnimFrame = requestAnimationFrame(drawFrame);
-
-                // Create composited MediaStream from canvas
-                const compositeStream = canvas.captureStream(fps);
-                // Add audio from mic (or screen audio fallback)
-                if (audioStream) audioStream.getAudioTracks().forEach(t => compositeStream.addTrack(t));
-                else screenStream.getAudioTracks().forEach(t => compositeStream.addTrack(t));
-                ss.localStream = compositeStream;
+                _startPipComposite(ss, screenStream, screenTrack, camStream, finalAudioTrack, res);
             } else {
                 // Camera not available — screen-only
                 const combined = new MediaStream();
                 screenStream.getVideoTracks().forEach(t => combined.addTrack(t));
-                if (audioStream) audioStream.getAudioTracks().forEach(t => combined.addTrack(t));
-                else screenStream.getAudioTracks().forEach(t => combined.addTrack(t));
+                if (finalAudioTrack) combined.addTrack(finalAudioTrack);
                 ss.localStream = combined;
             }
         } else {
             // Screen share without camera overlay
             const combined = new MediaStream();
             screenStream.getVideoTracks().forEach(t => combined.addTrack(t));
-            if (audioStream) audioStream.getAudioTracks().forEach(t => combined.addTrack(t));
-            else screenStream.getAudioTracks().forEach(t => combined.addTrack(t));
+            if (finalAudioTrack) combined.addTrack(finalAudioTrack);
             ss.localStream = combined;
         }
     } else {
@@ -2519,6 +2622,11 @@ async function startMediaCapture(streamId, opts = {}) {
 
         // Detect vertical video and add class for responsive mobile layout
         _detectBroadcastVerticalPreview(ss.localStream);
+
+        // Listen for video dimension changes (e.g., device rotation mid-stream)
+        if (preview) {
+            preview.addEventListener('resize', () => _detectBroadcastVerticalPreview(ss.localStream));
+        }
     }
     updateBroadcastMobileChatFab();
 }
@@ -2557,7 +2665,7 @@ const RESTREAM_PLATFORM_META = {
 
 const RESTREAM_DEFAULT_URLS = {
     youtube: 'rtmp://a.rtmp.youtube.com/live2',
-    twitch: 'rtmp://live.twitch.tv/app',
+    twitch: 'rtmps://live.twitch.tv/app',
     kick: '',
     custom: '',
 };
@@ -3996,101 +4104,213 @@ function _detectBroadcastVerticalPreview(stream) {
     }
 }
 
-async function flipCamera() {
+/** Re-detect vertical preview for the currently active stream */
+function _refreshVerticalPreview() {
+    try {
+        const ss = getActiveStreamState();
+        if (ss?.localStream) _detectBroadcastVerticalPreview(ss.localStream);
+    } catch { /* ignore if no active stream */ }
+}
+
+/* ── Orientation & Resize Listeners for Camera Rotation ──── */
+(function _initOrientationHandlers() {
+    // Listen for device orientation changes (mobile rotation)
+    if ('orientation' in screen) {
+        try {
+            screen.orientation.addEventListener('change', () => {
+                _refreshVerticalPreview();
+                updateBroadcastMobileChatFab();
+            });
+        } catch { /* orientation API not supported */ }
+    }
+    // Fallback: legacy orientationchange event
+    window.addEventListener('orientationchange', () => {
+        // Delay slightly — track dimensions may take a moment to update
+        setTimeout(() => {
+            _refreshVerticalPreview();
+            updateBroadcastMobileChatFab();
+        }, 300);
+    });
+    // Also re-check on window resize
+    let _resizeTimer;
+    window.addEventListener('resize', () => {
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(() => {
+            _refreshVerticalPreview();
+            updateBroadcastMobileChatFab();
+        }, 200);
+    });
+})();
+
+function closeCameraSwitcher() {
+    const sheet = document.getElementById('bc-camera-sheet');
+    if (sheet) sheet.style.display = 'none';
+}
+
+function _renderCameraSwitcherChoices(devices, activeCameraId) {
+    const list = document.getElementById('bc-camera-sheet-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const options = [{ deviceId: 'default', label: 'System Default Camera', _default: true }, ...devices];
+    options.forEach((device, index) => {
+        const current = (activeCameraId || 'default') === device.deviceId;
+        const meta = device._default
+            ? { icon: 'fa-solid fa-wand-magic-sparkles', title: 'Default Camera', detail: 'Let the browser choose the preferred camera for this device.' }
+            : _describeCameraRole(device, index - 1);
+        const titleText = device._default ? 'System Default Camera' : (device.label || meta.title);
+        const subtitleText = device._default ? meta.detail : `${meta.title} • ${meta.detail}`;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `bc-camera-choice${current ? ' is-active' : ''}`;
+        button.innerHTML = `
+            <span class="bc-camera-choice-icon"><i class="${meta.icon}"></i></span>
+            <span class="bc-camera-choice-body">
+                <span class="bc-camera-choice-title">
+                    <span>${titleText}</span>
+                    ${current ? '<span class="bc-camera-choice-badge">Live</span>' : ''}
+                </span>
+                <span class="bc-camera-choice-subtitle">${subtitleText}</span>
+            </span>
+            <span class="bc-camera-choice-arrow"><i class="fa-solid fa-chevron-right"></i></span>
+        `;
+        button.addEventListener('click', () => chooseBroadcastCamera(device.deviceId, button));
+        list.appendChild(button);
+    });
+}
+
+async function openCameraSwitcher() {
+    const sheet = document.getElementById('bc-camera-sheet');
+    const list = document.getElementById('bc-camera-sheet-list');
+    if (!sheet || !list) return;
+
+    sheet.style.display = 'flex';
+    list.innerHTML = '<div class="bc-camera-sheet-empty"><i class="fa-solid fa-spinner fa-spin"></i><span>Loading cameras…</span></div>';
+
+    try {
+        const devices = await _enumerateBroadcastVideoInputs({ ensureLabels: true });
+        if (!devices.length) {
+            list.innerHTML = '<div class="bc-camera-sheet-empty"><i class="fa-solid fa-camera-slash"></i><span>No cameras detected.</span></div>';
+            return;
+        }
+        const ss = getActiveStreamState();
+        const activeTrack = ss?.localStream?.getVideoTracks?.()[0] || null;
+        const activeCameraId = activeTrack?.getSettings?.().deviceId || _getPreferredCameraId();
+        _renderCameraSwitcherChoices(devices, activeCameraId);
+    } catch (err) {
+        list.innerHTML = `<div class="bc-camera-sheet-empty"><i class="fa-solid fa-circle-exclamation"></i><span>${err.message || 'Could not load cameras.'}</span></div>`;
+    }
+}
+
+async function _switchActiveCamera(cameraId) {
     const ss = getActiveStreamState();
     if (!ss || !ss.localStream) return;
 
-    // Block flip during screen share — clicking would replace screen with camera
+    // Block live camera replacement during screen share — screen mode owns the video track.
     if (broadcastState.settings.screenShare) {
-        toast('Disable screen share before flipping camera', 'info');
+        toast('Camera selection saved. Turn off screen share to switch the live camera track.', 'info');
         return;
     }
 
     const videoTrack = ss.localStream.getVideoTracks()[0]; if (!videoTrack) return;
     const oldSettings = videoTrack.getSettings();
-    const facingMode = oldSettings.facingMode; // may be undefined on desktop
     const oldDeviceId = oldSettings.deviceId;
+    if ((cameraId || 'default') === (oldDeviceId || 'default')) return;
 
-    // Determine new camera: use facingMode on mobile, cycle deviceId on desktop
-    let newConstraints;
-    if (facingMode) {
-        // Mobile: toggle user ↔ environment
-        const newFacing = (facingMode === 'user') ? 'environment' : 'user';
-        newConstraints = { video: {
-            facingMode: { ideal: newFacing },
-            width: { ideal: oldSettings.width || 1280 },
-            height: { ideal: oldSettings.height || 720 }
-        } };
-    } else {
-        // Desktop: facingMode is undefined — cycle through video input devices
-        try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(d => d.kind === 'videoinput');
-            if (videoDevices.length < 2) { toast('Only one camera detected', 'info'); return; }
-            const currentIdx = videoDevices.findIndex(d => d.deviceId === oldDeviceId);
-            const nextIdx = (currentIdx + 1) % videoDevices.length;
-            newConstraints = { video: {
-                deviceId: { exact: videoDevices[nextIdx].deviceId },
-                width: { ideal: oldSettings.width || 1280 },
-                height: { ideal: oldSettings.height || 720 }
-            } };
-        } catch {
-            newConstraints = { video: {
-                width: { ideal: oldSettings.width || 1280 },
-                height: { ideal: oldSettings.height || 720 }
-            } };
-        }
-    }
+    const devices = await _enumerateBroadcastVideoInputs({ ensureLabels: false });
+    const chosenDevice = devices.find(d => d.deviceId === cameraId) || null;
+    const facingHint = _getCameraFacingHint(chosenDevice) || oldSettings.facingMode || 'user';
+    const trackWidth = oldSettings.width || 1280;
+    const trackHeight = oldSettings.height || 720;
+    const trackFrameRate = oldSettings.frameRate || getBroadcastFrameRate();
 
-    // Android requires stopping the old camera BEFORE acquiring the new one
-    // (concurrent camera access is often blocked on mobile)
+    const candidateConstraints = cameraId && cameraId !== 'default'
+        ? [
+            { video: { deviceId: { exact: cameraId }, width: { ideal: trackWidth }, height: { ideal: trackHeight }, frameRate: { ideal: trackFrameRate } } },
+            { video: { deviceId: cameraId, width: { ideal: trackWidth }, height: { ideal: trackHeight }, frameRate: { ideal: trackFrameRate } } },
+            { video: { deviceId: { ideal: cameraId }, facingMode: { ideal: facingHint }, width: { ideal: trackWidth }, height: { ideal: trackHeight }, frameRate: { ideal: trackFrameRate } } },
+        ]
+        : [
+            { video: { facingMode: { ideal: facingHint }, width: { ideal: trackWidth }, height: { ideal: trackHeight }, frameRate: { ideal: trackFrameRate } } },
+            { video: true },
+        ];
+
     ss._suppressRecovery = true; // prevent track.ended from triggering recovery
     const suppressTimeout = setTimeout(() => { ss._suppressRecovery = false; }, 15000);
     videoTrack.stop();
     ss.localStream.removeTrack(videoTrack);
+
     try {
-        let newStream;
-        try {
-            newStream = await _getUserMediaWithTimeout(newConstraints);
-        } catch {
-            // Bare minimum fallback
-            newStream = await _getUserMediaWithTimeout({ video: true });
+        let newStream = null;
+        let lastError = null;
+        for (const constraints of candidateConstraints) {
+            try {
+                newStream = await _getUserMediaWithTimeout(constraints);
+                if (newStream?.getVideoTracks?.().length) break;
+            } catch (err) {
+                lastError = err;
+            }
         }
+        if (!newStream?.getVideoTracks?.().length) throw (lastError || new Error('Could not access the selected camera'));
+
         const newTrack = newStream.getVideoTracks()[0];
         ss.localStream.addTrack(newTrack);
-        // Replace track on all viewer peer connections — check for video senders including null tracks
         for (const [, pc] of ss.viewerConnections) {
             const sender = pc.getSenders().find(s => s.track === null || s.track?.kind === 'video');
             if (sender) sender.replaceTrack(newTrack);
         }
         syncRobotStreamerTracks(broadcastState.activeStreamId).catch(() => {});
         const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
-        updateVerticalPreview();
+        _detectBroadcastVerticalPreview(ss.localStream);
         clearTimeout(suppressTimeout);
         ss._suppressRecovery = false;
         attachLocalStreamRecoveryHandlers(broadcastState.activeStreamId);
-        toast('Camera flipped', 'success');
+        const appliedDeviceId = newTrack.getSettings?.().deviceId || cameraId || 'default';
+        _syncCameraSelectionUI(appliedDeviceId);
+        toast('Camera switched', 'success');
     } catch (err) {
-        // Failed to get new camera — try to re-acquire the original
-        console.error('[Broadcast] flipCamera failed:', err);
+        console.error('[Broadcast] switch camera failed:', err);
         try {
-            const recovery = await _getUserMediaWithTimeout({ video: { deviceId: oldDeviceId ? { ideal: oldDeviceId } : undefined, facingMode: { ideal: facingMode || 'user' } } });
+            const recovery = await _getUserMediaWithTimeout({ video: { deviceId: oldDeviceId ? { ideal: oldDeviceId } : undefined, facingMode: { ideal: oldSettings.facingMode || 'user' }, width: { ideal: trackWidth }, height: { ideal: trackHeight }, frameRate: { ideal: trackFrameRate } } });
             const recoveryTrack = recovery.getVideoTracks()[0];
             ss.localStream.addTrack(recoveryTrack);
-            // Also update viewer connections on recovery
             for (const [, pc] of ss.viewerConnections) {
                 const sender = pc.getSenders().find(s => s.track === null || s.track?.kind === 'video');
                 if (sender) sender.replaceTrack(recoveryTrack);
             }
             syncRobotStreamerTracks(broadcastState.activeStreamId).catch(() => {});
             const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
-            updateVerticalPreview();
+            _detectBroadcastVerticalPreview(ss.localStream);
+            _syncCameraSelectionUI(oldDeviceId || 'default');
         } catch { /* truly stuck — no video track */ }
         clearTimeout(suppressTimeout);
         ss._suppressRecovery = false;
         attachLocalStreamRecoveryHandlers(broadcastState.activeStreamId);
-        toast('Could not flip camera: ' + err.message, 'error');
+        throw err;
     }
+}
+
+async function chooseBroadcastCamera(cameraId, buttonEl = null) {
+    const previousCameraId = _getPreferredCameraId();
+    const buttons = Array.from(document.querySelectorAll('#bc-camera-sheet .bc-camera-choice'));
+    buttons.forEach(btn => btn.classList.add('is-loading'));
+    if (buttonEl) buttonEl.classList.add('is-active');
+    _syncCameraSelectionUI(cameraId);
+    try {
+        const ss = getActiveStreamState();
+        if (ss?.localStream) await _switchActiveCamera(cameraId);
+        closeCameraSwitcher();
+    } catch (err) {
+        _syncCameraSelectionUI(previousCameraId);
+        toast('Could not switch camera: ' + (err.message || 'Unknown error'), 'error');
+    } finally {
+        buttons.forEach(btn => btn.classList.remove('is-loading'));
+    }
+}
+
+async function flipCamera() {
+    await openCameraSwitcher();
 }
 
 async function toggleScreenShare() {
@@ -4166,10 +4386,201 @@ function _replaceAllViewerTracks(streamId) {
     syncRobotStreamerTracks(streamId).catch(() => {});
 }
 
+/**
+ * Start the PiP composite — draws screen + camera overlay onto a canvas.
+ * Camera position is controlled by ss._pipX / _pipY / _pipW (fractions of canvas).
+ */
+function _startPipComposite(ss, screenStream, screenTrack, camStream, finalAudioTrack, res) {
+    const canvas = document.createElement('canvas');
+    canvas.width = res.w; canvas.height = res.h;
+    const ctx = canvas.getContext('2d');
+    ss._compositeCanvas = canvas;
+    ss._compositeCtx = ctx;
+
+    // Hidden video elements for drawing
+    const screenVid = document.createElement('video');
+    screenVid.srcObject = screenStream; screenVid.muted = true; screenVid.playsInline = true; screenVid.play().catch(() => {});
+
+    const camVid = document.createElement('video');
+    camVid.srcObject = camStream; camVid.muted = true; camVid.playsInline = true; camVid.play().catch(() => {});
+
+    const fps = getBroadcastFrameRate();
+    const interval = 1000 / fps;
+    let lastDraw = 0;
+
+    function draw(now) {
+        ss._compositeAnimFrame = requestAnimationFrame(draw);
+        if (now - lastDraw < interval) return;
+        lastDraw = now;
+
+        // Draw screen full-canvas
+        ctx.drawImage(screenVid, 0, 0, canvas.width, canvas.height);
+
+        // Draw camera PiP if video is ready
+        if (camVid.readyState >= 2) {
+            const pw = Math.round(canvas.width * ss._pipW);
+            const aspectRatio = camVid.videoHeight / camVid.videoWidth || 0.75;
+            const ph = Math.round(pw * aspectRatio);
+            const px = Math.round(canvas.width * ss._pipX);
+            const py = Math.round(canvas.height * ss._pipY);
+
+            // Rounded rectangle clip (with fallback for older browsers)
+            const radius = 12;
+            ctx.save();
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(px, py, pw, ph, radius);
+            } else {
+                // Manual rounded rect fallback
+                ctx.moveTo(px + radius, py);
+                ctx.lineTo(px + pw - radius, py); ctx.arcTo(px + pw, py, px + pw, py + radius, radius);
+                ctx.lineTo(px + pw, py + ph - radius); ctx.arcTo(px + pw, py + ph, px + pw - radius, py + ph, radius);
+                ctx.lineTo(px + radius, py + ph); ctx.arcTo(px, py + ph, px, py + ph - radius, radius);
+                ctx.lineTo(px, py + radius); ctx.arcTo(px, py, px + radius, py, radius);
+            }
+            ctx.clip();
+            ctx.drawImage(camVid, px, py, pw, ph);
+            ctx.restore();
+
+            // Thin border
+            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(px, py, pw, ph, radius);
+            } else {
+                ctx.moveTo(px + radius, py);
+                ctx.lineTo(px + pw - radius, py); ctx.arcTo(px + pw, py, px + pw, py + radius, radius);
+                ctx.lineTo(px + pw, py + ph - radius); ctx.arcTo(px + pw, py + ph, px + pw - radius, py + ph, radius);
+                ctx.lineTo(px + radius, py + ph); ctx.arcTo(px, py + ph, px, py + ph - radius, radius);
+                ctx.lineTo(px, py + radius); ctx.arcTo(px, py, px + radius, py, radius);
+            }
+            ctx.stroke();
+        }
+    }
+    ss._compositeAnimFrame = requestAnimationFrame(draw);
+
+    // Capture composite as stream
+    const compositeStream = canvas.captureStream(fps);
+    if (finalAudioTrack) compositeStream.addTrack(finalAudioTrack);
+    ss.localStream = compositeStream;
+}
+
+/** Sync screen share live controls (Mic toggle, Camera PiP button) for screen mode */
+function _syncScreenShareLiveControls(ss) {
+    const isScreen = broadcastState.settings.screenShare;
+    const micBtn = document.getElementById('bc-btn-toggle-mic');
+    const camBtn = document.getElementById('bc-btn-cam-overlay');
+
+    // Show mic toggle only in screen share mode
+    if (micBtn) {
+        micBtn.style.display = isScreen ? '' : 'none';
+        micBtn.classList.toggle('bc-ctrl-btn-active', !!(ss && ss._micEnabled));
+        const icon = micBtn.querySelector('i');
+        if (icon) {
+            icon.className = (ss && ss._micEnabled) ? 'fas fa-microphone' : 'fas fa-microphone-slash';
+        }
+    }
+    // Camera overlay button
+    if (camBtn) {
+        camBtn.style.display = isScreen ? '' : 'none';
+        camBtn.classList.toggle('bc-ctrl-btn-active', !!(ss && ss._cameraOverlayEnabled));
+    }
+}
+
+/** Toggle mic on/off during screen share */
+async function toggleScreenShareMic() {
+    const ss = getActiveStreamState();
+    const streamId = broadcastState.activeStreamId;
+    if (!ss || !broadcastState.settings.screenShare) return;
+
+    if (ss._micEnabled) {
+        // Turn mic OFF — disconnect mic from audio mix
+        if (ss._micStream) {
+            ss._micStream.getTracks().forEach(t => t.stop());
+            ss._micStream = null;
+        }
+        // Rebuild audio without mic — just desktop audio
+        if (ss._mixAudioContext) {
+            try { ss._mixAudioContext.close(); } catch {}
+            ss._mixAudioContext = null;
+        }
+        // Replace audio track with desktop-only audio
+        if (ss._screenStream) {
+            const desktopAudioTracks = ss._screenStream.getAudioTracks();
+            if (desktopAudioTracks.length > 0 && ss.localStream) {
+                const oldAudio = ss.localStream.getAudioTracks()[0];
+                if (oldAudio) ss.localStream.removeTrack(oldAudio);
+                ss.localStream.addTrack(desktopAudioTracks[0]);
+                _replaceAllViewerTracks(streamId);
+            }
+        }
+        ss._micEnabled = false;
+        toast('Mic muted', 'info');
+    } else {
+        // Turn mic ON — get mic stream and mix with desktop audio
+        const s = broadcastState.settings;
+        const audioConstraints = buildAudioConstraints(s, s.forceAudio);
+        let micStream;
+        try {
+            micStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false });
+        } catch (err) {
+            toast('Could not access microphone: ' + err.message, 'error');
+            return;
+        }
+        ss._micStream = micStream;
+
+        // Mix desktop + mic via AudioContext
+        const desktopAudioTracks = ss._screenStream ? ss._screenStream.getAudioTracks() : [];
+        if (desktopAudioTracks.length > 0) {
+            try {
+                const mixCtx = new AudioContext();
+                const dest = mixCtx.createMediaStreamDestination();
+                mixCtx.createMediaStreamSource(new MediaStream(desktopAudioTracks)).connect(dest);
+                mixCtx.createMediaStreamSource(micStream).connect(dest);
+                const mixedTrack = dest.stream.getAudioTracks()[0];
+                ss._mixAudioContext = mixCtx;
+
+                if (ss.localStream) {
+                    const oldAudio = ss.localStream.getAudioTracks()[0];
+                    if (oldAudio) ss.localStream.removeTrack(oldAudio);
+                    ss.localStream.addTrack(mixedTrack);
+                    _replaceAllViewerTracks(streamId);
+                }
+            } catch {
+                // Fallback: just use mic track
+                if (ss.localStream) {
+                    const oldAudio = ss.localStream.getAudioTracks()[0];
+                    if (oldAudio) ss.localStream.removeTrack(oldAudio);
+                    const micTrack = micStream.getAudioTracks()[0];
+                    if (micTrack) ss.localStream.addTrack(micTrack);
+                    _replaceAllViewerTracks(streamId);
+                }
+            }
+        } else {
+            // No desktop audio — just add mic
+            if (ss.localStream) {
+                const micTrack = micStream.getAudioTracks()[0];
+                if (micTrack) {
+                    const oldAudio = ss.localStream.getAudioTracks()[0];
+                    if (oldAudio) ss.localStream.removeTrack(oldAudio);
+                    ss.localStream.addTrack(micTrack);
+                    _replaceAllViewerTracks(streamId);
+                }
+            }
+        }
+        ss._micEnabled = true;
+        toast('Mic unmuted', 'info');
+    }
+    _syncScreenShareLiveControls(ss);
+}
+
 /** Cleanup composite canvas + camera overlay resources */
 function _cleanupComposite(ss) {
     if (ss._compositeAnimFrame) { cancelAnimationFrame(ss._compositeAnimFrame); ss._compositeAnimFrame = null; }
     if (ss._cameraOverlayStream) { ss._cameraOverlayStream.getTracks().forEach(t => t.stop()); ss._cameraOverlayStream = null; }
+    if (ss._mixAudioContext) { try { ss._mixAudioContext.close(); } catch {} ss._mixAudioContext = null; }
+    if (ss._micStream) { ss._micStream.getTracks().forEach(t => t.stop()); ss._micStream = null; }
     ss._compositeCanvas = null;
     ss._compositeCtx = null;
 }
@@ -4369,10 +4780,14 @@ function initBroadcastSettingsListeners() {
         if (el) el.addEventListener('input', () => updateBroadcastSetting(key, parseInt(el.value)));
     });
     ['ttsDuration', 'ttsNames', 'ttsQueue', 'ttsMode', 'broadcastLimit', 'broadcastBps', 'broadcastBpsMin',
-     'broadcastRes', 'broadcastFps', 'broadcastCodec', 'forceCamera', 'forceAudio', 'allowSounds', 'ttsVoice'].forEach(key => {
+     'broadcastRes', 'broadcastFps', 'broadcastCodec', 'forceAudio', 'allowSounds', 'ttsVoice'].forEach(key => {
         const el = document.getElementById(`bc-${key}`);
         if (el) el.addEventListener('change', () => updateBroadcastSetting(key, el.value));
     });
+    const forceCameraEl = document.getElementById('bc-forceCamera');
+    if (forceCameraEl) {
+        forceCameraEl.addEventListener('change', () => _syncCameraSelectionUI(forceCameraEl.value));
+    }
     ['autoGain', 'echoCancellation', 'noiseSuppression', 'manualGainEnabled', 'force48kSampleRate'].forEach(key => {
         const el = document.getElementById(`bc-${key}`);
         if (el) el.addEventListener('change', () => updateBroadcastSetting(key, el.checked));
@@ -4513,11 +4928,131 @@ async function createBroadcastClip() {
 
 /* ── /Live Clip Creator ────────────────────────────────────── */
 
+/* ── PiP Drag & Resize on Preview ─────────────────────────── */
+/**
+ * Allow the streamer to drag/resize the camera PiP overlay by clicking on the preview video.
+ * Works in screen share + camera overlay mode. The preview shows the composite canvas output.
+ * - Click & drag inside PiP rect = move
+ * - Click & drag bottom-right corner of PiP = resize
+ * - Positions stored as fractions (0-1) in ss._pipX/_pipY/_pipW
+ */
+function _initPipDragResize() {
+    const preview = document.getElementById('bc-video-preview');
+    if (!preview) return;
+
+    function _getCanvasRelPos(e, rect) {
+        const cx = (e.clientX - rect.left) / rect.width;
+        const cy = (e.clientY - rect.top) / rect.height;
+        return { cx: Math.max(0, Math.min(1, cx)), cy: Math.max(0, Math.min(1, cy)) };
+    }
+
+    function _getPipRect(ss) {
+        if (!ss || !ss._compositeCanvas) return null;
+        const w = ss._pipW;
+        const aspect = (ss._cameraOverlayStream?.getVideoTracks()[0]?.getSettings()?.height /
+                        ss._cameraOverlayStream?.getVideoTracks()[0]?.getSettings()?.width) || 0.75;
+        const h = w * aspect;
+        return { x: ss._pipX, y: ss._pipY, w, h };
+    }
+
+    let _dragState = null; // { mode: 'move'|'resize', startCx, startCy, startPipX, startPipY, startPipW }
+
+    function onPointerDown(e) {
+        const ss = getActiveStreamState();
+        if (!ss || !ss._cameraOverlayEnabled || !broadcastState.settings.screenShare) return;
+        const rect = preview.getBoundingClientRect();
+        const { cx, cy } = _getCanvasRelPos(e, rect);
+        const pip = _getPipRect(ss);
+        if (!pip) return;
+
+        // Check if inside PiP rectangle
+        if (cx >= pip.x && cx <= pip.x + pip.w && cy >= pip.y && cy <= pip.y + pip.h) {
+            e.preventDefault();
+            // Check if near bottom-right corner for resize (last 20% of pip)
+            const resizeThresh = 0.2;
+            const isResize = (cx > pip.x + pip.w * (1 - resizeThresh)) && (cy > pip.y + pip.h * (1 - resizeThresh));
+            _dragState = {
+                mode: isResize ? 'resize' : 'move',
+                startCx: cx, startCy: cy,
+                startPipX: ss._pipX, startPipY: ss._pipY, startPipW: ss._pipW,
+            };
+            preview.style.cursor = isResize ? 'nwse-resize' : 'grabbing';
+            preview.setPointerCapture(e.pointerId);
+        }
+    }
+
+    function onPointerMove(e) {
+        if (!_dragState) {
+            // Show grab cursor when hovering over PiP
+            const ss = getActiveStreamState();
+            if (ss && ss._cameraOverlayEnabled && broadcastState.settings.screenShare) {
+                const rect = preview.getBoundingClientRect();
+                const { cx, cy } = _getCanvasRelPos(e, rect);
+                const pip = _getPipRect(ss);
+                if (pip && cx >= pip.x && cx <= pip.x + pip.w && cy >= pip.y && cy <= pip.y + pip.h) {
+                    const resizeThresh = 0.2;
+                    const isResize = (cx > pip.x + pip.w * (1 - resizeThresh)) && (cy > pip.y + pip.h * (1 - resizeThresh));
+                    preview.style.cursor = isResize ? 'nwse-resize' : 'grab';
+                } else {
+                    preview.style.cursor = '';
+                }
+            }
+            return;
+        }
+        e.preventDefault();
+        const ss = getActiveStreamState();
+        if (!ss) { _dragState = null; return; }
+        const rect = preview.getBoundingClientRect();
+        const { cx, cy } = _getCanvasRelPos(e, rect);
+        const dx = cx - _dragState.startCx;
+        const dy = cy - _dragState.startCy;
+
+        if (_dragState.mode === 'move') {
+            ss._pipX = Math.max(0, Math.min(1 - ss._pipW, _dragState.startPipX + dx));
+            // Estimate pip height for bounds clamping
+            const aspect = (ss._cameraOverlayStream?.getVideoTracks()[0]?.getSettings()?.height /
+                            ss._cameraOverlayStream?.getVideoTracks()[0]?.getSettings()?.width) || 0.75;
+            const pipH = ss._pipW * aspect;
+            ss._pipY = Math.max(0, Math.min(1 - pipH, _dragState.startPipY + dy));
+        } else if (_dragState.mode === 'resize') {
+            // Resize — change width proportionally, min 8%, max 50%
+            const newW = Math.max(0.08, Math.min(0.50, _dragState.startPipW + dx));
+            ss._pipW = newW;
+        }
+    }
+
+    function onPointerUp(e) {
+        if (_dragState) {
+            _dragState = null;
+            preview.style.cursor = '';
+            try { preview.releasePointerCapture(e.pointerId); } catch {}
+        }
+    }
+
+    preview.addEventListener('pointerdown', onPointerDown);
+    preview.addEventListener('pointermove', onPointerMove);
+    preview.addEventListener('pointerup', onPointerUp);
+    preview.addEventListener('pointercancel', onPointerUp);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initBroadcastSettingsListeners();
 
     // Update mobile chat FAB visibility on resize
-    window.addEventListener('resize', updateBroadcastMobileChatFab);
+    window.addEventListener('resize', () => {
+        updateBroadcastMobileChatFab();
+        if (window.innerWidth > 768) {
+            _bcMobileChatOpen = false;
+            const sidebar = document.getElementById('bc-chat-sidebar');
+            if (sidebar) sidebar.classList.remove('mobile-chat-open');
+            document.body.classList.remove('mobile-chat-visible');
+        }
+        if (window.innerWidth > 768) closeCameraSwitcher();
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeCameraSwitcher();
+    });
 
     const robotSelect = document.getElementById('bc-rsRobotSelect');
     if (robotSelect) {
@@ -4543,4 +5078,23 @@ document.addEventListener('DOMContentLoaded', () => {
             requestMediaPermissions();
         }, { passive: false });
     }
+
+    // ── Screen share device toggle listeners ──
+    const screenCamCheck = document.getElementById('bc-screen-cam-enabled');
+    const screenCamSelect = document.getElementById('bc-screen-cam-select');
+    if (screenCamCheck && screenCamSelect) {
+        screenCamCheck.addEventListener('change', () => {
+            screenCamSelect.style.display = screenCamCheck.checked ? 'block' : 'none';
+        });
+    }
+    const screenMicCheck = document.getElementById('bc-screen-mic-enabled');
+    const screenMicSelect = document.getElementById('bc-screen-mic-select');
+    if (screenMicCheck && screenMicSelect) {
+        screenMicCheck.addEventListener('change', () => {
+            screenMicSelect.style.display = screenMicCheck.checked ? 'block' : 'none';
+        });
+    }
+
+    // ── PiP drag/resize on preview ──
+    _initPipDragResize();
 });

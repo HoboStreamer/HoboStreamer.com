@@ -593,9 +593,12 @@ function getLiveStreams() {
 
 function getRecentStreams(limit = 20) {
     return all(`
-        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color,
+               v.id AS vod_id, v.is_public AS vod_is_public, v.thumbnail_url AS vod_thumbnail_url,
+               v.duration_seconds AS vod_duration
         FROM streams s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN vods v ON v.stream_id = s.id AND COALESCE(v.is_recording, 0) = 0
         WHERE s.is_live = 0 AND s.ended_at IS NOT NULL
         ORDER BY s.ended_at DESC
         LIMIT ?
@@ -891,6 +894,11 @@ function isFollowing(followerId, streamerId) {
     const row = get('SELECT id FROM follows WHERE follower_id = ? AND streamer_id = ?',
         [followerId, streamerId]);
     return !!row;
+}
+
+function getFollowerIds(streamerId) {
+    return all('SELECT follower_id FROM follows WHERE streamer_id = ?', [streamerId])
+        .map(r => r.follower_id);
 }
 
 // ── Transaction helpers ──────────────────────────────────────
@@ -1649,17 +1657,21 @@ function countUserPastesToday(userId, ip) {
 
 /**
  * Get a user's total game level (sum of all skill levels).
- * Returns 0 if the user has no game profile.
- * Used for tiered paste/upload limits.
+ * Game has been migrated to hobo.quest — always returns 0 now.
+ * Kept for paste upload limit compatibility.
  */
 function getUserTotalGameLevel(userId) {
     if (!userId) return 0;
-    const p = get('SELECT mining_xp, fishing_xp, woodcut_xp, farming_xp, combat_xp, crafting_xp, smithing_xp, agility_xp FROM game_players WHERE user_id = ?', [userId]);
-    if (!p) return 0;
-    const xpToLevel = (xp) => Math.floor(Math.sqrt((xp || 0) / 25)) + 1;
-    return xpToLevel(p.mining_xp) + xpToLevel(p.fishing_xp) + xpToLevel(p.woodcut_xp) +
-           xpToLevel(p.farming_xp) + xpToLevel(p.combat_xp) + xpToLevel(p.crafting_xp) +
-           xpToLevel(p.smithing_xp) + xpToLevel(p.agility_xp);
+    try {
+        const p = get('SELECT mining_xp, fishing_xp, woodcut_xp, farming_xp, combat_xp, crafting_xp, smithing_xp, agility_xp FROM game_players WHERE user_id = ?', [userId]);
+        if (!p) return 0;
+        const xpToLevel = (xp) => Math.floor(Math.sqrt((xp || 0) / 25)) + 1;
+        return xpToLevel(p.mining_xp) + xpToLevel(p.fishing_xp) + xpToLevel(p.woodcut_xp) +
+               xpToLevel(p.farming_xp) + xpToLevel(p.combat_xp) + xpToLevel(p.crafting_xp) +
+               xpToLevel(p.smithing_xp) + xpToLevel(p.agility_xp);
+    } catch {
+        return 0; // game_players table may not exist after migration
+    }
 }
 
 function getLastPasteTime(userId, ip) {
@@ -2080,7 +2092,7 @@ module.exports = {
     // Profiles
     getUserProfile, updateUserAvatar,
     // Follows
-    followUser, unfollowUser, getFollowerCount, isFollowing,
+    followUser, unfollowUser, getFollowerCount, isFollowing, getFollowerIds,
     // Transactions (Hobo Bucks)
     createTransaction, addHoboBucks, deductHoboBucks,
     // Hobo Coins

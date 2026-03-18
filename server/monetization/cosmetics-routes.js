@@ -61,21 +61,38 @@ router.post('/unequip', requireAuth, (req, res) => {
 });
 
 // ── Activate: consume game item → unlock cosmetic globally ───
-router.post('/activate', requireAuth, (req, res) => {
+router.post('/activate', requireAuth, async (req, res) => {
     const { itemId } = req.body;
     if (!itemId) return res.status(400).json({ error: 'itemId required' });
-    const result = cosmetics.activateFromGame(req.user.id, itemId);
+    const result = await cosmetics.activateFromGame(req.user.id, itemId);
     if (result.error) return res.status(400).json(result);
     res.json(result);
 });
 
 // ── Deactivate: revoke cosmetic → add back to game inventory ─
-router.post('/deactivate', requireAuth, (req, res) => {
+router.post('/deactivate', requireAuth, async (req, res) => {
     const { itemId } = req.body;
     if (!itemId) return res.status(400).json({ error: 'itemId required' });
-    const result = cosmetics.deactivateToGame(req.user.id, itemId);
+    const result = await cosmetics.deactivateToGame(req.user.id, itemId);
     if (result.error) return res.status(400).json(result);
     res.json(result);
+});
+
+// ── Internal: auto-unlock cosmetic from hobo-quest game ──────
+// Called server-to-server when hobo-quest game awards a hat/cosmetic item.
+router.post('/internal-unlock', (req, res) => {
+    if (req.headers['x-internal-secret'] !== 'hobo-internal-2026') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { userId, itemId } = req.body;
+    if (!userId || !itemId) return res.status(400).json({ error: 'userId and itemId required' });
+    try {
+        const result = cosmetics.unlockCosmetic(userId, itemId);
+        res.json(result);
+    } catch (err) {
+        console.error(`[Cosmetics] internal-unlock error for user ${userId}, item ${itemId}:`, err.message);
+        res.status(400).json({ error: 'Failed to unlock — user may not exist on hobostreamer' });
+    }
 });
 
 module.exports = router;

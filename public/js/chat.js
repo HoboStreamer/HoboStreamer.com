@@ -65,15 +65,22 @@ const CHAT_SETTINGS_DEFAULTS = {
     soundOnMention: false,        // Play a sound on @mention
     // Widget
     showFloatingChat: true,       // Show floating global chat button on non-chat pages
+    fullscreenOverlayChat: true,  // Show OBS-style chat overlay in fullscreen live player
     // Cross-feed — show messages from other sources while in a stream chat
     showGlobalInStream: false,    // Show global chat messages in stream chat
     showAllStreamsInStream: false, // Show messages from ALL live streams in stream chat
     // TTS
-    ttsEnabled: true,             // TTS toggle (on by default)
+    ttsEnabled: false,            // TTS toggle for regular pages (off by default)
+    streamingTtsEnabled: true,    // Separate TTS toggle while broadcasting live
     ttsVolume: 80,                // TTS volume (0–100)
 };
 let chatSettings = { ...CHAT_SETTINGS_DEFAULTS };
 let chatSettingsPanelOpen = false;
+const FULLSCREEN_CHAT_IDLE_MS = 2600;
+const FULLSCREEN_CHAT_FADE_MS = 9000;
+const FULLSCREEN_CHAT_MAX_MESSAGES = 7;
+let _fullscreenChatIdleTimer = null;
+let _fullscreenChatRecent = [];
 
 function loadChatSettings() {
     try {
@@ -108,6 +115,7 @@ function applyChatSettings() {
     document.documentElement.classList.toggle('chat-hide-system', !chatSettings.showSystemMessages);
     // Sync all settings panel checkboxes/selects if any are open
     syncSettingsPanelUI();
+    updateFullscreenChatOverlayState();
 }
 function syncSettingsPanelUI() {
     document.querySelectorAll('.chat-settings-panel').forEach(panel => {
@@ -119,6 +127,31 @@ function syncSettingsPanelUI() {
         });
     });
     syncTTSToggleButtons();
+}
+
+function isBroadcastingLiveForTTS() {
+    return typeof isStreaming === 'function' && isStreaming();
+}
+
+function getChatTTSSettingKey(options = {}) {
+    if (options.button) {
+        const inBroadcastPage = !!options.button.closest('#page-broadcast');
+        if (inBroadcastPage && isBroadcastingLiveForTTS()) return 'streamingTtsEnabled';
+    }
+    if (options.streaming || options.forceStreaming || options.page === 'broadcast') {
+        return 'streamingTtsEnabled';
+    }
+    return 'ttsEnabled';
+}
+
+function isChatTTSEnabled(options = {}) {
+    const key = getChatTTSSettingKey(options);
+    return !!chatSettings[key];
+}
+
+function refreshChatTTSContext() {
+    syncTTSToggleButtons();
+    syncSettingsPanelUI();
 }
 // Initialize on load
 loadChatSettings();
@@ -173,6 +206,153 @@ function getChatRenderTargetId() {
     return getChatEl().messages?.id || null;
 }
 
+function getFullscreenChatEls() {
+    return {
+        container: document.getElementById('video-container'),
+        overlay: document.getElementById('fullscreen-chat-overlay'),
+        messages: document.getElementById('fullscreen-chat-messages'),
+        input: document.getElementById('fullscreen-chat-input'),
+    };
+}
+
+function isFullscreenChatActive() {
+    const { container } = getFullscreenChatEls();
+    const page = document.getElementById('page-channel');
+    return !!(
+        chatSettings.fullscreenOverlayChat &&
+        container &&
+        document.fullscreenElement === container &&
+        page &&
+        page.classList.contains('active') &&
+        document.getElementById('ch-live-area')?.style.display !== 'none'
+    );
+}
+
+function clearFullscreenChatMessages() {
+    const { messages } = getFullscreenChatEls();
+    if (messages) messages.innerHTML = '';
+}
+
+function scheduleFullscreenChatIdle() {
+    if (_fullscreenChatIdleTimer) clearTimeout(_fullscreenChatIdleTimer);
+    const { container, input } = getFullscreenChatEls();
+    if (!isFullscreenChatActive() || !container) return;
+    if (input && document.activeElement === input) return;
+    _fullscreenChatIdleTimer = setTimeout(() => {
+        if (!isFullscreenChatActive()) return;
+        if (input && document.activeElement === input) return;
+        container.classList.add('fs-chat-idle');
+    }, FULLSCREEN_CHAT_IDLE_MS);
+}
+
+function markFullscreenChatActivity() {
+    const { container } = getFullscreenChatEls();
+    if (!container) return;
+    container.classList.remove('fs-chat-idle');
+    scheduleFullscreenChatIdle();
+}
+
+function renderFullscreenChatRecent() {
+    const { messages } = getFullscreenChatEls();
+    if (!messages) return;
+    messages.innerHTML = '';
+    _fullscreenChatRecent.slice(-FULLSCREEN_CHAT_MAX_MESSAGES).forEach(entry => {
+        const el = document.createElement('div');
+        el.className = `fullscreen-chat-msg ${entry.kind || 'chat'}`.trim();
+        el.innerHTML = entry.html;
+        messages.appendChild(el);
+        scheduleFullscreenChatFade(el);
+    });
+}
+
+function updateFullscreenChatOverlayState() {
+    const { container, overlay, input } = getFullscreenChatEls();
+    if (!container || !overlay) return;
+
+    const active = isFullscreenChatActive();
+    container.classList.toggle('fs-chat-enabled', active);
+    if (!active) {
+        container.classList.remove('fs-chat-idle');
+        overlay.setAttribute('aria-hidden', 'true');
+        if (_fullscreenChatIdleTimer) { clearTimeout(_fullscreenChatIdleTimer); _fullscreenChatIdleTimer = null; }
+        return;
+    }
+
+    overlay.setAttribute('aria-hidden', 'false');
+    renderFullscreenChatRecent();
+    if (input) _autoResizeTextarea(input);
+    markFullscreenChatActivity();
+}
+
+function scheduleFullscreenChatFade(el) {
+    if (!el) return;
+    if (el._fadeTimer) clearTimeout(el._fadeTimer);
+    if (el._removeTimer) clearTimeout(el._removeTimer);
+    el.classList.remove('is-fading');
+    el._fadeTimer = setTimeout(() => {
+        el.classList.add('is-fading');
+    }, FULLSCREEN_CHAT_FADE_MS);
+    el._removeTimer = setTimeout(() => {
+        el.remove();
+    }, FULLSCREEN_CHAT_FADE_MS + 550);
+}
+
+function queueFullscreenChatEntry(entry) {
+    if (!entry?.html) return;
+    _fullscreenChatRecent.push(entry);
+    if (_fullscreenChatRecent.length > FULLSCREEN_CHAT_MAX_MESSAGES * 2) {
+        _fullscreenChatRecent = _fullscreenChatRecent.slice(-FULLSCREEN_CHAT_MAX_MESSAGES * 2);
+    }
+
+    if (!isFullscreenChatActive()) return;
+
+    const { messages } = getFullscreenChatEls();
+    if (!messages) return;
+    const el = document.createElement('div');
+    el.className = `fullscreen-chat-msg ${entry.kind || 'chat'}`.trim();
+    el.innerHTML = entry.html;
+    messages.appendChild(el);
+
+    while (messages.children.length > FULLSCREEN_CHAT_MAX_MESSAGES) {
+        messages.firstElementChild?.remove();
+    }
+
+    scheduleFullscreenChatFade(el);
+}
+
+function buildFullscreenChatEntry(msg) {
+    const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
+    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
+    const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
+    const rawText = msg.message || msg.text || '';
+    const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
+    return {
+        kind: 'chat',
+        html: `<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:${esc(nameColor)}">${badge}${displayName}</span></div><div class="fullscreen-chat-text">${text}</div>`,
+    };
+}
+
+function setupFullscreenChatOverlay() {
+    document.addEventListener('fullscreenchange', updateFullscreenChatOverlayState);
+    document.addEventListener('keydown', () => {
+        if (isFullscreenChatActive()) markFullscreenChatActivity();
+    }, { passive: true });
+    document.addEventListener('focusin', (e) => {
+        if (e.target?.id === 'fullscreen-chat-input') markFullscreenChatActivity();
+    });
+    document.addEventListener('focusout', (e) => {
+        if (e.target?.id === 'fullscreen-chat-input') scheduleFullscreenChatIdle();
+    });
+    ['mousemove', 'mousedown', 'touchstart'].forEach(type => {
+        document.addEventListener(type, (e) => {
+            const { container } = getFullscreenChatEls();
+            if (!container || !isFullscreenChatActive()) return;
+            if (e.target === container || container.contains(e.target)) markFullscreenChatActivity();
+        }, { passive: true });
+    });
+}
+
 async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
     const { messages } = getChatEl();
     if (!messages) return;
@@ -187,8 +367,19 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
     }
 
     applyChatSettings();
-    // Always scroll to the bottom after loading history
+    // Always scroll to the bottom after loading history — reset scroll state
+    // to prevent false "new messages below" indicators on first open
     scrollChatToBottom();
+    _chatUserScrolledUp = false;
+    _chatUnreadCount = 0;
+    _hideChatNewMessagesIndicator();
+    // Re-scroll after a frame to catch any late DOM renders
+    requestAnimationFrame(() => {
+        scrollChatToBottom();
+        _chatUserScrolledUp = false;
+        _chatUnreadCount = 0;
+        _hideChatNewMessagesIndicator();
+    });
     // Also scroll the floating chat widget if it's open
     _fcwScrollToBottom();
 }
@@ -447,6 +638,8 @@ function destroyChat() {
         chatStreamId = null;
     }
     chatRenderTargetId = null;
+    clearFullscreenChatMessages();
+    _fullscreenChatRecent = [];
     // Clean up stale background WS (disconnected while in bg)
     if (_bgBroadcastWs && _bgBroadcastWs.readyState !== WebSocket.OPEN) {
         try { _bgBroadcastWs.close(); } catch {}
@@ -595,10 +788,10 @@ function handleChatMessage(msg) {
             // Legacy browser-side TTS (Self TTS mode)
             if (typeof isStreaming === 'function' && isStreaming() && broadcastState?.settings?.ttsMode === 'self') {
                 // Broadcaster is live — use broadcast TTS with its volume/pitch/rate settings
-                if (typeof speakBroadcastTTS === 'function') {
+                if (isChatTTSEnabled({ streaming: true }) && typeof speakBroadcastTTS === 'function') {
                     speakBroadcastTTS(msg.message || msg.text, msg.username);
                 }
-            } else if (chatSettings.ttsEnabled) {
+            } else if (isChatTTSEnabled()) {
                 speakTTS(msg.message || msg.text, msg.voiceFX, msg.username);
             }
             break;
@@ -606,8 +799,8 @@ function handleChatMessage(msg) {
             // Server-synthesized TTS audio (Site-Wide TTS mode)
             if (typeof isStreaming === 'function' && isStreaming() && typeof playBroadcastTTSAudio === 'function') {
                 // Broadcaster is live — route to broadcast audio queue
-                playBroadcastTTSAudio(msg);
-            } else if (chatSettings.ttsEnabled) {
+                if (isChatTTSEnabled({ streaming: true })) playBroadcastTTSAudio(msg);
+            } else if (isChatTTSEnabled()) {
                 // Regular chat viewer — play through chat TTS queue
                 playTTSAudio(msg);
             }
@@ -814,6 +1007,7 @@ function addChatMessage(msg) {
 
     // Mirror message to floating chat widget (for non-chat pages)
     _fcwAddMessage(msg);
+    queueFullscreenChatEntry(buildFullscreenChatEntry(msg));
 }
 
 /**
@@ -849,6 +1043,12 @@ function addSystemMessage(text, isError = false) {
     container.appendChild(el);
     scrollChat();
     if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
+    if (text) {
+        queueFullscreenChatEntry({
+            kind: 'system',
+            html: `<div class="fullscreen-chat-text">${esc(text)}</div>`,
+        });
+    }
 }
 
 /**
@@ -885,6 +1085,10 @@ function addDonationMessage(msg) {
     container.appendChild(el);
     scrollChat();
     if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
+    queueFullscreenChatEntry({
+        kind: 'donation',
+        html: `<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:var(--accent)"><i class="fa-solid fa-coins"></i> ${donorName}</span></div><div class="fullscreen-chat-text">donated <strong>$${amount} Hobo Bucks</strong>${text}</div>`,
+    });
 
     // TTS for donations
     if (document.getElementById('tts-checkbox')?.checked) {
@@ -988,8 +1192,8 @@ let _chatHistoryDraft = '';
 const CHAT_HISTORY_MAX = 50;
 const CHAT_TEXTAREA_MAX_LINES = 4;
 
-function sendChat() {
-    const { input } = getChatEl();
+function sendChat(overrideInput = null) {
+    const input = overrideInput || getChatEl().input;
     if (!input) return;
     const text = input.value.trim();
     if (!text) return;
@@ -1031,6 +1235,7 @@ function sendChat() {
     input.value = '';
     _autoResizeTextarea(input);
     input.focus();
+    if (input.id === 'fullscreen-chat-input') markFullscreenChatActivity();
     startSlowModeCooldown();
 }
 
@@ -1091,10 +1296,13 @@ function _autoResizeTextarea(el) {
 function _chatTextareaKeydown(e) {
     const el = e.target;
     const isFcw = el.id === 'fcw-chat-input';
+    const isFullscreen = el.id === 'fullscreen-chat-input';
 
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (isFcw) fcwSendChat(); else sendChat();
+        if (isFcw) fcwSendChat();
+        else if (isFullscreen) sendChat(el);
+        else sendChat();
         return;
     }
 
@@ -2265,20 +2473,23 @@ function cancelAllTTS() {
 
 /** Toggle TTS on/off from the chat input button */
 function toggleChatTTS(btn) {
-    chatSettings.ttsEnabled = !chatSettings.ttsEnabled;
+    const key = getChatTTSSettingKey({ button: btn });
+    chatSettings[key] = !chatSettings[key];
     saveChatSettings();
     if (btn) {
-        btn.classList.toggle('tts-active', chatSettings.ttsEnabled);
-        btn.title = chatSettings.ttsEnabled ? 'TTS On (click to mute)' : 'TTS Off (click to enable)';
+        const enabled = !!chatSettings[key];
+        btn.classList.toggle('tts-active', enabled);
+        btn.title = enabled ? 'TTS On (click to mute)' : 'TTS Off (click to enable)';
     }
-    if (!chatSettings.ttsEnabled) cancelAllTTS();
+    if (!chatSettings[key]) cancelAllTTS();
 }
 
 /** Update TTS toggle button state (called after settings load) */
 function syncTTSToggleButtons() {
     document.querySelectorAll('.chat-tts-toggle').forEach(btn => {
-        btn.classList.toggle('tts-active', chatSettings.ttsEnabled);
-        btn.title = chatSettings.ttsEnabled ? 'TTS On (click to mute)' : 'TTS Off (click to enable)';
+        const enabled = isChatTTSEnabled({ button: btn });
+        btn.classList.toggle('tts-active', enabled);
+        btn.title = enabled ? 'TTS On (click to mute)' : 'TTS Off (click to enable)';
     });
 }
 
@@ -2409,6 +2620,10 @@ function buildSettingsPanelHTML() {
                 <span>Floating Chat Button</span>
                 <input type="checkbox" data-setting="showFloatingChat" onchange="onChatSettingChange(this)">
             </label>
+            <label class="csp-row">
+                <span>Fullscreen Overlay Chat</span>
+                <input type="checkbox" data-setting="fullscreenOverlayChat" onchange="onChatSettingChange(this)">
+            </label>
         </div>
         <div class="csp-section">
             <div class="csp-title"><i class="fa-solid fa-tower-broadcast"></i> Cross-Feed</div>
@@ -2429,6 +2644,10 @@ function buildSettingsPanelHTML() {
                 <input type="checkbox" data-setting="ttsEnabled" onchange="onChatSettingChange(this)">
             </label>
             <label class="csp-row">
+                <span>Enable TTS While Streaming</span>
+                <input type="checkbox" data-setting="streamingTtsEnabled" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row">
                 <span>TTS Volume</span>
                 <input type="range" min="0" max="100" step="5" data-setting="ttsVolume" onchange="onChatSettingChange(this)" oninput="onChatSettingChange(this)">
             </label>
@@ -2446,7 +2665,7 @@ function onChatSettingChange(el) {
     else if (el.type === 'range') chatSettings[key] = parseInt(el.value, 10);
     else chatSettings[key] = el.value;
     saveChatSettings();
-    if (key === 'ttsEnabled') syncTTSToggleButtons();
+    if (key === 'ttsEnabled' || key === 'streamingTtsEnabled') syncTTSToggleButtons();
     if (key === 'showFloatingChat') _fcwUpdateVisibility();
     if (key === 'showGlobalInStream' || key === 'showAllStreamsInStream') _syncGlobalFeed();
 }
@@ -2535,6 +2754,7 @@ document.addEventListener('keydown', (e) => {
 
 /* ── Apply settings on initial page load ──────────────────────── */
 applyChatSettings();
+setupFullscreenChatOverlay();
 
 /* ═══════════════════════════════════════════════════════════════
    MOBILE CHAT — Bottom Sheet Toggle

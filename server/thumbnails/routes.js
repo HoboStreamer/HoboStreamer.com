@@ -9,7 +9,7 @@
 const express = require('express');
 const multer = require('multer');
 const db = require('../db/database');
-const { requireAuth } = require('../auth/auth');
+const { requireAuth, optionalAuth } = require('../auth/auth');
 const thumbService = require('./thumbnail-service');
 
 const router = express.Router();
@@ -59,11 +59,12 @@ router.post('/live/:streamId', requireAuth, upload.single('thumbnail'), (req, re
 });
 
 // ── Regenerate VOD thumbnail ─────────────────────────────────
-router.post('/generate/vod/:id', requireAuth, async (req, res) => {
+router.post('/generate/vod/:id', optionalAuth, async (req, res) => {
     try {
         const vod = db.getVodById(req.params.id);
         if (!vod) return res.status(404).json({ error: 'VOD not found' });
-        if (vod.user_id !== req.user.id && req.user.role !== 'admin') {
+        const canManage = !!req.user && (vod.user_id === req.user.id || req.user.role === 'admin');
+        if (!canManage && !vod.is_public) {
             return res.status(403).json({ error: 'Not your VOD' });
         }
 
@@ -79,11 +80,12 @@ router.post('/generate/vod/:id', requireAuth, async (req, res) => {
 });
 
 // ── Regenerate Clip thumbnail ────────────────────────────────
-router.post('/generate/clip/:id', requireAuth, async (req, res) => {
+router.post('/generate/clip/:id', optionalAuth, async (req, res) => {
     try {
         const clip = db.get('SELECT * FROM clips WHERE id = ?', [req.params.id]);
         if (!clip) return res.status(404).json({ error: 'Clip not found' });
-        if (clip.user_id !== req.user.id && req.user.role !== 'admin') {
+        const canManage = !!req.user && (clip.user_id === req.user.id || req.user.role === 'admin');
+        if (!canManage && !clip.is_public) {
             return res.status(403).json({ error: 'Not your clip' });
         }
 

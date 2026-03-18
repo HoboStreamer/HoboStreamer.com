@@ -7,12 +7,14 @@
 .broadcast-layout {
     display: flex;
     height: calc(100vh - var(--navbar-h));
+    height: calc(100dvh - var(--navbar-h));
     gap: 16px;
     padding: 16px;
 }
 
 .broadcast-main {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     border: 1px solid rgba(255,255,255,0.05);
@@ -29,9 +31,16 @@
     width: 100%;
     background: #000;
     aspect-ratio: 16/9;
+    min-height: 220px;
     max-height: 55vh;
     overflow: hidden;
     border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+#bc-browser-broadcast {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
 }
 
 .bc-video-container video {
@@ -195,6 +204,74 @@
     cursor: pointer;
 }
 
+/* ── Screen Share Setup ──────────────────────────────────────── */
+.bc-screen-share-info {
+    padding: 14px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: rgba(255,255,255,0.02);
+}
+
+.bc-screen-device-toggle {
+    display: flex;
+    align-items: center;
+}
+
+.bc-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    user-select: none;
+}
+
+.bc-toggle-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.bc-toggle-label i {
+    color: var(--accent);
+    width: 18px;
+    text-align: center;
+}
+
+/* ── PiP Drag Handle (in video preview) ──────────────────────── */
+.bc-pip-controls {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    display: flex;
+    gap: 4px;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.25s;
+}
+.bc-video-container:hover .bc-pip-controls { opacity: 1; }
+.bc-pip-controls button {
+    background: rgba(0,0,0,0.65);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.bc-pip-controls button:hover {
+    background: rgba(0,0,0,0.85);
+    border-color: var(--accent);
+}
+.bc-pip-controls button.active {
+    background: rgba(241, 196, 15, 0.25);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 /* ── Broadcaster Controls Panel ──────────────────────────────── */
 .bc-controls {
     padding: 16px;
@@ -275,6 +352,179 @@
 
 .bc-ctrl-btn-active:hover {
     background: var(--accent-dark);
+}
+
+/* ── Camera Switcher Sheet ──────────────────────────────────── */
+.bc-camera-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 18px max(18px, env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+    background: rgba(5, 6, 10, 0.72);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.bc-camera-sheet-panel {
+    width: min(560px, 100%);
+    max-height: min(72vh, 620px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border-radius: 22px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(24,24,30,0.98), rgba(16,16,22,0.98));
+    box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+}
+
+.bc-camera-sheet-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.bc-camera-sheet-header h3 {
+    margin: 0 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.05rem;
+    color: var(--text-primary);
+}
+
+.bc-camera-sheet-header p {
+    margin: 0;
+    font-size: 0.86rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.bc-camera-sheet-close {
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.04);
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.bc-camera-sheet-close:hover {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.18);
+}
+
+.bc-camera-sheet-list {
+    overflow-y: auto;
+    padding: 12px 14px 16px;
+    display: grid;
+    gap: 10px;
+}
+
+.bc-camera-sheet-empty {
+    min-height: 140px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+}
+
+.bc-camera-choice {
+    width: 100%;
+    text-align: left;
+    padding: 14px 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.04);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.bc-camera-choice:hover {
+    transform: translateY(-1px);
+    border-color: rgba(241, 196, 15, 0.45);
+    background: rgba(241, 196, 15, 0.08);
+    box-shadow: 0 14px 30px rgba(0,0,0,0.2);
+}
+
+.bc-camera-choice.is-active {
+    border-color: rgba(241, 196, 15, 0.9);
+    background: rgba(241, 196, 15, 0.12);
+    box-shadow: 0 0 0 1px rgba(241, 196, 15, 0.45);
+}
+
+.bc-camera-choice.is-loading {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.bc-camera-choice-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    color: var(--accent);
+    background: rgba(241, 196, 15, 0.1);
+    border: 1px solid rgba(241, 196, 15, 0.18);
+}
+
+.bc-camera-choice-body {
+    min-width: 0;
+    flex: 1;
+}
+
+.bc-camera-choice-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-weight: 700;
+    font-size: 0.94rem;
+}
+
+.bc-camera-choice-subtitle {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.bc-camera-choice-badge {
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: rgba(46, 204, 113, 0.16);
+    color: #7ef0a7;
+    white-space: nowrap;
+}
+
+.bc-camera-choice-arrow {
+    color: var(--text-muted);
+    font-size: 0.9rem;
 }
 
 /* ── Restream Control Panel ─────────────────────────────────── */
@@ -779,7 +1029,7 @@
         flex-direction: column;
         height: calc(100vh - var(--navbar-h));
         height: calc(100dvh - var(--navbar-h));
-        padding: 0;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
         gap: 0;
         overflow: hidden;
         position: relative;
@@ -794,34 +1044,37 @@
     }
 
     .bc-video-container {
-        max-height: 35vh;
-        max-height: 35dvh;
+        min-height: clamp(220px, 34dvh, 360px);
+        max-height: clamp(240px, 46dvh, 460px);
         border-radius: 0;
         aspect-ratio: unset; /* let video size naturally on mobile */
+        transition: min-height 0.3s ease, max-height 0.3s ease;
     }
     .bc-video-container video {
-        max-height: 35vh;
-        max-height: 35dvh;
+        max-height: clamp(240px, 46dvh, 460px);
     }
 
     /* When streaming vertically on phone, give the preview more room */
     .bc-video-container.bc-vertical-preview {
-        max-height: 45vh;
-        max-height: 45dvh;
+        min-height: clamp(300px, 48dvh, 520px);
+        max-height: clamp(320px, 62dvh, 640px);
     }
     .bc-video-container.bc-vertical-preview video {
-        max-height: 45vh;
-        max-height: 45dvh;
+        max-height: clamp(320px, 62dvh, 640px);
     }
 
     .bc-info-bar {
         gap: 10px;
-        padding: 10px 12px;
+        padding: 10px max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left));
+    }
+
+    .bc-controls {
+        padding: 12px max(12px, env(safe-area-inset-right)) calc(22px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
     }
 
     .bc-ctrl-buttons {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .bc-ctrl-btn {
@@ -883,20 +1136,18 @@
 @media (max-width: 768px) and (orientation: portrait) {
     .bc-video-container {
         aspect-ratio: unset;
-        max-height: 40vh;
-        max-height: 40dvh;
+        min-height: clamp(230px, 38dvh, 380px);
+        max-height: clamp(260px, 48dvh, 460px);
     }
     .bc-video-container video {
-        max-height: 40vh;
-        max-height: 40dvh;
+        max-height: clamp(260px, 48dvh, 460px);
     }
     .bc-video-container.bc-vertical-preview {
-        max-height: 50vh;
-        max-height: 50dvh;
+        min-height: clamp(320px, 52dvh, 560px);
+        max-height: clamp(360px, 68dvh, 700px);
     }
     .bc-video-container.bc-vertical-preview video {
-        max-height: 50vh;
-        max-height: 50dvh;
+        max-height: clamp(360px, 68dvh, 700px);
     }
     /* Tighter controls on portrait phone */
     .bc-ctrl-buttons {
@@ -910,7 +1161,7 @@
 }
 
 /* ── Broadcast Landscape Phone ── */
-@media (max-height: 500px) and (max-width: 900px) {
+@media (max-height: 500px) and (min-width: 700px) and (max-width: 1100px) {
     .broadcast-layout {
         flex-direction: row;
         height: calc(100vh - var(--navbar-h));
@@ -931,7 +1182,7 @@
     }
     /* Show chat sidebar alongside on landscape phone */
     #bc-chat-sidebar {
-        width: 280px;
+        width: clamp(260px, 34vw, 320px);
         flex-shrink: 0;
         position: relative;
         transform: none;
@@ -1485,6 +1736,20 @@
         grid-template-columns: 1fr;
     }
 
+    .bc-camera-sheet {
+        padding: 0;
+        align-items: flex-end;
+    }
+
+    .bc-camera-sheet-panel {
+        width: 100%;
+        max-height: 84vh;
+        border-radius: 22px 22px 0 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+    }
+
     .bc-tabs-bar {
         height: auto;
         padding: 8px;
@@ -1509,10 +1774,10 @@
 @media (max-width: 480px) {
     .broadcast-layout { padding: 0; gap: 0; }
     .broadcast-main { border-radius: 0; }
-    .bc-video-container { max-height: 30vh; max-height: 30dvh; }
-    .bc-video-container video { max-height: 30vh; max-height: 30dvh; }
-    .bc-video-container.bc-vertical-preview { max-height: 40vh; max-height: 40dvh; }
-    .bc-video-container.bc-vertical-preview video { max-height: 40vh; max-height: 40dvh; }
+    .bc-video-container { min-height: 210px; max-height: 42dvh; }
+    .bc-video-container video { max-height: 42dvh; }
+    .bc-video-container.bc-vertical-preview { min-height: 300px; max-height: 58dvh; }
+    .bc-video-container.bc-vertical-preview video { max-height: 58dvh; }
     .bc-info-bar { padding: 6px 8px; gap: 6px; font-size: 0.78rem; }
     .bc-ctrl-btn { padding: 6px 8px; font-size: 0.75rem; gap: 4px; }
     .bc-ctrl-btn i { font-size: 0.85rem; }
@@ -1527,6 +1792,12 @@
     .stream-config-card h4 { font-size: 0.85rem; }
     #bc-stream-manager,
     .bc-instructions-panel { padding: 10px; }
+}
+
+@media (min-width: 769px) {
+    .bc-camera-sheet {
+        align-items: center;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════

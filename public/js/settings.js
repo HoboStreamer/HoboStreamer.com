@@ -67,7 +67,7 @@ async function saveSettingsProfile() {
 
 // Password management handled on hobo.tools
 function changePassword() {
-    window.open('https://hobo.tools/my', '_blank');
+    window.open('https://my.hobo.tools', '_blank');
 }
 
 /* ── Broadcaster Tab ──────────────────────────────────────────── */

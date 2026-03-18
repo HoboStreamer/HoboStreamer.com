@@ -35,6 +35,48 @@ const MAX_TAGS = 10;
 const MAX_TAG_LENGTH = 32;
 const MAX_PANELS_LENGTH = 20000;
 
+// ── Go-Live Notification Push ────────────────────────────────
+const HOBO_TOOLS_INTERNAL_URL = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
+
+/** Push "X went live" notification to all followers via hobo.tools internal API (fire-and-forget) */
+function notifyFollowersGoLive(streamer, stream) {
+    const followerIds = db.getFollowerIds(streamer.id);
+    if (!followerIds.length) return;
+
+    const payload = {
+        user_ids: followerIds,
+        type: 'STREAM_LIVE',
+        title: `${streamer.display_name || streamer.username} is live!`,
+        message: stream.title || 'Started streaming',
+        icon: '🔴',
+        sender_id: streamer.id,
+        sender_name: streamer.display_name || streamer.username,
+        sender_avatar: streamer.avatar_url || null,
+        service: 'hobostreamer',
+        url: `https://hobostreamer.com/${streamer.username}`,
+        rich_content: {
+            thumbnail: streamer.avatar_url || null,
+            context: {
+                stream_id: stream.id,
+                username: streamer.username,
+                title: stream.title || 'Started streaming',
+            },
+        },
+    };
+
+    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/notifications/push-bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Internal-Key': INTERNAL_API_KEY },
+        body: JSON.stringify(payload),
+    }).then(r => {
+        if (!r.ok) console.warn(`[Notify] Go-live notification push failed: ${r.status}`);
+        else console.log(`[Notify] Go-live notifications sent to ${followerIds.length} followers`);
+    }).catch(err => {
+        console.warn('[Notify] Go-live notification push error:', err.message);
+    });
+}
+
 function hasOwn(obj, key) {
     return Object.prototype.hasOwnProperty.call(obj || {}, key);
 }
@@ -457,6 +499,10 @@ router.post('/', requireAuth, (req, res) => {
         chatRelayService.startForStream(stream).catch((relayErr) => {
             console.warn(`[ChatRelay] Failed to start relay for stream ${streamId}:`, relayErr.message);
         });
+
+        // Notify followers that this streamer went live (fire-and-forget)
+        notifyFollowersGoLive(req.user, stream);
+
         res.status(201).json({ stream, endpoint });
     } catch (err) {
         console.error('[Streams] Create error:', err.message);

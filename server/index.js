@@ -78,15 +78,7 @@ const chatRelayService = require('./integrations/chat-relay-service');
 const restreamRoutes = require('./streaming/restream-routes');
 const restreamManager = require('./streaming/restream-manager');
 
-// Game
-const gameRoutes = require('./game/routes');
-const gameServer = require('./game/game-server');
-const game = require('./game/game-engine');
-
-// Canvas (collaborative r/place-style game)
-const canvasService = require('./game/canvas-service');
-const canvasServer = require('./game/canvas-server');
-const canvasRoutes = require('./game/canvas-routes');
+// Game & Canvas — migrated to hobo.quest (game/canvas code removed)
 
 // ── Express App ──────────────────────────────────────────────
 const app = express();
@@ -106,12 +98,16 @@ function getAllowedOrigins() {
     const baseOrigin = normalizeOrigin(config.baseUrl);
     if (baseOrigin) allowed.add(baseOrigin);
 
+    // hobo.quest game client calls cosmetics API cross-origin
+    allowed.add('https://hobo.quest');
+
     if (config.nodeEnv !== 'production') {
         [
             'http://localhost:3000',
             'http://127.0.0.1:3000',
             'http://localhost:5173',
             'http://127.0.0.1:5173',
+            'http://localhost:3200',
         ].forEach(origin => allowed.add(origin));
     }
 
@@ -255,8 +251,10 @@ app.use('/api/restream', restreamRoutes);
 app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
-app.use('/api/game', gameRoutes);
-app.use('/api/game/canvas', canvasRoutes);
+// Game & Canvas — migrated to hobo.quest
+app.get('/game', (req, res) => res.redirect(301, 'https://hobo.quest/game'));
+app.get('/canvas', (req, res) => res.redirect(301, 'https://hobo.quest/canvas'));
+app.use('/api/game', (req, res) => res.status(410).json({ error: 'Game has moved to https://hobo.quest/game' }));
 app.use('/api/meta', metaRoutes);
 app.use('/api/pastes', pasteRoutes);
 const ttsRoutes = require('./chat/tts-routes');
@@ -375,10 +373,8 @@ server.on('upgrade', (req, socket, head) => {
         controlServer.handleUpgrade(req, socket, head);
     } else if (url.startsWith('/ws/call')) {
         callServer.handleUpgrade(req, socket, head);
-    } else if (url.startsWith('/ws/game')) {
-        gameServer.handleUpgrade(req, socket, head);
-    } else if (url.startsWith('/ws/canvas')) {
-        canvasServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/game') || url.startsWith('/ws/canvas')) {
+        socket.destroy(); // migrated to hobo.quest
     } else if (url.startsWith('/ws/robotstreamer-publish')) {
         robotStreamerService.handleUpgrade(req, socket, head);
     } else {
@@ -445,9 +441,7 @@ async function start() {
         console.log(`[Server] Admin user "${adminUser}" created from ADMIN_USERNAME — change password after first login!`);
     }
 
-    // 2b. Initialize game database
-    game.initGameDb();
-    console.log('[Server] Game engine ready');
+    // Game & Canvas migrated to hobo.quest — no local init needed
 
     // 3. Initialize chat server
     chatServer.init(server);
@@ -458,13 +452,7 @@ async function start() {
     // 4b. Initialize broadcast server
     broadcastServer.init(server);
 
-    // 4c. Initialize game WebSocket server
-    gameServer.init(server);
-
-    // 4c2. Initialize canvas service + WebSocket
-    canvasService.initDb();
-    canvasServer.init();
-    console.log('[Server] Canvas game ready');
+    // Game & Canvas WebSocket servers migrated to hobo.quest
 
     // 4d. Initialize group call signaling server
     callServer.init(server);
@@ -559,8 +547,7 @@ async function start() {
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/broadcast`);
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/control`);
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/call`);
-        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/game`);
-        console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/canvas`);
+        console.log(`[Server] Game/Canvas:  migrated to hobo.quest`);
         console.log(`[Server] Environment:  ${config.nodeEnv}`);
         console.log('');
         console.log('[Server] Ready. Happy camping! 🏕️');
@@ -578,6 +565,12 @@ async function start() {
 
         function broadcastChangelog() {
             try {
+                // Get git describe for a human-readable version tag
+                let versionTag = '';
+                try {
+                    versionTag = execSync('git describe --always --tags', { cwd: REPO_DIR, encoding: 'utf8', timeout: 3000 }).trim();
+                } catch { versionTag = ''; }
+
                 const raw = execSync(
                     `git --no-pager log --pretty=format:'%H||%h||%s||%an||%aI' -10`,
                     { cwd: REPO_DIR, encoding: 'utf8', timeout: 5000 }
@@ -588,10 +581,23 @@ async function start() {
                 });
                 if (commits.length === 0) return;
 
+                // Build summary: use version tag if available, otherwise top 3 subjects
                 const top3 = commits.slice(0, 3).map(c => c.subject).join(' · ');
+                const versionPrefix = versionTag ? `(${versionTag}) ` : '';
+                // Include relative time since the most recent commit
+                const latestDate = commits[0].date ? new Date(commits[0].date) : null;
+                let timeSuffix = '';
+                if (latestDate) {
+                    const ago = Date.now() - latestDate.getTime();
+                    if (ago < 60_000) timeSuffix = ' (just now)';
+                    else if (ago < 3_600_000) timeSuffix = ` (${Math.round(ago / 60_000)}m ago)`;
+                    else if (ago < 86_400_000) timeSuffix = ` (${Math.round(ago / 3_600_000)}h ago)`;
+                    else timeSuffix = ` (${Math.round(ago / 86_400_000)}d ago)`;
+                }
+
                 const payload = {
                     type: 'update',
-                    summary: `Server updated — ${top3}`,
+                    summary: `Server restarted ${versionPrefix}— ${top3}${timeSuffix}`,
                     commits,
                     url: '/updates',
                     timestamp: new Date().toISOString(),
@@ -601,7 +607,7 @@ async function start() {
                 // Persist to chat_messages on the FIRST broadcast only
                 if (_changelogBroadcasts === 0) {
                     try {
-                        const summaryText = `🚀 Server updated — ${top3}`;
+                        const summaryText = `🚀 Server restarted ${versionPrefix}— ${top3}${timeSuffix}`;
                         db.saveChatMessage({
                             stream_id: null,
                             user_id: null,
@@ -749,8 +755,7 @@ function shutdown() {
     setTimeout(() => {
         restreamManager.stopViewerCountPolling();
         restreamManager.stopAll();
-        canvasServer.close();
-        gameServer.close();
+        // canvasServer + gameServer migrated to hobo.quest
         callServer.close();
         chatServer.close();
         controlServer.close();

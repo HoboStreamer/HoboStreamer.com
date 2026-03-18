@@ -29,6 +29,7 @@ const STABLE_THRESHOLD_MS = 30000;
 const MAX_RESTART_ATTEMPTS = 30;           // 30 attempts (was 10 — too few for Twitch connection storms)
 const FFMPEG_STARTUP_DELAY_RTMP = 3000;
 const RAPID_CRASH_THRESHOLD_MS = 5000;     // If FFmpeg exits within this, apply extra backoff
+const LIVE_OUTPUT_BUFFER_MS = 1000;
 
 /**
  * Path to a static FFmpeg binary built with OpenSSL (not GnuTLS).
@@ -272,6 +273,12 @@ class RestreamManager extends EventEmitter {
         if (!dest.server_url || !dest.stream_key) return null;
         let url = dest.server_url.replace(/\/+$/, '');
 
+        // Twitch is much more stable over RTMPS. Normalize old RTMP configs
+        // transparently so existing saved destinations don't need manual edits.
+        if (dest.platform === 'twitch' && url.startsWith('rtmp://')) {
+            url = url.replace(/^rtmp:\/\//, 'rtmps://');
+        }
+
         // Kick ingest URLs require /app path — auto-add if missing.
         // Without /app, the RTMP handshake sends the wrong app name and Kick
         // closes the connection immediately after TLS (looks like a TLS error).
@@ -296,6 +303,11 @@ class RestreamManager extends EventEmitter {
             '-rw_timeout', '10000000',  // 10s read/write timeout (microseconds)
             '-i', flvUrl,
             '-c', 'copy',               // Codec copy — no re-encoding
+            '-muxdelay', '0',
+            '-muxpreload', '0',
+            '-flush_packets', '1',
+            '-rtmp_live', 'live',
+            '-rtmp_buffer', String(LIVE_OUTPUT_BUFFER_MS),
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
             destUrl,
@@ -320,6 +332,11 @@ class RestreamManager extends EventEmitter {
             '-f', 'mpegts',
             '-i', 'pipe:0',             // Read combined MPEG-TS from stdin
             ...this._getEncodingArgs(preset, { customOverrides }),
+            '-muxdelay', '0',
+            '-muxpreload', '0',
+            '-flush_packets', '1',
+            '-rtmp_live', 'live',
+            '-rtmp_buffer', String(LIVE_OUTPUT_BUFFER_MS),
             '-max_muxing_queue_size', '4096',
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
@@ -463,10 +480,16 @@ class RestreamManager extends EventEmitter {
             '-thread_queue_size', '1024',      // Prevent input queue blocking (video+audio demux interleave)
             '-analyzeduration', '2000000',     // 2s — SDP is known, don't over-probe
             '-probesize', '2000000',           // 2MB — plenty for known RTP streams
+            '-use_wallclock_as_timestamps', '1',
             '-fflags', '+genpts+discardcorrupt+nobuffer',
             '-err_detect', 'ignore_err',       // Don't bail on corrupt RTP packets (missed packets → partial frames)
             '-i', sdpPath,
             ...this._getEncodingArgs(preset, { hasAudio: !!audioConsumer, customOverrides }),
+            '-muxdelay', '0',
+            '-muxpreload', '0',
+            '-flush_packets', '1',
+            '-rtmp_live', 'live',
+            '-rtmp_buffer', String(LIVE_OUTPUT_BUFFER_MS),
             '-max_muxing_queue_size', '4096',  // Prevent FLV muxer stalls from interleave gaps
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
@@ -546,11 +569,11 @@ class RestreamManager extends EventEmitter {
         const encoderPreset = customOverrides.encoderPreset || preset.preset;
 
         // Compute maxrate/bufsize relative to video bitrate (if custom bitrate overridden)
-        let maxrate = preset.maxrate;
+        let maxrate = videoBitrate;
         let bufsize = preset.bufsize;
         if (customOverrides.videoBitrate) {
             const kbps = parseInt(customOverrides.videoBitrate, 10);
-            maxrate = `${kbps + 500}k`;
+            maxrate = `${kbps}k`;
             bufsize = `${kbps * 2}k`;
         }
 
@@ -561,6 +584,7 @@ class RestreamManager extends EventEmitter {
             '-preset', encoderPreset,
             '-tune', 'zerolatency',          // Eliminates lookahead buffering; critical for jittery real-time input
             '-b:v', videoBitrate,
+            '-minrate', videoBitrate,
             '-maxrate', maxrate,
             '-bufsize', bufsize,
             '-g', String(preset.gop),
@@ -569,7 +593,7 @@ class RestreamManager extends EventEmitter {
             '-flags', '+cgop',               // Closed GOPs — clean segment boundaries for RTMP ingest
             '-pix_fmt', 'yuv420p',
             '-threads', '2',                  // Cap per-process threads — prevents N encodes from fighting over all cores
-            '-x264-params', 'nal-hrd=cbr',   // Truly CBR output for RTMP service compatibility
+            '-x264-params', 'nal-hrd=cbr:force-cfr=1',   // Truly CBR output for RTMP service compatibility
         );
 
         // Optional resolution scaling
@@ -670,6 +694,8 @@ class RestreamManager extends EventEmitter {
      * to avoid GnuTLS TLS session invalidation issues.
      */
     _spawnFFmpeg(session, args) {
+        this._disposeTransientSessionState(session);
+
         // Use OpenSSL FFmpeg binary for RTMPS destinations (GnuTLS has TLS rekeying issues)
         const destUrl = args[args.length - 1] || '';
         const isRtmps = destUrl.startsWith('rtmps://');
@@ -698,6 +724,7 @@ class RestreamManager extends EventEmitter {
         proc.stdout.on('data', () => {}); // drain stdout
 
         proc.on('error', (err) => {
+            this._disposeTransientSessionState(session, proc);
             console.error(`[Restream] FFmpeg spawn error for ${session.key}:`, err.message);
             session.lastError = err.message;
             session.status = 'error';
@@ -709,6 +736,7 @@ class RestreamManager extends EventEmitter {
         });
 
         proc.on('close', (code) => {
+            this._disposeTransientSessionState(session, proc);
             if (session.status === 'stopped') return; // intentional stop
 
             const duration = Date.now() - (session.startedAt || Date.now());
@@ -742,7 +770,7 @@ class RestreamManager extends EventEmitter {
 
                 // Reset backoff after stable period
                 session.stableTimer = setTimeout(() => {
-                    if (session.process === proc) {
+                    if (session.process === proc && session.status === 'live') {
                         session.restartAttempts = 0;
                         session.restartDelay = RESTART_BASE_DELAY;
                         console.log(`[Restream] Session ${session.key} stable — reset backoff`);
@@ -873,6 +901,35 @@ class RestreamManager extends EventEmitter {
             // Force kill after 5s if SIGTERM doesn't work
             const proc = session.process;
             setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);
+            session.process = null;
+        }
+    }
+
+    /**
+     * Clear per-run resources after an FFmpeg exit/error without removing the session.
+     * This prevents stale stable timers, leaked JSMPEG taps, and leaked WebRTC
+     * PlainRtpTransport consumers from surviving into restart attempts.
+     */
+    _disposeTransientSessionState(session, proc = null) {
+        if (session.stableTimer) {
+            clearTimeout(session.stableTimer);
+            session.stableTimer = null;
+        }
+
+        if (proc && session.process && session.process !== proc) return;
+
+        if (session.dataTapCleanup) {
+            try { session.dataTapCleanup(); } catch {}
+            session.dataTapCleanup = null;
+        }
+
+        if (proc) {
+            try { proc.stdin?.destroy(); } catch {}
+            try { proc.stdout?.destroy(); } catch {}
+            try { proc.stderr?.destroy(); } catch {}
+        }
+
+        if (!proc || session.process === proc) {
             session.process = null;
         }
     }

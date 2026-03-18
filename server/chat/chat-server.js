@@ -29,7 +29,7 @@ class ChatServer {
         this.wss = null;
         /** @type {Map<WebSocket, { user: object|null, anonId: string, streamId: number|null, ip: string }>} */
         this.clients = new Map();
-        /** @type {Map<string, number>} IP → sequential anon number (warm cache, backed by DB) */
+        /** @type {Map<string, number>} IP → unified anon number (warm cache, backed by hobo.tools) */
         this.anonMap = new Map();
         this.nextAnonId = 1;
         this._anonDbLoaded = false;
@@ -43,6 +43,12 @@ class ChatServer {
         this.ttsQueueSize = new Map();
         /** @type {Map<string, number>} `${streamId}:${userId}` → user's TTS queue count */
         this.ttsUserCounts = new Map();
+
+        // ── Unified anon resolution via hobo.tools internal API ──
+        this._hoboToolsUrl = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
+        this._internalKey = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
+        /** @type {Map<string, Promise<number>>} IP → pending resolve promise (dedup concurrent) */
+        this._pendingResolves = new Map();
     }
 
     normalizeIp(ip) {
@@ -88,21 +94,79 @@ class ChatServer {
         }
     }
 
+    /**
+     * Resolve anon number from hobo.tools unified API.
+     * Returns a Promise<number>. Caches in memory and falls back to local DB.
+     */
+    async _resolveUnifiedAnonNum(ip) {
+        // Already cached
+        if (this.anonMap.has(ip)) return this.anonMap.get(ip);
+
+        // Dedup concurrent resolves for the same IP
+        if (this._pendingResolves.has(ip)) return this._pendingResolves.get(ip);
+
+        const promise = (async () => {
+            try {
+                const res = await fetch(`${this._hoboToolsUrl}/internal/resolve-anon`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Internal-Key': this._internalKey,
+                    },
+                    body: JSON.stringify({ ip }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const num = data.anon_number;
+                    this.anonMap.set(ip, num);
+                    if (num >= this.nextAnonId) this.nextAnonId = num + 1;
+                    // Also sync to local DB for warmup cache
+                    try { db.getOrCreateAnonNum(ip); } catch { /* ok */ }
+                    return num;
+                }
+                throw new Error(`HTTP ${res.status}`);
+            } catch (e) {
+                console.warn(`[Chat] Unified anon resolve failed for ${ip}, falling back to local:`, e.message);
+                // Fallback to local DB
+                try {
+                    const num = db.getOrCreateAnonNum(ip);
+                    this.anonMap.set(ip, num);
+                    if (num >= this.nextAnonId) this.nextAnonId = num + 1;
+                    return num;
+                } catch {
+                    const num = this.nextAnonId++;
+                    this.anonMap.set(ip, num);
+                    return num;
+                }
+            } finally {
+                this._pendingResolves.delete(ip);
+            }
+        })();
+
+        this._pendingResolves.set(ip, promise);
+        return promise;
+    }
+
     getAnonIdForIp(ip) {
         this._loadAnonMappings();
         const anonKey = this.normalizeIp(ip);
-        if (!this.anonMap.has(anonKey)) {
-            // Persist to DB so it survives restarts
-            try {
-                const num = db.getOrCreateAnonNum(anonKey);
-                this.anonMap.set(anonKey, num);
-                if (num >= this.nextAnonId) this.nextAnonId = num + 1;
-            } catch (e) {
-                // Fallback: use in-memory only
-                this.anonMap.set(anonKey, this.nextAnonId++);
-            }
+        if (this.anonMap.has(anonKey)) {
+            return `anon${this.anonMap.get(anonKey)}`;
         }
-        return `anon${this.anonMap.get(anonKey)}`;
+        // Synchronous fallback for immediate use — kick off async resolve in background
+        this._resolveUnifiedAnonNum(anonKey).catch(() => {});
+        // Use local DB for synchronous path
+        try {
+            const num = db.getOrCreateAnonNum(anonKey);
+            this.anonMap.set(anonKey, num);
+            if (num >= this.nextAnonId) this.nextAnonId = num + 1;
+            return `anon${num}`;
+        } catch (e) {
+            // Fallback: use in-memory only
+            const num = this.nextAnonId++;
+            this.anonMap.set(anonKey, num);
+            return `anon${num}`;
+        }
     }
 
     getAnonIdForConnection(ip, streamId = null) {
@@ -357,18 +421,6 @@ class ChatServer {
             return;
         }
 
-        // ── Word filter ──────────────────────────────────────
-        const filterResult = wordFilter.check(text);
-        if (!filterResult.safe) {
-            text = filterResult.filtered;
-        }
-
-        // ── Spam check ───────────────────────────────────────
-        if (wordFilter.isSpam(text)) {
-            this.sendTo(ws, { type: 'system', message: 'Message blocked: detected as spam.' });
-            return;
-        }
-
         // ── Ban check ────────────────────────────────────────
         if (client.user && db.isUserBanned(client.user.id, client.streamId)) {
             this.sendTo(ws, { type: 'system', message: 'You are banned from this chat.' });
@@ -421,21 +473,6 @@ class ChatServer {
                 }
             }
 
-            // Caps limit
-            if (chatSettings.caps_percentage_limit && text.length >= 8) {
-                const letters = text.replace(/[^a-z]/gi, '');
-                const caps = text.replace(/[^A-Z]/g, '');
-                if (letters.length >= 6 && (caps.length / letters.length) * 100 > Number(chatSettings.caps_percentage_limit)) {
-                    this.sendTo(ws, { type: 'system', message: 'Please ease up on the all-caps.' });
-                    return;
-                }
-            }
-
-            // Aggressive filter
-            if (chatSettings.aggressive_filter && !filterResult.safe) {
-                this.sendTo(ws, { type: 'system', message: 'Message blocked by channel moderation settings.' });
-                return;
-            }
         }
 
         const username = client.user ? client.user.display_name : client.anonId;
@@ -457,7 +494,7 @@ class ChatServer {
             is_global: !client.streamId,
             avatar_url: client.user?.avatar_url || null,
             profile_color: client.user?.profile_color || '#999',
-            filtered: !filterResult.safe,
+            filtered: false,
             timestamp: new Date().toISOString(),
         };
 

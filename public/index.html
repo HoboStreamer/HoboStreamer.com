@@ -5,9 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HoboStreamer — Live Streaming for Camp Culture</title>
     <meta name="description" content="HoboStreamer.com — Open source live streaming platform for stealth campers, nomads, and outdoor enthusiasts. Paired with HoboApp.">
-    <link rel="stylesheet" href="/css/style.css?v=9">
+    <link rel="stylesheet" href="/css/style.css?v=10">
     <link rel="stylesheet" href="/css/broadcast.css?v=3">
-    <link rel="stylesheet" href="/css/game.css?v=2">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -29,41 +28,41 @@
     <div class="nav-links-wrap">
         <button class="nav-scroll-btn nav-scroll-left" id="nav-scroll-left" onclick="scrollNavLinks(-1)" title="Scroll left"><i class="fa-solid fa-chevron-left"></i></button>
         <div class="nav-links">
-            <a href="#" onclick="event.preventDefault();navigate('/')" class="nav-link active" data-page="home" data-tooltip="Live">
-            <i class="fa-solid fa-fire"></i> <span>Live</span>
+            <a href="/" onclick="event.preventDefault();navigate('/')" class="nav-link active" data-page="home" data-tooltip="Home">
+            <i class="fa-solid fa-house"></i> <span>Home</span>
         </a>
-        <a href="#" onclick="event.preventDefault();navigate('/vods')" class="nav-link" data-page="vods" data-tooltip="Videos">
-            <i class="fa-solid fa-video"></i> <span>Videos</span>
+        <a href="/vods" onclick="event.preventDefault();navigate('/vods')" class="nav-link" data-page="vods" data-tooltip="VODs">
+            <i class="fa-solid fa-video"></i> <span>VODs</span>
         </a>
-        <a href="#" onclick="event.preventDefault();navigate('/clips')" class="nav-link" data-page="clips" data-tooltip="Clips">
+        <a href="/clips" onclick="event.preventDefault();navigate('/clips')" class="nav-link" data-page="clips" data-tooltip="Clips">
             <i class="fa-solid fa-scissors"></i> <span>Clips</span>
         </a>
-        <a href="#" onclick="event.preventDefault();navigate('/pastes')" class="nav-link" data-page="pastes" data-tooltip="Pastes">
+        <a href="/pastes" onclick="event.preventDefault();navigate('/pastes')" class="nav-link" data-page="pastes" data-tooltip="Pastes">
             <i class="fa-solid fa-paste"></i> <span>Pastes</span>
         </a>
-        <a href="#" onclick="event.preventDefault();navigate('/chat')" class="nav-link" data-page="chat" data-tooltip="Chat">
+        <a href="/chat" onclick="event.preventDefault();navigate('/chat')" class="nav-link" data-page="chat" data-tooltip="Chat">
             <i class="fa-solid fa-comments"></i> <span>Chat</span>
         </a>
         <div class="nav-dropdown" id="nav-game-dropdown">
-            <a href="#" onclick="event.preventDefault();toggleNavDropdown('nav-game-dropdown')" class="nav-link" data-page="game" data-tooltip="Game">
+            <a href="https://hobo.quest" onclick="event.preventDefault();toggleNavDropdown('nav-game-dropdown')" class="nav-link" data-page="game" data-tooltip="Game">
                 <i class="fa-solid fa-gamepad"></i> <span>Game</span> <i class="fa-solid fa-caret-down nav-dd-caret"></i>
             </a>
             <div class="nav-dropdown-menu">
                 <a href="https://hobo.quest/game" onclick="closeNavDropdowns()">
-                    <i class="fa-solid fa-dragon"></i> HoboGame
+                    <i class="fa-solid fa-dragon"></i> Quest
                 </a>
                 <a href="https://hobo.quest/canvas" onclick="closeNavDropdowns()">
                     <i class="fa-solid fa-palette"></i> Canvas
                 </a>
             </div>
         </div>
-        <a href="#" onclick="event.preventDefault();navigate('/broadcast')" class="nav-link" data-page="broadcast" id="nav-broadcast" style="display:none" data-tooltip="Go Live">
+        <a href="/broadcast" onclick="event.preventDefault();navigate('/broadcast')" class="nav-link" data-page="broadcast" id="nav-broadcast" style="display:none" data-tooltip="Go Live">
             <i class="fa-solid fa-tower-broadcast"></i> <span>Go Live</span><span class="nav-live-dot" id="nav-live-dot" style="display:none"><i class="fa-solid fa-circle"></i></span>
         </a>
-        <a href="#" onclick="event.preventDefault();navigate('/dashboard')" class="nav-link" data-page="dashboard" id="nav-dashboard" style="display:none" data-tooltip="Dashboard">
+        <a href="/dashboard" onclick="event.preventDefault();navigate('/dashboard')" class="nav-link" data-page="dashboard" id="nav-dashboard" style="display:none" data-tooltip="Dashboard">
             <i class="fa-solid fa-gauge-high"></i> <span>Dashboard</span>
         </a>
-        <a href="#" onclick="event.preventDefault();navigate('/admin')" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin">
+        <a href="https://hobo.tools/admin" onclick="event.preventDefault();window.location.href='https://hobo.tools/admin'" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin">
             <i class="fa-solid fa-shield-halved"></i> <span>Admin</span>
         </a>
         </div>
@@ -89,18 +88,18 @@
                 <i class="fa-solid fa-caret-down"></i>
             </div>
             <div class="user-dropdown" id="user-dropdown">
-                <a onclick="navigate('/'+currentUser?.username)"><i class="fa-solid fa-user"></i> My Channel</a>
-                <a onclick="navigate('/broadcast')"><i class="fa-solid fa-tower-broadcast"></i> Go Live</a>
-                <a onclick="navigate('/dashboard')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
-                <a onclick="navigate('/settings')"><i class="fa-solid fa-gear"></i> Settings</a>
-                <a onclick="showModal('stream-key')"><i class="fa-solid fa-key"></i> Stream Key</a>
-                <a onclick="showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
-                <a onclick="navigate('/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
-                <a href="https://hobo.tools/my" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
+                <a href="#" onclick="event.preventDefault();navigate('/'+currentUser?.username)"><i class="fa-solid fa-user"></i> My Channel</a>
+                <a href="/broadcast" onclick="event.preventDefault();navigate('/broadcast')"><i class="fa-solid fa-tower-broadcast"></i> Go Live</a>
+                <a href="/dashboard" onclick="event.preventDefault();navigate('/dashboard')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+                <a href="/settings" onclick="event.preventDefault();navigate('/settings')"><i class="fa-solid fa-gear"></i> Settings</a>
+                <a href="#" onclick="event.preventDefault();showModal('stream-key')"><i class="fa-solid fa-key"></i> Stream Key</a>
+                <a href="#" onclick="event.preventDefault();showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
+                <a href="/themes" onclick="event.preventDefault();navigate('/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
+                <a href="https://my.hobo.tools" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
                 <hr>
-                <a onclick="captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
+                <a href="#" onclick="event.preventDefault();captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
                 <hr>
-                <a onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
+                <a href="#" onclick="event.preventDefault();logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
             </div>
         </div>
     </div>
@@ -119,7 +118,7 @@
         <div class="hero">
             <div class="hero-content">
                 <h1><i class="fa-solid fa-campground"></i> HoboStreamer</h1>
-                <p>Live streaming for stealth campers, nomads & outdoor culture</p>
+                <p class="hero-tagline">Live streaming for <span class="hero-rotate-wrap"><span class="hero-rotate" id="hero-rotate"></span></span></p>
                 <div class="hero-cta">
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
                         <i class="fa-solid fa-broadcast-tower"></i> Start Streaming
@@ -133,163 +132,67 @@
                     <a href="https://discord.gg/M6MuRUaeJj" target="_blank" class="btn btn-outline btn-lg" rel="noopener noreferrer">
                         <i class="fa-brands fa-discord"></i> Discord
                     </a>
-                    <button class="btn btn-outline btn-lg" onclick="document.querySelector('.promo-bar').scrollIntoView({behavior:'smooth',block:'start'});setTimeout(()=>{if(!document.getElementById('hoboapp-popover').classList.contains('open'))toggleHoboAppPopover()},400);">
-                        <i class="fa-solid fa-campground"></i> HoboApp
-                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- HoboApp Cross-Promo -->
-        <div class="promo-bar">
-            <i class="fa-solid fa-map-location-dot"></i>
-            <a href="#" class="promo-bar-link" onclick="event.preventDefault();toggleHoboAppPopover()">Looking for camping spots? Check out <strong>HoboApp</strong> — 300+ curated stealth camping locations in Washington State <i class="fa-solid fa-chevron-down hoboapp-chevron"></i></a>
-        </div>
-
-        <!-- HoboApp Popover (below promo bar, pushes content down) -->
-        <div class="hoboapp-popover" id="hoboapp-popover">
-            <div class="hoboapp-popover-inner">
-                <button class="hoboapp-popover-close" onclick="toggleHoboAppPopover()" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
-
-                <!-- Header -->
-                <div class="hoboapp-header">
-                    <div class="hoboapp-logo">
-                        <i class="fa-solid fa-campground"></i>
-                    </div>
-                    <div>
-                        <h2>HoboApp <span class="hoboapp-version" id="hoboapp-version">Loading…</span></h2>
-                        <p class="hoboapp-tagline">Washington State Stealth Camp & Shelter Locator</p>
-                    </div>
+        <div class="network-hub">
+            <div class="network-hub-header">
+                <i class="fa-solid fa-network-wired"></i>
+                <div>
+                    <h3>The Hobo Network</h3>
+                    <p>Everything you need — streaming, games, maps, food resources, and more.</p>
                 </div>
-
-                <p class="hoboapp-desc">A free, open-source desktop app that aggregates <strong>18 data sources</strong> into one interactive map — purpose-built for stealth campers, van dwellers, and nomads. <strong>307 hand-curated</strong> Washington State locations with stealth ratings.</p>
-
-                <div class="hoboapp-live-meta" id="hoboapp-live-meta">
-                    <div class="hoboapp-meta-card">
-                        <span class="hoboapp-meta-label">Latest version</span>
-                        <strong id="hoboapp-meta-version">Loading…</strong>
-                        <span class="hoboapp-meta-sub" id="hoboapp-meta-version-sub">Checking GitHub release/package data…</span>
+            </div>
+            <div class="network-hub-grid">
+                <a href="https://my.hobo.tools" class="network-card" target="_blank" rel="noopener">
+                    <div class="network-card-icon" style="--card-accent:#c0965c"><i class="fa-solid fa-user-circle"></i></div>
+                    <div class="network-card-info">
+                        <strong>My Account</strong>
+                        <span>Profile, settings, themes &amp; notifications</span>
                     </div>
-                    <div class="hoboapp-meta-card">
-                        <span class="hoboapp-meta-label">Latest commit</span>
-                        <strong id="hoboapp-meta-commit">Loading…</strong>
-                        <span class="hoboapp-meta-sub" id="hoboapp-meta-commit-sub">Fetching latest commit…</span>
+                    <i class="fa-solid fa-arrow-right network-card-arrow"></i>
+                </a>
+                <a href="https://hobo.quest" class="network-card" target="_blank" rel="noopener">
+                    <div class="network-card-icon" style="--card-accent:#e74c3c"><i class="fa-solid fa-dragon"></i></div>
+                    <div class="network-card-info">
+                        <strong>HoboQuest</strong>
+                        <span>MMORPG, pixel canvas &amp; community games</span>
                     </div>
-                    <div class="hoboapp-meta-card">
-                        <span class="hoboapp-meta-label">Last pushed</span>
-                        <strong id="hoboapp-meta-pushed">Loading…</strong>
-                        <span class="hoboapp-meta-sub" id="hoboapp-meta-pushed-sub">Syncing repository activity…</span>
+                    <i class="fa-solid fa-arrow-right network-card-arrow"></i>
+                </a>
+                <a href="https://maps.hobo.tools" class="network-card" target="_blank" rel="noopener">
+                    <div class="network-card-icon" style="--card-accent:#2ecc71"><i class="fa-solid fa-map-location-dot"></i></div>
+                    <div class="network-card-info">
+                        <strong>HoboMaps</strong>
+                        <span>Camps, resources, stealth spots &amp; survival guide</span>
                     </div>
-                    <div class="hoboapp-meta-card">
-                        <span class="hoboapp-meta-label">GitHub stars</span>
-                        <strong id="hoboapp-meta-stars">—</strong>
-                        <span class="hoboapp-meta-sub" id="hoboapp-meta-stars-sub">Live from github.com/HoboStreamer/HoboApp</span>
+                    <i class="fa-solid fa-arrow-right network-card-arrow"></i>
+                </a>
+                <a href="https://food.hobo.tools" class="network-card" target="_blank" rel="noopener">
+                    <div class="network-card-icon" style="--card-accent:#f39c12"><i class="fa-solid fa-utensils"></i></div>
+                    <div class="network-card-info">
+                        <strong>HoboFood</strong>
+                        <span>Food banks, budget meals &amp; meal planner</span>
                     </div>
-                </div>
-
-                <div class="hoboapp-latest-change">
-                    <div class="hoboapp-latest-change-head">
-                        <strong>Latest change</strong>
-                        <a id="hoboapp-commit-link" href="https://github.com/HoboStreamer/HoboApp" target="_blank" rel="noopener">View on GitHub</a>
+                    <i class="fa-solid fa-arrow-right network-card-arrow"></i>
+                </a>
+                <a href="https://hobo.tools" class="network-card" target="_blank" rel="noopener">
+                    <div class="network-card-icon" style="--card-accent:#9b59b6"><i class="fa-solid fa-toolbox"></i></div>
+                    <div class="network-card-info">
+                        <strong>HoboTools</strong>
+                        <span>Network hub, admin &amp; developer tools</span>
                     </div>
-                    <p id="hoboapp-commit-message">Fetching latest HoboApp changes from GitHub…</p>
-                </div>
-
-                <!-- Feature Grid -->
-                <div class="hoboapp-features">
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-map-location-dot"></i></div>
-                        <div>
-                            <strong>Interactive Map</strong>
-                            <span>Dark/satellite views, marker clusters, heatmaps, GPX export</span>
-                        </div>
+                    <i class="fa-solid fa-arrow-right network-card-arrow"></i>
+                </a>
+                <a href="https://hobo.quest/canvas" class="network-card" target="_blank" rel="noopener">
+                    <div class="network-card-icon" style="--card-accent:#3498db"><i class="fa-solid fa-palette"></i></div>
+                    <div class="network-card-info">
+                        <strong>Canvas</strong>
+                        <span>Collaborative pixel art — place tiles, build together</span>
                     </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-database"></i></div>
-                        <div>
-                            <strong>18 Data Sources</strong>
-                            <span>RIDB, FreeCampsites, iOverlander, USFS, NPS, OSM, Reddit & more</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-bridge"></i></div>
-                        <div>
-                            <strong>Bridge & Shelter Finder</strong>
-                            <span>Federal bridge inventory with clearance data & shelter scoring</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-umbrella"></i></div>
-                        <div>
-                            <strong>Rain Cover Finder</strong>
-                            <span>Awnings, canopies, covered walkways + 45 curated PNW spots</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-cloud-sun"></i></div>
-                        <div>
-                            <strong>Weather & Terrain</strong>
-                            <span>NWS forecasts, weather alerts, elevation analysis, moon phases</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-shield-halved"></i></div>
-                        <div>
-                            <strong>Crime Intel Heatmap</strong>
-                            <span>Safety scoring from urban grit indicators + 22 curated zones</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-utensils"></i></div>
-                        <div>
-                            <strong>Budget Meal Planner</strong>
-                            <span>Cross-store price comparison, nutrition data, food bank locator</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-bus"></i></div>
-                        <div>
-                            <strong>Transit Directions</strong>
-                            <span>Walking, biking & transit routes with WA agency fares</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-hand-holding-heart"></i></div>
-                        <div>
-                            <strong>Survival Resources</strong>
-                            <span>Showers, laundry, WiFi, shelters, clinics, food banks, water & 30+ types</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-water"></i></div>
-                        <div>
-                            <strong>Waterways & Woods</strong>
-                            <span>Rivers, springs, lakes, fishing spots, dense forest, BLM/USFS land</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-syringe"></i></div>
-                        <div>
-                            <strong>Harm Reduction</strong>
-                            <span>Naloxone, syringe exchanges, addiction counselling, outreach</span>
-                        </div>
-                    </div>
-                    <div class="hoboapp-feat">
-                        <div class="hoboapp-feat-icon"><i class="fa-solid fa-route"></i></div>
-                        <div>
-                            <strong>Trip Planner</strong>
-                            <span>Multi-night itinerary builder with per-night weather & moon phase</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Download CTA -->
-                <div class="hoboapp-cta">
-                    <a href="https://github.com/HoboStreamer/HoboApp" target="_blank" rel="noopener" class="btn btn-primary btn-lg hoboapp-dl-btn">
-                        <i class="fa-brands fa-github"></i> Download on GitHub
-                    </a>
-                    <p class="hoboapp-cta-sub" id="hoboapp-cta-sub"><i class="fa-solid fa-code-branch"></i> Free & open source &nbsp;·&nbsp; <i class="fa-brands fa-windows"></i> <i class="fa-brands fa-linux"></i> <i class="fa-brands fa-apple"></i> Windows, Linux & macOS</p>
-                </div>
+                    <i class="fa-solid fa-arrow-right network-card-arrow"></i>
+                </a>
             </div>
         </div>
 
@@ -307,19 +210,36 @@
                 </div>
             </div>
 
-            <!-- HoboStreamer Changelog -->
-            <div class="section-header" style="margin-top:32px;">
-                <h2><i class="fa-solid fa-code-commit"></i> Recent Changes</h2>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    <button id="home-changelog-toggle" class="badge" onclick="toggleHomeChangelog()" style="cursor:pointer;border:none;background:var(--surface);padding:4px 10px;border-radius:6px;color:var(--text);font-size:0.78rem;">Show All</button>
-                    <a href="#" onclick="event.preventDefault();navigate('/updates')" class="badge" style="cursor:pointer;text-decoration:none;">View All</a>
+            <!-- Streaming CTA -->
+            <div class="home-cta-banner" id="home-cta-banner">
+                <div class="home-cta-inner">
+                    <div class="home-cta-text">
+                        <h3><i class="fa-solid fa-broadcast-tower"></i> Go live however you want</h3>
+                        <p>Start instantly in your browser when you want the fastest setup, or plug in OBS and ffmpeg when you want a full scene-based workflow. Same account, same channel, no friction.</p>
+                    </div>
+                    <div class="home-cta-steps">
+                        <div class="home-cta-step">
+                            <div class="home-cta-step-icon"><i class="fa-solid fa-user-plus"></i></div>
+                            <strong>Claim your channel</strong>
+                            <span>One sign-in through Hobo Network</span>
+                        </div>
+                        <div class="home-cta-step-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+                        <div class="home-cta-step">
+                            <div class="home-cta-step-icon"><i class="fa-solid fa-video"></i></div>
+                            <strong>Start broadcasting</strong>
+                            <span>Browser, OBS, or ffmpeg</span>
+                        </div>
+                        <div class="home-cta-step-arrow"><i class="fa-solid fa-arrow-right"></i></div>
+                        <div class="home-cta-step">
+                            <div class="home-cta-step-icon"><i class="fa-solid fa-users"></i></div>
+                            <strong>Build the hangout</strong>
+                            <span>Share live links, clips, and VODs</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
+                        <i class="fa-solid fa-broadcast-tower"></i> Launch Your Stream
+                    </button>
                 </div>
-            </div>
-            <div id="home-changelog-wrapper" class="home-changelog-wrapper collapsed">
-                <div id="home-changelog" class="home-changelog">
-                    <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
-                </div>
-                <div class="home-changelog-fade" id="home-changelog-fade"></div>
             </div>
 
             <!-- Recently Online -->
@@ -330,6 +250,49 @@
                 <div class="empty-state">
                     <p class="muted">No recent streams</p>
                 </div>
+            </div>
+
+            <!-- Recent Clips -->
+            <div class="section-header" id="home-clips-header" style="display:none">
+                <h2><i class="fa-solid fa-scissors"></i> Recent Clips</h2>
+                <a href="/clips" onclick="event.preventDefault();navigate('/clips')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
+            </div>
+            <div class="stream-grid home-clips-grid" id="home-clips-grid"></div>
+
+            <!-- Recent Pastes -->
+            <div class="section-header" id="home-pastes-header" style="display:none">
+                <h2><i class="fa-solid fa-paste"></i> Recent Pastes</h2>
+                <a href="/pastes" onclick="event.preventDefault();navigate('/pastes')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
+            </div>
+            <div class="home-pastes-list" id="home-pastes-list"></div>
+
+            <!-- HoboQuest Leaderboards -->
+            <div class="section-header" id="home-quest-header" style="display:none">
+                <h2><i class="fa-solid fa-trophy"></i> HoboQuest Leaderboards</h2>
+                <a href="https://hobo.quest/game" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">Play Game</a>
+            </div>
+            <div class="home-leaderboards" id="home-leaderboards"></div>
+
+            <!-- Canvas Preview -->
+            <div class="section-header" id="home-canvas-header" style="display:none">
+                <h2><i class="fa-solid fa-palette"></i> Community Canvas</h2>
+                <a href="https://hobo.quest/canvas" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">Open Canvas</a>
+            </div>
+            <div class="home-canvas-preview" id="home-canvas-preview"></div>
+
+            <!-- HoboStreamer Changelog -->
+            <div class="section-header" style="margin-top:32px;">
+                <h2><i class="fa-solid fa-code-commit"></i> Recent Changes</h2>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button id="home-changelog-toggle" class="badge" onclick="toggleHomeChangelog()" style="cursor:pointer;border:none;background:var(--surface);padding:4px 10px;border-radius:6px;color:var(--text);font-size:0.78rem;">Show All</button>
+                    <a href="/updates" onclick="event.preventDefault();navigate('/updates')" class="badge" style="cursor:pointer;text-decoration:none;">View All</a>
+                </div>
+            </div>
+            <div id="home-changelog-wrapper" class="home-changelog-wrapper collapsed">
+                <div id="home-changelog" class="home-changelog">
+                    <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
+                </div>
+                <div class="home-changelog-fade" id="home-changelog-fade"></div>
             </div>
         </div>
     </section>
@@ -422,6 +385,27 @@
                                 <button class="vc-btn" id="btn-fullscreen" title="Fullscreen">
                                     <i class="fa-solid fa-expand"></i>
                                 </button>
+                            </div>
+                        </div>
+                        <div class="fullscreen-chat-overlay" id="fullscreen-chat-overlay" aria-hidden="true">
+                            <div class="fullscreen-chat-messages" id="fullscreen-chat-messages"></div>
+                            <div class="fullscreen-chat-chrome" id="fullscreen-chat-chrome">
+                                <div class="fullscreen-chat-header">
+                                    <span><i class="fa-solid fa-comments"></i> Live Chat</span>
+                                    <span class="fullscreen-chat-hint">Moves out of the way when idle</span>
+                                </div>
+                                <div class="chat-input-area fullscreen-chat-input-area" id="fullscreen-chat-input-area">
+                                    <div class="chat-input-row">
+                                        <textarea id="fullscreen-chat-input" class="chat-textarea fullscreen-chat-textarea" placeholder="Send a message..." maxlength="500"
+                                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                                        <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
+                                            <i class="fa-solid fa-volume-high"></i>
+                                        </button>
+                                        <button class="chat-send-btn" onclick="sendChat(document.getElementById('fullscreen-chat-input'))">
+                                            <i class="fa-solid fa-paper-plane"></i>
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1193,7 +1177,22 @@
                             </div>
                         </div>
 
-                        <!-- Device selection for Browser WebRTC (visible when browser sub-method selected) -->
+                        <!-- Browser Source Choice (Camera vs Screen Share) -->
+                        <div class="form-group" id="bc-browser-source-choice" style="display:block">
+                            <label>What do you want to share?</label>
+                            <div class="bc-method-picker bc-method-picker-sm">
+                                <div class="bc-method-card-sm selected" data-bsrc="camera" onclick="selectBrowserSource('camera')">
+                                    <i class="fa-solid fa-camera"></i>
+                                    <strong>Camera / Mic</strong>
+                                </div>
+                                <div class="bc-method-card-sm" data-bsrc="screen" onclick="selectBrowserSource('screen')">
+                                    <i class="fa-solid fa-display"></i>
+                                    <strong>Screen Share</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ═ Camera mode: device pickers ═ -->
                         <div class="form-group" id="bc-create-devices" style="display:block">
                             <div id="bc-perm-request" class="bc-perm-request">
                                 <p class="bc-perm-hint"><i class="fa-solid fa-shield-halved"></i> Your browser needs camera &amp; microphone access to list available devices and go live.</p>
@@ -1211,6 +1210,37 @@
                                     <i class="fa-solid fa-arrows-rotate"></i> Refresh Devices
                                 </button>
                             </div>
+                        </div>
+
+                        <!-- ═ Screen Share mode: info + optional devices ═ -->
+                        <div class="form-group" id="bc-screen-share-setup" style="display:none">
+                            <div class="bc-screen-share-info">
+                                <p class="bc-perm-hint"><i class="fa-solid fa-display"></i> You'll be prompted to pick a screen, window, or tab when you click Create Stream.</p>
+                                <p class="bc-perm-hint" style="margin-bottom:4px"><i class="fa-solid fa-volume-up"></i> Desktop/system audio will be captured if your browser supports it.</p>
+                            </div>
+                            <div id="bc-screen-optional-devices">
+                                <div class="bc-screen-device-toggle" style="margin-top:10px">
+                                    <label class="bc-toggle-label">
+                                        <input type="checkbox" id="bc-screen-mic-enabled" checked>
+                                        <i class="fa-solid fa-microphone"></i> Include Microphone
+                                    </label>
+                                </div>
+                                <div id="bc-screen-mic-select" style="margin-top:6px">
+                                    <select id="bc-screen-audio" class="form-input"><option value="default">Default Microphone</option></select>
+                                </div>
+                                <div class="bc-screen-device-toggle" style="margin-top:10px">
+                                    <label class="bc-toggle-label">
+                                        <input type="checkbox" id="bc-screen-cam-enabled">
+                                        <i class="fa-solid fa-video"></i> Include Camera (PiP overlay)
+                                    </label>
+                                </div>
+                                <div id="bc-screen-cam-select" style="display:none;margin-top:6px">
+                                    <select id="bc-screen-camera" class="form-input"><option value="default">Default Camera</option></select>
+                                </div>
+                            </div>
+                            <button class="btn btn-small btn-outline" type="button" onclick="requestMediaPermissions()" style="margin-top:10px" title="Grant access and refresh device list">
+                                <i class="fa-solid fa-arrows-rotate"></i> Grant Access / Refresh Devices
+                            </button>
                         </div>
 
                         <button class="btn btn-primary btn-lg" style="width:100%" id="bc-create-btn" onclick="createNewStream()">
@@ -1537,14 +1567,17 @@
                             <button class="bc-ctrl-btn bc-ctrl-btn-danger" id="bc-toggle-stream" onclick="stopBroadcast()">
                                 <i class="fa-solid fa-stop"></i> Stop Stream
                             </button>
-                            <button class="bc-ctrl-btn" onclick="flipCamera()">
-                                <i class="fa-solid fa-camera-rotate"></i> Flip
+                            <button class="bc-ctrl-btn" id="bc-btn-switch-cam" onclick="openCameraSwitcher()">
+                                <i class="fa-solid fa-camera-rotate"></i> Switch Cam
                             </button>
                             <button class="bc-ctrl-btn" id="bc-btn-screenshare" onclick="toggleScreenShare()">
                                 <i class="fa-solid fa-display"></i> Screen
                             </button>
                             <button class="bc-ctrl-btn" id="bc-btn-cam-overlay" onclick="toggleCameraOverlay()" style="display:none">
                                 <i class="fa-solid fa-video"></i> Cam PiP
+                            </button>
+                            <button class="bc-ctrl-btn" id="bc-btn-toggle-mic" onclick="toggleScreenShareMic()" style="display:none">
+                                <i class="fa-solid fa-microphone"></i> Mic
                             </button>
                             <button class="bc-ctrl-btn" onclick="toggleBroadcastStats()">
                                 <i class="fa-solid fa-chart-line"></i> Stats
@@ -2071,6 +2104,26 @@
             <i class="fa-solid fa-comment"></i>
             <span class="mobile-chat-badge" id="bc-mobile-chat-badge" style="display:none">0</span>
         </button>
+
+        <div class="bc-camera-sheet" id="bc-camera-sheet" style="display:none" onclick="if(event.target===this)closeCameraSwitcher()">
+            <div class="bc-camera-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="bc-camera-sheet-title">
+                <div class="bc-camera-sheet-header">
+                    <div>
+                        <h3 id="bc-camera-sheet-title"><i class="fa-solid fa-camera"></i> Switch Camera</h3>
+                        <p id="bc-camera-sheet-subtitle">Pick the exact camera you want to use live.</p>
+                    </div>
+                    <button class="bc-camera-sheet-close" type="button" onclick="closeCameraSwitcher()" aria-label="Close camera switcher">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="bc-camera-sheet-list" id="bc-camera-sheet-list">
+                    <div class="bc-camera-sheet-empty">
+                        <i class="fa-solid fa-spinner fa-spin"></i>
+                        <span>Loading cameras…</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </section>
 
     <!-- ── SETTINGS ──────────────────────────────────────── -->
@@ -2141,7 +2194,7 @@
                     <div class="settings-card">
                         <h3><i class="fa-solid fa-lock"></i> Password &amp; Security</h3>
                         <p style="color:var(--text-muted);margin:8px 0 12px">Your account is managed by the Hobo Network.</p>
-                        <a href="https://hobo.tools/my" class="btn btn-outline" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none">
+                        <a href="https://my.hobo.tools" class="btn btn-outline" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none">
                             <i class="fa-solid fa-arrow-up-right-from-square"></i> Manage Account on hobo.tools
                         </a>
                     </div>
@@ -2643,135 +2696,7 @@
         </div>
     </section>
 
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!--  GAME — HoboGame Open-World Survival                       -->
-<!-- ═══════════════════════════════════════════════════════════ -->
-    <section id="page-game" class="page">
-        <div class="game-wrapper">
-            <div class="game-canvas-container">
-                <!-- HUD overlay: status badges + action buttons -->
-                <div class="game-hud-top">
-                    <div class="game-hud-left">
-                        <span class="game-zone-badge" id="game-zone">Outpost</span>
-                        <span class="game-players-badge"><i class="fa-solid fa-users"></i> <span id="game-players">1</span></span>
-                        <span class="game-connection-badge disconnected" id="game-conn-badge">
-                            <span class="game-connection-dot"></span>
-                            <span id="game-conn-text">Offline</span>
-                        </span>
-                    </div>
-                    <div class="game-hud-right">
-                        <button class="game-hud-btn" onclick="togglePanel('inventory')" title="Inventory (I)"><i class="fa-solid fa-box-open"></i></button>
-                        <button class="game-hud-btn" onclick="togglePanel('skills')" title="Skills (K)"><i class="fa-solid fa-chart-bar"></i></button>
-                        <button class="game-hud-btn" onclick="togglePanel('map')" title="Map (M)"><i class="fa-solid fa-map"></i></button>
-                    </div>
-                </div>
-                <canvas id="game-canvas" width="960" height="640"></canvas>
-                <!-- Login overlay (shown when not authenticated) -->
-                <div class="game-login-overlay" id="game-login-overlay">
-                    <div class="game-login-content game-promo">
-                        <div class="game-promo-icon">🏕️⚔️🌍</div>
-                        <h3>HoboGame</h3>
-                        <p class="game-promo-tagline">Open-world survival right here on HoboStreamer</p>
-                        <div class="game-promo-features">
-                            <div class="game-promo-feat"><span class="gpf-icon">⛏️</span><span>Chop trees, mine ores & fish across a massive procedural world</span></div>
-                            <div class="game-promo-feat"><span class="gpf-icon">⚔️</span><span>Craft swords, armor, potions & legendary equipment</span></div>
-                            <div class="game-promo-feat"><span class="gpf-icon">💀</span><span>Open-world PvP — raid other players or get raided</span></div>
-                            <div class="game-promo-feat"><span class="gpf-icon">🏠</span><span>Build bases with walls, furnaces, storage & sleeping bags</span></div>
-                            <div class="game-promo-feat"><span class="gpf-icon">🐉</span><span>Fight dragons & monsters in procedural dungeons</span></div>
-                            <div class="game-promo-feat"><span class="gpf-icon">🏆</span><span>Level 6 skills, compete on global leaderboards</span></div>
-                        </div>
-                        <button class="btn btn-primary btn-lg" onclick="showModal('register')" style="margin-top:16px">
-                            <i class="fa-solid fa-user-plus"></i> Register for a Permanent Account
-                        </button>
-                        <p class="muted" style="margin-top:8px">
-                            You can also jump in instantly as your current anon number, or <a href="#" onclick="event.preventDefault();showModal('login')">log in</a> to continue an existing character.
-                        </p>
-                    </div>
-                </div>
-                <!-- Loading overlay (shown while connecting/loading) -->
-                <div class="game-loading-overlay" id="game-loading-overlay" style="display:none">
-                    <div class="game-loading-content">
-                        <div class="game-loading-spinner"></div>
-                        <h3 id="game-loading-title">Connecting to HoboGame...</h3>
-                        <p id="game-loading-status">Establishing connection</p>
-                        <div class="game-loading-bar-track">
-                            <div class="game-loading-bar-fill" id="game-loading-bar"></div>
-                        </div>
-                        <div class="game-loading-tips" id="game-loading-tips">
-                            <p>💡 Tip: Bank your loot at the Outpost to keep it safe from PvP death!</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <!-- Controls hint hidden — game is fullscreen now -->
-        </div>
-    </section>
-
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!--  CANVAS — Collaborative r/place-style Pixel Art             -->
-<!-- ═══════════════════════════════════════════════════════════ -->
-    <section id="page-canvas" class="page">
-        <div class="canvas-layout">
-            <!-- Left Sidebar -->
-            <div class="canvas-sidebar">
-                <div class="canvas-card">
-                    <h3><i class="fa-solid fa-palette"></i> Palette</h3>
-                    <div id="canvas-color-preview" class="canvas-color-preview"></div>
-                    <div class="canvas-palette" id="canvas-palette"></div>
-                    <div class="canvas-status" id="canvas-status">Select a color to place</div>
-                    <div class="canvas-cooldown" id="canvas-cooldown"></div>
-                    <div class="canvas-coords" id="canvas-coords">Hover over the canvas</div>
-                </div>
-                <div class="canvas-card">
-                    <h3><i class="fa-solid fa-circle-info"></i> Info</h3>
-                    <div class="canvas-hover" id="canvas-hover">Hover over a tile to see details</div>
-                </div>
-                <div class="canvas-card">
-                    <h3><i class="fa-solid fa-question-circle"></i> Controls</h3>
-                    <div class="canvas-help">
-                        <span><kbd>Click</kbd> / <kbd>Tap</kbd> Place tile</span>
-                        <span><kbd>Right-drag</kbd> / <kbd>Drag</kbd> Pan around</span>
-                        <span><kbd>Scroll</kbd> / <kbd>Pinch</kbd> Zoom in/out</span>
-                        <span><kbd>Arrows</kbd> Move cursor</span>
-                        <span><kbd>Space</kbd> / <kbd>Enter</kbd> Place at cursor</span>
-                        <span><kbd>R</kbd> Reset view</span>
-                        <span style="margin-top:4px;opacity:0.7"><i class="fa-solid fa-paint-roller"></i> You can paint over other players' tiles after a short tile cooldown</span>
-                    </div>
-                </div>
-            </div>
-            <!-- Canvas Stage -->
-            <div class="canvas-stage-wrap">
-                <div class="canvas-toolbar">
-                    <div class="canvas-toolbar-left">
-                        <button class="btn btn-outline btn-sm" onclick="resetCanvasCamera()" title="Reset View"><i class="fa-solid fa-expand"></i></button>
-                        <button class="btn btn-outline btn-sm active" id="canvas-grid-btn" onclick="canvasToggleGrid()" title="Toggle Grid"><i class="fa-solid fa-border-all"></i></button>
-                        <button class="btn btn-outline btn-sm" onclick="centerCanvasCursor()" title="Go to Cursor"><i class="fa-solid fa-crosshairs"></i></button>
-                    </div>
-                    <div class="canvas-toolbar-right">
-                        <span class="canvas-place-count" id="canvas-place-count"></span>
-                        <span class="canvas-online" id="canvas-online"><i class="fa-solid fa-users"></i> 0 online</span>
-                    </div>
-                </div>
-                <div class="canvas-stage">
-                    <canvas id="canvas-board"></canvas>
-                    <div class="canvas-login-prompt" id="canvas-login-prompt" style="display:none">
-                        <i class="fa-solid fa-lock"></i> <a href="#" onclick="event.preventDefault();showModal('login')">Log in</a> or <a href="#" onclick="event.preventDefault();showModal('register')">register</a> to place tiles
-                    </div>
-                </div>
-            </div>
-            <!-- Right Sidebar -->
-            <div class="canvas-sidebar canvas-sidebar-right">
-                <div class="canvas-card">
-                    <h3><i class="fa-solid fa-clock-rotate-left"></i> Activity</h3>
-                    <div class="canvas-activity" id="canvas-activity">No recent activity</div>
-                </div>
-                <div class="canvas-card">
-                    <h3><i class="fa-solid fa-users"></i> Online</h3>
-                    <div class="canvas-presence" id="canvas-presence">No one here yet</div>
-                </div>
-            </div>
-        </div>
-    </section>
+<!-- Game & Canvas migrated to hobo.quest -->
 
     <!-- ═══════════════════════════════════════════════════════════ -->
     <!--  UPDATES / CHANGELOG                                        -->
@@ -3023,7 +2948,7 @@
 
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=2"></script>
-<script src="/js/app.js?v=6"></script>
+<script src="/js/app.js?v=8"></script>
 <script src="/js/stream-player.js?v=4"></script>
 <script src="/js/emotes.js?v=3"></script>
 <script src="/js/chat.js?v=11"></script>
@@ -3076,15 +3001,13 @@
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>
-<script src="/js/game.js?v=2"></script>
-<script src="/js/canvas.js?v=1"></script>
 <script src="/js/staff-console.js?v=1"></script>
 <script src="/js/dashboard-moderation.js?v=1"></script>
 <script src="/js/pastes.js?v=1"></script>
 <script src="/js/messenger.js?v=1"></script>
 
 <!-- ── Hobo Network shared libs (notifications, account sync) ── -->
-<script src="https://hobo.tools/shared/notification-ui.js"></script>
+<script src="/js/notification-ui.js"></script>
 <script>
 // Initialize Hobo Network notifications when user is logged in
 // (the auth token IS the hobo.tools RS256 JWT now — no separate hobo_token)
