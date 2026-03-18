@@ -14,6 +14,42 @@ const multer = require('multer');
 const db = require('../db/database');
 const { requireAuth, optionalAuth } = require('../auth/auth');
 
+const HOBO_TOOLS_INTERNAL_URL = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
+
+function truncatePreview(text, max = 120) {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!clean) return '';
+    return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+function notificationActor(user, fallbackName = 'Someone') {
+    return {
+        sender_id: user?.id || null,
+        sender_name: user ? (user.display_name || user.username) : fallbackName,
+        sender_avatar: user?.avatar_url || null,
+    };
+}
+
+function pushNotification(payload) {
+    if (!payload?.user_id) return;
+
+    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/notifications/push`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Internal-Key': INTERNAL_API_KEY,
+        },
+        body: JSON.stringify(payload),
+    }).then((response) => {
+        if (!response.ok) {
+            console.warn(`[Notify] Paste notification push failed: ${response.status}`);
+        }
+    }).catch((err) => {
+        console.warn('[Notify] Paste notification push error:', err.message);
+    });
+}
+
 // ── Screenshot upload storage ───────────────────────────────
 const SCREENSHOTS_DIR = path.resolve('./data/pastes/screenshots');
 if (!fs.existsSync(SCREENSHOTS_DIR)) fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
@@ -606,6 +642,27 @@ router.post('/:slug/fork', optionalAuth, (req, res) => {
         );
 
         const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [slug]);
+
+        if (original.user_id && (!req.user || original.user_id !== req.user.id)) {
+            const actor = notificationActor(req.user, 'Someone');
+            pushNotification({
+                user_id: original.user_id,
+                type: 'PASTE_FORK',
+                category: 'social',
+                priority: 'normal',
+                title: 'Your paste was forked',
+                message: `${actor.sender_name} forked "${truncatePreview(original.title || 'Untitled paste', 80)}"`,
+                icon: '🍴',
+                ...actor,
+                service: 'hobostreamer',
+                url: `https://hobostreamer.com/p/${original.slug}`,
+                rich_content: {
+                    body: truncatePreview(original.content, 160),
+                    context: { paste_slug: original.slug, event: 'fork' },
+                },
+            });
+        }
+
         res.status(201).json({ paste, url: `/p/${slug}` });
     } catch (err) {
         console.error('[Pastes] Fork error:', err);
@@ -635,7 +692,7 @@ router.get('/:slug/raw', (req, res) => {
 // ── Like / Unlike a paste ───────────────────────────────────
 router.post('/:slug/like', requireAuth, (req, res) => {
     try {
-        const paste = db.get('SELECT id FROM pastes WHERE slug = ?', [req.params.slug]);
+        const paste = db.get('SELECT id, slug, user_id, title FROM pastes WHERE slug = ?', [req.params.slug]);
         if (!paste) return res.status(404).json({ error: 'Paste not found' });
 
         const alreadyLiked = db.hasUserLikedPaste(paste.id, req.user.id);
@@ -644,6 +701,24 @@ router.post('/:slug/like', requireAuth, (req, res) => {
             result = db.unlikePaste(paste.id, req.user.id);
         } else {
             result = db.likePaste(paste.id, req.user.id);
+            if (paste.user_id && paste.user_id !== req.user.id) {
+                const actor = notificationActor(req.user);
+                pushNotification({
+                    user_id: paste.user_id,
+                    type: 'PASTE_LIKE',
+                    category: 'social',
+                    priority: 'normal',
+                    title: 'New like on your paste',
+                    message: `${actor.sender_name} liked "${truncatePreview(paste.title || 'Untitled paste', 80)}"`,
+                    icon: '👍',
+                    ...actor,
+                    service: 'hobostreamer',
+                    url: `https://hobostreamer.com/p/${paste.slug}`,
+                    rich_content: {
+                        context: { paste_slug: paste.slug, event: 'like' },
+                    },
+                });
+            }
         }
         res.json({ liked: !alreadyLiked, likes: result?.likes || 0 });
     } catch (err) {
@@ -655,9 +730,29 @@ router.post('/:slug/like', requireAuth, (req, res) => {
 // ── Track a copy event ──────────────────────────────────────
 router.post('/:slug/copy', optionalAuth, (req, res) => {
     try {
-        const paste = db.get('SELECT id, copies FROM pastes WHERE slug = ?', [req.params.slug]);
+        const paste = db.get('SELECT id, slug, user_id, title, copies FROM pastes WHERE slug = ?', [req.params.slug]);
         if (!paste) return res.status(404).json({ error: 'Paste not found' });
         db.incrementPasteCopies(req.params.slug);
+
+        if (paste.user_id && (!req.user || paste.user_id !== req.user.id)) {
+            const actor = notificationActor(req.user, 'Someone');
+            pushNotification({
+                user_id: paste.user_id,
+                type: 'PASTE_COPY',
+                category: 'social',
+                priority: 'low',
+                title: 'Your paste was copied',
+                message: `${actor.sender_name} copied "${truncatePreview(paste.title || 'Untitled paste', 80)}"`,
+                icon: '📋',
+                ...actor,
+                service: 'hobostreamer',
+                url: `https://hobostreamer.com/p/${paste.slug}`,
+                rich_content: {
+                    context: { paste_slug: paste.slug, event: 'copy' },
+                },
+            });
+        }
+
         res.json({ copies: (paste.copies || 0) + 1 });
     } catch (err) {
         console.error('[Pastes] Copy track error:', err);
@@ -715,7 +810,7 @@ router.get('/:slug/comments', optionalAuth, (req, res) => {
  */
 router.post('/:slug/comments', optionalAuth, (req, res) => {
     try {
-        const paste = db.get('SELECT id, user_id FROM pastes WHERE slug = ?', [req.params.slug]);
+        const paste = db.get('SELECT id, slug, user_id, title FROM pastes WHERE slug = ?', [req.params.slug]);
         if (!paste) return res.status(404).json({ error: 'Paste not found' });
 
         const ip = req.ip || req.connection?.remoteAddress || 'unknown';
@@ -771,8 +866,9 @@ router.post('/:slug/comments', optionalAuth, (req, res) => {
 
         // ── Parent comment validation ───────────────────────
         const parentId = req.body.parent_id ? parseInt(req.body.parent_id) : null;
+        let parent = null;
         if (parentId) {
-            const parent = db.getPasteCommentById(parentId);
+            parent = db.getPasteCommentById(parentId);
             if (!parent || parent.paste_id !== paste.id) {
                 return res.status(400).json({ error: 'Invalid parent comment' });
             }
@@ -802,6 +898,52 @@ router.post('/:slug/comments', optionalAuth, (req, res) => {
             LEFT JOIN users u ON c.user_id = u.id
             WHERE c.id = ?
         `, [result.lastInsertRowid]);
+
+        const actor = notificationActor(req.user, anonName || 'Anonymous');
+        const actorUserId = req.user?.id || null;
+        const recipients = new Map();
+
+        if (paste.user_id && paste.user_id !== actorUserId) {
+            recipients.set(paste.user_id, {
+                user_id: paste.user_id,
+                type: parentId ? 'PASTE_REPLY' : 'PASTE_COMMENT',
+                category: 'social',
+                priority: 'normal',
+                title: parentId ? 'New reply on your paste' : 'New comment on your paste',
+                message: `${actor.sender_name} ${parentId ? 'replied on' : 'commented on'} "${truncatePreview(paste.title || 'Untitled paste', 80)}"`,
+                icon: parentId ? '↩️' : '💬',
+                ...actor,
+                service: 'hobostreamer',
+                url: `https://hobostreamer.com/p/${paste.slug}#comments`,
+                rich_content: {
+                    body: truncatePreview(message, 180),
+                    context: { paste_slug: paste.slug, comment_id: comment.id, parent_id: parentId || null },
+                },
+            });
+        }
+
+        if (parent?.user_id && parent.user_id !== actorUserId) {
+            recipients.set(parent.user_id, {
+                user_id: parent.user_id,
+                type: 'PASTE_REPLY',
+                category: 'social',
+                priority: 'normal',
+                title: 'New reply to your comment',
+                message: `${actor.sender_name} replied to your comment on "${truncatePreview(paste.title || 'Untitled paste', 80)}"`,
+                icon: '↩️',
+                ...actor,
+                service: 'hobostreamer',
+                url: `https://hobostreamer.com/p/${paste.slug}#comments`,
+                rich_content: {
+                    body: truncatePreview(message, 180),
+                    context: { paste_slug: paste.slug, comment_id: comment.id, parent_id: parentId },
+                },
+            });
+        }
+
+        for (const payload of recipients.values()) {
+            pushNotification(payload);
+        }
 
         res.status(201).json({ comment });
     } catch (err) {

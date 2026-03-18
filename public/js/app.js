@@ -795,6 +795,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
     try {
         currentChannelUsername = username;
         const data = await api(`/streams/channel/${username}`);
+        const mediaData = await api(`/media/channel/${username}`).catch(() => null);
         const ch = data.channel;
         const streams = data.streams || (data.stream ? [data.stream] : []);
         const vods = data.vods || [];
@@ -802,6 +803,8 @@ async function loadChannelPage(username, preferredStreamId = null) {
         const liveStreams = streams.filter(s => s && s.is_live);
         const rsRestream = data.rs_restream || {};
         const restreamLinks = data.restream_links || null;
+
+        renderChannelMediaStrip(ch, mediaData);
 
         // Follow button helper
         const setupFollowBtn = (btn) => {
@@ -967,6 +970,44 @@ async function loadChannelPage(username, preferredStreamId = null) {
         toast('Channel not found', 'error');
         navigate('/');
     }
+}
+
+function renderChannelMediaStrip(channel, mediaData) {
+    const mountId = 'ch-media-request-strip';
+    let mount = document.getElementById(mountId);
+    if (!mount) {
+        mount = document.createElement('div');
+        mount.id = mountId;
+        mount.style.marginTop = '10px';
+        mount.style.display = 'flex';
+        mount.style.flexWrap = 'wrap';
+        mount.style.gap = '10px';
+        const infoText = document.querySelector('#ch-info-bar .ch-info-bar-text');
+        const offlineInfo = document.querySelector('#ch-offline-header .ch-offline-header-info');
+        if (infoText) infoText.appendChild(mount);
+        if (offlineInfo && !offlineInfo.querySelector(`#${mountId}`)) {
+            const clone = mount.cloneNode(false);
+            clone.id = `${mountId}-offline`;
+            offlineInfo.appendChild(clone);
+        }
+    }
+
+    const queueCount = mediaData?.state?.queue?.length || 0;
+    const cost = mediaData?.state?.settings?.request_cost || 25;
+    const queueUrl = mediaData?.media_player_url || `/media/${channel.username}`;
+    const html = `
+        <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(192,150,92,.12);border:1px solid rgba(192,150,92,.22);font-size:.92rem;">
+            <i class="fa-solid fa-headphones"></i>
+            Request media with <strong>!sr &lt;url&gt;</strong> · ${cost} coins · ${queueCount} queued
+        </span>
+        <a href="${queueUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:inherit;text-decoration:none;font-size:.92rem;">
+            <i class="fa-solid fa-up-right-from-square"></i>
+            Open media queue
+        </a>`;
+
+    mount.innerHTML = html;
+    const offlineMount = document.getElementById(`${mountId}-offline`);
+    if (offlineMount) offlineMount.innerHTML = html;
 }
 
 /**

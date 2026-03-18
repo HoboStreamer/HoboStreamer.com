@@ -71,6 +71,7 @@ const themeRoutes = require('./themes/routes');
 const emoteRoutes = require('./emotes/routes');
 const metaRoutes = require('./meta/routes');
 const pasteRoutes = require('./pastes/routes');
+const mediaRoutes = require('./media/routes');
 const robotStreamerService = require('./integrations/robotstreamer-service');
 const chatRelayService = require('./integrations/chat-relay-service');
 
@@ -257,6 +258,7 @@ app.get('/canvas', (req, res) => res.redirect(301, 'https://hobo.quest/canvas'))
 app.use('/api/game', (req, res) => res.status(410).json({ error: 'Game has moved to https://hobo.quest/game' }));
 app.use('/api/meta', metaRoutes);
 app.use('/api/pastes', pasteRoutes);
+app.use('/api/media', mediaRoutes);
 const ttsRoutes = require('./chat/tts-routes');
 app.use('/api/tts', ttsRoutes);
 const dmRoutes = require('./chat/dm-routes');
@@ -325,6 +327,10 @@ app.post('/api/admin/broadcast', requireAuth, permissions.requireAdmin, (req, re
 // Each widget is a standalone HTML page designed for OBS browser sources.
 app.get('/obs/chat/:username', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/obs/chat.html'));
+});
+
+app.get('/media/:username', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/media-player.html'));
 });
 
 // ── SPA Fallback ─────────────────────────────────────────────

@@ -261,6 +261,51 @@ function initDb() {
         database.exec(`CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_id)`);
     } catch (e) { console.warn('[DB] Comments migration:', e.message); }
 
+    // Migrate: create media request tables if missing
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS media_request_settings (
+            user_id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 1,
+            request_cost INTEGER DEFAULT 25,
+            max_per_user INTEGER DEFAULT 3,
+            max_duration_seconds INTEGER DEFAULT 600,
+            allow_youtube INTEGER DEFAULT 1,
+            allow_vimeo INTEGER DEFAULT 1,
+            allow_direct_media INTEGER DEFAULT 1,
+            auto_advance INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        database.exec(`CREATE TABLE IF NOT EXISTS media_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            streamer_id INTEGER NOT NULL,
+            stream_id INTEGER,
+            user_id INTEGER NOT NULL,
+            username TEXT NOT NULL,
+            input TEXT NOT NULL,
+            canonical_url TEXT NOT NULL,
+            embed_url TEXT,
+            provider TEXT NOT NULL CHECK(provider IN ('youtube', 'vimeo', 'audio', 'video')),
+            title TEXT NOT NULL,
+            thumbnail_url TEXT,
+            duration_seconds INTEGER,
+            cost INTEGER NOT NULL DEFAULT 25,
+            queue_position INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'playing', 'played', 'skipped', 'removed', 'failed')),
+            requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME,
+            ended_at DATETIME,
+            last_error TEXT,
+            FOREIGN KEY (streamer_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE SET NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_media_requests_streamer_status ON media_requests(streamer_id, status, queue_position, requested_at)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_media_requests_user_status ON media_requests(user_id, status, requested_at)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_media_requests_canonical ON media_requests(streamer_id, canonical_url, status)');
+    } catch (e) { console.warn('[DB] media requests migration:', e.message); }
+
     // Migrate: create anon IP mapping table for persistent anon numbering
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS anon_ip_mappings (
@@ -1399,6 +1444,127 @@ function getTotalWatchTime(userId) {
     return row ? (row.total || 0) : 0;
 }
 
+// ── Media Request helpers ───────────────────────────────────
+
+function getMediaRequestSettingsByUserId(userId) {
+    return get('SELECT * FROM media_request_settings WHERE user_id = ?', [userId]);
+}
+
+function upsertMediaRequestSettings(userId, fields = {}) {
+    const existing = getMediaRequestSettingsByUserId(userId);
+    if (!existing) {
+        run(`INSERT INTO media_request_settings (
+            user_id, enabled, request_cost, max_per_user, max_duration_seconds,
+            allow_youtube, allow_vimeo, allow_direct_media, auto_advance
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+            userId,
+            fields.enabled ?? 1,
+            fields.request_cost ?? 25,
+            fields.max_per_user ?? 3,
+            fields.max_duration_seconds ?? 600,
+            fields.allow_youtube ?? 1,
+            fields.allow_vimeo ?? 1,
+            fields.allow_direct_media ?? 1,
+            fields.auto_advance ?? 1,
+        ]);
+    } else if (Object.keys(fields).length) {
+        const sets = [];
+        const vals = [];
+        for (const [k, v] of Object.entries(fields)) {
+            sets.push(`${k} = ?`);
+            vals.push(v);
+        }
+        sets.push('updated_at = CURRENT_TIMESTAMP');
+        vals.push(userId);
+        run(`UPDATE media_request_settings SET ${sets.join(', ')} WHERE user_id = ?`, vals);
+    }
+    return getMediaRequestSettingsByUserId(userId);
+}
+
+function createMediaRequest({ streamer_id, stream_id, user_id, username, input, canonical_url, embed_url, provider, title, thumbnail_url, duration_seconds, cost, queue_position }) {
+    return run(
+        `INSERT INTO media_requests (
+            streamer_id, stream_id, user_id, username, input, canonical_url, embed_url,
+            provider, title, thumbnail_url, duration_seconds, cost, queue_position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            streamer_id,
+            stream_id || null,
+            user_id,
+            username,
+            input,
+            canonical_url,
+            embed_url || null,
+            provider,
+            title,
+            thumbnail_url || null,
+            duration_seconds ?? null,
+            cost,
+            queue_position ?? 0,
+        ]
+    );
+}
+
+function getMediaRequestById(id) {
+    return get('SELECT * FROM media_requests WHERE id = ?', [id]);
+}
+
+function getMediaRequestByStreamerAndId(streamerId, id) {
+    return get('SELECT * FROM media_requests WHERE streamer_id = ? AND id = ?', [streamerId, id]);
+}
+
+function getActiveMediaRequestByStreamer(streamerId) {
+    return get(`SELECT * FROM media_requests WHERE streamer_id = ? AND status = 'playing' ORDER BY started_at DESC, id DESC LIMIT 1`, [streamerId]);
+}
+
+function getNextPendingMediaRequest(streamerId) {
+    return get(`SELECT * FROM media_requests WHERE streamer_id = ? AND status = 'pending' ORDER BY queue_position ASC, requested_at ASC, id ASC LIMIT 1`, [streamerId]);
+}
+
+function getPendingMediaRequestsByStreamer(streamerId, limit = 50) {
+    return all(`SELECT * FROM media_requests WHERE streamer_id = ? AND status = 'pending' ORDER BY queue_position ASC, requested_at ASC, id ASC LIMIT ?`, [streamerId, limit]);
+}
+
+function getRecentMediaRequestsByStreamer(streamerId, limit = 15) {
+    return all(`SELECT * FROM media_requests WHERE streamer_id = ? AND status IN ('played', 'skipped', 'removed', 'failed') ORDER BY COALESCE(ended_at, requested_at) DESC, id DESC LIMIT ?`, [streamerId, limit]);
+}
+
+function countPendingMediaRequestsForUser(streamerId, userId) {
+    const row = get(`SELECT COUNT(*) AS c FROM media_requests WHERE streamer_id = ? AND user_id = ? AND status IN ('pending', 'playing')`, [streamerId, userId]);
+    return row?.c || 0;
+}
+
+function getMediaRequestMaxQueuePosition(streamerId) {
+    const row = get(`SELECT MAX(queue_position) AS max_pos FROM media_requests WHERE streamer_id = ? AND status = 'pending'`, [streamerId]);
+    return row?.max_pos || 0;
+}
+
+function findActiveMediaRequestByCanonicalUrl(streamerId, canonicalUrl) {
+    return get(`SELECT * FROM media_requests WHERE streamer_id = ? AND canonical_url = ? AND status IN ('pending', 'playing') ORDER BY id DESC LIMIT 1`, [streamerId, canonicalUrl]);
+}
+
+function updateMediaRequest(id, fields = {}) {
+    const sets = [];
+    const vals = [];
+    for (const [k, v] of Object.entries(fields)) {
+        sets.push(`${k} = ?`);
+        vals.push(v);
+    }
+    if (!sets.length) return null;
+    vals.push(id);
+    return run(`UPDATE media_requests SET ${sets.join(', ')} WHERE id = ?`, vals);
+}
+
+function renormalizePendingMediaRequestPositions(streamerId) {
+    const rows = all(`SELECT id FROM media_requests WHERE streamer_id = ? AND status = 'pending' ORDER BY queue_position ASC, requested_at ASC, id ASC`, [streamerId]);
+    const tx = getDb().transaction((list) => {
+        list.forEach((row, idx) => {
+            run('UPDATE media_requests SET queue_position = ? WHERE id = ?', [idx + 1, row.id]);
+        });
+    });
+    tx(rows);
+}
+
 // ── Comment helpers ──────────────────────────────────────────
 
 function createComment({ content_type, content_id, user_id, parent_id, message }) {
@@ -2112,6 +2278,14 @@ module.exports = {
     createCoinRedemption, getPendingRedemptions, resolveRedemption,
     // Watch Time
     upsertWatchTime, getWatchTime, getTotalWatchTime,
+    // Media Requests
+    getMediaRequestSettingsByUserId, upsertMediaRequestSettings,
+    createMediaRequest, getMediaRequestById, getMediaRequestByStreamerAndId,
+    getActiveMediaRequestByStreamer, getNextPendingMediaRequest,
+    getPendingMediaRequestsByStreamer, getRecentMediaRequestsByStreamer,
+    countPendingMediaRequestsForUser, getMediaRequestMaxQueuePosition,
+    findActiveMediaRequestByCanonicalUrl, updateMediaRequest,
+    renormalizePendingMediaRequestPositions,
     // VODs
     createVod, getVodById, getVodsByUser, getPublicVods, getActiveVodByStream, getOrphanedRecordingVods,
     // Clips

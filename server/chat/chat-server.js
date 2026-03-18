@@ -23,6 +23,8 @@ const ipUtils = require('../admin/ip-utils');
 const WS_HEARTBEAT_MS = 30000;
 const MAX_SEND_BACKPRESSURE = 256 * 1024;
 const RATE_LIMIT_CACHE_TTL_MS = 10 * 60 * 1000;
+const GOTTI_GIF_URL = 'https://media1.tenor.com/m/Y-GsLUQT9LQAAAAd/deez-something-came-in-the-mail-today.gif';
+const GOTTI_CAPTION = 'Something came in the mail today... deez nuts. GOTTI!';
 
 class ChatServer {
     constructor() {
@@ -415,6 +417,12 @@ class ChatServer {
         let text = (msg.message || '').trim();
         if (!text || text.length > 500) return;
 
+        // ── Stream utility commands (!sr, !queue, !nowplaying, !skip) ──
+        if (text.startsWith('!')) {
+            this.handleBangCommand(ws, client, text);
+            return;
+        }
+
         // ── Chat commands ────────────────────────────────────
         if (text.startsWith('/')) {
             this.handleCommand(ws, client, text);
@@ -609,6 +617,162 @@ class ChatServer {
         }
     }
 
+    handleBangCommand(ws, client, text) {
+        const parts = text.trim().split(/\s+/);
+        const cmd = parts[0].toLowerCase();
+
+        if (cmd === '!gotti') {
+            const username = client.user ? client.user.display_name : client.anonId;
+            const coreUsername = client.user ? client.user.username : null;
+            const role = client.user ? client.user.role : 'anon';
+            const gottiMsg = {
+                type: 'gotti',
+                username,
+                core_username: coreUsername,
+                user_id: client.user?.id || null,
+                anon_id: client.anonId,
+                role,
+                stream_id: client.streamId,
+                is_global: !client.streamId,
+                avatar_url: client.user?.avatar_url || null,
+                profile_color: client.user?.profile_color || '#999',
+                message: GOTTI_CAPTION,
+                gif_url: GOTTI_GIF_URL,
+                source_url: 'https://tenor.com/view/deez-something-came-in-the-mail-today-deez-nuts-discord-gif-20388619',
+                timestamp: new Date().toISOString(),
+            };
+
+            if (client.user?.id) {
+                try {
+                    const cosmeticProfile = cosmetics.getCosmeticProfile(client.user.id);
+                    if (cosmeticProfile.nameFX) gottiMsg.nameFX = cosmeticProfile.nameFX;
+                    if (cosmeticProfile.particleFX) gottiMsg.particleFX = cosmeticProfile.particleFX;
+                    if (cosmeticProfile.hatFX) gottiMsg.hatFX = cosmeticProfile.hatFX;
+                } catch { /* non-critical */ }
+
+                try {
+                    const tags = require('../game/tags');
+                    const tagProfile = tags.getTagProfile(client.user.id);
+                    if (tagProfile) gottiMsg.tag = tagProfile;
+                } catch { /* non-critical */ }
+            }
+
+            if (client.streamId) {
+                this.broadcastToStream(client.streamId, gottiMsg);
+                this.forwardToGlobal(client.streamId, gottiMsg);
+            } else {
+                this.broadcastGlobal(gottiMsg);
+            }
+            return;
+        }
+
+        if (!client.streamId) {
+            this.sendTo(ws, { type: 'system', message: 'Media request commands only work in a stream chat.' });
+            return;
+        }
+
+        const args = text.slice(parts[0].length).trim();
+
+        try {
+            const stream = db.getStreamById(client.streamId);
+            if (!stream?.user_id) {
+                this.sendTo(ws, { type: 'system', message: 'Could not resolve the current stream owner.' });
+                return;
+            }
+
+            const mediaQueue = require('../media/media-queue');
+
+            switch (cmd) {
+                case '!sr':
+                case '!req':
+                case '!request': {
+                    if (!client.user?.id) {
+                        this.sendTo(ws, { type: 'system', message: 'You must be logged in to request media.' });
+                        return;
+                    }
+
+                    mediaQueue.addRequest({
+                        streamerId: stream.user_id,
+                        streamId: client.streamId,
+                        userId: client.user.id,
+                        username: client.user.display_name || client.user.username,
+                        input: args,
+                    }).then((request) => {
+                        this.broadcastToStream(client.streamId, {
+                            type: 'system',
+                            message: `${request.username} added “${request.title}” to the media queue for ${request.cost} Hobo Coins.`,
+                            timestamp: new Date().toISOString(),
+                        });
+                        this.sendTo(ws, {
+                            type: 'coin_earned',
+                            coins: 0,
+                            total: db.getUserById(client.user.id)?.hobo_coins_balance || 0,
+                            reason: 'Media request purchase',
+                        });
+                    }).catch((err) => {
+                        this.sendTo(ws, { type: 'system', message: err.message || 'Failed to add media request.' });
+                    });
+                    return;
+                }
+
+                case '!queue': {
+                    const state = mediaQueue.getState(stream.user_id);
+                    const items = state.queue.slice(0, 3);
+                    if (!items.length) {
+                        this.sendTo(ws, { type: 'system', message: 'The media queue is empty. Use !sr <url> to request something.' });
+                        return;
+                    }
+                    const summary = items.map((item, index) => `#${index + 1} ${item.title}`).join(' • ');
+                    this.sendTo(ws, { type: 'system', message: `Queued: ${summary}` });
+                    return;
+                }
+
+                case '!np':
+                case '!nowplaying':
+                case '!watching': {
+                    const state = mediaQueue.getState(stream.user_id);
+                    if (state.now_playing) {
+                        this.sendTo(ws, { type: 'system', message: `Now playing: ${state.now_playing.title} (requested by ${state.now_playing.username})` });
+                    } else if (state.queue[0]) {
+                        this.sendTo(ws, { type: 'system', message: `Nothing is playing yet. Up next: ${state.queue[0].title}` });
+                    } else {
+                        this.sendTo(ws, { type: 'system', message: 'Nothing is playing right now.' });
+                    }
+                    return;
+                }
+
+                case '!skip': {
+                    if (!this.canModerate(client) && client.user?.id !== stream.user_id) {
+                        this.sendTo(ws, { type: 'system', message: 'Only the streamer or a moderator can skip media.' });
+                        return;
+                    }
+                    const ended = mediaQueue.finishCurrent(stream.user_id, 'skipped');
+                    const next = mediaQueue.startNext(stream.user_id);
+                    if (ended) {
+                        this.broadcastToStream(client.streamId, {
+                            type: 'system',
+                            message: `Skipped: ${ended.title}${next ? ` • Up next: ${next.title}` : ''}`,
+                            timestamp: new Date().toISOString(),
+                        });
+                    } else {
+                        this.sendTo(ws, { type: 'system', message: 'Nothing is currently playing.' });
+                    }
+                    return;
+                }
+
+                case '!mediahelp': {
+                    this.sendTo(ws, { type: 'system', message: 'Media commands: !sr <url>, !queue, !nowplaying, !skip' });
+                    return;
+                }
+
+                default:
+                    return;
+            }
+        } catch (err) {
+            this.sendTo(ws, { type: 'system', message: err.message || 'Media command failed.' });
+        }
+    }
+
     /**
      * Handle chat commands
      */
@@ -623,6 +787,7 @@ class ChatServer {
                 this.sendTo(ws, {
                     type: 'system',
                     message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /me <action>, /paste <content>` +
+                        `\nMedia: !sr <url>, !queue, !nowplaying` +
                         (this.canModerate(client)
                             ? `\nMod: /ban <user>, /unban <user>, /timeout <user> [seconds], /clear, /slow <seconds>`
                             : ''),

@@ -508,6 +508,51 @@ CREATE TABLE IF NOT EXISTS watch_time (
 CREATE INDEX IF NOT EXISTS idx_watch_time_user ON watch_time(user_id);
 CREATE INDEX IF NOT EXISTS idx_watch_time_stream ON watch_time(stream_id);
 
+-- Streamer media request settings
+CREATE TABLE IF NOT EXISTS media_request_settings (
+    user_id INTEGER PRIMARY KEY,
+    enabled INTEGER DEFAULT 1,
+    request_cost INTEGER DEFAULT 25,
+    max_per_user INTEGER DEFAULT 3,
+    max_duration_seconds INTEGER DEFAULT 600,
+    allow_youtube INTEGER DEFAULT 1,
+    allow_vimeo INTEGER DEFAULT 1,
+    allow_direct_media INTEGER DEFAULT 1,
+    auto_advance INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Media request queue and playback history
+CREATE TABLE IF NOT EXISTS media_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    streamer_id INTEGER NOT NULL,
+    stream_id INTEGER,
+    user_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    input TEXT NOT NULL,
+    canonical_url TEXT NOT NULL,
+    embed_url TEXT,
+    provider TEXT NOT NULL CHECK(provider IN ('youtube', 'vimeo', 'audio', 'video')),
+    title TEXT NOT NULL,
+    thumbnail_url TEXT,
+    duration_seconds INTEGER,
+    cost INTEGER NOT NULL DEFAULT 25,
+    queue_position INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'playing', 'played', 'skipped', 'removed', 'failed')),
+    requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    ended_at DATETIME,
+    last_error TEXT,
+    FOREIGN KEY (streamer_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE SET NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_media_requests_streamer_status ON media_requests(streamer_id, status, queue_position, requested_at);
+CREATE INDEX IF NOT EXISTS idx_media_requests_user_status ON media_requests(user_id, status, requested_at);
+CREATE INDEX IF NOT EXISTS idx_media_requests_canonical ON media_requests(streamer_id, canonical_url, status);
+
 -- ═══════════════════════════════════════════════════════════════
 -- User Cosmetics — global unlocked items & active equipment
 -- Items earned in HoboGame, equipped globally (chat, overlay, etc.)

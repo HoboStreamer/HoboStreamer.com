@@ -704,6 +704,9 @@ function handleChatMessage(msg) {
                 }
             }
             break;
+        case 'gotti':
+            addGottiMessage(msg);
+            break;
         case 'system':
             addSystemMessage(msg.message || msg.text);
             break;
@@ -1084,6 +1087,55 @@ function addSystemMessage(text, isError = false) {
             html: `<div class="fullscreen-chat-text">${esc(text)}</div>`,
         });
     }
+}
+
+function addGottiMessage(msg) {
+    const { messages: container } = getChatEl();
+    if (!container) return;
+
+    const el = document.createElement('div');
+    el.className = 'chat-msg gotti';
+
+    const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
+    const avatarHtml = getChatAvatarHTML(msg);
+    const hatHtml = msg.hatFX?.emoji ? `<span class="chat-hat" aria-hidden="true">${esc(msg.hatFX.emoji)}</span>` : '';
+    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
+
+    const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
+    const coreUsername = esc(msg.core_username || '');
+    const userId = esc(String(msg.user_id || ''));
+    const isAnon = !msg.user_id;
+    const nameFXClass = msg.nameFX?.cssClass ? ` ${esc(msg.nameFX.cssClass)}` : '';
+    const hasParticles = msg.particleFX?.chars;
+    const particleWrapOpen = hasParticles ? `<span class="chat-particle-wrap ${esc(msg.particleFX.cssClass || '')}">` : '';
+    const particleWrapClose = hasParticles ? '</span>' : '';
+    const gifUrl = esc(msg.gif_url || '');
+    const sourceUrl = esc(msg.source_url || gifUrl);
+    const caption = esc(msg.message || 'GOTTI!');
+
+    el.innerHTML = `${badge}${hatHtml}${particleWrapOpen}<span class="chat-avatar-wrap">${avatarHtml}</span><span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}<div class="gotti-card"><div class="gotti-card-media"><img class="gotti-card-image" src="${gifUrl}" alt="${caption}" loading="lazy"></div><div class="gotti-card-copy"><div class="gotti-card-title">${caption}</div><a class="gotti-card-link" href="${sourceUrl}" target="_blank" rel="noopener">Open source GIF</a></div></div>`;
+
+    if (hasParticles) {
+        const wrap = el.querySelector('.chat-particle-wrap');
+        if (wrap) spawnChatParticles(wrap, msg.particleFX.chars);
+    }
+
+    container.appendChild(el);
+    if (chatSettings.autoScroll) {
+        scrollChat();
+        if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
+    }
+
+    _fcwAddMessage({
+        ...msg,
+        message: `${msg.message || 'GOTTI!'} ${msg.source_url || msg.gif_url || ''}`,
+    });
+
+    queueFullscreenChatEntry({
+        kind: 'gotti',
+        html: `<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:${esc(nameColor)}">${badge}${displayName}</span></div><div class="fullscreen-chat-text">${caption}</div><img class="fullscreen-chat-gotti" src="${gifUrl}" alt="${caption}" loading="lazy">`,
+    });
 }
 
 /**

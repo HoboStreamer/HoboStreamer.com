@@ -12,6 +12,67 @@ const db = require('../db/database');
 const { requireAuth, optionalAuth } = require('../auth/auth');
 
 const router = express.Router();
+const HOBO_TOOLS_INTERNAL_URL = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
+
+function truncatePreview(text, max = 120) {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!clean) return '';
+    return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+function notificationActor(user) {
+    return {
+        sender_id: user?.id || null,
+        sender_name: user?.display_name || user?.username || 'Someone',
+        sender_avatar: user?.avatar_url || null,
+    };
+}
+
+function pushNotification(payload) {
+    if (!payload?.user_id) return;
+
+    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/notifications/push`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Internal-Key': INTERNAL_API_KEY,
+        },
+        body: JSON.stringify(payload),
+    }).then((response) => {
+        if (!response.ok) {
+            console.warn(`[Notify] Comment notification push failed: ${response.status}`);
+        }
+    }).catch((err) => {
+        console.warn('[Notify] Comment notification push error:', err.message);
+    });
+}
+
+function getCommentTarget(contentType, contentId) {
+    if (contentType === 'vod') {
+        const vod = db.getVodById(contentId);
+        if (!vod) return null;
+        return {
+            user_id: vod.user_id,
+            title: vod.title || 'your VOD',
+            label: 'VOD',
+            url: 'https://hobostreamer.com/vods',
+        };
+    }
+
+    if (contentType === 'clip') {
+        const clip = db.getClipById(contentId);
+        if (!clip) return null;
+        return {
+            user_id: clip.user_id,
+            title: clip.title || 'your clip',
+            label: 'clip',
+            url: 'https://hobostreamer.com/clips',
+        };
+    }
+
+    return null;
+}
 
 // ── List Comments ────────────────────────────────────────────
 router.get('/:type/:id', optionalAuth, (req, res) => {
@@ -57,10 +118,15 @@ router.post('/:type/:id', requireAuth, (req, res) => {
         }
 
         const parentId = req.body.parent_id ? parseInt(req.body.parent_id) : null;
+        const target = getCommentTarget(contentType, contentId);
+        if (!target) {
+            return res.status(404).json({ error: 'Content not found' });
+        }
 
         // Verify parent comment exists and belongs to same content
+        let parent = null;
         if (parentId) {
-            const parent = db.getCommentById(parentId);
+            parent = db.getCommentById(parentId);
             if (!parent || parent.content_type !== contentType || parent.content_id !== contentId) {
                 return res.status(400).json({ error: 'Invalid parent comment' });
             }
@@ -80,6 +146,51 @@ router.post('/:type/:id', requireAuth, (req, res) => {
             FROM comments c JOIN users u ON c.user_id = u.id
             WHERE c.id = ?
         `, [result.lastInsertRowid]);
+
+        const actor = notificationActor(req.user);
+        const recipients = new Map();
+
+        if (target.user_id && target.user_id !== req.user.id) {
+            recipients.set(target.user_id, {
+                user_id: target.user_id,
+                type: parentId ? 'CONTENT_REPLY' : 'CONTENT_COMMENT',
+                category: 'social',
+                priority: 'normal',
+                title: parentId ? `New reply on your ${target.label}` : `New comment on your ${target.label}`,
+                message: `${actor.sender_name} ${parentId ? 'replied on' : 'commented on'} "${truncatePreview(target.title, 80)}"`,
+                icon: parentId ? '↩️' : '💬',
+                ...actor,
+                service: 'hobostreamer',
+                url: `${target.url}#comments`,
+                rich_content: {
+                    body: truncatePreview(message, 180),
+                    context: { content_type: contentType, content_id: contentId, comment_id: comment.id, parent_id: parentId || null },
+                },
+            });
+        }
+
+        if (parent?.user_id && parent.user_id !== req.user.id) {
+            recipients.set(parent.user_id, {
+                user_id: parent.user_id,
+                type: 'CONTENT_REPLY',
+                category: 'social',
+                priority: 'normal',
+                title: 'New reply to your comment',
+                message: `${actor.sender_name} replied to your comment on "${truncatePreview(target.title, 80)}"`,
+                icon: '↩️',
+                ...actor,
+                service: 'hobostreamer',
+                url: `${target.url}#comments`,
+                rich_content: {
+                    body: truncatePreview(message, 180),
+                    context: { content_type: contentType, content_id: contentId, comment_id: comment.id, parent_id: parentId },
+                },
+            });
+        }
+
+        for (const payload of recipients.values()) {
+            pushNotification(payload);
+        }
 
         res.status(201).json({ comment });
     } catch (err) {
