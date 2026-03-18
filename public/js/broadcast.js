@@ -934,6 +934,9 @@ function _restoreLastBroadcastFields() {
     const catEl = document.getElementById('bc-category');
     const lastCat = localStorage.getItem('bc-last-category');
     if (catEl && lastCat) catEl.value = lastCat;
+    // Populate username in create reassurance text
+    const usernameEl = document.getElementById('bc-create-username');
+    if (usernameEl && currentUser?.username) usernameEl.textContent = currentUser.username;
 }
 
 /* ── Broadcast Stream Tabs ───────────────────────────────────── */
@@ -1217,13 +1220,19 @@ async function loadExistingStreams(excludeStreamId) {
                 <div class="bc-welcome">
                     <i class="fa-solid fa-campground fa-3x" style="margin-bottom:12px;color:var(--accent)"></i>
                     <h3>Welcome to HoboStreamer!</h3>
-                    <p>You haven't streamed yet. Create your first stream below to get started.</p>
+                    <p>Ready to go live? Fill out the form on the left and click <strong>Create Stream</strong>.</p>
                     <div class="bc-welcome-tips">
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-globe"></i> <strong>WebRTC</strong> — Stream from your browser camera/screen, or via OBS WHIP</div>
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-server"></i> <strong>RTMP</strong> — Classic OBS/Streamlabs/FFmpeg streaming</div>
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-terminal"></i> <strong>JSMPEG</strong> — Lightweight FFmpeg pipeline, great for Raspberry Pi</div>
+                        <div class="bc-welcome-tip"><i class="fa-solid fa-1" style="font-size:0.75rem"></i> <span>Pick a <strong>title</strong> &amp; <strong>method</strong> (WebRTC is the easiest — uses your browser camera)</span></div>
+                        <div class="bc-welcome-tip"><i class="fa-solid fa-2" style="font-size:0.75rem"></i> <span>Allow camera/mic when prompted (WebRTC only)</span></div>
+                        <div class="bc-welcome-tip"><i class="fa-solid fa-3" style="font-size:0.75rem"></i> <span>Click <strong>Create Stream</strong> and you're live!</span></div>
                     </div>
-                    <p class="muted" style="margin-top:12px"><i class="fa-solid fa-circle-info"></i> Your stream URL will be <strong>hobostreamer.com/${esc(currentUser?.username || 'you')}</strong> — it stays the same for every stream.</p>
+                    <div class="bc-welcome-methods" style="margin-top:14px;text-align:left">
+                        <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:8px"><strong>Three ways to stream:</strong></p>
+                        <div class="bc-welcome-tip"><i class="fa-solid fa-globe"></i> <strong>WebRTC</strong> — Stream from your browser (camera, screen, or OBS WHIP) — no install needed</div>
+                        <div class="bc-welcome-tip"><i class="fa-solid fa-server"></i> <strong>RTMP</strong> — Use OBS Studio, Streamlabs, IRL Pro, or any RTMP app — best quality</div>
+                        <div class="bc-welcome-tip"><i class="fa-solid fa-terminal"></i> <strong>JSMPEG</strong> — Run an FFmpeg command — perfect for Raspberry Pi &amp; headless servers</div>
+                    </div>
+                    <p class="muted" style="margin-top:14px"><i class="fa-solid fa-circle-info"></i> Your permanent stream link: <strong>hobostreamer.com/${esc(currentUser?.username || 'you')}</strong></p>
                 </div>`;
             return;
         }
@@ -1251,11 +1260,11 @@ async function loadExistingStreams(excludeStreamId) {
             <div class="bc-welcome">
                 <i class="fa-solid fa-campground fa-3x" style="margin-bottom:12px;color:var(--accent)"></i>
                 <h3>Welcome to HoboStreamer!</h3>
-                <p>Create your first stream below to start broadcasting.</p>
+                <p>Fill in the form on the left to create your stream. <strong>WebRTC</strong> is the easiest — it uses your browser camera directly.</p>
                 <div class="bc-welcome-tips">
-                    <div class="bc-welcome-tip"><i class="fa-solid fa-globe"></i> <strong>WebRTC</strong> — Stream from your browser or OBS</div>
-                    <div class="bc-welcome-tip"><i class="fa-solid fa-server"></i> <strong>RTMP</strong> — Classic OBS streaming</div>
-                    <div class="bc-welcome-tip"><i class="fa-solid fa-terminal"></i> <strong>JSMPEG</strong> — FFmpeg lightweight pipeline</div>
+                    <div class="bc-welcome-tip"><i class="fa-solid fa-globe"></i> <strong>WebRTC</strong> — Stream from your browser (no install needed)</div>
+                    <div class="bc-welcome-tip"><i class="fa-solid fa-server"></i> <strong>RTMP</strong> — Use OBS, Streamlabs, or a mobile app (best quality)</div>
+                    <div class="bc-welcome-tip"><i class="fa-solid fa-terminal"></i> <strong>JSMPEG</strong> — FFmpeg command line (Raspberry Pi &amp; headless)</div>
                 </div>
             </div>`;
     }
@@ -1307,12 +1316,37 @@ async function endExistingStream(streamId) {
 }
 
 /* ── Method Selection ────────────────────────────────────────── */
+const _methodExplainers = {
+    webrtc: '<strong>WebRTC</strong> lets you stream directly from this browser tab using your camera, microphone, or screen — no extra software needed. Just click Create Stream and you\'re live.',
+    rtmp: '<strong>RTMP</strong> sends video from a dedicated streaming app (OBS Studio, Streamlabs, IRL Pro, etc.) to our server. After creating the stream, you\'ll get a <strong>Server URL</strong> and <strong>Stream Key</strong> to paste into your app. This gives you the best video quality and most customization.',
+    jsmpeg: '<strong>JSMPEG</strong> uses a single FFmpeg command in your terminal to send video. It\'s the most lightweight method — ideal for Raspberry Pi, security cameras, headless Linux servers, and 24/7 unattended streams. After creating the stream, you\'ll get a ready-to-paste terminal command.',
+};
 function selectStreamMethod(method) {
     broadcastState.selectedMethod = method;
     document.querySelectorAll('.bc-method-card').forEach(el => el.classList.toggle('selected', el.dataset.method === method));
     const sub = document.getElementById('bc-webrtc-sub');
     if (sub) sub.style.display = method === 'webrtc' ? 'block' : 'none';
+    // Update method explainer text
+    const explainer = document.getElementById('bc-method-explainer-text');
+    if (explainer && _methodExplainers[method]) explainer.innerHTML = _methodExplainers[method];
+    // Update step 3 header based on method
+    _syncStep3Header(method);
     _syncBrowserSourceUI();
+}
+/** Update the step 3 header text/visibility based on the selected method */
+function _syncStep3Header(method) {
+    const hdr = document.getElementById('bc-step3-header');
+    if (!hdr) return;
+    const textEl = hdr.querySelector('.bc-step-text span');
+    if (!textEl) return;
+    if (method === 'webrtc') {
+        hdr.style.display = '';
+        textEl.textContent = 'Set up your camera, mic, or screen share';
+    } else if (method === 'rtmp') {
+        hdr.style.display = 'none';
+    } else if (method === 'jsmpeg') {
+        hdr.style.display = 'none';
+    }
 }
 function selectWebRTCSub(sub) {
     broadcastState.selectedWebRTCSub = sub;
