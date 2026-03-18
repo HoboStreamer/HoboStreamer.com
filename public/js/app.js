@@ -305,10 +305,14 @@ function toggleUserMenu() {
 
 function closeMobileNav() {
     document.querySelector('.nav-links')?.classList.remove('show');
+    document.querySelector('.nav-hamburger')?.classList.remove('open');
 }
 
 function toggleMobileNav() {
-    document.querySelector('.nav-links').classList.toggle('show');
+    const navLinks = document.querySelector('.nav-links');
+    const hamburger = document.querySelector('.nav-hamburger');
+    navLinks.classList.toggle('show');
+    hamburger?.classList.toggle('open', navLinks.classList.contains('show'));
 }
 
 /* ── SPA Router (URL-based) ───────────────────────────────────── */

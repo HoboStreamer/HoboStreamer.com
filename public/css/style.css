@@ -113,6 +113,7 @@ main#app { position: relative; z-index: 1; }
     backdrop-filter: blur(18px);
     -webkit-backdrop-filter: blur(18px);
     box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+    overflow: visible;
 }
 .nav-brand {
     display: flex; align-items: center; gap: 8px;
@@ -341,6 +342,7 @@ main#app { position: relative; z-index: 1; }
 }
 #nav-username { font-size: 0.9rem; color: var(--text-primary); }
 
+.nav-avatar-wrap { position: relative; }
 .user-dropdown {
     display: none; position: absolute; top: 100%; right: 0;
     background: var(--bg-tertiary); border: 1px solid var(--border);
@@ -362,8 +364,14 @@ main#app { position: relative; z-index: 1; }
     color: var(--text-primary); font-size: 1.3rem;
     padding: 8px; cursor: pointer;
     border-radius: 10px;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
 }
 .nav-hamburger:hover { background: rgba(255,255,255,0.06); }
+.nav-hamburger.open {
+    background: rgba(192,150,92,0.12);
+    color: var(--accent);
+}
 
 /* ═══════════════════════════════════════════════════════════════
    BUTTONS
@@ -2578,37 +2586,53 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
 /* 1024px: Hamburger menu + hide nav links (catches Steam Deck & small laptops) */
 @media (max-width: 1024px) {
-    .nav-link span { display: none; }
-    .nav-dd-caret { display: none; }
-    .nav-link { padding: 8px 10px; position: relative; }
-    .navbar { gap: 8px; padding: 0 8px; }
+    .navbar { gap: 8px; padding: 0 10px; }
     .nav-brand { font-size: 1.1rem; }
     .nav-brand i { font-size: 1.2rem; }
 
+    /* Hide inline nav links — hamburger takes over */
     .nav-links { display: none; }
+    .nav-links-wrap { display: contents; }
     .nav-links-wrap .nav-scroll-btn { display: none !important; }
-    .nav-hamburger { display: flex; order: 10; }
+    .nav-hamburger { display: flex; }
+
+    /* Mobile nav drawer */
     .nav-links.show {
         display: flex; flex-direction: column;
-        position: absolute; top: var(--navbar-h); left: 0; right: 0;
-        background: var(--glass-strong); border-bottom: 1px solid var(--border);
-        padding: 12px; z-index: 1001;
+        position: fixed; top: var(--navbar-h); left: 0; right: 0;
+        background: var(--glass-strong);
+        border-bottom: 1px solid var(--border);
+        padding: 10px 12px; z-index: 1001;
         overflow-y: auto;
         max-height: calc(100vh - var(--navbar-h));
-        gap: 8px;
+        max-height: calc(100dvh - var(--navbar-h));
+        gap: 4px;
         box-shadow: 0 18px 40px rgba(0,0,0,0.35);
         backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        animation: nav-drawer-in 0.2s ease-out;
     }
+    @keyframes nav-drawer-in {
+        from { opacity: 0; transform: translateY(-8px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
     /* Restore labels & lay out vertically in dropdown */
     .nav-links.show .nav-link {
         flex-shrink: 1;
         justify-content: flex-start;
-        padding: 12px 14px;
+        padding: 11px 14px;
         border-color: rgba(255,255,255,0.05);
         background: rgba(255,255,255,0.03);
+        border-radius: 10px;
+        font-size: 0.92rem;
     }
     .nav-links.show .nav-link span { display: inline; }
     .nav-links.show .nav-link[data-tooltip]::after { display: none; }
+    .nav-links.show .nav-link.active {
+        background: linear-gradient(180deg, rgba(192,150,92,0.14), rgba(192,150,92,0.06));
+        border-color: rgba(192,150,92,0.22);
+    }
 
     /* Nav dropdown in mobile: always show items inline, no floating menu */
     .nav-links.show .nav-dropdown { width: 100%; }
@@ -2626,20 +2650,24 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     }
     .nav-links.show .nav-dropdown-menu a {
         padding: 10px 14px;
-        border-radius: var(--radius, 8px);
+        border-radius: 10px;
         border: 1px solid rgba(255,255,255,0.05);
         background: rgba(255,255,255,0.03);
+        font-size: 0.9rem;
     }
     .nav-links.show .nav-dropdown > .nav-link { display: none; }
 
     /* Nav-right stays visible, pushed to end before hamburger */
-    .nav-right { order: 9; margin-left: auto; gap: 6px; }
+    .nav-right { margin-left: auto; gap: 6px; }
     /* Compact currency badges */
-    .nav-balance, .nav-coins { padding: 4px 7px; font-size: 0.72rem; gap: 3px; border-radius: 10px; }
+    .nav-balance, .nav-coins { padding: 4px 7px; font-size: 0.75rem; gap: 3px; border-radius: 10px; }
     /* Smaller avatar, hide caret */
     .nav-avatar-wrap { gap: 0; padding: 2px; }
     .nav-avatar-wrap > .fa-caret-down { display: none; }
-    .nav-avatar { width: 28px; height: 28px; font-size: 0.75rem; }
+    .nav-avatar { width: 30px; height: 30px; font-size: 0.78rem; }
+
+    /* User dropdown needs to not overflow right edge */
+    .user-dropdown { right: -8px; min-width: 190px; }
 }
 
 /* 900px: Compact currency, hide brand text (keep "Hobo" on mobile) */
@@ -2692,6 +2720,35 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
 /* 768px: Mobile stream layout + compact content */
 @media (max-width: 768px) {
+    .navbar { padding: 0 8px; gap: 6px; }
+    .nav-brand { gap: 6px; }
+    .nav-brand i { font-size: 1.1rem; }
+    .brand-text { font-size: 0.92rem; }
+    .nav-hamburger { padding: 6px; font-size: 1.2rem; }
+    .nav-right { gap: 4px; }
+    .nav-balance, .nav-coins { padding: 3px 6px; font-size: 0.72rem; gap: 2px; }
+    .nav-avatar { width: 28px; height: 28px; font-size: 0.72rem; }
+    .nav-avatar-wrap { padding: 2px; }
+
+    /* Sign in button compact */
+    #nav-auth-anon .btn { padding: 6px 10px; font-size: 0.82rem; }
+
+    /* User dropdown full-width on mobile */
+    .user-dropdown {
+        position: fixed; top: var(--navbar-h); left: 8px; right: 8px;
+        width: auto; min-width: 0; max-height: calc(100vh - var(--navbar-h) - 16px);
+        max-height: calc(100dvh - var(--navbar-h) - 16px);
+        overflow-y: auto;
+        border-radius: 12px;
+        animation: nav-drawer-in 0.15s ease-out;
+    }
+    .user-dropdown a { padding: 12px 16px; font-size: 0.92rem; }
+
+    /* Nav drawer tighter */
+    .nav-links.show { padding: 8px 10px; gap: 3px; }
+    .nav-links.show .nav-link { padding: 10px 12px; font-size: 0.88rem; }
+    .nav-links.show .nav-dropdown-menu a { padding: 9px 12px; font-size: 0.86rem; }
+
     .hero h1 { font-size: 1.6rem; }
     .hero { padding-left: 16px; padding-right: 16px; }
     .vod-player-info,
@@ -2876,12 +2933,21 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
 @media (max-width: 480px) {
     :root { --chat-w: 100%; }
+    .navbar { padding: 0 6px; gap: 4px; }
+    .nav-brand { gap: 5px; }
+    .nav-brand i { font-size: 1rem; }
+    .brand-text { font-size: 0.88rem; }
+    .nav-hamburger { padding: 6px; font-size: 1.15rem; }
+    .nav-balance, .nav-coins { padding: 2px 5px; font-size: 0.68rem; }
+    .nav-avatar { width: 26px; height: 26px; font-size: 0.68rem; }
+
+    /* Sign in button — icon only on tiny screens */
+    #nav-auth-anon .btn span { display: none; }
+    #nav-auth-anon .btn { padding: 6px 10px; font-size: 0.82rem; gap: 0; }
+
     .stream-card { border-radius: 16px; }
     .modal { width: 95%; border-radius: var(--radius); }
     .admin-stats { grid-template-columns: 1fr; }
-    #nav-auth-anon .btn:first-child span { display: none; }
-    #nav-auth-anon .btn,
-    #nav-auth-user .btn { padding-inline: 10px; }
     .section-header { align-items: flex-start; }
     .reply-form button,
     .comment-form-actions .btn { width: 100%; justify-content: center; }
@@ -2988,6 +3054,15 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
 /* 360px: Very small phones (iPhone SE, Galaxy S series) */
 @media (max-width: 360px) {
+    .navbar { padding: 0 4px; gap: 3px; }
+    .nav-brand i { font-size: 0.95rem; }
+    .brand-text { font-size: 0.82rem; }
+    /* Hide currency on tiny screens to save space */
+    .nav-balance, .nav-coins { display: none; }
+    .nav-avatar { width: 24px; height: 24px; font-size: 0.65rem; }
+    .nav-hamburger { padding: 5px; font-size: 1.1rem; }
+    #nav-auth-anon .btn { padding: 5px 8px; font-size: 0.78rem; }
+
     .hero h1 { font-size: 1.3rem; }
     .hero p { font-size: 0.85rem; }
     .ch-info-bar-top h2 { font-size: 0.82rem; }
@@ -2996,7 +3071,6 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .control-btn { min-width: 44px; padding: 6px 8px; font-size: 0.7rem; }
     .control-btn i { font-size: 0.9rem; }
     .btn-follow { font-size: 0.72rem; padding: 3px 8px; }
-    .nav-balance, .nav-coins { font-size: 0.68rem; padding: 3px 6px; }
     .dash-card { padding: 14px; border-radius: 14px; }
     .dash-card h3 { font-size: 0.9rem; }
     .modal { width: 98%; padding: 16px; border-radius: 14px; }
