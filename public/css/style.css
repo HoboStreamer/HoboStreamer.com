@@ -508,8 +508,8 @@ main#app { position: relative; z-index: 1; }
     font-size: 0.82rem; color: var(--text-secondary); margin: 3px 0 0;
 }
 .network-hub-grid {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
-    max-width: 900px; margin: 0 auto;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    max-width: 960px; margin: 0 auto;
 }
 .network-card {
     display: flex; align-items: center; gap: 12px;
