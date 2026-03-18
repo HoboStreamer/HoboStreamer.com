@@ -1807,7 +1807,127 @@ main#app { position: relative; z-index: 1; }
 .chat-msg {
     font-size: 0.85rem; line-height: 1.4;
     padding: 2px 0; word-break: break-word;
+    position: relative;
 }
+
+/* ── Reply button (hover action) ─────────────────────────── */
+.chat-msg-hoverable .chat-reply-btn {
+    display: none;
+    position: absolute;
+    right: 4px; top: 2px;
+    padding: 2px 6px;
+    font-size: 0.65rem;
+    background: var(--bg-card, #1e1e2e);
+    border: 1px solid var(--border, #333);
+    border-radius: var(--radius-sm, 4px);
+    color: var(--text-muted, #888);
+    cursor: pointer;
+    z-index: 5;
+    line-height: 1;
+    transition: color 0.15s, border-color 0.15s;
+}
+.chat-msg-hoverable:hover .chat-reply-btn { display: inline-flex; }
+.chat-msg-hoverable .chat-reply-btn:hover {
+    color: var(--accent, #c0965c);
+    border-color: var(--accent, #c0965c);
+}
+
+/* ── Reply header (on replied messages) ──────────────────── */
+.chat-reply-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    color: var(--text-muted, #888);
+    padding: 1px 0 2px 0;
+    cursor: pointer;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    margin-left: 2px;
+}
+.chat-reply-header:hover { color: var(--text-secondary, #aaa); }
+.chat-reply-header i { font-size: 0.6rem; opacity: 0.7; flex-shrink: 0; }
+.chat-reply-user { font-weight: 600; color: var(--text-secondary, #aaa); flex-shrink: 0; }
+.chat-reply-snippet {
+    opacity: 0.6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-left: 4px;
+}
+
+/* ── Reply context bar (above chat input) ────────────────── */
+.chat-reply-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background: color-mix(in srgb, var(--accent, #c0965c) 8%, var(--bg-card, #1e1e2e));
+    border: 1px solid color-mix(in srgb, var(--accent, #c0965c) 20%, var(--border, #333));
+    border-radius: var(--radius, 6px);
+    font-size: 0.78rem;
+    color: var(--text-secondary, #aaa);
+    overflow: hidden;
+    animation: chat-reply-bar-in 0.15s ease-out;
+}
+@keyframes chat-reply-bar-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.chat-reply-bar-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.chat-reply-bar-content i {
+    color: var(--accent, #c0965c);
+    font-size: 0.7rem;
+    flex-shrink: 0;
+}
+.chat-reply-bar-content strong {
+    color: var(--text-primary, #fff);
+    flex-shrink: 0;
+}
+.chat-reply-bar-snippet {
+    opacity: 0.5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-left: 4px;
+}
+.chat-reply-bar-close {
+    flex-shrink: 0;
+    padding: 2px 5px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted, #888);
+    cursor: pointer;
+    font-size: 0.8rem;
+    border-radius: var(--radius-sm, 4px);
+    transition: color 0.15s, background 0.15s;
+}
+.chat-reply-bar-close:hover {
+    color: var(--text-primary, #fff);
+    background: rgba(255,255,255,0.08);
+}
+
+/* ── Reply flash (scroll-to highlight) ───────────────────── */
+.chat-msg-reply-flash {
+    animation: reply-flash 1.5s ease-out;
+}
+@keyframes reply-flash {
+    0%   { background: color-mix(in srgb, var(--accent, #c0965c) 25%, transparent); }
+    100% { background: transparent; }
+}
+
 .chat-msg .chat-user {
     font-weight: 600; cursor: pointer;
 }

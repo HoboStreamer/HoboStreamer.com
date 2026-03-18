@@ -139,6 +139,15 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] chat_messages migration:', e.message); }
 
+    // Migrate: add reply_to_id column to chat_messages for threaded replies
+    try {
+        const cmCols2 = database.prepare("PRAGMA table_info('chat_messages')").all().map(c => c.name);
+        if (!cmCols2.includes('reply_to_id')) {
+            database.exec(`ALTER TABLE chat_messages ADD COLUMN reply_to_id INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL`);
+            console.log('[DB] Added reply_to_id column to chat_messages');
+        }
+    } catch (e) { console.warn('[DB] chat_messages reply_to_id migration:', e.message); }
+
     // Migrate: add default_vod_visibility / default_clip_visibility to channels
     try {
         const chanCols = database.prepare("PRAGMA table_info('channels')").all().map(c => c.name);
@@ -808,11 +817,11 @@ function deleteRestreamDestination(id) {
 
 // ── Chat helpers ─────────────────────────────────────────────
 
-function saveChatMessage({ stream_id, user_id, anon_id, username, message, message_type, is_global }) {
+function saveChatMessage({ stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id }) {
     return run(
-        `INSERT INTO chat_messages (stream_id, user_id, anon_id, username, message, message_type, is_global)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [stream_id, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0]
+        `INSERT INTO chat_messages (stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null]
     );
 }
 

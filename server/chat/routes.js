@@ -15,6 +15,34 @@ const permissions = require('../auth/permissions');
 
 const router = express.Router();
 
+/**
+ * Hydrate reply_to context onto an array of message rows.
+ * Each row must have reply_to_id (from DB). Adds a reply_to object
+ * with { id, username, user_id, message } for the parent message.
+ */
+function hydrateReplies(messages) {
+    const replyIds = [...new Set(messages.map(m => m.reply_to_id).filter(Boolean))];
+    if (!replyIds.length) return messages;
+    const placeholders = replyIds.map(() => '?').join(',');
+    const parents = db.all(
+        `SELECT id, username, user_id, message FROM chat_messages WHERE id IN (${placeholders})`,
+        replyIds
+    );
+    const parentMap = new Map(parents.map(p => [p.id, p]));
+    return messages.map(m => {
+        if (m.reply_to_id && parentMap.has(m.reply_to_id)) {
+            const p = parentMap.get(m.reply_to_id);
+            m.reply_to = {
+                id: p.id,
+                username: p.username,
+                user_id: p.user_id,
+                message: p.message.length > 100 ? p.message.slice(0, 100) + '…' : p.message,
+            };
+        }
+        return m;
+    });
+}
+
 // ── Send Chat Message (REST fallback when WS is down) ────────
 router.post('/send', requireAuth, (req, res) => {
     try {
@@ -40,6 +68,21 @@ router.post('/send', requireAuth, (req, res) => {
         }
 
         const username = req.user.display_name || req.user.username;
+
+        // Reply-to support
+        const replyToId = req.body.reply_to_id ? parseInt(req.body.reply_to_id) : null;
+        let replyTo = null;
+        if (replyToId) {
+            const parent = db.getChatMessageById(replyToId);
+            if (parent && !parent.is_deleted) {
+                replyTo = {
+                    id: parent.id,
+                    username: parent.username,
+                    user_id: parent.user_id,
+                    message: parent.message.length > 100 ? parent.message.slice(0, 100) + '…' : parent.message,
+                };
+            }
+        }
 
         const chatMsg = {
             type: 'chat',
@@ -75,8 +118,9 @@ router.post('/send', requireAuth, (req, res) => {
         } catch { /* non-critical */ }
 
         // Save to database
+        let savedId = null;
         try {
-            db.saveChatMessage({
+            const result = db.saveChatMessage({
                 stream_id: null,
                 user_id: req.user.id,
                 anon_id: null,
@@ -84,8 +128,14 @@ router.post('/send', requireAuth, (req, res) => {
                 message: filtered,
                 message_type: 'chat',
                 is_global: true,
+                reply_to_id: replyToId,
             });
+            savedId = result.lastInsertRowid;
         } catch { /* non-critical */ }
+
+        // Attach message ID and reply context to broadcast
+        if (savedId) chatMsg.id = Number(savedId);
+        if (replyTo) chatMsg.reply_to = replyTo;
 
         // Broadcast to all global chat clients
         chatServer.broadcastGlobal(chatMsg);
@@ -204,7 +254,7 @@ router.get('/global/history', optionalAuth, (req, res) => {
         sql += ` ORDER BY cm.timestamp DESC LIMIT ?`;
         params.push(limit);
 
-        const messages = db.all(sql, params).reverse();
+        const messages = hydrateReplies(db.all(sql, params).reverse());
         res.json({ messages });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get global chat history' });
@@ -248,7 +298,7 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
         sql += ` ORDER BY cm.timestamp DESC LIMIT ?`;
         params.push(limit);
 
-        const messages = db.all(sql, params).reverse();
+        const messages = hydrateReplies(db.all(sql, params).reverse());
         res.json({ messages });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get chat history' });

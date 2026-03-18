@@ -485,7 +485,15 @@ html, body {
         const rawText = msg.message || msg.text || '';
         const text = parseEmotes(rawText);
 
-        el.innerHTML = `${platformBadge}${roleBadge}${hatHtml}${particleOpen}<span class="username${nameFXClass}" style="color:${esc(nameColor)}">${esc(cleanName)}</span>${particleClose}: ${text}`;
+        // Reply header for OBS overlay
+        let replyHtml = '';
+        if (msg.reply_to) {
+            const replyUser = esc(msg.reply_to.username || 'unknown');
+            const replySnippet = esc(msg.reply_to.message || '');
+            replyHtml = `<div style="font-size:0.72em;opacity:0.6;margin-bottom:1px"><i class="fa-solid fa-reply fa-flip-horizontal" style="font-size:0.6em"></i> @${replyUser} ${replySnippet}</div>`;
+        }
+
+        el.innerHTML = `${replyHtml}${platformBadge}${roleBadge}${hatHtml}${particleOpen}<span class="username${nameFXClass}" style="color:${esc(nameColor)}">${esc(cleanName)}</span>${particleClose}: ${text}`;
 
         // Spawn particles
         if (hasParticles) {

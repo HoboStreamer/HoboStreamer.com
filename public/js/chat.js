@@ -41,6 +41,9 @@ let chatSlowModeSeconds = 0;
 let chatSlowModeCooldownTimer = null;
 let chatSlowModeCooldownEnd = 0;
 
+// ── Reply-to state ──────────────────────────────────────────
+let _chatReplyTo = null; // { id, username, user_id, message }
+
 // ── Chat settings (persisted to localStorage) ────────────────
 const CHAT_SETTINGS_KEY = 'hobo_chat_settings';
 const CHAT_SETTINGS_DEFAULTS = {
@@ -327,9 +330,10 @@ function buildFullscreenChatEntry(msg) {
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
     const rawText = msg.message || msg.text || '';
     const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
+    const replyLine = msg.reply_to ? `<div style="font-size:0.72em;opacity:0.5;margin-bottom:1px"><i class="fa-solid fa-reply fa-flip-horizontal" style="font-size:0.65em"></i> @${esc(msg.reply_to.username || 'unknown')}</div>` : '';
     return {
         kind: 'chat',
-        html: `<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:${esc(nameColor)}">${badge}${displayName}</span></div><div class="fullscreen-chat-text">${text}</div>`,
+        html: `${replyLine}<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:${esc(nameColor)}">${badge}${displayName}</span></div><div class="fullscreen-chat-text">${text}</div>`,
     };
 }
 
@@ -893,6 +897,9 @@ function addChatMessage(msg) {
     const el = document.createElement('div');
     el.className = 'chat-msg';
 
+    // Attach message ID for reply targeting
+    if (msg.id) el.dataset.msgId = msg.id;
+
     const isGlobal = chatEl.isGlobal;
 
     // Timestamps — normalize to UTC then display in browser local time
@@ -977,7 +984,35 @@ function addChatMessage(msg) {
     const particleWrapOpen = hasParticles ? `<span class="chat-particle-wrap ${esc(msg.particleFX.cssClass || '')}">` : '';
     const particleWrapClose = hasParticles ? `</span>` : '';
 
-    el.innerHTML = `${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
+    // Reply header (if this message is a reply)
+    let replyHtml = '';
+    if (msg.reply_to) {
+        const replyUser = esc(msg.reply_to.username || 'unknown');
+        const replySnippet = esc(msg.reply_to.message || '');
+        const replyMsgId = msg.reply_to.id ? `data-reply-target="${esc(String(msg.reply_to.id))}"` : '';
+        replyHtml = `<div class="chat-reply-header" ${replyMsgId} onclick="scrollToReplyTarget(this)"><i class="fa-solid fa-reply fa-flip-horizontal"></i> <span class="chat-reply-user">@${replyUser}</span> <span class="chat-reply-snippet">${replySnippet}</span></div>`;
+    }
+
+    el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
+
+    // Reply action button (hover)
+    if (msg.id) {
+        const replyBtn = document.createElement('button');
+        replyBtn.className = 'chat-reply-btn';
+        replyBtn.title = 'Reply';
+        replyBtn.innerHTML = '<i class="fa-solid fa-reply"></i>';
+        replyBtn.onclick = (e) => {
+            e.stopPropagation();
+            setChatReply({
+                id: msg.id,
+                username: msg.username || msg.displayName || 'anon',
+                user_id: msg.user_id,
+                message: (msg.message || msg.text || '').slice(0, 100),
+            });
+        };
+        el.appendChild(replyBtn);
+        el.classList.add('chat-msg-hoverable');
+    }
 
     // Spawn particles if equipped
     if (hasParticles) {
@@ -1225,6 +1260,11 @@ function sendChat(overrideInput = null) {
         streamId: chatStreamId,
     };
 
+    // Attach reply-to if replying
+    if (_chatReplyTo) {
+        msg.reply_to_id = _chatReplyTo.id;
+    }
+
     // Tag message with voice channel ID if in voice call chat mode
     if (chatMode === 'voice' && typeof callState !== 'undefined' && callState.joined && callState.channelId) {
         msg.voiceChannelId = callState.channelId;
@@ -1235,6 +1275,7 @@ function sendChat(overrideInput = null) {
     input.value = '';
     _autoResizeTextarea(input);
     input.focus();
+    clearChatReply();
     if (input.id === 'fullscreen-chat-input') markFullscreenChatActivity();
     startSlowModeCooldown();
 }
@@ -1256,7 +1297,7 @@ async function _sendChatViaRest(text, input) {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message: text }),
+            body: JSON.stringify({ message: text, reply_to_id: _chatReplyTo?.id || undefined }),
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -1267,11 +1308,66 @@ async function _sendChatViaRest(text, input) {
         input.value = '';
         _autoResizeTextarea(input);
         input.focus();
+        clearChatReply();
         if (chatStreamId) {
             addSystemMessage('Sent to global chat (stream chat reconnecting)');
         }
     } catch {
         addSystemMessage('Server unreachable — message not sent');
+    }
+}
+
+/* ── Reply-to helpers ─────────────────────────────────────────── */
+
+/**
+ * Set the reply target — shows the reply bar above the chat input.
+ */
+function setChatReply(replyData) {
+    _chatReplyTo = replyData;
+    // Show/update reply bar on all chat input areas
+    document.querySelectorAll('.chat-input-area').forEach(area => {
+        let bar = area.querySelector('.chat-reply-bar');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.className = 'chat-reply-bar';
+            // Insert before the chat-input-row
+            const inputRow = area.querySelector('.chat-input-row');
+            if (inputRow) {
+                area.insertBefore(bar, inputRow);
+            } else {
+                area.prepend(bar);
+            }
+        }
+        bar.innerHTML = `<div class="chat-reply-bar-content"><i class="fa-solid fa-reply fa-flip-horizontal"></i> Replying to <strong>${esc(replyData.username)}</strong><span class="chat-reply-bar-snippet">${esc(replyData.message)}</span></div><button class="chat-reply-bar-close" onclick="clearChatReply()" title="Cancel reply"><i class="fa-solid fa-xmark"></i></button>`;
+        bar.style.display = '';
+    });
+    // Focus the relevant input
+    const chatEl = getChatEl();
+    if (chatEl.input) chatEl.input.focus();
+}
+
+/**
+ * Clear the reply target — hides the reply bar.
+ */
+function clearChatReply() {
+    _chatReplyTo = null;
+    document.querySelectorAll('.chat-reply-bar').forEach(bar => {
+        bar.style.display = 'none';
+    });
+}
+
+/**
+ * Scroll to and highlight the message being replied to.
+ */
+function scrollToReplyTarget(headerEl) {
+    const targetId = headerEl?.dataset?.replyTarget;
+    if (!targetId) return;
+    // Search all chat containers for the target message
+    const targetMsg = document.querySelector(`.chat-msg[data-msg-id="${targetId}"]`);
+    if (targetMsg) {
+        targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetMsg.classList.add('chat-msg-reply-flash');
+        setTimeout(() => targetMsg.classList.remove('chat-msg-reply-flash'), 1500);
     }
 }
 
@@ -1303,6 +1399,13 @@ function _chatTextareaKeydown(e) {
         if (isFcw) fcwSendChat();
         else if (isFullscreen) sendChat(el);
         else sendChat();
+        return;
+    }
+
+    // Escape: clear reply
+    if (e.key === 'Escape' && _chatReplyTo) {
+        clearChatReply();
+        e.preventDefault();
         return;
     }
 
@@ -1367,6 +1470,7 @@ async function loadChatHistory(streamId) {
         const msgs = data.messages || [];
         msgs.forEach(m => {
             addChatMessage({
+                id: m.id,
                 username: m.username || m.display_name || `anon${m.user_id || ''}`,
                 core_username: m.core_username || null,
                 message: m.message,
@@ -1376,6 +1480,7 @@ async function loadChatHistory(streamId) {
                 profile_color: m.profile_color,
                 user_id: m.user_id,
                 timestamp: m.timestamp,
+                reply_to: m.reply_to || null,
             });
         });
     } catch { /* silent */ }
@@ -1391,6 +1496,7 @@ async function loadGlobalChatHistory() {
                 addRichSystemMessage(esc(m.message), 'update');
             } else {
                 addChatMessage({
+                    id: m.id,
                     username: m.username || m.display_name || `anon${m.user_id || ''}`,
                     core_username: m.core_username || null,
                     message: m.message,
@@ -1401,6 +1507,7 @@ async function loadGlobalChatHistory() {
                     user_id: m.user_id,
                     timestamp: m.timestamp,
                     stream_username: m.stream_username || null,
+                    reply_to: m.reply_to || null,
                 });
             }
         });
@@ -1424,8 +1531,20 @@ function showChatContextMenu(event) {
     const isAnon = target.dataset.anon === '1';
     if (!username) return;
 
+    // Extract message data from parent .chat-msg for reply support
+    const msgEl = target.closest('.chat-msg');
+    const msgId = msgEl?.dataset?.msgId || null;
+
     const menu = document.createElement('div');
     menu.className = 'chat-context-menu';
+    if (msgId) {
+        menu.dataset.replyMsgId = msgId;
+        menu.dataset.replyUsername = username;
+        menu.dataset.replyUserId = userId || '';
+        // Extract plain text of the message (everything after the username colon)
+        const msgText = msgEl?.textContent?.split(username + ':')?.slice(1)?.join(':')?.trim() || '';
+        menu.dataset.replyMessage = msgText.slice(0, 100);
+    }
     menu.innerHTML = `
         <div class="ctx-loading"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>
     `;
@@ -1568,6 +1687,7 @@ function renderAnonContextMenu(menu, username, userId) {
             </div>
         </div>
         <div class="ctx-actions">
+            ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
             ${banBtns}
         </div>
@@ -1622,6 +1742,7 @@ function renderContextMenu(menu, profile, username) {
         ${gameHtml}
         <div class="ctx-divider"></div>
         <div class="ctx-actions">
+            ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
@@ -1641,6 +1762,18 @@ function renderContextMenu(menu, profile, username) {
 }
 
 /* ── Context menu actions ─────────────────────────────────────── */
+function ctxReply() {
+    const menu = activeContextMenu;
+    if (!menu?.dataset?.replyMsgId) return;
+    setChatReply({
+        id: parseInt(menu.dataset.replyMsgId),
+        username: menu.dataset.replyUsername,
+        user_id: menu.dataset.replyUserId ? parseInt(menu.dataset.replyUserId) : null,
+        message: menu.dataset.replyMessage || '',
+    });
+    dismissContextMenu();
+}
+
 function ctxWhisper(username) {
     dismissContextMenu();
     // Route to the DM messenger widget instead of the old whisper command
