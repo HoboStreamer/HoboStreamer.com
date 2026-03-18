@@ -1527,8 +1527,15 @@ async function showRTMPInstructions(stream) {
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
-        document.getElementById('bc-rtmp-url').textContent = ep.rtmpUrl || `rtmp://${location.hostname}:1935/live`;
-        document.getElementById('bc-rtmp-key').textContent = ep.streamKey || data.stream_key || 'N/A';
+        const rtmpUrl = ep.rtmpUrl || `rtmp://${location.hostname}:1935/live`;
+        const streamKey = ep.streamKey || data.stream_key || 'N/A';
+        document.getElementById('bc-rtmp-url').textContent = rtmpUrl;
+        document.getElementById('bc-rtmp-key').textContent = streamKey;
+        // Mirror into IRL Pro guide fields
+        const irlUrl = document.getElementById('bc-irlpro-url');
+        const irlKey = document.getElementById('bc-irlpro-key');
+        if (irlUrl) irlUrl.textContent = rtmpUrl;
+        if (irlKey) irlKey.textContent = streamKey;
     } catch {
         document.getElementById('bc-rtmp-url').textContent = `rtmp://${location.hostname}:1935/live`;
         document.getElementById('bc-rtmp-key').textContent = 'Error loading key';
@@ -1565,14 +1572,14 @@ function setRtmpStatusUI(receiving) {
         wrap.className = 'bc-rtmp-status receiving';
         spinner.style.display = 'none';
         ok.style.display = '';
-        label.textContent = 'Receiving feed from OBS';
-        detail.textContent = 'Your RTMP stream is live and connected';
+        label.textContent = 'Receiving RTMP feed';
+        detail.textContent = 'Your stream is live and connected';
     } else {
         wrap.className = 'bc-rtmp-status waiting';
         spinner.style.display = '';
         ok.style.display = 'none';
-        label.textContent = 'Waiting for OBS...';
-        detail.textContent = 'Start streaming in OBS to connect';
+        label.textContent = 'Waiting for stream...';
+        detail.textContent = 'Start streaming in OBS or your app to connect';
     }
 }
 

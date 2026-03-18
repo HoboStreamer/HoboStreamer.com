@@ -6,7 +6,7 @@
     <title>HoboStreamer — Live Streaming for Camp Culture</title>
     <meta name="description" content="HoboStreamer.com — Open source live streaming platform for stealth campers, nomads, and outdoor enthusiasts. Paired with HoboApp.">
     <link rel="stylesheet" href="/css/style.css?v=12">
-    <link rel="stylesheet" href="/css/broadcast.css?v=4">
+    <link rel="stylesheet" href="/css/broadcast.css?v=5">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -1351,7 +1351,7 @@
                 <!-- RTMP Instructions Panel -->
                 <div id="bc-rtmp-instructions" style="display:none" class="bc-instructions-panel">
                     <h2><i class="fa-solid fa-server"></i> RTMP Stream Setup</h2>
-                    <p>Use OBS, Streamlabs, or any RTMP-compatible software.</p>
+                    <p>Use OBS, IRL Pro, Streamlabs, or any RTMP-compatible software.</p>
                     <div class="bc-code-block">
                         <label>Server URL</label>
                         <div class="bc-code-copy">
@@ -1376,6 +1376,43 @@
                             <li>Click "Start Streaming" in OBS</li>
                         </ol>
                     </div>
+
+                    <!-- IRL Pro Mobile Setup -->
+                    <details class="bc-app-guide" id="bc-irlpro-guide">
+                        <summary>
+                            <span class="bc-app-guide-header">
+                                <i class="fa-solid fa-mobile-screen-button"></i>
+                                <strong>IRL Pro (Android)</strong>
+                                <span class="bc-app-guide-badge">Mobile</span>
+                            </span>
+                        </summary>
+                        <div class="bc-app-guide-body">
+                            <p class="bc-app-guide-desc">Stream from your phone using <a href="https://play.google.com/store/apps/details?id=app.irlpro.android" target="_blank" rel="noopener">IRL Pro</a> — a mobile streaming app with SRTLA bonding, chat overlays, and multi-camera support.</p>
+                            <ol>
+                                <li>Open <strong>IRL Pro</strong> and tap the <strong>⚙️ Settings</strong> gear icon</li>
+                                <li>Under <strong>Streaming</strong>, select <strong>Platform</strong> → choose <strong>Custom RTMP</strong></li>
+                                <li>In the <strong>RTMP URL</strong> field, paste:<br>
+                                    <code class="bc-inline-code" id="bc-irlpro-url"></code>
+                                    <button class="btn btn-small btn-inline-copy" onclick="copyToClipboard(document.getElementById('bc-rtmp-url').textContent)" title="Copy URL"><i class="fa-solid fa-copy"></i></button>
+                                </li>
+                                <li>In the <strong>Stream Key</strong> field, paste:<br>
+                                    <code class="bc-inline-code" id="bc-irlpro-key"></code>
+                                    <button class="btn btn-small btn-inline-copy" onclick="copyToClipboard(document.getElementById('bc-rtmp-key').textContent)" title="Copy Key"><i class="fa-solid fa-copy"></i></button>
+                                </li>
+                                <li>Set your preferred <strong>Resolution</strong> (720p recommended) and <strong>Bitrate</strong> (2500–4000 kbps)</li>
+                                <li>Go back to the main screen and tap <strong>Go Live</strong></li>
+                            </ol>
+                            <div class="bc-app-guide-tips">
+                                <p><i class="fa-solid fa-lightbulb"></i> <strong>Tips:</strong></p>
+                                <ul>
+                                    <li>Enable <strong>SRTLA Bonding</strong> in IRL Pro settings for better mobile reliability — it combines WiFi + cellular for a more stable connection</li>
+                                    <li>Set the codec to <strong>H.264</strong> for best compatibility</li>
+                                    <li>If you see buffering, lower your bitrate to <strong>1500–2000 kbps</strong></li>
+                                    <li>IRL Pro's chat overlay can be pointed at <code>https://hobostreamer.com/embed/chat/<em>your-stream-id</em></code> for live chat on screen</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </details>
 
                     <!-- RTMP Feed Status Indicator -->
                     <div id="bc-rtmp-status" class="bc-rtmp-status waiting">
@@ -3128,7 +3165,7 @@
 <script src="/js/hobo-bucks.js?v=2"></script>
 <script src="/js/hobo-coins.js?v=2"></script>
 <script src="/js/cosmetics-ui.js?v=2"></script>
-<script src="/js/broadcast.js?v=9"></script>
+<script src="/js/broadcast.js?v=10"></script>
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>

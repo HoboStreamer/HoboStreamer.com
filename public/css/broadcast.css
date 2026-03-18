@@ -1795,6 +1795,159 @@
     color: var(--accent);
 }
 
+/* ── App Setup Guides (collapsible) ──────────────────────────── */
+.bc-app-guide {
+    margin-top: 20px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-tertiary);
+    overflow: hidden;
+}
+
+.bc-app-guide summary {
+    padding: 12px 16px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: background 0.15s;
+}
+.bc-app-guide summary::-webkit-details-marker { display: none; }
+.bc-app-guide summary::marker { display: none; content: ''; }
+
+.bc-app-guide summary:hover {
+    background: var(--bg-hover);
+}
+
+.bc-app-guide[open] summary {
+    border-bottom: 1px solid var(--border);
+}
+
+.bc-app-guide-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.bc-app-guide-header i {
+    color: var(--accent);
+    font-size: 1.05rem;
+}
+
+.bc-app-guide-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--bg-primary);
+    margin-left: auto;
+}
+
+.bc-app-guide-body {
+    padding: 16px;
+}
+
+.bc-app-guide-desc {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    line-height: 1.5;
+}
+
+.bc-app-guide-desc a {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+.bc-app-guide-body ol {
+    padding-left: 20px;
+    margin: 8px 0 16px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+.bc-app-guide-body li {
+    margin-bottom: 6px;
+}
+
+.bc-inline-code {
+    display: inline;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 2px 8px;
+    user-select: all;
+    word-break: break-all;
+}
+
+.btn-inline-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 6px;
+    margin-left: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    vertical-align: middle;
+}
+
+.btn-inline-copy:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.bc-app-guide-tips {
+    margin-top: 12px;
+    padding: 12px 14px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.83rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.bc-app-guide-tips > p {
+    margin-bottom: 6px;
+    color: var(--text-primary);
+}
+
+.bc-app-guide-tips > p i {
+    color: var(--accent);
+}
+
+.bc-app-guide-tips ul {
+    padding-left: 18px;
+    margin: 0;
+    font-size: 0.82rem;
+}
+
+.bc-app-guide-tips li {
+    margin-bottom: 4px;
+}
+
+.bc-app-guide-tips code {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    background: var(--bg-tertiary);
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+    color: var(--accent);
+}
+
 /* ── Form Groups in Create Section ───────────────────────────── */
 .bc-create-section .form-group {
     margin-bottom: 16px;
