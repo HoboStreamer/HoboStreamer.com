@@ -6,7 +6,7 @@
     <title>HoboStreamer — Live Streaming for Camp Culture</title>
     <meta name="description" content="HoboStreamer.com — Open source live streaming platform for stealth campers, nomads, and outdoor enthusiasts. Paired with HoboApp.">
     <link rel="stylesheet" href="/css/style.css?v=13">
-    <link rel="stylesheet" href="/css/broadcast.css?v=5">
+    <link rel="stylesheet" href="/css/broadcast.css?v=6">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -1137,18 +1137,29 @@
                 <!-- ═══ STEP 0: Stream Manager (existing streams + create new) ═══ -->
                 <div id="bc-stream-manager">
                     <h2><i class="fa-solid fa-tower-broadcast"></i> Go Live</h2>
+                    <p class="bc-page-subtitle">Set up your stream in 3 easy steps — pick a method, configure your devices, and hit Go Live.</p>
 
                     <div class="bc-manager-grid">
                     <!-- Create new stream (left / primary) -->
                     <div class="bc-create-section" id="bc-create-section">
                         <h3>Create New Stream</h3>
+
+                        <!-- STEP 1: Stream Info -->
+                        <div class="bc-step-header">
+                            <span class="bc-step-number">1</span>
+                            <div class="bc-step-text">
+                                <strong>Stream Info</strong>
+                                <span>Give your stream a title so viewers know what you're doing</span>
+                            </div>
+                        </div>
                         <div class="form-group">
-                            <label>Stream Title</label>
-                            <input type="text" id="bc-title" class="form-input" placeholder="What are you streaming?">
+                            <label>Stream Title <span class="bc-required">*</span></label>
+                            <input type="text" id="bc-title" class="form-input" placeholder="What are you streaming? e.g. Camping in the woods">
+                            <span class="bc-field-hint">This appears on your channel page and in the stream directory</span>
                         </div>
                         <div class="form-group">
                             <label>Description</label>
-                            <textarea id="bc-description" class="form-input" rows="2" placeholder="Tell viewers what to expect..."></textarea>
+                            <textarea id="bc-description" class="form-input" rows="2" placeholder="Optional — tell viewers what to expect..."></textarea>
                         </div>
                         <div class="form-group">
                             <label>Category</label>
@@ -1166,39 +1177,55 @@
                             </select>
                         </div>
 
-                        <!-- Method Selection -->
+                        <!-- STEP 2: Method Selection -->
+                        <div class="bc-step-header">
+                            <span class="bc-step-number">2</span>
+                            <div class="bc-step-text">
+                                <strong>Streaming Method</strong>
+                                <span>How do you want to send your video to HoboStreamer?</span>
+                            </div>
+                        </div>
                         <div class="form-group">
-                            <label>Streaming Method</label>
                             <div class="bc-method-picker">
                                 <div class="bc-method-card selected" data-method="webrtc" onclick="selectStreamMethod('webrtc')">
                                     <i class="fa-solid fa-globe"></i>
                                     <strong>WebRTC</strong>
-                                    <span>Browser or OBS</span>
+                                    <span class="bc-method-subtitle">Browser or OBS (WHIP)</span>
+                                    <span class="bc-method-best"><i class="fa-solid fa-star"></i> Easiest — no software to install</span>
                                 </div>
                                 <div class="bc-method-card" data-method="rtmp" onclick="selectStreamMethod('rtmp')">
                                     <i class="fa-solid fa-server"></i>
                                     <strong>RTMP</strong>
-                                    <span>OBS / Streamlabs</span>
+                                    <span class="bc-method-subtitle">OBS / Streamlabs / IRL Pro</span>
+                                    <span class="bc-method-best"><i class="fa-solid fa-tv"></i> Best quality — use your streaming app</span>
                                 </div>
                                 <div class="bc-method-card" data-method="jsmpeg" onclick="selectStreamMethod('jsmpeg')">
                                     <i class="fa-solid fa-terminal"></i>
                                     <strong>JSMPEG</strong>
-                                    <span>FFmpeg / Raspberry Pi</span>
+                                    <span class="bc-method-subtitle">FFmpeg command line</span>
+                                    <span class="bc-method-best"><i class="fa-solid fa-microchip"></i> Lightweight — Raspberry Pi &amp; headless</span>
                                 </div>
+                            </div>
+                            <div class="bc-method-explainer" id="bc-method-explainer">
+                                <i class="fa-solid fa-circle-info"></i>
+                                <span id="bc-method-explainer-text"><strong>WebRTC</strong> lets you stream directly from this browser tab using your camera, microphone, or screen — no extra software needed. Just click Create Stream and you're live.</span>
                             </div>
                         </div>
 
                         <!-- WebRTC sub-choice -->
                         <div class="form-group" id="bc-webrtc-sub" style="display:block">
                             <label>WebRTC Source</label>
+                            <p class="bc-choice-hint">Stream straight from this browser, or send video from OBS using WebRTC (WHIP).</p>
                             <div class="bc-method-picker bc-method-picker-sm">
                                 <div class="bc-method-card-sm selected" data-sub="browser" onclick="selectWebRTCSub('browser')">
                                     <i class="fa-solid fa-camera"></i>
                                     <strong>Browser</strong>
+                                    <span class="bc-card-sm-hint">No extra software</span>
                                 </div>
                                 <div class="bc-method-card-sm" data-sub="obs" onclick="selectWebRTCSub('obs')">
                                     <i class="fa-solid fa-desktop"></i>
                                     <strong>OBS (WHIP)</strong>
+                                    <span class="bc-card-sm-hint">Requires OBS 30+</span>
                                 </div>
                             </div>
                         </div>
@@ -1206,15 +1233,27 @@
                         <!-- Browser Source Choice (Camera vs Screen Share) -->
                         <div class="form-group" id="bc-browser-source-choice" style="display:block">
                             <label>What do you want to share?</label>
+                            <p class="bc-choice-hint">Pick whether to stream your webcam/phone camera, or share your screen/window/tab.</p>
                             <div class="bc-method-picker bc-method-picker-sm">
                                 <div class="bc-method-card-sm selected" data-bsrc="camera" onclick="selectBrowserSource('camera')">
                                     <i class="fa-solid fa-camera"></i>
                                     <strong>Camera / Mic</strong>
+                                    <span class="bc-card-sm-hint">Webcam, phone cam, etc.</span>
                                 </div>
                                 <div class="bc-method-card-sm" data-bsrc="screen" onclick="selectBrowserSource('screen')">
                                     <i class="fa-solid fa-display"></i>
                                     <strong>Screen Share</strong>
+                                    <span class="bc-card-sm-hint">Desktop, app, or browser tab</span>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- STEP 3: Configure -->
+                        <div class="bc-step-header" id="bc-step3-header">
+                            <span class="bc-step-number">3</span>
+                            <div class="bc-step-text">
+                                <strong>Configure</strong>
+                                <span>Set up your camera, mic, or screen share</span>
                             </div>
                         </div>
 
@@ -1225,6 +1264,7 @@
                                 <button id="bc-perm-btn" class="btn btn-outline" type="button" style="touch-action:manipulation">
                                     <i class="fa-solid fa-video"></i> Allow Camera &amp; Mic
                                 </button>
+                                <p class="bc-perm-extra">Click the button above — your browser will ask for permission. This is required to stream.</p>
                                 <p id="bc-perm-debug" style="display:none;font-size:0.75rem;color:var(--text-secondary);margin-top:8px"></p>
                             </div>
                             <div id="bc-device-selects" style="display:none">
@@ -1334,6 +1374,88 @@
                         <button class="btn btn-primary btn-lg" style="width:100%" id="bc-create-btn" onclick="createNewStream()">
                             <i class="fa-solid fa-tower-broadcast"></i> Create Stream
                         </button>
+                        <p class="bc-create-reassurance"><i class="fa-solid fa-circle-info"></i> Your stream will appear at <strong>hobostreamer.com/<span id="bc-create-username">you</span></strong> — this link stays the same every time you go live.</p>
+
+                        <!-- Which method should I use? -->
+                        <details class="bc-help-guide">
+                            <summary><i class="fa-solid fa-question-circle"></i> Which streaming method should I use?</summary>
+                            <div class="bc-help-guide-body">
+                                <div class="bc-help-comparison">
+                                    <div class="bc-help-col">
+                                        <div class="bc-help-col-header webrtc"><i class="fa-solid fa-globe"></i> WebRTC (Browser)</div>
+                                        <ul>
+                                            <li><strong>Easiest option</strong> — works right in your browser</li>
+                                            <li>No software to install</li>
+                                            <li>Use your webcam, phone camera, or screen share</li>
+                                            <li>Ultra-low latency (under 1 second)</li>
+                                            <li>Great for casual streaming, IRL, and quick screen shares</li>
+                                        </ul>
+                                        <p class="bc-help-verdict"><i class="fa-solid fa-arrow-right"></i> <strong>Choose this</strong> if you just want to go live fast without installing anything.</p>
+                                    </div>
+                                    <div class="bc-help-col">
+                                        <div class="bc-help-col-header rtmp"><i class="fa-solid fa-server"></i> RTMP</div>
+                                        <ul>
+                                            <li><strong>Best video quality</strong> — uses OBS, Streamlabs, or a mobile app</li>
+                                            <li>Full control over scenes, overlays, transitions</li>
+                                            <li>Supports OBS Studio, Streamlabs, IRL Pro (Android), and more</li>
+                                            <li>Just paste the Server URL and Stream Key into your app</li>
+                                            <li>Best for gaming, desktop content, and professional-looking streams</li>
+                                        </ul>
+                                        <p class="bc-help-verdict"><i class="fa-solid fa-arrow-right"></i> <strong>Choose this</strong> if you use OBS or a mobile streaming app like IRL Pro.</p>
+                                    </div>
+                                    <div class="bc-help-col">
+                                        <div class="bc-help-col-header jsmpeg"><i class="fa-solid fa-terminal"></i> JSMPEG</div>
+                                        <ul>
+                                            <li><strong>Lightweight</strong> — just a single FFmpeg command</li>
+                                            <li>Perfect for Raspberry Pi, security cameras, embedded devices</li>
+                                            <li>Works on headless servers (no GUI needed)</li>
+                                            <li>Lower quality than RTMP (mpeg1 codec), but very low CPU usage</li>
+                                            <li>Great for 24/7 unattended streams and IoT projects</li>
+                                        </ul>
+                                        <p class="bc-help-verdict"><i class="fa-solid fa-arrow-right"></i> <strong>Choose this</strong> if you're streaming from a Pi, Linux server, or anything command-line.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <!-- FAQ -->
+                        <details class="bc-help-guide">
+                            <summary><i class="fa-solid fa-life-ring"></i> Need help? Common questions</summary>
+                            <div class="bc-help-guide-body">
+                                <div class="bc-faq-item">
+                                    <strong>My camera/mic isn't showing up</strong>
+                                    <p>Click "Allow Camera & Mic" and accept the browser permission popup. If you accidentally denied it, click the lock/camera icon in your browser's address bar to re-enable permissions, then refresh the page.</p>
+                                </div>
+                                <div class="bc-faq-item">
+                                    <strong>Can I stream from my phone?</strong>
+                                    <p>Yes! Use <strong>WebRTC → Browser → Camera/Mic</strong> to stream directly from your phone's browser. Or install <strong>IRL Pro</strong> (Android) and use the <strong>RTMP</strong> method — there's a setup guide on the RTMP instructions page.</p>
+                                </div>
+                                <div class="bc-faq-item">
+                                    <strong>How do I use OBS?</strong>
+                                    <p>Select <strong>RTMP</strong> as your method and click Create Stream. You'll get a <strong>Server URL</strong> and <strong>Stream Key</strong> — paste those into OBS under Settings → Stream → Custom. Then click "Start Streaming" in OBS. Alternatively, select <strong>WebRTC → OBS (WHIP)</strong> if you have OBS 30+ for ultra-low latency.</p>
+                                </div>
+                                <div class="bc-faq-item">
+                                    <strong>What's WHIP?</strong>
+                                    <p>WHIP (WebRTC HTTP Ingest Protocol) is a new standard that lets OBS send video via WebRTC instead of RTMP. It gives you sub-second latency. Requires <strong>OBS Studio 30.0 or newer</strong>.</p>
+                                </div>
+                                <div class="bc-faq-item">
+                                    <strong>Can I share my screen and my face at the same time?</strong>
+                                    <p>Yes! Choose <strong>Screen Share</strong>, then check the <strong>"Include Camera (PiP overlay)"</strong> checkbox. Your webcam will appear as a small picture-in-picture over your screen share.</p>
+                                </div>
+                                <div class="bc-faq-item">
+                                    <strong>Where is my stream link?</strong>
+                                    <p>Your stream is always at <strong>hobostreamer.com/your-username</strong>. This link never changes — share it once, and it works every time you go live.</p>
+                                </div>
+                                <div class="bc-faq-item">
+                                    <strong>Can I stream to multiple platforms at once?</strong>
+                                    <p>Yes! After you go live, scroll down to the <strong>Restreams</strong> section. You can add YouTube, Twitch, Kick, or any custom RTMP server as a restream destination.</p>
+                                </div>
+                                <div class="bc-faq-item">
+                                    <strong>My stream quality is bad / buffering</strong>
+                                    <p>Try lowering the resolution to 480p or 360p, or reduce the max bitrate. If on mobile data, use 1000–1500 kbps. Make sure you have a stable internet connection — WiFi is better than cellular for streaming.</p>
+                                </div>
+                            </div>
+                        </details>
                     </div>
 
                     <!-- Existing streams list (right / secondary) -->
@@ -1351,7 +1473,7 @@
                 <!-- RTMP Instructions Panel -->
                 <div id="bc-rtmp-instructions" style="display:none" class="bc-instructions-panel">
                     <h2><i class="fa-solid fa-server"></i> RTMP Stream Setup</h2>
-                    <p>Use OBS, IRL Pro, Streamlabs, or any RTMP-compatible software.</p>
+                    <p class="bc-instructions-intro">Your stream is created! Now paste the info below into your streaming software (OBS Studio, Streamlabs, IRL Pro, or any RTMP-compatible app) and hit "Start Streaming".</p>
                     <div class="bc-code-block">
                         <label>Server URL</label>
                         <div class="bc-code-copy">
@@ -1432,7 +1554,7 @@
                 <!-- JSMPEG Instructions Panel -->
                 <div id="bc-jsmpeg-instructions" style="display:none" class="bc-instructions-panel">
                     <h2><i class="fa-solid fa-terminal"></i> JSMPEG Stream Setup</h2>
-                    <p>Stream using FFmpeg — ideal for Raspberry Pi, embedded devices, Linux desktops, and headless servers. Supports video + audio.</p>
+                    <p class="bc-instructions-intro">Your stream is created! Copy one of the FFmpeg commands below and run it in your terminal. Ideal for Raspberry Pi, embedded devices, Linux desktops, and headless servers.</p>
 
                     <!-- Quick-copy commands -->
                     <div class="bc-code-block">
@@ -1618,7 +1740,7 @@
                 <!-- WebRTC OBS (WHIP) Instructions Panel -->
                 <div id="bc-webrtc-obs-instructions" style="display:none" class="bc-instructions-panel">
                     <h2><i class="fa-solid fa-desktop"></i> WebRTC via OBS (WHIP)</h2>
-                    <p>OBS 30+ supports WebRTC streaming via the WHIP protocol. This provides ultra-low latency.</p>
+                    <p class="bc-instructions-intro">Your stream is created! Paste the info below into OBS Studio 30+ to start streaming with ultra-low latency via WebRTC. This is newer and faster than RTMP.</p>
                     <div class="bc-code-block">
                         <label>WHIP Endpoint</label>
                         <div class="bc-code-copy">
@@ -3165,7 +3287,7 @@
 <script src="/js/hobo-bucks.js?v=2"></script>
 <script src="/js/hobo-coins.js?v=2"></script>
 <script src="/js/cosmetics-ui.js?v=2"></script>
-<script src="/js/broadcast.js?v=10"></script>
+<script src="/js/broadcast.js?v=11"></script>
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>
