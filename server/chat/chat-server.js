@@ -482,6 +482,23 @@ class ChatServer {
         // Voice channel tagging — clients can tag messages with the voice channel they're in
         const voiceChannelId = (typeof msg.voiceChannelId === 'string' && msg.voiceChannelId) ? msg.voiceChannelId : null;
 
+        // Reply-to support — client sends reply_to_id, we look up the parent message
+        const replyToId = msg.reply_to_id ? parseInt(msg.reply_to_id) : null;
+        let replyTo = null;
+        if (replyToId) {
+            try {
+                const parent = db.getChatMessageById(replyToId);
+                if (parent && !parent.is_deleted) {
+                    replyTo = {
+                        id: parent.id,
+                        username: parent.username,
+                        user_id: parent.user_id,
+                        message: parent.message.length > 100 ? parent.message.slice(0, 100) + '…' : parent.message,
+                    };
+                }
+            } catch { /* non-critical */ }
+        }
+
         const chatMsg = {
             type: 'chat',
             username,
@@ -521,7 +538,7 @@ class ChatServer {
 
         // Save to database
         try {
-            db.saveChatMessage({
+            const result = db.saveChatMessage({
                 stream_id: client.streamId || null,
                 user_id: client.user?.id,
                 anon_id: client.anonId,
@@ -529,8 +546,13 @@ class ChatServer {
                 message: text,
                 message_type: 'chat',
                 is_global: !client.streamId,
+                reply_to_id: replyToId,
             });
+            if (result.lastInsertRowid) chatMsg.id = Number(result.lastInsertRowid);
         } catch { /* non-critical */ }
+
+        // Attach reply context to broadcast
+        if (replyTo) chatMsg.reply_to = replyTo;
 
         // Award Hobo Coins for chatting (logged-in users only)
         if (client.user?.id && client.streamId) {
