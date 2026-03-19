@@ -1089,6 +1089,20 @@ function addSystemMessage(text, isError = false) {
     }
 }
 
+/**
+ * Build avatar HTML for a chat message (reusable helper).
+ * Returns an <img> with letter fallback, or just a letter span for anon users.
+ */
+function getChatAvatarHTML(msg) {
+    const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
+    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
+    return msg.avatar_url
+        ? `<img class="chat-avatar" src="${esc(msg.avatar_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
+          + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`
+        : `<span class="chat-avatar-letter" style="background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`;
+}
+
 function addGottiMessage(msg) {
     const { messages: container } = getChatEl();
     if (!container) return;

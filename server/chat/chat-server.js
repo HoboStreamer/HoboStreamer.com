@@ -319,11 +319,6 @@ class ChatServer {
         const client = this.clients.get(ws);
         if (!client) return;
 
-        // Debug: log all chat messages that start with !
-        if (msg.type === 'chat' && typeof msg.message === 'string' && msg.message.trim().startsWith('!')) {
-            console.log(`[Chat DEBUG] Received bang command via WS: "${msg.message}" from ${client.user?.username || client.anonId} in ${client.streamId ? 'stream ' + client.streamId : 'global'}`);
-        }
-
         // Rate limiting (only for chat messages, not join/leave)
         if (msg.type === 'chat') {
             const now = Date.now();
@@ -627,7 +622,6 @@ class ChatServer {
         const cmd = parts[0].toLowerCase();
 
         if (cmd === '!gotti') {
-            console.log(`[Chat] !gotti command from ${client.user?.username || client.anonId} in ${client.streamId ? 'stream ' + client.streamId : 'global'}`);
             const username = client.user ? client.user.display_name : client.anonId;
             const coreUsername = client.user ? client.user.username : null;
             const role = client.user ? client.user.role : 'anon';
@@ -663,7 +657,6 @@ class ChatServer {
                 } catch { /* non-critical */ }
             }
 
-            console.log(`[Chat] Broadcasting gotti msg, streamId=${client.streamId || 'global'}, clients=${this.clients.size}`);
             if (client.streamId) {
                 this.broadcastToStream(client.streamId, gottiMsg);
                 this.forwardToGlobal(client.streamId, gottiMsg);
