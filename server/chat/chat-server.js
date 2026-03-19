@@ -700,7 +700,7 @@ class ChatServer {
                     }).then((request) => {
                         this.broadcastToStream(client.streamId, {
                             type: 'system',
-                            message: `${request.username} added “${request.title}” to the media queue for ${request.cost} Hobo Coins.`,
+                            message: `${request.username} added “${request.title}”${request.duration_seconds ? ` (${Math.floor(request.duration_seconds / 60)}m${request.duration_seconds % 60}s)` : ''} to the media queue for ${request.cost} Hobo Coins.`,
                             timestamp: new Date().toISOString(),
                         });
                         this.sendTo(ws, {
@@ -732,7 +732,9 @@ class ChatServer {
                 case '!watching': {
                     const state = mediaQueue.getState(stream.user_id);
                     if (state.now_playing) {
-                        this.sendTo(ws, { type: 'system', message: `Now playing: ${state.now_playing.title} (requested by ${state.now_playing.username})` });
+                        const np = state.now_playing;
+                        const durText = np.duration_seconds ? ` [${Math.floor(np.duration_seconds / 60)}m${np.duration_seconds % 60}s]` : '';
+                        this.sendTo(ws, { type: 'system', message: `Now playing: ${np.title}${durText} (requested by ${np.username})` });
                     } else if (state.queue[0]) {
                         this.sendTo(ws, { type: 'system', message: `Nothing is playing yet. Up next: ${state.queue[0].title}` });
                     } else {

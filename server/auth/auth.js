@@ -209,8 +209,10 @@ function extractToken(req) {
     if (authHeader && authHeader.startsWith('Bearer ')) {
         return authHeader.slice(7);
     }
-    if (req.cookies && req.cookies.token) {
-        return req.cookies.token;
+    // Check both cookie names: 'token' (legacy hobostreamer) and 'hobo_token' (shared network)
+    if (req.cookies) {
+        if (req.cookies.token) return req.cookies.token;
+        if (req.cookies.hobo_token) return req.cookies.hobo_token;
     }
     return null;
 }

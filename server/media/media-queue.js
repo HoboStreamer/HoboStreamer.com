@@ -1,4 +1,5 @@
 const db = require('../db/database');
+const downloader = require('./media-downloader');
 
 const DEFAULTS = {
     enabled: 1,
@@ -9,10 +10,17 @@ const DEFAULTS = {
     allow_vimeo: 1,
     allow_direct_media: 1,
     auto_advance: 1,
+    cost_mode: 'flat',
+    cost_per_minute: 5,
+    allow_live: 0,
+    download_mode: 'stream',  // 'stream' = extract URL, 'download' = download file to disk
 };
 
 const DIRECT_AUDIO_EXT = /\.(mp3|wav|ogg|m4a|aac|flac)(\?.*)?$/i;
 const DIRECT_VIDEO_EXT = /\.(mp4|webm|ogv|mov|m4v)(\?.*)?$/i;
+
+// Active extraction/download jobs: requestId → { cancel, promise }
+const activeJobs = new Map();
 
 class MediaQueue {
     getSettings(streamerId) {
@@ -23,6 +31,23 @@ class MediaQueue {
         return { ...DEFAULTS, ...(db.upsertMediaRequestSettings(streamerId, fields) || {}) };
     }
 
+    /**
+     * Calculate cost based on settings. Supports flat and per-minute modes.
+     */
+    calculateCost(settings, durationSeconds) {
+        if (settings.cost_mode === 'per_minute' && Number.isFinite(durationSeconds) && durationSeconds > 0) {
+            const minutes = Math.ceil(durationSeconds / 60);
+            const perMin = Math.max(1, Number(settings.cost_per_minute) || DEFAULTS.cost_per_minute);
+            return Math.max(1, minutes * perMin);
+        }
+        return Math.max(1, Number(settings.request_cost) || DEFAULTS.request_cost);
+    }
+
+    /**
+     * Add a media request to the queue.
+     * Uses yt-dlp for metadata (title, duration, thumbnail) when available.
+     * Enforces duration limits and per-minute pricing.
+     */
     async addRequest({ streamerId, streamId, userId, username, input }) {
         const settings = this.getSettings(streamerId);
         if (!settings.enabled) throw new Error('Media requests are disabled for this channel');
@@ -31,6 +56,23 @@ class MediaQueue {
         if (!trimmed) throw new Error('Usage: !sr <media url>');
 
         const normalized = await this.normalizeInput(trimmed, settings);
+
+        // Enforce duration limit
+        const maxDuration = Number(settings.max_duration_seconds) || DEFAULTS.max_duration_seconds;
+        if (Number.isFinite(normalized.duration_seconds) && normalized.duration_seconds > 0) {
+            if (normalized.duration_seconds > maxDuration) {
+                const maxMin = Math.floor(maxDuration / 60);
+                const vidMin = Math.floor(normalized.duration_seconds / 60);
+                const vidSec = normalized.duration_seconds % 60;
+                throw new Error(`Too long (${vidMin}m${vidSec}s). Max allowed: ${maxMin}m.`);
+            }
+        }
+
+        // Live stream check
+        if (normalized.isLive && !settings.allow_live) {
+            throw new Error('Live stream requests are disabled for this channel');
+        }
+
         const pendingCount = db.countPendingMediaRequestsForUser(streamerId, userId);
         if (pendingCount >= Number(settings.max_per_user || DEFAULTS.max_per_user)) {
             throw new Error(`You already have ${pendingCount} active request(s) in queue`);
@@ -39,9 +81,13 @@ class MediaQueue {
         const duplicate = db.findActiveMediaRequestByCanonicalUrl(streamerId, normalized.canonical_url);
         if (duplicate) throw new Error('That media is already in the queue');
 
-        const cost = Math.max(1, Number(settings.request_cost || DEFAULTS.request_cost));
+        // Calculate cost (flat or per-minute)
+        const cost = this.calculateCost(settings, normalized.duration_seconds);
         if (!db.deductHoboCoins(userId, cost)) {
-            throw new Error(`Not enough Hobo Coins. This channel charges ${cost} coins per request.`);
+            const costDesc = settings.cost_mode === 'per_minute'
+                ? `${settings.cost_per_minute} coins/min`
+                : `${cost} coins`;
+            throw new Error(`Not enough Hobo Coins. This channel charges ${costDesc} per request.`);
         }
 
         const queuePosition = db.getMediaRequestMaxQueuePosition(streamerId) + 1;
@@ -71,7 +117,96 @@ class MediaQueue {
 
         const request = db.getMediaRequestById(result.lastInsertRowid);
         this.broadcastQueueUpdate(streamerId);
+
+        // Kick off background stream URL extraction for the new request
+        this.extractStreamUrlForRequest(request.id).catch(() => {});
+
         return request;
+    }
+
+    /**
+     * Extract a direct stream URL for a pending/playing request (background).
+     * Updates the DB row when done.
+     */
+    async extractStreamUrlForRequest(requestId) {
+        const request = db.getMediaRequestById(requestId);
+        if (!request) return null;
+        if (request.stream_url && request.download_status === 'ready') return request;
+        if (request.provider === 'audio' || request.provider === 'video') {
+            // Direct media — the canonical_url IS the stream URL
+            db.updateMediaRequest(requestId, {
+                stream_url: request.canonical_url,
+                download_status: 'ready',
+            });
+            return db.getMediaRequestById(requestId);
+        }
+
+        if (!downloader.isAvailable()) {
+            // No yt-dlp — fall back to embed URL
+            db.updateMediaRequest(requestId, {
+                stream_url: request.embed_url,
+                download_status: 'ready',
+            });
+            return db.getMediaRequestById(requestId);
+        }
+
+        try {
+            db.updateMediaRequest(requestId, { download_status: 'extracting' });
+            this.broadcastQueueUpdate(request.streamer_id);
+
+            const { streamUrl } = await downloader.extractStreamUrl(request.canonical_url);
+            db.updateMediaRequest(requestId, {
+                stream_url: streamUrl,
+                download_status: 'ready',
+            });
+            this.broadcastQueueUpdate(request.streamer_id);
+            return db.getMediaRequestById(requestId);
+        } catch (err) {
+            console.warn(`[MediaQueue] Stream URL extraction failed for request ${requestId}:`, err.message);
+            // Fall back to embed URL
+            db.updateMediaRequest(requestId, {
+                stream_url: request.embed_url,
+                download_status: 'ready',
+                last_error: `Extraction failed: ${err.message}`,
+            });
+            this.broadcastQueueUpdate(request.streamer_id);
+            return db.getMediaRequestById(requestId);
+        }
+    }
+
+    /**
+     * Download media file to disk for a request (when stream mode won't work).
+     */
+    async downloadFileForRequest(requestId) {
+        const request = db.getMediaRequestById(requestId);
+        if (!request) return null;
+        if (request.file_path && request.download_status === 'ready') return request;
+        if (!downloader.isAvailable()) throw new Error('Download not available');
+
+        try {
+            db.updateMediaRequest(requestId, { download_status: 'downloading' });
+            this.broadcastQueueUpdate(request.streamer_id);
+
+            const maxDuration = Number(request.duration_seconds) || 600;
+            const { filePath } = await downloader.downloadToFile(request.canonical_url, maxDuration);
+            const servePath = `/media/cache/${require('path').basename(filePath)}`;
+
+            db.updateMediaRequest(requestId, {
+                file_path: servePath,
+                stream_url: servePath,
+                download_status: 'ready',
+            });
+            this.broadcastQueueUpdate(request.streamer_id);
+            return db.getMediaRequestById(requestId);
+        } catch (err) {
+            console.warn(`[MediaQueue] Download failed for request ${requestId}:`, err.message);
+            db.updateMediaRequest(requestId, {
+                download_status: 'failed',
+                last_error: `Download failed: ${err.message}`,
+            });
+            this.broadcastQueueUpdate(request.streamer_id);
+            throw err;
+        }
     }
 
     startNext(streamerId) {
@@ -88,6 +223,16 @@ class MediaQueue {
         db.renormalizePendingMediaRequestPositions(streamerId);
 
         const request = db.getMediaRequestById(next.id);
+
+        // Ensure stream URL is extracted before playing
+        if (!request.stream_url || request.download_status !== 'ready') {
+            this.extractStreamUrlForRequest(request.id).catch(() => {});
+        }
+
+        // Pre-extract next-in-queue for seamless advance
+        const nextUp = db.getNextPendingMediaRequest(streamerId);
+        if (nextUp) this.extractStreamUrlForRequest(nextUp.id).catch(() => {});
+
         this.broadcastQueueUpdate(streamerId);
         this.broadcastNowPlaying(streamerId, request);
         return request;
@@ -100,6 +245,7 @@ class MediaQueue {
         db.updateMediaRequest(active.id, {
             status,
             ended_at: new Date().toISOString(),
+            playback_position: 0,
         });
 
         const ended = db.getMediaRequestById(active.id);
@@ -121,10 +267,75 @@ class MediaQueue {
         db.updateMediaRequest(request.id, {
             status: nextStatus,
             ended_at: new Date().toISOString(),
+            playback_position: 0,
         });
         db.renormalizePendingMediaRequestPositions(streamerId);
         this.broadcastQueueUpdate(streamerId);
         return db.getMediaRequestById(request.id);
+    }
+
+    /**
+     * Refund coins for a failed or skipped request.
+     * Returns the refunded amount, or 0 if already refunded.
+     */
+    refund(requestId) {
+        const request = db.getMediaRequestById(requestId);
+        if (!request) throw new Error('Request not found');
+        if (request.refunded) return 0;
+
+        const amount = request.cost || 0;
+        if (amount <= 0) return 0;
+
+        db.addHoboCoins(request.user_id, amount);
+        db.createCoinTransaction({
+            user_id: request.user_id,
+            stream_id: request.stream_id,
+            amount: amount,
+            type: 'refund',
+            message: `Refund: ${request.title || 'media request'}`,
+        });
+        db.updateMediaRequest(requestId, { refunded: 1 });
+
+        return amount;
+    }
+
+    /**
+     * Mark a request as failed and auto-refund the user.
+     */
+    failRequest(requestId, errorMessage) {
+        const request = db.getMediaRequestById(requestId);
+        if (!request) return null;
+
+        db.updateMediaRequest(requestId, {
+            status: 'failed',
+            ended_at: new Date().toISOString(),
+            last_error: errorMessage || 'Playback failed',
+        });
+
+        // Auto-refund on failure
+        this.refund(requestId);
+
+        db.renormalizePendingMediaRequestPositions(request.streamer_id);
+        this.broadcastQueueUpdate(request.streamer_id);
+        return db.getMediaRequestById(requestId);
+    }
+
+    /**
+     * Save playback position for the currently playing request.
+     * Called periodically by the media player client.
+     */
+    savePlaybackPosition(requestId, positionSeconds) {
+        const pos = Number(positionSeconds);
+        if (!Number.isFinite(pos) || pos < 0) return;
+        db.updateMediaRequest(requestId, { playback_position: pos });
+    }
+
+    /**
+     * Get playback position for a request (for resume on reload/restart).
+     */
+    getPlaybackPosition(requestId) {
+        const request = db.getMediaRequestById(requestId);
+        return request?.playback_position || 0;
     }
 
     move(streamerId, requestId, direction) {
@@ -153,6 +364,11 @@ class MediaQueue {
         };
     }
 
+    /**
+     * Normalize user input into a canonical media request.
+     * Uses yt-dlp for metadata when available (title, duration, thumbnail).
+     * Falls back to oEmbed API if yt-dlp not installed.
+     */
     async normalizeInput(rawInput, settings) {
         let url;
         try {
@@ -164,10 +380,30 @@ class MediaQueue {
         const hostname = url.hostname.replace(/^www\./i, '').toLowerCase();
         const href = url.toString();
 
+        // ── YouTube ──
         const ytId = this.extractYouTubeId(url);
         if (ytId) {
             if (!settings.allow_youtube) throw new Error('YouTube requests are disabled for this channel');
             const canonical = `https://www.youtube.com/watch?v=${ytId}`;
+
+            // Use yt-dlp for accurate metadata (duration, title, thumbnail)
+            if (downloader.isAvailable()) {
+                try {
+                    const info = await downloader.getInfo(canonical);
+                    return {
+                        canonical_url: canonical,
+                        embed_url: `https://www.youtube.com/embed/${ytId}?autoplay=1&rel=0`,
+                        provider: 'youtube',
+                        title: info.title || `YouTube video ${ytId}`,
+                        thumbnail_url: info.thumbnail || `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
+                        duration_seconds: info.duration || null,
+                        isLive: info.isLive || false,
+                    };
+                } catch {
+                    // Fall through to oEmbed fallback
+                }
+            }
+
             const meta = await this.fetchOEmbed(`https://www.youtube.com/oembed?url=${encodeURIComponent(canonical)}&format=json`);
             return {
                 canonical_url: canonical,
@@ -176,9 +412,11 @@ class MediaQueue {
                 title: meta?.title || `YouTube video ${ytId}`,
                 thumbnail_url: meta?.thumbnail_url || `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
                 duration_seconds: null,
+                isLive: false,
             };
         }
 
+        // ── Vimeo ──
         const vimeoMatch = hostname === 'vimeo.com' || hostname === 'player.vimeo.com'
             ? url.pathname.match(/\/(?:video\/)?(\d+)/)
             : null;
@@ -186,10 +424,25 @@ class MediaQueue {
             if (!settings.allow_vimeo) throw new Error('Vimeo requests are disabled for this channel');
             const videoId = vimeoMatch[1];
             const canonical = `https://vimeo.com/${videoId}`;
-            const meta = await this.fetchOEmbed(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(canonical)}`);
-            if (Number.isFinite(meta?.duration) && meta.duration > Number(settings.max_duration_seconds || DEFAULTS.max_duration_seconds)) {
-                throw new Error(`That video is too long. Max allowed is ${settings.max_duration_seconds} seconds.`);
+
+            if (downloader.isAvailable()) {
+                try {
+                    const info = await downloader.getInfo(canonical);
+                    return {
+                        canonical_url: canonical,
+                        embed_url: `https://player.vimeo.com/video/${videoId}?autoplay=1`,
+                        provider: 'vimeo',
+                        title: info.title || `Vimeo video ${videoId}`,
+                        thumbnail_url: info.thumbnail || null,
+                        duration_seconds: info.duration || null,
+                        isLive: info.isLive || false,
+                    };
+                } catch {
+                    // Fall through to oEmbed
+                }
             }
+
+            const meta = await this.fetchOEmbed(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(canonical)}`);
             return {
                 canonical_url: canonical,
                 embed_url: `https://player.vimeo.com/video/${videoId}?autoplay=1`,
@@ -197,9 +450,11 @@ class MediaQueue {
                 title: meta?.title || `Vimeo video ${videoId}`,
                 thumbnail_url: meta?.thumbnail_url || null,
                 duration_seconds: Number.isFinite(meta?.duration) ? meta.duration : null,
+                isLive: false,
             };
         }
 
+        // ── Direct audio ──
         if (DIRECT_AUDIO_EXT.test(href)) {
             if (!settings.allow_direct_media) throw new Error('Direct media requests are disabled for this channel');
             return {
@@ -209,9 +464,11 @@ class MediaQueue {
                 title: this.filenameTitle(url.pathname),
                 thumbnail_url: null,
                 duration_seconds: null,
+                isLive: false,
             };
         }
 
+        // ── Direct video ──
         if (DIRECT_VIDEO_EXT.test(href)) {
             if (!settings.allow_direct_media) throw new Error('Direct media requests are disabled for this channel');
             return {
@@ -221,7 +478,26 @@ class MediaQueue {
                 title: this.filenameTitle(url.pathname),
                 thumbnail_url: null,
                 duration_seconds: null,
+                isLive: false,
             };
+        }
+
+        // ── Generic yt-dlp support (SoundCloud, Twitch clips, etc.) ──
+        if (downloader.isAvailable()) {
+            try {
+                const info = await downloader.getInfo(href);
+                return {
+                    canonical_url: info.url || href,
+                    embed_url: null,
+                    provider: 'video',
+                    title: info.title || this.filenameTitle(url.pathname),
+                    thumbnail_url: info.thumbnail || null,
+                    duration_seconds: info.duration || null,
+                    isLive: info.isLive || false,
+                };
+            } catch {
+                // Not recognized by yt-dlp either
+            }
         }
 
         throw new Error('Unsupported media URL. Supported: YouTube, Vimeo, direct audio/video files');

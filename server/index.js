@@ -202,7 +202,7 @@ app.use('/css', express.static(path.join(__dirname, '../public/css'), { maxAge: 
 app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, filePath) => { if (filePath.endsWith('.html')) noCacheHeaders(res); } }));
 
 // Ensure data directories exist
-['./data', './data/vods', './data/clips', './data/media', './data/thumbnails', './data/emotes', './data/avatars', './data/pastes', './data/pastes/screenshots'].forEach(dir => {
+['./data', './data/vods', './data/clips', './data/media', './data/media/cache', './data/thumbnails', './data/emotes', './data/avatars', './data/pastes', './data/pastes/screenshots'].forEach(dir => {
     const fullPath = path.resolve(dir);
     if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
 });

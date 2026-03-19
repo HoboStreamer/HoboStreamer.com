@@ -44,9 +44,59 @@ async function api(path, opts = {}) {
         ...opts,
         body: opts.body ? (typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body)) : undefined,
     });
+
+    // Auto-refresh on 401 (expired JWT) — try once
+    if (res.status === 401 && !opts._retried) {
+        const refreshed = await tryRefreshToken();
+        if (refreshed) {
+            return api(path, { ...opts, _retried: true });
+        }
+    }
+
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw { status: res.status, message: data.error || 'Request failed', data };
     return data;
+}
+
+/** Attempt to refresh the access token using the httpOnly refresh cookie */
+let _refreshPromise = null;
+async function tryRefreshToken() {
+    // Coalesce concurrent refresh attempts
+    if (_refreshPromise) return _refreshPromise;
+    _refreshPromise = (async () => {
+        try {
+            const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' });
+            if (!res.ok) return false;
+            const data = await res.json();
+            if (data.access_token) {
+                localStorage.setItem('token', data.access_token);
+                return true;
+            }
+            return false;
+        } catch {
+            return false;
+        } finally {
+            _refreshPromise = null;
+        }
+    })();
+    return _refreshPromise;
+}
+
+/** Proactively refresh token before it expires (checks every 30 min) */
+function startTokenRefreshTimer() {
+    setInterval(async () => {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        try {
+            // Decode JWT payload to check expiration
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            const expiresIn = (payload.exp * 1000) - Date.now();
+            // Refresh if expiring within 2 hours
+            if (expiresIn < 2 * 60 * 60 * 1000) {
+                await tryRefreshToken();
+            }
+        } catch { /* malformed token, will be caught on next API call */ }
+    }, 30 * 60 * 1000); // Check every 30 minutes
 }
 
 /* ── Protocol Badge ───────────────────────────────────────────── */
@@ -219,7 +269,13 @@ function doLogin() { window.location.href = '/api/auth/sso/login'; }
 function doRegister() { window.location.href = '/api/auth/sso/login'; }
 
 function logout() {
+    // Clear server-side cookies via API
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    // Clear client-side storage
     localStorage.removeItem('token');
+    // Also clear cookies client-side as fallback
+    document.cookie = 'token=;Max-Age=0;path=/';
+    document.cookie = 'hobo_token=;Max-Age=0;path=/';
     currentUser = null;
     onAuthChange();
     if (typeof destroyCall === 'function') destroyCall();
@@ -234,11 +290,16 @@ function logout() {
 
 async function loadUser() {
     const tok = localStorage.getItem('token');
-    if (!tok) return;
+    if (!tok) {
+        // No token in localStorage — try refreshing from httpOnly cookie
+        const refreshed = await tryRefreshToken();
+        if (!refreshed) return;
+    }
     try {
         const data = await api('/auth/me');
         currentUser = mergeUserWithCapabilities(data.user || data, data.capabilities);
-    } catch {
+    } catch (err) {
+        // If still 401 after auto-refresh attempt in api(), give up
         localStorage.removeItem('token');
     }
 }
@@ -3205,6 +3266,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadUser();
     _userLoaded = true;
     onAuthChange();
+
+    // Start proactive token refresh timer
+    startTokenRefreshTimer();
 
     // Load theme from server if logged in (localStorage already applied instantly)
     if (currentUser && typeof loadThemeFromServer === 'function') {

@@ -1,0 +1,268 @@
+/**
+ * Media Downloader — Server-side yt-dlp media extraction & proxy
+ *
+ * Uses yt-dlp to:
+ *   1. Fetch metadata (title, duration, thumbnail) for validation
+ *   2. Extract direct stream URLs for playback
+ *   3. Download files for buffered playback when streaming fails
+ *
+ * Inspired by RS-Companion MediaPlayer's multi-strategy extraction.
+ */
+
+const { execFile, spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+
+// ── Config ──────────────────────────────────────────────────
+const YTDLP_PATH = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
+const CACHE_DIR = path.resolve('./data/media/cache');
+const MAX_CACHE_SIZE_MB = 2048;
+const CACHE_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
+const URL_CACHE_TTL_MS = 3 * 60 * 60 * 1000;  // 3 hours for extracted stream URLs
+const INFO_TIMEOUT_MS = 20000;
+const EXTRACT_TIMEOUT_MS = 30000;
+const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000; // 10 min for file download
+
+// In-memory URL cache: canonicalUrl → { streamUrl, expiresAt, info }
+const urlCache = new Map();
+
+// Ensure cache dir exists
+try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch {}
+
+/**
+ * Check if yt-dlp is available
+ */
+function isAvailable() {
+    try {
+        return fs.existsSync(YTDLP_PATH);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Get video info (metadata only, no download).
+ * Returns: { title, duration, thumbnail, url, id, isLive, uploadDate }
+ */
+async function getInfo(url) {
+    return new Promise((resolve, reject) => {
+        const args = [
+            '--no-download',
+            '--print', '%(title)s\n%(duration)s\n%(thumbnail)s\n%(webpage_url)s\n%(id)s\n%(extractor)s\n%(is_live)s\n%(upload_date)s',
+            '--no-warnings',
+            '--no-playlist',
+            '--age-limit', '99',
+            '--geo-bypass',
+            '--no-check-certificates',
+            url,
+        ];
+
+        execFile(YTDLP_PATH, args, { timeout: INFO_TIMEOUT_MS }, (err, stdout, stderr) => {
+            if (err) {
+                const msg = (stderr || err.message || '').slice(0, 300);
+                return reject(new Error(`Failed to get video info: ${msg}`));
+            }
+
+            const lines = stdout.trim().split('\n');
+            const durationRaw = parseInt(lines[1]) || 0;
+            const isLive = lines[6] === 'True';
+
+            let uploadDate = '';
+            if (lines[7] && /^\d{8}$/.test(lines[7])) {
+                const y = lines[7].slice(0, 4), m = lines[7].slice(4, 6), d = lines[7].slice(6, 8);
+                uploadDate = `${y}-${m}-${d}`;
+            }
+
+            resolve({
+                title: lines[0] || 'Unknown',
+                duration: durationRaw,
+                thumbnail: lines[2] || '',
+                url: lines[3] || url,
+                id: lines[4] || '',
+                extractor: lines[5] || 'unknown',
+                isLive,
+                uploadDate,
+            });
+        });
+    });
+}
+
+/**
+ * Extract a direct playable stream URL using yt-dlp.
+ * Tries multiple strategies for maximum compatibility.
+ * Uses cache if available.
+ */
+async function extractStreamUrl(url) {
+    // Check cache
+    const cached = urlCache.get(url);
+    if (cached && Date.now() < cached.expiresAt) {
+        return cached;
+    }
+
+    const strategies = [
+        // Best audio+video combined, prefer mp4
+        ['--format', 'best[ext=mp4]/best[ext=webm]/best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
+        // Lower quality fallback
+        ['--format', 'worst[ext=mp4]/worst', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
+        // Force generic
+        ['--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
+    ];
+
+    for (let i = 0; i < strategies.length; i++) {
+        try {
+            const result = await runYtdlp(strategies[i]);
+            const streamUrl = result.split('\n')[0];
+            if (streamUrl && streamUrl.startsWith('http')) {
+                const entry = { streamUrl, expiresAt: Date.now() + URL_CACHE_TTL_MS };
+                urlCache.set(url, entry);
+                return entry;
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    throw new Error('All stream URL extraction strategies failed');
+}
+
+/**
+ * Download media to a local file for buffered playback.
+ * Returns the file path on success.
+ */
+async function downloadToFile(url, maxDurationSeconds = 600) {
+    const hash = crypto.createHash('sha256').update(url).digest('hex').slice(0, 16);
+    const ext = 'mp4';
+    const filePath = path.join(CACHE_DIR, `${hash}.${ext}`);
+
+    // Check if already cached
+    if (fs.existsSync(filePath)) {
+        const stat = fs.statSync(filePath);
+        if (stat.size > 0 && (Date.now() - stat.mtimeMs) < CACHE_MAX_AGE_MS) {
+            return { filePath, cached: true };
+        }
+        // Stale — remove
+        try { fs.unlinkSync(filePath); } catch {}
+    }
+
+    return new Promise((resolve, reject) => {
+        const args = [
+            '--format', 'best[ext=mp4][filesize<200M]/best[ext=mp4]/best[filesize<200M]/best',
+            '--output', filePath,
+            '--no-playlist',
+            '--age-limit', '99',
+            '--geo-bypass',
+            '--no-check-certificates',
+            '--no-warnings',
+            '--max-filesize', '200M',
+            '--retries', '3',
+            '--fragment-retries', '3',
+        ];
+
+        // Limit download to the configured max duration
+        if (maxDurationSeconds > 0) {
+            args.push('--download-sections', `*0-${maxDurationSeconds}`);
+        }
+
+        args.push(url);
+
+        const proc = spawn(YTDLP_PATH, args, { timeout: DOWNLOAD_TIMEOUT_MS });
+        let stderr = '';
+        proc.stderr.on('data', (d) => { stderr += d.toString().slice(-500); });
+
+        proc.on('close', (code) => {
+            if (code === 0 && fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+                resolve({ filePath, cached: false });
+            } else {
+                reject(new Error(`Download failed (code ${code}): ${stderr.slice(0, 200)}`));
+            }
+        });
+
+        proc.on('error', (err) => {
+            reject(new Error(`Download process error: ${err.message}`));
+        });
+    });
+}
+
+/**
+ * Get the local cache file path for a URL (if cached).
+ */
+function getCachedPath(url) {
+    const hash = crypto.createHash('sha256').update(url).digest('hex').slice(0, 16);
+    const filePath = path.join(CACHE_DIR, `${hash}.mp4`);
+    if (fs.existsSync(filePath)) {
+        const stat = fs.statSync(filePath);
+        if (stat.size > 0 && (Date.now() - stat.mtimeMs) < CACHE_MAX_AGE_MS) {
+            return filePath;
+        }
+    }
+    return null;
+}
+
+/**
+ * Purge old cache files to stay under MAX_CACHE_SIZE_MB.
+ */
+function purgeCache() {
+    try {
+        const files = fs.readdirSync(CACHE_DIR).map(f => {
+            const p = path.join(CACHE_DIR, f);
+            const stat = fs.statSync(p);
+            return { path: p, size: stat.size, mtime: stat.mtimeMs };
+        });
+
+        // Remove expired files
+        const now = Date.now();
+        for (const f of files) {
+            if (now - f.mtime > CACHE_MAX_AGE_MS) {
+                try { fs.unlinkSync(f.path); } catch {}
+            }
+        }
+
+        // If still over size limit, remove oldest first
+        const remaining = files.filter(f => fs.existsSync(f.path));
+        let totalSize = remaining.reduce((s, f) => s + f.size, 0);
+        const maxBytes = MAX_CACHE_SIZE_MB * 1024 * 1024;
+
+        if (totalSize > maxBytes) {
+            remaining.sort((a, b) => a.mtime - b.mtime);
+            for (const f of remaining) {
+                if (totalSize <= maxBytes) break;
+                try { fs.unlinkSync(f.path); totalSize -= f.size; } catch {}
+            }
+        }
+    } catch {}
+}
+
+// Purge on startup and periodically
+purgeCache();
+setInterval(purgeCache, 60 * 60 * 1000); // Every hour
+
+// Clean up expired URL cache entries periodically
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, val] of urlCache) {
+        if (now >= val.expiresAt) urlCache.delete(key);
+    }
+}, 30 * 60 * 1000);
+
+/**
+ * Run yt-dlp with given args. Returns stdout.
+ */
+function runYtdlp(args) {
+    return new Promise((resolve, reject) => {
+        execFile(YTDLP_PATH, args, { timeout: EXTRACT_TIMEOUT_MS }, (err, stdout, stderr) => {
+            if (err) return reject(new Error((stderr || err.message || '').slice(0, 300)));
+            resolve(stdout.trim());
+        });
+    });
+}
+
+module.exports = {
+    isAvailable,
+    getInfo,
+    extractStreamUrl,
+    downloadToFile,
+    getCachedPath,
+    purgeCache,
+    CACHE_DIR,
+};
