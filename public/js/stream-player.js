@@ -1759,13 +1759,13 @@ function _buildClipTitleModal(overlay, clipId) {
     modal.innerHTML = `
         <h3 style="margin:0 0 8px 0"><i class="fa-solid fa-scissors"></i> Name Your Clip</h3>
         <p style="margin:0 0 16px 0;opacity:0.7;font-size:0.9rem">Give your clip a title so others know what it is</p>
-        <input type="text" id="clip-title-input" class="form-input" placeholder="Enter clip title..."
+        <input type="text" id="live-clip-title-input" class="form-input" placeholder="Enter clip title..."
                maxlength="200" style="width:100%;box-sizing:border-box;margin-bottom:16px;font-size:1rem;padding:10px 12px">
         <div style="display:flex;gap:8px;justify-content:center">
-            <button id="clip-title-save" class="btn btn-primary" style="flex:1">
+            <button id="live-clip-title-save" class="btn btn-primary" style="flex:1">
                 <i class="fa-solid fa-check"></i> Save Title
             </button>
-            <button id="clip-title-skip" class="btn" style="flex:0.6;opacity:0.7">
+            <button id="live-clip-title-skip" class="btn" style="flex:0.6;opacity:0.7">
                 Skip
             </button>
         </div>
@@ -1773,7 +1773,7 @@ function _buildClipTitleModal(overlay, clipId) {
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
-    const input = document.getElementById('clip-title-input');
+    const input = document.getElementById('live-clip-title-input');
     input.focus();
 
     const saveTitle = async () => {
@@ -1801,8 +1801,8 @@ function _buildClipTitleModal(overlay, clipId) {
 
     const skip = () => overlay.remove();
 
-    document.getElementById('clip-title-save').onclick = saveTitle;
-    document.getElementById('clip-title-skip').onclick = skip;
+    document.getElementById('live-clip-title-save').onclick = saveTitle;
+    document.getElementById('live-clip-title-skip').onclick = skip;
     input.onkeydown = (e) => { if (e.key === 'Enter') saveTitle(); if (e.key === 'Escape') skip(); };
     overlay.onclick = (e) => { if (e.target === overlay) skip(); };
 }
