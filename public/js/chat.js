@@ -875,6 +875,9 @@ function handleChatMessage(msg) {
 }
 
 function addChatMessage(msg) {
+    // Feed username into autocomplete cache
+    if (typeof acTrackUser === 'function') acTrackUser(msg);
+
     const chatEl = getChatEl();
     const container = chatEl.messages;
 

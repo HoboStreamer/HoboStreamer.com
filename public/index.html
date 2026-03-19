@@ -520,7 +520,7 @@
                                 <div class="chat-input-area fullscreen-chat-input-area" id="fullscreen-chat-input-area">
                                     <div class="chat-input-row">
                                         <textarea id="fullscreen-chat-input" class="chat-textarea fullscreen-chat-textarea" placeholder="Send a message..." maxlength="500"
-                                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                                                  rows="1" autocomplete="off" spellcheck="true" enterkeyhint="send"></textarea>
                                         <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                                             <i class="fa-solid fa-volume-high"></i>
                                         </button>
@@ -606,7 +606,7 @@
                                 <i class="fa-solid fa-face-smile"></i>
                             </button>
                             <textarea id="chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                                      rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                                      rows="1" autocomplete="off" spellcheck="true" enterkeyhint="send"></textarea>
                             <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                                 <i class="fa-solid fa-volume-high"></i>
                             </button>
@@ -705,7 +705,7 @@
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
                         <textarea id="offline-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                                  rows="1" autocomplete="off" spellcheck="true" enterkeyhint="send"></textarea>
                         <button class="chat-send-btn" onclick="sendChat()">
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
@@ -2458,7 +2458,7 @@
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
                         <textarea id="bc-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                                  rows="1" autocomplete="off" spellcheck="true" enterkeyhint="send"></textarea>
                         <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                             <i class="fa-solid fa-volume-high"></i>
                         </button>
@@ -3013,7 +3013,7 @@
                             <i class="fa-solid fa-face-smile"></i>
                         </button>
                         <textarea id="global-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                                  rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                                  rows="1" autocomplete="off" spellcheck="true" enterkeyhint="send"></textarea>
                         <button class="chat-send-btn" onclick="sendChat()">
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
@@ -3339,6 +3339,7 @@
 <script src="/js/stream-player.js?v=4"></script>
 <script src="/js/emotes.js?v=3"></script>
 <script src="/js/chat.js?v=12"></script>
+<script src="/js/chat-autocomplete.js?v=1"></script>
 <script src="/js/controls.js?v=2"></script>
 <script src="/js/dashboard.js?v=2"></script>
 <script src="/js/admin.js?v=3"></script>
@@ -3355,7 +3356,7 @@
         <div class="fcw-messages" id="fcw-messages"></div>
         <div class="fcw-input-area">
             <textarea id="fcw-chat-input" class="chat-textarea" placeholder="Send a message..." maxlength="500"
-                      rows="1" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+                      rows="1" autocomplete="off" spellcheck="true" enterkeyhint="send"></textarea>
             <button class="chat-send-btn" onclick="fcwSendChat()">
                 <i class="fa-solid fa-paper-plane"></i>
             </button>
