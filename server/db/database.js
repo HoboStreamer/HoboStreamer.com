@@ -306,6 +306,22 @@ function initDb() {
         database.exec('CREATE INDEX IF NOT EXISTS idx_media_requests_canonical ON media_requests(streamer_id, canonical_url, status)');
     } catch (e) { console.warn('[DB] media requests migration:', e.message); }
 
+    // Migrate: add new media columns for server-side downloading + pricing + playback state
+    try {
+        const mrCols = database.pragma('table_info(media_requests)').map(c => c.name);
+        if (!mrCols.includes('stream_url'))             database.exec('ALTER TABLE media_requests ADD COLUMN stream_url TEXT');
+        if (!mrCols.includes('download_status'))        database.exec("ALTER TABLE media_requests ADD COLUMN download_status TEXT DEFAULT 'none' CHECK(download_status IN ('none','extracting','downloading','ready','failed'))");
+        if (!mrCols.includes('file_path'))              database.exec('ALTER TABLE media_requests ADD COLUMN file_path TEXT');
+        if (!mrCols.includes('playback_position'))      database.exec('ALTER TABLE media_requests ADD COLUMN playback_position REAL DEFAULT 0');
+        if (!mrCols.includes('refunded'))               database.exec('ALTER TABLE media_requests ADD COLUMN refunded INTEGER DEFAULT 0');
+
+        const msCols = database.pragma('table_info(media_request_settings)').map(c => c.name);
+        if (!msCols.includes('cost_mode'))              database.exec("ALTER TABLE media_request_settings ADD COLUMN cost_mode TEXT DEFAULT 'flat' CHECK(cost_mode IN ('flat','per_minute'))");
+        if (!msCols.includes('cost_per_minute'))        database.exec('ALTER TABLE media_request_settings ADD COLUMN cost_per_minute INTEGER DEFAULT 5');
+        if (!msCols.includes('allow_live'))             database.exec('ALTER TABLE media_request_settings ADD COLUMN allow_live INTEGER DEFAULT 0');
+        if (!msCols.includes('download_mode'))          database.exec("ALTER TABLE media_request_settings ADD COLUMN download_mode TEXT DEFAULT 'stream' CHECK(download_mode IN ('stream','download'))");
+    } catch (e) { console.warn('[DB] media columns migration:', e.message); }
+
     // Migrate: create anon IP mapping table for persistent anon numbering
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS anon_ip_mappings (
@@ -1455,8 +1471,9 @@ function upsertMediaRequestSettings(userId, fields = {}) {
     if (!existing) {
         run(`INSERT INTO media_request_settings (
             user_id, enabled, request_cost, max_per_user, max_duration_seconds,
-            allow_youtube, allow_vimeo, allow_direct_media, auto_advance
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+            allow_youtube, allow_vimeo, allow_direct_media, auto_advance,
+            cost_mode, cost_per_minute, allow_live, download_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
             userId,
             fields.enabled ?? 1,
             fields.request_cost ?? 25,
@@ -1466,6 +1483,10 @@ function upsertMediaRequestSettings(userId, fields = {}) {
             fields.allow_vimeo ?? 1,
             fields.allow_direct_media ?? 1,
             fields.auto_advance ?? 1,
+            fields.cost_mode ?? 'flat',
+            fields.cost_per_minute ?? 5,
+            fields.allow_live ?? 0,
+            fields.download_mode ?? 'stream',
         ]);
     } else if (Object.keys(fields).length) {
         const sets = [];

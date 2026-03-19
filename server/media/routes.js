@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db/database');
 const mediaQueue = require('./media-queue');
 const { requireAuth, optionalAuth } = require('../auth/auth');
+const downloader = require('./media-downloader');
 
 const router = express.Router();
 
@@ -53,12 +54,27 @@ router.put('/settings', requireAuth, (req, res) => {
             allow_vimeo: 'allow_vimeo',
             allow_direct_media: 'allow_direct_media',
             auto_advance: 'auto_advance',
+            allow_live: 'allow_live',
+            cost_mode: 'cost_mode',
+            cost_per_minute: 'cost_per_minute',
+            download_mode: 'download_mode',
         };
 
         for (const [key, target] of Object.entries(mapping)) {
             if (req.body[key] === undefined) continue;
-            if (['enabled', 'allow_youtube', 'allow_vimeo', 'allow_direct_media', 'auto_advance'].includes(key)) {
+
+            if (['enabled', 'allow_youtube', 'allow_vimeo', 'allow_direct_media', 'auto_advance', 'allow_live'].includes(key)) {
                 fields[target] = req.body[key] ? 1 : 0;
+            } else if (key === 'cost_mode') {
+                if (!['flat', 'per_minute'].includes(req.body[key])) {
+                    return res.status(400).json({ error: 'cost_mode must be flat or per_minute' });
+                }
+                fields[target] = req.body[key];
+            } else if (key === 'download_mode') {
+                if (!['stream', 'download'].includes(req.body[key])) {
+                    return res.status(400).json({ error: 'download_mode must be stream or download' });
+                }
+                fields[target] = req.body[key];
             } else {
                 const num = cleanInt(req.body[key], null);
                 if (!Number.isFinite(num) || num < 0) {
@@ -170,6 +186,84 @@ router.delete('/queue/:id', requireAuth, (req, res) => {
     } catch (err) {
         res.status(400).json({ error: err.message || 'Failed to remove request' });
     }
+});
+
+// ── Stream URL extraction ──────────────────────────────────
+// Client calls this to get a direct playable URL for the current/specific request
+router.get('/queue/:id/stream-url', optionalAuth, async (req, res) => {
+    try {
+        const request = db.getMediaRequestById(cleanInt(req.params.id, 0));
+        if (!request) return res.status(404).json({ error: 'Request not found' });
+
+        // If already extracted, return immediately
+        if (request.stream_url && request.download_status === 'ready') {
+            return res.json({ stream_url: request.stream_url, download_status: 'ready' });
+        }
+
+        // Kick off extraction and return status
+        mediaQueue.extractStreamUrlForRequest(request.id).catch(() => {});
+        const updated = db.getMediaRequestById(request.id);
+        res.json({
+            stream_url: updated?.stream_url || null,
+            download_status: updated?.download_status || 'extracting',
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to get stream URL' });
+    }
+});
+
+// ── Playback position save (called periodically by player) ──
+router.post('/queue/:id/position', optionalAuth, (req, res) => {
+    try {
+        const requestId = cleanInt(req.params.id, 0);
+        const position = Number(req.body.position);
+        if (!Number.isFinite(position) || position < 0) {
+            return res.status(400).json({ error: 'Invalid position' });
+        }
+        mediaQueue.savePlaybackPosition(requestId, position);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(400).json({ error: err.message || 'Failed to save position' });
+    }
+});
+
+// ── Manual refund by streamer ──────────────────────────────
+router.post('/queue/:id/refund', requireAuth, (req, res) => {
+    try {
+        const request = db.getMediaRequestById(cleanInt(req.params.id, 0));
+        if (!request) return res.status(404).json({ error: 'Request not found' });
+        // Only channel owner can refund
+        if (request.streamer_id !== req.user.id) {
+            return res.status(403).json({ error: 'Only the channel owner can issue refunds' });
+        }
+        const amount = mediaQueue.refund(request.id);
+        res.json({ refunded: amount, request: db.getMediaRequestById(request.id) });
+    } catch (err) {
+        res.status(400).json({ error: err.message || 'Failed to refund' });
+    }
+});
+
+// ── Report playback failure (auto-refunds) ──────────────────
+router.post('/queue/:id/fail', requireAuth, (req, res) => {
+    try {
+        const request = db.getMediaRequestById(cleanInt(req.params.id, 0));
+        if (!request) return res.status(404).json({ error: 'Request not found' });
+        if (request.streamer_id !== req.user.id) {
+            return res.status(403).json({ error: 'Only the channel owner can report failures' });
+        }
+        const failed = mediaQueue.failRequest(request.id, req.body.error || 'Playback failed');
+        res.json({ request: failed });
+    } catch (err) {
+        res.status(400).json({ error: err.message || 'Failed to report failure' });
+    }
+});
+
+// ── Download status / info ──────────────────────────────────
+router.get('/downloader/status', requireAuth, (req, res) => {
+    res.json({
+        available: downloader.isAvailable(),
+        cache_dir: downloader.CACHE_DIR,
+    });
 });
 
 module.exports = router;

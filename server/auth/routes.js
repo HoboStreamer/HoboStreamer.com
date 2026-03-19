@@ -347,12 +347,23 @@ router.get('/callback', async (req, res) => {
 
         // Use the hobo.tools token directly (no more local tokens)
         const hoboToolsToken = tokenData.access_token;
+        const hoboRefreshToken = tokenData.refresh_token;
         if (!hoboToolsToken) {
             return res.status(500).send('No access token in response');
         }
 
-        // Set cookie and redirect to home
-        res.cookie('token', hoboToolsToken, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: true });
+        const isSecure = (process.env.BASE_URL || '').startsWith('https');
+
+        // Set access token cookie (readable by JS for API calls)
+        res.cookie('token', hoboToolsToken, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
+
+        // Also set hobo_token (used by shared navbar/notification libs)
+        res.cookie('hobo_token', hoboToolsToken, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
+
+        // Store refresh token in httpOnly cookie (not readable by JS — server handles refresh)
+        if (hoboRefreshToken) {
+            res.cookie('hobo_refresh', hoboRefreshToken, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure, path: '/api/auth' });
+        }
 
         // Return HTML that stores token in localStorage and redirects
         res.send(`<!DOCTYPE html>
@@ -369,6 +380,67 @@ router.get('/callback', async (req, res) => {
         console.error('[Auth/SSO] Callback error:', err);
         res.status(500).send('OAuth login failed. Please try again.');
     }
+});
+
+// ── Token Refresh (server-to-server using httpOnly refresh cookie) ──
+router.post('/refresh', async (req, res) => {
+    const refreshToken = req.cookies?.hobo_refresh;
+    if (!refreshToken) {
+        return res.status(401).json({ error: 'No refresh token' });
+    }
+    try {
+        const https = require('https');
+        const tokenData = await new Promise((resolve, reject) => {
+            const body = JSON.stringify({
+                grant_type: 'refresh_token',
+                client_id: HOBO_CLIENT_ID,
+                client_secret: HOBO_CLIENT_SECRET,
+                refresh_token: refreshToken,
+            });
+            const url = new URL(`${HOBO_TOOLS_BASE}/oauth/token`);
+            const httpReq = https.request({
+                hostname: url.hostname, port: url.port || 443, path: url.pathname,
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            }, (httpRes) => {
+                let data = '';
+                httpRes.on('data', chunk => data += chunk);
+                httpRes.on('end', () => {
+                    try { resolve(JSON.parse(data)); }
+                    catch { reject(new Error('Invalid response')); }
+                });
+            });
+            httpReq.on('error', reject);
+            httpReq.write(body);
+            httpReq.end();
+        });
+
+        if (tokenData.error || !tokenData.access_token) {
+            // Refresh failed — clear stale cookies
+            res.clearCookie('hobo_refresh', { path: '/api/auth' });
+            return res.status(401).json({ error: tokenData.error_description || 'Refresh failed' });
+        }
+
+        const isSecure = (process.env.BASE_URL || '').startsWith('https');
+        res.cookie('token', tokenData.access_token, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
+        res.cookie('hobo_token', tokenData.access_token, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
+        if (tokenData.refresh_token) {
+            res.cookie('hobo_refresh', tokenData.refresh_token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure, path: '/api/auth' });
+        }
+        res.json({ access_token: tokenData.access_token, expires_in: tokenData.expires_in || 86400 });
+    } catch (err) {
+        console.error('[Auth] Refresh error:', err.message);
+        res.status(500).json({ error: 'Token refresh failed' });
+    }
+});
+
+// ── Logout (clear all auth cookies) ──────────────────────────
+router.post('/logout', (req, res) => {
+    const isSecure = (process.env.BASE_URL || '').startsWith('https');
+    res.clearCookie('token', { sameSite: 'Lax', secure: isSecure });
+    res.clearCookie('hobo_token', { sameSite: 'Lax', secure: isSecure });
+    res.clearCookie('hobo_refresh', { path: '/api/auth', sameSite: 'Lax', secure: isSecure });
+    res.json({ ok: true });
 });
 
 // ── SSO Status (for client-side detection) ───────────────────
