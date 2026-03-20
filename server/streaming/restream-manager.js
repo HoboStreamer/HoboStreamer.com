@@ -138,6 +138,9 @@ class RestreamManager extends EventEmitter {
         /** @type {Map<number, { count: number|null, fetchedAt: number }>} destId → cached viewer count */
         this._viewerCountCache = new Map();
         this._viewerPollTimer = null;
+        /** Twitch Helix App Access Token cache */
+        this._twitchToken = null;
+        this._twitchTokenExpiry = 0;
     }
 
     /**
@@ -953,7 +956,7 @@ class RestreamManager extends EventEmitter {
      */
     getCachedViewerCount(destId) {
         const cached = this._viewerCountCache.get(destId);
-        if (!cached || Date.now() - cached.fetchedAt > 90000) return null;
+        if (!cached || Date.now() - cached.fetchedAt > 180000) return null;
         return cached.count;
     }
 
@@ -1032,11 +1035,22 @@ class RestreamManager extends EventEmitter {
                     if (count == null) {
                         count = await this._fetchKickViewerCount(dest.channel_url);
                     }
+                } else if (dest.platform === 'twitch') {
+                    // Twitch Helix API — uses App Access Token (client credentials)
+                    count = await this._fetchTwitchViewerCount(dest.channel_url);
                 }
-                // Twitch Helix API requires OAuth token — skip for now
                 // YouTube API requires API key — skip for now
 
-                this._viewerCountCache.set(destId, { count, fetchedAt: Date.now() });
+                // Only update cache if we got a real count — don't overwrite a good broadcaster-relayed
+                // value with null from a failed server-side fetch
+                if (count != null) {
+                    this._viewerCountCache.set(destId, { count, fetchedAt: Date.now() });
+                } else {
+                    // If there's no existing cache entry at all, set null so getCachedViewerCount returns null
+                    if (!this._viewerCountCache.has(destId)) {
+                        this._viewerCountCache.set(destId, { count: null, fetchedAt: Date.now() });
+                    }
+                }
             } catch (e) {
                 // Silent — don't spam logs for polling failures
             }
@@ -1088,6 +1102,109 @@ class RestreamManager extends EventEmitter {
             });
         } catch {
             return Promise.resolve(null);
+        }
+    }
+
+    /**
+     * Get a Twitch App Access Token via Client Credentials grant.
+     * Caches the token and refreshes 5 minutes before expiry.
+     * @returns {Promise<{accessToken: string, clientId: string}|null>}
+     */
+    async _getTwitchToken() {
+        const db = require('../db/database');
+        const clientId = db.getSetting('twitch_client_id');
+        const clientSecret = db.getSetting('twitch_client_secret');
+        if (!clientId || !clientSecret) return null;
+
+        // Return cached token if still valid (5 min buffer)
+        if (this._twitchToken && Date.now() < this._twitchTokenExpiry - 300000) {
+            return { accessToken: this._twitchToken, clientId };
+        }
+
+        const https = require('https');
+        return new Promise((resolve) => {
+            const body = `client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&grant_type=client_credentials`;
+            const req = https.request('https://id.twitch.tv/oauth2/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) },
+                timeout: 8000,
+            }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode !== 200) {
+                        console.warn(`[Restream] Twitch token request failed: HTTP ${res.statusCode}`);
+                        return resolve(null);
+                    }
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.access_token) {
+                            this._twitchToken = parsed.access_token;
+                            this._twitchTokenExpiry = Date.now() + (parsed.expires_in || 3600) * 1000;
+                            resolve({ accessToken: parsed.access_token, clientId });
+                        } else {
+                            resolve(null);
+                        }
+                    } catch { resolve(null); }
+                });
+            });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => { req.destroy(); resolve(null); });
+            req.write(body);
+            req.end();
+        });
+    }
+
+    /**
+     * Fetch viewer count from Twitch Helix API.
+     * @param {string} channelUrl - e.g. https://twitch.tv/HoboStreamerDotCom
+     * @returns {Promise<number|null>}
+     */
+    async _fetchTwitchViewerCount(channelUrl) {
+        const https = require('https');
+        try {
+            const url = new URL(channelUrl);
+            const login = url.pathname.split('/').filter(Boolean)[0];
+            if (!login) return null;
+
+            const auth = await this._getTwitchToken();
+            if (!auth) return null;
+
+            return new Promise((resolve) => {
+                const req = https.get(`https://api.twitch.tv/helix/streams?user_login=${encodeURIComponent(login.toLowerCase())}`, {
+                    headers: {
+                        'Authorization': `Bearer ${auth.accessToken}`,
+                        'Client-Id': auth.clientId,
+                        'Accept': 'application/json',
+                    },
+                    timeout: 8000,
+                }, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => {
+                        if (res.statusCode === 401) {
+                            // Token expired — clear cache so next poll refreshes
+                            this._twitchToken = null;
+                            this._twitchTokenExpiry = 0;
+                            return resolve(null);
+                        }
+                        if (res.statusCode >= 400) return resolve(null);
+                        try {
+                            const parsed = JSON.parse(data);
+                            const stream = parsed?.data?.[0];
+                            if (stream && typeof stream.viewer_count === 'number') {
+                                resolve(stream.viewer_count);
+                            } else {
+                                resolve(0); // Not live on Twitch = 0 viewers
+                            }
+                        } catch { resolve(null); }
+                    });
+                });
+                req.on('error', () => resolve(null));
+                req.on('timeout', () => { req.destroy(); resolve(null); });
+            });
+        } catch {
+            return null;
         }
     }
 

@@ -318,4 +318,14 @@ router.post('/viewer-counts', requireAuth, (req, res) => {
     }
 });
 
+// ── GET /viewer-counts — get all cached platform viewer counts for the broadcaster
+router.get('/viewer-counts', requireAuth, (req, res) => {
+    try {
+        const ext = restreamManager.getExternalViewerCountsForUser(req.user.id);
+        res.json({ total: ext.total, breakdown: ext.breakdown });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get viewer counts' });
+    }
+});
+
 module.exports = router;

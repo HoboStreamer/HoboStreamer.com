@@ -591,6 +591,7 @@ async function initWebRTC(stream) {
                     case 'viewer-count':
                         const vcEl = document.getElementById('vc-viewers');
                         const extVc = (typeof _cachedExternalViewerCount === 'number') ? _cachedExternalViewerCount : 0;
+                        if (typeof _cachedHsViewerCount !== 'undefined') _cachedHsViewerCount = msg.count || 0;
                         if (vcEl) vcEl.textContent = (msg.count || 0) + extVc;
                         break;
                 }

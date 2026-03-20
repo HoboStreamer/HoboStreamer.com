@@ -4134,6 +4134,9 @@ async function handleSignalingMessage(streamId, msg) {
 const _perStreamViewerCounts = new Map();
 let _rsViewerCount = 0;
 let _rsViewerPollTimer = null;
+/** Platform viewer counts (Twitch, Kick, etc.) fetched from server */
+let _platformViewerCount = 0;
+let _platformViewerBreakdown = [];
 
 function updateBroadcastStatus(state) {
     const el = document.getElementById('bc-connection-status'); if (!el) return;
@@ -4159,9 +4162,9 @@ function _updateTabViewerCount(streamId, count) {
 }
 
 function _updateTotalViewerCount() {
-    let total = 0;
-    for (const [, c] of _perStreamViewerCounts) total += c;
-    total += _rsViewerCount;
+    let hsTotal = 0;
+    for (const [, c] of _perStreamViewerCounts) hsTotal += c;
+    const total = hsTotal + _rsViewerCount + _platformViewerCount;
     const el = document.getElementById('bc-viewer-count');
     if (el) el.textContent = total;
     // RS viewer count badge (show breakdown when RS viewers exist)
@@ -4170,6 +4173,28 @@ function _updateTotalViewerCount() {
         if (_rsViewerCount > 0) { rsEl.style.display = ''; rsEl.querySelector('strong').textContent = _rsViewerCount; }
         else rsEl.style.display = 'none';
     }
+    // Platform viewer count badges (Twitch/Kick/YouTube)
+    _updatePlatformViewerBadges();
+}
+
+/** Render platform viewer count badges (Twitch/Kick/YouTube) in the broadcaster info bar */
+function _updatePlatformViewerBadges() {
+    const container = document.getElementById('bc-platform-viewer-badges');
+    if (!container) return;
+    if (!_platformViewerBreakdown || _platformViewerBreakdown.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    const platformIcons = { twitch: 'fa-brands fa-twitch', kick: 'fa-brands fa-kickstarter-k', youtube: 'fa-brands fa-youtube', custom: 'fa-solid fa-globe' };
+    const platformColors = { twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', custom: '#888' };
+    let html = '';
+    for (const entry of _platformViewerBreakdown) {
+        const icon = platformIcons[entry.platform] || platformIcons.custom;
+        const color = platformColors[entry.platform] || platformColors.custom;
+        const name = entry.name || entry.platform;
+        html += `<div class="bc-info-item" style="color:${color}"><i class="${icon}"></i> <strong>${entry.count}</strong> on ${name}</div>`;
+    }
+    container.innerHTML = html;
 }
 
 async function _startRsViewerPoll() {
@@ -4214,11 +4239,15 @@ function _startRestreamViewerPoll() {
 
 function _stopRestreamViewerPoll() {
     if (_restreamViewerPollTimer) { clearInterval(_restreamViewerPollTimer); _restreamViewerPollTimer = null; }
+    _platformViewerCount = 0;
+    _platformViewerBreakdown = [];
 }
 
 async function _pollRestreamViewerCounts() {
     if (!_restreamDestinations || _restreamDestinations.length === 0) return;
     const counts = [];
+
+    // 1. Browser-side polling for platforms the server can't reach (Kick is CF-blocked)
     for (const dest of _restreamDestinations) {
         if (!dest.enabled || !dest.channel_url) continue;
         try {
@@ -4238,15 +4267,28 @@ async function _pollRestreamViewerCounts() {
                     }
                 }
             }
-            // Twitch Helix requires OAuth — skip for now
+            // Twitch Helix is polled server-side (has API keys) — no browser action needed
             // YouTube Data API requires API key — skip for now
         } catch {}
     }
+
+    // 2. Push browser-collected counts to server
     if (counts.length > 0) {
         try {
             await api('/restream/viewer-counts', { method: 'POST', body: { counts } });
         } catch {}
     }
+
+    // 3. Fetch all platform viewer counts from server (includes Twitch + Kick + others)
+    try {
+        const data = await api('/restream/viewer-counts');
+        _platformViewerCount = data?.total || 0;
+        _platformViewerBreakdown = data?.breakdown || [];
+    } catch {
+        _platformViewerCount = 0;
+        _platformViewerBreakdown = [];
+    }
+    _updateTotalViewerCount();
 }
 
 /* ── Broadcaster Controls ─────────────────────────────────────── */
