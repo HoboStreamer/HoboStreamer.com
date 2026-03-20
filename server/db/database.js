@@ -382,6 +382,14 @@ function initDb() {
         ];
         const seedInsert = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
         for (const [k, v, d, t] of ttsSeeds) seedInsert.run(k, v, d, t);
+
+        // Seed Twitch API settings (for Helix viewer count polling)
+        const twitchSeeds = [
+            ['twitch_client_id', '', 'Twitch API Client ID (from dev.twitch.tv, used for viewer counts)', 'string'],
+            ['twitch_client_secret', '', 'Twitch API Client Secret (from dev.twitch.tv)', 'string'],
+        ];
+        const seedTwitch = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of twitchSeeds) seedTwitch.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
 
     // Migrate: expand role CHECK to include global_mod, migrate 'mod' → 'global_mod'

@@ -12,6 +12,8 @@ let hoboAppMetaData = null;
 let hoboAppMetaPromise = null;
 /** Cached external viewer count (Kick/Twitch/RS) — updated by cumulative viewer poll */
 let _cachedExternalViewerCount = 0;
+/** Cached native HS viewer count from WebSocket — updated by stream-player.js WS handler */
+let _cachedHsViewerCount = 0;
 
 /* ── Capability helpers ────────────────────────────────────── */
 function mergeUserWithCapabilities(user, capabilities) {
@@ -1281,15 +1283,14 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
     const streamCount = liveStreams.length;
 
     // Update the cached external viewer count for the vc-viewers badge
-    if (externalViewers) {
-        _cachedExternalViewerCount = externalTotal;
-        // Also update the main viewer badge with combined total
-        const vcEl = document.getElementById('vc-viewers');
-        if (vcEl) {
-            const currentHs = parseInt(vcEl.textContent) || 0;
-            // Use the larger of current HS count and the polled HS total (WebSocket may be more recent)
-            vcEl.textContent = Math.max(currentHs, hsTotal) + externalTotal;
-        }
+    // Always update — even when externalViewers is null (dropped to 0)
+    _cachedExternalViewerCount = externalTotal;
+    // Also update the main viewer badge with combined total
+    const vcEl = document.getElementById('vc-viewers');
+    if (vcEl) {
+        // Use the larger of the WS-reported HS count and the polled HS total
+        const bestHs = Math.max(_cachedHsViewerCount || 0, hsTotal);
+        vcEl.textContent = bestHs + externalTotal;
     }
 
     let html = '';
@@ -1324,8 +1325,10 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
             const color = platformColors[link.platform] || platformColors.custom;
             const liveDot = link.is_live ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#e91916;margin-right:4px;animation:pulse-live 1.5s infinite"></span>' : '';
             const name = esc(link.name || link.platform);
-            const viewerStr = link.viewer_count != null ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${link.viewer_count}` : '';
-            html += `<a href="${esc(link.channel_url)}" target="_blank" rel="noopener" class="ch-restream-badge" style="color:${color}" title="${link.is_live ? 'Live on' : 'Also on'} ${name}${link.viewer_count != null ? ' (' + link.viewer_count + ' viewers)' : ''}">${liveDot}<i class="${icon}"></i> ${name}${viewerStr}</a>`;
+            // Show viewer count: real count when available, 0 when live but no data, hidden when offline
+            const vc = link.viewer_count != null ? link.viewer_count : (link.is_live ? 0 : null);
+            const viewerStr = vc != null ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${vc}` : '';
+            html += `<a href="${esc(link.channel_url)}" target="_blank" rel="noopener" class="ch-restream-badge" style="color:${color}" title="${link.is_live ? 'Live on' : 'Also on'} ${name}${vc != null ? ' (' + vc + ' viewers)' : ''}">${liveDot}<i class="${icon}"></i> ${name}${viewerStr}</a>`;
         }
     }
 
