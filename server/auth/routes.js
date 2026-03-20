@@ -366,12 +366,20 @@ router.get('/callback', async (req, res) => {
         }
 
         // Return HTML that stores token in localStorage and redirects
+        const userJson = JSON.stringify({ id: localUser.id, username: localUser.username, display_name: localUser.display_name || localUser.username, avatar_url: localUser.avatar_url || null });
         res.send(`<!DOCTYPE html>
 <html><head><title>Logging in...</title></head>
 <body>
 <script>
     localStorage.setItem('token', ${JSON.stringify(hoboToolsToken)});
-    localStorage.removeItem('hobo_token');
+    localStorage.setItem('hobo_token', ${JSON.stringify(hoboToolsToken)});
+    // Seed account-switcher state so shared libs stay in sync
+    try {
+        var u = ${userJson};
+        var acct = { id: u.id, username: u.username, display_name: u.display_name, avatar_url: u.avatar_url, is_anon: false, token: ${JSON.stringify(hoboToolsToken)}, added_at: Date.now() };
+        localStorage.setItem('hobo_accounts', JSON.stringify([acct]));
+        localStorage.setItem('hobo_active_account', String(u.id));
+    } catch(e) {}
     window.location.href = '/';
 </script>
 <noscript><a href="/">Click here to continue</a></noscript>

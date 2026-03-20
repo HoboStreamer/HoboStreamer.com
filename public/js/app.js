@@ -69,7 +69,11 @@ async function tryRefreshToken() {
             if (!res.ok) return false;
             const data = await res.json();
             if (data.access_token) {
+                // Sync both localStorage keys so shared libs (account-switcher) stay in sync
                 localStorage.setItem('token', data.access_token);
+                localStorage.setItem('hobo_token', data.access_token);
+                // Update account-switcher token for the active account
+                _syncAccountSwitcherToken(data.access_token);
                 return true;
             }
             return false;
@@ -82,21 +86,47 @@ async function tryRefreshToken() {
     return _refreshPromise;
 }
 
-/** Proactively refresh token before it expires (checks every 30 min) */
-function startTokenRefreshTimer() {
-    setInterval(async () => {
-        const token = localStorage.getItem('token');
-        if (!token) return;
-        try {
-            // Decode JWT payload to check expiration
-            const payload = JSON.parse(atob(token.split('.')[1]));
-            const expiresIn = (payload.exp * 1000) - Date.now();
-            // Refresh if expiring within 2 hours
-            if (expiresIn < 2 * 60 * 60 * 1000) {
-                await tryRefreshToken();
+/** Keep the shared account-switcher's stored token in sync */
+function _syncAccountSwitcherToken(newToken) {
+    try {
+        const raw = localStorage.getItem('hobo_accounts');
+        if (!raw) return;
+        const accounts = JSON.parse(raw);
+        const activeId = localStorage.getItem('hobo_active_account');
+        for (const acct of accounts) {
+            if (String(acct.id) === activeId) {
+                acct.token = newToken;
+                break;
             }
-        } catch { /* malformed token, will be caught on next API call */ }
-    }, 30 * 60 * 1000); // Check every 30 minutes
+        }
+        localStorage.setItem('hobo_accounts', JSON.stringify(accounts));
+    } catch { /* non-critical */ }
+}
+
+/** Check if stored token is expiring soon or already expired */
+function _isTokenExpiringSoon() {
+    const token = localStorage.getItem('token');
+    if (!token) return false;
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        const expiresIn = (payload.exp * 1000) - Date.now();
+        return expiresIn < 2 * 60 * 60 * 1000; // < 2 hours remaining (or already expired)
+    } catch { return true; } // malformed = treat as expiring
+}
+
+/** Proactively refresh token before it expires */
+function startTokenRefreshTimer() {
+    // Periodic check every 15 min
+    setInterval(async () => {
+        if (_isTokenExpiringSoon()) await tryRefreshToken();
+    }, 15 * 60 * 1000);
+
+    // Also check immediately when tab becomes visible (handles background throttling)
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'visible' && _isTokenExpiringSoon()) {
+            await tryRefreshToken();
+        }
+    });
 }
 
 /* ── Protocol Badge ───────────────────────────────────────────── */
@@ -271,8 +301,9 @@ function doRegister() { window.location.href = '/api/auth/sso/login'; }
 function logout() {
     // Clear server-side cookies via API
     fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
-    // Clear client-side storage
+    // Clear client-side storage (both keys)
     localStorage.removeItem('token');
+    localStorage.removeItem('hobo_token');
     // Also clear cookies client-side as fallback
     document.cookie = 'token=;Max-Age=0;path=/';
     document.cookie = 'hobo_token=;Max-Age=0;path=/';
@@ -289,11 +320,17 @@ function logout() {
 }
 
 async function loadUser() {
-    const tok = localStorage.getItem('token');
+    let tok = localStorage.getItem('token');
     if (!tok) {
         // No token in localStorage — try refreshing from httpOnly cookie
         const refreshed = await tryRefreshToken();
         if (!refreshed) return;
+        tok = localStorage.getItem('token');
+    }
+    // If token is already expired, proactively refresh before making the API call
+    // (avoids a wasted 401 round-trip)
+    if (tok && _isTokenExpiringSoon()) {
+        await tryRefreshToken();
     }
     try {
         const data = await api('/auth/me');
@@ -301,6 +338,7 @@ async function loadUser() {
     } catch (err) {
         // If still 401 after auto-refresh attempt in api(), give up
         localStorage.removeItem('token');
+        localStorage.removeItem('hobo_token');
     }
 }
 
