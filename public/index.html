@@ -3394,24 +3394,36 @@
 <script src="/js/pastes.js?v=1"></script>
 <script src="/js/messenger.js?v=1"></script>
 
-<!-- ── Hobo Network shared libs (notifications, account sync) ── -->
-<script src="/js/notification-ui.js"></script>
+<!-- ── Hobo Network shared libs (notifications, account sync, unified navbar) ── -->
+<script src="/shared/theme-loader.js"></script>
+<script src="/shared/navbar.js"></script>
+<script src="/shared/notification-ui.js"></script>
+<script src="/shared/account-switcher.js"></script>
 <script>
-// Initialize Hobo Network notifications when user is logged in
-// (the auth token IS the hobo.tools RS256 JWT now — no separate hobo_token)
-(function initHoboNotifications() {
-    const token = localStorage.getItem('token');
-    if (!token) return;
+// Initialize Hobo Network unified navbar + notifications
+(function initHoboNetwork() {
+    const token = localStorage.getItem('token') || (document.cookie.match(/(?:^|; )hobo_token=([^;]*)/) || [])[1] || null;
 
+    // Unified navbar
+    if (window.HoboNavbar) {
+        HoboNavbar.init({
+            service: 'hobostreamer',
+            token: token,
+            user: null, // Will be populated after auth check
+            apiBase: 'https://hobo.tools',
+        });
+    }
+
+    // Notifications bell
     const mount = document.getElementById('hobo-bell-mount');
-    if (!mount || !window.HoboNotifications) return;
-
-    HoboNotifications.init({
-        token: token,
-        apiBase: 'https://hobo.tools',
-        soundBase: 'https://hobo.tools/assets/sounds',
-    });
-    mount.appendChild(HoboNotifications.createBell());
+    if (mount && window.HoboNotifications && token) {
+        HoboNotifications.init({
+            token: token,
+            apiBase: 'https://hobo.tools',
+            soundBase: 'https://hobo.tools/assets/sounds',
+        });
+        mount.appendChild(HoboNotifications.createBell());
+    }
 })();
 </script>
 </body>
