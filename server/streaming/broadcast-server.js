@@ -262,27 +262,41 @@ class BroadcastServer extends EventEmitter {
             // ── SFU Produce Signaling (for WebRTC → RTMP restreaming) ──
             case 'sfu-get-capabilities':
                 if (client.role === 'broadcaster') {
+                    console.log(`[SFU Signaling] stream ${client.streamId}: get-capabilities`);
                     this._handleSfuGetCapabilities(ws, client);
                 }
                 break;
             case 'sfu-create-transport':
                 if (client.role === 'broadcaster') {
+                    console.log(`[SFU Signaling] stream ${client.streamId}: create-transport`);
                     this._handleSfuCreateTransport(ws, client);
                 }
                 break;
             case 'sfu-connect-transport':
                 if (client.role === 'broadcaster') {
+                    console.log(`[SFU Signaling] stream ${client.streamId}: connect-transport`);
                     this._handleSfuConnectTransport(ws, client, msg);
                 }
                 break;
             case 'sfu-produce':
                 if (client.role === 'broadcaster') {
+                    console.log(`[SFU Signaling] stream ${client.streamId}: produce (${msg.kind})`);
                     this._handleSfuProduce(ws, client, msg);
                 }
                 break;
             case 'sfu-stop-produce':
                 if (client.role === 'broadcaster') {
+                    console.log(`[SFU Signaling] stream ${client.streamId}: stop-produce`);
                     this._handleSfuStopProduce(ws, client);
+                }
+                break;
+
+            // Diagnostic: browser reports SFU produce outcome
+            case 'sfu-produce-status':
+                if (client.role === 'broadcaster') {
+                    const status = msg.status || 'unknown';
+                    const detail = msg.error || msg.detail || '';
+                    console.log(`[SFU Signaling] stream ${client.streamId}: produce-status=${status}${detail ? ' — ' + detail : ''}`);
                 }
                 break;
 

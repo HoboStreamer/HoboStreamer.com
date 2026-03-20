@@ -42,6 +42,15 @@ class WebRTCSFU extends EventEmitter {
 
             this.worker.on('died', () => {
                 console.error('[WebRTC] Mediasoup Worker died! Restarting...');
+                this.ready = false;
+                // Close all rooms gracefully before reinit — prevents unhandled
+                // errors from orphaned transports/consumers cascading into crashes.
+                for (const roomId of this.rooms.keys()) {
+                    try { this.closeRoom(roomId); } catch (e) {
+                        console.warn(`[WebRTC] Error closing room ${roomId} after worker death:`, e.message);
+                    }
+                }
+                this.rooms.clear();
                 setTimeout(() => this.init(), 2000);
             });
 

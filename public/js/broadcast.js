@@ -3276,7 +3276,7 @@ let _robotStreamerIntegrationPromise = null;
 const RS_RECONNECT_BASE_DELAY = 3000;
 const RS_RECONNECT_MAX_DELAY = 60000;
 const RS_STABLE_CONNECTION_MS = 30000; // connection must survive 30s to reset backoff
-const RS_MAX_SHORT_LIVED_RETRIES = 5;   // give up after this many consecutive short-lived sessions
+const RS_MAX_SHORT_LIVED_RETRIES = 15;  // give up after this many consecutive short-lived sessions
 
 function canUseRobotStreamerRestream() {
     const rs = broadcastState.robotStreamer;
@@ -3372,6 +3372,11 @@ function createRobotStreamerRpc(ws) {
 async function loadRobotStreamerMediasoup() {
     if (!_robotStreamerMediasoupModulePromise) {
         _robotStreamerMediasoupModulePromise = import('https://esm.sh/mediasoup-client@3.18.7');
+        // Clear cache on rejection so the next call retries instead of being
+        // permanently broken by a transient network error or CSP violation.
+        _robotStreamerMediasoupModulePromise.catch(() => {
+            _robotStreamerMediasoupModulePromise = null;
+        });
     }
     return _robotStreamerMediasoupModulePromise;
 }
@@ -3951,12 +3956,14 @@ async function _handleSfuProduceRequest(streamId) {
     const ss = getStreamState(streamId);
     if (!ss?.localStream || !ss?.signalingWs) {
         console.warn('[SFU Produce] No local stream or signaling — cannot produce');
+        sendBroadcastSignal(ss, { type: 'sfu-produce-status', status: 'skipped', detail: !ss?.localStream ? 'no-localStream' : 'no-signalingWs' });
         return;
     }
 
     // Already producing?
     if (_sfuProduceStates.has(streamId)) {
         console.log('[SFU Produce] Already producing for stream', streamId);
+        sendBroadcastSignal(ss, { type: 'sfu-produce-status', status: 'already-producing' });
         return;
     }
 
@@ -3971,7 +3978,9 @@ async function _handleSfuProduceRequest(streamId) {
         if (!Device) throw new Error('mediasoup-client failed to load');
 
         // Step 2: Get router capabilities from our SFU
-        sendBroadcastSignal(ss, { type: 'sfu-get-capabilities' });
+        if (!sendBroadcastSignal(ss, { type: 'sfu-get-capabilities' })) {
+            throw new Error('signaling WS not open — cannot send sfu-get-capabilities');
+        }
         const capsMsg = await _waitForSfuMessage(streamId, 'sfu-capabilities');
 
         const device = new Device();
@@ -4033,8 +4042,10 @@ async function _handleSfuProduceRequest(streamId) {
         }
 
         console.log('[SFU Produce] Producing into local SFU for stream', streamId);
+        sendBroadcastSignal(ss, { type: 'sfu-produce-status', status: 'ok', detail: `video=${!!state.videoProducer} audio=${!!state.audioProducer}` });
     } catch (err) {
         console.error('[SFU Produce] Failed:', err.message);
+        sendBroadcastSignal(ss, { type: 'sfu-produce-status', status: 'error', error: err.message });
         _cleanupSfuProduce(streamId);
     }
 }
