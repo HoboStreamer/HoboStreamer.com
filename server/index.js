@@ -121,7 +121,19 @@ const allowedOrigins = getAllowedOrigins();
 app.set('trust proxy', 2); // Two hops: Cloudflare → nginx → Node
 
 app.use(helmet({
-    contentSecurityPolicy: false, // Allow inline scripts for dev
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "https://hobo.tools"],
+            styleSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
+            fontSrc: ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
+            imgSrc: ["'self'", "data:", "blob:", "image.tmdb.org", "https://hobo.tools"],
+            connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest"],
+            mediaSrc: ["'self'", "blob:"],
+            frameSrc: ["'self'"],
+            workerSrc: ["'self'", "blob:"],
+        },
+    },
     crossOriginEmbedderPolicy: false,
 }));
 app.use(cors({
@@ -194,6 +206,16 @@ app.use((req, res, next) => {
 });
 
 // ── Static Files ─────────────────────────────────────────────
+// Serve hobo-shared client-side libs (navbar, notifications, themes)
+const sharedPath = path.resolve(__dirname, '..', '..', 'packages', 'hobo-shared');
+app.use('/shared', express.static(sharedPath, {
+    setHeaders(res) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        res.setHeader('Cache-Control', 'public, max-age=300');
+    },
+}));
+
 // JS/CSS/HTML: no-cache + tell Cloudflare CDN not to cache at edge
 // Browsers revalidate with etag (304 Not Modified), CDN always fetches fresh from origin
 const noCacheHeaders = (res) => { res.setHeader('Cache-Control', 'no-cache'); res.setHeader('CDN-Cache-Control', 'no-store'); };
