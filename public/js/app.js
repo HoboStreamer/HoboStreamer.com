@@ -895,8 +895,11 @@ function loadChatPage() {
 async function loadChannelPage(username, preferredStreamId = null) {
     try {
         currentChannelUsername = username;
-        const data = await api(`/streams/channel/${username}`);
-        const mediaData = await api(`/media/channel/${username}`).catch(() => null);
+        // Fetch channel data and media in parallel — player init shouldn't wait for media strip
+        const [data, mediaData] = await Promise.all([
+            api(`/streams/channel/${username}`),
+            api(`/media/channel/${username}`).catch(() => null),
+        ]);
         const ch = data.channel;
         const streams = data.streams || (data.stream ? [data.stream] : []);
         const vods = data.vods || [];

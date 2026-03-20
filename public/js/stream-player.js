@@ -263,16 +263,22 @@ function initJSMPEG(endpoint, stream) {
     const wsUrl = `${wsProtocol}://${host}:${port}`;
     const bufferProfile = getJsmpegBufferProfile();
 
-    // Check if JSMpeg lib is loaded (from CDN or local)
+    // Check if JSMpeg lib is loaded (local copy preferred, CDN fallback)
     if (typeof JSMpeg === 'undefined') {
-        loadExternalScriptOnce('https://jsmpeg.com/jsmpeg.min.js').then(() => {
+        loadExternalScriptOnce('/js/jsmpeg.min.js').then(() => {
             startJSMPEG(wsUrl, canvas, placeholder, bufferProfile);
         }).catch(() => {
-            console.error('Failed to load JSMpeg library');
-            placeholder.innerHTML = `
-                <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
-                <p>JSMPEG player not available</p>
-                <p class="muted">Ensure jsmpeg.min.js is loaded</p>`;
+            // Local copy failed — try CDN fallback
+            console.warn('[Player] Local jsmpeg.min.js failed, trying CDN');
+            loadExternalScriptOnce('https://jsmpeg.com/jsmpeg.min.js').then(() => {
+                startJSMPEG(wsUrl, canvas, placeholder, bufferProfile);
+            }).catch(() => {
+                console.error('Failed to load JSMpeg library');
+                placeholder.innerHTML = `
+                    <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
+                    <p>JSMPEG player not available</p>
+                    <p class="muted">Ensure jsmpeg.min.js is loaded</p>`;
+            });
         });
     } else {
         startJSMPEG(wsUrl, canvas, placeholder, bufferProfile);
@@ -424,7 +430,7 @@ async function initWebRTC(stream) {
         let _rewatchCount = 0;
         const MAX_REWATCH_ATTEMPTS = 12;
 
-        // Start a timer when 'watch' is sent — if no 'offer' arrives within 12s, re-watch
+        // Start a timer when 'watch' is sent — if no 'offer' arrives within 6s, re-watch
         const startWatchOfferTimeout = () => {
             if (_watchOfferTimer) clearTimeout(_watchOfferTimer);
             _watchOfferTimer = setTimeout(() => {
@@ -432,13 +438,13 @@ async function initWebRTC(stream) {
                 if (!player || _viewerIntentionalClose) return;
                 // No offer received — broadcaster may be unresponsive
                 if (_rewatchCount < MAX_REWATCH_ATTEMPTS) {
-                    console.warn(`[Player] No offer received within 12s (attempt ${_rewatchCount + 1}/${MAX_REWATCH_ATTEMPTS})`);
+                    console.warn(`[Player] No offer received within 6s (attempt ${_rewatchCount + 1}/${MAX_REWATCH_ATTEMPTS})`);
                     scheduleViewerRewatch(500);
                 } else {
                     console.error('[Player] Max rewatch attempts reached — stream may be unavailable');
                     showStreamError('Stream is not responding. Try refreshing the page.');
                 }
-            }, 12000);
+            }, 6000);
         };
 
         const scheduleViewerRewatch = (delay = 1500) => {
@@ -626,6 +632,9 @@ async function handleViewerOffer(msg, ws, video) {
         iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
         ],
     });
     player.pc = pc;
@@ -826,16 +835,16 @@ async function handleViewerOffer(msg, ws, video) {
         return;
     }
 
-    // ICE connection timeout — if not connected within 15s, something is stuck
+    // ICE connection timeout — if not connected within 10s, something is stuck
     player._iceTimeout = setTimeout(() => {
         player._iceTimeout = null;
         if (!player || player.pc !== pc || _iceConnected) return;
         const state = pc.iceConnectionState;
         if (state !== 'connected' && state !== 'completed') {
-            console.warn(`[Player] ICE timeout after 15s (state: ${state})`);
+            console.warn(`[Player] ICE timeout after 10s (state: ${state})`);
             triggerRewatch('ICE connection timeout');
         }
-    }, 15000);
+    }, 10000);
 }
 
 /* ── HLS / HTTP-FLV (RTMP transcoded) ──────────────────────────── */

@@ -256,6 +256,42 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
     }
 });
 
+// ── Lightweight live-only channel endpoint (fast player init) ──
+// Returns ONLY the data needed to start the player — no VODs, clips, or heavy queries
+router.get('/channel/:username/live', (req, res) => {
+    try {
+        const channel = db.getChannelByUsername(req.params.username);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+        const liveStreams = db.getLiveStreamsByUserId(channel.user_id) || [];
+        for (const liveStream of liveStreams) {
+            if (liveStream.protocol === 'jsmpeg') {
+                const user = db.getUserById(liveStream.user_id);
+                liveStream.endpoint = jsmpegRelay.getChannelInfo(user.stream_key);
+            } else if (liveStream.protocol === 'webrtc') {
+                liveStream.endpoint = { roomId: `stream-${liveStream.id}` };
+            } else if (liveStream.protocol === 'rtmp') {
+                const config = require('../config');
+                const user = db.getUserById(liveStream.user_id);
+                const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
+                liveStream.endpoint = {
+                    hlsUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
+                    flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                };
+            }
+            delete liveStream.stream_key;
+        }
+
+        res.json({
+            channel: { username: channel.username, display_name: channel.display_name, user_id: channel.user_id },
+            streams: liveStreams,
+        });
+    } catch (err) {
+        console.error('[Channels] Live-only error:', err.message);
+        res.status(500).json({ error: 'Failed to get live stream data' });
+    }
+});
+
 // ── Get Own Channel ──────────────────────────────────────────
 router.get('/channel', requireAuth, (req, res) => {
     try {
