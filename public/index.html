@@ -123,6 +123,9 @@
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
                         <i class="fa-solid fa-broadcast-tower"></i> Start Streaming
                     </button>
+                    <a href="https://hobo.tools" class="btn btn-outline btn-lg">
+                        <i class="fa-solid fa-screwdriver-wrench"></i> Hobo Tools
+                    </a>
                     <a href="https://hobo.quest/game" class="btn btn-outline btn-lg">
                         <i class="fa-solid fa-gamepad"></i> Play Game
                     </a>
@@ -155,7 +158,7 @@
                 <div class="home-cta-inner">
                     <div class="home-cta-text">
                         <h3><i class="fa-solid fa-broadcast-tower"></i> Go live however you want</h3>
-                        <p>Start instantly in your browser when you want the fastest setup, or plug in OBS and ffmpeg when you want a full scene-based workflow. Same account, same channel, no friction.</p>
+                        <p>Start instantly in your browser, or plug in OBS and ffmpeg for a full scene-based workflow. Then restream to Twitch, YouTube, Kick, and any RTMP server — all at once, all from one dashboard.</p>
                     </div>
                     <div class="home-cta-steps">
                         <div class="home-cta-step">
@@ -171,14 +174,54 @@
                         </div>
                         <div class="home-cta-step-arrow"><i class="fa-solid fa-arrow-right"></i></div>
                         <div class="home-cta-step">
-                            <div class="home-cta-step-icon"><i class="fa-solid fa-users"></i></div>
-                            <strong>Build the hangout</strong>
-                            <span>Share live links, clips, and VODs</span>
+                            <div class="home-cta-step-icon"><i class="fa-solid fa-tower-broadcast"></i></div>
+                            <strong>Restream everywhere</strong>
+                            <span>Twitch, YouTube, Kick &amp; more</span>
                         </div>
                     </div>
-                    <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
-                        <i class="fa-solid fa-broadcast-tower"></i> Launch Your Stream
-                    </button>
+
+                    <!-- Feature highlights -->
+                    <div class="home-cta-features">
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-tower-broadcast"></i>
+                            <strong>Multi-platform restreaming</strong>
+                            <span>Broadcast to Twitch, YouTube, Kick, RobotStreamer, and any custom RTMP server simultaneously</span>
+                        </div>
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-comment-dots"></i>
+                            <strong>Live chat &amp; emotes</strong>
+                            <span>Real-time chat with custom emotes, viewer reactions, and chat commands</span>
+                        </div>
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-film"></i>
+                            <strong>Clips &amp; VODs</strong>
+                            <span>Clip moments on the fly and auto-record VODs for every broadcast</span>
+                        </div>
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-gamepad"></i>
+                            <strong>Built-in game</strong>
+                            <span>Viewers play HoboQuest together live on-stream with leaderboards and canvas</span>
+                        </div>
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-paste"></i>
+                            <strong>Pastes &amp; file sharing</strong>
+                            <span>Share code snippets, text, and files with syntax highlighting — like Pastebin, built in</span>
+                        </div>
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-code"></i>
+                            <strong>100% open source</strong>
+                            <span>Every line of code is public on GitHub — no black boxes, no hidden trackers</span>
+                        </div>
+                    </div>
+
+                    <div class="home-cta-buttons">
+                        <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
+                            <i class="fa-solid fa-broadcast-tower"></i> Launch Your Stream
+                        </button>
+                        <a href="https://hobo.tools" class="btn btn-outline btn-lg">
+                            <i class="fa-solid fa-screwdriver-wrench"></i> Explore Hobo Tools
+                        </a>
+                    </div>
                 </div>
             </div>
 
