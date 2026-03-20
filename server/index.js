@@ -132,6 +132,7 @@ app.use(helmet({
             mediaSrc: ["'self'", "blob:"],
             frameSrc: ["'self'"],
             workerSrc: ["'self'", "blob:"],
+            scriptSrcAttr: ["'unsafe-inline'"],
         },
     },
     crossOriginEmbedderPolicy: false,
