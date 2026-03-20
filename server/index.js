@@ -97,7 +97,19 @@ function normalizeOrigin(origin) {
 function getAllowedOrigins() {
     const allowed = new Set();
     const baseOrigin = normalizeOrigin(config.baseUrl);
-    if (baseOrigin) allowed.add(baseOrigin);
+    if (baseOrigin) {
+        allowed.add(baseOrigin);
+        // Auto-add www variant (and vice versa) to prevent WS rejection when
+        // accessing via www.hobostreamer.com vs hobostreamer.com
+        try {
+            const url = new URL(baseOrigin);
+            if (url.hostname.startsWith('www.')) {
+                allowed.add(`${url.protocol}//${url.hostname.slice(4)}${url.port ? ':' + url.port : ''}`);
+            } else {
+                allowed.add(`${url.protocol}//www.${url.hostname}${url.port ? ':' + url.port : ''}`);
+            }
+        } catch {}
+    }
 
     // hobo.quest game client calls cosmetics API cross-origin
     allowed.add('https://hobo.quest');
@@ -381,6 +393,7 @@ server.on('upgrade', (req, socket, head) => {
     const origin = normalizeOrigin(req.headers.origin);
 
     if (origin && !allowedOrigins.has(origin)) {
+        console.warn(`[Server] WebSocket upgrade rejected — origin "${origin}" not in allowed origins [${[...allowedOrigins].join(', ')}]`);
         socket.destroy();
         return;
     }
@@ -578,6 +591,13 @@ async function start() {
         console.log(`[Server] WebSocket:    ws://${config.host}:${config.port}/ws/call`);
         console.log(`[Server] Game/Canvas:  migrated to hobo.quest`);
         console.log(`[Server] Environment:  ${config.nodeEnv}`);
+        console.log(`[Server] BASE_URL:     ${config.baseUrl}`);
+        console.log(`[Server] CORS origins: ${[...allowedOrigins].join(', ')}`);
+        if (config.turn?.url) {
+            console.log(`[Server] TURN server:  ${config.turn.url}`);
+        } else {
+            console.log(`[Server] TURN server:  not configured (STUN-only — some viewers may fail to connect)`);
+        }
         console.log('');
         console.log('[Server] Ready. Happy camping! 🏕️');
         console.log('');

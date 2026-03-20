@@ -412,6 +412,16 @@ async function initWebRTC(stream) {
         video.style.display = 'none';
         playerType = 'webrtc';
 
+        // Status phase tracking — shown in placeholder so viewer knows what's happening
+        const _updateStatus = (text) => {
+            if (placeholder && placeholder.style.display !== 'none') {
+                placeholder.innerHTML = `
+                    <i class="fa-solid fa-satellite-dish fa-3x"></i>
+                    <p>${text}</p>`;
+            }
+        };
+        _updateStatus('Connecting to stream...');
+
         // Connect to the broadcast signaling relay as a viewer
         const host = window.location.hostname;
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -420,7 +430,7 @@ async function initWebRTC(stream) {
         const wsUrl = `${protocol}://${host}${portSuffix}/ws/broadcast?streamId=${streamRef.id}&role=viewer&token=${token}`;
 
         const ws = new WebSocket(wsUrl);
-        player = { ws, video, pc: null, myPeerId: null, watchSent: false, _wsUrl: wsUrl };
+        player = { ws, video, pc: null, myPeerId: null, watchSent: false, _wsUrl: wsUrl, _serverIceServers: null };
         let _broadcasterDisconnectTimer = null;
         let _viewerReconnectTimer = null;
         let _viewerReconnectDelay = 3000; // exponential backoff: 3s → 30s max
@@ -428,7 +438,9 @@ async function initWebRTC(stream) {
         let _viewerRewatchTimer = null;
         let _watchOfferTimer = null; // timeout: sent 'watch' but never got 'offer'
         let _rewatchCount = 0;
+        let _totalIceFailures = 0; // never resets — prevents infinite ICE failure loop
         const MAX_REWATCH_ATTEMPTS = 12;
+        const MAX_ICE_FAILURES = 25; // hard cap on total ICE failures across all offers
 
         // Start a timer when 'watch' is sent — if no 'offer' arrives within 6s, re-watch
         const startWatchOfferTimeout = () => {
@@ -436,9 +448,16 @@ async function initWebRTC(stream) {
             _watchOfferTimer = setTimeout(() => {
                 _watchOfferTimer = null;
                 if (!player || _viewerIntentionalClose) return;
+                // Check total ICE failure cap first
+                if (_totalIceFailures >= MAX_ICE_FAILURES) {
+                    console.error('[Player] Too many total ICE failures — stream may require a TURN server');
+                    showStreamError('Could not establish media connection. Your network may be blocking WebRTC traffic.');
+                    return;
+                }
                 // No offer received — broadcaster may be unresponsive
                 if (_rewatchCount < MAX_REWATCH_ATTEMPTS) {
                     console.warn(`[Player] No offer received within 6s (attempt ${_rewatchCount + 1}/${MAX_REWATCH_ATTEMPTS})`);
+                    _updateStatus('Waiting for broadcaster response...');
                     scheduleViewerRewatch(500);
                 } else {
                     console.error('[Player] Max rewatch attempts reached — stream may be unavailable');
@@ -471,6 +490,7 @@ async function initWebRTC(stream) {
 
         ws.onopen = () => {
             console.log('[Player] Broadcast signaling connected');
+            _updateStatus('Connected — waiting for broadcaster...');
             _viewerReconnectDelay = 3000; // reset backoff on successful connect
             const pcState = player?.pc?.iceConnectionState;
             if (!player.watchSent || pcState === 'failed' || pcState === 'disconnected' || pcState === 'closed') {
@@ -484,12 +504,18 @@ async function initWebRTC(stream) {
                 switch (msg.type) {
                     case 'welcome':
                         player.myPeerId = msg.peerId;
-                        console.log('[Player] Welcome, peerId:', msg.peerId);
+                        // Store server-provided ICE servers (includes TURN if configured)
+                        if (msg.iceServers && Array.isArray(msg.iceServers)) {
+                            player._serverIceServers = msg.iceServers;
+                        }
+                        console.log('[Player] Welcome, peerId:', msg.peerId, 'iceServers:', (player._serverIceServers || []).length);
+                        _updateStatus('Connected — waiting for broadcaster...');
                         // Don't send watch here — wait for broadcaster-ready
                         break;
                     case 'broadcaster-ready':
                         // Broadcaster connected/reconnected — request to watch
                         console.log('[Player] Broadcaster ready, requesting watch');
+                        _updateStatus('Broadcaster found — negotiating...');
                         // Cancel any pending rewatch timer (prevents double-watch race)
                         if (_viewerRewatchTimer) { clearTimeout(_viewerRewatchTimer); _viewerRewatchTimer = null; }
                         // Cancel any pending disconnect grace timer
@@ -518,6 +544,7 @@ async function initWebRTC(stream) {
                     case 'offer':
                         // Broadcaster sent us an offer — create answer
                         console.log('[Player] Received offer from broadcaster');
+                        _updateStatus('Connecting media...');
                         // Clear the watch-to-offer timeout — offer received successfully
                         if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
                         _rewatchCount = 0; // reset retry count on successful offer
@@ -574,11 +601,13 @@ async function initWebRTC(stream) {
 
         ws.onerror = () => {
             console.error('[Player] Broadcast signaling error');
+            _updateStatus('Connection error — retrying...');
         };
 
         ws.onclose = (ev) => {
             console.log(`[Player] Broadcast signaling closed (code=${ev.code})`);
             if (_viewerIntentionalClose) return;
+            _updateStatus('Reconnecting to server...');
             // Reconnect signaling WS with exponential backoff
             // The WebRTC peer connection may still be delivering media even without signaling
             if (player && streamRef) {
@@ -628,15 +657,18 @@ async function handleViewerOffer(msg, ws, video) {
     if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
     if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
 
-    const pc = new RTCPeerConnection({
-        iceServers: [
+    // Use server-provided ICE servers (with TURN support) if available, else fallback to STUN-only
+    const iceServers = (player._serverIceServers && player._serverIceServers.length > 0)
+        ? player._serverIceServers
+        : [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
             { urls: 'stun:stun3.l.google.com:19302' },
             { urls: 'stun:stun4.l.google.com:19302' },
-        ],
-    });
+        ];
+
+    const pc = new RTCPeerConnection({ iceServers });
     player.pc = pc;
     let _iceConnected = false;
     let _hasVideoFrames = false;
@@ -645,7 +677,18 @@ async function handleViewerOffer(msg, ws, video) {
     // Schedules a re-watch if the current PC is still ours
     const triggerRewatch = (reason) => {
         if (!player || player.pc !== pc) return;
-        console.log(`[Player] Re-watching: ${reason}`);
+        // Track ICE failures separately — these never reset (prevents infinite loop)
+        if (reason.includes('ICE') || reason.includes('stall') || reason.includes('SDP')) {
+            _totalIceFailures++;
+            console.log(`[Player] Re-watching: ${reason} (ICE failures: ${_totalIceFailures}/${MAX_ICE_FAILURES})`);
+            if (_totalIceFailures >= MAX_ICE_FAILURES) {
+                console.error('[Player] Too many ICE/connection failures — giving up');
+                showStreamError('Could not establish media connection. Your network may be blocking WebRTC traffic. Try a different network or refresh the page.');
+                return;
+            }
+        } else {
+            console.log(`[Player] Re-watching: ${reason}`);
+        }
         player.watchSent = false;
         sendPlayerSignal({ type: 'watch' });
         player.watchSent = true;

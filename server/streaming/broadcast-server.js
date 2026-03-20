@@ -17,6 +17,7 @@ const WebSocket = require('ws');
 const { authenticateWs } = require('../auth/auth');
 const db = require('../db/database');
 const webrtcSFU = require('./webrtc-sfu');
+const config = require('../config');
 
 const WS_HEARTBEAT_MS = 30000;
 const MAX_SEND_BACKPRESSURE = 512 * 1024;
@@ -31,6 +32,22 @@ class BroadcastServer extends EventEmitter {
         this.clients = new Map();
         this.nextPeerId = 1;
         this.heartbeatInterval = null;
+    }
+
+    /** Build ICE servers array from config (STUN + optional TURN) */
+    _getIceServers() {
+        const servers = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+        ];
+        if (config.turn?.url) {
+            servers.push({
+                urls: config.turn.url,
+                username: config.turn.username || '',
+                credential: config.turn.credential || '',
+            });
+        }
+        return servers;
     }
 
     init(server) {
@@ -164,6 +181,7 @@ class BroadcastServer extends EventEmitter {
             role,
             streamId,
             viewerCount: room.viewers.size,
+            iceServers: this._getIceServers(),
         });
 
         // Broadcast viewer count
@@ -208,6 +226,7 @@ class BroadcastServer extends EventEmitter {
                 // Viewer requests to watch — tell broadcaster to create offer for this viewer
                 if (client.role === 'viewer') {
                     if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                        console.log(`[Broadcast] Viewer ${client.peerId} requests watch on stream ${client.streamId} — notifying broadcaster`);
                         this.safeSend(room.broadcaster, {
                             type: 'viewer-joined',
                             peerId: client.peerId,
@@ -217,6 +236,7 @@ class BroadcastServer extends EventEmitter {
                         // broadcaster-ready as soon as the broadcaster reconnects
                         if (!room._pendingWatchers) room._pendingWatchers = new Set();
                         room._pendingWatchers.add(client.peerId);
+                        console.log(`[Broadcast] Viewer ${client.peerId} wants to watch stream ${client.streamId} but broadcaster is not connected — queued as pending`);
                     }
                 }
                 break;
@@ -284,7 +304,11 @@ class BroadcastServer extends EventEmitter {
                         candidate: msg.candidate,
                         fromPeerId: 'broadcaster',
                     });
+                } else {
+                    console.warn(`[Broadcast] Cannot relay ${msg.type} to ${targetPeerId} — viewer WS not open (state: ${viewerWs.readyState})`);
                 }
+            } else if (targetPeerId) {
+                console.warn(`[Broadcast] Cannot relay ${msg.type} — viewer ${targetPeerId} not found in room (stream ${client.streamId})`);
             }
         } else {
             // Viewer sending to broadcaster
@@ -295,6 +319,8 @@ class BroadcastServer extends EventEmitter {
                     candidate: msg.candidate,
                     fromPeerId: client.peerId,
                 });
+            } else {
+                console.warn(`[Broadcast] Cannot relay ${msg.type} from viewer ${client.peerId} — broadcaster not connected (stream ${client.streamId})`);
             }
         }
     }
@@ -381,10 +407,20 @@ class BroadcastServer extends EventEmitter {
 
     safeSend(ws, data) {
         try {
-            if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
-                ws.send(JSON.stringify(data));
+            if (ws.readyState !== WebSocket.OPEN) {
+                // Don't log — disconnect handlers already log this
+                return;
             }
-        } catch {}
+            if (ws.bufferedAmount > MAX_SEND_BACKPRESSURE) {
+                const client = this.clients.get(ws);
+                console.warn(`[Broadcast] Dropping ${data?.type || 'unknown'} message — backpressure ${ws.bufferedAmount} bytes (${client?.role || '?'} ${client?.peerId || '?'} stream ${client?.streamId || '?'})`);
+                return;
+            }
+            ws.send(JSON.stringify(data));
+        } catch (err) {
+            const client = this.clients.get(ws);
+            console.warn(`[Broadcast] safeSend error for ${data?.type || 'unknown'}: ${err.message} (${client?.role || '?'} ${client?.peerId || '?'})`);
+        }
     }
 
     getViewerCount(streamId) {

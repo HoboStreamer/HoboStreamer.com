@@ -32,6 +32,15 @@ module.exports = {
         audioPort: parseInt(process.env.JSMPEG_AUDIO_PORT || '9711', 10),
     },
 
+    // TURN relay for WebRTC NAT traversal (optional but recommended)
+    // Without TURN, viewers behind symmetric NAT cannot connect.
+    // Set up coturn on your server or use a TURN provider.
+    turn: {
+        url: process.env.TURN_URL || '',           // e.g. 'turn:turn.example.com:3478'
+        username: process.env.TURN_USERNAME || '',
+        credential: process.env.TURN_CREDENTIAL || '',
+    },
+
     mediasoup: {
         listenIp: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
         announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1',

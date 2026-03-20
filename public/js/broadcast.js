@@ -3815,7 +3815,11 @@ async function createViewerConnection(streamId, viewerPeerId) {
     const maxBitrate = getTargetVideoBitrate();
     const maxFrameRate = getBroadcastFrameRate();
     const scaleDownBy = getSuggestedScaleDown(s);
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] });
+    // Use server-provided ICE servers (with TURN support) if available
+    const iceServers = (ss._serverIceServers && ss._serverIceServers.length > 0)
+        ? ss._serverIceServers
+        : [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+    const pc = new RTCPeerConnection({ iceServers });
     ss.viewerConnections.set(viewerPeerId, pc);
     ss.localStream.getTracks().forEach(track => {
         try {
@@ -4079,7 +4083,13 @@ async function handleSignalingMessage(streamId, msg) {
             _updateTabViewerCount(streamId, msg.count || 0);
             _updateTotalViewerCount();
             break;
-        case 'welcome': console.log(`[Broadcast] Stream ${streamId} welcome:`, msg); break;
+        case 'welcome':
+            console.log(`[Broadcast] Stream ${streamId} welcome:`, msg);
+            // Store server-provided ICE servers (includes TURN if configured)
+            if (msg.iceServers && Array.isArray(msg.iceServers)) {
+                ss._serverIceServers = msg.iceServers;
+            }
+            break;
         case 'error': toast(msg.message || 'Broadcast error', 'error'); break;
 
         // ── SFU Produce (for server-side WebRTC → RTMP restreaming) ──
