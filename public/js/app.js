@@ -1105,7 +1105,7 @@ function renderChannelMediaStrip(channel, mediaData) {
     const html = `
         <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(192,150,92,.12);border:1px solid rgba(192,150,92,.22);font-size:.92rem;">
             <i class="fa-solid fa-headphones"></i>
-            Request media with <strong>!sr &lt;url&gt;</strong> · ${cost} coins · ${queueCount} queued
+            Request media with <strong>!sr</strong>/<strong>!yt</strong>/<strong>!youtube</strong>/<strong>!req</strong>/<strong>!request</strong> &lt;url&gt; · ${cost} coins · ${queueCount} queued
         </span>
         <a href="${queueUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:inherit;text-decoration:none;font-size:.92rem;">
             <i class="fa-solid fa-up-right-from-square"></i>

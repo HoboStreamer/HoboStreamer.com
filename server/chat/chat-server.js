@@ -684,6 +684,8 @@ class ChatServer {
 
             switch (cmd) {
                 case '!sr':
+                case '!yt':
+                case '!youtube':
                 case '!req':
                 case '!request': {
                     if (!client.user?.id) {
@@ -719,7 +721,7 @@ class ChatServer {
                     const state = mediaQueue.getState(stream.user_id);
                     const items = state.queue.slice(0, 3);
                     if (!items.length) {
-                        this.sendTo(ws, { type: 'system', message: 'The media queue is empty. Use !sr <url> to request something.' });
+                        this.sendTo(ws, { type: 'system', message: 'The media queue is empty. Use !sr, !yt, !youtube, !req, or !request with a URL to queue something.' });
                         return;
                     }
                     const summary = items.map((item, index) => `#${index + 1} ${item.title}`).join(' • ');
@@ -763,7 +765,7 @@ class ChatServer {
                 }
 
                 case '!mediahelp': {
-                    this.sendTo(ws, { type: 'system', message: 'Media commands: !sr <url>, !queue, !nowplaying, !skip' });
+                    this.sendTo(ws, { type: 'system', message: 'Media commands: !sr/!yt/!youtube/!req/!request <url>, !queue, !nowplaying, !skip' });
                     return;
                 }
 
@@ -789,7 +791,7 @@ class ChatServer {
                 this.sendTo(ws, {
                     type: 'system',
                     message: `Commands: /help, /tts <message>, /color <#hex>, /viewers, /uptime, /me <action>, /paste <content>` +
-                        `\nMedia: !sr <url>, !queue, !nowplaying` +
+                        `\nMedia: !sr/!yt/!youtube/!req/!request <url>, !queue, !nowplaying` +
                         (this.canModerate(client)
                             ? `\nMod: /ban <user>, /unban <user>, /timeout <user> [seconds], /clear, /slow <seconds>`
                             : ''),

@@ -26,6 +26,13 @@ let mpRetryCount = 0;
 const MP_MAX_RETRIES = 2;
 const MP_POSITION_SAVE_INTERVAL = 5000;
 
+function isEmbedUrl(url) {
+    const value = String(url || '');
+    return /youtube\.com\/embed\//i.test(value)
+        || /youtube-nocookie\.com\/embed\//i.test(value)
+        || /player\.vimeo\.com\/video\//i.test(value);
+}
+
 // ── Helpers ─────────────────────────────────────────────────
 function mpUsername() {
     return window.location.pathname.split('/').filter(Boolean)[1] || '';
@@ -109,7 +116,7 @@ function renderPage() {
     document.getElementById('mp-title').textContent = `${mpChannel.display_name} — Media Queue`;
     document.getElementById('mp-subtitle').textContent = mpOwner
         ? 'Manage requests, playback, and your queue from this page.'
-        : `Request media in chat with !sr while watching ${mpChannel.display_name}.`;
+        : `Request media in chat with !sr, !yt, !youtube, !req, or !request while watching ${mpChannel.display_name}.`;
     document.getElementById('mp-channel-link').href = `/${mpChannel.username}`;
     document.getElementById('mp-owner-controls').hidden = !mpOwner;
     document.getElementById('mp-settings-card').hidden = !mpOwner;
@@ -205,8 +212,10 @@ async function loadPlayer(request) {
         return;
     }
 
-    // For YouTube embeds as last resort (if stream extraction failed)
-    if (!streamUrl && request.provider === 'youtube' && request.embed_url) {
+    // Explicit embed fallback for providers that support iframe playback.
+    // Never feed embed URLs into native <video>/<audio> or Chromium throws
+    // MEDIA_ERR_SRC_NOT_SUPPORTED (code 4).
+    if ((!streamUrl || isEmbedUrl(playUrl)) && request.embed_url && (request.provider === 'youtube' || request.provider === 'vimeo')) {
         createEmbedFallback(request);
         return;
     }
@@ -278,6 +287,11 @@ async function loadPlayer(request) {
                 }
             }, 2000);
         } else {
+            if (request.embed_url && (request.provider === 'youtube' || request.provider === 'vimeo')) {
+                console.warn('[MediaPlayer] Native playback failed, switching to embed fallback');
+                createEmbedFallback(request);
+                return;
+            }
             showError(msg);
             if (mpOwner) reportFailure(request.id, msg);
         }

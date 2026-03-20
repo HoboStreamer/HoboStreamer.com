@@ -163,10 +163,14 @@ class MediaQueue {
             return db.getMediaRequestById(requestId);
         } catch (err) {
             console.warn(`[MediaQueue] Stream URL extraction failed for request ${requestId}:`, err.message);
-            // Fall back to embed URL
+            // Do NOT stuff embed URLs into stream_url.
+            // The web player uses `stream_url` for native <video>/<audio> playback,
+            // so writing a YouTube/Vimeo embed URL here causes MEDIA_ERR_SRC_NOT_SUPPORTED
+            // and false playback-failure refunds. Leave extraction marked failed so
+            // the client can explicitly choose iframe fallback when `embed_url` exists.
             db.updateMediaRequest(requestId, {
-                stream_url: request.embed_url,
-                download_status: 'ready',
+                stream_url: null,
+                download_status: 'failed',
                 last_error: `Extraction failed: ${err.message}`,
             });
             this.broadcastQueueUpdate(request.streamer_id);
