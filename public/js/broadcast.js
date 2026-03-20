@@ -3766,6 +3766,12 @@ function connectSignaling(streamId) {
     ws.onopen = () => {
         console.log(`[Broadcast] Signaling connected for stream ${streamId}`);
         ss.signalingReconnectDelay = 3000; // reset backoff on successful connect
+        // Clear stale SFU produce state — the server's SFU room is fresh after reconnect,
+        // so any old producers are invalid and would cause "already-producing" false positives.
+        if (_sfuProduceStates.has(streamId)) {
+            console.log('[SFU Produce] Clearing stale produce state on signaling reconnect for stream', streamId);
+            _cleanupSfuProduce(streamId);
+        }
         if (broadcastState.activeStreamId === streamId) updateBroadcastStatus('connected');
     };
 
