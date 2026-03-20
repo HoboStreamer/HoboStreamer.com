@@ -965,6 +965,26 @@ class RestreamManager extends EventEmitter {
     }
 
     /**
+     * Get total external viewer count for a user across all active restream destinations.
+     * Returns { total, breakdown: [{ platform, name, count }] }
+     */
+    getExternalViewerCountsForUser(userId) {
+        const db = require('../db/database');
+        const dests = db.getRestreamDestinationsByUserId(userId) || [];
+        const breakdown = [];
+        let total = 0;
+        for (const d of dests) {
+            if (!d.enabled) continue;
+            const count = this.getCachedViewerCount(d.id);
+            if (count != null && count > 0) {
+                breakdown.push({ platform: d.platform, name: d.name || d.platform, count, destId: d.id });
+                total += count;
+            }
+        }
+        return { total, breakdown };
+    }
+
+    /**
      * Start periodic viewer count polling for active restream destinations.
      * Called from server/index.js on startup.
      */

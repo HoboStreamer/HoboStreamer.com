@@ -185,6 +185,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
 
         // Include RS restream status for each live stream
         const rsInfo = {};
+        const rsViewerCount = robotStreamerService.getRsViewerCount(channel.user_id);
         for (const ls of liveStreams) {
             const hasBridge = robotStreamerService.chatBridges.has(ls.id);
             const hasPublish = robotStreamerService._activePublish?.has(ls.id);
@@ -196,17 +197,19 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                     robot_name: integration?.stream_name || integration?.robot_id || 'RS Robot',
                     chat_mirrored: hasBridge,
                     video_restreamed: !!hasPublish,
+                    viewer_count: rsViewerCount,
                 };
             }
         }
 
         // Include restream destination links (Twitch/Kick/YouTube) for live streams
         let restreamLinks = null;
+        let externalViewers = null;
         if (liveStreams.length > 0) {
+            const restreamManager = require('./restream-manager');
             const dests = db.getRestreamDestinationsByUserId(channel.user_id) || [];
             const enabledWithUrl = dests.filter(d => d.enabled && d.channel_url);
             if (enabledWithUrl.length > 0) {
-                const restreamManager = require('./restream-manager');
                 restreamLinks = enabledWithUrl.map(d => {
                     // Check if this destination is actively streaming
                     const streamStatuses = liveStreams.flatMap(ls => restreamManager.getStreamStatus(ls.id));
@@ -223,6 +226,18 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                     };
                 });
             }
+
+            // Build external viewers summary (Kick/Twitch/YouTube + RS)
+            const ext = restreamManager.getExternalViewerCountsForUser(channel.user_id);
+            const rsVc = rsViewerCount;
+            const totalExternal = ext.total + rsVc;
+            if (totalExternal > 0 || ext.breakdown.length > 0 || Object.keys(rsInfo).length > 0) {
+                externalViewers = {
+                    total: totalExternal,
+                    platform_viewers: ext.breakdown,
+                    rs_viewers: rsVc,
+                };
+            }
         }
 
         res.json({
@@ -231,6 +246,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             streams: liveStreams,
             rs_restream: Object.keys(rsInfo).length ? rsInfo : null,
             restream_links: restreamLinks,
+            external_viewers: externalViewers,
             vods,
             clips,
         });
@@ -305,10 +321,20 @@ router.put('/channel', requireAuth, (req, res) => {
 // ── List Live Streams ────────────────────────────────────────
 router.get('/', optionalAuth, (req, res) => {
     try {
+        const restreamManager = require('./restream-manager');
         const streams = db.getLiveStreams();
         const enriched = streams.map(s => {
             const channel = db.getChannelByUserId(s.user_id);
-            return { ...s, channel: channel || null };
+            // Add external viewer counts (Kick/Twitch/YouTube + RS) to each stream
+            const ext = restreamManager.getExternalViewerCountsForUser(s.user_id);
+            const rsVc = robotStreamerService.getRsViewerCount(s.user_id);
+            const externalTotal = ext.total + rsVc;
+            return {
+                ...s,
+                channel: channel || null,
+                external_viewer_count: externalTotal,
+                total_viewer_count: (s.viewer_count || 0) + externalTotal,
+            };
         });
         res.json({ streams: enriched });
     } catch (err) {

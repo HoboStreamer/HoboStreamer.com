@@ -35,8 +35,28 @@ class RobotStreamerService {
         this.chatBridges = new Map();
         /** @type {Map<number, { ws: WebSocket, upstream: WebSocket|null, connectedAt: number }>} streamId → active publish session */
         this._activePublish = new Map();
+        /** @type {Map<number, { count: number, fetchedAt: number }>} userId → cached RS viewer count */
+        this._rsViewerCounts = new Map();
         this.publishProxy = new WebSocket.Server({ noServer: true, maxPayload: 512 * 1024, perMessageDeflate: false });
         this.publishProxy.on('connection', (ws, req, ctx) => this._handlePublishConnection(ws, req, ctx));
+    }
+
+    /**
+     * Cache a RobotStreamer viewer count for a user.
+     * Called from the validate endpoint when the broadcaster polls.
+     */
+    setRsViewerCount(userId, count) {
+        this._rsViewerCounts.set(userId, { count: Number(count) || 0, fetchedAt: Date.now() });
+    }
+
+    /**
+     * Get cached RS viewer count for a user.
+     * Returns count if fresh (<120s), otherwise 0.
+     */
+    getRsViewerCount(userId) {
+        const cached = this._rsViewerCounts.get(userId);
+        if (!cached || Date.now() - cached.fetchedAt > 120000) return 0;
+        return cached.count;
     }
 
     sanitizeIntegration(row, extras = {}) {

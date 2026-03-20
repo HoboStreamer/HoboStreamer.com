@@ -10,6 +10,8 @@ let currentStreamId = null;
 let currentStreamData = null;
 let hoboAppMetaData = null;
 let hoboAppMetaPromise = null;
+/** Cached external viewer count (Kick/Twitch/RS) — updated by cumulative viewer poll */
+let _cachedExternalViewerCount = 0;
 
 /* ── Capability helpers ────────────────────────────────────── */
 function mergeUserWithCapabilities(user, capabilities) {
@@ -863,7 +865,7 @@ function renderStreamGrid(containerId, streams, isLive) {
                 ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
                 ${s.protocol ? protocolBadge(s.protocol) : ''}
                 ${s.is_nsfw ? '<span class="stream-card-nsfw">NSFW</span>' : ''}
-                ${isLive ? `<span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${s.viewer_count || 0}</span>` : ''}
+                ${isLive ? `<span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${s.total_viewer_count || s.viewer_count || 0}</span>` : ''}
                 ${duration}
             </div>
             <div class="stream-card-info">
@@ -902,6 +904,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
         const liveStreams = streams.filter(s => s && s.is_live);
         const rsRestream = data.rs_restream || {};
         const restreamLinks = data.restream_links || null;
+        const externalViewers = data.external_viewers || null;
 
         renderChannelMediaStrip(ch, mediaData);
 
@@ -967,7 +970,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
             activateChannelStream(targetStream);
 
             // Show cumulative viewers across all streams
-            updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
+            updateCumulativeViewers(liveStreams, rsRestream, restreamLinks, externalViewers);
         } else {
             // ── OFFLINE STATE ──
             document.getElementById('ch-live-area').style.display = 'none';
@@ -1254,37 +1257,57 @@ function setupTabKeyboardNav(container, username) {
 
 /**
  * Update cumulative viewer display below the video player.
- * Shows total viewers across all streams, RS restream indicator, and share button.
+ * Shows total viewers across all streams + external platforms, RS restream indicator, and share button.
  */
-function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = null) {
+function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = null, externalViewers = null) {
     const el = document.getElementById('ch-cumulative-viewers');
     if (!el) return;
 
     const hasRs = Object.keys(rsRestream).length > 0;
     const hasRestream = restreamLinks?.length > 0;
+    const hasExternal = externalViewers && externalViewers.total > 0;
 
-    if (liveStreams.length <= 1 && !hasRs && !hasRestream) {
+    if (liveStreams.length <= 1 && !hasRs && !hasRestream && !hasExternal) {
         el.style.display = 'none';
         return;
     }
 
-    const total = liveStreams.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
+    const hsTotal = liveStreams.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
+    const externalTotal = externalViewers?.total || 0;
+    const combinedTotal = hsTotal + externalTotal;
     const streamCount = liveStreams.length;
 
+    // Update the cached external viewer count for the vc-viewers badge
+    if (externalViewers) {
+        _cachedExternalViewerCount = externalTotal;
+        // Also update the main viewer badge with combined total
+        const vcEl = document.getElementById('vc-viewers');
+        if (vcEl) {
+            const currentHs = parseInt(vcEl.textContent) || 0;
+            // Use the larger of current HS count and the polled HS total (WebSocket may be more recent)
+            vcEl.textContent = Math.max(currentHs, hsTotal) + externalTotal;
+        }
+    }
+
     let html = '';
-    if (streamCount > 1) {
-        html += `<span class="ch-viewer-total"><i class="fa-solid fa-layer-group"></i> <strong>${total}</strong> viewer${total !== 1 ? 's' : ''} across <strong>${streamCount}</strong> streams</span>`;
+
+    // Show combined viewer total when there are multiple streams or external viewers
+    if (streamCount > 1 || hasExternal) {
+        const totalLabel = hasExternal ? 'total' : '';
+        html += `<span class="ch-viewer-total"><i class="fa-solid fa-layer-group"></i> <strong>${combinedTotal}</strong> viewer${combinedTotal !== 1 ? 's' : ''} ${totalLabel}${streamCount > 1 ? ` across <strong>${streamCount}</strong> streams` : ''}</span>`;
     }
 
     // RS restream badges — link to robotstreamer.com/robot/{id} when robot_id available
     for (const [, rs] of Object.entries(rsRestream)) {
         if (rs.active) {
-            const label = 'RS Restream';
+            const rsViewers = rs.viewer_count || externalViewers?.rs_viewers || 0;
+            const viewerStr = rsViewers > 0 ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${rsViewers}` : '';
+            const label = 'RS';
             if (rs.robot_id) {
                 const rsUrl = `https://robotstreamer.com/robot/${esc(rs.robot_id)}`;
-                html += `<a href="${rsUrl}" target="_blank" rel="noopener" class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}"><i class="fa-solid fa-robot"></i> ${label}</a>`;
+                html += `<a href="${rsUrl}" target="_blank" rel="noopener" class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}${rsViewers ? ' (' + rsViewers + ' viewers)' : ''}"><i class="fa-solid fa-robot"></i> ${label}${viewerStr}</a>`;
             } else {
-                html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}"><i class="fa-solid fa-robot"></i> ${label}</span>`;
+                html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}"><i class="fa-solid fa-robot"></i> ${label}${viewerStr}</span>`;
             }
         }
     }
@@ -1360,7 +1383,7 @@ function switchToLiveStream(username, streamId, btn) {
             rememberLastStream(username, streamId);
             // Update cumulative viewers with fresh data
             const liveStreams = streams.filter(s => s && s.is_live);
-            updateCumulativeViewers(liveStreams, data.rs_restream || {}, data.restream_links || null);
+            updateCumulativeViewers(liveStreams, data.rs_restream || {}, data.restream_links || null, data.external_viewers || null);
             // Refresh tabs with latest viewer counts
             loadLiveStreamTabs(username, streamId, liveStreams, data.rs_restream || {});
         } else {
@@ -1437,6 +1460,7 @@ function startStreamStatusPoll(stream) {
             const current = liveStreams.find(s => s.id === currentStreamId);
             const rsRestream = data.rs_restream || {};
             const restreamLinks = data.restream_links || null;
+            const extViewers = data.external_viewers || null;
             if (!current && liveStreams.length > 0) {
                 // Current stream ended, but others are live — auto-switch to best
                 const best = liveStreams.reduce((b, s) =>
@@ -1445,7 +1469,7 @@ function startStreamStatusPoll(stream) {
                 const bestTitle = best.title || 'another stream';
                 loadLiveStreamTabs(username, best.id, liveStreams, rsRestream);
                 activateChannelStream(best);
-                updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
+                updateCumulativeViewers(liveStreams, rsRestream, restreamLinks, extViewers);
                 rememberLastStream(username, best.id);
                 history.replaceState(null, '', `/${username}?stream=${best.id}`);
                 toast(`Stream ended — switched to "${bestTitle}"`, 'info');
@@ -1464,7 +1488,7 @@ function startStreamStatusPoll(stream) {
             }
 
             // Update cumulative viewers
-            updateCumulativeViewers(liveStreams, rsRestream, restreamLinks);
+            updateCumulativeViewers(liveStreams, rsRestream, restreamLinks, extViewers);
         } catch { /* silent — network error, retry next interval */ }
     }, STREAM_POLL_INTERVAL);
 }

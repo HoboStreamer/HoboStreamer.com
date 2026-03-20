@@ -2562,7 +2562,9 @@ function freezeGifEmote(img) {
 
 function updateViewerCount(count) {
     const el = document.getElementById('vc-viewers');
-    if (el) el.textContent = count;
+    // Include cached external viewer count (Kick/Twitch/RS) if available
+    const external = (typeof _cachedExternalViewerCount === 'number') ? _cachedExternalViewerCount : 0;
+    if (el) el.textContent = count + external;
 }
 
 /**

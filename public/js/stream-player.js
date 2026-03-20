@@ -557,7 +557,8 @@ async function initWebRTC(stream) {
                         break;
                     case 'viewer-count':
                         const vcEl = document.getElementById('vc-viewers');
-                        if (vcEl) vcEl.textContent = msg.count || 0;
+                        const extVc = (typeof _cachedExternalViewerCount === 'number') ? _cachedExternalViewerCount : 0;
+                        if (vcEl) vcEl.textContent = (msg.count || 0) + extVc;
                         break;
                 }
             } catch (err) {
