@@ -987,6 +987,57 @@ class RestreamManager extends EventEmitter {
         return { total, breakdown };
     }
 
+    getViewerPollingConfig() {
+        const db = require('../db/database');
+        const rawMode = String(db.getSetting('kick_viewer_count_mode') || 'auto').trim().toLowerCase();
+        const mode = ['auto', 'server', 'browser', 'disabled'].includes(rawMode) ? rawMode : 'auto';
+        return {
+            kick: {
+                mode,
+                browserDirectEnabled: mode === 'auto' || mode === 'browser',
+                serverFetchEnabled: mode === 'auto' || mode === 'server',
+            },
+        };
+    }
+
+    _getKickViewerFetchConfig() {
+        const db = require('../db/database');
+        const polling = this.getViewerPollingConfig();
+        const template = String(db.getSetting('kick_viewer_count_api_url_template') || 'https://kick.com/api/v2/channels/{slug}').trim();
+        const jsonPath = String(db.getSetting('kick_viewer_count_json_path') || 'livestream.viewer_count').trim() || 'livestream.viewer_count';
+        const userAgent = String(db.getSetting('kick_viewer_count_user_agent') || '').trim();
+        const headersRaw = String(db.getSetting('kick_viewer_count_headers_json') || '').trim();
+        let headers = { Accept: 'application/json' };
+
+        if (headersRaw) {
+            try {
+                const parsed = JSON.parse(headersRaw);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    headers = {};
+                    for (const [key, value] of Object.entries(parsed)) {
+                        if (!key) continue;
+                        headers[String(key)] = String(value ?? '');
+                    }
+                }
+            } catch {
+                // Ignore invalid JSON and keep default headers
+            }
+        }
+
+        if (userAgent && !headers['User-Agent']) headers['User-Agent'] = userAgent;
+        return { ...polling.kick, template, jsonPath, headers };
+    }
+
+    _extractJsonPathValue(data, path) {
+        if (!data || typeof data !== 'object' || !path) return null;
+        const value = String(path)
+            .split('.')
+            .map(part => part.trim())
+            .filter(Boolean)
+            .reduce((acc, part) => (acc && typeof acc === 'object' ? acc[part] : undefined), data);
+        return Number.isFinite(value) ? value : null;
+    }
+
     /**
      * Start periodic viewer count polling for active restream destinations.
      * Called from server/index.js on startup.
@@ -1032,7 +1083,7 @@ class RestreamManager extends EventEmitter {
                     // Primary: check chat relay Pusher viewer count (reliable, not CF-blocked)
                     count = chatRelayService.getViewerCount(destId);
                     // Fallback: try Kick HTTP API (usually CF-blocked from servers)
-                    if (count == null) {
+                    if (count == null && this.getViewerPollingConfig().kick.serverFetchEnabled) {
                         count = await this._fetchKickViewerCount(dest.channel_url);
                     }
                 } else if (dest.platform === 'twitch') {
@@ -1071,17 +1122,22 @@ class RestreamManager extends EventEmitter {
      */
     _fetchKickViewerCount(channelUrl) {
         const https = require('https');
+        const http = require('http');
         try {
+            const config = this._getKickViewerFetchConfig();
+            if (!config.serverFetchEnabled) return Promise.resolve(null);
+
             const url = new URL(channelUrl);
             const slug = url.pathname.split('/').filter(Boolean)[0];
             if (!slug) return Promise.resolve(null);
+            const requestUrl = config.template.includes('{slug}')
+                ? config.template.replaceAll('{slug}', encodeURIComponent(slug))
+                : config.template;
+            const requestModule = requestUrl.startsWith('http://') ? http : https;
 
             return new Promise((resolve) => {
-                const req = https.get(`https://kick.com/api/v2/channels/${slug}`, {
-                    headers: {
-                        'Accept': 'application/json',
-                        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-                    },
+                const req = requestModule.get(requestUrl, {
+                    headers: config.headers,
                     timeout: 8000,
                 }, (res) => {
                     let data = '';
@@ -1090,8 +1146,7 @@ class RestreamManager extends EventEmitter {
                         if (res.statusCode >= 400) return resolve(null);
                         try {
                             const parsed = JSON.parse(data);
-                            const count = parsed?.livestream?.viewer_count;
-                            resolve(typeof count === 'number' ? count : null);
+                            resolve(this._extractJsonPathValue(parsed, config.jsonPath));
                         } catch {
                             resolve(null);
                         }

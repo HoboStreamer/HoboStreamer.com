@@ -4227,6 +4227,22 @@ function _stopRsViewerPoll() {
 // The server can't reach Kick/Twitch APIs (Cloudflare-blocked). But the
 // broadcaster's browser CAN, so we poll here and relay counts to the server.
 let _restreamViewerPollTimer = null;
+let _restreamViewerConfig = null;
+let _restreamViewerConfigFetchedAt = 0;
+
+async function _getRestreamViewerConfig() {
+    if (_restreamViewerConfig && Date.now() - _restreamViewerConfigFetchedAt < 300000) {
+        return _restreamViewerConfig;
+    }
+    try {
+        const data = await api('/restream/viewer-config');
+        _restreamViewerConfig = data?.config || { kick: { mode: 'auto', browserDirectEnabled: true } };
+    } catch {
+        _restreamViewerConfig = { kick: { mode: 'auto', browserDirectEnabled: true } };
+    }
+    _restreamViewerConfigFetchedAt = Date.now();
+    return _restreamViewerConfig;
+}
 
 function _startRestreamViewerPoll() {
     _stopRestreamViewerPoll();
@@ -4246,12 +4262,14 @@ function _stopRestreamViewerPoll() {
 async function _pollRestreamViewerCounts() {
     if (!_restreamDestinations || _restreamDestinations.length === 0) return;
     const counts = [];
+    const config = await _getRestreamViewerConfig();
+    const kickBrowserDirectEnabled = config?.kick?.browserDirectEnabled !== false;
 
     // 1. Browser-side polling for platforms the server can't reach (Kick is CF-blocked)
     for (const dest of _restreamDestinations) {
         if (!dest.enabled || !dest.channel_url) continue;
         try {
-            if (dest.platform === 'kick') {
+            if (dest.platform === 'kick' && kickBrowserDirectEnabled) {
                 const u = new URL(dest.channel_url);
                 const slug = u.pathname.split('/').filter(Boolean)[0];
                 if (!slug) continue;

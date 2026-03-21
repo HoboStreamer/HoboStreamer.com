@@ -390,6 +390,17 @@ function initDb() {
         ];
         const seedTwitch = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
         for (const [k, v, d, t] of twitchSeeds) seedTwitch.run(k, v, d, t);
+
+        // Seed Kick viewer-count settings
+        const kickViewerSeeds = [
+            ['kick_viewer_count_mode', 'auto', 'Kick viewer-count mode: auto, server, browser, or disabled', 'string'],
+            ['kick_viewer_count_api_url_template', 'https://kick.com/api/v2/channels/{slug}', 'Kick viewer-count API/proxy URL template. Use {slug} for the channel slug.', 'string'],
+            ['kick_viewer_count_json_path', 'livestream.viewer_count', 'Dot-path to the viewer count in the Kick API/proxy JSON response', 'string'],
+            ['kick_viewer_count_headers_json', '{"Accept":"application/json"}', 'Optional JSON object of HTTP headers for Kick viewer-count requests', 'string'],
+            ['kick_viewer_count_user_agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36', 'Optional User-Agent header for server-side Kick viewer-count requests', 'string'],
+        ];
+        const seedKickViewer = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of kickViewerSeeds) seedKickViewer.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
 
     // Migrate: expand role CHECK to include global_mod, migrate 'mod' → 'global_mod'

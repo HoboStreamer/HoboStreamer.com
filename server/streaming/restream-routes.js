@@ -328,4 +328,13 @@ router.get('/viewer-counts', requireAuth, (req, res) => {
     }
 });
 
+// ── GET /viewer-config — get safe viewer polling config for the broadcaster
+router.get('/viewer-config', requireAuth, (req, res) => {
+    try {
+        res.json({ config: restreamManager.getViewerPollingConfig() });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get viewer polling config' });
+    }
+});
+
 module.exports = router;
