@@ -212,6 +212,12 @@ class ChatServer {
             });
         }, WS_HEARTBEAT_MS);
 
+        // ── Viewer snapshot recording (every 60s) ────────────
+        if (this._snapshotInterval) clearInterval(this._snapshotInterval);
+        this._snapshotInterval = setInterval(() => {
+            this._recordViewerSnapshots();
+        }, 60_000);
+
         this.wss.on('connection', (ws, req) => {
             this.handleConnection(ws, req);
         });
@@ -1258,6 +1264,27 @@ class ChatServer {
     }
 
     /**
+     * Record viewer snapshots for all active streams.
+     * Called every 60 seconds by the snapshot interval timer.
+     */
+    _recordViewerSnapshots() {
+        // Collect unique active stream IDs
+        const streamIds = new Set();
+        for (const [, client] of this.clients) {
+            if (client.streamId) streamIds.add(client.streamId);
+        }
+        for (const streamId of streamIds) {
+            try {
+                const count = this.getStreamViewerCount(streamId);
+                const chatActivity = db.getRecentChatActivity(streamId, 5);
+                db.insertViewerSnapshot(streamId, count, chatActivity);
+            } catch (err) {
+                // Non-critical — don't crash the chat server over analytics
+            }
+        }
+    }
+
+    /**
      * Push the current users list to all clients in a stream/global.
      * Throttled to avoid flooding on rapid join/leave bursts.
      */
@@ -1358,6 +1385,10 @@ class ChatServer {
             if (this.heartbeatInterval) {
                 clearInterval(this.heartbeatInterval);
                 this.heartbeatInterval = null;
+            }
+            if (this._snapshotInterval) {
+                clearInterval(this._snapshotInterval);
+                this._snapshotInterval = null;
             }
             this.wss.clients.forEach(ws => ws.close());
             this.wss.close();

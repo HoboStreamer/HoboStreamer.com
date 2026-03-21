@@ -3952,6 +3952,46 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
 .channel-below-fold { padding-top: 16px; }
 
+/* ── Channel Analytics ───────────────────────────────────── */
+.ch-analytics-period-btns { display:flex; gap:4px; margin-left:auto; }
+.ch-analytics-period-btns .btn { padding:4px 10px; font-size:0.75rem; border-radius:6px; }
+.ch-analytics-period-btns .btn.active { background:var(--accent); color:#fff; }
+.analytics-stat-cards {
+    display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+    gap:12px; margin-bottom:20px;
+}
+.analytics-stat-card {
+    background:var(--card-bg,rgba(22,22,26,0.74)); border:1px solid var(--border,#333);
+    border-radius:10px; padding:14px 16px; text-align:center;
+}
+.analytics-stat-card .stat-value {
+    font-size:1.35rem; font-weight:700; color:var(--text,#fff); line-height:1.2;
+}
+.analytics-stat-card .stat-label {
+    font-size:0.72rem; color:var(--text-muted,#888); text-transform:uppercase;
+    letter-spacing:0.04em; margin-top:2px;
+}
+.analytics-chart-wrap {
+    background:var(--card-bg,rgba(22,22,26,0.74)); border:1px solid var(--border,#333);
+    border-radius:10px; padding:16px; margin-bottom:20px;
+}
+.analytics-chart-wrap canvas { max-height:240px; width:100%; }
+.analytics-chart-title { font-size:0.85rem; color:var(--text-muted,#888); margin:0 0 10px; font-weight:500; }
+.analytics-streams-table { margin-bottom:24px; }
+.analytics-streams-table h3 { font-size:0.95rem; margin:0 0 10px; color:var(--text,#fff); }
+.table-responsive { overflow-x:auto; }
+.analytics-table {
+    width:100%; border-collapse:collapse; font-size:0.82rem;
+    background:var(--card-bg,rgba(22,22,26,0.74)); border-radius:10px; overflow:hidden;
+}
+.analytics-table th { text-align:left; padding:10px 12px; color:var(--text-muted,#888);
+    font-weight:600; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.03em;
+    border-bottom:1px solid var(--border,#333);
+}
+.analytics-table td { padding:8px 12px; border-bottom:1px solid var(--border,#222); color:var(--text,#ddd); }
+.analytics-table tbody tr:hover { background:rgba(255,255,255,0.03); }
+.analytics-table tbody tr:last-child td { border-bottom:none; }
+
 /* ═══════════════════════════════════════════════════════════════
    VOD / Clip Player Pages
    ═══════════════════════════════════════════════════════════════ */

@@ -1072,11 +1072,193 @@ async function loadChannelPage(username, preferredStreamId = null) {
             clipsGrid.innerHTML = '<p class="muted">No clips yet</p>';
         }
 
+        // Load channel analytics (non-blocking)
+        loadChannelAnalytics(username);
+
     } catch (e) {
         console.error('Channel load error:', e);
         toast('Channel not found', 'error');
         navigate('/');
     }
+}
+
+// ── Channel Analytics ────────────────────────────────────────
+let _chAnalyticsChart = null;
+
+async function loadChannelAnalytics(username, days = 30) {
+    try {
+        const res = await fetch(`/api/analytics/channel/${encodeURIComponent(username)}?days=${days}`);
+        if (!res.ok) return; // silently skip if no data
+        const data = await res.json();
+
+        const header = document.getElementById('ch-analytics-header');
+        const section = document.getElementById('ch-analytics-section');
+        if (!header || !section) return;
+
+        const { summary, streams, all_time } = data;
+        if (!summary || (!summary.total_streams && !all_time?.total_streams)) return;
+
+        header.style.display = '';
+        section.style.display = '';
+
+        // Period toggle buttons
+        const periodBtns = document.getElementById('ch-analytics-period-btns');
+        if (periodBtns && !periodBtns._wired) {
+            periodBtns._wired = true;
+            periodBtns.addEventListener('click', e => {
+                const btn = e.target.closest('[data-days]');
+                if (!btn) return;
+                periodBtns.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                loadChannelAnalytics(username, parseInt(btn.dataset.days));
+            });
+        }
+
+        // Stat cards
+        const cards = document.getElementById('ch-analytics-cards');
+        const s = summary;
+        const statItems = [
+            { value: s.total_streams || 0, label: 'Streams' },
+            { value: formatDurationShort(s.total_duration_seconds || 0), label: 'Stream Time' },
+            { value: s.peak_viewers || 0, label: 'Peak Viewers' },
+            { value: s.avg_viewers_per_stream != null ? s.avg_viewers_per_stream : '—', label: 'Avg Viewers' },
+            { value: s.total_messages || 0, label: 'Chat Messages' },
+            { value: s.total_unique_chatters || 0, label: 'Unique Chatters' },
+        ];
+        cards.innerHTML = statItems.map(i => `
+            <div class="analytics-stat-card">
+                <div class="stat-value">${typeof i.value === 'number' ? i.value.toLocaleString() : i.value}</div>
+                <div class="stat-label">${i.label}</div>
+            </div>
+        `).join('');
+
+        // Recent streams table
+        const tableWrap = document.getElementById('ch-streams-table-wrap');
+        const tbody = document.getElementById('ch-streams-tbody');
+        if (streams && streams.length) {
+            tableWrap.style.display = '';
+            tbody.innerHTML = streams.slice(0, 20).map(st => `
+                <tr>
+                    <td>${formatDate(st.started_at)}</td>
+                    <td>${esc(st.title || 'Untitled')}</td>
+                    <td>${formatDuration(st.duration_seconds || 0)}</td>
+                    <td>${st.peak_viewers ?? '—'}</td>
+                    <td>${st.avg_viewers != null ? (Math.round(st.avg_viewers * 10) / 10) : '—'}</td>
+                    <td>${st.total_messages ?? '—'}</td>
+                </tr>
+            `).join('');
+        } else {
+            tableWrap.style.display = 'none';
+        }
+
+        // Viewer chart for most recent stream with snapshots
+        const chartWrap = document.getElementById('ch-viewer-chart-wrap');
+        if (streams && streams.length) {
+            // Load chart data for the most recent stream
+            try {
+                const sRes = await fetch(`/api/analytics/stream/${streams[0].id}`);
+                if (sRes.ok) {
+                    const sData = await sRes.json();
+                    if (sData.viewer_chart && sData.viewer_chart.length > 1) {
+                        await renderViewerChart(sData, streams[0]);
+                        chartWrap.style.display = '';
+                    } else {
+                        chartWrap.style.display = 'none';
+                    }
+                }
+            } catch { chartWrap.style.display = 'none'; }
+        } else {
+            chartWrap.style.display = 'none';
+        }
+
+    } catch (err) {
+        console.error('[Analytics] Load error:', err);
+    }
+}
+
+async function renderViewerChart(data, stream) {
+    // Lazy-load Chart.js if not already loaded
+    if (typeof Chart === 'undefined') {
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+    }
+
+    const canvas = document.getElementById('ch-viewer-chart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    // Destroy previous chart
+    if (_chAnalyticsChart) { _chAnalyticsChart.destroy(); _chAnalyticsChart = null; }
+
+    const title = document.getElementById('ch-chart-title');
+    if (title) title.textContent = `Viewers — ${esc(stream.title || 'Latest Stream')}`;
+
+    const points = data.viewer_chart;
+    const labels = points.map(p => {
+        const d = new Date(p.t);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    });
+
+    _chAnalyticsChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Viewers',
+                data: points.map(p => p.v),
+                borderColor: 'rgba(99, 102, 241, 1)',
+                backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 0,
+                borderWidth: 2,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: items => points[items[0].dataIndex]
+                            ? new Date(points[items[0].dataIndex].t).toLocaleTimeString()
+                            : '',
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888', maxTicksLimit: 10, font: { size: 11 } },
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: '#888', precision: 0, font: { size: 11 } },
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                },
+            },
+        },
+    });
+}
+
+function formatDurationShort(seconds) {
+    if (!seconds) return '0m';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function renderChannelMediaStrip(channel, mediaData) {

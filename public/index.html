@@ -222,6 +222,11 @@
                             <strong>100% open source</strong>
                             <span>Every line of code is public on GitHub — no black boxes, no hidden trackers</span>
                         </div>
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-chart-line"></i>
+                            <strong>Stream analytics</strong>
+                            <span>Track viewers, watch time, peak concurrents, and chat activity across every broadcast</span>
+                        </div>
                     </div>
 
                     <div class="home-cta-buttons">
@@ -782,6 +787,44 @@
                 </div>
                 <div class="stream-grid" id="ch-clips-grid">
                     <p class="muted">No clips yet</p>
+                </div>
+
+                <!-- Channel Analytics Section -->
+                <div class="section-header" id="ch-analytics-header" style="display:none">
+                    <h2><i class="fa-solid fa-chart-line"></i> Stream Analytics</h2>
+                    <div class="ch-analytics-period-btns" id="ch-analytics-period-btns">
+                        <button class="btn btn-sm btn-ghost active" data-days="7">7d</button>
+                        <button class="btn btn-sm btn-ghost" data-days="30">30d</button>
+                        <button class="btn btn-sm btn-ghost" data-days="90">90d</button>
+                    </div>
+                </div>
+                <div id="ch-analytics-section" style="display:none">
+                    <!-- Summary stat cards -->
+                    <div class="analytics-stat-cards" id="ch-analytics-cards"></div>
+                    <!-- Viewer chart for most recent stream -->
+                    <div class="analytics-chart-wrap" id="ch-viewer-chart-wrap" style="display:none">
+                        <h3 class="analytics-chart-title" id="ch-chart-title">Viewers — Latest Stream</h3>
+                        <canvas id="ch-viewer-chart" height="200"></canvas>
+                    </div>
+                    <!-- Recent streams table -->
+                    <div class="analytics-streams-table" id="ch-streams-table-wrap" style="display:none">
+                        <h3>Recent Streams</h3>
+                        <div class="table-responsive">
+                            <table class="analytics-table" id="ch-streams-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Title</th>
+                                        <th>Duration</th>
+                                        <th>Peak</th>
+                                        <th>Avg</th>
+                                        <th>Chat</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ch-streams-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

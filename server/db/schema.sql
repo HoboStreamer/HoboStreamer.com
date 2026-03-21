@@ -578,3 +578,33 @@ CREATE TABLE IF NOT EXISTS user_equipped (
     PRIMARY KEY (user_id, slot),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- ═══════════════════════════════════════════════════════════════
+-- Stream Analytics — viewer snapshots & per-stream summary
+-- ═══════════════════════════════════════════════════════════════
+
+-- Time-series viewer count snapshots (for charts)
+CREATE TABLE IF NOT EXISTS viewer_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stream_id INTEGER NOT NULL,
+    viewer_count INTEGER DEFAULT 0,
+    chat_messages_5m INTEGER DEFAULT 0,     -- messages in trailing 5 min window
+    recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_viewer_snapshots_stream ON viewer_snapshots(stream_id, recorded_at);
+
+-- Cached per-stream analytics (computed on stream end or periodically)
+CREATE TABLE IF NOT EXISTS stream_analytics (
+    stream_id INTEGER PRIMARY KEY,
+    avg_viewers REAL DEFAULT 0,
+    peak_viewers INTEGER DEFAULT 0,
+    unique_chatters INTEGER DEFAULT 0,
+    total_messages INTEGER DEFAULT 0,
+    total_watch_minutes INTEGER DEFAULT 0,
+    new_followers INTEGER DEFAULT 0,
+    clips_created INTEGER DEFAULT 0,
+    coins_earned INTEGER DEFAULT 0,
+    computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
+);
