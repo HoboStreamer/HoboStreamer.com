@@ -147,6 +147,7 @@ class RTMPServer extends EventEmitter {
                 this.emit('unpublish', { streamId: info.streamId, userId: info.userId, streamKey });
 
                 db.endStream(info.streamId);
+                try { db.computeAndCacheStreamAnalytics(info.streamId); } catch {}
                 this.activeStreams.delete(streamKey);
                 console.log(`[RTMP] Stream ended: ${streamKey} (stream ${info.streamId})`);
             }

@@ -2288,6 +2288,192 @@ function banAllAccountsOnIp(ip, { reason, bannedBy, expires }) {
     return bannedIds;
 }
 
+// ── Stream Analytics helpers ─────────────────────────────────
+
+function insertViewerSnapshot(streamId, viewerCount, chatMessages5m) {
+    return run(
+        `INSERT INTO viewer_snapshots (stream_id, viewer_count, chat_messages_5m)
+         VALUES (?, ?, ?)`,
+        [streamId, viewerCount, chatMessages5m || 0]
+    );
+}
+
+function getViewerSnapshots(streamId) {
+    return all(
+        `SELECT viewer_count, chat_messages_5m, recorded_at
+         FROM viewer_snapshots WHERE stream_id = ? ORDER BY recorded_at ASC`,
+        [streamId]
+    );
+}
+
+function computeAndCacheStreamAnalytics(streamId) {
+    const stream = get('SELECT * FROM streams WHERE id = ?', [streamId]);
+    if (!stream) return null;
+
+    // Average viewers from snapshots
+    const avgRow = get(
+        'SELECT AVG(viewer_count) as avg_vc FROM viewer_snapshots WHERE stream_id = ?', [streamId]
+    );
+    const avgViewers = avgRow?.avg_vc || 0;
+
+    // Unique chatters
+    const chattersRow = get(
+        `SELECT COUNT(DISTINCT COALESCE(user_id, anon_id)) as cnt
+         FROM chat_messages WHERE stream_id = ? AND is_deleted = 0 AND is_global = 0`,
+        [streamId]
+    );
+    const uniqueChatters = chattersRow?.cnt || 0;
+
+    // Total messages
+    const msgsRow = get(
+        `SELECT COUNT(*) as cnt FROM chat_messages
+         WHERE stream_id = ? AND is_deleted = 0 AND is_global = 0 AND message_type = 'chat'`,
+        [streamId]
+    );
+    const totalMessages = msgsRow?.cnt || 0;
+
+    // Total watch minutes
+    const watchRow = get(
+        'SELECT SUM(minutes_watched) as total FROM watch_time WHERE stream_id = ?', [streamId]
+    );
+    const totalWatchMinutes = watchRow?.total || 0;
+
+    // Clips created during this stream
+    const clipsRow = get(
+        'SELECT COUNT(*) as cnt FROM clips WHERE stream_id = ?', [streamId]
+    );
+    const clipsCreated = clipsRow?.cnt || 0;
+
+    // Coins earned during this stream
+    const coinsRow = get(
+        'SELECT SUM(coins_earned) as total FROM watch_time WHERE stream_id = ?', [streamId]
+    );
+    const coinsEarned = coinsRow?.total || 0;
+
+    // New followers — approximate: follows where followed_at is during stream
+    let newFollowers = 0;
+    if (stream.started_at && stream.ended_at) {
+        const fRow = get(
+            `SELECT COUNT(*) as cnt FROM follows
+             WHERE followed_id = ? AND followed_at >= ? AND followed_at <= ?`,
+            [stream.user_id, stream.started_at, stream.ended_at]
+        );
+        newFollowers = fRow?.cnt || 0;
+    }
+
+    // Upsert into stream_analytics
+    run(
+        `INSERT INTO stream_analytics
+            (stream_id, avg_viewers, peak_viewers, unique_chatters, total_messages,
+             total_watch_minutes, new_followers, clips_created, coins_earned, computed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(stream_id) DO UPDATE SET
+            avg_viewers = excluded.avg_viewers,
+            peak_viewers = excluded.peak_viewers,
+            unique_chatters = excluded.unique_chatters,
+            total_messages = excluded.total_messages,
+            total_watch_minutes = excluded.total_watch_minutes,
+            new_followers = excluded.new_followers,
+            clips_created = excluded.clips_created,
+            coins_earned = excluded.coins_earned,
+            computed_at = CURRENT_TIMESTAMP`,
+        [streamId, avgViewers, stream.peak_viewers || 0, uniqueChatters, totalMessages,
+         totalWatchMinutes, newFollowers, clipsCreated, coinsEarned]
+    );
+
+    return {
+        stream_id: streamId,
+        avg_viewers: avgViewers,
+        peak_viewers: stream.peak_viewers || 0,
+        unique_chatters: uniqueChatters,
+        total_messages: totalMessages,
+        total_watch_minutes: totalWatchMinutes,
+        new_followers: newFollowers,
+        clips_created: clipsCreated,
+        coins_earned: coinsEarned,
+    };
+}
+
+function getStreamAnalytics(streamId) {
+    return get('SELECT * FROM stream_analytics WHERE stream_id = ?', [streamId]);
+}
+
+function getChannelAnalyticsSummary(userId, days) {
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+
+    // Stream history with analytics
+    const streams = all(`
+        SELECT s.id, s.title, s.category, s.started_at, s.ended_at, s.duration_seconds,
+               s.peak_viewers, s.viewer_count,
+               sa.avg_viewers, sa.unique_chatters, sa.total_messages,
+               sa.total_watch_minutes, sa.new_followers, sa.clips_created, sa.coins_earned
+        FROM streams s
+        LEFT JOIN stream_analytics sa ON sa.stream_id = s.id
+        WHERE s.user_id = ? AND s.started_at >= ? AND s.duration_seconds > 0
+        ORDER BY s.started_at DESC
+    `, [userId, cutoff]);
+
+    // Aggregate stats
+    const agg = get(`
+        SELECT COUNT(*) as total_streams,
+               SUM(s.duration_seconds) as total_duration,
+               MAX(s.peak_viewers) as all_time_peak,
+               AVG(sa.avg_viewers) as avg_viewers_per_stream,
+               SUM(sa.total_messages) as total_messages,
+               SUM(sa.unique_chatters) as total_unique_chatters,
+               SUM(sa.total_watch_minutes) as total_watch_minutes,
+               SUM(sa.new_followers) as total_new_followers,
+               SUM(sa.clips_created) as total_clips
+        FROM streams s
+        LEFT JOIN stream_analytics sa ON sa.stream_id = s.id
+        WHERE s.user_id = ? AND s.started_at >= ? AND s.duration_seconds > 0
+    `, [userId, cutoff]);
+
+    // All-time totals
+    const allTime = get(`
+        SELECT COUNT(*) as total_streams,
+               SUM(duration_seconds) as total_duration,
+               MAX(peak_viewers) as peak_viewers
+        FROM streams WHERE user_id = ? AND duration_seconds > 0
+    `, [userId]);
+
+    const followerCount = get(
+        'SELECT COUNT(*) as cnt FROM follows WHERE followed_id = ?', [userId]
+    )?.cnt || 0;
+
+    return {
+        period_days: days,
+        streams,
+        summary: {
+            total_streams: agg?.total_streams || 0,
+            total_duration_seconds: agg?.total_duration || 0,
+            peak_viewers: agg?.all_time_peak || 0,
+            avg_viewers_per_stream: Math.round((agg?.avg_viewers_per_stream || 0) * 10) / 10,
+            total_messages: agg?.total_messages || 0,
+            total_unique_chatters: agg?.total_unique_chatters || 0,
+            total_watch_minutes: agg?.total_watch_minutes || 0,
+            total_new_followers: agg?.total_new_followers || 0,
+            total_clips: agg?.total_clips || 0,
+        },
+        all_time: {
+            total_streams: allTime?.total_streams || 0,
+            total_duration_seconds: allTime?.total_duration || 0,
+            peak_viewers: allTime?.peak_viewers || 0,
+            follower_count: followerCount,
+        },
+    };
+}
+
+function getRecentChatActivity(streamId, minutes) {
+    const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    const row = get(
+        `SELECT COUNT(*) as cnt FROM chat_messages
+         WHERE stream_id = ? AND timestamp >= ? AND is_deleted = 0 AND is_global = 0 AND message_type = 'chat'`,
+        [streamId, cutoff]
+    );
+    return row?.cnt || 0;
+}
+
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
@@ -2375,4 +2561,7 @@ module.exports = {
     // IP Tracking
     logIp, getIpsByUser, getUsersByIp, getLinkedAccounts, getLinkedAccountsByAnon,
     getLatestIpForUser, getLatestIpForAnon, getIpLog, banAllAccountsOnIp,
+    // Stream Analytics
+    insertViewerSnapshot, getViewerSnapshots, computeAndCacheStreamAnalytics,
+    getStreamAnalytics, getChannelAnalyticsSummary, getRecentChatActivity,
 };

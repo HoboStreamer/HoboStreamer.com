@@ -309,6 +309,8 @@ const ttsRoutes = require('./chat/tts-routes');
 app.use('/api/tts', ttsRoutes);
 const dmRoutes = require('./chat/dm-routes');
 app.use('/api/dm', dmRoutes);
+const analyticsRoutes = require('./streaming/analytics-routes');
+app.use('/api/analytics', analyticsRoutes);
 
 // ── Internal Analytics API ───────────────────────────────────
 // Called by hobo-tools admin panel to fetch this service's analytics
@@ -746,6 +748,7 @@ async function start() {
             for (const stream of staleStreams) {
                 console.log(`[Heartbeat] Ending stale stream ${stream.id} (no heartbeat for 5+ minutes)`);
                 db.endStream(stream.id);
+                try { db.computeAndCacheStreamAnalytics(stream.id); } catch {}
                 // Auto-finalize any active VOD recording for this stream
                 vodRoutes.finalizeVodRecording(stream.id).catch(err => {
                     console.warn(`[VOD] Auto-finalize failed for stale stream ${stream.id}:`, err.message);
