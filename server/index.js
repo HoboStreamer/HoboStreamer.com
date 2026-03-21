@@ -78,6 +78,7 @@ const chatRelayService = require('./integrations/chat-relay-service');
 // Restream
 const restreamRoutes = require('./streaming/restream-routes');
 const restreamManager = require('./streaming/restream-manager');
+const { AnalyticsTracker } = require('hobo-shared/analytics');
 
 // Game & Canvas — migrated to hobo.quest (game/canvas code removed)
 
@@ -191,6 +192,11 @@ const uploadLimiter = rateLimit({
     legacyHeaders: false,
     message: { error: 'Too many upload requests, please slow down' },
 });
+// ── Analytics Tracking ────────────────────────────────────────
+const analytics = new AnalyticsTracker(db.db || db, 'hobostreamer');
+app.locals.analytics = analytics;
+app.use(analytics.middleware());
+
 app.use('/api/', apiLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
@@ -299,6 +305,25 @@ const ttsRoutes = require('./chat/tts-routes');
 app.use('/api/tts', ttsRoutes);
 const dmRoutes = require('./chat/dm-routes');
 app.use('/api/dm', dmRoutes);
+
+// ── Internal Analytics API ───────────────────────────────────
+// Called by hobo-tools admin panel to fetch this service's analytics
+app.get('/api/admin/analytics', requireAuth, permissions.requireAdmin, (req, res) => {
+    try {
+        const days = Math.min(parseInt(req.query.days) || 30, 365);
+        res.json({ ok: true, analytics: analytics.getStats({ days }) });
+    } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+app.get('/api/admin/analytics/bots', requireAuth, permissions.requireAdmin, (req, res) => {
+    try {
+        const days = Math.min(parseInt(req.query.days) || 30, 365);
+        res.json({ ok: true, bots: analytics.getBotAnalysis(days) });
+    } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
 
 // ── Health Check ─────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
@@ -813,6 +838,7 @@ function shutdown() {
         jsmpegRelay.closeAll();
         webrtcSFU.closeAll();
         rtmpServer.stop();
+        analytics.destroy();
         db.close();
 
         server.close(() => {
