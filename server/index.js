@@ -193,7 +193,11 @@ const uploadLimiter = rateLimit({
     message: { error: 'Too many upload requests, please slow down' },
 });
 // ── Analytics Tracking ────────────────────────────────────────
-const analytics = new AnalyticsTracker(db.db || db, 'hobostreamer');
+const BetterSqlite3 = require('better-sqlite3');
+const analyticsDbPath = path.join(__dirname, '..', 'data', 'analytics.db');
+const analyticsDb = new BetterSqlite3(analyticsDbPath);
+analyticsDb.pragma('journal_mode = WAL');
+const analytics = new AnalyticsTracker(analyticsDb, 'hobostreamer');
 app.locals.analytics = analytics;
 app.use(analytics.middleware());
 
@@ -839,6 +843,7 @@ function shutdown() {
         webrtcSFU.closeAll();
         rtmpServer.stop();
         analytics.destroy();
+        analyticsDb.close();
         db.close();
 
         server.close(() => {
