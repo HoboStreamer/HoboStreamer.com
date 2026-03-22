@@ -95,12 +95,14 @@ async function loadSettingsBroadcaster() {
     setCheck('set-echo-cancellation', s.echoCancellation);
     setCheck('set-noise-suppression', s.noiseSuppression);
 
-    // Load VOD/clip visibility defaults from channel
+    // Load VOD/clip visibility defaults + weather settings from channel
     try {
         const ch = await api('/streams/channel');
         if (ch) {
             setVal('set-default-vod-visibility', ch.default_vod_visibility || 'public');
             setVal('set-default-clip-visibility', ch.default_clip_visibility || 'public');
+            setVal('set-weather-zip', ch.weather_zip || '');
+            setVal('set-weather-detail', ch.weather_detail || 'basic');
         }
     } catch { /* channel may not exist yet */ }
 }
@@ -118,13 +120,17 @@ function saveSettingsBroadcaster() {
     s.noiseSuppression = document.getElementById('set-noise-suppression')?.checked || false;
     saveBroadcastSettings();
 
-    // Save VOD/clip visibility defaults to channel
+    // Save VOD/clip visibility defaults + weather settings to channel
     const vodVis = document.getElementById('set-default-vod-visibility')?.value;
     const clipVis = document.getElementById('set-default-clip-visibility')?.value;
-    if (vodVis || clipVis) {
+    const weatherZip = document.getElementById('set-weather-zip')?.value;
+    const weatherDetail = document.getElementById('set-weather-detail')?.value;
+    {
         const body = {};
         if (vodVis) body.default_vod_visibility = vodVis;
         if (clipVis) body.default_clip_visibility = clipVis;
+        body.weather_zip = weatherZip || '';
+        if (weatherDetail) body.weather_detail = weatherDetail;
         api('/streams/channel', { method: 'PUT', body }).catch(() => {});
     }
 

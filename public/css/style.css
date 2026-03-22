@@ -3396,6 +3396,8 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .ch-info-bar-right { width: 100%; justify-content: space-between; }
     .ch-info-bar-top h2 { font-size: 0.95rem; }
     .ch-stream-title { font-size: 0.8rem; }
+    .ch-weather-widget { max-width: 100%; }
+    .weather-hourly-scroll { max-width: calc(100vw - 32px); }
 
     .live-stream-tabs { height: 38px; padding: 0; }
     .live-tab { padding: 0 10px; font-size: 0.78rem; gap: 5px; }
@@ -3877,6 +3879,52 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .ch-info-bar-right .ch-follower-count {
     font-size: 0.82rem; color: var(--text-muted); white-space: nowrap;
 }
+
+/* ── Weather Widget ──────────────────────────────────────── */
+.ch-weather-widget {
+    display: flex; flex-direction: column; gap: 6px;
+    font-size: 0.82rem; color: var(--text-secondary);
+    max-width: 340px;
+}
+.weather-current {
+    display: flex; align-items: center; gap: 10px;
+}
+.weather-main {
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.weather-icon { font-size: 1.3rem; color: var(--primary, var(--accent)); }
+.weather-temp { font-size: 1.15rem; font-weight: 700; color: var(--text-primary); }
+.weather-details {
+    display: flex; flex-direction: column; gap: 1px; min-width: 0;
+}
+.weather-condition { font-weight: 600; color: var(--text-primary); font-size: 0.8rem; }
+.weather-location { font-size: 0.72rem; color: var(--text-muted); }
+.weather-meta { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.weather-hourly {
+    overflow: hidden; margin-top: 2px;
+}
+.weather-hourly-scroll {
+    display: flex; gap: 2px; overflow-x: auto; padding-bottom: 4px;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.weather-hourly-scroll::-webkit-scrollbar { height: 4px; }
+.weather-hourly-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.weather-hour {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 4px 6px; border-radius: 6px;
+    background: var(--bg-tertiary, var(--bg-secondary));
+    min-width: 46px; flex-shrink: 0;
+}
+.wh-time { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; }
+.wh-icon { font-size: 0.8rem; color: var(--primary, var(--accent)); }
+.wh-temp { font-size: 0.78rem; font-weight: 700; color: var(--text-primary); }
+.wh-precip { font-size: 0.62rem; color: var(--info, #60a5fa); }
+.wh-precip i { font-size: 0.55rem; }
+.wh-extra { font-size: 0.58rem; color: var(--text-muted); }
+
+/* Offline area weather gets more room */
+#ch-weather-widget-offline .ch-weather-widget,
+#ch-weather-widget-offline { max-width: 500px; }
 
 /* ── Offline Area ────────────────────────────────────────── */
 .ch-offline-area { padding: 0; }

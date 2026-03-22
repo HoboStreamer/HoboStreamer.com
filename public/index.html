@@ -607,6 +607,7 @@
                             </div>
                         </div>
                         <div class="ch-info-bar-right">
+                            <div class="ch-weather-widget" id="ch-weather-widget" style="display:none"></div>
                             <span class="ch-follower-count" id="ch-follower-count">0 followers</span>
                             <button class="btn btn-follow" id="ch-btn-follow">
                                 <i class="fa-solid fa-heart"></i> Follow
@@ -711,6 +712,7 @@
                         <span class="ch-follower-count" id="ch-follower-count-offline">0 followers</span>
                         <span class="ch-category-badge badge" id="ch-category-badge-offline">irl</span>
                     </div>
+                    <div class="ch-weather-widget" id="ch-weather-widget-offline" style="display:none"></div>
                 </div>
                 <div class="ch-actions">
                     <button class="btn btn-follow" id="ch-btn-follow-offline">
@@ -2878,6 +2880,30 @@
                                     <option value="private">Private — Only you</option>
                                 </select>
                                 <div class="settings-row-hint">Clips from your streams will default to this visibility</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-cloud-sun"></i> Channel Weather</h3>
+                        <p class="muted" style="margin-bottom:12px">Show local weather on your channel page. Your zip/postal code is never shared with viewers.</p>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Zip / Postal Code</span>
+                            <div class="settings-row-content">
+                                <input type="text" id="set-weather-zip" class="form-input" placeholder="e.g. 90210" maxlength="10" style="max-width:160px">
+                                <div class="settings-row-hint">Used to look up weather — never shown to viewers</div>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-row-label">Detail Level</span>
+                            <div class="settings-row-content">
+                                <select id="set-weather-detail" class="form-input" style="max-width:260px">
+                                    <option value="off">Off — Don't show weather</option>
+                                    <option value="basic">Basic — Current conditions only</option>
+                                    <option value="hourly">Hourly — Current + 8-hour forecast</option>
+                                    <option value="detailed">Detailed — Current + 24-hour forecast with extras</option>
+                                </select>
+                                <div class="settings-row-hint">Controls how much weather info viewers see on your channel</div>
                             </div>
                         </div>
                     </div>

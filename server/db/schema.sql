@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS channels (
     emote_sources TEXT DEFAULT '{"defaults":true,"custom":true,"ffz":true,"bttv":true,"7tv":true}',
     default_vod_visibility TEXT DEFAULT 'public' CHECK(default_vod_visibility IN ('public', 'unlisted', 'private')),
     default_clip_visibility TEXT DEFAULT 'public' CHECK(default_clip_visibility IN ('public', 'unlisted', 'private')),
+    weather_zip TEXT DEFAULT NULL,
+    weather_detail TEXT DEFAULT 'basic' CHECK(weather_detail IN ('off', 'basic', 'hourly', 'detailed')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

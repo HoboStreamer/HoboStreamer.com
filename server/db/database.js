@@ -161,6 +161,19 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] Channel visibility migration:', e.message); }
 
+    // Migrate: add weather_zip / weather_detail to channels
+    try {
+        const wCols = database.prepare("PRAGMA table_info('channels')").all().map(c => c.name);
+        if (!wCols.includes('weather_zip')) {
+            database.exec(`ALTER TABLE channels ADD COLUMN weather_zip TEXT DEFAULT NULL`);
+            console.log('[DB] Added weather_zip column to channels');
+        }
+        if (!wCols.includes('weather_detail')) {
+            database.exec(`ALTER TABLE channels ADD COLUMN weather_detail TEXT DEFAULT 'basic'`);
+            console.log('[DB] Added weather_detail column to channels');
+        }
+    } catch (e) { console.warn('[DB] Channel weather migration:', e.message); }
+
     // Migrate: create RobotStreamer integration table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS robotstreamer_integrations (
@@ -782,7 +795,7 @@ function updateChannel(userId, fields) {
     const updates = [];
     const params = [];
     for (const [key, val] of Object.entries(fields)) {
-        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'auto_record', 'offline_banner_url', 'panels', 'emote_sources'].includes(key)) {
+        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'auto_record', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail'].includes(key)) {
             updates.push(`${key} = ?`);
             params.push(['tags', 'panels', 'emote_sources'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
         }

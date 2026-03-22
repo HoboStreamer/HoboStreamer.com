@@ -226,8 +226,12 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             }
         }
 
+        // Strip private fields from public channel response
+        const publicChannel = { ...channel, follower_count: followerCount, is_following: isFollowing };
+        delete publicChannel.weather_zip;
+
         res.json({
-            channel: { ...channel, follower_count: followerCount, is_following: isFollowing },
+            channel: publicChannel,
             stream: liveStreams[0] || null,
             streams: liveStreams,
             rs_restream: Object.keys(rsInfo).length ? rsInfo : null,
@@ -303,6 +307,19 @@ router.put('/channel', requireAuth, (req, res) => {
         const defaultVodVisibility = cleanVisibility(req.body.default_vod_visibility);
         const defaultClipVisibility = cleanVisibility(req.body.default_clip_visibility);
 
+        // Weather settings
+        let weatherZip;
+        if (hasOwn(req.body, 'weather_zip')) {
+            const raw = (req.body.weather_zip || '').toString().trim();
+            weatherZip = raw === '' ? null : raw.replace(/[^0-9a-zA-Z\s-]/g, '').slice(0, 10);
+        }
+        const ALLOWED_WEATHER_DETAIL = new Set(['off', 'basic', 'hourly', 'detailed']);
+        let weatherDetail;
+        if (hasOwn(req.body, 'weather_detail')) {
+            const wd = (req.body.weather_detail || '').toString().trim();
+            weatherDetail = ALLOWED_WEATHER_DETAIL.has(wd) ? wd : undefined;
+        }
+
         if ((hasOwn(req.body, 'title') && title === null)
             || (hasOwn(req.body, 'description') && description === null)
             || (hasOwn(req.body, 'category') && category === null)
@@ -327,6 +344,8 @@ router.put('/channel', requireAuth, (req, res) => {
         if (defaultClipVisibility !== undefined) {
             fields.default_clip_visibility = defaultClipVisibility;
         }
+        if (weatherZip !== undefined) fields.weather_zip = weatherZip;
+        if (weatherDetail !== undefined) fields.weather_detail = weatherDetail;
 
         if (Object.keys(fields).length > 0) {
             db.updateChannel(req.user.id, fields);
@@ -337,6 +356,126 @@ router.put('/channel', requireAuth, (req, res) => {
     } catch (err) {
         console.error('[Channels] Update error:', err.message);
         res.status(500).json({ error: 'Failed to update channel' });
+    }
+});
+
+// ── Weather for Channel (privacy-preserving) ─────────────────
+const weatherCache = new Map(); // key: zip, value: { data, ts }
+const WEATHER_CACHE_TTL = 15 * 60 * 1000; // 15 min
+const GEOCODE_CACHE = new Map();
+
+async function geocodeZip(zip) {
+    if (GEOCODE_CACHE.has(zip)) return GEOCODE_CACHE.get(zip);
+    try {
+        const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(zip)}&count=1&language=en&format=json`;
+        const resp = await fetch(url);
+        const json = await resp.json();
+        if (json.results && json.results.length > 0) {
+            const r = json.results[0];
+            const result = { lat: r.latitude, lon: r.longitude, name: r.name, region: r.admin1 || '', country: r.country_code || '' };
+            GEOCODE_CACHE.set(zip, result);
+            return result;
+        }
+    } catch (e) { console.warn('[Weather] Geocode error:', e.message); }
+    // Fallback: try US zip via zip-coordinates API
+    try {
+        const url = `https://api.zippopotam.us/us/${encodeURIComponent(zip)}`;
+        const resp = await fetch(url);
+        if (resp.ok) {
+            const json = await resp.json();
+            const place = json.places?.[0];
+            if (place) {
+                const result = { lat: parseFloat(place.latitude), lon: parseFloat(place.longitude), name: place['place name'], region: place['state abbreviation'] || '', country: 'US' };
+                GEOCODE_CACHE.set(zip, result);
+                return result;
+            }
+        }
+    } catch (e) { /* silent fallback */ }
+    return null;
+}
+
+async function fetchWeather(zip) {
+    const now = Date.now();
+    const cached = weatherCache.get(zip);
+    if (cached && (now - cached.ts) < WEATHER_CACHE_TTL) return cached.data;
+
+    const geo = await geocodeZip(zip);
+    if (!geo) return null;
+
+    try {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}`
+            + `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,cloud_cover,visibility,uv_index`
+            + `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,is_day`
+            + `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch`
+            + `&timezone=auto&forecast_days=2`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        const result = { ...data, location: { name: geo.name, region: geo.region, country: geo.country } };
+        weatherCache.set(zip, { data: result, ts: now });
+        return result;
+    } catch (e) {
+        console.warn('[Weather] Fetch error:', e.message);
+        return null;
+    }
+}
+
+router.get('/channel/:username/weather', async (req, res) => {
+    try {
+        const channel = db.getChannelByUsername(req.params.username);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+        if (!channel.weather_zip || channel.weather_detail === 'off') {
+            return res.json({ enabled: false });
+        }
+
+        const weather = await fetchWeather(channel.weather_zip);
+        if (!weather) return res.json({ enabled: false, error: 'Weather data unavailable' });
+
+        const detail = channel.weather_detail || 'basic';
+
+        // Shape response based on detail level — never expose zip code
+        const response = { enabled: true, detail, location: weather.location };
+
+        // Current conditions (always included if not 'off')
+        if (weather.current) {
+            response.current = {
+                temperature: weather.current.temperature_2m,
+                feels_like: weather.current.apparent_temperature,
+                humidity: weather.current.relative_humidity_2m,
+                weather_code: weather.current.weather_code,
+                wind_speed: weather.current.wind_speed_10m,
+                wind_direction: weather.current.wind_direction_10m,
+                is_day: weather.current.is_day,
+            };
+        }
+
+        // Hourly forecast — amount depends on detail level
+        if (weather.hourly && detail !== 'basic') {
+            const now = new Date();
+            const times = weather.hourly.time.map(t => new Date(t));
+            const startIdx = times.findIndex(t => t >= now);
+            const hours = detail === 'hourly' ? 8 : 24; // hourly=8h, detailed=24h
+            const end = Math.min(startIdx + hours, times.length);
+
+            response.hourly = [];
+            for (let i = Math.max(0, startIdx); i < end; i++) {
+                const entry = { time: weather.hourly.time[i], temperature: weather.hourly.temperature_2m[i], feels_like: weather.hourly.apparent_temperature[i], weather_code: weather.hourly.weather_code[i], precipitation_probability: weather.hourly.precipitation_probability[i], wind_speed: weather.hourly.wind_speed_10m[i] };
+                if (detail === 'detailed') {
+                    entry.humidity = weather.hourly.relative_humidity_2m[i];
+                    entry.precipitation = weather.hourly.precipitation[i];
+                    entry.wind_gusts = weather.hourly.wind_gusts_10m[i];
+                    entry.wind_direction = weather.hourly.wind_direction_10m[i];
+                    entry.cloud_cover = weather.hourly.cloud_cover[i];
+                    entry.visibility = weather.hourly.visibility[i];
+                    entry.uv_index = weather.hourly.uv_index[i];
+                }
+                response.hourly.push(entry);
+            }
+        }
+
+        res.json(response);
+    } catch (err) {
+        console.error('[Weather] Route error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch weather' });
     }
 });
 

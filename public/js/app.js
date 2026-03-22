@@ -913,6 +913,9 @@ async function loadChannelPage(username, preferredStreamId = null) {
 
         renderChannelMediaStrip(ch, mediaData);
 
+        // Load weather widget (non-blocking)
+        loadChannelWeather(username);
+
         // Follow button helper
         const setupFollowBtn = (btn) => {
             if (!btn) return;
@@ -1446,6 +1449,116 @@ function setupTabKeyboardNav(container, username) {
  * Update cumulative viewer display below the video player.
  * Shows total viewers across all streams + external platforms, RS restream indicator, and share button.
  */
+// ── Weather Widget ───────────────────────────────────────────
+const WMO_WEATHER = {
+    0: { label: 'Clear', icon: 'fa-sun', iconNight: 'fa-moon' },
+    1: { label: 'Mostly Clear', icon: 'fa-sun', iconNight: 'fa-moon' },
+    2: { label: 'Partly Cloudy', icon: 'fa-cloud-sun', iconNight: 'fa-cloud-moon' },
+    3: { label: 'Overcast', icon: 'fa-cloud' },
+    45: { label: 'Fog', icon: 'fa-smog' },
+    48: { label: 'Rime Fog', icon: 'fa-smog' },
+    51: { label: 'Light Drizzle', icon: 'fa-cloud-rain' },
+    53: { label: 'Drizzle', icon: 'fa-cloud-rain' },
+    55: { label: 'Heavy Drizzle', icon: 'fa-cloud-showers-heavy' },
+    56: { label: 'Freezing Drizzle', icon: 'fa-icicles' },
+    57: { label: 'Heavy Freezing Drizzle', icon: 'fa-icicles' },
+    61: { label: 'Light Rain', icon: 'fa-cloud-rain' },
+    63: { label: 'Rain', icon: 'fa-cloud-showers-heavy' },
+    65: { label: 'Heavy Rain', icon: 'fa-cloud-showers-heavy' },
+    66: { label: 'Freezing Rain', icon: 'fa-icicles' },
+    67: { label: 'Heavy Freezing Rain', icon: 'fa-icicles' },
+    71: { label: 'Light Snow', icon: 'fa-snowflake' },
+    73: { label: 'Snow', icon: 'fa-snowflake' },
+    75: { label: 'Heavy Snow', icon: 'fa-snowflake' },
+    77: { label: 'Snow Grains', icon: 'fa-snowflake' },
+    80: { label: 'Light Showers', icon: 'fa-cloud-rain' },
+    81: { label: 'Showers', icon: 'fa-cloud-showers-heavy' },
+    82: { label: 'Heavy Showers', icon: 'fa-cloud-showers-heavy' },
+    85: { label: 'Light Snow Showers', icon: 'fa-snowflake' },
+    86: { label: 'Heavy Snow Showers', icon: 'fa-snowflake' },
+    95: { label: 'Thunderstorm', icon: 'fa-cloud-bolt' },
+    96: { label: 'Thunderstorm w/ Hail', icon: 'fa-cloud-bolt' },
+    99: { label: 'Thunderstorm w/ Heavy Hail', icon: 'fa-cloud-bolt' },
+};
+
+function getWeatherInfo(code, isDay = true) {
+    const w = WMO_WEATHER[code] || { label: 'Unknown', icon: 'fa-cloud' };
+    const icon = (!isDay && w.iconNight) ? w.iconNight : w.icon;
+    return { label: w.label, icon };
+}
+
+function formatHour(isoTime) {
+    const d = new Date(isoTime);
+    const h = d.getHours();
+    if (h === 0) return '12am';
+    if (h === 12) return '12pm';
+    return h > 12 ? `${h - 12}pm` : `${h}am`;
+}
+
+function windDir(deg) {
+    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    return dirs[Math.round(deg / 45) % 8];
+}
+
+async function loadChannelWeather(username) {
+    const widgets = [document.getElementById('ch-weather-widget'), document.getElementById('ch-weather-widget-offline')];
+    widgets.forEach(w => { if (w) w.style.display = 'none'; });
+
+    try {
+        const data = await api(`/streams/channel/${username}/weather`);
+        if (!data || !data.enabled || !data.current) return;
+
+        const html = renderWeatherWidget(data);
+        widgets.forEach(w => {
+            if (w) { w.innerHTML = html; w.style.display = ''; }
+        });
+    } catch { /* silent */ }
+}
+
+function renderWeatherWidget(data) {
+    const c = data.current;
+    const w = getWeatherInfo(c.weather_code, c.is_day);
+    const loc = data.location || {};
+    const locStr = [loc.name, loc.region].filter(Boolean).join(', ');
+
+    let html = `<div class="weather-current">`;
+    html += `<div class="weather-main">`;
+    html += `<i class="fa-solid ${w.icon} weather-icon"></i>`;
+    html += `<span class="weather-temp">${Math.round(c.temperature)}°F</span>`;
+    html += `</div>`;
+    html += `<div class="weather-details">`;
+    html += `<span class="weather-condition">${w.label}</span>`;
+    if (locStr) html += `<span class="weather-location">${locStr}</span>`;
+    html += `<span class="weather-meta">Feels ${Math.round(c.feels_like)}° · ${c.humidity}% humidity · Wind ${Math.round(c.wind_speed)} mph ${windDir(c.wind_direction)}</span>`;
+    html += `</div></div>`;
+
+    // Hourly forecast
+    if (data.hourly && data.hourly.length > 0) {
+        html += `<div class="weather-hourly">`;
+        html += `<div class="weather-hourly-scroll">`;
+        for (const h of data.hourly) {
+            const hw = getWeatherInfo(h.weather_code, true);
+            html += `<div class="weather-hour" title="${hw.label}, ${Math.round(h.temperature)}°F, ${h.precipitation_probability}% precip, Wind ${Math.round(h.wind_speed)} mph">`;
+            html += `<span class="wh-time">${formatHour(h.time)}</span>`;
+            html += `<i class="fa-solid ${hw.icon} wh-icon"></i>`;
+            html += `<span class="wh-temp">${Math.round(h.temperature)}°</span>`;
+            if (h.precipitation_probability > 0) {
+                html += `<span class="wh-precip"><i class="fa-solid fa-droplet"></i> ${h.precipitation_probability}%</span>`;
+            }
+            // Extra details for 'detailed' mode
+            if (data.detail === 'detailed' && h.uv_index !== undefined) {
+                html += `<span class="wh-extra">${Math.round(h.wind_speed)} mph`;
+                if (h.wind_gusts > h.wind_speed + 5) html += ` (${Math.round(h.wind_gusts)})`;
+                html += `</span>`;
+            }
+            html += `</div>`;
+        }
+        html += `</div></div>`;
+    }
+
+    return html;
+}
+
 function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = null, externalViewers = null) {
     const el = document.getElementById('ch-cumulative-viewers');
     if (!el) return;
