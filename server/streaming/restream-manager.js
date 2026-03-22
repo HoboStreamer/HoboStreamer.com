@@ -141,6 +141,9 @@ class RestreamManager extends EventEmitter {
         /** Twitch Helix App Access Token cache */
         this._twitchToken = null;
         this._twitchTokenExpiry = 0;
+        /** Kick Dev API App Access Token cache */
+        this._kickToken = null;
+        this._kickTokenExpiry = 0;
     }
 
     /**
@@ -1006,53 +1009,12 @@ class RestreamManager extends EventEmitter {
 
     getViewerPollingConfig() {
         const db = require('../db/database');
-        const rawMode = String(db.getSetting('kick_viewer_count_mode') || 'auto').trim().toLowerCase();
-        const mode = ['auto', 'server', 'browser', 'disabled'].includes(rawMode) ? rawMode : 'auto';
+        const hasKickApi = !!(db.getSetting('kick_client_id') && db.getSetting('kick_client_secret'));
         return {
             kick: {
-                mode,
-                browserDirectEnabled: mode === 'auto' || mode === 'browser',
-                serverFetchEnabled: mode === 'auto' || mode === 'server',
+                serverFetchEnabled: hasKickApi,
             },
         };
-    }
-
-    _getKickViewerFetchConfig() {
-        const db = require('../db/database');
-        const polling = this.getViewerPollingConfig();
-        const template = String(db.getSetting('kick_viewer_count_api_url_template') || 'https://kick.com/api/v2/channels/{slug}').trim();
-        const jsonPath = String(db.getSetting('kick_viewer_count_json_path') || 'livestream.viewer_count').trim() || 'livestream.viewer_count';
-        const userAgent = String(db.getSetting('kick_viewer_count_user_agent') || '').trim();
-        const headersRaw = String(db.getSetting('kick_viewer_count_headers_json') || '').trim();
-        let headers = { Accept: 'application/json' };
-
-        if (headersRaw) {
-            try {
-                const parsed = JSON.parse(headersRaw);
-                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                    headers = {};
-                    for (const [key, value] of Object.entries(parsed)) {
-                        if (!key) continue;
-                        headers[String(key)] = String(value ?? '');
-                    }
-                }
-            } catch {
-                // Ignore invalid JSON and keep default headers
-            }
-        }
-
-        if (userAgent && !headers['User-Agent']) headers['User-Agent'] = userAgent;
-        return { ...polling.kick, template, jsonPath, headers };
-    }
-
-    _extractJsonPathValue(data, path) {
-        if (!data || typeof data !== 'object' || !path) return null;
-        const value = String(path)
-            .split('.')
-            .map(part => part.trim())
-            .filter(Boolean)
-            .reduce((acc, part) => (acc && typeof acc === 'object' ? acc[part] : undefined), data);
-        return Number.isFinite(value) ? value : null;
     }
 
     /**
@@ -1098,14 +1060,18 @@ class RestreamManager extends EventEmitter {
                 let count = null;
                 let platformLive = null;
                 if (dest.platform === 'kick') {
-                    // Primary: check chat relay Pusher viewer count (reliable, not CF-blocked)
-                    count = chatRelayService.getViewerCount(destId);
-                    // Kick Pusher gives us viewer count only when live — also check explicit signal
-                    platformLive = chatRelayService.getPlatformLive(destId);
-                    if (count != null && platformLive == null) platformLive = true;
-                    // Fallback: try Kick HTTP API (usually CF-blocked from servers)
-                    if (count == null && this.getViewerPollingConfig().kick.serverFetchEnabled) {
-                        count = await this._fetchKickViewerCount(dest.channel_url);
+                    // Primary: Kick official API (requires client_id + client_secret)
+                    if (this.getViewerPollingConfig().kick.serverFetchEnabled) {
+                        const result = await this._fetchKickViewerCount(dest.channel_url);
+                        if (result != null) {
+                            count = result.count;
+                            platformLive = result.platformLive;
+                        }
+                    }
+                    // Fallback: chat relay Pusher viewer count
+                    if (count == null) {
+                        count = chatRelayService.getViewerCount(destId);
+                        platformLive = chatRelayService.getPlatformLive(destId);
                         if (count != null && platformLive == null) platformLive = true;
                     }
                 } else if (dest.platform === 'twitch') {
@@ -1147,47 +1113,110 @@ class RestreamManager extends EventEmitter {
     }
 
     /**
-     * Fetch viewer count from Kick's public API.
-     * @param {string} channelUrl - e.g. https://kick.com/HoboStreamer?chatroom=123
-     * @returns {Promise<number|null>}
+     * Get a Kick App Access Token via Client Credentials grant.
+     * Uses the official Kick Developer API (https://docs.kick.com).
+     * Caches the token and refreshes 5 minutes before expiry.
+     * @returns {Promise<{accessToken: string}|null>}
      */
-    _fetchKickViewerCount(channelUrl) {
-        const https = require('https');
-        const http = require('http');
-        try {
-            const config = this._getKickViewerFetchConfig();
-            if (!config.serverFetchEnabled) return Promise.resolve(null);
+    async _getKickToken() {
+        const db = require('../db/database');
+        const clientId = db.getSetting('kick_client_id');
+        const clientSecret = db.getSetting('kick_client_secret');
+        if (!clientId || !clientSecret) return null;
 
+        // Return cached token if still valid (5 min buffer)
+        if (this._kickToken && Date.now() < this._kickTokenExpiry - 300000) {
+            return { accessToken: this._kickToken };
+        }
+
+        const https = require('https');
+        return new Promise((resolve) => {
+            const body = `client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&grant_type=client_credentials`;
+            const req = https.request('https://id.kick.com/oauth/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) },
+                timeout: 8000,
+            }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode !== 200) {
+                        console.warn(`[Restream] Kick token request failed: HTTP ${res.statusCode}`);
+                        return resolve(null);
+                    }
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.access_token) {
+                            this._kickToken = parsed.access_token;
+                            this._kickTokenExpiry = Date.now() + (parsed.expires_in || 7200) * 1000;
+                            resolve({ accessToken: parsed.access_token });
+                        } else {
+                            resolve(null);
+                        }
+                    } catch { resolve(null); }
+                });
+            });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => { req.destroy(); resolve(null); });
+            req.write(body);
+            req.end();
+        });
+    }
+
+    /**
+     * Fetch viewer count from the official Kick API.
+     * GET https://api.kick.com/public/v1/channels?slug[]={slug}
+     * @param {string} channelUrl - e.g. https://kick.com/HoboStreamer?chatroom=123
+     * @returns {Promise<{count: number, platformLive: boolean}|null>}
+     */
+    async _fetchKickViewerCount(channelUrl) {
+        const https = require('https');
+        try {
             const url = new URL(channelUrl);
             const slug = url.pathname.split('/').filter(Boolean)[0];
-            if (!slug) return Promise.resolve(null);
-            const requestUrl = config.template.includes('{slug}')
-                ? config.template.replaceAll('{slug}', encodeURIComponent(slug))
-                : config.template;
-            const requestModule = requestUrl.startsWith('http://') ? http : https;
+            if (!slug) return null;
+
+            const auth = await this._getKickToken();
+            if (!auth) return null;
 
             return new Promise((resolve) => {
-                const req = requestModule.get(requestUrl, {
-                    headers: config.headers,
+                const reqUrl = `https://api.kick.com/public/v1/channels?slug[]=${encodeURIComponent(slug)}`;
+                const req = https.get(reqUrl, {
+                    headers: {
+                        'Authorization': `Bearer ${auth.accessToken}`,
+                        'Accept': 'application/json',
+                    },
                     timeout: 8000,
                 }, (res) => {
                     let data = '';
                     res.on('data', (chunk) => data += chunk);
                     res.on('end', () => {
+                        if (res.statusCode === 401) {
+                            // Token expired — clear cache so next poll refreshes
+                            this._kickToken = null;
+                            this._kickTokenExpiry = 0;
+                            return resolve(null);
+                        }
                         if (res.statusCode >= 400) return resolve(null);
                         try {
                             const parsed = JSON.parse(data);
-                            resolve(this._extractJsonPathValue(parsed, config.jsonPath));
-                        } catch {
-                            resolve(null);
-                        }
+                            const channel = parsed?.data?.[0];
+                            if (channel?.stream) {
+                                const isLive = channel.stream.is_live === true;
+                                const viewers = typeof channel.stream.viewer_count === 'number' ? channel.stream.viewer_count : 0;
+                                resolve({ count: isLive ? viewers : 0, platformLive: isLive });
+                            } else {
+                                // No stream data = not live
+                                resolve({ count: 0, platformLive: false });
+                            }
+                        } catch { resolve(null); }
                     });
                 });
                 req.on('error', () => resolve(null));
                 req.on('timeout', () => { req.destroy(); resolve(null); });
             });
         } catch {
-            return Promise.resolve(null);
+            return null;
         }
     }
 

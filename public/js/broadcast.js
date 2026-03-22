@@ -4223,26 +4223,10 @@ function _stopRsViewerPoll() {
     _rsViewerCount = 0;
 }
 
-/* ── Restream Platform Viewer Count Relay ─────────────────────── */
-// The server can't reach Kick/Twitch APIs (Cloudflare-blocked). But the
-// broadcaster's browser CAN, so we poll here and relay counts to the server.
+/* ── Restream Platform Viewer Count Polling ───────────────────── */
+// Server polls Kick/Twitch APIs directly (official API with OAuth tokens).
+// Client only fetches the aggregated counts from our server.
 let _restreamViewerPollTimer = null;
-let _restreamViewerConfig = null;
-let _restreamViewerConfigFetchedAt = 0;
-
-async function _getRestreamViewerConfig() {
-    if (_restreamViewerConfig && Date.now() - _restreamViewerConfigFetchedAt < 300000) {
-        return _restreamViewerConfig;
-    }
-    try {
-        const data = await api('/restream/viewer-config');
-        _restreamViewerConfig = data?.config || { kick: { mode: 'auto', browserDirectEnabled: true } };
-    } catch {
-        _restreamViewerConfig = { kick: { mode: 'auto', browserDirectEnabled: true } };
-    }
-    _restreamViewerConfigFetchedAt = Date.now();
-    return _restreamViewerConfig;
-}
 
 function _startRestreamViewerPoll() {
     _stopRestreamViewerPoll();
@@ -4261,43 +4245,8 @@ function _stopRestreamViewerPoll() {
 
 async function _pollRestreamViewerCounts() {
     if (!_restreamDestinations || _restreamDestinations.length === 0) return;
-    const counts = [];
-    const config = await _getRestreamViewerConfig();
-    const kickBrowserDirectEnabled = config?.kick?.browserDirectEnabled !== false;
 
-    // 1. Browser-side polling for platforms the server can't reach (Kick is CF-blocked)
-    for (const dest of _restreamDestinations) {
-        if (!dest.enabled || !dest.channel_url) continue;
-        try {
-            if (dest.platform === 'kick' && kickBrowserDirectEnabled) {
-                const u = new URL(dest.channel_url);
-                const slug = u.pathname.split('/').filter(Boolean)[0];
-                if (!slug) continue;
-                const resp = await fetch(`https://kick.com/api/v2/channels/${slug}`, {
-                    headers: { 'Accept': 'application/json' },
-                    signal: AbortSignal.timeout(8000),
-                });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    const vc = data?.livestream?.viewer_count;
-                    if (typeof vc === 'number') {
-                        counts.push({ destId: dest.id, count: vc });
-                    }
-                }
-            }
-            // Twitch Helix is polled server-side (has API keys) — no browser action needed
-            // YouTube Data API requires API key — skip for now
-        } catch {}
-    }
-
-    // 2. Push browser-collected counts to server
-    if (counts.length > 0) {
-        try {
-            await api('/restream/viewer-counts', { method: 'POST', body: { counts } });
-        } catch {}
-    }
-
-    // 3. Fetch all platform viewer counts from server (includes Twitch + Kick + others)
+    // Fetch all platform viewer counts from server (Kick + Twitch + others)
     try {
         const data = await api('/restream/viewer-counts');
         _platformViewerCount = data?.total || 0;
