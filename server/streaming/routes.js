@@ -454,6 +454,8 @@ router.get('/channel/:username/weather', async (req, res) => {
 
         // Shape response based on detail level — never expose zip code
         const response = { enabled: true, detail };
+        // Include UTC offset so frontend can convert streamer-local times to viewer-local
+        if (weather.utc_offset_seconds != null) response.utc_offset_seconds = weather.utc_offset_seconds;
         if (channel.weather_show_location) {
             response.location = weather.location;
         }
@@ -473,9 +475,17 @@ router.get('/channel/:username/weather', async (req, res) => {
 
         // Hourly forecast — amount depends on detail level
         if (weather.hourly && detail !== 'basic') {
-            const now = new Date();
-            const times = weather.hourly.time.map(t => new Date(t));
-            const startIdx = times.findIndex(t => t >= now);
+            // Open-Meteo times are naive in the location's timezone.
+            // Convert server "now" to the location's local time for comparison.
+            const utcOff = weather.utc_offset_seconds || 0;
+            const nowUtcMs = Date.now();
+            const locationNowMs = nowUtcMs + utcOff * 1000;
+            const locationNow = new Date(locationNowMs);
+            // Compare as naive strings (YYYY-MM-DDTHH:MM) since hourly times have no TZ
+            const locationNowIso = locationNow.toISOString().slice(0, 16);
+
+            const times = weather.hourly.time;
+            const startIdx = times.findIndex(t => t >= locationNowIso);
             const hours = detail === 'hourly' ? 8 : 24; // hourly=8h, detailed=24h
             const end = Math.min(startIdx + hours, times.length);
 

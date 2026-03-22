@@ -1487,12 +1487,40 @@ function getWeatherInfo(code, isDay = true) {
     return { label: w.label, icon };
 }
 
-function formatHour(isoTime) {
-    const d = new Date(isoTime);
+function formatHour(isoTime, utcOffsetSec) {
+    // Open-Meteo times are naive (no TZ) in the streamer's local timezone.
+    // Append the streamer's UTC offset so JS parses them correctly,
+    // then getHours() returns the viewer's local hour automatically.
+    let d;
+    if (utcOffsetSec != null) {
+        const sign = utcOffsetSec >= 0 ? '+' : '-';
+        const abs = Math.abs(utcOffsetSec);
+        const hh = String(Math.floor(abs / 3600)).padStart(2, '0');
+        const mm = String(Math.floor((abs % 3600) / 60)).padStart(2, '0');
+        d = new Date(isoTime + sign + hh + ':' + mm);
+    } else {
+        d = new Date(isoTime);
+    }
     const h = d.getHours();
     if (h === 0) return '12am';
     if (h === 12) return '12pm';
     return h > 12 ? `${h - 12}pm` : `${h}am`;
+}
+
+function isCurrentHour(isoTime, utcOffsetSec) {
+    let d;
+    if (utcOffsetSec != null) {
+        const sign = utcOffsetSec >= 0 ? '+' : '-';
+        const abs = Math.abs(utcOffsetSec);
+        const hh = String(Math.floor(abs / 3600)).padStart(2, '0');
+        const mm = String(Math.floor((abs % 3600) / 60)).padStart(2, '0');
+        d = new Date(isoTime + sign + hh + ':' + mm);
+    } else {
+        d = new Date(isoTime);
+    }
+    const now = new Date();
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+        && d.getDate() === now.getDate() && d.getHours() === now.getHours();
 }
 
 function windDir(deg) {
@@ -1534,12 +1562,15 @@ function renderWeatherWidget(data) {
 
     // Hourly forecast
     if (data.hourly && data.hourly.length > 0) {
+        const utcOff = data.utc_offset_seconds;
         html += `<div class="weather-hourly">`;
         html += `<div class="weather-hourly-scroll">`;
         for (const h of data.hourly) {
             const hw = getWeatherInfo(h.weather_code, true);
-            html += `<div class="weather-hour" title="${hw.label}, ${Math.round(h.temperature)}°F, ${h.precipitation_probability}% precip, Wind ${Math.round(h.wind_speed)} mph">`;
-            html += `<span class="wh-time">${formatHour(h.time)}</span>`;
+            const isCurrent = isCurrentHour(h.time, utcOff);
+            const timeLabel = isCurrent ? 'Now' : formatHour(h.time, utcOff);
+            html += `<div class="weather-hour${isCurrent ? ' wh-now' : ''}" title="${hw.label}, ${Math.round(h.temperature)}°F, ${h.precipitation_probability}% precip, Wind ${Math.round(h.wind_speed)} mph">`;
+            html += `<span class="wh-time">${timeLabel}</span>`;
             html += `<i class="fa-solid ${hw.icon} wh-icon"></i>`;
             html += `<span class="wh-temp">${Math.round(h.temperature)}°</span>`;
             if (h.precipitation_probability > 0) {
