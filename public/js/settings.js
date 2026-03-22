@@ -103,6 +103,7 @@ async function loadSettingsBroadcaster() {
             setVal('set-default-clip-visibility', ch.default_clip_visibility || 'public');
             setVal('set-weather-zip', ch.weather_zip || '');
             setVal('set-weather-detail', ch.weather_detail || 'basic');
+            setCheck('set-weather-show-location', !!ch.weather_show_location);
         }
     } catch { /* channel may not exist yet */ }
 }
@@ -131,6 +132,7 @@ function saveSettingsBroadcaster() {
         if (clipVis) body.default_clip_visibility = clipVis;
         body.weather_zip = weatherZip || '';
         if (weatherDetail) body.weather_detail = weatherDetail;
+        body.weather_show_location = document.getElementById('set-weather-show-location')?.checked ? 1 : 0;
         api('/streams/channel', { method: 'PUT', body }).catch(() => {});
     }
 

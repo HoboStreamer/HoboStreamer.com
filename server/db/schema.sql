@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS channels (
     default_clip_visibility TEXT DEFAULT 'public' CHECK(default_clip_visibility IN ('public', 'unlisted', 'private')),
     weather_zip TEXT DEFAULT NULL,
     weather_detail TEXT DEFAULT 'basic' CHECK(weather_detail IN ('off', 'basic', 'hourly', 'detailed')),
+    weather_show_location INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

@@ -1519,7 +1519,7 @@ function renderWeatherWidget(data) {
     const c = data.current;
     const w = getWeatherInfo(c.weather_code, c.is_day);
     const loc = data.location || {};
-    const locStr = [loc.name, loc.region].filter(Boolean).join(', ');
+    const locStr = loc.name ? [loc.name, loc.region].filter(Boolean).join(', ') : '';
 
     let html = `<div class="weather-current">`;
     html += `<div class="weather-main">`;

@@ -346,6 +346,9 @@ router.put('/channel', requireAuth, (req, res) => {
         }
         if (weatherZip !== undefined) fields.weather_zip = weatherZip;
         if (weatherDetail !== undefined) fields.weather_detail = weatherDetail;
+        if (hasOwn(req.body, 'weather_show_location')) {
+            fields.weather_show_location = cleanBooleanFlag(req.body.weather_show_location) ? 1 : 0;
+        }
 
         if (Object.keys(fields).length > 0) {
             db.updateChannel(req.user.id, fields);
@@ -433,7 +436,10 @@ router.get('/channel/:username/weather', async (req, res) => {
         const detail = channel.weather_detail || 'basic';
 
         // Shape response based on detail level — never expose zip code
-        const response = { enabled: true, detail, location: weather.location };
+        const response = { enabled: true, detail };
+        if (channel.weather_show_location) {
+            response.location = weather.location;
+        }
 
         // Current conditions (always included if not 'off')
         if (weather.current) {
