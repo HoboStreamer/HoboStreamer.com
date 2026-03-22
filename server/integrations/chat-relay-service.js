@@ -143,6 +143,7 @@ class ChatRelayService {
             reconnectTimer: null,
             disconnect: null,
             viewerCount: null, // Populated by Kick Pusher viewer-count events
+            platformLive: null, // Whether the platform reports the stream as live
         };
 
         this.bridges.set(key, bridge);
@@ -270,7 +271,18 @@ class ChatRelayService {
         }
         return null;
     }
-
+    /**
+     * Get platform live status for a specific destination via Kick Pusher events.
+     * Returns true/false if known, null if unknown.
+     */
+    getPlatformLive(destId) {
+        for (const bridge of this.bridges.values()) {
+            if (bridge.destId === destId && bridge.platformLive != null) {
+                return bridge.platformLive;
+            }
+        }
+        return null;
+    }
     // ── Internal: teardown ────────────────────────────────────
 
     _teardown(bridge) {
@@ -508,6 +520,13 @@ class ChatRelayService {
                     if (payload?.viewer_count != null || payload?.livestream?.viewer_count != null) {
                         bridge.viewerCount = payload.viewer_count ?? payload.livestream?.viewer_count;
                     }
+                    bridge.platformLive = true;
+                    break;
+                }
+
+                case 'App\\Events\\StopStreamBroadcast': {
+                    bridge.platformLive = false;
+                    bridge.viewerCount = 0;
                     break;
                 }
 
