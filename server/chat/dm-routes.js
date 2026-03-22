@@ -204,6 +204,24 @@ router.post('/conversations/:id/messages', (req, res) => {
             }
         } catch { /* non-critical */ }
 
+        // Push notifications to other participants (for when they're offline)
+        try {
+            const { pushBulkNotification, actorInfo } = require('../utils/notify');
+            const participants = dm.getParticipants(convId);
+            const otherIds = participants.filter(p => p.id !== req.user.id).map(p => p.id);
+            if (otherIds.length) {
+                const senderName = sender?.display_name || sender?.username || 'Someone';
+                const preview = message.trim().length > 100 ? message.trim().slice(0, 99) + '…' : message.trim();
+                pushBulkNotification(otherIds, {
+                    type: 'DIRECT_MESSAGE',
+                    title: `Message from ${senderName}`,
+                    message: preview,
+                    url: `https://hobostreamer.com/dm/${convId}`,
+                    ...actorInfo(sender),
+                });
+            }
+        } catch { /* non-critical */ }
+
         res.json({ message: msg });
     } catch (err) {
         console.error('[DM] Send message error:', err.message);
