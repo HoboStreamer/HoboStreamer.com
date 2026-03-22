@@ -317,7 +317,8 @@ app.use('/api/analytics', analyticsRoutes);
 app.get('/api/admin/analytics', requireAuth, permissions.requireAdmin, (req, res) => {
     try {
         const days = Math.min(parseInt(req.query.days) || 30, 365);
-        res.json({ ok: true, analytics: analytics.getStats({ days }) });
+        const hours = req.query.hours ? Math.min(parseInt(req.query.hours), 8760) : null;
+        res.json({ ok: true, analytics: analytics.getStats({ days, hours }) });
     } catch (err) {
         res.status(500).json({ ok: false, error: err.message });
     }
