@@ -1259,6 +1259,24 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             const clip = db.getClipById(clipId);
             console.log(`[Clips] Direct upload: ${req.file.filename} for user ${req.user.username} (${stat.size} bytes)`);
 
+            // Notify streamer that someone clipped their stream
+            try {
+                if (parsedStreamId) {
+                    const clipStream = db.getStreamById(parsedStreamId);
+                    if (clipStream && clipStream.user_id !== req.user.id) {
+                        const { pushNotification, actorInfo } = require('../utils/notify');
+                        pushNotification({
+                            user_id: clipStream.user_id,
+                            type: 'CLIP_CREATED',
+                            title: 'New Clip',
+                            message: `${req.user.display_name || req.user.username} clipped your stream${sanitizedTitle ? `: ${sanitizedTitle}` : ''}`,
+                            url: `https://hobostreamer.com/clip/${clipId}`,
+                            ...actorInfo(req.user),
+                        });
+                    }
+                }
+            } catch { /* non-critical */ }
+
             // Generate clip thumbnail in background
             thumbService.generateClipThumbnail(clip.id, clipPath).then(thumbUrl => {
                 if (thumbUrl) console.log(`[Clips] Thumbnail generated: ${thumbUrl}`);
@@ -1408,6 +1426,25 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
 
             const clip = db.getClipById(result.lastInsertRowid);
             console.log(`[Clips] VOD clip extracted: ${clipFilename} for user ${req.user.username} (VOD ${parsedVodId}, ${startTime.toFixed(1)}s-${endTime.toFixed(1)}s)`);
+
+            // Notify streamer that someone clipped their stream
+            try {
+                const effectiveStreamId = parsedStreamId || vod.stream_id;
+                if (effectiveStreamId) {
+                    const clipStream = db.getStreamById(effectiveStreamId);
+                    if (clipStream && clipStream.user_id !== req.user.id) {
+                        const { pushNotification, actorInfo } = require('../utils/notify');
+                        pushNotification({
+                            user_id: clipStream.user_id,
+                            type: 'CLIP_CREATED',
+                            title: 'New Clip',
+                            message: `${req.user.display_name || req.user.username} clipped your stream${sanitizedTitle ? `: ${sanitizedTitle}` : ''}`,
+                            url: `https://hobostreamer.com/clip/${clip.id}`,
+                            ...actorInfo(req.user),
+                        });
+                    }
+                }
+            } catch { /* non-critical */ }
 
             // Generate clip thumbnail in background
             thumbService.generateClipThumbnail(clip.id, clipPath).then(thumbUrl => {

@@ -36,16 +36,14 @@ const MAX_TAG_LENGTH = 32;
 const MAX_PANELS_LENGTH = 20000;
 
 // ── Go-Live Notification Push ────────────────────────────────
-const HOBO_TOOLS_INTERNAL_URL = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
+const { pushBulkNotification } = require('../utils/notify');
 
 /** Push "X went live" notification to all followers via hobo.tools internal API (fire-and-forget) */
 function notifyFollowersGoLive(streamer, stream) {
     const followerIds = db.getFollowerIds(streamer.id);
     if (!followerIds.length) return;
 
-    const payload = {
-        user_ids: followerIds,
+    pushBulkNotification(followerIds, {
         type: 'STREAM_LIVE',
         title: `${streamer.display_name || streamer.username} is live!`,
         message: stream.title || 'Started streaming',
@@ -53,7 +51,6 @@ function notifyFollowersGoLive(streamer, stream) {
         sender_id: streamer.id,
         sender_name: streamer.display_name || streamer.username,
         sender_avatar: streamer.avatar_url || null,
-        service: 'hobostreamer',
         url: `https://hobostreamer.com/${streamer.username}`,
         rich_content: {
             thumbnail: streamer.avatar_url || null,
@@ -63,17 +60,6 @@ function notifyFollowersGoLive(streamer, stream) {
                 title: stream.title || 'Started streaming',
             },
         },
-    };
-
-    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/notifications/push-bulk`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Internal-Key': INTERNAL_API_KEY },
-        body: JSON.stringify(payload),
-    }).then(r => {
-        if (!r.ok) console.warn(`[Notify] Go-live notification push failed: ${r.status}`);
-        else console.log(`[Notify] Go-live notifications sent to ${followerIds.length} followers`);
-    }).catch(err => {
-        console.warn('[Notify] Go-live notification push error:', err.message);
     });
 }
 
@@ -769,6 +755,19 @@ router.post('/:id/follow', requireAuth, (req, res) => {
                 const hoboCoins = require('../monetization/hobo-coins');
                 hoboCoins.awardFollow(req.user.id, stream.user_id);
             } catch { /* non-critical */ }
+            // Notify the followed user
+            try {
+                const { pushNotification, actorInfo } = require('../utils/notify');
+                const follower = db.getUserById(req.user.id);
+                pushNotification({
+                    user_id: stream.user_id,
+                    type: 'FOLLOW',
+                    title: 'New Follower',
+                    message: `${follower?.display_name || follower?.username || 'Someone'} followed you`,
+                    url: `https://hobostreamer.com/${follower?.username || ''}`,
+                    ...actorInfo(follower),
+                });
+            } catch { /* non-critical */ }
             res.json({ following: true, count: db.getFollowerCount(stream.user_id) });
         }
     } catch (err) {
@@ -792,6 +791,19 @@ router.post('/channel/:username/follow', requireAuth, (req, res) => {
             try {
                 const hoboCoins = require('../monetization/hobo-coins');
                 hoboCoins.awardFollow(req.user.id, user.id);
+            } catch { /* non-critical */ }
+            // Notify the followed user
+            try {
+                const { pushNotification, actorInfo } = require('../utils/notify');
+                const follower = db.getUserById(req.user.id);
+                pushNotification({
+                    user_id: user.id,
+                    type: 'FOLLOW',
+                    title: 'New Follower',
+                    message: `${follower?.display_name || follower?.username || 'Someone'} followed you`,
+                    url: `https://hobostreamer.com/${follower?.username || ''}`,
+                    ...actorInfo(follower),
+                });
             } catch { /* non-critical */ }
             res.json({ following: true, count: db.getFollowerCount(user.id) });
         }

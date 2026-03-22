@@ -13,41 +13,12 @@ const fs = require('fs');
 const multer = require('multer');
 const db = require('../db/database');
 const { requireAuth, optionalAuth } = require('../auth/auth');
-
-const HOBO_TOOLS_INTERNAL_URL = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
+const { pushNotification, actorInfo: notificationActor } = require('../utils/notify');
 
 function truncatePreview(text, max = 120) {
     const clean = String(text || '').replace(/\s+/g, ' ').trim();
     if (!clean) return '';
     return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
-}
-
-function notificationActor(user, fallbackName = 'Someone') {
-    return {
-        sender_id: user?.id || null,
-        sender_name: user ? (user.display_name || user.username) : fallbackName,
-        sender_avatar: user?.avatar_url || null,
-    };
-}
-
-function pushNotification(payload) {
-    if (!payload?.user_id) return;
-
-    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/notifications/push`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Internal-Key': INTERNAL_API_KEY,
-        },
-        body: JSON.stringify(payload),
-    }).then((response) => {
-        if (!response.ok) {
-            console.warn(`[Notify] Paste notification push failed: ${response.status}`);
-        }
-    }).catch((err) => {
-        console.warn('[Notify] Paste notification push error:', err.message);
-    });
 }
 
 // ── Screenshot upload storage ───────────────────────────────
