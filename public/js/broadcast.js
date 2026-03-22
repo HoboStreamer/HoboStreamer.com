@@ -4286,7 +4286,9 @@ function updateBroadcastMobileChatFab() {
     if (!fab) return;
     const isLive = broadcastState.streams.size > 0;
     const isMobile = window.innerWidth <= 768;
-    fab.style.display = (isLive && isMobile) ? 'flex' : 'none';
+    const isStacked = window.innerWidth <= 1100;
+    // In stacked layout (<=1100px) chat is visible inline, no FAB needed
+    fab.style.display = (isLive && isMobile && !isStacked) ? 'flex' : 'none';
 }
 
 /** Detect if the broadcast preview video is vertical and toggle a class on the container */
@@ -5252,8 +5254,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const sidebar = document.getElementById('bc-chat-sidebar');
             if (sidebar) sidebar.classList.remove('mobile-chat-open');
             document.body.classList.remove('mobile-chat-visible');
+            closeCameraSwitcher();
         }
-        if (window.innerWidth > 768) closeCameraSwitcher();
     });
 
     document.addEventListener('keydown', (e) => {
