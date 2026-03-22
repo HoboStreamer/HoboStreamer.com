@@ -735,4 +735,99 @@ router.delete('/storage/vods/bulk', (req, res) => {
     }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// Media Tools — yt-dlp cookies, diagnostics, test extraction
+// ═══════════════════════════════════════════════════════════════
+const downloader = require('../media/media-downloader');
+
+// GET  /api/admin/media-tools/status — yt-dlp availability + cookies status
+router.get('/media-tools/status', (req, res) => {
+    try {
+        const cookiesPath = downloader.getCookiesPath();
+        let cookiesExist = false;
+        let cookiesSize = 0;
+        try {
+            const stat = fs.statSync(cookiesPath);
+            cookiesExist = stat.size > 0;
+            cookiesSize = stat.size;
+        } catch {}
+        res.json({
+            ytdlp_available: downloader.isAvailable(),
+            ytdlp_path: downloader.getYtdlpPath(),
+            cookies_configured: cookiesExist,
+            cookies_size: cookiesSize,
+            cookies_path: cookiesPath,
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PUT  /api/admin/media-tools/cookies — Upload/paste cookies.txt content
+router.put('/media-tools/cookies', (req, res) => {
+    try {
+        const { cookies } = req.body;
+        if (!cookies || typeof cookies !== 'string' || cookies.trim().length < 10) {
+            return res.status(400).json({ error: 'Cookies content is required (Netscape cookies.txt format)' });
+        }
+        const cookiesPath = downloader.getCookiesPath();
+        const dir = path.dirname(cookiesPath);
+        try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+        fs.writeFileSync(cookiesPath, cookies.trim() + '\n', 'utf8');
+        console.log(`[Admin] yt-dlp cookies updated by ${req.user.username} (${cookies.length} bytes)`);
+        res.json({ message: 'Cookies saved', size: cookies.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/admin/media-tools/cookies — Remove cookies file
+router.delete('/media-tools/cookies', (req, res) => {
+    try {
+        const cookiesPath = downloader.getCookiesPath();
+        try { fs.unlinkSync(cookiesPath); } catch {}
+        console.log(`[Admin] yt-dlp cookies removed by ${req.user.username}`);
+        res.json({ message: 'Cookies removed' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/admin/media-tools/test — Test yt-dlp extraction on a URL
+router.post('/media-tools/test', async (req, res) => {
+    try {
+        const { url } = req.body;
+        if (!url || typeof url !== 'string') {
+            return res.status(400).json({ error: 'URL is required' });
+        }
+        const results = { url, steps: [] };
+
+        // Step 1: Check yt-dlp availability
+        results.steps.push({ name: 'yt-dlp available', ok: downloader.isAvailable() });
+        if (!downloader.isAvailable()) {
+            return res.json(results);
+        }
+
+        // Step 2: Get info
+        try {
+            const info = await downloader.getInfo(url);
+            results.steps.push({ name: 'getInfo', ok: true, data: { title: info.title, duration: info.duration, extractor: info.extractor } });
+        } catch (err) {
+            results.steps.push({ name: 'getInfo', ok: false, error: err.message });
+        }
+
+        // Step 3: Extract stream URL
+        try {
+            const stream = await downloader.extractStreamUrl(url);
+            results.steps.push({ name: 'extractStreamUrl', ok: true, data: { streamUrl: stream.streamUrl.substring(0, 120) + '...' } });
+        } catch (err) {
+            results.steps.push({ name: 'extractStreamUrl', ok: false, error: err.message });
+        }
+
+        res.json(results);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;

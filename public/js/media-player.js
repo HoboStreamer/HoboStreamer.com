@@ -187,6 +187,12 @@ async function loadPlayer(request) {
     error.hidden = true;
     document.getElementById('mp-loading-text').textContent = 'Loading media…';
 
+    // YouTube/Vimeo: always use iframe embed — skip extraction entirely
+    if (request.embed_url && (request.provider === 'youtube' || request.provider === 'vimeo')) {
+        createEmbedFallback(request);
+        return;
+    }
+
     // Try to get a stream URL from the server
     let streamUrl = request.stream_url;
     if (!streamUrl || request.download_status !== 'ready') {
@@ -194,6 +200,11 @@ async function loadPlayer(request) {
         try {
             const data = await mpApi(`/api/media/queue/${request.id}/stream-url`);
             streamUrl = data.stream_url;
+            // If provider supports embed and extraction failed, use embed immediately
+            if (data.download_status === 'failed' && data.embed_url) {
+                createEmbedFallback({ ...request, embed_url: data.embed_url });
+                return;
+            }
             // If still extracting, poll until ready
             if (data.download_status !== 'ready' && data.download_status !== 'failed') {
                 streamUrl = await pollStreamUrl(request.id);

@@ -5355,3 +5355,220 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── PiP drag/resize on preview ──
     _initPipDragResize();
 });
+
+// ═══════════════════════════════════════════════════════════════
+// Media Request PiP Player (inline on broadcast page)
+// ═══════════════════════════════════════════════════════════════
+let _mediaPipState = null;     // { now_playing, queue, settings }
+let _mediaPipPollTimer = null;
+let _mediaPipSocket = null;
+let _mediaPipCurrentId = null;
+
+function toggleMediaPip() {
+    const panel = document.getElementById('bc-media-pip');
+    if (!panel) return;
+    const btn = document.getElementById('bc-btn-media-pip');
+    const visible = panel.style.display !== 'none';
+    panel.style.display = visible ? 'none' : '';
+    if (btn) btn.classList.toggle('bc-ctrl-btn-active', !visible);
+    if (!visible) {
+        _mediaPipRefresh();
+        _startMediaPipPoll();
+        _connectMediaPipSocket();
+    } else {
+        _stopMediaPipPoll();
+        try { _mediaPipSocket?.close(); } catch {}
+        _mediaPipSocket = null;
+    }
+}
+
+function mediaPopout() {
+    if (currentUser?.username) window.open(`/media/${currentUser.username}`, '_blank');
+}
+
+async function _mediaPipRefresh() {
+    if (!currentUser?.username) return;
+    try {
+        const data = await api(`/media/channel/${encodeURIComponent(currentUser.username)}`);
+        _mediaPipState = data.state;
+        _renderMediaPip();
+    } catch (e) {
+        console.warn('[MediaPip] refresh error:', e.message);
+    }
+}
+
+function _renderMediaPip() {
+    const state = _mediaPipState;
+    if (!state) return;
+
+    const np = state.now_playing;
+    const header = document.getElementById('bc-media-pip-now');
+    const emptyEl = document.getElementById('bc-media-pip-empty');
+    const loadingEl = document.getElementById('bc-media-pip-loading');
+    const controlsEl = document.getElementById('bc-media-pip-controls');
+    const hostEl = document.getElementById('bc-media-pip-host');
+    const queueEl = document.getElementById('bc-media-pip-queue');
+
+    // Now playing
+    if (np) {
+        header.textContent = np.title || 'Now Playing';
+        emptyEl.style.display = 'none';
+        controlsEl.style.display = '';
+        document.getElementById('bc-media-pip-track').textContent = np.title || 'Unknown';
+        document.getElementById('bc-media-pip-requester').textContent = `Requested by ${np.username || '?'}`;
+
+        // Load player if different request
+        if (_mediaPipCurrentId !== np.id) {
+            _mediaPipCurrentId = np.id;
+            _loadMediaPipPlayer(np);
+        }
+    } else {
+        header.textContent = 'Media Requests';
+        emptyEl.style.display = '';
+        controlsEl.style.display = 'none';
+        _destroyMediaPipPlayer();
+    }
+
+    // Queue
+    const queue = state.queue || [];
+    if (queue.length === 0) {
+        queueEl.innerHTML = '<div class="bc-media-pip-queue-empty">Queue empty</div>';
+    } else {
+        queueEl.innerHTML = queue.slice(0, 10).map(q =>
+            `<div class="bc-pip-queue-item">
+                <span class="bc-pip-queue-title">${_escPip(q.title)}</span>
+                <span class="bc-pip-queue-user">${_escPip(q.username)}</span>
+            </div>`
+        ).join('');
+        if (queue.length > 10) {
+            queueEl.innerHTML += `<div class="bc-media-pip-queue-empty">+${queue.length - 10} more</div>`;
+        }
+    }
+}
+
+function _escPip(s) {
+    return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function _loadMediaPipPlayer(request) {
+    const host = document.getElementById('bc-media-pip-host');
+    const empty = document.getElementById('bc-media-pip-empty');
+    const loading = document.getElementById('bc-media-pip-loading');
+    _destroyMediaPipPlayer();
+
+    // YouTube/Vimeo: use iframe embed
+    if (request.embed_url && (request.provider === 'youtube' || request.provider === 'vimeo')) {
+        const iframe = document.createElement('iframe');
+        iframe.src = request.embed_url;
+        iframe.allow = 'autoplay; fullscreen; picture-in-picture';
+        iframe.allowFullscreen = true;
+        host.appendChild(iframe);
+        empty.style.display = 'none';
+        loading.style.display = 'none';
+        return;
+    }
+
+    // Direct media
+    const url = request.stream_url || request.canonical_url;
+    if (!url) {
+        empty.style.display = '';
+        empty.querySelector('span').textContent = 'No playable URL';
+        return;
+    }
+
+    const isAudio = request.provider === 'audio';
+    const media = document.createElement(isAudio ? 'audio' : 'video');
+    media.src = url;
+    media.autoplay = true;
+    media.controls = true;
+    if (!isAudio) media.style.cssText = 'width:100%;height:100%;display:block;background:#000';
+    else media.style.cssText = 'width:100%;min-height:60px;display:block;background:#111';
+
+    media.addEventListener('canplay', () => { loading.style.display = 'none'; });
+    media.addEventListener('error', () => {
+        // Fall back to embed if available
+        if (request.embed_url) {
+            _destroyMediaPipPlayer();
+            const iframe = document.createElement('iframe');
+            iframe.src = request.embed_url;
+            iframe.allow = 'autoplay; fullscreen; picture-in-picture';
+            iframe.allowFullscreen = true;
+            host.appendChild(iframe);
+        }
+    });
+
+    host.appendChild(media);
+    empty.style.display = 'none';
+    loading.style.display = 'none';
+}
+
+function _destroyMediaPipPlayer() {
+    const host = document.getElementById('bc-media-pip-host');
+    if (!host) return;
+    const el = host.querySelector('video, audio, iframe');
+    if (el) {
+        try { el.pause?.(); } catch {}
+        el.remove();
+    }
+    _mediaPipCurrentId = null;
+}
+
+async function mediaPipSkip() {
+    const np = _mediaPipState?.now_playing;
+    if (!np) { toast('Nothing playing', 'warning'); return; }
+    try {
+        await api('/media/advance', { method: 'POST', body: { status: 'skipped' } });
+        _mediaPipRefresh();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function mediaPipStartNext() {
+    try {
+        await api('/media/start', { method: 'POST' });
+        _mediaPipRefresh();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+function _startMediaPipPoll() {
+    _stopMediaPipPoll();
+    _mediaPipPollTimer = setInterval(_mediaPipRefresh, 8000);
+}
+
+function _stopMediaPipPoll() {
+    if (_mediaPipPollTimer) { clearInterval(_mediaPipPollTimer); _mediaPipPollTimer = null; }
+}
+
+function _connectMediaPipSocket() {
+    const activeId = broadcastState.activeStreamId;
+    if (!activeId) return;
+    if (_mediaPipSocket && _mediaPipSocket._sid === activeId && _mediaPipSocket.readyState <= 1) return;
+    try { _mediaPipSocket?.close(); } catch {}
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = new URL(`${protocol}//${window.location.host}/ws/chat`);
+    const token = localStorage.getItem('token');
+    if (token) url.searchParams.set('token', token);
+    url.searchParams.set('stream', activeId);
+
+    const ws = new WebSocket(url.toString());
+    ws._sid = activeId;
+    ws.addEventListener('open', () => {
+        ws.send(JSON.stringify({ type: 'join_stream', streamId: activeId, token: token || undefined }));
+    });
+    ws.addEventListener('message', (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'media_queue_update' && msg.state) {
+                _mediaPipState = msg.state;
+                _renderMediaPip();
+            } else if (msg.type === 'media_now_playing' && msg.request) {
+                if (_mediaPipState) _mediaPipState.now_playing = msg.request;
+                _renderMediaPip();
+            }
+        } catch {}
+    });
+    ws.addEventListener('close', () => {
+        if (_mediaPipSocket === ws) _mediaPipSocket = null;
+    });
+    _mediaPipSocket = ws;
+}

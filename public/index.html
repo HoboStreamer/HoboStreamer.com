@@ -1304,6 +1304,7 @@
                 <button class="tab-btn" onclick="switchAdminTab('vpn')">VPN Queue</button>
                 <button class="tab-btn" onclick="switchAdminTab('pastes')">Pastes</button>
                 <button class="tab-btn" onclick="switchAdminTab('data')"><i class="fa-solid fa-hard-drive"></i> Data</button>
+                <button class="tab-btn" onclick="switchAdminTab('media-tools')"><i class="fa-solid fa-film"></i> Media</button>
             </div>
             <div class="admin-content" id="admin-content"></div>
         </div>
@@ -2034,6 +2035,9 @@
                             <button class="bc-ctrl-btn" id="bc-btn-clip" onclick="toggleBroadcastClipPanel()">
                                 <i class="fa-solid fa-scissors"></i> Clip
                             </button>
+                            <button class="bc-ctrl-btn" id="bc-btn-media-pip" onclick="toggleMediaPip()">
+                                <i class="fa-solid fa-film"></i> Media
+                            </button>
                         </div>
 
                         <!-- Live Clip Panel -->
@@ -2078,6 +2082,44 @@
 
                         <!-- Restream Control Panel (visible when destinations configured + streaming) -->
                         <div class="bc-restream-control" id="bc-restream-control" style="display:none"></div>
+
+                        <!-- Media Request PiP Player -->
+                        <div id="bc-media-pip" class="bc-media-pip" style="display:none">
+                            <div class="bc-media-pip-header">
+                                <div class="bc-media-pip-title">
+                                    <i class="fa-solid fa-film"></i>
+                                    <span id="bc-media-pip-now">Media Requests</span>
+                                </div>
+                                <div class="bc-media-pip-actions">
+                                    <button class="btn btn-small btn-outline" onclick="mediaPopout()" title="Open full player"><i class="fa-solid fa-up-right-from-square"></i></button>
+                                    <button class="btn btn-small btn-outline" onclick="toggleMediaPip()"><i class="fa-solid fa-xmark"></i></button>
+                                </div>
+                            </div>
+                            <div class="bc-media-pip-player" id="bc-media-pip-player">
+                                <div class="bc-media-pip-empty" id="bc-media-pip-empty">
+                                    <i class="fa-solid fa-music"></i>
+                                    <span>No media playing</span>
+                                </div>
+                                <div class="bc-media-pip-loading" id="bc-media-pip-loading" style="display:none">
+                                    <div class="spinner-small"></div>
+                                    <span>Loading…</span>
+                                </div>
+                                <div id="bc-media-pip-host"></div>
+                            </div>
+                            <div class="bc-media-pip-controls" id="bc-media-pip-controls" style="display:none">
+                                <div class="bc-media-pip-info">
+                                    <div class="bc-media-pip-track" id="bc-media-pip-track"></div>
+                                    <div class="bc-media-pip-requester" id="bc-media-pip-requester"></div>
+                                </div>
+                                <div class="bc-media-pip-btns">
+                                    <button class="bc-pip-btn" onclick="mediaPipSkip()" title="Skip"><i class="fa-solid fa-forward-step"></i></button>
+                                    <button class="bc-pip-btn" onclick="mediaPipStartNext()" title="Play next"><i class="fa-solid fa-play"></i></button>
+                                </div>
+                            </div>
+                            <div class="bc-media-pip-queue" id="bc-media-pip-queue">
+                                <div class="bc-media-pip-queue-empty">Queue empty</div>
+                            </div>
+                        </div>
 
                         <!-- TTS Settings -->
                         <div class="bc-settings-group">

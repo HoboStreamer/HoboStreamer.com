@@ -141,6 +141,16 @@ class MediaQueue {
             return db.getMediaRequestById(requestId);
         }
 
+        // YouTube/Vimeo: always use iframe embed — yt-dlp is unreliable
+        // (YouTube bot detection, short-lived URLs, etc.)
+        if ((request.provider === 'youtube' || request.provider === 'vimeo') && request.embed_url) {
+            db.updateMediaRequest(requestId, {
+                stream_url: null,
+                download_status: 'ready',
+            });
+            return db.getMediaRequestById(requestId);
+        }
+
         if (!downloader.isAvailable()) {
             // No yt-dlp — fall back to embed URL
             db.updateMediaRequest(requestId, {

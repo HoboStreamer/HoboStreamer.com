@@ -170,6 +170,7 @@ function switchAdminTab(tab) {
         case 'vpn': loadAdminVPN(); break;
         case 'pastes': loadAdminPastes(); break;
         case 'data': loadAdminData(); break;
+        case 'media-tools': loadAdminMediaTools(); break;
     }
 }
 
@@ -1339,5 +1340,119 @@ async function adminBulkDeleteVods() {
         loadAdminData();
     } catch (e) {
         toast(e.message || 'Bulk delete failed', 'error');
+    }
+}
+
+/* ── Media Tools ──────────────────────────────────────────────── */
+async function loadAdminMediaTools() {
+    const c = document.getElementById('admin-content');
+    c.innerHTML = '<p class="muted">Loading…</p>';
+
+    let status = {};
+    try {
+        status = await api('/admin/media-tools/status');
+    } catch (e) {
+        c.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+        return;
+    }
+
+    c.innerHTML = `
+        <div style="display:grid;gap:16px;max-width:800px">
+            <!-- Status card -->
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+                <h3 style="margin:0 0 12px;font-size:1rem"><i class="fa-solid fa-wrench"></i> yt-dlp Status</h3>
+                <div style="display:grid;gap:6px;font-size:0.9rem">
+                    <div><strong>yt-dlp available:</strong> ${status.ytdlp_available
+                        ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-check-circle"></i> Yes</span>'
+                        : '<span style="color:var(--danger,#ef4444)"><i class="fa-solid fa-xmark-circle"></i> No</span>'
+                    }</div>
+                    <div><strong>Path:</strong> <code style="background:var(--bg-tertiary,var(--bg-input));padding:2px 6px;border-radius:4px;font-size:0.85rem">${esc(status.ytdlp_path)}</code></div>
+                    <div><strong>Cookies:</strong> ${status.cookies_configured
+                        ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-cookie"></i> Configured (' + status.cookies_size + ' bytes)</span>'
+                        : '<span class="muted"><i class="fa-solid fa-cookie-bite"></i> Not configured</span>'
+                    }</div>
+                </div>
+            </div>
+
+            <!-- Cookies card -->
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+                <h3 style="margin:0 0 8px;font-size:1rem"><i class="fa-solid fa-cookie"></i> YouTube Cookies</h3>
+                <p class="muted" style="font-size:0.82rem;margin:0 0 12px">
+                    Paste a Netscape-format cookies.txt file to bypass YouTube bot detection.
+                    Export using a browser extension like <em>Get cookies.txt LOCALLY</em> while logged into YouTube.
+                </p>
+                <textarea id="admin-cookies-input" rows="8" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;0&#9;SID&#9;value..."
+                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:10px;border-radius:6px;font-family:monospace;font-size:0.82rem;resize:vertical"></textarea>
+                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+                    <button class="btn btn-primary" onclick="saveAdminCookies()">
+                        <i class="fa-solid fa-floppy-disk"></i> Save Cookies
+                    </button>
+                    <button class="btn btn-outline" onclick="deleteAdminCookies()" ${status.cookies_configured ? '' : 'disabled'}>
+                        <i class="fa-solid fa-trash"></i> Remove Cookies
+                    </button>
+                </div>
+            </div>
+
+            <!-- Test card -->
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+                <h3 style="margin:0 0 8px;font-size:1rem"><i class="fa-solid fa-flask-vial"></i> Test Extraction</h3>
+                <p class="muted" style="font-size:0.82rem;margin:0 0 12px">
+                    Test yt-dlp extraction on a URL to verify cookies and extraction work.
+                </p>
+                <div style="display:flex;gap:8px">
+                    <input type="text" id="admin-media-test-url" placeholder="https://www.youtube.com/watch?v=..."
+                        style="flex:1;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:8px 12px;border-radius:6px;font-size:0.9rem">
+                    <button class="btn btn-primary" onclick="testAdminExtraction()">
+                        <i class="fa-solid fa-play"></i> Test
+                    </button>
+                </div>
+                <div id="admin-media-test-results" style="margin-top:10px"></div>
+            </div>
+        </div>
+    `;
+}
+
+async function saveAdminCookies() {
+    const ta = document.getElementById('admin-cookies-input');
+    if (!ta) return;
+    const cookies = ta.value.trim();
+    if (!cookies) { toast('Paste cookies.txt content first', 'warning'); return; }
+    try {
+        await api('/admin/media-tools/cookies', { method: 'PUT', body: { cookies } });
+        toast('Cookies saved', 'success');
+        loadAdminMediaTools();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteAdminCookies() {
+    if (!confirm('Remove yt-dlp cookies?')) return;
+    try {
+        await api('/admin/media-tools/cookies', { method: 'DELETE' });
+        toast('Cookies removed', 'success');
+        loadAdminMediaTools();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function testAdminExtraction() {
+    const url = document.getElementById('admin-media-test-url')?.value?.trim();
+    if (!url) { toast('Enter a URL to test', 'warning'); return; }
+    const resultsDiv = document.getElementById('admin-media-test-results');
+    resultsDiv.innerHTML = '<p class="muted"><i class="fa-solid fa-spinner fa-spin"></i> Testing… (this may take up to 60s)</p>';
+    try {
+        const data = await api('/admin/media-tools/test', { method: 'POST', body: { url } });
+        let html = '<div style="display:grid;gap:6px;font-size:0.87rem;margin-top:8px">';
+        for (const step of (data.steps || [])) {
+            const icon = step.ok
+                ? '<i class="fa-solid fa-check-circle" style="color:var(--success,#22c55e)"></i>'
+                : '<i class="fa-solid fa-xmark-circle" style="color:var(--danger,#ef4444)"></i>';
+            let detail = '';
+            if (step.data) detail = ' — ' + esc(JSON.stringify(step.data));
+            if (step.error) detail = ' — <span style="color:var(--danger,#ef4444)">' + esc(step.error) + '</span>';
+            html += `<div>${icon} <strong>${esc(step.name)}</strong>${detail}</div>`;
+        }
+        html += '</div>';
+        resultsDiv.innerHTML = html;
+    } catch (e) {
+        resultsDiv.innerHTML = `<p style="color:var(--danger,#ef4444)">${esc(e.message)}</p>`;
     }
 }

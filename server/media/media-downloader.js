@@ -17,6 +17,7 @@ const crypto = require('crypto');
 // ── Config ──────────────────────────────────────────────────
 const YTDLP_PATH = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
 const CACHE_DIR = path.resolve('./data/media/cache');
+const COOKIES_PATH = path.resolve('./data/media/cookies.txt');
 const MAX_CACHE_SIZE_MB = 2048;
 const CACHE_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
 const URL_CACHE_TTL_MS = 3 * 60 * 60 * 1000;  // 3 hours for extracted stream URLs
@@ -41,6 +42,21 @@ function isAvailable() {
     }
 }
 
+function getCookiesPath() { return COOKIES_PATH; }
+function getYtdlpPath() { return YTDLP_PATH; }
+
+/**
+ * Build common yt-dlp args including cookies if configured.
+ */
+function cookieArgs() {
+    try {
+        if (fs.existsSync(COOKIES_PATH) && fs.statSync(COOKIES_PATH).size > 0) {
+            return ['--cookies', COOKIES_PATH];
+        }
+    } catch {}
+    return [];
+}
+
 /**
  * Get video info (metadata only, no download).
  * Returns: { title, duration, thumbnail, url, id, isLive, uploadDate }
@@ -48,6 +64,7 @@ function isAvailable() {
 async function getInfo(url) {
     return new Promise((resolve, reject) => {
         const args = [
+            ...cookieArgs(),
             '--no-download',
             '--print', '%(title)s\n%(duration)s\n%(thumbnail)s\n%(webpage_url)s\n%(id)s\n%(extractor)s\n%(is_live)s\n%(upload_date)s',
             '--no-warnings',
@@ -100,13 +117,14 @@ async function extractStreamUrl(url) {
         return cached;
     }
 
+    const cookies = cookieArgs();
     const strategies = [
         // Best audio+video combined, prefer mp4
-        ['--format', 'best[ext=mp4]/best[ext=webm]/best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
+        [...cookies, '--format', 'best[ext=mp4]/best[ext=webm]/best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
         // Lower quality fallback
-        ['--format', 'worst[ext=mp4]/worst', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
+        [...cookies, '--format', 'worst[ext=mp4]/worst', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
         // Force generic
-        ['--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
+        [...cookies, '--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
     ];
 
     for (let i = 0; i < strategies.length; i++) {
@@ -147,6 +165,7 @@ async function downloadToFile(url, maxDurationSeconds = 600) {
 
     return new Promise((resolve, reject) => {
         const args = [
+            ...cookieArgs(),
             '--format', 'best[ext=mp4][filesize<200M]/best[ext=mp4]/best[filesize<200M]/best',
             '--output', filePath,
             '--no-playlist',
@@ -264,5 +283,7 @@ module.exports = {
     downloadToFile,
     getCachedPath,
     purgeCache,
+    getCookiesPath,
+    getYtdlpPath,
     CACHE_DIR,
 };

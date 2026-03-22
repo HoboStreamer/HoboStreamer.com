@@ -195,9 +195,25 @@ router.get('/queue/:id/stream-url', optionalAuth, async (req, res) => {
         const request = db.getMediaRequestById(cleanInt(req.params.id, 0));
         if (!request) return res.status(404).json({ error: 'Request not found' });
 
-        // If already extracted, return immediately
-        if (request.stream_url && request.download_status === 'ready') {
-            return res.json({ stream_url: request.stream_url, download_status: 'ready' });
+        // If already extracted (or marked ready for embed), return immediately
+        if (request.download_status === 'ready') {
+            return res.json({
+                stream_url: request.stream_url || null,
+                embed_url: request.embed_url || null,
+                provider: request.provider,
+                download_status: 'ready',
+            });
+        }
+
+        // If extraction already failed, don't retry — return the failure
+        if (request.download_status === 'failed') {
+            return res.json({
+                stream_url: null,
+                embed_url: request.embed_url || null,
+                provider: request.provider,
+                download_status: 'failed',
+                last_error: request.last_error,
+            });
         }
 
         // Kick off extraction and return status
@@ -205,6 +221,8 @@ router.get('/queue/:id/stream-url', optionalAuth, async (req, res) => {
         const updated = db.getMediaRequestById(request.id);
         res.json({
             stream_url: updated?.stream_url || null,
+            embed_url: updated?.embed_url || null,
+            provider: updated?.provider,
             download_status: updated?.download_status || 'extracting',
         });
     } catch (err) {
