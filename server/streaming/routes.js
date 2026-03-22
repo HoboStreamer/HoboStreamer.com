@@ -202,11 +202,28 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                     const activeSession = streamStatuses.find(s => s.destId === d.id && (s.status === 'live' || s.status === 'starting'));
                     const relayInfo = chatRelayService.getRelayInfo(liveStreams[0].id);
                     const hasRelay = relayInfo?.some(r => r.destId === d.id);
+
+                    // Determine if actually live on the platform:
+                    // - If we have a platform-level signal (Twitch Helix, Kick Pusher), use it
+                    // - Otherwise fall back to session status with a 60s grace period for new sessions
+                    let isLive = false;
+                    if (activeSession) {
+                        const platformLive = restreamManager.isPlatformLive(d.id);
+                        if (platformLive != null) {
+                            // We have a definitive platform signal — trust it
+                            isLive = platformLive;
+                        } else {
+                            // No platform signal yet — show as live during grace period (first 60s)
+                            const sessionAge = Date.now() - (activeSession.startedAt || Date.now());
+                            isLive = sessionAge < 60000;
+                        }
+                    }
+
                     return {
                         platform: d.platform,
                         name: d.name,
                         channel_url: d.channel_url,
-                        is_live: !!activeSession,
+                        is_live: isLive,
                         chat_relayed: !!hasRelay,
                         viewer_count: restreamManager.getCachedViewerCount(d.id),
                     };

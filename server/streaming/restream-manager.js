@@ -952,7 +952,7 @@ class RestreamManager extends EventEmitter {
 
     /**
      * Get a cached viewer count for a destination.
-     * Returns the count if fresh (<90s), otherwise null.
+     * Returns the count if fresh (<180s), otherwise null.
      */
     getCachedViewerCount(destId) {
         const cached = this._viewerCountCache.get(destId);
@@ -961,10 +961,27 @@ class RestreamManager extends EventEmitter {
     }
 
     /**
+     * Check if a platform has confirmed the restream is actually live.
+     * Returns true/false if we have a recent signal, null if unknown.
+     */
+    isPlatformLive(destId) {
+        const cached = this._viewerCountCache.get(destId);
+        if (!cached || Date.now() - cached.fetchedAt > 180000) return null;
+        if (cached.platformLive != null) return cached.platformLive;
+        return null;
+    }
+
+    /**
      * Set viewer count from an external source (e.g. broadcaster client-side polling).
      */
-    setViewerCount(destId, count) {
-        this._viewerCountCache.set(destId, { count, fetchedAt: Date.now() });
+    setViewerCount(destId, count, platformLive) {
+        const existing = this._viewerCountCache.get(destId);
+        this._viewerCountCache.set(destId, {
+            count,
+            fetchedAt: Date.now(),
+            // Preserve existing platformLive if not explicitly provided
+            platformLive: platformLive != null ? platformLive : (existing?.platformLive ?? null),
+        });
     }
 
     /**
@@ -1079,27 +1096,41 @@ class RestreamManager extends EventEmitter {
                 if (!dest?.channel_url) continue;
 
                 let count = null;
+                let platformLive = null;
                 if (dest.platform === 'kick') {
                     // Primary: check chat relay Pusher viewer count (reliable, not CF-blocked)
                     count = chatRelayService.getViewerCount(destId);
+                    // Kick Pusher gives us viewer count only when live — also check explicit signal
+                    platformLive = chatRelayService.getPlatformLive(destId);
+                    if (count != null && platformLive == null) platformLive = true;
                     // Fallback: try Kick HTTP API (usually CF-blocked from servers)
                     if (count == null && this.getViewerPollingConfig().kick.serverFetchEnabled) {
                         count = await this._fetchKickViewerCount(dest.channel_url);
+                        if (count != null && platformLive == null) platformLive = true;
                     }
                 } else if (dest.platform === 'twitch') {
-                    // Twitch Helix API — uses App Access Token (client credentials)
-                    count = await this._fetchTwitchViewerCount(dest.channel_url);
+                    // Twitch Helix API — returns { count, platformLive }
+                    const result = await this._fetchTwitchViewerCount(dest.channel_url);
+                    if (result != null) {
+                        count = result.count;
+                        platformLive = result.platformLive;
+                    }
                 }
                 // YouTube API requires API key — skip for now
 
-                // Only update cache if we got a real count — don't overwrite a good broadcaster-relayed
-                // value with null from a failed server-side fetch
-                if (count != null) {
-                    this._viewerCountCache.set(destId, { count, fetchedAt: Date.now() });
+                // Update cache with count AND platform live status
+                const now = Date.now();
+                if (count != null || platformLive != null) {
+                    const existing = this._viewerCountCache.get(destId);
+                    this._viewerCountCache.set(destId, {
+                        count: count ?? existing?.count ?? null,
+                        fetchedAt: now,
+                        platformLive,
+                    });
                 } else {
                     // If there's no existing cache entry at all, set null so getCachedViewerCount returns null
                     if (!this._viewerCountCache.has(destId)) {
-                        this._viewerCountCache.set(destId, { count: null, fetchedAt: Date.now() });
+                        this._viewerCountCache.set(destId, { count: null, fetchedAt: now, platformLive: null });
                     }
                 }
             } catch (e) {
@@ -1248,9 +1279,10 @@ class RestreamManager extends EventEmitter {
                             const parsed = JSON.parse(data);
                             const stream = parsed?.data?.[0];
                             if (stream && typeof stream.viewer_count === 'number') {
-                                resolve(stream.viewer_count);
+                                resolve({ count: stream.viewer_count, platformLive: true });
                             } else {
-                                resolve(0); // Not live on Twitch = 0 viewers
+                                // No stream data = not live on Twitch
+                                resolve({ count: 0, platformLive: false });
                             }
                         } catch { resolve(null); }
                     });
