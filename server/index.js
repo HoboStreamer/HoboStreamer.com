@@ -144,7 +144,7 @@ app.use(helmet({
             imgSrc: ["'self'", "data:", "blob:", "image.tmdb.org", "https://hobo.tools", "cdn.frankerfacez.com", "cdn.betterttv.net", "cdn.7tv.app"],
             connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest"],
             mediaSrc: ["'self'", "blob:"],
-            frameSrc: ["'self'"],
+            frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://player.vimeo.com"],
             workerSrc: ["'self'", "blob:"],
             scriptSrcAttr: ["'unsafe-inline'"],
         },
