@@ -5399,29 +5399,26 @@ function _escPip(s) {
     return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 
-function _loadMediaPipPlayer(request) {
+async function _loadMediaPipPlayer(request) {
     const host = document.getElementById('bc-media-pip-host');
     const empty = document.getElementById('bc-media-pip-empty');
     const loading = document.getElementById('bc-media-pip-loading');
     _destroyMediaPipPlayer();
 
-    // YouTube/Vimeo: use iframe embed
-    if (request.embed_url && (request.provider === 'youtube' || request.provider === 'vimeo')) {
-        const iframe = document.createElement('iframe');
-        iframe.src = request.embed_url;
-        iframe.allow = 'autoplay; fullscreen; picture-in-picture';
-        iframe.allowFullscreen = true;
-        host.appendChild(iframe);
-        empty.style.display = 'none';
-        loading.style.display = 'none';
-        return;
+    let url = request.stream_url;
+    if (!url || request.download_status !== 'ready') {
+        try {
+            const data = await api(`/media/queue/${request.id}/stream-url`);
+            url = data?.stream_url || null;
+        } catch {
+            url = null;
+        }
     }
 
-    // Direct media
-    const url = request.stream_url || request.canonical_url;
     if (!url) {
         empty.style.display = '';
-        empty.querySelector('span').textContent = 'No playable URL';
+        empty.querySelector('span').textContent = 'Server is still preparing this media';
+        loading.style.display = 'none';
         return;
     }
 
@@ -5434,17 +5431,7 @@ function _loadMediaPipPlayer(request) {
     else media.style.cssText = 'width:100%;min-height:60px;display:block;background:#111';
 
     media.addEventListener('canplay', () => { loading.style.display = 'none'; });
-    media.addEventListener('error', () => {
-        // Fall back to embed if available
-        if (request.embed_url) {
-            _destroyMediaPipPlayer();
-            const iframe = document.createElement('iframe');
-            iframe.src = request.embed_url;
-            iframe.allow = 'autoplay; fullscreen; picture-in-picture';
-            iframe.allowFullscreen = true;
-            host.appendChild(iframe);
-        }
-    });
+    media.addEventListener('error', () => { loading.style.display = 'none'; });
 
     host.appendChild(media);
     empty.style.display = 'none';
@@ -5454,7 +5441,7 @@ function _loadMediaPipPlayer(request) {
 function _destroyMediaPipPlayer() {
     const host = document.getElementById('bc-media-pip-host');
     if (!host) return;
-    const el = host.querySelector('video, audio, iframe');
+    const el = host.querySelector('video, audio');
     if (el) {
         try { el.pause?.(); } catch {}
         el.remove();

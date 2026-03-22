@@ -1528,6 +1528,35 @@ function windDir(deg) {
     return dirs[Math.round(deg / 45) % 8];
 }
 
+let _channelWeatherData = null;
+
+function getWeatherUnitPreference() {
+    return localStorage.getItem('weather_unit') === 'c' ? 'c' : 'f';
+}
+
+function setWeatherUnitPreference(unit) {
+    localStorage.setItem('weather_unit', unit === 'c' ? 'c' : 'f');
+}
+
+function weatherTemp(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '--';
+    if (getWeatherUnitPreference() === 'c') {
+        return `${Math.round((num - 32) * 5 / 9)}°C`;
+    }
+    return `${Math.round(num)}°F`;
+}
+
+function toggleWeatherUnit() {
+    setWeatherUnitPreference(getWeatherUnitPreference() === 'f' ? 'c' : 'f');
+    const widgets = [document.getElementById('ch-weather-widget'), document.getElementById('ch-weather-widget-offline')];
+    if (!_channelWeatherData) return;
+    const html = renderWeatherWidget(_channelWeatherData);
+    widgets.forEach(w => {
+        if (w) { w.innerHTML = html; w.style.display = ''; }
+    });
+}
+
 async function loadChannelWeather(username) {
     const widgets = [document.getElementById('ch-weather-widget'), document.getElementById('ch-weather-widget-offline')];
     widgets.forEach(w => { if (w) w.style.display = 'none'; });
@@ -1536,6 +1565,7 @@ async function loadChannelWeather(username) {
         const data = await api(`/streams/channel/${username}/weather`);
         if (!data || !data.enabled || !data.current) return;
 
+        _channelWeatherData = data;
         const html = renderWeatherWidget(data);
         widgets.forEach(w => {
             if (w) { w.innerHTML = html; w.style.display = ''; }
@@ -1548,16 +1578,17 @@ function renderWeatherWidget(data) {
     const w = getWeatherInfo(c.weather_code, c.is_day);
     const loc = data.location || {};
     const locStr = loc.name ? [loc.name, loc.region].filter(Boolean).join(', ') : '';
+    const unit = getWeatherUnitPreference();
 
     let html = `<div class="weather-current">`;
     html += `<div class="weather-main">`;
     html += `<i class="fa-solid ${w.icon} weather-icon"></i>`;
-    html += `<span class="weather-temp">${Math.round(c.temperature)}°F</span>`;
+    html += `<span class="weather-temp">${weatherTemp(c.temperature)}</span>`;
     html += `</div>`;
     html += `<div class="weather-details">`;
-    html += `<span class="weather-condition">${w.label}</span>`;
+    html += `<div class="weather-topline"><span class="weather-condition">${w.label}</span><button type="button" class="weather-unit-toggle" onclick="toggleWeatherUnit()">°${unit === 'c' ? 'C' : 'F'}</button></div>`;
     if (locStr) html += `<span class="weather-location">${locStr}</span>`;
-    html += `<span class="weather-meta">Feels ${Math.round(c.feels_like)}° · ${c.humidity}% humidity · Wind ${Math.round(c.wind_speed)} mph ${windDir(c.wind_direction)}</span>`;
+    html += `<span class="weather-meta">Feels ${weatherTemp(c.feels_like)} · ${c.humidity}% humidity · Wind ${Math.round(c.wind_speed)} mph ${windDir(c.wind_direction)}</span>`;
     html += `</div></div>`;
 
     // Hourly forecast
@@ -1569,10 +1600,10 @@ function renderWeatherWidget(data) {
             const hw = getWeatherInfo(h.weather_code, true);
             const isCurrent = isCurrentHour(h.time, utcOff);
             const timeLabel = isCurrent ? 'Now' : formatHour(h.time, utcOff);
-            html += `<div class="weather-hour${isCurrent ? ' wh-now' : ''}" title="${hw.label}, ${Math.round(h.temperature)}°F, ${h.precipitation_probability}% precip, Wind ${Math.round(h.wind_speed)} mph">`;
+            html += `<div class="weather-hour${isCurrent ? ' wh-now' : ''}" title="${hw.label}, ${weatherTemp(h.temperature)}, ${h.precipitation_probability}% precip, Wind ${Math.round(h.wind_speed)} mph">`;
             html += `<span class="wh-time">${timeLabel}</span>`;
             html += `<i class="fa-solid ${hw.icon} wh-icon"></i>`;
-            html += `<span class="wh-temp">${Math.round(h.temperature)}°</span>`;
+            html += `<span class="wh-temp">${weatherTemp(h.temperature).replace(/°[CF]$/, '°')}</span>`;
             if (h.precipitation_probability > 0) {
                 html += `<span class="wh-precip"><i class="fa-solid fa-droplet"></i> ${h.precipitation_probability}%</span>`;
             }

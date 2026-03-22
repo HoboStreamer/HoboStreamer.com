@@ -26,13 +26,6 @@ let mpRetryCount = 0;
 const MP_MAX_RETRIES = 2;
 const MP_POSITION_SAVE_INTERVAL = 5000;
 
-function isEmbedUrl(url) {
-    const value = String(url || '');
-    return /youtube\.com\/embed\//i.test(value)
-        || /youtube-nocookie\.com\/embed\//i.test(value)
-        || /player\.vimeo\.com\/video\//i.test(value);
-}
-
 // ── Helpers ─────────────────────────────────────────────────
 function mpUsername() {
     return window.location.pathname.split('/').filter(Boolean)[1] || '';
@@ -187,24 +180,13 @@ async function loadPlayer(request) {
     error.hidden = true;
     document.getElementById('mp-loading-text').textContent = 'Loading media…';
 
-    // YouTube/Vimeo: always use iframe embed — skip extraction entirely
-    if (request.embed_url && (request.provider === 'youtube' || request.provider === 'vimeo')) {
-        createEmbedFallback(request);
-        return;
-    }
-
     // Try to get a stream URL from the server
     let streamUrl = request.stream_url;
     if (!streamUrl || request.download_status !== 'ready') {
-        document.getElementById('mp-loading-text').textContent = 'Extracting stream URL…';
+        document.getElementById('mp-loading-text').textContent = 'Preparing server-side media…';
         try {
             const data = await mpApi(`/api/media/queue/${request.id}/stream-url`);
             streamUrl = data.stream_url;
-            // If provider supports embed and extraction failed, use embed immediately
-            if (data.download_status === 'failed' && data.embed_url) {
-                createEmbedFallback({ ...request, embed_url: data.embed_url });
-                return;
-            }
             // If still extracting, poll until ready
             if (data.download_status !== 'ready' && data.download_status !== 'failed') {
                 streamUrl = await pollStreamUrl(request.id);
@@ -214,20 +196,11 @@ async function loadPlayer(request) {
         }
     }
 
-    // Determine what to play
-    const playUrl = streamUrl || request.embed_url || request.canonical_url;
+    const playUrl = streamUrl;
 
     if (!playUrl) {
-        showError('No playable URL found for this media.');
-        if (mpOwner) reportFailure(request.id, 'No playable URL');
-        return;
-    }
-
-    // Explicit embed fallback for providers that support iframe playback.
-    // Never feed embed URLs into native <video>/<audio> or Chromium throws
-    // MEDIA_ERR_SRC_NOT_SUPPORTED (code 4).
-    if ((!streamUrl || isEmbedUrl(playUrl)) && request.embed_url && (request.provider === 'youtube' || request.provider === 'vimeo')) {
-        createEmbedFallback(request);
+        showError('Server could not prepare a playable media file for this request.');
+        if (mpOwner) reportFailure(request.id, 'Server could not prepare a playable media file');
         return;
     }
 
@@ -298,18 +271,13 @@ async function loadPlayer(request) {
                 }
             }, 2000);
         } else {
-            if (request.embed_url && (request.provider === 'youtube' || request.provider === 'vimeo')) {
-                console.warn('[MediaPlayer] Native playback failed, switching to embed fallback');
-                createEmbedFallback(request);
-                return;
-            }
             showError(msg);
             if (mpOwner) reportFailure(request.id, msg);
         }
     });
 
     // Clear old content and insert
-    const existingMedia = host.querySelector('video, audio, iframe');
+    const existingMedia = host.querySelector('video, audio');
     if (existingMedia) existingMedia.remove();
     host.appendChild(media);
     mpMedia = media;
@@ -318,35 +286,11 @@ async function loadPlayer(request) {
     startPositionSave(request.id);
 }
 
-/**
- * Fall back to YouTube embed (iframe) if stream URL extraction failed.
- * Custom controls won't work with iframes, but at least it plays.
- */
-function createEmbedFallback(request) {
-    const host = document.getElementById('mp-player-host');
-    const loading = document.getElementById('mp-loading-overlay');
-    const controls = document.getElementById('mp-controls');
-
-    const iframe = document.createElement('iframe');
-    iframe.src = request.embed_url;
-    iframe.allow = 'autoplay; fullscreen; picture-in-picture';
-    iframe.allowFullscreen = true;
-    iframe.style.cssText = 'width:100%;height:100%;display:block;border:none;';
-
-    const existingMedia = host.querySelector('video, audio, iframe');
-    if (existingMedia) existingMedia.remove();
-    host.appendChild(iframe);
-
-    loading.hidden = true;
-    controls.hidden = true; // Can't control iframes
-    mpMedia = null;
-}
-
 function destroyPlayer() {
     stopPositionSave();
     const host = document.getElementById('mp-player-host');
     if (host) {
-        const el = host.querySelector('video, audio, iframe');
+        const el = host.querySelector('video, audio');
         if (el) {
             try { el.pause(); } catch {}
             el.remove();
@@ -373,7 +317,7 @@ async function pollStreamUrl(requestId, maxWait = 25000) {
             const data = await mpApi(`/api/media/queue/${requestId}/stream-url`);
             if (data.download_status === 'ready' && data.stream_url) return data.stream_url;
             if (data.download_status === 'failed') return null;
-            document.getElementById('mp-loading-text').textContent = `Extracting (${data.download_status || 'working'})…`;
+            document.getElementById('mp-loading-text').textContent = `Preparing media (${data.download_status || 'working'})…`;
         } catch {
             return null;
         }

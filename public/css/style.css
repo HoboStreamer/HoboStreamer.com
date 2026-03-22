@@ -3894,12 +3894,25 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 }
 .weather-icon { font-size: 1.3rem; color: var(--primary, var(--accent)); }
 .weather-temp { font-size: 1.15rem; font-weight: 700; color: var(--text-primary); }
+.weather-topline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .weather-details {
     display: flex; flex-direction: column; gap: 1px; min-width: 0;
 }
 .weather-condition { font-weight: 600; color: var(--text-primary); font-size: 0.8rem; }
 .weather-location { font-size: 0.72rem; color: var(--text-muted); }
 .weather-meta { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.weather-unit-toggle {
+    border: 1px solid var(--border);
+    background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
+    color: var(--text-primary);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.2;
+    cursor: pointer;
+}
+.weather-unit-toggle:hover { border-color: var(--accent); color: var(--accent); }
 .weather-hourly {
     overflow: hidden; margin-top: 2px;
 }

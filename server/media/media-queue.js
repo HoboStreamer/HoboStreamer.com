@@ -132,6 +132,7 @@ class MediaQueue {
         const request = db.getMediaRequestById(requestId);
         if (!request) return null;
         if (request.stream_url && request.download_status === 'ready') return request;
+        const settings = this.getSettings(request.streamer_id);
         if (request.provider === 'audio' || request.provider === 'video') {
             // Direct media — the canonical_url IS the stream URL
             db.updateMediaRequest(requestId, {
@@ -141,23 +142,21 @@ class MediaQueue {
             return db.getMediaRequestById(requestId);
         }
 
-        // YouTube/Vimeo: always use iframe embed — yt-dlp is unreliable
-        // (YouTube bot detection, short-lived URLs, etc.)
-        if ((request.provider === 'youtube' || request.provider === 'vimeo') && request.embed_url) {
+        if (!downloader.isAvailable()) {
             db.updateMediaRequest(requestId, {
                 stream_url: null,
-                download_status: 'ready',
+                download_status: 'failed',
+                last_error: 'yt-dlp is not available on the server',
             });
             return db.getMediaRequestById(requestId);
         }
 
-        if (!downloader.isAvailable()) {
-            // No yt-dlp — fall back to embed URL
-            db.updateMediaRequest(requestId, {
-                stream_url: request.embed_url,
-                download_status: 'ready',
-            });
-            return db.getMediaRequestById(requestId);
+        const forceServerDownload = settings.download_mode === 'download'
+            || request.provider === 'youtube'
+            || request.provider === 'vimeo';
+
+        if (forceServerDownload) {
+            return this.downloadFileForRequest(requestId);
         }
 
         try {
@@ -173,18 +172,17 @@ class MediaQueue {
             return db.getMediaRequestById(requestId);
         } catch (err) {
             console.warn(`[MediaQueue] Stream URL extraction failed for request ${requestId}:`, err.message);
-            // Do NOT stuff embed URLs into stream_url.
-            // The web player uses `stream_url` for native <video>/<audio> playback,
-            // so writing a YouTube/Vimeo embed URL here causes MEDIA_ERR_SRC_NOT_SUPPORTED
-            // and false playback-failure refunds. Leave extraction marked failed so
-            // the client can explicitly choose iframe fallback when `embed_url` exists.
-            db.updateMediaRequest(requestId, {
-                stream_url: null,
-                download_status: 'failed',
-                last_error: `Extraction failed: ${err.message}`,
-            });
-            this.broadcastQueueUpdate(request.streamer_id);
-            return db.getMediaRequestById(requestId);
+            try {
+                return await this.downloadFileForRequest(requestId);
+            } catch (downloadErr) {
+                db.updateMediaRequest(requestId, {
+                    stream_url: null,
+                    download_status: 'failed',
+                    last_error: `Extraction failed: ${err.message}. Download fallback failed: ${downloadErr.message}`,
+                });
+                this.broadcastQueueUpdate(request.streamer_id);
+                return db.getMediaRequestById(requestId);
+            }
         }
     }
 
