@@ -2890,8 +2890,11 @@
                         <div class="settings-row">
                             <span class="settings-row-label">Zip / Postal Code</span>
                             <div class="settings-row-content">
-                                <input type="text" id="set-weather-zip" class="form-input" placeholder="e.g. 90210" maxlength="10" style="max-width:160px">
-                                <div class="settings-row-hint">Used to look up weather — never shown to viewers</div>
+                                <div style="display:flex;align-items:center;gap:6px">
+                                    <input type="password" id="set-weather-zip" class="form-input" placeholder="e.g. 90210" maxlength="10" autocomplete="off" style="max-width:160px">
+                                    <button type="button" class="btn btn-sm btn-ghost" onclick="const i=document.getElementById('set-weather-zip');const t=i.type==='password'?'text':'password';i.type=t;this.innerHTML=t==='password'?'<i class=\'fa-solid fa-eye\'></i>':'<i class=\'fa-solid fa-eye-slash\'></i>'" title="Show/hide zip code"><i class="fa-solid fa-eye"></i></button>
+                                </div>
+                                <div class="settings-row-hint">Used to look up weather — never shown to viewers. Hidden to protect your privacy while streaming.</div>
                             </div>
                         </div>
                         <div class="settings-row">
