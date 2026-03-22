@@ -18,6 +18,12 @@ const crypto = require('crypto');
 const YTDLP_PATH = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
 const CACHE_DIR = path.resolve('./data/media/cache');
 const COOKIES_PATH = path.resolve('./data/media/cookies.txt');
+const NODE_CANDIDATES = [
+    process.env.YTDLP_NODE_PATH,
+    '/usr/local/bin/node',
+    '/opt/nvm/versions/node/v20.20.1/bin/node',
+    '/home/ubuntu/.nvm/versions/node/v20.20.1/bin/node',
+];
 const MAX_CACHE_SIZE_MB = 2048;
 const CACHE_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
 const URL_CACHE_TTL_MS = 3 * 60 * 60 * 1000;  // 3 hours for extracted stream URLs
@@ -45,6 +51,35 @@ function isAvailable() {
 function getCookiesPath() { return COOKIES_PATH; }
 function getYtdlpPath() { return YTDLP_PATH; }
 
+function getNodePath() {
+    for (const candidate of NODE_CANDIDATES) {
+        if (!candidate) continue;
+        try {
+            if (fs.existsSync(candidate)) return candidate;
+        } catch {}
+    }
+    return null;
+}
+
+function commonArgs() {
+    const args = ['--ignore-config'];
+    const nodePath = getNodePath();
+    if (nodePath) {
+        args.push('--js-runtimes', `node:${nodePath}`, '--remote-components', 'ejs:github');
+    }
+    return args;
+}
+
+function ytdlpEnv() {
+    const env = { ...process.env };
+    const nodePath = getNodePath();
+    if (nodePath) {
+        const nodeDir = path.dirname(nodePath);
+        env.PATH = env.PATH ? `${nodeDir}:${env.PATH}` : nodeDir;
+    }
+    return env;
+}
+
 /**
  * Build common yt-dlp args including cookies if configured.
  */
@@ -64,6 +99,7 @@ function cookieArgs() {
 async function getInfo(url) {
     return new Promise((resolve, reject) => {
         const args = [
+            ...commonArgs(),
             ...cookieArgs(),
             '--no-download',
             '--print', '%(title)s\n%(duration)s\n%(thumbnail)s\n%(webpage_url)s\n%(id)s\n%(extractor)s\n%(is_live)s\n%(upload_date)s',
@@ -75,7 +111,7 @@ async function getInfo(url) {
             url,
         ];
 
-        execFile(YTDLP_PATH, args, { timeout: INFO_TIMEOUT_MS }, (err, stdout, stderr) => {
+        execFile(YTDLP_PATH, args, { timeout: INFO_TIMEOUT_MS, env: ytdlpEnv() }, (err, stdout, stderr) => {
             if (err) {
                 const msg = (stderr || err.message || '').slice(0, 300);
                 return reject(new Error(`Failed to get video info: ${msg}`));
@@ -120,11 +156,11 @@ async function extractStreamUrl(url) {
     const cookies = cookieArgs();
     const strategies = [
         // Best audio+video combined, prefer mp4
-        [...cookies, '--format', 'best[ext=mp4]/best[ext=webm]/best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
+        [...commonArgs(), ...cookies, '--format', 'best[ext=mp4]/best[ext=webm]/best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
         // Lower quality fallback
-        [...cookies, '--format', 'worst[ext=mp4]/worst', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
+        [...commonArgs(), ...cookies, '--format', 'worst[ext=mp4]/worst', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
         // Force generic
-        [...cookies, '--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
+        [...commonArgs(), ...cookies, '--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
     ];
 
     for (let i = 0; i < strategies.length; i++) {
@@ -165,6 +201,7 @@ async function downloadToFile(url, maxDurationSeconds = 600) {
 
     return new Promise((resolve, reject) => {
         const args = [
+            ...commonArgs(),
             ...cookieArgs(),
             '--format', 'best[ext=mp4][filesize<200M]/best[ext=mp4]/best[filesize<200M]/best',
             '--output', filePath,
@@ -185,7 +222,7 @@ async function downloadToFile(url, maxDurationSeconds = 600) {
 
         args.push(url);
 
-        const proc = spawn(YTDLP_PATH, args, { timeout: DOWNLOAD_TIMEOUT_MS });
+        const proc = spawn(YTDLP_PATH, args, { timeout: DOWNLOAD_TIMEOUT_MS, env: ytdlpEnv() });
         let stderr = '';
         proc.stderr.on('data', (d) => { stderr += d.toString().slice(-500); });
 
@@ -269,7 +306,7 @@ setInterval(() => {
  */
 function runYtdlp(args) {
     return new Promise((resolve, reject) => {
-        execFile(YTDLP_PATH, args, { timeout: EXTRACT_TIMEOUT_MS }, (err, stdout, stderr) => {
+        execFile(YTDLP_PATH, args, { timeout: EXTRACT_TIMEOUT_MS, env: ytdlpEnv() }, (err, stdout, stderr) => {
             if (err) return reject(new Error((stderr || err.message || '').slice(0, 300)));
             resolve(stdout.trim());
         });
