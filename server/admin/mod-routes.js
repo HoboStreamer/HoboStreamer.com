@@ -259,10 +259,22 @@ router.get('/chat/search', (req, res) => {
         const limit = Math.min(parseInt(req.query.limit || '50'), 200);
         const offset = parseInt(req.query.offset || '0');
         const query = req.query.q || '';
-        const userId = req.query.user_id ? parseInt(req.query.user_id) : null;
+        const rawUid = (req.query.user_id || '').trim();
         const streamId = req.query.stream_id ? parseInt(req.query.stream_id) : null;
 
-        const result = db.searchChatMessages({ query, userId, streamId, limit, offset });
+        // Support "anon123" in the user_id field — route to anonId filter
+        let userId = null;
+        let anonId = null;
+        if (rawUid) {
+            const anonMatch = rawUid.match(/^anon(\d+)$/i);
+            if (anonMatch) {
+                anonId = rawUid.toLowerCase();
+            } else {
+                userId = parseInt(rawUid) || null;
+            }
+        }
+
+        const result = db.searchChatMessages({ query, userId, anonId, streamId, limit, offset });
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: 'Search failed' });
