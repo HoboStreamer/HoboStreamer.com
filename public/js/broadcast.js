@@ -2276,32 +2276,86 @@ function startGlobalDisplayTimers() {
         if (!ss || ss.statsPollPending) return;
         ss.statsPollPending = true;
         let totalBytesSent = 0, frameRate = 0, resolution = '', connState = 'waiting', codec = '';
+        let hasStats = false;
         try {
-            if (ss.viewerConnections.size === 0) {
-                if (ss.localStream) {
-                    const vt = ss.localStream.getVideoTracks()[0];
-                    if (vt) { const st = vt.getSettings(); resolution = `${st.width || '?'}x${st.height || '?'}`; frameRate = st.frameRate || 0; }
-                    connState = ss.signalingWs?.readyState === WebSocket.OPEN ? 'connected' : 'disconnected';
-                }
-            } else {
+            // Helper: extract video stats from an RTCStatsReport
+            const extractStats = (stats) => {
+                let bytes = 0;
+                stats.forEach(r => {
+                    if (r.type === 'outbound-rtp' && r.kind === 'video') {
+                        bytes += r.bytesSent || 0;  // sum all video layers (simulcast)
+                        if (r.framesPerSecond) frameRate = r.framesPerSecond;
+                        if (r.frameWidth && r.frameHeight) resolution = `${r.frameWidth}x${r.frameHeight}`;
+                    }
+                    if (r.type === 'codec' && r.mimeType?.startsWith('video/')) codec = r.mimeType.replace('video/', '');
+                });
+                return bytes;
+            };
+
+            if (ss.viewerConnections.size > 0) {
+                // Direct peer connections — sample the first connected one
                 for (const [, pc] of ss.viewerConnections) {
                     try {
                         connState = pc.iceConnectionState;
-                        const stats = await pc.getStats();
-                        stats.forEach(r => {
-                            if (r.type === 'outbound-rtp' && r.kind === 'video') { totalBytesSent = r.bytesSent || 0; frameRate = r.framesPerSecond || 0; if (r.frameWidth && r.frameHeight) resolution = `${r.frameWidth}x${r.frameHeight}`; }
-                            if (r.type === 'codec' && r.mimeType?.startsWith('video/')) codec = r.mimeType.replace('video/', '');
-                        }); break;
+                        totalBytesSent = extractStats(await pc.getStats());
+                        hasStats = totalBytesSent > 0;
+                        break;
                     } catch {}
                 }
             }
-            const now = Date.now(); let bitrateKbps = 0;
-            if (ss.lastStatTime > 0 && totalBytesSent > 0) { const db = totalBytesSent - ss.lastStatBytes; const dm = now - ss.lastStatTime; if (dm > 0 && db >= 0) bitrateKbps = Math.round((db * 8) / dm); }
-            ss.lastStatBytes = totalBytesSent; ss.lastStatTime = now;
+
+            // Fallback: SFU produce transport (for restreaming scenarios)
+            if (!hasStats) {
+                const sfuState = _sfuProduceStates.get(ss.streamData?.id);
+                if (sfuState?.transport) {
+                    try {
+                        const sfuStats = await sfuState.transport.getStats();
+                        totalBytesSent = extractStats(sfuStats);
+                        hasStats = totalBytesSent > 0;
+                        if (hasStats) connState = 'connected';
+                    } catch {}
+                }
+            }
+
+            // Fallback: local stream settings (when no WebRTC stats available)
+            if (!hasStats && ss.localStream) {
+                const vt = ss.localStream.getVideoTracks()[0];
+                if (vt) {
+                    const st = vt.getSettings();
+                    resolution = `${st.width || '?'}x${st.height || '?'}`;
+                    frameRate = st.frameRate || 0;
+                }
+                connState = ss.signalingWs?.readyState === WebSocket.OPEN ? 'connected' : 'disconnected';
+            }
+
+            // Compute bitrate from byte deltas
+            const now = Date.now();
+            let bitrateKbps = 0;
+            if (ss.lastStatTime > 0 && totalBytesSent > 0) {
+                const db = totalBytesSent - ss.lastStatBytes;
+                const dm = now - ss.lastStatTime;
+                if (dm > 0 && db >= 0) bitrateKbps = Math.round((db * 8) / dm);
+            }
+            ss.lastStatBytes = totalBytesSent;
+            ss.lastStatTime = now;
+
+            // Format bitrate for display
             const setT = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
-            setT('bc-stat-bitrate', ss.viewerConnections.size > 0 ? `${bitrateKbps} kbps` : 'no viewers');
-            setT('bc-stat-fps', `${Math.round(frameRate)} fps`); setT('bc-stat-resolution', resolution || '--');
-            setT('bc-stat-status', connState); setT('bc-stat-codec', codec || '--');
+            let bitrateText;
+            if (hasStats && bitrateKbps > 0) {
+                bitrateText = bitrateKbps >= 1000 ? `${(bitrateKbps / 1000).toFixed(1)} Mbps` : `${bitrateKbps} kbps`;
+            } else if (hasStats) {
+                bitrateText = 'measuring...';
+            } else {
+                // No WebRTC stats — show target bitrate as estimate
+                const targetKbps = parseInt(broadcastState.settings.broadcastBps, 10) || 0;
+                bitrateText = targetKbps > 0 ? `~${targetKbps >= 1000 ? (targetKbps / 1000).toFixed(1) + ' Mbps' : targetKbps + ' kbps'}` : '--';
+            }
+            setT('bc-stat-bitrate', bitrateText);
+            setT('bc-stat-fps', `${Math.round(frameRate)} fps`);
+            setT('bc-stat-resolution', resolution || '--');
+            setT('bc-stat-status', connState);
+            setT('bc-stat-codec', codec || '--');
         } finally {
             if (ss) ss.statsPollPending = false;
         }
