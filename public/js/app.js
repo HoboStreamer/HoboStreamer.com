@@ -1270,13 +1270,12 @@ function renderChannelMediaStrip(channel, mediaData) {
     if (!mount) {
         mount = document.createElement('div');
         mount.id = mountId;
-        mount.style.marginTop = '10px';
-        mount.style.display = 'flex';
-        mount.style.flexWrap = 'wrap';
-        mount.style.gap = '10px';
-        const infoText = document.querySelector('#ch-info-bar .ch-info-bar-text');
+        mount.className = 'ch-media-strip';
+        // Mount as its own row after the info bar, not inside info-bar-text
+        const infoBar = document.getElementById('ch-info-bar');
+        if (infoBar) infoBar.insertAdjacentElement('afterend', mount);
+        // Offline clone
         const offlineInfo = document.querySelector('#ch-offline-header .ch-offline-header-info');
-        if (infoText) infoText.appendChild(mount);
         if (offlineInfo && !offlineInfo.querySelector(`#${mountId}`)) {
             const clone = mount.cloneNode(false);
             clone.id = `${mountId}-offline`;
@@ -1288,13 +1287,16 @@ function renderChannelMediaStrip(channel, mediaData) {
     const cost = mediaData?.state?.settings?.request_cost || 25;
     const queueUrl = mediaData?.media_player_url || `/media/${channel.username}`;
     const html = `
-        <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(192,150,92,.12);border:1px solid rgba(192,150,92,.22);font-size:.92rem;">
+        <div class="ch-media-strip-info">
             <i class="fa-solid fa-headphones"></i>
-            Request media with <strong>!sr</strong>/<strong>!yt</strong>/<strong>!youtube</strong>/<strong>!req</strong>/<strong>!request</strong> &lt;url&gt; · ${cost} coins · ${queueCount} queued
-        </span>
-        <a href="${queueUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:inherit;text-decoration:none;font-size:.92rem;">
-            <i class="fa-solid fa-up-right-from-square"></i>
-            Open media queue
+            <span><strong>!sr</strong> &lt;url&gt;</span>
+            <span class="ch-media-strip-sep">·</span>
+            <span>${cost} coins</span>
+            <span class="ch-media-strip-sep">·</span>
+            <span>${queueCount} queued</span>
+        </div>
+        <a href="${queueUrl}" target="_blank" rel="noopener" class="ch-media-strip-link">
+            <i class="fa-solid fa-up-right-from-square"></i> Open queue
         </a>`;
 
     mount.innerHTML = html;
