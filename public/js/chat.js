@@ -791,6 +791,19 @@ function handleChatMessage(msg) {
             addSystemMessage('Chat was cleared by a moderator');
             break;
         }
+        case 'delete-messages': {
+            // Remove specific messages from the DOM by their IDs
+            if (msg.ids && msg.ids.length > 0) {
+                const idSet = new Set(msg.ids.map(String));
+                document.querySelectorAll('.chat-msg[data-msg-id]').forEach(el => {
+                    if (idSet.has(el.dataset.msgId)) {
+                        el.classList.add('chat-msg-deleted');
+                        setTimeout(() => el.remove(), 300);
+                    }
+                });
+            }
+            break;
+        }
         case 'tts':
             // Legacy browser-side TTS (Self TTS mode)
             if (typeof isStreaming === 'function' && isStreaming() && broadcastState?.settings?.ttsMode === 'self') {
@@ -905,6 +918,9 @@ function addChatMessage(msg) {
 
     // Attach message ID for reply targeting
     if (msg.id) el.dataset.msgId = msg.id;
+    // Attach source platform for relay user identification
+    if (msg.source_platform) el.dataset.sourcePlatform = msg.source_platform;
+    if (msg.role === 'external') el.dataset.isRelay = '1';
 
     const isGlobal = chatEl.isGlobal;
 
@@ -1603,6 +1619,8 @@ function showChatContextMenu(event) {
     // Extract message data from parent .chat-msg for reply support
     const msgEl = target.closest('.chat-msg');
     const msgId = msgEl?.dataset?.msgId || null;
+    const isRelay = msgEl?.dataset?.isRelay === '1';
+    const sourcePlatform = msgEl?.dataset?.sourcePlatform || '';
 
     const menu = document.createElement('div');
     menu.className = 'chat-context-menu';
@@ -1614,6 +1632,10 @@ function showChatContextMenu(event) {
         const msgText = msgEl?.textContent?.split(username + ':')?.slice(1)?.join(':')?.trim() || '';
         menu.dataset.replyMessage = msgText.slice(0, 100);
     }
+    // Store message and relay data for moderation actions
+    menu.dataset.msgId = msgId || '';
+    menu.dataset.isRelay = isRelay ? '1' : '';
+    menu.dataset.sourcePlatform = sourcePlatform;
     menu.innerHTML = `
         <div class="ctx-loading"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>
     `;
@@ -1623,8 +1645,12 @@ function showChatContextMenu(event) {
     positionContextMenu(menu, event.clientX, event.clientY);
     activeContextMenu = menu;
 
-    // Fetch user profile (or render simplified menu for anon users)
-    loadContextMenuProfile(menu, coreUsername, userId, isAnon);
+    // Fetch user profile (or render simplified menu for relay/anon users)
+    if (isRelay) {
+        renderRelayContextMenu(menu, username, sourcePlatform);
+    } else {
+        loadContextMenuProfile(menu, coreUsername, userId, isAnon);
+    }
 
     // Clicks inside the menu shouldn't dismiss it (needed for rename submenu toggle etc.)
     menu.addEventListener('click', (e) => e.stopPropagation());
@@ -1733,10 +1759,25 @@ async function loadContextMenuProfile(menu, username, userId, isAnon) {
 
 function renderAnonContextMenu(menu, username, userId) {
     const initial = username[0] ? username[0].toUpperCase() : '?';
+    const canMod = canModerateCurrentStream() && chatStreamId;
+    const isGlobalMod = currentUser?.capabilities?.moderate_global;
+
+    let modBtns = '';
     let banBtns = '';
-    const showStreamBan = canModerateCurrentStream() && chatStreamId;
+    const showStreamBan = canMod;
     const showSiteBan = currentUser?.capabilities?.manage_site_bans;
     const showAdminTools = currentUser?.capabilities?.view_ip_info;
+
+    // Delete message / delete all messages (moderators)
+    if (canMod || isGlobalMod) {
+        const msgId = menu.dataset.msgId;
+        if (msgId) {
+            modBtns += `<button class="ctx-btn ctx-btn-warn" onclick="ctxDeleteMessage('${esc(msgId)}')"><i class="fa-solid fa-trash"></i> Delete Message</button>`;
+        }
+        modBtns += `<button class="ctx-btn ctx-btn-warn" data-username="${esc(username)}" onclick="ctxDeleteAllAnonMessages(this.dataset.username)"><i class="fa-solid fa-trash-can"></i> Delete All Messages</button>`;
+    }
+    if (modBtns) modBtns = '<div class="ctx-divider"></div>' + modBtns;
+
     if (showStreamBan || showSiteBan || showAdminTools) banBtns += '<div class="ctx-divider"></div>';
     if (showAdminTools) {
         banBtns += `<button class="ctx-btn ctx-btn-admin-tools" data-username="${esc(username)}" data-uid="" data-anon="1" onclick="ctxAdminTools(this.dataset.username, null, this.dataset.username)"><i class="fa-solid fa-shield-halved"></i> Admin Tools</button>`;
@@ -1758,6 +1799,7 @@ function renderAnonContextMenu(menu, username, userId) {
         <div class="ctx-actions">
             ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
+            ${modBtns}
             ${banBtns}
         </div>
     `;
@@ -1795,6 +1837,18 @@ function renderContextMenu(menu, profile, username) {
     const coins = profile.hobo_coins_balance || 0;
     const msgs = profile.messageCount || 0;
 
+    // Moderation: delete message / delete all messages
+    const canMod = canModerateCurrentStream() && chatStreamId;
+    const isGlobalMod = currentUser?.capabilities?.moderate_global;
+    let modBtns = '';
+    if (canMod || isGlobalMod) {
+        const msgId = menu.dataset.msgId;
+        if (msgId) {
+            modBtns += `<button class="ctx-btn ctx-btn-warn" onclick="ctxDeleteMessage('${esc(String(msgId))}')"><i class="fa-solid fa-trash"></i> Delete Message</button>`;
+        }
+        modBtns += `<button class="ctx-btn ctx-btn-warn" data-uid="${profile.id}" onclick="ctxDeleteAllUserMessages(this.dataset.uid)"><i class="fa-solid fa-trash-can"></i> Delete All Messages</button>`;
+    }
+
     menu.innerHTML = `
         <div class="ctx-header">
             ${avatarHtml}
@@ -1822,6 +1876,7 @@ function renderContextMenu(menu, profile, username) {
                     <button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" data-display="${esc(profile.display_name || username)}" onclick="ctxRenameDisplayName(this.dataset.username, this.dataset.uid, this.dataset.display)"><i class="fa-solid fa-signature"></i> Rename Display Name</button>
                 </div>
             </div>` : ''}
+            ${modBtns ? '<div class="ctx-divider"></div>' + modBtns : ''}
             ${(canModerateCurrentStream() && chatStreamId) || currentUser?.capabilities?.manage_site_bans || currentUser?.capabilities?.view_ip_info ? '<div class="ctx-divider"></div>' : ''}
             ${currentUser?.capabilities?.view_ip_info ? `<button class="ctx-btn ctx-btn-admin-tools" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxAdminTools(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-shield-halved"></i> Admin Tools</button>` : ''}
             ${canModerateCurrentStream() && chatStreamId ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxStreamBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>` : ''}
@@ -1942,6 +1997,146 @@ function ctxGlobalBanAnon(anonName) {
             if (result) toast(`${anonName} IP-banned (${result.banned_user_ids?.length || 0} associated accounts also banned)`, 'success');
         })
         .catch(e => toast(e.message || 'Ban failed', 'error'));
+}
+
+/* ── Message deletion actions ─────────────────────────────────── */
+
+function ctxDeleteMessage(msgId) {
+    dismissContextMenu();
+    if (!msgId) return;
+    api('/mod/delete-message', { method: 'POST', body: { message_id: msgId, stream_id: chatStreamId || null } })
+        .then(() => toast('Message deleted', 'success'))
+        .catch(e => toast(e.message || 'Delete failed', 'error'));
+}
+
+function ctxDeleteAllUserMessages(userId) {
+    dismissContextMenu();
+    if (!userId) return;
+    const scope = currentUser?.capabilities?.moderate_global ? 'globally' : 'from this stream';
+    if (!confirm(`Delete ALL messages from this user ${scope}?`)) return;
+    const body = { user_id: userId };
+    if (chatStreamId) body.stream_id = chatStreamId;
+    api('/mod/delete-user-messages', { method: 'POST', body })
+        .then(r => toast(`Deleted ${r.count || 0} message(s)`, 'success'))
+        .catch(e => toast(e.message || 'Delete failed', 'error'));
+}
+
+function ctxDeleteAllAnonMessages(anonId) {
+    dismissContextMenu();
+    if (!anonId) return;
+    const scope = currentUser?.capabilities?.moderate_global ? 'globally' : 'from this stream';
+    if (!confirm(`Delete ALL messages from ${anonId} ${scope}?`)) return;
+    const body = { anon_id: anonId };
+    if (chatStreamId) body.stream_id = chatStreamId;
+    api('/mod/delete-user-messages', { method: 'POST', body })
+        .then(r => toast(`Deleted ${r.count || 0} message(s)`, 'success'))
+        .catch(e => toast(e.message || 'Delete failed', 'error'));
+}
+
+function ctxDeleteRelayMessages(relayUsername) {
+    dismissContextMenu();
+    if (!relayUsername) return;
+    const scope = currentUser?.capabilities?.moderate_global ? 'globally' : 'from this stream';
+    if (!confirm(`Delete ALL messages from ${relayUsername} ${scope}?`)) return;
+    const body = { relay_username: relayUsername };
+    if (chatStreamId) body.stream_id = chatStreamId;
+    api('/mod/delete-user-messages', { method: 'POST', body })
+        .then(r => toast(`Deleted ${r.count || 0} message(s)`, 'success'))
+        .catch(e => toast(e.message || 'Delete failed', 'error'));
+}
+
+/* ── Relay user moderation ────────────────────────────────────── */
+
+/**
+ * Parse a relay username like "[Twitch] foobar" into { platform, externalUsername }.
+ */
+function parseRelayUsername(prefixedUsername) {
+    const match = prefixedUsername.match(/^\[(\w+)\]\s*(.+)$/);
+    if (match) return { platform: match[1].toLowerCase(), externalUsername: match[2] };
+    return { platform: '', externalUsername: prefixedUsername };
+}
+
+function ctxHideRelayUser(prefixedUsername) {
+    dismissContextMenu();
+    const { platform, externalUsername } = parseRelayUsername(prefixedUsername);
+    if (!platform) return toast('Could not identify platform', 'error');
+    if (!confirm(`Hide [${platform}] ${externalUsername} from this stream? Their messages will no longer appear.`)) return;
+    api('/mod/relay-user/hide', {
+        method: 'POST',
+        body: {
+            channel_id: currentStreamData?.channel_id || null,
+            platform,
+            external_username: externalUsername,
+            action: 'hide',
+            reason: 'Hidden via chat context menu',
+        },
+    })
+        .then(() => toast(`[${platform}] ${externalUsername} hidden`, 'success'))
+        .catch(e => toast(e.message || 'Hide failed', 'error'));
+}
+
+function ctxBanRelayUser(prefixedUsername) {
+    dismissContextMenu();
+    const { platform, externalUsername } = parseRelayUsername(prefixedUsername);
+    if (!platform) return toast('Could not identify platform', 'error');
+    if (!confirm(`⚠️ Ban [${platform}] ${externalUsername}? Their messages will be hidden and future messages blocked.`)) return;
+    // Ban the relay user AND delete their messages
+    const body = {
+        channel_id: currentStreamData?.channel_id || null,
+        platform,
+        external_username: externalUsername,
+        action: 'ban',
+        reason: 'Banned via chat context menu',
+    };
+    api('/mod/relay-user/hide', { method: 'POST', body })
+        .then(() => {
+            // Also delete their existing messages
+            const deleteBody = { relay_username: prefixedUsername };
+            if (chatStreamId) deleteBody.stream_id = chatStreamId;
+            return api('/mod/delete-user-messages', { method: 'POST', body: deleteBody });
+        })
+        .then(r => toast(`[${platform}] ${externalUsername} banned — ${r?.count || 0} message(s) deleted`, 'success'))
+        .catch(e => toast(e.message || 'Ban failed', 'error'));
+}
+
+/**
+ * Render context menu for relayed external users (Twitch, Kick, YouTube, RS).
+ */
+function renderRelayContextMenu(menu, username, sourcePlatform) {
+    const { platform, externalUsername } = parseRelayUsername(username);
+    const displayPlatform = platform.charAt(0).toUpperCase() + platform.slice(1);
+    const initial = externalUsername[0] ? externalUsername[0].toUpperCase() : '?';
+
+    const platformColors = { twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', rs: '#e67e22' };
+    const color = platformColors[platform] || '#888';
+
+    const canMod = canModerateCurrentStream() && chatStreamId;
+    const isGlobalMod = currentUser?.capabilities?.moderate_global;
+
+    let modBtns = '';
+    if (canMod || isGlobalMod) {
+        const msgId = menu.dataset.msgId;
+        if (msgId) {
+            modBtns += `<button class="ctx-btn ctx-btn-warn" onclick="ctxDeleteMessage('${esc(String(msgId))}')"><i class="fa-solid fa-trash"></i> Delete Message</button>`;
+        }
+        modBtns += `<button class="ctx-btn ctx-btn-warn" data-username="${esc(username)}" onclick="ctxDeleteRelayMessages(this.dataset.username)"><i class="fa-solid fa-trash-can"></i> Delete All Messages</button>`;
+        modBtns += `<button class="ctx-btn ctx-btn-warn" data-username="${esc(username)}" onclick="ctxHideRelayUser(this.dataset.username)"><i class="fa-solid fa-eye-slash"></i> Hide from stream</button>`;
+        modBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" onclick="ctxBanRelayUser(this.dataset.username)"><i class="fa-solid fa-ban"></i> Ban from stream</button>`;
+    }
+
+    menu.innerHTML = `
+        <div class="ctx-header">
+            <span class="ctx-avatar-letter" style="background:${esc(color)}">${initial}</span>
+            <div class="ctx-info">
+                <span class="ctx-name">${esc(externalUsername)}</span>
+                <span class="ctx-meta"><i class="fa-solid fa-link"></i> ${esc(displayPlatform)} relay user</span>
+            </div>
+        </div>
+        <div class="ctx-actions">
+            ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
+            ${modBtns ? '<div class="ctx-divider"></div>' + modBtns : ''}
+        </div>
+    `;
 }
 
 /* ═══════════════════════════════════════════════════════════════

@@ -103,10 +103,20 @@ function renderDashModerationChannels(channels) {
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-links-${channel.id}" ${settings.links_allowed !== false ? 'checked' : ''}> Allow Links</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-filter-${channel.id}" ${settings.aggressive_filter ? 'checked' : ''}> Aggressive Filter</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-followers-${channel.id}" ${settings.followers_only ? 'checked' : ''}> Followers Only</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-ipapproval-${channel.id}" ${settings.ip_approval_mode ? 'checked' : ''}> <span>IP Approval Mode <i class="fa-solid fa-shield-halved" title="New IPs must be approved before messages are visible"></i></span></label>
                         </div>
                         <button class="btn btn-primary" onclick="dashSaveChannelModerationSettings(${channel.id})"><i class="fa-solid fa-floppy-disk"></i> Save Settings</button>
                     </div>
                 </div>
+
+                ${settings.ip_approval_mode ? `
+                <div class="dash-mod-grid">
+                    <div class="dash-mod-section dash-mod-section-wide">
+                        <h5><i class="fa-solid fa-shield-halved"></i> IP Approval Queue</h5>
+                        <div id="dash-mod-ip-queue-${channel.id}" class="dash-mod-ip-queue"><p class="muted">Loading pending messages...</p></div>
+                    </div>
+                </div>
+                ` : ''}
 
                 <div class="dash-mod-grid">
                     <div class="dash-mod-section">
@@ -130,6 +140,10 @@ function renderDashModerationChannels(channels) {
 
     channels.forEach((channel) => {
         dashLoadChannelModerationLogs(channel.id);
+        const settings = channel.moderation_settings || {};
+        if (settings.ip_approval_mode) {
+            dashLoadIpApprovalQueue(channel.id);
+        }
     });
 }
 
@@ -182,7 +196,7 @@ window.dashAddChannelModerator = async function dashAddChannelModerator(channelI
     if (!username) return toast('Enter a username to add.', 'error');
 
     try {
-        await api(`/channels/${channelId}/moderators`, {
+        await api(`/channels/${channelId}/mods`, {
             method: 'POST',
             body: { username },
         });
@@ -197,7 +211,7 @@ window.dashRemoveChannelModerator = async function dashRemoveChannelModerator(ch
     if (!confirm(`Remove ${username} as a channel moderator?`)) return;
 
     try {
-        await api(`/channels/${channelId}/moderators/${userId}`, { method: 'DELETE' });
+        await api(`/channels/${channelId}/mods/${userId}`, { method: 'DELETE' });
         toast(`${username} removed`, 'success');
         await dashReloadModeration();
     } catch (err) {
@@ -207,7 +221,7 @@ window.dashRemoveChannelModerator = async function dashRemoveChannelModerator(ch
 
 window.dashSaveChannelModerationSettings = async function dashSaveChannelModerationSettings(channelId) {
     try {
-        await api(`/channels/${channelId}/moderation/settings`, {
+        await api(`/channels/${channelId}/moderation`, {
             method: 'PUT',
             body: {
                 slowmode_seconds: Number(document.getElementById(`dash-mod-slow-${channelId}`)?.value || 0),
@@ -218,6 +232,7 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 links_allowed: !!document.getElementById(`dash-mod-links-${channelId}`)?.checked,
                 aggressive_filter: !!document.getElementById(`dash-mod-filter-${channelId}`)?.checked,
                 followers_only: !!document.getElementById(`dash-mod-followers-${channelId}`)?.checked,
+                ip_approval_mode: !!document.getElementById(`dash-mod-ipapproval-${channelId}`)?.checked,
             },
         });
         toast('Channel moderation settings saved', 'success');
@@ -268,6 +283,88 @@ window.dashDeleteChannelMessage = async function dashDeleteChannelMessage(channe
         await window.dashSearchChannelChat(channelId);
     } catch (err) {
         toast(err.message || 'Failed to delete message', 'error');
+    }
+};
+
+/* ── IP Approval Queue ────────────────────────────────────── */
+
+async function dashLoadIpApprovalQueue(channelId) {
+    const target = document.getElementById(`dash-mod-ip-queue-${channelId}`);
+    if (!target) return;
+
+    try {
+        const data = await api(`/mod/ip-approval/${channelId}/pending`);
+        const pending = data.pending || [];
+
+        if (!pending.length) {
+            target.innerHTML = '<p class="muted">No pending IP approvals.</p>';
+            return;
+        }
+
+        // Group by IP address for easier review
+        const byIp = {};
+        for (const msg of pending) {
+            const ip = msg.ip_address || 'unknown';
+            if (!byIp[ip]) byIp[ip] = { ip, geo: msg.geo, messages: [] };
+            byIp[ip].messages.push(msg);
+        }
+
+        target.innerHTML = Object.values(byIp).map(group => {
+            const geoStr = group.geo ? [group.geo.city, group.geo.region, group.geo.country].filter(Boolean).join(', ') : 'Unknown';
+            return `
+                <div class="dash-ip-approval-group">
+                    <div class="dash-ip-approval-header">
+                        <div>
+                            <strong>${esc(group.ip)}</strong>
+                            <span class="muted"> — ${esc(geoStr)}</span>
+                            <span class="muted"> (${group.messages.length} message${group.messages.length > 1 ? 's' : ''})</span>
+                        </div>
+                        <div class="dash-ip-approval-actions">
+                            <button class="btn btn-small btn-primary" onclick="dashApproveIp(${channelId}, '${esc(group.ip)}')"><i class="fa-solid fa-check"></i> Approve</button>
+                            <button class="btn btn-small" onclick="dashDenyIp(${channelId}, '${esc(group.ip)}')"><i class="fa-solid fa-xmark"></i> Deny</button>
+                        </div>
+                    </div>
+                    <div class="dash-ip-approval-messages">
+                        ${group.messages.map(m => `
+                            <div class="dash-mod-log-entry">
+                                <strong>${esc(m.username || 'Anonymous')}</strong>
+                                <span class="muted">${dashFormatModerationDate(m.created_at)}</span>
+                                <div>${esc(m.message || '')}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        target.innerHTML = `<p class="muted">Failed to load IP approval queue: ${esc(err.message || 'Unknown error')}</p>`;
+    }
+}
+
+window.dashApproveIp = async function dashApproveIp(channelId, ip) {
+    try {
+        const result = await api(`/mod/ip-approval/${channelId}/approve`, {
+            method: 'POST',
+            body: { ip },
+        });
+        toast(result.message || 'IP approved', 'success');
+        await dashLoadIpApprovalQueue(channelId);
+    } catch (err) {
+        toast(err.message || 'Failed to approve IP', 'error');
+    }
+};
+
+window.dashDenyIp = async function dashDenyIp(channelId, ip) {
+    if (!confirm(`Deny all messages from IP ${ip}?`)) return;
+    try {
+        await api(`/mod/ip-approval/${channelId}/deny`, {
+            method: 'POST',
+            body: { ip },
+        });
+        toast('IP denied', 'success');
+        await dashLoadIpApprovalQueue(channelId);
+    } catch (err) {
+        toast(err.message || 'Failed to deny IP', 'error');
     }
 };
 

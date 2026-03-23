@@ -618,6 +618,87 @@ function initDb() {
         database.exec(`CREATE INDEX IF NOT EXISTS idx_ip_log_action ON ip_log(action)`);
     } catch (e) { console.warn('[DB] ip_log migration:', e.message); }
 
+    // Migrate: approved_ips — per-channel IP whitelist for anti-VPN mode
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS approved_ips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            ip_address TEXT NOT NULL,
+            approved_by INTEGER,
+            source TEXT DEFAULT 'auto',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(channel_id, ip_address),
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_approved_ips_channel ON approved_ips(channel_id)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_approved_ips_ip ON approved_ips(ip_address)`);
+    } catch (e) { console.warn('[DB] approved_ips migration:', e.message); }
+
+    // Migrate: pending_ip_messages — messages held for IP approval when anti-VPN mode is on
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS pending_ip_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            stream_id INTEGER,
+            ip_address TEXT NOT NULL,
+            user_id INTEGER,
+            anon_id TEXT,
+            username TEXT,
+            message TEXT NOT NULL,
+            status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','denied')),
+            reviewed_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_pending_ip_channel ON pending_ip_messages(channel_id, status)`);
+    } catch (e) { console.warn('[DB] pending_ip_messages migration:', e.message); }
+
+    // Migrate: hidden_relay_users — relayed external users banned/hidden by streamer or admin
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS hidden_relay_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER,
+            platform TEXT NOT NULL,
+            external_username TEXT NOT NULL,
+            action TEXT DEFAULT 'hide' CHECK(action IN ('hide','ban')),
+            reason TEXT,
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_hidden_relay_channel ON hidden_relay_users(channel_id, platform)`);
+    } catch (e) { console.warn('[DB] hidden_relay_users migration:', e.message); }
+
+    // Migrate: add ip_approval_mode to channel_moderation_settings
+    try {
+        const cols = database.pragma('table_info(channel_moderation_settings)').map(c => c.name);
+        if (!cols.includes('ip_approval_mode')) {
+            database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN ip_approval_mode INTEGER DEFAULT 0');
+        }
+    } catch (e) { console.warn('[DB] ip_approval_mode migration:', e.message); }
+
+    // Migrate: add deleted_by and deleted_at to chat_messages for soft-delete attribution
+    try {
+        const cols = database.pragma('table_info(chat_messages)').map(c => c.name);
+        if (!cols.includes('deleted_by')) {
+            database.exec('ALTER TABLE chat_messages ADD COLUMN deleted_by INTEGER');
+        }
+        if (!cols.includes('deleted_at')) {
+            database.exec("ALTER TABLE chat_messages ADD COLUMN deleted_at DATETIME");
+        }
+    } catch (e) { console.warn('[DB] chat_messages delete attribution migration:', e.message); }
+
+    // Migrate: add source_platform column to chat_messages for filtering relayed messages
+    try {
+        const cols = database.pragma('table_info(chat_messages)').map(c => c.name);
+        if (!cols.includes('source_platform')) {
+            database.exec("ALTER TABLE chat_messages ADD COLUMN source_platform TEXT");
+        }
+    } catch (e) { console.warn('[DB] chat_messages source_platform migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -911,11 +992,11 @@ function deleteRestreamDestination(id) {
 
 // ── Chat helpers ─────────────────────────────────────────────
 
-function saveChatMessage({ stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id }) {
+function saveChatMessage({ stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform }) {
     return run(
-        `INSERT INTO chat_messages (stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [stream_id, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null]
+        `INSERT INTO chat_messages (stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null, source_platform || null]
     );
 }
 
@@ -1750,6 +1831,7 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.caps_percentage_limit !== undefined) { updates.push('caps_percentage_limit = ?'); params.push(Number(fields.caps_percentage_limit) || 0); }
         if (fields.aggressive_filter !== undefined) { updates.push('aggressive_filter = ?'); params.push(fields.aggressive_filter ? 1 : 0); }
         if (fields.max_message_length !== undefined) { updates.push('max_message_length = ?'); params.push(Math.max(50, Number(fields.max_message_length) || 500)); }
+        if (fields.ip_approval_mode !== undefined) { updates.push('ip_approval_mode = ?'); params.push(fields.ip_approval_mode ? 1 : 0); }
         if (updates.length > 0) {
             updates.push('updated_at = CURRENT_TIMESTAMP');
             params.push(channelId);
@@ -2092,10 +2174,207 @@ function getChatMessageById(id) {
 }
 
 /**
- * Delete a chat message by ID.
+ * Soft-delete a chat message by ID. Sets is_deleted=1 and records who deleted it.
  */
-function deleteChatMessage(id) {
-    return run('DELETE FROM chat_messages WHERE id = ?', [id]);
+function deleteChatMessage(id, deletedBy = null) {
+    return run(
+        'UPDATE chat_messages SET is_deleted = 1, deleted_by = ?, deleted_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [deletedBy, id]
+    );
+}
+
+/**
+ * Soft-delete ALL chat messages from a specific user, optionally scoped to a stream.
+ * Returns the list of deleted message IDs for real-time broadcast.
+ */
+function deleteUserChatMessages(userId, { streamId = null, deletedBy = null } = {}) {
+    const condition = streamId
+        ? 'user_id = ? AND stream_id = ? AND is_deleted = 0'
+        : 'user_id = ? AND is_deleted = 0';
+    const params = streamId ? [userId, streamId] : [userId];
+    const messages = all(`SELECT id FROM chat_messages WHERE ${condition}`, params);
+    const ids = messages.map(m => m.id);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    run(
+        `UPDATE chat_messages SET is_deleted = 1, deleted_by = ?, deleted_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
+        [deletedBy, ...ids]
+    );
+    return ids;
+}
+
+/**
+ * Soft-delete ALL chat messages from a specific anon_id, optionally scoped to stream.
+ */
+function deleteAnonChatMessages(anonId, { streamId = null, deletedBy = null } = {}) {
+    const condition = streamId
+        ? 'anon_id = ? AND stream_id = ? AND is_deleted = 0'
+        : 'anon_id = ? AND is_deleted = 0';
+    const params = streamId ? [anonId, streamId] : [anonId];
+    const messages = all(`SELECT id FROM chat_messages WHERE ${condition}`, params);
+    const ids = messages.map(m => m.id);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    run(
+        `UPDATE chat_messages SET is_deleted = 1, deleted_by = ?, deleted_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
+        [deletedBy, ...ids]
+    );
+    return ids;
+}
+
+/**
+ * Soft-delete ALL messages from a relayed external username (e.g. "[Twitch] foobar")
+ */
+function deleteRelayUserMessages(username, { streamId = null, deletedBy = null } = {}) {
+    const condition = streamId
+        ? 'username = ? AND stream_id = ? AND is_deleted = 0'
+        : 'username = ? AND is_deleted = 0';
+    const params = streamId ? [username, streamId] : [username];
+    const messages = all(`SELECT id FROM chat_messages WHERE ${condition}`, params);
+    const ids = messages.map(m => m.id);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    run(
+        `UPDATE chat_messages SET is_deleted = 1, deleted_by = ?, deleted_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders})`,
+        [deletedBy, ...ids]
+    );
+    return ids;
+}
+
+// ── Approved IPs (Anti-VPN Mode) ─────────────────────────────
+
+/**
+ * Check if an IP is approved for a channel.
+ */
+function isIpApproved(channelId, ip) {
+    return !!get('SELECT 1 FROM approved_ips WHERE channel_id = ? AND ip_address = ?', [channelId, ip]);
+}
+
+/**
+ * Auto-approve an IP for a channel (from existing chatter).
+ */
+function approveIp(channelId, ip, approvedBy = null, source = 'auto') {
+    return run(
+        'INSERT OR IGNORE INTO approved_ips (channel_id, ip_address, approved_by, source) VALUES (?, ?, ?, ?)',
+        [channelId, ip, approvedBy, source]
+    );
+}
+
+/**
+ * Remove an IP approval.
+ */
+function revokeIpApproval(channelId, ip) {
+    return run('DELETE FROM approved_ips WHERE channel_id = ? AND ip_address = ?', [channelId, ip]);
+}
+
+/**
+ * Get all approved IPs for a channel.
+ */
+function getApprovedIps(channelId, { limit = 100, offset = 0 } = {}) {
+    return all(
+        `SELECT ai.*, u.username as approved_by_username
+         FROM approved_ips ai LEFT JOIN users u ON ai.approved_by = u.id
+         WHERE ai.channel_id = ? ORDER BY ai.created_at DESC LIMIT ? OFFSET ?`,
+        [channelId, limit, offset]
+    );
+}
+
+/**
+ * Hold a message for IP approval.
+ */
+function holdMessageForApproval({ channelId, streamId, ip, userId, anonId, username, message }) {
+    return run(
+        `INSERT INTO pending_ip_messages (channel_id, stream_id, ip_address, user_id, anon_id, username, message)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [channelId, streamId, ip, userId || null, anonId || null, username, message]
+    );
+}
+
+/**
+ * Get pending messages for a channel.
+ */
+function getPendingIpMessages(channelId, { limit = 50 } = {}) {
+    return all(
+        `SELECT * FROM pending_ip_messages WHERE channel_id = ? AND status = 'pending' ORDER BY created_at ASC LIMIT ?`,
+        [channelId, limit]
+    );
+}
+
+/**
+ * Approve or deny a pending IP message. If approved, auto-approve the IP too.
+ */
+function reviewPendingIpMessage(id, { status, reviewedBy, channelId }) {
+    run('UPDATE pending_ip_messages SET status = ?, reviewed_by = ? WHERE id = ?', [status, reviewedBy, id]);
+    if (status === 'approved') {
+        const msg = get('SELECT * FROM pending_ip_messages WHERE id = ?', [id]);
+        if (msg) approveIp(channelId || msg.channel_id, msg.ip_address, reviewedBy, 'manual');
+    }
+}
+
+/**
+ * Bulk-approve all pending messages from a specific IP in a channel.
+ */
+function approveAllFromIp(channelId, ip, reviewedBy) {
+    approveIp(channelId, ip, reviewedBy, 'manual');
+    return run(
+        "UPDATE pending_ip_messages SET status = 'approved', reviewed_by = ? WHERE channel_id = ? AND ip_address = ? AND status = 'pending'",
+        [reviewedBy, channelId, ip]
+    );
+}
+
+/**
+ * Deny all pending messages from a specific IP in a channel.
+ */
+function denyAllFromIp(channelId, ip, reviewedBy) {
+    return run(
+        "UPDATE pending_ip_messages SET status = 'denied', reviewed_by = ? WHERE channel_id = ? AND ip_address = ? AND status = 'pending'",
+        [reviewedBy, channelId, ip]
+    );
+}
+
+// ── Hidden Relay Users ───────────────────────────────────────
+
+/**
+ * Hide or ban a relayed external user.
+ */
+function hideRelayUser({ channelId, platform, externalUsername, action = 'hide', reason, createdBy }) {
+    return run(
+        `INSERT OR REPLACE INTO hidden_relay_users (channel_id, platform, external_username, action, reason, created_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [channelId || null, platform, externalUsername, action, reason || null, createdBy]
+    );
+}
+
+/**
+ * Check if a relayed user is hidden/banned.
+ * Checks both channel-scoped and site-wide entries (channel_id IS NULL).
+ */
+function isRelayUserHidden(channelId, platform, externalUsername) {
+    return !!get(
+        `SELECT 1 FROM hidden_relay_users
+         WHERE platform = ? AND external_username = ? AND (channel_id = ? OR channel_id IS NULL)`,
+        [platform, externalUsername, channelId]
+    );
+}
+
+/**
+ * Unhide/unban a relayed external user.
+ */
+function unhideRelayUser(id) {
+    return run('DELETE FROM hidden_relay_users WHERE id = ?', [id]);
+}
+
+/**
+ * Get hidden relay users for a channel (includes site-wide).
+ */
+function getHiddenRelayUsers(channelId, { limit = 100 } = {}) {
+    return all(
+        `SELECT hru.*, u.username as created_by_username
+         FROM hidden_relay_users hru LEFT JOIN users u ON hru.created_by = u.id
+         WHERE hru.channel_id = ? OR hru.channel_id IS NULL
+         ORDER BY hru.created_at DESC LIMIT ?`,
+        [channelId, limit]
+    );
 }
 
 /**
@@ -2572,6 +2851,13 @@ module.exports = {
     // Moderation Action Logging
     logModerationAction, getModerationActions,
     getChatMessageById, deleteChatMessage, searchChannelChatMessages,
+    deleteUserChatMessages, deleteAnonChatMessages, deleteRelayUserMessages,
+    // Approved IPs (Anti-VPN)
+    isIpApproved, approveIp, revokeIpApproval, getApprovedIps,
+    holdMessageForApproval, getPendingIpMessages, reviewPendingIpMessage,
+    approveAllFromIp, denyAllFromIp,
+    // Hidden Relay Users
+    hideRelayUser, isRelayUserHidden, unhideRelayUser, getHiddenRelayUsers,
     // IP Tracking
     logIp, getIpsByUser, getUsersByIp, getLinkedAccounts, getLinkedAccountsByAnon,
     getLatestIpForUser, getLatestIpForAnon, getIpLog, banAllAccountsOnIp,

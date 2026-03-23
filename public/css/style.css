@@ -2669,6 +2669,20 @@ main#app { position: relative; z-index: 1; }
 .ctx-btn-danger { color: var(--danger); }
 .ctx-btn-danger i { color: var(--danger); }
 .ctx-btn-danger:hover { background: rgba(231,76,60,0.12); }
+.ctx-btn-warn { color: var(--warning, #f39c12); }
+.ctx-btn-warn i { color: var(--warning, #f39c12); }
+.ctx-btn-warn:hover { background: rgba(243,156,18,0.12); }
+
+/* Deleted message fade-out */
+.chat-msg-deleted {
+    opacity: 0;
+    transform: translateX(-20px);
+    transition: opacity 0.3s, transform 0.3s;
+    max-height: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+}
 
 /* ── Rename submenu ── */
 .ctx-rename-group { position: relative; }
@@ -7493,6 +7507,36 @@ body.theme-light .user-dropdown {
     background: var(--bg-tertiary);
     border-radius: var(--radius);
     padding: 14px;
+}
+.dash-mod-section-wide {
+    grid-column: 1 / -1;
+}
+
+/* IP Approval Queue */
+.dash-ip-approval-group {
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-bottom: 10px;
+    border-left: 3px solid var(--warning, #f39c12);
+}
+.dash-ip-approval-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.dash-ip-approval-actions {
+    display: flex;
+    gap: 6px;
+}
+.dash-ip-approval-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-left: 8px;
+    border-left: 2px solid var(--border);
 }
 
 .dash-mod-list {

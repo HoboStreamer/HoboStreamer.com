@@ -10,12 +10,21 @@
  * DELETE /api/mod/ban/:id                 - Unban (removes ban entry + clears is_banned if global)
  * GET    /api/mod/chat/search             - Search all chat logs
  * GET    /api/mod/chat/user/:userId       - View a user's chat history
+ * POST   /api/mod/delete-message          - Delete a single chat message
+ * POST   /api/mod/delete-user-messages    - Bulk-delete all messages from a user/anon/relay
+ * POST   /api/mod/relay-user/hide         - Hide or ban a relayed user
+ * DELETE /api/mod/relay-user/:id          - Unhide a relayed user
+ * GET    /api/mod/relay-users/hidden/:channelId - List hidden relay users for a channel
  * GET    /api/mod/ip/user/:userId         - Get all IPs used by a user
  * GET    /api/mod/ip/anon/:anonId         - Get latest IP + alts for an anon
  * GET    /api/mod/ip/lookup/:ip           - Get all accounts on an IP
  * GET    /api/mod/ip/alts/:userId         - Get linked accounts (alt detection)
  * POST   /api/mod/ip/ban-all              - Ban all accounts on an IP
  * GET    /api/mod/ip/log                  - Search IP history log
+ * GET    /api/mod/ip-approval/:channelId/pending  - Get pending IP-approval messages
+ * POST   /api/mod/ip-approval/:channelId/approve  - Approve all messages from an IP
+ * POST   /api/mod/ip-approval/:channelId/deny     - Deny all messages from an IP
+ * POST   /api/mod/ip-approval/:channelId/review   - Review a single pending message
  */
 const express = require('express');
 const db = require('../db/database');
@@ -271,6 +280,358 @@ router.get('/chat/user/:userId', (req, res) => {
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: 'Failed to get chat history' });
+    }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  MESSAGE DELETION
+// ══════════════════════════════════════════════════════════════
+
+// ── Delete a single chat message ─────────────────────────────
+router.post('/delete-message', (req, res) => {
+    try {
+        const { message_id, stream_id } = req.body;
+        if (!message_id) return res.status(400).json({ error: 'message_id required' });
+
+        const message = db.getChatMessageById(parseInt(message_id));
+        if (!message) return res.status(404).json({ error: 'Message not found' });
+
+        // Permission: stream mod can delete messages in their stream, global mod can delete anything
+        const isGlobal = permissions.isGlobalModOrAbove(req.user);
+        if (!isGlobal) {
+            const targetStreamId = stream_id || message.stream_id;
+            if (!targetStreamId || !permissions.canModerateStream(req.user, targetStreamId)) {
+                return res.status(403).json({ error: 'You cannot moderate this stream' });
+            }
+        }
+
+        db.deleteChatMessage(parseInt(message_id), req.user.id);
+
+        // Broadcast deletion to connected clients
+        if (message.stream_id) {
+            chatServer.broadcastToStream(message.stream_id, {
+                type: 'delete-messages',
+                ids: [parseInt(message_id)],
+            });
+            chatServer.forwardToGlobal(message.stream_id, {
+                type: 'delete-messages',
+                ids: [parseInt(message_id)],
+            });
+        } else {
+            chatServer.broadcastGlobal({
+                type: 'delete-messages',
+                ids: [parseInt(message_id)],
+            });
+        }
+
+        db.logModerationAction({
+            scope_type: message.stream_id ? 'stream' : 'site',
+            scope_id: message.stream_id || undefined,
+            actor_user_id: req.user.id,
+            target_user_id: message.user_id || undefined,
+            action_type: 'message_delete',
+            details: { message_id: parseInt(message_id) },
+        });
+
+        res.json({ message: 'Message deleted', ids: [parseInt(message_id)] });
+    } catch (err) {
+        console.error('[Mod] Delete message error:', err.message);
+        res.status(500).json({ error: 'Failed to delete message' });
+    }
+});
+
+// ── Bulk-delete all messages from a user/anon/relay ──────────
+router.post('/delete-user-messages', (req, res) => {
+    try {
+        const { user_id, anon_id, relay_username, stream_id } = req.body;
+        if (!user_id && !anon_id && !relay_username) {
+            return res.status(400).json({ error: 'user_id, anon_id, or relay_username required' });
+        }
+
+        // Permission: streamers can only delete within their stream, global mods can delete globally
+        const isGlobal = permissions.isGlobalModOrAbove(req.user);
+        const scopedStreamId = isGlobal ? (stream_id || null) : stream_id;
+
+        if (!isGlobal) {
+            if (!stream_id) return res.status(400).json({ error: 'stream_id required for stream moderators' });
+            if (!permissions.canModerateStream(req.user, stream_id)) {
+                return res.status(403).json({ error: 'You cannot moderate this stream' });
+            }
+        }
+
+        let ids = [];
+        if (user_id) {
+            ids = db.deleteUserChatMessages(parseInt(user_id), { streamId: scopedStreamId, deletedBy: req.user.id });
+        } else if (anon_id) {
+            ids = db.deleteAnonChatMessages(anon_id, { streamId: scopedStreamId, deletedBy: req.user.id });
+        } else if (relay_username) {
+            ids = db.deleteRelayUserMessages(relay_username, { streamId: scopedStreamId, deletedBy: req.user.id });
+        }
+
+        // Broadcast deletions to connected clients
+        if (ids.length > 0) {
+            const deleteMsg = { type: 'delete-messages', ids };
+            if (scopedStreamId) {
+                chatServer.broadcastToStream(scopedStreamId, deleteMsg);
+                chatServer.forwardToGlobal(scopedStreamId, deleteMsg);
+            } else {
+                // Global deletion — broadcast to all streams + global
+                chatServer.broadcastGlobal(deleteMsg);
+                // Also broadcast to every stream audience
+                for (const [, client] of chatServer.clients) {
+                    if (client.streamId) {
+                        chatServer.broadcastToStream(client.streamId, deleteMsg);
+                        break; // broadcastToStream hits all clients in that stream
+                    }
+                }
+                // Broadcast to all connected clients for maximum coverage
+                const msg = JSON.stringify(deleteMsg);
+                for (const [ws] of chatServer.clients) {
+                    if (ws.readyState === 1) ws.send(msg);
+                }
+            }
+        }
+
+        const target = user_id ? `user ${user_id}` : anon_id ? `anon ${anon_id}` : `relay ${relay_username}`;
+        db.logModerationAction({
+            scope_type: scopedStreamId ? 'stream' : 'site',
+            scope_id: scopedStreamId || undefined,
+            actor_user_id: req.user.id,
+            target_user_id: user_id ? parseInt(user_id) : undefined,
+            action_type: 'bulk_message_delete',
+            details: { target, count: ids.length, stream_id: scopedStreamId || null },
+        });
+
+        res.json({ message: `Deleted ${ids.length} message(s) from ${target}`, ids, count: ids.length });
+    } catch (err) {
+        console.error('[Mod] Bulk delete error:', err.message);
+        res.status(500).json({ error: 'Failed to delete messages' });
+    }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  RELAY USER MODERATION
+// ══════════════════════════════════════════════════════════════
+
+// ── Hide or ban a relayed external user ──────────────────────
+router.post('/relay-user/hide', (req, res) => {
+    try {
+        const { channel_id, platform, external_username, action, reason } = req.body;
+        if (!platform || !external_username) {
+            return res.status(400).json({ error: 'platform and external_username required' });
+        }
+
+        // Permission: channel owner/mod or global mod
+        const isGlobal = permissions.isGlobalModOrAbove(req.user);
+        if (!isGlobal && channel_id) {
+            const channel = db.getChannelById(channel_id);
+            if (!channel) return res.status(404).json({ error: 'Channel not found' });
+            // Stream owner or global mod
+            if (channel.user_id !== req.user.id) {
+                return res.status(403).json({ error: 'You cannot moderate this channel' });
+            }
+        }
+
+        db.hideRelayUser({
+            channelId: channel_id || null,
+            platform,
+            externalUsername: external_username,
+            action: action || 'hide',
+            reason,
+            createdBy: req.user.id,
+        });
+
+        db.logModerationAction({
+            scope_type: channel_id ? 'channel' : 'site',
+            scope_id: channel_id || undefined,
+            actor_user_id: req.user.id,
+            action_type: 'relay_user_hide',
+            details: { platform, external_username, action: action || 'hide', reason },
+        });
+
+        res.json({ message: `[${platform}] ${external_username} ${action || 'hidden'}` });
+    } catch (err) {
+        console.error('[Mod] Relay user hide error:', err.message);
+        res.status(500).json({ error: 'Failed to hide relay user' });
+    }
+});
+
+// ── Unhide a relayed user ────────────────────────────────────
+router.delete('/relay-user/:id', (req, res) => {
+    try {
+        db.unhideRelayUser(parseInt(req.params.id));
+
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            action_type: 'relay_user_unhide',
+            details: { id: parseInt(req.params.id) },
+        });
+
+        res.json({ message: 'Relay user unhidden' });
+    } catch (err) {
+        console.error('[Mod] Relay user unhide error:', err.message);
+        res.status(500).json({ error: 'Failed to unhide relay user' });
+    }
+});
+
+// ── List hidden relay users for a channel ────────────────────
+router.get('/relay-users/hidden/:channelId', (req, res) => {
+    try {
+        const channelId = parseInt(req.params.channelId);
+        const hidden = db.getHiddenRelayUsers(channelId);
+        res.json({ hidden });
+    } catch (err) {
+        console.error('[Mod] List hidden relay users error:', err.message);
+        res.status(500).json({ error: 'Failed to list hidden relay users' });
+    }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  IP APPROVAL QUEUE (Anti-VPN Mode)
+// ══════════════════════════════════════════════════════════════
+
+// ── Get pending messages for a channel ───────────────────────
+router.get('/ip-approval/:channelId/pending', (req, res) => {
+    try {
+        const channelId = parseInt(req.params.channelId);
+        if (!permissions.canModerateStream(req.user, channelId) && !permissions.isGlobalModOrAbove(req.user)) {
+            // Also check channel ownership
+            const channel = db.getChannelById(channelId);
+            if (!channel || channel.user_id !== req.user.id) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+        }
+        const pending = db.getPendingIpMessages(channelId);
+
+        // Add geo data
+        const enriched = pending.map(msg => {
+            let geo = null;
+            if (msg.ip_address) {
+                try { geo = ipUtils.lookupIp(msg.ip_address); } catch {}
+            }
+            return { ...msg, geo };
+        });
+
+        res.json({ pending: enriched });
+    } catch (err) {
+        console.error('[Mod] IP approval pending error:', err.message);
+        res.status(500).json({ error: 'Failed to get pending messages' });
+    }
+});
+
+// ── Approve all messages from an IP ──────────────────────────
+router.post('/ip-approval/:channelId/approve', (req, res) => {
+    try {
+        const channelId = parseInt(req.params.channelId);
+        const { ip } = req.body;
+        if (!ip) return res.status(400).json({ error: 'ip required' });
+
+        const channel = db.getChannelById(channelId);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+        if (channel.user_id !== req.user.id && !permissions.isGlobalModOrAbove(req.user)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        // Get pending messages that will be approved (to broadcast them as real chat)
+        const pendingMsgs = db.all(
+            "SELECT * FROM pending_ip_messages WHERE channel_id = ? AND ip_address = ? AND status = 'pending'",
+            [channelId, ip]
+        );
+
+        db.approveAllFromIp(channelId, ip, req.user.id);
+
+        // Broadcast previously-held messages as real chat messages
+        for (const msg of pendingMsgs) {
+            if (msg.stream_id) {
+                const chatMsg = {
+                    type: 'chat',
+                    username: msg.username,
+                    user_id: msg.user_id || null,
+                    anon_id: msg.anon_id || null,
+                    role: msg.user_id ? 'user' : 'anon',
+                    message: msg.message,
+                    stream_id: msg.stream_id,
+                    is_global: false,
+                    profile_color: '#999',
+                    timestamp: msg.created_at,
+                    was_held: true,
+                };
+                chatServer.broadcastToStream(msg.stream_id, chatMsg);
+                chatServer.forwardToGlobal(msg.stream_id, chatMsg);
+            }
+        }
+
+        db.logModerationAction({
+            scope_type: 'channel',
+            scope_id: channelId,
+            actor_user_id: req.user.id,
+            action_type: 'ip_approval_approve',
+            details: { ip, messages_approved: pendingMsgs.length },
+        });
+
+        res.json({ message: `IP ${ip} approved — ${pendingMsgs.length} held message(s) released`, count: pendingMsgs.length });
+    } catch (err) {
+        console.error('[Mod] IP approve error:', err.message);
+        res.status(500).json({ error: 'Failed to approve IP' });
+    }
+});
+
+// ── Deny all messages from an IP ─────────────────────────────
+router.post('/ip-approval/:channelId/deny', (req, res) => {
+    try {
+        const channelId = parseInt(req.params.channelId);
+        const { ip } = req.body;
+        if (!ip) return res.status(400).json({ error: 'ip required' });
+
+        const channel = db.getChannelById(channelId);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+        if (channel.user_id !== req.user.id && !permissions.isGlobalModOrAbove(req.user)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        db.denyAllFromIp(channelId, ip, req.user.id);
+
+        db.logModerationAction({
+            scope_type: 'channel',
+            scope_id: channelId,
+            actor_user_id: req.user.id,
+            action_type: 'ip_approval_deny',
+            details: { ip },
+        });
+
+        res.json({ message: `IP ${ip} denied` });
+    } catch (err) {
+        console.error('[Mod] IP deny error:', err.message);
+        res.status(500).json({ error: 'Failed to deny IP' });
+    }
+});
+
+// ── Review a single pending message ──────────────────────────
+router.post('/ip-approval/:channelId/review', (req, res) => {
+    try {
+        const channelId = parseInt(req.params.channelId);
+        const { message_id, status } = req.body;
+        if (!message_id || !['approved', 'denied'].includes(status)) {
+            return res.status(400).json({ error: 'message_id and status (approved/denied) required' });
+        }
+
+        const channel = db.getChannelById(channelId);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+        if (channel.user_id !== req.user.id && !permissions.isGlobalModOrAbove(req.user)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        db.reviewPendingIpMessage(parseInt(message_id), {
+            status,
+            reviewedBy: req.user.id,
+            channelId,
+        });
+
+        res.json({ message: `Message ${status}` });
+    } catch (err) {
+        console.error('[Mod] IP review error:', err.message);
+        res.status(500).json({ error: 'Failed to review message' });
     }
 });
 
