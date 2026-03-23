@@ -17,6 +17,7 @@ const express = require('express');
 const db = require('../db/database');
 const { requireAuth } = require('../auth/auth');
 const permissions = require('../auth/permissions');
+const chatServer = require('../chat/chat-server');
 
 const router = express.Router({ mergeParams: true });
 
@@ -185,6 +186,8 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? Math.min(100, Math.max(0, parseInt(req.body.caps_percentage_limit) || 70)) : undefined,
             max_message_length: req.body.max_message_length !== undefined
                 ? Math.min(2000, Math.max(1, parseInt(req.body.max_message_length) || 500)) : undefined,
+            ip_approval_mode: req.body.ip_approval_mode !== undefined
+                ? parseBoolean(req.body.ip_approval_mode, false) : undefined,
         });
 
         db.logModerationAction({
@@ -248,7 +251,15 @@ router.post('/:channelId/moderation/messages/:messageId/delete', requireAuth, re
             }
         }
 
-        db.deleteChatMessage(messageId);
+        db.deleteChatMessage(messageId, req.user.id);
+
+        // Broadcast deletion to connected clients
+        if (message.stream_id) {
+            chatServer.broadcastToStream(message.stream_id, { type: 'delete-messages', ids: [messageId] });
+            chatServer.forwardToGlobal(message.stream_id, { type: 'delete-messages', ids: [messageId] });
+        } else {
+            chatServer.broadcastGlobal({ type: 'delete-messages', ids: [messageId] });
+        }
 
         db.logModerationAction({
             scope_type: 'channel',
@@ -259,7 +270,7 @@ router.post('/:channelId/moderation/messages/:messageId/delete', requireAuth, re
             details: { message_id: messageId, stream_id: message.stream_id },
         });
 
-        res.json({ message: 'Message deleted' });
+        res.json({ message: 'Message deleted', ids: [messageId] });
     } catch (err) {
         res.status(500).json({ error: 'Failed to delete message' });
     }

@@ -445,6 +445,57 @@ class ChatServer {
             return;
         }
 
+        // ── IP Approval Mode (Anti-VPN) ─────────────────────
+        if (client.streamId && client.ip) {
+            try {
+                const stream = db.getStreamById(client.streamId);
+                const channel = stream?.channel_id ? db.getChannelById(stream.channel_id) : (stream ? db.getChannelByUserId(stream.user_id) : null);
+                if (channel) {
+                    const settings = db.getChannelModerationSettings(channel.id);
+                    if (settings?.ip_approval_mode) {
+                        const isStaffBypass = client.user && permissions.isGlobalModOrAbove(client.user);
+                        const isOwner = client.user && stream && stream.user_id === client.user.id;
+                        if (!isStaffBypass && !isOwner) {
+                            if (!db.isIpApproved(channel.id, client.ip)) {
+                                // Auto-approve IPs that have existing non-deleted chat messages in this channel's streams
+                                const existing = db.get(
+                                    `SELECT 1 FROM chat_messages cm
+                                     JOIN streams s ON cm.stream_id = s.id
+                                     WHERE s.channel_id = ? AND cm.is_deleted = 0
+                                     AND (cm.user_id = ? OR cm.anon_id = ?)
+                                     LIMIT 1`,
+                                    [channel.id, client.user?.id || -1, client.anonId || '']
+                                );
+                                if (existing) {
+                                    // This user has chatted before — auto-approve their IP
+                                    db.approveIp(channel.id, client.ip, null, 'auto_existing');
+                                } else {
+                                    // Hold the message for streamer approval
+                                    const username = client.user ? client.user.display_name : client.anonId;
+                                    db.holdMessageForApproval({
+                                        channelId: channel.id,
+                                        streamId: client.streamId,
+                                        ip: client.ip,
+                                        userId: client.user?.id || null,
+                                        anonId: client.anonId || null,
+                                        username,
+                                        message: text,
+                                    });
+                                    this.sendTo(ws, {
+                                        type: 'system',
+                                        message: 'This channel has IP approval mode enabled. Your message is being held for review by the streamer.',
+                                    });
+                                    // Notify the streamer that a new IP needs approval
+                                    this._notifyStreamerPendingIp(client.streamId, stream.user_id, username, client.ip);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch { /* non-critical — don't block chat for IP approval errors */ }
+        }
+
         // ── Channel moderation settings ──────────────────────
         if (client.streamId) {
             const chatSettings = this._getChannelChatSettings(client.streamId);
@@ -1396,6 +1447,26 @@ class ChatServer {
     }
 
     /**
+     * Notify the stream owner that a new IP needs approval.
+     * Sends a system message only to the streamer's connection.
+     */
+    _notifyStreamerPendingIp(streamId, streamOwnerId, username, ip) {
+        if (!streamOwnerId) return;
+        try {
+            for (const [ws, client] of this.clients) {
+                if (client.user?.id === streamOwnerId && client.streamId === streamId) {
+                    this.sendTo(ws, {
+                        type: 'system',
+                        message: `⏳ New IP needs approval: ${username} (${ip}). Open Dashboard → Moderation to review.`,
+                        ip_approval_alert: true,
+                    });
+                    break;
+                }
+            }
+        } catch { /* non-critical */ }
+    }
+
+    /**
      * Get channel moderation settings for a stream.
      * Caches the channel lookup to avoid repeated DB queries.
      */
@@ -1404,6 +1475,7 @@ class ChatServer {
             slow_mode_seconds: 0, followers_only: 0, emote_only: 0,
             allow_anonymous: 1, links_allowed: 1, account_age_gate_hours: 0,
             caps_percentage_limit: 0, aggressive_filter: 0, max_message_length: 500,
+            ip_approval_mode: 0,
         };
         if (!streamId) return defaults;
         try {

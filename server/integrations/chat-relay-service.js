@@ -313,6 +313,15 @@ class ChatRelayService {
         const color = PLATFORM_COLORS[bridge.platform] || '#888';
         const prefixedUsername = `[${label}] ${username}`;
 
+        // Check if this relay user is hidden/banned
+        try {
+            const stream = db.getStreamById(bridge.streamId);
+            const channel = stream?.channel_id ? db.getChannelById(stream.channel_id) : (stream ? db.getChannelByUserId(stream.user_id) : null);
+            if (channel && db.isRelayUserHidden(channel.id, bridge.platform, username)) {
+                return; // Silently drop messages from hidden relay users
+            }
+        } catch { /* non-critical — allow message through on error */ }
+
         const chatMsg = {
             type: 'chat',
             username: prefixedUsername,
@@ -329,7 +338,7 @@ class ChatRelayService {
         };
 
         try {
-            db.saveChatMessage({
+            const result = db.saveChatMessage({
                 stream_id: bridge.streamId,
                 user_id: null,
                 anon_id: null,
@@ -337,7 +346,9 @@ class ChatRelayService {
                 message: chatMsg.message,
                 message_type: 'chat',
                 is_global: 0,
+                source_platform: bridge.platform,
             });
+            if (result?.lastInsertRowid) chatMsg.id = Number(result.lastInsertRowid);
         } catch {}
 
         chatServer.broadcastToStream(bridge.streamId, chatMsg);
