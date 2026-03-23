@@ -1393,10 +1393,13 @@ function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []
         const title = s.title || `Stream ${idx + 1}`;
         const viewers = s.viewer_count || 0;
         const uptime = formatUptime(s.started_at);
-        const protoTag = s.protocol ? `<span class="live-tab-proto">${s.protocol.toUpperCase()}</span>` : '';
-        const rsTag = rsRestream[s.id] ? '<span class="live-tab-rs" title="Also on RobotStreamer"><i class="fa-solid fa-robot"></i></span>' : '';
+        const proto = s.protocol ? s.protocol.toUpperCase() : '';
+        const hasRs = !!rsRestream[s.id];
         const uptimeTag = uptime ? `<span class="live-tab-uptime"><i class="fa-solid fa-clock"></i> ${uptime}</span>` : '';
         const sep = idx > 0 ? '<span class="live-tab-separator" aria-hidden="true"></span>' : '';
+        // Compact badge line: protocol + RS icon inline
+        const badges = [proto, hasRs ? '<i class="fa-solid fa-robot" style="color:#4fc3f7;font-size:0.62rem" title="RobotStreamer"></i>' : ''].filter(Boolean).join(' ');
+        const badgeSpan = badges ? `<span class="live-tab-badges">${badges}</span>` : '';
         return `${sep}<button class="live-tab ${isActive ? 'active' : ''}"
                     onclick="switchToLiveStream('${esc(currentUsername)}', ${s.id}, this)"
                     data-stream-id="${s.id}" data-username="${esc(currentUsername)}"
@@ -1405,11 +1408,9 @@ function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []
             <span class="live-tab-num">${idx + 1}</span>
             <span class="live-tab-dot"></span>
             <span class="live-tab-title">${esc(title)}</span>
-            <span class="live-tab-meta">
-                ${protoTag}${rsTag}
-                <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${viewers}</span>
-                ${uptimeTag}
-            </span>
+            ${badgeSpan}
+            <span class="live-tab-viewers"><i class="fa-solid fa-eye"></i> ${viewers}</span>
+            ${uptimeTag}
         </button>`;
     }).join('') +
     `<span class="live-tabs-summary" title="${totalViewers} viewers across ${filtered.length} streams">
@@ -1630,6 +1631,9 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
     const hasRs = Object.keys(rsRestream).length > 0;
     const hasRestream = restreamLinks?.length > 0;
     const hasExternal = externalViewers && externalViewers.total > 0;
+    const hasMultiStream = liveStreams.length > 1;
+    // Whether live tabs are already showing multi-stream summary
+    const tabsVisible = document.getElementById('live-stream-tabs')?.style.display !== 'none';
 
     if (liveStreams.length <= 1 && !hasRs && !hasRestream && !hasExternal) {
         el.style.display = 'none';
@@ -1654,24 +1658,24 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
 
     let html = '';
 
-    // Show combined viewer total when there are multiple streams or external viewers
-    if (streamCount > 1 || hasExternal) {
+    // Show combined viewer total — but skip when live tabs already show per-stream counts
+    if ((streamCount > 1 || hasExternal) && !tabsVisible) {
         const totalLabel = hasExternal ? 'total' : '';
         html += `<span class="ch-viewer-total"><i class="fa-solid fa-layer-group"></i> <strong>${combinedTotal}</strong> viewer${combinedTotal !== 1 ? 's' : ''} ${totalLabel}${streamCount > 1 ? ` across <strong>${streamCount}</strong> streams` : ''}</span>`;
     }
 
-    // RS restream badges — link to robotstreamer.com/robot/{id} when robot_id available
-    for (const [, rs] of Object.entries(rsRestream)) {
-        if (rs.active) {
-            const rsViewers = rs.viewer_count || externalViewers?.rs_viewers || 0;
-            const viewerStr = rsViewers > 0 ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${rsViewers}` : '';
-            const label = 'RS';
-            if (rs.robot_id) {
-                const rsUrl = `https://robotstreamer.com/robot/${esc(rs.robot_id)}`;
-                html += `<a href="${rsUrl}" target="_blank" rel="noopener" class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}${rsViewers ? ' (' + rsViewers + ' viewers)' : ''}"><i class="fa-solid fa-robot"></i> ${label}${viewerStr}</a>`;
-            } else {
-                html += `<span class="ch-rs-badge" title="Also live on RobotStreamer${rs.robot_name ? ': ' + esc(rs.robot_name) : ''}"><i class="fa-solid fa-robot"></i> ${label}${viewerStr}</span>`;
-            }
+    // RS restream badge — combine all active RS entries into one badge with summed viewers
+    const activeRsList = Object.values(rsRestream).filter(rs => rs.active);
+    if (activeRsList.length > 0) {
+        const rsViewersTotal = activeRsList.reduce((sum, rs) => sum + (rs.viewer_count || 0), 0) || (externalViewers?.rs_viewers || 0);
+        const viewerStr = rsViewersTotal > 0 ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${rsViewersTotal}` : '';
+        // Use the first entry with a robot_id for the link
+        const linkable = activeRsList.find(rs => rs.robot_id);
+        if (linkable) {
+            const rsUrl = `https://robotstreamer.com/robot/${esc(linkable.robot_id)}`;
+            html += `<a href="${rsUrl}" target="_blank" rel="noopener" class="ch-rs-badge" title="Also live on RobotStreamer${linkable.robot_name ? ': ' + esc(linkable.robot_name) : ''}${rsViewersTotal ? ' (' + rsViewersTotal + ' viewers)' : ''}"><i class="fa-solid fa-robot"></i> RS${viewerStr}</a>`;
+        } else {
+            html += `<span class="ch-rs-badge" title="Also live on RobotStreamer"><i class="fa-solid fa-robot"></i> RS${viewerStr}</span>`;
         }
     }
 

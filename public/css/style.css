@@ -3415,9 +3415,10 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .ch-media-strip { padding: 5px 12px; gap: 8px; font-size: 0.74rem; }
 
     .live-stream-tabs { height: 38px; padding: 0; }
-    .live-tab { padding: 0 10px; font-size: 0.78rem; gap: 5px; }
+    .live-tab { padding: 0 10px; font-size: 0.75rem; gap: 5px; }
     .live-tab-title { max-width: 120px; }
     .live-tab-uptime { display: none; }
+    .live-tab-badges { display: none; }
     .live-tab-num { width: 16px; height: 16px; font-size: 0.6rem; }
     .live-tabs-summary { font-size: 0.7rem; padding: 0 8px; }
     .ch-cumulative-viewers { gap: 6px; }
@@ -3617,8 +3618,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
     /* Hide live stream tabs in portrait if only one stream (JS also handles this) */
     .live-stream-tabs:not(:has(.live-tab:nth-child(2))) { display: none; }
-    .live-tab-meta { gap: 3px; }
-    .live-tab-proto { display: none; }
+    .live-tab-badges { display: none; }
 }
 
 /* 360px: Very small phones (iPhone SE, Galaxy S series) */
@@ -3674,7 +3674,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     padding: 0;
-    height: 44px;
+    height: 42px;
     overflow: hidden;
     position: relative;
 }
@@ -3685,10 +3685,10 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 }
 .live-tabs-scroll::-webkit-scrollbar { display: none; }
 .live-tab {
-    display: flex; align-items: center; gap: 7px;
-    padding: 0 16px; border: none;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 14px; border: none;
     background: transparent;
-    color: var(--text-secondary); font-size: 0.82rem;
+    color: var(--text-muted); font-size: 0.8rem;
     white-space: nowrap; cursor: pointer;
     transition: color 0.15s, background 0.15s;
     font-family: var(--font);
@@ -3702,12 +3702,12 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     outline-offset: -2px;
 }
 .live-tab.active {
-    color: #fff; font-weight: 600;
-    background: rgba(255,255,255,0.04);
+    color: var(--text-primary); font-weight: 600;
+    background: rgba(255,255,255,0.03);
     border-bottom-color: var(--accent);
 }
 .live-tab-num {
-    font-size: 0.65rem; font-weight: 700;
+    font-size: 0.62rem; font-weight: 700;
     color: var(--text-muted);
     background: rgba(255,255,255,0.06);
     width: 18px; height: 18px; border-radius: 50%;
@@ -3727,34 +3727,27 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     50% { opacity: 0.4; }
 }
 .live-tab-title {
-    max-width: 180px;
+    max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.live-tab-meta {
-    display: flex; align-items: center; gap: 5px;
-    margin-left: auto; padding-left: 4px;
-}
-.live-tab-proto {
+.live-tab-badges {
     font-size: 0.6rem; font-weight: 600;
     color: var(--text-muted);
     background: rgba(255,255,255,0.06);
-    padding: 1px 5px; border-radius: 4px;
+    padding: 1px 6px; border-radius: 4px;
     text-transform: uppercase; letter-spacing: 0.5px;
+    display: inline-flex; align-items: center; gap: 4px;
 }
-.live-tab.active .live-tab-proto {
+.live-tab.active .live-tab-badges {
     color: rgba(255,255,255,0.55);
     background: rgba(255,255,255,0.1);
 }
-.live-tab-rs {
-    font-size: 0.68rem; color: #4fc3f7;
-}
-.live-tab.active .live-tab-rs { color: rgba(255,255,255,0.65); }
 .live-tab-viewers {
     font-size: 0.72rem; font-weight: 700;
     color: var(--text-secondary);
     display: inline-flex; align-items: center; gap: 3px;
-    line-height: 1;
+    line-height: 1; margin-left: auto;
 }
 .live-tab-viewers i { font-size: 0.62rem; }
 .live-tab.active .live-tab-viewers {
@@ -3772,14 +3765,14 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     margin: 0 2px; align-self: center;
 }
 .live-tabs-summary {
-    font-size: 0.75rem; color: var(--text-muted);
+    font-size: 0.72rem; color: var(--text-muted);
     padding: 0 14px; white-space: nowrap;
     display: inline-flex; align-items: center; gap: 6px;
     border-left: 1px solid var(--border);
     flex-shrink: 0; align-self: center;
 }
 .live-tabs-summary strong { color: var(--text-primary); font-weight: 600; }
-.live-tabs-summary i { color: var(--accent); font-size: 0.7rem; }
+.live-tabs-summary i { color: var(--accent); font-size: 0.68rem; }
 
 /* ── Stream Switch Loading Overlay ─────────────────────────── */
 .stream-switch-overlay {
