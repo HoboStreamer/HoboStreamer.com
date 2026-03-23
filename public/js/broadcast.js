@@ -944,8 +944,9 @@ function _restoreLastBroadcastFields() {
 /**
  * Build/rebuild the broadcast tab bar from the user's active streams.
  * @param {number|null} activeStreamId - Stream to mark active, or null for [+] tab
+ * @param {number|null} excludeStreamId - Stream ID to exclude (just-ended, DELETE pending)
  */
-async function buildBroadcastTabs(activeStreamId) {
+async function buildBroadcastTabs(activeStreamId, excludeStreamId = null) {
     const bar = document.getElementById('bc-tabs-bar');
     const scroll = document.getElementById('bc-tabs-scroll');
     if (!bar || !scroll) return;
@@ -953,7 +954,7 @@ async function buildBroadcastTabs(activeStreamId) {
     let liveStreams = [];
     try {
         const data = await api('/streams/mine');
-        liveStreams = (data.streams || []).filter(s => s.is_live);
+        liveStreams = (data.streams || []).filter(s => s.is_live && s.id !== excludeStreamId);
     } catch {}
 
     if (liveStreams.length === 0 && !activeStreamId) {
@@ -1089,7 +1090,7 @@ async function endBroadcastTab(streamId) {
         if (remaining.length > 0) {
             const withState = remaining.find(s => broadcastState.streams.has(s.id));
             const nextStream = withState || remaining[0];
-            await buildBroadcastTabs(nextStream.id);
+            await buildBroadcastTabs(nextStream.id, streamId);
             await switchOrResumeStream(nextStream);
         } else {
             hideBroadcastTabs();
@@ -1308,10 +1309,23 @@ async function endExistingStream(streamId) {
             bgCtx = _detachVodForBackground(streamId);
             cleanupStream(streamId);
         }
-        toast('Stream ended', 'info');
-        if (!isStreaming()) setNavLiveIndicator(false);
-        loadExistingStreams(streamId);
         _backgroundStreamEnd(streamId, bgCtx);
+        toast('Stream ended', 'info');
+
+        // If other streams are still live, switch to them
+        const data = await api('/streams/mine');
+        const remaining = (data.streams || []).filter(s => s.is_live && s.id !== streamId);
+        if (remaining.length > 0) {
+            const withState = remaining.find(s => broadcastState.streams.has(s.id));
+            const nextStream = withState || remaining[0];
+            await buildBroadcastTabs(nextStream.id, streamId);
+            await switchOrResumeStream(nextStream);
+        } else {
+            hideBroadcastTabs();
+            if (!isStreaming()) setNavLiveIndicator(false);
+            showStreamManager();
+            loadExistingStreams(streamId);
+        }
     } catch (e) { toast(e.message || 'Failed to end stream', 'error'); }
 }
 
@@ -1677,14 +1691,14 @@ async function endSetupStream() {
     try { if (endingStreamId) await api(`/streams/${endingStreamId}`, { method: 'DELETE' }); } catch {}
     if (endingStreamId) cleanupStream(endingStreamId);
 
-    // Check if other streams are still live
+    // Check if other streams are still live (exclude just-ended stream)
     try {
         const data = await api('/streams/mine');
-        const remaining = (data.streams || []).filter(s => s.is_live);
+        const remaining = (data.streams || []).filter(s => s.is_live && s.id !== endingStreamId);
         if (remaining.length > 0) {
             const withState = remaining.find(s => broadcastState.streams.has(s.id));
             const nextStream = withState || remaining[0];
-            await buildBroadcastTabs(nextStream.id);
+            await buildBroadcastTabs(nextStream.id, endingStreamId);
             await switchOrResumeStream(nextStream);
             toast('Stream ended', 'info');
             return;
@@ -1694,7 +1708,7 @@ async function endSetupStream() {
     hideBroadcastTabs();
     clearGlobalDisplayTimers();
     if (!isStreaming()) setNavLiveIndicator(false);
-    showStreamManager(); loadExistingStreams(); toast('Stream ended', 'info');
+    showStreamManager(); loadExistingStreams(endingStreamId); toast('Stream ended', 'info');
 }
 
 /* ── Device Enumeration ──────────────────────────────────────── */
@@ -2131,17 +2145,19 @@ async function stopBroadcast() {
         cleanupStream(activeId);
     }
 
-    // Check if other streams are still live (exclude the stopped stream — DELETE hasn't fired yet)
+    // Fire background DELETE early so the server knows immediately
+    if (activeId) _backgroundStreamEnd(activeId, bgCtx);
+
+    // Check if other streams are still live (exclude the stopped stream — DELETE may be in-flight)
     try {
         const data = await api('/streams/mine');
         const remaining = (data.streams || []).filter(s => s.is_live && s.id !== activeId);
         if (remaining.length > 0) {
             const withState = remaining.find(s => broadcastState.streams.has(s.id));
             const nextStream = withState || remaining[0];
-            await buildBroadcastTabs(nextStream.id);
+            await buildBroadcastTabs(nextStream.id, activeId);
             await switchOrResumeStream(nextStream);
             toast('Stream ended', 'info');
-            if (activeId) _backgroundStreamEnd(activeId, bgCtx);
             return;
         }
     } catch {}
@@ -2153,7 +2169,6 @@ async function stopBroadcast() {
     // Scroll create section into view so user lands on "Create New Stream"
     const createSec = document.getElementById('bc-create-section');
     if (createSec) createSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (activeId) _backgroundStreamEnd(activeId, bgCtx);
 }
 
 /**
