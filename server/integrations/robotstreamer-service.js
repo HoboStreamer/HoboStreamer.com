@@ -345,6 +345,11 @@ class RobotStreamerService {
                 if (data.message === undefined) return;
                 if (data.robot_id && String(data.robot_id) !== bridge.robotId) return;
 
+                const msgText = String(data.message || '');
+
+                // Drop RS protocol/meta messages (e.g. {"user_name":"Goosely"})
+                if (/^\s*\{.*\}\s*$/.test(msgText)) return;
+
                 const timestamp = Number.isFinite(Number(data.timestamp))
                     ? new Date(Number(data.timestamp)).toISOString()
                     : new Date().toISOString();
@@ -367,7 +372,7 @@ class RobotStreamerService {
                     user_id: null,
                     anon_id: null,
                     role: 'external',
-                    message: String(data.message || ''),
+                    message: msgText,
                     stream_id: stream.id,
                     is_global: false,
                     avatar_url: data.avatar || null,
