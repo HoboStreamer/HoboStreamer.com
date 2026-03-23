@@ -1104,6 +1104,9 @@ async function endBroadcastTab(streamId) {
         }
     } catch (e) {
         toast(e.message || 'Failed to end stream', 'error');
+        // Fallback — stream was already cleaned up, make sure UI recovers
+        showStreamManager();
+        loadExistingStreams(streamId);
     }
 }
 
@@ -1312,21 +1315,21 @@ async function endExistingStream(streamId) {
         _backgroundStreamEnd(streamId, bgCtx);
         toast('Stream ended', 'info');
 
-        // If other streams are still live, switch to them
+        // Stay on stream manager — just refresh tabs and stream list
         const data = await api('/streams/mine');
         const remaining = (data.streams || []).filter(s => s.is_live && s.id !== streamId);
         if (remaining.length > 0) {
-            const withState = remaining.find(s => broadcastState.streams.has(s.id));
-            const nextStream = withState || remaining[0];
-            await buildBroadcastTabs(nextStream.id, streamId);
-            await switchOrResumeStream(nextStream);
+            await buildBroadcastTabs(null, streamId);
         } else {
             hideBroadcastTabs();
+            clearGlobalDisplayTimers();
             if (!isStreaming()) setNavLiveIndicator(false);
-            showStreamManager();
-            loadExistingStreams(streamId);
         }
-    } catch (e) { toast(e.message || 'Failed to end stream', 'error'); }
+        loadExistingStreams(streamId);
+    } catch (e) {
+        toast(e.message || 'Failed to end stream', 'error');
+        loadExistingStreams(streamId);
+    }
 }
 
 /* ── Method Selection ────────────────────────────────────────── */
