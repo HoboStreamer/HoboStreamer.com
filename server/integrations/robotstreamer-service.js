@@ -348,7 +348,19 @@ class RobotStreamerService {
                 const timestamp = Number.isFinite(Number(data.timestamp))
                     ? new Date(Number(data.timestamp)).toISOString()
                     : new Date().toISOString();
-                const username = `[RS] ${String(data.username || 'anon')}`;
+                const rawUsername = String(data.username || 'anon');
+                const username = `[RS] ${rawUsername}`;
+
+                // Check if this relay user is hidden/banned
+                try {
+                    const channel = stream.channel_id
+                        ? db.getChannelById(stream.channel_id)
+                        : db.getChannelByUserId(stream.user_id);
+                    if (channel && db.isRelayUserHidden(channel.id, 'rs', rawUsername)) {
+                        return; // Silently drop messages from hidden/banned relay users
+                    }
+                } catch { /* non-critical — allow message through on error */ }
+
                 const mirrored = {
                     type: 'chat',
                     username,
@@ -361,7 +373,7 @@ class RobotStreamerService {
                     avatar_url: data.avatar || null,
                     profile_color: '#7dd3fc',
                     timestamp,
-                    source_platform: 'robotstreamer',
+                    source_platform: 'rs',
                 };
 
                 try {
@@ -373,6 +385,7 @@ class RobotStreamerService {
                         message: mirrored.message,
                         message_type: 'chat',
                         is_global: 0,
+                        source_platform: 'rs',
                     });
                 } catch {}
 
