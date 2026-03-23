@@ -3412,6 +3412,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .ch-stream-title { font-size: 0.8rem; }
     .ch-weather-widget { max-width: 100%; }
     .weather-hourly-scroll { max-width: calc(100vw - 32px); }
+    .ch-media-strip { padding: 5px 12px; gap: 8px; font-size: 0.74rem; }
 
     .live-stream-tabs { height: 38px; padding: 0; }
     .live-tab { padding: 0 10px; font-size: 0.78rem; gap: 5px; }
@@ -3527,6 +3528,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .ch-info-bar { padding: 6px 10px; gap: 8px; }
     .ch-info-bar .ch-avatar { width: 32px; height: 32px; font-size: 0.85rem; }
     .ch-info-bar-top h2 { font-size: 0.88rem; }
+    .ch-media-strip { padding: 4px 10px; gap: 6px; font-size: 0.7rem; }
 
     .mobile-chat-toggle { width: 48px; height: 48px; font-size: 1.1rem; bottom: 16px; right: 12px; }
 
@@ -3893,6 +3895,34 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .ch-info-bar-right .ch-follower-count {
     font-size: 0.82rem; color: var(--text-muted); white-space: nowrap;
 }
+
+/* ── Media Request Strip (below info bar) ────────────────── */
+.ch-media-strip {
+    display: flex; align-items: center; gap: 12px;
+    padding: 6px 16px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.78rem; color: var(--text-muted);
+    flex-wrap: wrap;
+}
+.ch-media-strip-info {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px;
+    background: rgba(192, 150, 92, .10); border: 1px solid rgba(192, 150, 92, .18);
+    color: var(--text-secondary); white-space: nowrap;
+}
+.ch-media-strip-info i { color: var(--primary, var(--accent)); font-size: 0.72rem; }
+.ch-media-strip-info strong { color: var(--text-primary); }
+.ch-media-strip-sep { opacity: 0.4; }
+.ch-media-strip-link {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 999px;
+    background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .10);
+    color: var(--text-secondary); text-decoration: none;
+    transition: all 0.15s; white-space: nowrap;
+}
+.ch-media-strip-link:hover { background: rgba(255, 255, 255, .10); color: var(--text-primary); }
+.ch-media-strip-link i { font-size: 0.68rem; }
 
 /* ── Weather Widget ──────────────────────────────────────── */
 .ch-weather-widget {
