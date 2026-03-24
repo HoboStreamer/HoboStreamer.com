@@ -1121,7 +1121,10 @@ async function loadAdminData() {
     const c = document.getElementById('admin-content');
     c.innerHTML = '<p class="muted"><i class="fa-solid fa-spinner fa-spin"></i> Analyzing storage...</p>';
     try {
-        const data = await api('/admin/storage');
+        const [data, tierData] = await Promise.all([
+            api('/admin/storage'),
+            api('/admin/storage/tiers').catch(() => null),
+        ]);
         const d = data.disk || {};
         const usePct = d.total ? ((d.used / d.total) * 100).toFixed(1) : 0;
         const dataPct = d.total ? ((data.dataTotal.bytes / d.total) * 100).toFixed(1) : 0;
@@ -1131,7 +1134,72 @@ async function loadAdminData() {
         const breakdown = (data.breakdown || []).sort((a, b) => b.bytes - a.bytes);
         const maxBreakdown = Math.max(...breakdown.map(b => b.bytes), 1);
 
+        // Storage tier info
+        let tierHtml = '';
+        if (tierData) {
+            const h = tierData.hot || {};
+            const co = tierData.cold || {};
+            const hDisk = h.disk || {};
+            const cDisk = co.disk || {};
+            const hPct = hDisk.total ? ((hDisk.used / hDisk.total) * 100).toFixed(1) : 0;
+            const cPct = cDisk.total ? ((cDisk.used / cDisk.total) * 100).toFixed(1) : 0;
+            const ts = tierData.settings || {};
+
+            tierHtml = `
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:28px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <h3 style="margin:0"><i class="fa-solid fa-layer-group"></i> Storage Tiers</h3>
+                    <div style="display:flex;gap:8px">
+                        <button class="btn btn-outline btn-sm" onclick="adminRunSweep()"><i class="fa-solid fa-broom"></i> Run Sweep</button>
+                        <button class="btn btn-outline btn-sm" onclick="adminEditTierSettings()"><i class="fa-solid fa-gear"></i> Settings</button>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+                    <div style="background:var(--bg-tertiary);border-radius:10px;padding:16px">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                            <i class="fa-solid fa-bolt" style="color:#f59e0b"></i>
+                            <strong>Hot Storage</strong> <span class="muted" style="font-size:12px">(Primary SSD)</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                            <span>${fmtBytes(hDisk.used)} / ${fmtBytes(hDisk.total)}</span>
+                            <span class="storage-pct-${storagePctClass(parseFloat(hPct))}" style="font-weight:700">${hPct}%</span>
+                        </div>
+                        <div style="background:var(--bg-secondary);border-radius:4px;height:10px;overflow:hidden;margin-bottom:8px">
+                            <div style="background:var(--storage-bar-${storagePctClass(parseFloat(hPct))});height:100%;width:${hPct}%;border-radius:4px"></div>
+                        </div>
+                        <div style="font-size:12px;color:var(--text-secondary)">${h.dbCount || 0} VODs — ${fmtBytes(h.vods?.bytes || 0)} on disk</div>
+                    </div>
+                    <div style="background:var(--bg-tertiary);border-radius:10px;padding:16px">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                            <i class="fa-solid fa-snowflake" style="color:#38bdf8"></i>
+                            <strong>Cold Storage</strong> <span class="muted" style="font-size:12px">(Block Volume)</span>
+                            ${co.available ? '<span style="color:#22c55e;font-size:11px"><i class="fa-solid fa-circle-check"></i> Mounted</span>' : '<span style="color:#ef4444;font-size:11px"><i class="fa-solid fa-circle-xmark"></i> Not mounted</span>'}
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                            <span>${fmtBytes(cDisk.used)} / ${fmtBytes(cDisk.total)}</span>
+                            <span class="storage-pct-${storagePctClass(parseFloat(cPct))}" style="font-weight:700">${cPct}%</span>
+                        </div>
+                        <div style="background:var(--bg-secondary);border-radius:4px;height:10px;overflow:hidden;margin-bottom:8px">
+                            <div style="background:#38bdf8;height:100%;width:${cPct}%;border-radius:4px"></div>
+                        </div>
+                        <div style="font-size:12px;color:var(--text-secondary)">${co.dbCount || 0} VODs — ${fmtBytes(co.vods?.bytes || 0)} on disk</div>
+                    </div>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--text-secondary)">
+                    <span title="Auto-migration enabled"><i class="fa-solid ${ts.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}" style="color:${ts.enabled ? '#22c55e' : '#ef4444'}"></i> Auto-migrate: ${ts.enabled ? 'ON' : 'OFF'}</span>
+                    <span>| Age: ${ts.minAgeDays || '?'}d</span>
+                    <span>| Views ≤ ${ts.maxViewsForCold || '?'}</span>
+                    <span>| Last access: ${ts.minLastAccessDays || '?'}d</span>
+                    <span>| Sweep: every ${ts.sweepIntervalMs ? (ts.sweepIntervalMs / 60000).toFixed(0) + ' min' : '?'}</span>
+                    <span>| Max/sweep: ${ts.maxPerSweep || '?'}</span>
+                </div>
+            </div>`;
+        }
+
         c.innerHTML = `
+            <!-- Storage Tiers -->
+            ${tierHtml}
+
             <!-- Disk Overview -->
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:28px">
                 <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px">
@@ -1203,8 +1271,17 @@ async function loadAdminData() {
                         <option value="size">Sort by Size</option>
                         <option value="date">Sort by Date</option>
                         <option value="duration">Sort by Duration</option>
+                        <option value="views">Sort by Views</option>
+                        <option value="tier">Sort by Tier</option>
+                        <option value="accessed">Sort by Last Access</option>
                         <option value="user">Sort by User</option>
                     </select>
+                    <button class="btn btn-sm" onclick="adminBulkMoveVods('cold')" id="admin-vod-cold-btn" disabled style="background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3)">
+                        <i class="fa-solid fa-snowflake"></i> Move to Cold
+                    </button>
+                    <button class="btn btn-sm" onclick="adminBulkMoveVods('hot')" id="admin-vod-hot-btn" disabled style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3)">
+                        <i class="fa-solid fa-bolt"></i> Move to Hot
+                    </button>
                     <button class="btn btn-danger btn-sm" onclick="adminBulkDeleteVods()" id="admin-vod-bulk-btn" disabled>
                         <i class="fa-solid fa-trash-can"></i> Delete Selected
                     </button>
@@ -1268,14 +1345,22 @@ async function loadAdminVodTable() {
                         <th style="padding:8px 6px">Title</th>
                         <th style="padding:8px 6px">User</th>
                         <th style="padding:8px 6px;text-align:right">Size</th>
+                        <th style="padding:8px 6px;text-align:right">Views</th>
                         <th style="padding:8px 6px;text-align:right">Duration</th>
                         <th style="padding:8px 6px">Date</th>
+                        <th style="padding:8px 6px;text-align:center">Tier</th>
                         <th style="padding:8px 6px;text-align:center">Status</th>
                     </tr>
                 </thead>
                 <tbody>
                     ${vods.map(v => {
                         const age = v.created_at ? timeAgo(v.created_at) : '—';
+                        const tier = v.actualTier || v.storage_tier || 'hot';
+                        const tierBadge = tier === 'cold'
+                            ? '<span style="background:rgba(56,189,248,0.15);color:#38bdf8;padding:2px 6px;border-radius:4px;font-size:11px"><i class="fa-solid fa-snowflake"></i> Cold</span>'
+                            : tier === 'missing'
+                            ? '<span style="background:rgba(239,68,68,0.15);color:#ef4444;padding:2px 6px;border-radius:4px;font-size:11px"><i class="fa-solid fa-ghost"></i> Missing</span>'
+                            : '<span style="background:rgba(245,158,11,0.15);color:#f59e0b;padding:2px 6px;border-radius:4px;font-size:11px"><i class="fa-solid fa-bolt"></i> Hot</span>';
                         const statusIcons = [
                             v.is_recording ? '<i class="fa-solid fa-circle" style="color:#ef4444" title="Recording"></i>' : '',
                             v.is_public ? '<i class="fa-solid fa-globe" style="color:#22c55e" title="Public"></i>' : '<i class="fa-solid fa-lock" style="color:#f59e0b" title="Private"></i>',
@@ -1283,12 +1368,14 @@ async function loadAdminVodTable() {
                         ].filter(Boolean).join(' ');
                         return `
                             <tr style="border-bottom:1px solid var(--border)" data-vod-id="${v.id}">
-                                <td style="padding:8px 6px"><input type="checkbox" class="admin-vod-cb" value="${v.id}" onchange="adminUpdateVodSelection()" style="cursor:pointer"></td>
-                                <td style="padding:8px 6px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(v.title || '')}">${esc(v.title || '(untitled)')}</td>
+                                <td style="padding:8px 6px"><input type="checkbox" class="admin-vod-cb" value="${v.id}" data-tier="${tier}" onchange="adminUpdateVodSelection()" style="cursor:pointer"></td>
+                                <td style="padding:8px 6px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(v.title || '')}">${esc(v.title || '(untitled)')}</td>
                                 <td style="padding:8px 6px">${esc(v.username)}</td>
                                 <td style="padding:8px 6px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${fmtBytes(v.diskSize || v.file_size || 0)}</td>
+                                <td style="padding:8px 6px;text-align:right;color:var(--text-secondary)">${(v.view_count || 0).toLocaleString()}</td>
                                 <td style="padding:8px 6px;text-align:right;color:var(--text-secondary)">${fmtDuration(v.duration_seconds)}</td>
                                 <td style="padding:8px 6px;color:var(--text-secondary)" title="${esc(v.created_at || '')}">${age}</td>
+                                <td style="padding:8px 6px;text-align:center">${tierBadge}</td>
                                 <td style="padding:8px 6px;text-align:center">${statusIcons}</td>
                             </tr>
                         `;
@@ -1313,13 +1400,30 @@ function adminToggleAllVods(checked) {
 }
 
 function adminUpdateVodSelection() {
-    const selected = document.querySelectorAll('.admin-vod-cb:checked');
+    const selected = [...document.querySelectorAll('.admin-vod-cb:checked')];
+    const count = selected.length;
     const btn = document.getElementById('admin-vod-bulk-btn');
+    const coldBtn = document.getElementById('admin-vod-cold-btn');
+    const hotBtn = document.getElementById('admin-vod-hot-btn');
     if (btn) {
-        btn.disabled = selected.length === 0;
-        btn.innerHTML = selected.length > 0
-            ? `<i class="fa-solid fa-trash-can"></i> Delete Selected (${selected.length})`
+        btn.disabled = count === 0;
+        btn.innerHTML = count > 0
+            ? `<i class="fa-solid fa-trash-can"></i> Delete Selected (${count})`
             : '<i class="fa-solid fa-trash-can"></i> Delete Selected';
+    }
+    if (coldBtn) {
+        const hotCount = selected.filter(cb => cb.dataset.tier === 'hot').length;
+        coldBtn.disabled = hotCount === 0;
+        coldBtn.innerHTML = hotCount > 0
+            ? `<i class="fa-solid fa-snowflake"></i> Move to Cold (${hotCount})`
+            : '<i class="fa-solid fa-snowflake"></i> Move to Cold';
+    }
+    if (hotBtn) {
+        const coldCount = selected.filter(cb => cb.dataset.tier === 'cold').length;
+        hotBtn.disabled = coldCount === 0;
+        hotBtn.innerHTML = coldCount > 0
+            ? `<i class="fa-solid fa-bolt"></i> Move to Hot (${coldCount})`
+            : '<i class="fa-solid fa-bolt"></i> Move to Hot';
     }
 }
 
@@ -1340,6 +1444,123 @@ async function adminBulkDeleteVods() {
         loadAdminData();
     } catch (e) {
         toast(e.message || 'Bulk delete failed', 'error');
+    }
+}
+
+async function adminRunSweep() {
+    const btn = event?.target?.closest?.('button');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Running…'; }
+    try {
+        const data = await api('/admin/storage/tiers/sweep', { method: 'POST' });
+        const msg = data.moved > 0
+            ? `Sweep complete: moved ${data.moved} VOD(s) to cold storage, freed ${fmtBytes(data.freedBytes || 0)} on hot`
+            : 'Sweep complete: no VODs eligible for migration';
+        toast(msg, data.moved > 0 ? 'success' : 'info');
+        if (data.errors?.length) toast(`${data.errors.length} error(s) during sweep`, 'warning');
+        loadAdminData();
+    } catch (e) {
+        toast(e.message || 'Sweep failed', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-broom"></i> Run Sweep Now'; }
+    }
+}
+
+async function adminEditTierSettings() {
+    // Fetch current settings
+    let tierStatus;
+    try {
+        tierStatus = await api('/admin/storage/tiers');
+    } catch (e) {
+        toast(e.message || 'Failed to load tier settings', 'error');
+        return;
+    }
+    const s = tierStatus.settings || {};
+
+    // Build a simple modal
+    const overlay = document.createElement('div');
+    overlay.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999';
+    overlay.innerHTML = `
+        <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:24px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+            <h3 style="margin:0 0 16px;font-size:1.1rem"><i class="fa-solid fa-sliders"></i> Storage Tier Settings</h3>
+            <div style="display:grid;gap:10px;font-size:0.9rem">
+                <label style="display:flex;align-items:center;gap:8px">
+                    <input type="checkbox" id="ts-enabled" ${s.enabled !== false ? 'checked' : ''}>
+                    <span>Auto-sweep enabled</span>
+                </label>
+                <label style="display:grid;gap:2px">
+                    <span>Min age (days) before cold migration</span>
+                    <input type="number" id="ts-minAge" value="${s.minAgeDays ?? 7}" min="1" max="365" style="padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-primary);color:var(--text-primary)">
+                </label>
+                <label style="display:grid;gap:2px">
+                    <span>Max view count for cold eligibility</span>
+                    <input type="number" id="ts-maxViews" value="${s.maxViewsForCold ?? 5}" min="0" max="10000" style="padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-primary);color:var(--text-primary)">
+                </label>
+                <label style="display:grid;gap:2px">
+                    <span>Min days since last access</span>
+                    <input type="number" id="ts-minAccess" value="${s.minLastAccessDays ?? 3}" min="1" max="365" style="padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-primary);color:var(--text-primary)">
+                </label>
+                <label style="display:grid;gap:2px">
+                    <span>Max VODs per sweep</span>
+                    <input type="number" id="ts-maxPerSweep" value="${s.maxPerSweep ?? 10}" min="1" max="100" style="padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-primary);color:var(--text-primary)">
+                </label>
+                <label style="display:grid;gap:2px">
+                    <span>Hot disk pressure threshold (%)</span>
+                    <input type="number" id="ts-pressure" value="${s.hotDiskPressurePct ?? 80}" min="50" max="99" style="padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-primary);color:var(--text-primary)">
+                </label>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+                <button class="btn btn-sm" id="ts-cancel" style="padding:6px 16px">Cancel</button>
+                <button class="btn btn-primary btn-sm" id="ts-save" style="padding:6px 16px"><i class="fa-solid fa-check"></i> Save</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('#ts-cancel').onclick = () => overlay.remove();
+    overlay.querySelector('#ts-save').onclick = async () => {
+        const body = {
+            enabled: document.getElementById('ts-enabled').checked,
+            minAgeDays: parseInt(document.getElementById('ts-minAge').value) || 7,
+            maxViewsForCold: parseInt(document.getElementById('ts-maxViews').value) || 5,
+            minLastAccessDays: parseInt(document.getElementById('ts-minAccess').value) || 3,
+            maxPerSweep: parseInt(document.getElementById('ts-maxPerSweep').value) || 10,
+            hotDiskPressurePct: parseInt(document.getElementById('ts-pressure').value) || 80,
+        };
+        try {
+            await api('/admin/storage/tiers/settings', { method: 'PUT', body });
+            toast('Storage tier settings saved', 'success');
+            overlay.remove();
+            loadAdminData();
+        } catch (e) {
+            toast(e.message || 'Failed to save settings', 'error');
+        }
+    };
+}
+
+async function adminBulkMoveVods(target) {
+    const allChecked = [...document.querySelectorAll('.admin-vod-cb:checked')];
+    // Only move VODs that are on the opposite tier
+    const ids = allChecked
+        .filter(cb => target === 'cold' ? cb.dataset.tier === 'hot' : cb.dataset.tier === 'cold')
+        .map(cb => parseInt(cb.value));
+    if (ids.length === 0) {
+        toast(`No selected VODs are eligible to move to ${target}`, 'warning');
+        return;
+    }
+    const label = target === 'cold' ? 'cold (block storage)' : 'hot (primary SSD)';
+    if (!confirm(`Move ${ids.length} VOD(s) to ${label}?`)) return;
+
+    try {
+        const data = await api('/admin/storage/tiers/bulk-move', { method: 'POST', body: { ids, target } });
+        const msg = `Moved ${data.moved} of ${ids.length} VOD(s) to ${target}`;
+        toast(msg, data.moved > 0 ? 'success' : 'info');
+        if (data.errors?.length) {
+            console.warn('[Admin] Bulk move errors:', data.errors);
+            toast(`${data.errors.length} error(s) during move`, 'warning');
+        }
+        loadAdminData();
+    } catch (e) {
+        toast(e.message || 'Bulk move failed', 'error');
     }
 }
 

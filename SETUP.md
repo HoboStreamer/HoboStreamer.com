@@ -1208,7 +1208,104 @@ This guide was aligned with current public guidance from:
 
 ---
 
-## 31. Summary
+## 31. Block Storage — Cold VOD Archival
+
+HoboStreamer supports a two-tier storage model for VODs:
+
+| Tier | Location | Purpose |
+|------|----------|---------|
+| **Hot** | `./data/vods/` (primary SSD) | Active, popular, or recent VODs — fast serving |
+| **Cold** | `/mnt/hobo-cold/vods/` (OVH block volume) | Older or less-viewed VODs — cheap bulk storage |
+
+A background sweep automatically migrates VODs from hot → cold when they meet configurable thresholds (age, view count, last access time). VODs are served transparently from either tier — no user-visible difference.
+
+### 31a. Provision OVH Block Storage
+
+1. In OVH Public Cloud → **Block Storage** → **Create a volume**
+2. Choose **high-speed-gen2**, 80 GB (or desired size), same region as your instance
+3. Attach the volume to your compute instance
+
+### 31b. Format and mount
+
+```bash
+# Identify the new disk (usually /dev/sdb or /dev/sdc)
+lsblk
+
+# Format as ext4
+sudo mkfs.ext4 -L hobo-cold /dev/sdX
+
+# Create mount point and mount
+sudo mkdir -p /mnt/hobo-cold
+sudo mount /dev/sdX /mnt/hobo-cold
+
+# Create VOD directory owned by your app user
+sudo mkdir -p /mnt/hobo-cold/vods
+sudo chown ubuntu:ubuntu /mnt/hobo-cold/vods
+```
+
+### 31c. Add to fstab for persistence
+
+Get the UUID:
+```bash
+sudo blkid /dev/sdX
+```
+
+Add to `/etc/fstab`:
+```
+UUID=<your-uuid>  /mnt/hobo-cold  ext4  defaults,nofail  0  2
+```
+
+The `nofail` flag ensures the server still boots if the volume is detached.
+
+Verify:
+```bash
+sudo umount /mnt/hobo-cold && sudo mount -a
+df -h /mnt/hobo-cold
+```
+
+### 31d. Configure in HoboStreamer
+
+Add the cold storage path to your `.env`:
+```
+COLD_STORAGE_PATH=/mnt/hobo-cold/vods
+```
+
+Or configure via the admin panel under **Storage → Storage Tiers → Settings**.
+
+### 31e. Default sweep thresholds
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `true` | Auto-sweep on/off |
+| `minAgeDays` | `7` | VOD must be at least this old |
+| `maxViewsForCold` | `5` | VOD must have ≤ this many views |
+| `minLastAccessDays` | `3` | VOD must not have been accessed for this many days |
+| `maxPerSweep` | `10` | Max VODs to move per sweep cycle |
+| `sweepIntervalMs` | `3600000` | Sweep runs every hour |
+| `hotDiskPressurePct` | `80` | Above this % used on hot storage, thresholds are relaxed |
+
+When hot disk usage exceeds the pressure threshold, the sweep relaxes criteria (halves age/access requirements, doubles view threshold) to more aggressively free space.
+
+### 31f. Admin panel controls
+
+The **Storage** tab in the admin panel shows:
+- **Storage Tiers** card with hot/cold volume usage bars, mount status, VOD counts per tier
+- **Run Sweep Now** button for manual migration
+- **Settings** button to edit all thresholds via a modal
+- **Move to Cold / Move to Hot** bulk action buttons for manual VOD tier changes
+- Each VOD row shows its current tier badge (🔥 Hot, ❄️ Cold, or ⚠️ Missing)
+
+### 31g. How it works internally
+
+- `storage-tier.js` manages all tier logic — settings stored in the `site_settings` DB table
+- On startup, `syncTiers()` reconciles the DB `storage_tier` column with actual file locations
+- File serving checks hot path first, then cold — transparent to end users
+- Cross-mount moves use copy → verify size → unlink (can't `rename()` across mount points)
+- `last_accessed_at` is updated on every file serve to track access recency
+
+---
+
+## 32. Summary
 
 For OVH + Ubuntu 25.04, the best HoboStreamer deployment pattern is:
 
@@ -1223,5 +1320,6 @@ For OVH + Ubuntu 25.04, the best HoboStreamer deployment pattern is:
 - only one streaming protocol exposed at a time unless you have a real need for more
 - Unified notification system via hobo.tools with optional Amazon SES for critical email alerts
 - Multi-domain identity with SSO, anonymous users, and multi-account switching
+- Block storage for cold VOD archival with automatic tiering
 
 See also [README.md](README.md) and [deploy](deploy).

@@ -81,6 +81,7 @@ module.exports = {
 
     vod: {
         path: process.env.VOD_PATH || './data/vods',
+        coldPath: process.env.COLD_STORAGE_PATH || '',
         clipsPath: process.env.CLIPS_PATH || './data/clips',
         maxSizeMb: parseInt(process.env.MAX_VOD_SIZE_MB || '2048', 10),
     },
