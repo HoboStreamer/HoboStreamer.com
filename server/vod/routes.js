@@ -892,9 +892,13 @@ router.delete('/:id', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not authorized to delete this VOD' });
         }
 
-        // Delete file
-        if (vod.file_path && fs.existsSync(vod.file_path)) {
-            fs.unlinkSync(vod.file_path);
+        // Delete file (check both hot and cold tiers)
+        if (vod.file_path) {
+            const storageTier = require('./storage-tier');
+            const realPath = storageTier.resolveVodPath(vod.file_path);
+            if (fs.existsSync(realPath)) {
+                fs.unlinkSync(realPath);
+            }
             cleanupSeekableFile(vod.file_path);
         }
 
@@ -924,16 +928,30 @@ router.post('/:id/publish', requireAuth, (req, res) => {
 // ── Serve VOD/Clip files ─────────────────────────────────────
 router.get('/file/:filename', optionalAuth, (req, res) => {
     try {
+        const storageTier = require('./storage-tier');
         const filename = path.basename(req.params.filename); // Prevent directory traversal
         const vodPath = path.resolve(config.vod.path, filename);
         const clipPath = path.resolve(config.vod.clipsPath, filename);
-        let filePath = vodPath;
+
+        // Resolve file across storage tiers (hot SSD + cold block storage)
+        const coldVodPath = path.join(storageTier.coldPath(), filename);
+        let filePath = null;
         let mediaRecord = null;
         let mediaType = null;
 
         if (fs.existsSync(vodPath)) {
+            filePath = vodPath;
             mediaType = 'vod';
             mediaRecord = db.get('SELECT id, user_id, is_public, is_recording, file_path FROM vods WHERE file_path = ?', [vodPath]);
+        } else if (fs.existsSync(coldVodPath)) {
+            // VOD is on cold storage
+            filePath = coldVodPath;
+            mediaType = 'vod';
+            mediaRecord = db.get('SELECT id, user_id, is_public, is_recording, file_path FROM vods WHERE file_path = ?', [vodPath]);
+            if (!mediaRecord) {
+                // Try matching by basename in case file_path was stored differently
+                mediaRecord = db.get("SELECT id, user_id, is_public, is_recording, file_path FROM vods WHERE file_path LIKE ?", [`%${filename}`]);
+            }
         } else if (fs.existsSync(clipPath)) {
             filePath = clipPath;
             mediaType = 'clip';
@@ -947,7 +965,7 @@ router.get('/file/:filename', optionalAuth, (req, res) => {
             );
         }
 
-        if (!fs.existsSync(filePath)) {
+        if (!filePath || !fs.existsSync(filePath)) {
             return res.status(404).json({ error: 'File not found' });
         }
 
@@ -966,6 +984,11 @@ router.get('/file/:filename', optionalAuth, (req, res) => {
 
         if (!canAccess) {
             return res.status(403).json({ error: 'This media is private' });
+        }
+
+        // Track last access time for storage tier decisions
+        if (mediaType === 'vod' && mediaRecord.id) {
+            try { db.run("UPDATE vods SET last_accessed_at = datetime('now') WHERE id = ?", [mediaRecord.id]); } catch {}
         }
 
         // For live recordings, serve the seekable copy if it exists

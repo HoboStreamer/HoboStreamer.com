@@ -484,6 +484,10 @@ async function start() {
     try { db.run("ALTER TABLE vods ADD COLUMN is_recording INTEGER DEFAULT 0"); console.log('[DB] Added vods.is_recording column'); } catch { /* already exists */ }
     // Migrate: add call_mode column to streams table for group calls
     try { db.run("ALTER TABLE streams ADD COLUMN call_mode TEXT DEFAULT NULL"); console.log('[DB] Added streams.call_mode column'); } catch { /* already exists */ }
+    // Migrate: add storage_tier column to vods (hot = primary SSD, cold = block storage)
+    try { db.run("ALTER TABLE vods ADD COLUMN storage_tier TEXT DEFAULT 'hot'"); console.log('[DB] Added vods.storage_tier column'); } catch { /* already exists */ }
+    // Migrate: add last_accessed_at for storage tier access tracking
+    try { db.run("ALTER TABLE vods ADD COLUMN last_accessed_at DATETIME"); console.log('[DB] Added vods.last_accessed_at column'); } catch { /* already exists */ }
     console.log('[Server] Database ready');
 
     // Seed built-in themes if empty
@@ -613,6 +617,11 @@ async function start() {
 
     // 6e. Start periodic viewer count polling for restream destinations
     restreamManager.startViewerCountPolling();
+
+    // 6f. Start storage tier manager (auto-migrate cold VODs)
+    const storageTier = require('./vod/storage-tier');
+    storageTier.syncTiers();
+    storageTier.start();
 
     // 7. Start HTTP server
     server.listen(config.port, config.host, () => {
@@ -838,6 +847,7 @@ function shutdown() {
     setTimeout(() => {
         restreamManager.stopViewerCountPolling();
         restreamManager.stopAll();
+        try { require('./vod/storage-tier').stop(); } catch {}
         // canvasServer + gameServer migrated to hobo.quest
         callServer.close();
         chatServer.close();

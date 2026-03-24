@@ -26,6 +26,11 @@
  * GET    /api/admin/storage                - Disk usage & per-directory breakdown
  * GET    /api/admin/storage/vods           - Detailed VOD file listing
  * DELETE /api/admin/storage/vods/bulk      - Bulk-delete VODs by ID
+ * GET    /api/admin/storage/tiers          - Storage tier status (hot/cold)
+ * PUT    /api/admin/storage/tiers/settings - Update tier settings
+ * POST   /api/admin/storage/tiers/sweep    - Trigger manual sweep
+ * POST   /api/admin/storage/tiers/move     - Move single VOD between tiers
+ * POST   /api/admin/storage/tiers/bulk-move - Bulk move VODs between tiers
  */
 const express = require('express');
 const crypto = require('crypto');
@@ -576,7 +581,8 @@ router.get('/storage', (req, res) => {
 
         // Per-directory breakdown
         const directories = [
-            { name: 'VODs',       path: './data/vods',                icon: 'fa-video' },
+            { name: 'VODs (Hot)',  path: './data/vods',                icon: 'fa-video' },
+            { name: 'VODs (Cold)', path: storageTier.coldPath(),       icon: 'fa-snowflake' },
             { name: 'Clips',      path: './data/clips',               icon: 'fa-film' },
             { name: 'Thumbnails', path: './data/thumbnails',          icon: 'fa-image' },
             { name: 'Avatars',    path: './data/avatars',             icon: 'fa-user-circle' },
@@ -640,12 +646,16 @@ router.get('/storage/vods', (req, res) => {
             case 'date': orderBy = `v.created_at ${order}`; break;
             case 'user': orderBy = `u.username ${order}, v.file_size DESC`; break;
             case 'duration': orderBy = `v.duration_seconds ${order}`; break;
+            case 'tier': orderBy = `v.storage_tier ${order}, v.file_size DESC`; break;
+            case 'views': orderBy = `v.view_count ${order}`; break;
+            case 'accessed': orderBy = `v.last_accessed_at ${order}`; break;
             default:      orderBy = `v.file_size ${order}`; break;
         }
 
         const vods = db.all(`
             SELECT v.id, v.title, v.file_path, v.file_size, v.duration_seconds,
-                   v.is_public, v.is_recording, v.created_at,
+                   v.is_public, v.is_recording, v.created_at, v.view_count,
+                   v.storage_tier, v.last_accessed_at,
                    v.stream_id, u.username, u.display_name, u.id as user_id
             FROM vods v
             JOIN users u ON v.user_id = u.id
@@ -655,18 +665,20 @@ router.get('/storage/vods', (req, res) => {
 
         const total = db.get('SELECT COUNT(*) as c FROM vods').c;
 
-        // Verify which files actually exist on disk
+        // Verify which files actually exist on disk (check both tiers)
         const enriched = vods.map(v => {
             let diskSize = 0;
             let exists = false;
+            const tier = storageTier.getFileTier(v.file_path);
             if (v.file_path) {
+                const realPath = storageTier.resolveVodPath(v.file_path);
                 try {
-                    const stat = fs.statSync(path.resolve(v.file_path));
+                    const stat = fs.statSync(realPath);
                     diskSize = stat.size;
-                    exists = true;
+                    exists = tier !== 'missing';
                 } catch { /* file missing */ }
             }
-            return { ...v, diskSize, fileExists: exists };
+            return { ...v, diskSize, fileExists: exists, actualTier: tier };
         });
 
         // Per-user summary
@@ -704,16 +716,25 @@ router.delete('/storage/vods/bulk', (req, res) => {
                 const vod = db.get('SELECT * FROM vods WHERE id = ?', [id]);
                 if (!vod) { errors.push(`VOD ${id} not found`); continue; }
 
-                // Delete file from disk
+                // Delete file from disk (check both hot and cold tiers)
                 if (vod.file_path) {
-                    const filePath = path.resolve(vod.file_path);
-                    if (fs.existsSync(filePath)) {
-                        const size = fs.statSync(filePath).size;
-                        fs.unlinkSync(filePath);
+                    const realPath = storageTier.resolveVodPath(vod.file_path);
+                    if (fs.existsSync(realPath)) {
+                        const size = fs.statSync(realPath).size;
+                        fs.unlinkSync(realPath);
                         freed += size;
                     }
+                    // Also check the other tier in case DB was out of sync
+                    const basename = path.basename(vod.file_path);
+                    const hotFile = path.join(storageTier.hotPath(), basename);
+                    const coldFile = path.join(storageTier.coldPath(), basename);
+                    for (const f of [hotFile, coldFile]) {
+                        if (fs.existsSync(f)) {
+                            try { freed += fs.statSync(f).size; fs.unlinkSync(f); } catch {}
+                        }
+                    }
                     // Also remove .seekable variant if exists
-                    const seekable = filePath.replace(/(\.[^.]+)$/, '.seekable$1');
+                    const seekable = path.join(storageTier.hotPath(), basename.replace(/(\.[^.]+)$/, '.seekable$1'));
                     if (fs.existsSync(seekable)) {
                         freed += fs.statSync(seekable).size;
                         fs.unlinkSync(seekable);
@@ -732,6 +753,108 @@ router.delete('/storage/vods/bulk', (req, res) => {
     } catch (err) {
         console.error('[Admin] Bulk VOD delete error:', err.message);
         res.status(500).json({ error: 'Bulk delete failed' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Storage Tier Management — hot/cold VOD tiering
+// ═══════════════════════════════════════════════════════════════
+const storageTier = require('../vod/storage-tier');
+
+// ── GET /api/admin/storage/tiers ─────────────────────────────
+// Full status of both storage tiers + settings
+router.get('/storage/tiers', (req, res) => {
+    try {
+        res.json(storageTier.getStatus());
+    } catch (err) {
+        console.error('[Admin] Storage tier status error:', err.message);
+        res.status(500).json({ error: 'Failed to get tier status' });
+    }
+});
+
+// ── PUT /api/admin/storage/tiers/settings ────────────────────
+// Update storage tier settings
+router.put('/storage/tiers/settings', (req, res) => {
+    try {
+        const allowed = Object.keys(storageTier.DEFAULTS);
+        const updates = {};
+        for (const key of allowed) {
+            if (req.body[key] !== undefined) {
+                let val = req.body[key];
+                // Coerce types to match defaults
+                if (typeof storageTier.DEFAULTS[key] === 'number') val = Number(val);
+                if (typeof storageTier.DEFAULTS[key] === 'boolean') val = !!val;
+                storageTier.setSetting(key, val);
+                updates[key] = val;
+            }
+        }
+        // Restart sweep timer with new settings
+        storageTier.stop();
+        storageTier.start();
+        console.log(`[Admin] Storage tier settings updated by ${req.user.username}:`, updates);
+        res.json({ ok: true, settings: storageTier.getSettings() });
+    } catch (err) {
+        console.error('[Admin] Storage tier settings error:', err.message);
+        res.status(500).json({ error: 'Failed to update settings' });
+    }
+});
+
+// ── POST /api/admin/storage/tiers/sweep ──────────────────────
+// Manually trigger a sweep
+router.post('/storage/tiers/sweep', (req, res) => {
+    try {
+        const result = storageTier.runSweep();
+        console.log(`[Admin] Manual sweep triggered by ${req.user.username}:`, result);
+        res.json(result);
+    } catch (err) {
+        console.error('[Admin] Sweep error:', err.message);
+        res.status(500).json({ error: 'Sweep failed' });
+    }
+});
+
+// ── POST /api/admin/storage/tiers/move ───────────────────────
+// Manually move a VOD between tiers
+router.post('/storage/tiers/move', (req, res) => {
+    try {
+        const { vodId, target } = req.body;
+        if (!vodId || !['hot', 'cold'].includes(target)) {
+            return res.status(400).json({ error: 'vodId and target (hot|cold) required' });
+        }
+        const result = target === 'cold'
+            ? storageTier.moveToCold(vodId)
+            : storageTier.moveToHot(vodId);
+        console.log(`[Admin] VOD ${vodId} move to ${target} by ${req.user.username}:`, result);
+        res.json(result);
+    } catch (err) {
+        console.error('[Admin] Tier move error:', err.message);
+        res.status(500).json({ error: 'Move failed' });
+    }
+});
+
+// ── POST /api/admin/storage/tiers/bulk-move ──────────────────
+// Bulk move VODs to a target tier
+router.post('/storage/tiers/bulk-move', (req, res) => {
+    try {
+        const { ids, target } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0 || !['hot', 'cold'].includes(target)) {
+            return res.status(400).json({ error: 'ids array and target (hot|cold) required' });
+        }
+        if (ids.length > 50) {
+            return res.status(400).json({ error: 'Max 50 VODs per bulk move' });
+        }
+        let moved = 0, bytesTotal = 0, errors = [];
+        for (const id of ids) {
+            const result = target === 'cold'
+                ? storageTier.moveToCold(id)
+                : storageTier.moveToHot(id);
+            if (result.ok) { moved++; bytesTotal += result.bytes || 0; }
+            else errors.push({ id, error: result.error });
+        }
+        console.log(`[Admin] Bulk move ${target} by ${req.user.username}: ${moved}/${ids.length}`);
+        res.json({ moved, bytes: bytesTotal, errors: errors.length ? errors : undefined });
+    } catch (err) {
+        console.error('[Admin] Bulk move error:', err.message);
+        res.status(500).json({ error: 'Bulk move failed' });
     }
 });
 
