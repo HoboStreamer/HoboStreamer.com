@@ -19,6 +19,7 @@ const {
     xpToLevel, levelToXp, rollLoot,
     hashNoise, getBiomeAt, getResourceNodeAt, getDifficultyTier, isInSafeZone, getWaterZone,
 } = require('./items');
+const { getSpotName } = require('./fishing-spots');
 
 let worldSeed = 0;
 
@@ -1055,6 +1056,7 @@ function fish(userId, tileX, tileY, reelScore) {
     if (reel === 0) {
         return {
             success: true, action: 'fish', zone: getWaterZone(tileX, tileY, worldSeed),
+            spotName: getSpotName(tileX, tileY, getWaterZone(tileX, tileY, worldSeed)),
             escaped: true, message: 'The fish got away!',
             stamina: sta - staCost, tileX, tileY,
         };
@@ -1130,7 +1132,7 @@ function fish(userId, tileX, tileY, reelScore) {
     const sellValue = (item?.sellPrice || 1) + Math.floor(weight * 2);
 
     return {
-        success: true, action: 'fish', zone,
+        success: true, action: 'fish', zone, spotName: getSpotName(tileX, tileY, zone),
         loot: { id: lootId, ...(item || {}), weight, sellValue },
         reelScore: reel, newSpecies, collectionCount, milestone,
         xp: xpResult, toolBroke,

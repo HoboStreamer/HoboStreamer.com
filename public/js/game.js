@@ -431,6 +431,19 @@ let dailyQuestMeta = { claimed: 0, total: 0, completed: 0, streak: 0, nextResetA
 let dailyQuestLastSync = 0;
 const dailyQuestReadyNotified = new Set();
 
+// ── Fishing Spot Names ─────────────────────────────────────
+const FISHING_SPOT_NAMES = {
+    shallow: ['Shallow Waters', 'Mudflat Cove', 'The Sandy Shallows', 'Barnacle Bay', 'Tidepools'],
+    river:   ['Murky Current',  'Calm Bend',    'The Narrows',        'Mossy Banks', 'The Muddy River'],
+    deep:    ['Deep Ocean',     'The Abyss',    'Open Sea',           'Dark Waters', 'The Drop-Off'],
+    arctic:  ['Arctic Waters',  'Frostbite Bay','Glacial Basin',      'The Ice Shelf','Frozen Passage'],
+};
+function getSpotName(tileX, tileY, zone) {
+    const names = FISHING_SPOT_NAMES[zone];
+    if (!names) return 'Unknown Waters';
+    return names[Math.abs((tileX * 7 + tileY * 13)) % names.length];
+}
+
 // ── Fishing Mini-Game State (Toontown-style) ─────────────────
 const FISHING = {
     active: false,
@@ -460,6 +473,7 @@ const FISHING = {
     // Result phase
     resultTimer: 0,
     resultData: null,       // server response
+    spotName: '',           // display name for the current fishing location
 };
 
 // Inventory grid state (Minecraft-style)
@@ -5386,6 +5400,7 @@ function enterFishingMode(tileX, tileY) {
     FISHING.tileX = tileX;
     FISHING.tileY = tileY;
     FISHING.zone = zone;
+    FISHING.spotName = getSpotName(tileX, tileY, zone);
     FISHING.castAnim = 0;
     FISHING.castHit = false;
     FISHING.reelRound = 0;
@@ -5418,7 +5433,7 @@ function enterFishingMode(tileX, tileY) {
     }
 
     activePanel = null; // Close any open panel
-    addChatMsg(`🎣 Fishing in ${zone} waters... Click on a fish shadow to cast!`);
+    addChatMsg(`🎣 Fishing at ${FISHING.spotName}... Click on a fish shadow to cast!`);
 }
 
 function exitFishingMode() {
@@ -5577,8 +5592,8 @@ function renderFishingOverlay(ctx) {
     ctx.fillStyle = '#e0e0e0';
     ctx.font = 'bold 18px monospace';
     ctx.textAlign = 'center';
-    const zoneNames = { shallow: '🏖️ Shallow Waters', river: '🏞️ River', deep: '🌊 Deep Ocean', arctic: '❄️ Arctic Waters' };
-    ctx.fillText(zoneNames[F.zone] || 'Fishing', CAM_W / 2, pr.y - 20);
+    // spot name now comes from FISHING.spotName (set in enterFishingMode)
+    ctx.fillText(F.spotName || 'Fishing', CAM_W / 2, pr.y - 20);
 
     ctx.font = '12px monospace';
     ctx.fillStyle = '#999';
