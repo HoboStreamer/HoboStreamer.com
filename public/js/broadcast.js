@@ -680,6 +680,82 @@ function isStreaming() {
     return broadcastState.streams.size > 0;
 }
 
+/* ── Broadcast Tabs Management ──────────────────────────────── */
+
+/**
+ * Switch between broadcast tabs (Go Live, Past Streams, Broadcast Settings)
+ */
+function switchBroadcastTab(tabName) {
+    // Hide all tab content
+    const allTabs = document.querySelectorAll('.broadcast-tab-content');
+    allTabs.forEach(tab => tab.classList.remove('active'));
+
+    // Show selected tab content
+    const selectedTab = document.querySelector(`.broadcast-tab-content[data-tab="${tabName}"]`);
+    if (selectedTab) {
+        selectedTab.classList.add('active');
+    }
+
+    // Update tab button states
+    const allButtons = document.querySelectorAll('.broadcast-page-tab-btn');
+    allButtons.forEach(btn => btn.classList.remove('active'));
+
+    const activeButton = document.querySelector(`.broadcast-page-tab-btn[data-tab="${tabName}"]`);
+    if (activeButton) {
+        activeButton.classList.add('active');
+        updateTabIndicator(activeButton);
+    }
+
+    // Load tab content if needed
+    if (tabName === 'past-streams') {
+        loadBroadcastVODs();
+    } else if (tabName === 'broadcast-settings') {
+        loadBroadcastSettingsForm();
+    }
+
+    // Save active tab preference
+    try {
+        localStorage.setItem('hobo_active_broadcast_tab', tabName);
+    } catch {}
+}
+
+/**
+ * Update the tab indicator position
+ */
+function updateTabIndicator(activeButton) {
+    const indicator = document.querySelector('.broadcast-page-tabs-indicator');
+    if (!indicator || !activeButton) return;
+
+    const container = document.querySelector('.broadcast-page-tabs-container');
+    if (!container) return;
+
+    const buttonRect = activeButton.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const relativeLeft = buttonRect.left - containerRect.left;
+
+    indicator.style.left = `${relativeLeft}px`;
+    indicator.style.width = `${buttonRect.width}px`;
+}
+
+/**
+ * Initialize broadcast tabs on page load
+ */
+function initBroadcastTabs() {
+    // Restore saved tab preference
+    let savedTab = 'go-live';
+    try {
+        savedTab = localStorage.getItem('hobo_active_broadcast_tab') || 'go-live';
+    } catch {}
+
+    switchBroadcastTab(savedTab);
+
+    // Add resize listener for indicator
+    window.addEventListener('resize', () => {
+        const activeButton = document.querySelector('.broadcast-page-tab-btn.active');
+        updateTabIndicator(activeButton);
+    });
+}
+
 /* ── Load/Save Settings ──────────────────────────────────────── */
 function loadBroadcastSettings() {
     try {
@@ -5317,6 +5393,7 @@ function _initPipDragResize() {
 
 document.addEventListener('DOMContentLoaded', () => {
     initBroadcastSettingsListeners();
+    initBroadcastTabs();
 
     // Update mobile chat FAB visibility on resize
     window.addEventListener('resize', () => {
@@ -5581,4 +5658,422 @@ function _connectMediaPipSocket() {
         if (_mediaPipSocket === ws) _mediaPipSocket = null;
     });
     _mediaPipSocket = ws;
+}
+
+/* ═════════════════════════════════════════════════════════════
+   BROADCAST TABS — VOD ARCHIVE & SETTINGS
+   ═════════════════════════════════════════════════════════════ */
+
+let _vodArchive = [];
+let _vodCurrentModal = null;
+
+/**
+ * Load VODs for the Past Streams tab
+ */
+async function loadBroadcastVODs() {
+    const grid = document.getElementById('bc-vod-grid');
+    if (!grid) return;
+
+    try {
+        // Fetch VODs from API
+        const response = await fetch('/api/vods');
+        const vods = await response.json();
+
+        if (!Array.isArray(vods)) {
+            grid.innerHTML = '<p class="muted" style="grid-column: 1/-1; text-align: center; padding: 40px">No VODs found</p>';
+            return;
+        }
+
+        _vodArchive = vods;
+        renderBroadcastVODGrid(vods);
+    } catch (err) {
+        console.error('Error loading VODs:', err);
+        grid.innerHTML = '<p class="muted" style="grid-column: 1/-1; text-align: center; padding: 40px">Error loading VODs</p>';
+    }
+}
+
+/**
+ * Render VOD cards in the grid
+ */
+function renderBroadcastVODGrid(vods) {
+    const grid = document.getElementById('bc-vod-grid');
+    if (!grid) return;
+
+    if (vods.length === 0) {
+        grid.innerHTML = '<p class="muted" style="grid-column: 1/-1; text-align: center; padding: 40px">No VODs found</p>';
+        return;
+    }
+
+    grid.innerHTML = vods.map((vod, idx) => `
+        <div class="bc-vod-card" onclick="openBroadcastVODModal(${idx})">
+            <div class="bc-vod-card-thumb">
+                ${vod.thumbnail_url ? `<img src="${vod.thumbnail_url}" alt="${vod.title || 'VOD'}">` : '<i class="fa-solid fa-video"></i>'}
+                <div class="bc-vod-card-duration">${formatDuration(vod.duration_seconds || 0)}</div>
+            </div>
+            <div class="bc-vod-card-content">
+                <h4 class="bc-vod-card-title">${vod.title || 'Untitled Stream'}</h4>
+                <div class="bc-vod-card-meta">
+                    <span><i class="fa-solid fa-calendar-days"></i> ${new Date(vod.created_at).toLocaleDateString()}</span>
+                    <span><i class="fa-solid fa-eye"></i> ${vod.view_count || 0} views</span>
+                    <span><i class="fa-solid fa-${vod.is_public ? 'globe' : 'lock'}"></i> ${vod.is_public ? 'Public' : 'Private'}</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+/**
+ * Open VOD detail modal
+ */
+function openBroadcastVODModal(vodIndex) {
+    const vod = _vodArchive[vodIndex];
+    if (!vod) return;
+
+    _vodCurrentModal = vod;
+    const modal = document.getElementById('bc-vod-modal');
+    if (!modal) return;
+
+    // Set VOD info
+    document.getElementById('bc-vod-modal-title').textContent = vod.title || 'Untitled Stream';
+    document.getElementById('bc-vod-modal-date').textContent = new Date(vod.created_at).toLocaleDateString();
+    document.getElementById('bc-vod-modal-duration').textContent = formatDuration(vod.duration_seconds || 0);
+    document.getElementById('bc-vod-modal-views').textContent = (vod.view_count || 0).toLocaleString();
+    document.getElementById('bc-vod-is-public').checked = vod.is_public === true;
+
+    // Set video source
+    const player = document.getElementById('bc-vod-player');
+    if (player && vod.stream_url) {
+        player.src = vod.stream_url;
+    }
+
+    // Load chat replay
+    loadVODChatReplay(vod.id);
+
+    // Show modal
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+}
+
+/**
+ * Load and display chat replay for a VOD
+ */
+async function loadVODChatReplay(vodId) {
+    const chatContainer = document.getElementById('bc-vod-chat-replay');
+    if (!chatContainer) return;
+
+    try {
+        const response = await fetch(`/api/vods/${vodId}/chat`);
+        const messages = await response.json();
+
+        if (!Array.isArray(messages) || messages.length === 0) {
+            chatContainer.innerHTML = '<p class="muted">No chat messages during this stream</p>';
+            return;
+        }
+
+        chatContainer.innerHTML = messages.map(msg => `
+            <div class="bc-vod-chat-message" onclick="seekBroadcastVOD(${msg.timestamp || 0})">
+                <div class="bc-vod-chat-message-info">
+                    <span class="bc-vod-chat-message-username">${msg.username}</span>
+                    <span class="bc-vod-chat-message-time">${formatDuration(msg.timestamp || 0)}</span>
+                </div>
+                <div class="bc-vod-chat-message-text">${msg.message}</div>
+            </div>
+        `).join('');
+    } catch (err) {
+        console.error('Error loading chat replay:', err);
+        chatContainer.innerHTML = '<p class="muted">Error loading chat messages</p>';
+    }
+}
+
+/**
+ * Seek VOD to a specific timestamp
+ */
+function seekBroadcastVOD(seconds) {
+    const player = document.getElementById('bc-vod-player');
+    if (player) {
+        player.currentTime = Math.max(0, seconds);
+    }
+}
+
+/**
+ * Close VOD modal
+ */
+function closeBroadcastVODModal() {
+    const modal = document.getElementById('bc-vod-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.classList.remove('active');
+        const player = document.getElementById('bc-vod-player');
+        if (player) player.pause();
+    }
+    _vodCurrentModal = null;
+}
+
+/**
+ * Search/filter VODs
+ */
+function searchBroadcastVODs() {
+    const searchQuery = document.getElementById('bc-vod-search')?.value || '';
+    const filtered = _vodArchive.filter(vod => 
+        (vod.title || '').toLowerCase().includes(searchQuery.toLowerCase())
+    );
+    renderBroadcastVODGrid(filtered);
+}
+
+/**
+ * Sort VODs
+ */
+function sortBroadcastVODs(sortBy) {
+    let sorted = [..._vodArchive];
+
+    switch (sortBy) {
+        case 'newest':
+            sorted.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            break;
+        case 'oldest':
+            sorted.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            break;
+        case 'longest':
+            sorted.sort((a, b) => (b.duration_seconds || 0) - (a.duration_seconds || 0));
+            break;
+        case 'mostviewed':
+            sorted.sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
+            break;
+    }
+
+    renderBroadcastVODGrid(sorted);
+}
+
+/**
+ * Filter VODs by public/private status
+ */
+function filterBroadcastVODs(filterValue, filterType) {
+    let filtered = _vodArchive;
+
+    if (filterValue === 'public') {
+        filtered = filtered.filter(v => v.is_public === true);
+    } else if (filterValue === 'private') {
+        filtered = filtered.filter(v => v.is_public !== true);
+    }
+
+    renderBroadcastVODGrid(filtered);
+}
+
+/**
+ * Update VOD visibility (public/private)
+ */
+async function updateBroadcastVODVisibility(isPublic) {
+    if (!_vodCurrentModal) return;
+
+    try {
+        const response = await fetch(`/api/vods/${_vodCurrentModal.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_public: isPublic })
+        });
+
+        if (response.ok) {
+            _vodCurrentModal.is_public = isPublic;
+            // Reload VOD grid to reflect changes
+            loadBroadcastVODs();
+        }
+    } catch (err) {
+        console.error('Error updating VOD visibility:', err);
+    }
+}
+
+/**
+ * Download VOD
+ */
+function downloadBroadcastVOD() {
+    if (!_vodCurrentModal || !_vodCurrentModal.stream_url) return;
+    const link = document.createElement('a');
+    link.href = _vodCurrentModal.stream_url;
+    link.download = `${_vodCurrentModal.title || 'stream'}.mp4`;
+    link.click();
+}
+
+/**
+ * Delete VOD
+ */
+async function deleteBroadcastVOD() {
+    if (!_vodCurrentModal) return;
+    if (!confirm('Delete this VOD? This cannot be undone.')) return;
+
+    try {
+        const response = await fetch(`/api/vods/${_vodCurrentModal.id}`, { method: 'DELETE' });
+        if (response.ok) {
+            closeBroadcastVODModal();
+            loadBroadcastVODs();
+        }
+    } catch (err) {
+        console.error('Error deleting VOD:', err);
+    }
+}
+
+/**
+ * Load Broadcast Settings form
+ */
+function loadBroadcastSettingsForm() {
+    try {
+        const saved = localStorage.getItem('hobo_broadcast_settings_form') || '{}';
+        const settings = JSON.parse(saved);
+
+        // Populate form fields
+        if (settings.defaultMethod) {
+            selectDefaultStreamingMethod(settings.defaultMethod);
+            document.getElementById('bc-settings-default-method')?.setAttribute('value', settings.defaultMethod);
+        }
+
+        if (settings.camera) document.getElementById('bc-settings-camera').value = settings.camera;
+        if (settings.microphone) document.getElementById('bc-settings-microphone').value = settings.microphone;
+        if (settings.micGain) {
+            document.getElementById('bc-settings-mic-gain').value = settings.micGain;
+            document.getElementById('bc-settings-mic-gain-display').textContent = settings.micGain + '%';
+        }
+        if (settings.echoCancellation !== undefined) {
+            document.getElementById('bc-settings-echo-cancellation').checked = settings.echoCancellation;
+        }
+        if (settings.noiseSuppression !== undefined) {
+            document.getElementById('bc-settings-noise-suppression').checked = settings.noiseSuppression;
+        }
+        if (settings.resolution) document.getElementById('bc-settings-resolution').value = settings.resolution;
+        if (settings.fps) document.getElementById('bc-settings-fps').value = settings.fps;
+        if (settings.bitrate) document.getElementById('bc-settings-bitrate').value = settings.bitrate;
+        if (settings.ttsMode) document.getElementById('bc-settings-tts-mode').value = settings.ttsMode;
+        if (settings.ttsVoice) document.getElementById('bc-settings-tts-voice').value = settings.ttsVoice;
+        if (settings.vodPublic !== undefined) {
+            document.getElementById('bc-settings-vod-public').checked = settings.vodPublic;
+        }
+    } catch (err) {
+        console.error('Error loading broadcast settings form:', err);
+    }
+}
+
+/**
+ * Update broadcast settings form
+ */
+function updateBroadcastSettings() {
+    // Update mic gain display
+    const gain = document.getElementById('bc-settings-mic-gain');
+    const display = document.getElementById('bc-settings-mic-gain-display');
+    if (gain && display) {
+        display.textContent = gain.value + '%';
+    }
+}
+
+/**
+ * Save broadcast settings form
+ */
+function saveBroadcastSettingsForm() {
+    try {
+        const settings = {
+            defaultMethod: document.getElementById('bc-settings-default-method')?.value || 'webrtc',
+            camera: document.getElementById('bc-settings-camera')?.value || 'default',
+            microphone: document.getElementById('bc-settings-microphone')?.value || 'default',
+            micGain: parseInt(document.getElementById('bc-settings-mic-gain')?.value || 100),
+            echoCancellation: document.getElementById('bc-settings-echo-cancellation')?.checked !== false,
+            noiseSuppression: document.getElementById('bc-settings-noise-suppression')?.checked !== false,
+            resolution: document.getElementById('bc-settings-resolution')?.value || '480p',
+            fps: document.getElementById('bc-settings-fps')?.value || '30',
+            bitrate: parseInt(document.getElementById('bc-settings-bitrate')?.value || 2500),
+            ttsMode: document.getElementById('bc-settings-tts-mode')?.value || 'off',
+            ttsVoice: document.getElementById('bc-settings-tts-voice')?.value || 'en-us',
+            vodPublic: document.getElementById('bc-settings-vod-public')?.checked !== false
+        };
+
+        localStorage.setItem('hobo_broadcast_settings_form', JSON.stringify(settings));
+
+        // Show save confirmation
+        const status = document.getElementById('bc-settings-save-status');
+        if (status) {
+            status.textContent = '✓ Settings saved';
+            status.style.color = 'var(--success, #22c55e)';
+            setTimeout(() => {
+                status.textContent = '';
+            }, 3000);
+        }
+    } catch (err) {
+        console.error('Error saving settings:', err);
+    }
+}
+
+/**
+ * Reset broadcast settings to defaults
+ */
+function resetBroadcastSettingsForm() {
+    if (!confirm('Reset all settings to defaults?')) return;
+
+    try {
+        localStorage.removeItem('hobo_broadcast_settings_form');
+        loadBroadcastSettingsForm();
+
+        // Show reset confirmation
+        const status = document.getElementById('bc-settings-save-status');
+        if (status) {
+            status.textContent = '✓ Settings reset';
+            status.style.color = 'var(--success, #22c55e)';
+            setTimeout(() => {
+                status.textContent = '';
+            }, 3000);
+        }
+    } catch (err) {
+        console.error('Error resetting settings:', err);
+    }
+}
+
+/**
+ * Select default streaming method (updates both form and hidden input)
+ */
+function selectDefaultStreamingMethod(method) {
+    const cards = document.querySelectorAll('#bc-broadcast-settings-tab .bc-method-card');
+    cards.forEach(card => {
+        card.classList.toggle('selected', card.dataset.method === method);
+    });
+    
+    const input = document.getElementById('bc-settings-default-method');
+    if (input) input.value = method;
+}
+
+/**
+ * Format duration in seconds to HH:MM:SS
+ */
+function formatDuration(seconds) {
+    if (!seconds || seconds < 0) return '0:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Load Broadcast Settings values into the Go Live form
+ */
+function loadBroadcastSettingsToForm() {
+    try {
+        const saved = localStorage.getItem('hobo_broadcast_settings_form') || '{}';
+        const settings = JSON.parse(saved);
+
+        // Select the streaming method
+        if (settings.defaultMethod) {
+            selectStreamMethod(settings.defaultMethod);
+        }
+
+        // Pre-select devices if saved
+        if (settings.camera) {
+            const cameraSelect = document.getElementById('bc-create-camera');
+            if (cameraSelect) cameraSelect.value = settings.camera;
+        }
+        if (settings.microphone) {
+            const micSelect = document.getElementById('bc-create-audio');
+            if (micSelect) micSelect.value = settings.microphone;
+        }
+
+        // Show a confirmation message
+        toast('✓ Defaults loaded from Broadcast Settings', 'success');
+    } catch (err) {
+        console.error('Error loading broadcast settings to form:', err);
+        toast('Error loading settings', 'error');
+    }
 }
