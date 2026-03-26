@@ -3,19 +3,79 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HoboStreamer — Free Open Source Live Streaming Platform</title>
-    <meta name="description" content="HoboStreamer.com — Free, open source live streaming with multi-platform restreaming to Twitch, YouTube, Kick, and more. VODs, clips, chat moderation, voice channels, emotes, analytics, and 200+ interconnected tools across the Hobo Network.">
-    <meta property="og:title" content="HoboStreamer — Free Open Source Live Streaming">
-    <meta property="og:description" content="Go live for free. Restream to Twitch, YouTube, Kick, and more. Clips, VODs, emotes, voice chat, analytics, and 14 connected services.">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>HoboStreamer - Free Open Source Live Streaming Platform</title>
+    <meta name="description" content="Free, open source live streaming platform. Restream to Twitch, YouTube, Kick, and more. VODs, clips, chat moderation, voice channels, emotes, analytics, and 200+ community tools.">
+    <meta name="keywords" content="live streaming, restream, streaming platform, twitch, youtube, open source, free streaming, hobostreamer">
+    <meta name="author" content="Hobo Network">
+    <meta name="theme-color" content="#c0965c">
+    
+    <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://hobostreamer.com">
-    <link rel="canonical" href="https://hobostreamer.com">
+    <meta property="og:url" content="https://hobostreamer.com/">
+    <meta property="og:title" content="HoboStreamer - Free Open Source Live Streaming">
+    <meta property="og:description" content="Go live for free. Restream to Twitch, YouTube, Kick & more. Clips, VODs, chat moderation, emotes, voice, analytics, and 200+ connected community tools.">
+    <meta property="og:image" content="https://hobostreamer.com/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="HoboStreamer - Live Streaming Platform">
+    <meta property="og:site_name" content="HoboStreamer">
+    <meta property="og:locale" content="en_US">
+    
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://hobostreamer.com/">
+    <meta name="twitter:title" content="HoboStreamer - Free Live Streaming">
+    <meta name="twitter:description" content="Free, open source live streaming. Restream to Twitch, YouTube, Kick. VODs, clips, community tools.">
+    <meta name="twitter:image" content="https://hobostreamer.com/og-image.png">
+    <meta name="twitter:image:alt" content="HoboStreamer Platform">
+    
+    <!-- Icons & Preconnect -->
+    <link rel="canonical" href="https://hobostreamer.com/">
+    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
+    <link rel="apple-touch-icon" href="/assets/logo.svg">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+    
+    <!-- Stylesheets -->
     <link rel="stylesheet" href="/css/style.css?v=15">
     <link rel="stylesheet" href="/css/broadcast.css?v=6">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
+    
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "HoboStreamer",
+      "description": "Free, open source live streaming platform with restreaming, VODs, clips, and 200+ community tools",
+      "url": "https://hobostreamer.com",
+      "applicationCategory": "Multimedia",
+      "operatingSystem": "Web",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "HoboStreamer",
+      "url": "https://hobostreamer.com",
+      "description": "Free open source live streaming platform",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": "https://hobostreamer.com/search?q={search_term_string}"
+        }
+      }
+    }
+    </script>
 </head>
 <body>
 
@@ -1369,8 +1429,29 @@
                     </button>
                 </div>
 
+                <!-- ═══════════════════════════════════════════════════════════ -->
+                <!-- BROADCAST SECTION TABS (Go Live | Past Streams | Settings) -->
+                <!-- ═══════════════════════════════════════════════════════════ -->
+                <div class="broadcast-page-tabs-nav">
+                    <div class="broadcast-page-tabs-container">
+                        <button class="broadcast-page-tab-btn active" data-tab="go-live" onclick="switchBroadcastTab('go-live')">
+                            <i class="fa-solid fa-tower-broadcast"></i>
+                            <span>Go Live</span>
+                        </button>
+                        <button class="broadcast-page-tab-btn" data-tab="past-streams" onclick="switchBroadcastTab('past-streams')">
+                            <i class="fa-solid fa-video"></i>
+                            <span>Past Streams</span>
+                        </button>
+                        <button class="broadcast-page-tab-btn" data-tab="broadcast-settings" onclick="switchBroadcastTab('broadcast-settings')">
+                            <i class="fa-solid fa-sliders"></i>
+                            <span>Broadcast Settings</span>
+                        </button>
+                    </div>
+                    <div class="broadcast-page-tabs-indicator"></div>
+                </div>
+
                 <!-- ═══ STEP 0: Stream Manager (existing streams + create new) ═══ -->
-                <div id="bc-stream-manager">
+                <div id="bc-stream-manager" class="broadcast-tab-content active" data-tab="go-live">
                     <h2><i class="fa-solid fa-tower-broadcast"></i> Go Live</h2>
                     <p class="bc-page-subtitle">Set up your stream in 3 easy steps — pick a method, configure your devices, and hit Go Live.</p>
 
@@ -1378,6 +1459,14 @@
                     <!-- Create new stream (left / primary) -->
                     <div class="bc-create-section" id="bc-create-section">
                         <h3>Create New Stream</h3>
+
+                        <!-- Load from Broadcast Settings -->
+                        <div class="bc-quick-load">
+                            <p class="muted"><i class="fa-solid fa-lightbulb"></i> Use your saved defaults from Broadcast Settings</p>
+                            <button class="btn btn-outline btn-small" onclick="loadBroadcastSettingsToForm()" type="button">
+                                <i class="fa-solid fa-download"></i> Load Defaults
+                            </button>
+                        </div>
 
                         <!-- STEP 1: Stream Info -->
                         <div class="bc-step-header">
@@ -1701,6 +1790,240 @@
                         </div>
                     </div>
                     </div><!-- .bc-manager-grid -->
+                </div>
+
+                <!-- ═══ PAST STREAMS TAB ═══ -->
+                <div id="bc-past-streams-tab" class="broadcast-tab-content" data-tab="past-streams">
+                    <div class="bc-tab-header">
+                        <h2><i class="fa-solid fa-video"></i> Past Streams</h2>
+                        <p class="bc-page-subtitle">Browse and watch your recorded VODs. Click a VOD to view it with chat replay.</p>
+                    </div>
+                    <div class="bc-vod-archive-section">
+                        <!-- VOD Archive Grid Container -->
+                        <div id="bc-vod-controls" class="bc-vod-controls">
+                            <div class="bc-vod-search-bar">
+                                <input type="text" id="bc-vod-search" class="form-input" placeholder="Search VODs by title...">
+                                <button class="btn btn-outline btn-small" onclick="searchBroadcastVODs()">
+                                    <i class="fa-solid fa-search"></i>
+                                </button>
+                            </div>
+                            <div class="bc-vod-filters">
+                                <select id="bc-vod-sort" class="form-input form-input-sm" onchange="sortBroadcastVODs(this.value)">
+                                    <option value="newest">Newest First</option>
+                                    <option value="oldest">Oldest First</option>
+                                    <option value="longest">Longest Duration</option>
+                                    <option value="mostviewed">Most Viewed</option>
+                                </select>
+                                <select id="bc-vod-filter-public" class="form-input form-input-sm" onchange="filterBroadcastVODs(this.value, 'public')">
+                                    <option value="">All VODs</option>
+                                    <option value="public">Public Only</option>
+                                    <option value="private">Private Only</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- VOD Grid -->
+                        <div id="bc-vod-grid" class="bc-vod-grid">
+                            <p class="muted" style="grid-column: 1/-1; text-align: center; padding: 40px 20px">
+                                <i class="fa-solid fa-video"></i> Loading VODs...
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- VOD Detail Modal -->
+                    <div id="bc-vod-modal" class="bc-modal" style="display:none">
+                        <div class="bc-modal-content bc-vod-modal-content">
+                            <button class="bc-modal-close" onclick="closeBroadcastVODModal()">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                            <div class="bc-vod-modal-header">
+                                <div class="bc-vod-modal-video">
+                                    <video id="bc-vod-player" controls style="width: 100%; height: auto; background: #000"></video>
+                                </div>
+                                <div class="bc-vod-modal-info">
+                                    <h3 id="bc-vod-modal-title">Stream Title</h3>
+                                    <div class="bc-vod-modal-meta">
+                                        <span><i class="fa-solid fa-calendar"></i> <span id="bc-vod-modal-date">--</span></span>
+                                        <span><i class="fa-solid fa-clock"></i> <span id="bc-vod-modal-duration">--</span></span>
+                                        <span><i class="fa-solid fa-eye"></i> <span id="bc-vod-modal-views">--</span> views</span>
+                                    </div>
+                                    <div class="bc-vod-modal-actions">
+                                        <label class="bc-toggle-label">
+                                            <input type="checkbox" id="bc-vod-is-public" onchange="updateBroadcastVODVisibility(this.checked)">
+                                            Public
+                                        </label>
+                                        <button class="btn btn-outline btn-small" onclick="downloadBroadcastVOD()">
+                                            <i class="fa-solid fa-download"></i> Download
+                                        </button>
+                                        <button class="btn btn-danger btn-small" onclick="deleteBroadcastVOD()">
+                                            <i class="fa-solid fa-trash"></i> Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Chat Replay Section -->
+                            <div class="bc-vod-modal-chat-section">
+                                <h4><i class="fa-solid fa-comments"></i> Chat Replay</h4>
+                                <div class="bc-vod-chat-replay" id="bc-vod-chat-replay">
+                                    <p class="muted">Loading chat messages...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ BROADCAST SETTINGS TAB ═══ -->
+                <div id="bc-broadcast-settings-tab" class="broadcast-tab-content" data-tab="broadcast-settings">
+                    <div class="bc-tab-header">
+                        <h2><i class="fa-solid fa-sliders"></i> Broadcast Settings</h2>
+                        <p class="bc-page-subtitle">Configure your default broadcast preferences. These settings will auto-populate when you create a new stream.</p>
+                    </div>
+
+                    <div class="bc-settings-form">
+                        <!-- Streaming Method -->
+                        <div class="bc-settings-group">
+                            <h3><i class="fa-solid fa-tower-broadcast"></i> Default Streaming Method</h3>
+                            <div class="form-group">
+                                <label>Preferred Method</label>
+                                <div class="bc-method-picker">
+                                    <div class="bc-method-card" data-method="webrtc" onclick="selectDefaultStreamingMethod('webrtc')">
+                                        <i class="fa-solid fa-globe"></i>
+                                        <strong>WebRTC</strong>
+                                        <span class="bc-method-subtitle">Browser or OBS (WHIP)</span>
+                                    </div>
+                                    <div class="bc-method-card" data-method="rtmp" onclick="selectDefaultStreamingMethod('rtmp')">
+                                        <i class="fa-solid fa-server"></i>
+                                        <strong>RTMP</strong>
+                                        <span class="bc-method-subtitle">OBS / IRL Pro</span>
+                                    </div>
+                                    <div class="bc-method-card" data-method="jsmpeg" onclick="selectDefaultStreamingMethod('jsmpeg')">
+                                        <i class="fa-solid fa-terminal"></i>
+                                        <strong>JSMPEG</strong>
+                                        <span class="bc-method-subtitle">FFmpeg / Pi</span>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="bc-settings-default-method" value="webrtc">
+                            </div>
+                        </div>
+
+                        <!-- Media Devices -->
+                        <div class="bc-settings-group">
+                            <h3><i class="fa-solid fa-camera"></i> Default Media Devices</h3>
+                            <div class="form-group">
+                                <label>Preferred Camera</label>
+                                <select id="bc-settings-camera" class="form-input">
+                                    <option value="default">Default</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Preferred Microphone</label>
+                                <select id="bc-settings-microphone" class="form-input">
+                                    <option value="default">Default</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Audio Settings -->
+                        <div class="bc-settings-group">
+                            <h3><i class="fa-solid fa-sliders"></i> Audio Settings</h3>
+                            <div class="form-group">
+                                <label>Microphone Gain</label>
+                                <input type="range" id="bc-settings-mic-gain" min="0" max="200" value="100" class="form-range" onchange="updateBroadcastSettings()">
+                                <span id="bc-settings-mic-gain-display">100%</span>
+                            </div>
+                            <div class="form-group">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-settings-echo-cancellation" checked onchange="updateBroadcastSettings()">
+                                    Echo Cancellation
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-settings-noise-suppression" checked onchange="updateBroadcastSettings()">
+                                    Noise Suppression
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Video Quality Settings -->
+                        <div class="bc-settings-group">
+                            <h3><i class="fa-solid fa-image"></i> Video Quality Defaults</h3>
+                            <div class="form-group">
+                                <label>Resolution</label>
+                                <select id="bc-settings-resolution" class="form-input" onchange="updateBroadcastSettings()">
+                                    <option value="360p">360p (low)</option>
+                                    <option value="480p" selected>480p (recommended)</option>
+                                    <option value="720p">720p (high)</option>
+                                    <option value="1080p">1080p (very high)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Frame Rate</label>
+                                <select id="bc-settings-fps" class="form-input" onchange="updateBroadcastSettings()">
+                                    <option value="24">24 FPS</option>
+                                    <option value="30" selected>30 FPS</option>
+                                    <option value="60">60 FPS</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Target Bitrate (kbps)</label>
+                                <input type="number" id="bc-settings-bitrate" class="form-input" value="2500" min="500" max="10000" step="100" onchange="updateBroadcastSettings()">
+                                <span class="bc-field-hint">Lower for slow connections, higher for better quality</span>
+                            </div>
+                        </div>
+
+                        <!-- TTS Settings -->
+                        <div class="bc-settings-group">
+                            <h3><i class="fa-solid fa-volume-high"></i> Text-to-Speech Defaults</h3>
+                            <div class="form-group">
+                                <label>TTS Mode</label>
+                                <select id="bc-settings-tts-mode" class="form-input" onchange="updateBroadcastSettings()">
+                                    <option value="off" selected>Off</option>
+                                    <option value="commands">Commands Only</option>
+                                    <option value="alerts">Alerts Only</option>
+                                    <option value="all">All Messages</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>TTS Voice</label>
+                                <select id="bc-settings-tts-voice" class="form-input" onchange="updateBroadcastSettings()">
+                                    <option value="en-us">English (US)</option>
+                                    <option value="en-uk">English (UK)</option>
+                                    <option value="es">Spanish</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- VOD Settings -->
+                        <div class="bc-settings-group">
+                            <h3><i class="fa-solid fa-video"></i> VOD Defaults</h3>
+                            <div class="form-group">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-settings-vod-public" checked onchange="updateBroadcastSettings()">
+                                    Make new VODs public by default
+                                </label>
+                                <span class="bc-field-hint">VODs can be toggled after streaming</span>
+                            </div>
+                            <div class="form-group">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-settings-vod-auto-clip" onchange="updateBroadcastSettings()">
+                                    Auto-clip last 30 seconds (future feature)
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Save Settings Button -->
+                        <div class="bc-settings-actions">
+                            <button class="btn btn-primary" onclick="saveBroadcastSettingsForm()">
+                                <i class="fa-solid fa-floppy-disk"></i> Save Settings
+                            </button>
+                            <button class="btn btn-outline" onclick="resetBroadcastSettingsForm()">
+                                <i class="fa-solid fa-rotate-left"></i> Reset to Defaults
+                            </button>
+                            <span id="bc-settings-save-status" class="muted"></span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ═══ STEP 1: Method-specific setup (shown after create) ═══ -->

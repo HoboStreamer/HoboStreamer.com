@@ -30,6 +30,545 @@
     box-shadow: var(--shadow-soft, 0 12px 40px rgba(0,0,0,0.28));
 }
 
+/* ── Broadcast Page Tabs Navigation ─────────────────────────────── */
+.broadcast-page-tabs-nav {
+    position: relative;
+    padding: 0 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+}
+
+.broadcast-page-tabs-container {
+    display: flex;
+    gap: 2px;
+    align-items: stretch;
+}
+
+.broadcast-page-tab-btn {
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    transition: color 0.2s ease;
+    white-space: nowrap;
+}
+
+.broadcast-page-tab-btn:hover {
+    color: var(--text-primary);
+}
+
+.broadcast-page-tab-btn.active {
+    color: var(--accent);
+}
+
+.broadcast-page-tab-btn i {
+    font-size: 1rem;
+}
+
+.broadcast-page-tabs-indicator {
+    position: absolute;
+    bottom: 0;
+    left: 16px;
+    height: 3px;
+    background: var(--accent);
+    border-radius: 3px 3px 0 0;
+    transition: all 0.3s ease;
+    width: 0;
+}
+
+/* ── Broadcast Tab Content ──────────────────────────────────────── */
+.broadcast-tab-content {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.broadcast-tab-content.active {
+    display: flex;
+    flex-direction: column;
+}
+
+.bc-tab-header {
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.bc-tab-header h2 {
+    font-size: 1.75rem;
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bc-tab-header i {
+    color: var(--accent);
+}
+
+/* ── VOD Archive Section ────────────────────────────────────────── */
+.bc-vod-archive-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex: 1;
+}
+
+.bc-vod-controls {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.bc-vod-search-bar {
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    min-width: 250px;
+}
+
+.bc-vod-search-bar input {
+    flex: 1;
+}
+
+.bc-vod-filters {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.bc-vod-filters select {
+    min-width: 140px;
+}
+
+/* VOD Grid */
+.bc-vod-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+    flex: 1;
+}
+
+.bc-vod-card {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.bc-vod-card:hover {
+    background: rgba(255,255,255,0.04);
+    border-color: var(--accent);
+}
+
+.bc-vod-card-thumb {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #000;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bc-vod-card-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.bc-vod-card-duration {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: rgba(0,0,0,0.8);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.bc-vod-card-content {
+    padding: 12px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.bc-vod-card-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin: 0 0 8px;
+    line-height: 1.3;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.bc-vod-card-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: auto;
+}
+
+.bc-vod-card-meta span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.bc-vod-card-meta i {
+    font-size: 0.8rem;
+}
+
+/* VOD Modal */
+.bc-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.bc-modal.active {
+    display: flex;
+}
+
+.bc-modal-content {
+    background: rgba(22,22,26,0.95);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    max-width: 1200px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    position: relative;
+}
+
+.bc-vod-modal-content {
+    display: flex;
+    flex-direction: column;
+}
+
+.bc-modal-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+    z-index: 10;
+    transition: background 0.2s ease;
+}
+
+.bc-modal-close:hover {
+    background: rgba(255,255,255,0.15);
+}
+
+.bc-vod-modal-header {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 24px;
+    padding: 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.bc-vod-modal-video {
+    width: 100%;
+}
+
+.bc-vod-modal-info {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.bc-vod-modal-info h3 {
+    font-size: 1.3rem;
+    margin: 0;
+}
+
+.bc-vod-modal-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.bc-vod-modal-meta span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.bc-vod-modal-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.bc-vod-modal-chat-section {
+    padding: 24px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.bc-vod-modal-chat-section h4 {
+    margin: 0 0 16px;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bc-vod-chat-replay {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 12px;
+    background: rgba(255,255,255,0.02);
+}
+
+.bc-vod-chat-message {
+    padding: 8px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    font-size: 0.85rem;
+}
+
+.bc-vod-chat-message:hover {
+    background: rgba(255,255,255,0.08);
+}
+
+.bc-vod-chat-message-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.bc-vod-chat-message-username {
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 0.8rem;
+}
+
+.bc-vod-chat-message-time {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+
+.bc-vod-chat-message-text {
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+/* ── Broadcast Settings Form ────────────────────────────────────── */
+.bc-settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    max-width: 600px;
+}
+
+.bc-settings-group {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.bc-settings-group h3 {
+    margin: 0 0 16px;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bc-settings-group h3 i {
+    color: var(--accent);
+}
+
+.bc-settings-group .form-group {
+    margin-bottom: 12px;
+}
+
+.bc-settings-group .form-group:last-child {
+    margin-bottom: 0;
+}
+
+.bc-settings-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 8px;
+}
+
+.bc-settings-actions .btn {
+    flex: 0 0 auto;
+}
+
+.bc-settings-actions #bc-settings-save-status {
+    margin-left: auto;
+    font-size: 0.85rem;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .bc-vod-grid {
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    }
+
+    .bc-vod-modal-header {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+}
+
+@media (max-width: 768px) {
+    .broadcast-page-tabs-container {
+        gap: 0;
+    }
+
+    .broadcast-page-tab-btn {
+        padding: 10px 12px;
+        font-size: 0.85rem;
+    }
+
+    .broadcast-page-tab-btn span {
+        display: none;
+    }
+
+    .broadcast-page-tab-btn i {
+        font-size: 1.1rem;
+    }
+
+    .bc-vod-grid {
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    }
+
+    .bc-vod-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .bc-vod-search-bar {
+        flex-direction: column;
+        min-width: 100%;
+    }
+
+    .bc-vod-filters {
+        flex-direction: column;
+    }
+
+    .bc-vod-filters select {
+        width: 100%;
+        min-width: auto;
+    }
+
+    .bc-settings-form {
+        max-width: 100%;
+    }
+
+    .bc-modal {
+        padding: 10px;
+    }
+
+    .bc-modal-content {
+        max-height: 95vh;
+        border-radius: 12px;
+    }
+
+    .bc-vod-modal-header {
+        padding: 16px;
+    }
+
+    .bc-vod-modal-chat-section {
+        padding: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    .broadcast-page-tab-btn {
+        padding: 8px 6px;
+    }
+
+    .bc-vod-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px;
+    }
+
+    .bc-vod-card-content {
+        padding: 8px;
+    }
+
+    .bc-vod-card-title {
+        font-size: 0.8rem;
+        -webkit-line-clamp: 1;
+        margin-bottom: 6px;
+    }
+
+    .bc-vod-card-meta {
+        font-size: 0.7rem;
+        gap: 2px;
+    }
+
+    .bc-settings-group {
+        padding: 12px;
+    }
+
+    .bc-settings-group h3 {
+        font-size: 0.95rem;
+        margin-bottom: 12px;
+    }
+
+    .bc-quick-load {
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px;
+    }
+
+    .bc-quick-load p {
+        font-size: 0.8rem;
+    }
+
+    .bc-quick-load .btn {
+        width: 100%;
+    }
+}
+
 /* ── Video Preview ────────────────────────────────────────────── */
 .bc-video-container {
     position: relative;
@@ -1640,6 +2179,29 @@
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+/* Quick Load Settings */
+.bc-quick-load {
+    background: rgba(var(--accent-rgb, 192, 150, 92), 0.08);
+    border: 1px solid rgba(var(--accent-rgb, 192, 150, 92), 0.2);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.bc-quick-load p {
+    margin: 0;
+    font-size: 0.85rem;
+    flex: 1;
+}
+
+.bc-quick-load .btn {
+    flex-shrink: 0;
 }
 
 .bc-active-notice {
