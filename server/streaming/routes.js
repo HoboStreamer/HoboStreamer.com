@@ -609,6 +609,33 @@ router.delete('/voice-channels/:channelId', requireAuth, (req, res) => {
     }
 });
 
+// ── Broadcast Settings ──────────────────────────────────────
+router.get('/broadcast-settings', requireAuth, (req, res) => {
+    try {
+        const user = req.user;
+        // Return default broadcast settings (these are typically stored client-side in localStorage)
+        res.json({
+            settings: {
+                defaultMethod: 'webrtc',
+                camera: '',
+                microphone: '',
+                micGain: 80,
+                echoCancellation: true,
+                noiseSuppression: true,
+                resolution: '1280x720',
+                fps: 30,
+                bitrate: 2500,
+                ttsMode: 'off',
+                ttsVoice: 'default',
+                vodPublic: true,
+            },
+        });
+    } catch (err) {
+        console.error('[Streaming] broadcast-settings error:', err.message);
+        res.status(500).json({ error: 'Failed to get broadcast settings' });
+    }
+});
+
 // ── Get Stream Details ───────────────────────────────────────
 router.get('/:id', optionalAuth, (req, res) => {
     try {
@@ -1042,33 +1069,6 @@ router.get('/:id/call', optionalAuth, (req, res) => {
     } catch (err) {
         console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to get call status' });
-    }
-});
-
-// ── GET /broadcast-settings — Get broadcast settings for the authenticated user
-router.get('/broadcast-settings', requireAuth, (req, res) => {
-    try {
-        const user = req.user;
-        // Return default broadcast settings (these are typically stored client-side in localStorage)
-        res.json({
-            settings: {
-                defaultMethod: 'webrtc',
-                camera: '',
-                microphone: '',
-                micGain: 80,
-                echoCancellation: true,
-                noiseSuppression: true,
-                resolution: '1280x720',
-                fps: 30,
-                bitrate: 2500,
-                ttsMode: 'off',
-                ttsVoice: 'default',
-                vodPublic: true,
-            },
-        });
-    } catch (err) {
-        console.error('[Streaming] broadcast-settings error:', err.message);
-        res.status(500).json({ error: 'Failed to get broadcast settings' });
     }
 });
 
