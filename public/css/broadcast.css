@@ -2036,9 +2036,32 @@
 
 .bc-manager-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 24px;
     align-items: start;
+}
+
+/* Hide the old right-sidebar streams list - now using bc-active-streams-section instead */
+#bc-existing-streams {
+    display: none;
+}
+
+/* New active streams section at top of form */
+.bc-active-streams-section {
+    background: rgba(196, 181, 253, 0.08);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 24px;
+}
+
+.bc-active-streams-section h3 {
+    font-size: 1.05rem;
+    color: var(--accent);
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 #bc-existing-streams h3 {

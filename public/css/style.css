@@ -1912,6 +1912,111 @@ main#app { position: relative; z-index: 1; }
 .control-btn i { font-size: 1.2rem; }
 .control-btn.on-cooldown { opacity: 0.5; pointer-events: none; }
 
+/* ONVIF Camera Controls */
+.onvif-widget {
+    margin: 12px 0; padding: 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: all 0.2s;
+}
+
+.onvif-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+
+.onvif-header h3 {
+    font-size: 0.95rem; color: var(--accent); margin: 0;
+    display: flex; align-items: center; gap: 6px;
+}
+
+.onvif-status {
+    font-size: 1rem; font-weight: bold;
+    animation: pulse 2s infinite;
+}
+
+.onvif-status.connected { color: #0f0; }
+.onvif-status.unreachable { color: #f00; animation: none; }
+.onvif-status.unknown { color: #888; animation: none; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+.onvif-controls {
+    display: flex; flex-direction: column; gap: 10px;
+}
+
+/* D-Pad for Pan/Tilt */
+.dpad-container {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 4px; width: 120px; height: 120px;
+    margin: 0 auto;
+}
+
+.dpad-btn {
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-hover); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text-primary);
+    cursor: pointer; transition: all 0.1s;
+    font-size: 1rem;
+}
+
+.dpad-btn:hover { background: var(--bg-active); border-color: var(--accent); }
+.dpad-btn:active { background: var(--accent); color: #000; }
+.dpad-btn.on-cooldown { opacity: 0.5; pointer-events: none; }
+
+.dpad-up { grid-column: 2; grid-row: 1; }
+.dpad-left { grid-column: 1; grid-row: 2; }
+.dpad-center { grid-column: 2; grid-row: 2; background: var(--bg-primary); }
+.dpad-right { grid-column: 3; grid-row: 2; }
+.dpad-down { grid-column: 2; grid-row: 3; }
+
+/* Zoom Controls */
+.zoom-container {
+    display: flex; align-items: center; gap: 8px;
+    justify-content: center;
+}
+
+.zoom-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px;
+    background: var(--bg-hover); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text-primary);
+    cursor: pointer; transition: all 0.1s;
+    font-size: 0.9rem;
+}
+
+.zoom-btn:hover { background: var(--bg-active); border-color: var(--accent); }
+.zoom-btn:active { background: var(--accent); color: #000; }
+.zoom-btn.on-cooldown { opacity: 0.5; pointer-events: none; }
+
+.zoom-slider {
+    width: 120px; height: 24px;
+    accent-color: var(--accent);
+}
+
+/* Preset Buttons */
+.presets-container {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    justify-content: center;
+}
+
+.preset-btn {
+    padding: 6px 12px; background: var(--bg-hover);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text-primary); font-size: 0.75rem;
+    cursor: pointer; transition: all 0.1s;
+}
+
+.preset-btn:hover { border-color: var(--accent); color: var(--accent); }
+.preset-btn:active { background: var(--accent); color: #000; }
+.preset-btn.on-cooldown { opacity: 0.5; pointer-events: none; }
+
 /* Multi-cam */
 .multicam-bar {
     display: flex; align-items: center; gap: 8px;

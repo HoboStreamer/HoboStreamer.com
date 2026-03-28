@@ -1307,6 +1307,65 @@ function getApiKeyByHash(hash) {
     return get('SELECT * FROM api_keys WHERE key_hash = ? AND is_active = 1', [hash]);
 }
 
+// ── ONVIF Camera helpers ─────────────────────────────────────
+
+function createCameraProfile({ user_id, stream_id, name, onvif_url, username, password_hash, pan_speed, tilt_speed, zoom_speed }) {
+    return run(
+        `INSERT INTO camera_profiles (user_id, stream_id, name, onvif_url, username, password_hash, pan_speed, tilt_speed, zoom_speed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [user_id, stream_id || null, name, onvif_url, username, password_hash, pan_speed || 0.5, tilt_speed || 0.5, zoom_speed || 0.5]
+    );
+}
+
+function getCameraProfile(cameraId) {
+    return get('SELECT * FROM camera_profiles WHERE id = ?', [cameraId]);
+}
+
+function getCameraProfilesByUser(userId) {
+    return all('SELECT * FROM camera_profiles WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+}
+
+function getCameraProfilesByStream(streamId) {
+    return all('SELECT * FROM camera_profiles WHERE stream_id = ? AND is_active = 1 ORDER BY name', [streamId]);
+}
+
+function updateCameraProfile(cameraId, data) {
+    const { name, onvif_url, username, password_hash, pan_speed, tilt_speed, zoom_speed, is_active, last_connected } = data;
+    return run(
+        `UPDATE camera_profiles SET name = ?, onvif_url = ?, username = ?, password_hash = ?, 
+         pan_speed = ?, tilt_speed = ?, zoom_speed = ?, is_active = ?, last_connected = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [name, onvif_url, username, password_hash, pan_speed, tilt_speed, zoom_speed, is_active, last_connected, cameraId]
+    );
+}
+
+function deleteCameraProfile(cameraId) {
+    // Cascade delete presets and associated controls
+    run('DELETE FROM camera_presets WHERE camera_id = ?', [cameraId]);
+    run('UPDATE stream_controls SET camera_id = NULL WHERE camera_id = ?', [cameraId]);
+    return run('DELETE FROM camera_profiles WHERE id = ?', [cameraId]);
+}
+
+function createCameraPreset({ camera_id, name, pan, tilt, zoom, preset_token }) {
+    return run(
+        `INSERT INTO camera_presets (camera_id, name, pan, tilt, zoom, preset_token)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [camera_id, name, pan, tilt, zoom, preset_token || null]
+    );
+}
+
+function getCameraPreset(presetId) {
+    return get('SELECT * FROM camera_presets WHERE id = ?', [presetId]);
+}
+
+function getCameraPresetsByCamera(cameraId) {
+    return all('SELECT * FROM camera_presets WHERE camera_id = ? ORDER BY name', [cameraId]);
+}
+
+function deleteCameraPreset(presetId) {
+    return run('DELETE FROM camera_presets WHERE id = ?', [presetId]);
+}
+
 // ── Ban helpers ──────────────────────────────────────────────
 
 function isUserBanned(userId, streamId) {
@@ -2815,6 +2874,10 @@ module.exports = {
     createClip, getClipById, getClipsByUser, getPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
     // Controls
     getStreamControls, createControl,
+    // ONVIF Cameras
+    createCameraProfile, getCameraProfile, getCameraProfilesByUser, getCameraProfilesByStream,
+    updateCameraProfile, deleteCameraProfile,
+    createCameraPreset, getCameraPreset, getCameraPresetsByCamera, deleteCameraPreset,
     // API Keys
     createApiKey, getApiKeyByHash,
     // Bans

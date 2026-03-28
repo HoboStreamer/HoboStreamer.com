@@ -229,6 +229,39 @@ CREATE TABLE IF NOT EXISTS content_views (
 );
 CREATE INDEX IF NOT EXISTS idx_content_views_lookup ON content_views(content_type, content_id);
 
+-- ONVIF Camera Profiles (for PTZ control)
+CREATE TABLE IF NOT EXISTS camera_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    stream_id INTEGER,                      -- NULL = global profile
+    name TEXT NOT NULL,
+    onvif_url TEXT NOT NULL,                -- e.g., http://192.168.1.100:8080
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,            -- bcrypt hashed
+    pan_speed REAL DEFAULT 0.5,             -- 0.0-1.0
+    tilt_speed REAL DEFAULT 0.5,
+    zoom_speed REAL DEFAULT 0.5,
+    is_active INTEGER DEFAULT 1,
+    last_connected DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
+);
+
+-- ONVIF Camera Presets (saved PTZ positions)
+CREATE TABLE IF NOT EXISTS camera_presets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    camera_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    pan REAL NOT NULL,                      -- 0.0-1.0
+    tilt REAL NOT NULL,
+    zoom REAL NOT NULL,
+    preset_token TEXT,                      -- ONVIF device preset token (if supported)
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (camera_id) REFERENCES camera_profiles(id) ON DELETE CASCADE
+);
+
 -- Stream Controls (interactive buttons/commands)
 CREATE TABLE IF NOT EXISTS stream_controls (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -236,13 +269,16 @@ CREATE TABLE IF NOT EXISTS stream_controls (
     label TEXT NOT NULL,
     command TEXT NOT NULL,                  -- command string sent to hardware
     icon TEXT DEFAULT 'fa-gamepad',         -- Font Awesome icon class
-    control_type TEXT DEFAULT 'button' CHECK(control_type IN ('button', 'toggle', 'slider', 'dpad')),
+    control_type TEXT DEFAULT 'button' CHECK(control_type IN ('button', 'toggle', 'slider', 'dpad', 'onvif')),
     key_binding TEXT,                       -- keyboard shortcut
     cooldown_ms INTEGER DEFAULT 500,
     is_enabled INTEGER DEFAULT 1,
     sort_order INTEGER DEFAULT 0,
+    camera_id INTEGER,                      -- NULL for non-ONVIF controls; references camera_profiles(id)
+    onvif_movement TEXT,                    -- 'pan_left', 'pan_right', 'tilt_up', 'tilt_down', 'zoom_in', 'zoom_out', 'preset'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
+    FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE,
+    FOREIGN KEY (camera_id) REFERENCES camera_profiles(id) ON DELETE SET NULL
 );
 
 -- Control API Keys (for hardware clients)

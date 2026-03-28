@@ -2,14 +2,15 @@
  * HoboStreamer — Control Server
  * 
  * WebSocket server for interactive camp controls.
- * Viewers send commands → server relays → hardware client (Raspberry Pi).
+ * Viewers send commands → server relays → hardware client (Raspberry Pi) OR ONVIF camera.
  * 
  * Architecture:
- *   Browser → WebSocket → Control Server → WebSocket → Hardware Client
+ *   Browser → WebSocket → Control Server → (Hardware WS OR ONVIF) → Endpoint
  */
 const WebSocket = require('ws');
 const db = require('../db/database');
 const { authenticateWs } = require('../auth/auth');
+const { OnvifClient } = require('../core/onvif-client');
 
 class ControlServer {
     constructor() {
@@ -136,28 +137,21 @@ class ControlServer {
     /**
      * Handle a control command from a viewer
      */
-    handleCommand(ws, msg) {
+    async handleCommand(ws, msg) {
         const client = this.viewerClients.get(ws);
         if (!client || !client.streamId) return;
 
-        const { command, control_id } = msg;
-        if (!command) return;
+        const { command, control_id, isOnvif, cameraId, movement } = msg;
+        if (!command && !isOnvif) return;
 
         // Get the stream to find the stream key
         const stream = db.getStreamById(client.streamId);
-        if (!stream || !stream.is_live) return;
+        if (!stream) return;
 
         const user = db.getUserById(stream.user_id);
         if (!user) return;
 
-        // Check if hardware client is connected
-        const hardwareWs = this.hardwareClients.get(user.stream_key);
-        if (!hardwareWs || hardwareWs.readyState !== WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Hardware not connected' }));
-            return;
-        }
-
-        // Cooldown check
+        // Check cooldown
         if (control_id) {
             const control = db.get('SELECT * FROM stream_controls WHERE id = ?', [control_id]);
             if (control) {
@@ -168,6 +162,78 @@ class ControlServer {
                 }
                 this.commandCounts.set(`${client.streamId}-${control_id}`, Date.now());
             }
+        }
+
+        // Handle ONVIF camera movement
+        if (isOnvif && cameraId && movement) {
+            try {
+                const camera = db.getCameraProfile(cameraId);
+                if (!camera) {
+                    ws.send(JSON.stringify({ type: 'error', message: 'Camera not found' }));
+                    return;
+                }
+
+                // Create ONVIF client and execute movement
+                const bcrypt = require('bcryptjs');
+                const password = camera.password_hash; // For now, hash IS the plaintext (MVP)
+                
+                const onvifClient = new OnvifClient(camera.onvif_url, camera.username, password);
+                const connected = await Promise.race([
+                    onvifClient.connect(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+                ]);
+
+                if (!connected) {
+                    ws.send(JSON.stringify({ type: 'error', message: 'Camera unreachable' }));
+                    return;
+                }
+
+                // Execute movement command
+                const movements = {
+                    'pan_left': [-camera.pan_speed, 0, 0],
+                    'pan_right': [camera.pan_speed, 0, 0],
+                    'tilt_up': [0, camera.tilt_speed, 0],
+                    'tilt_down': [0, -camera.tilt_speed, 0],
+                    'zoom_in': [0, 0, camera.zoom_speed],
+                    'zoom_out': [0, 0, -camera.zoom_speed],
+                };
+
+                const [panSpeed, tiltSpeed, zoomSpeed] = movements[movement] || [0, 0, 0];
+
+                if (panSpeed !== 0 || tiltSpeed !== 0 || zoomSpeed !== 0) {
+                    await onvifClient.relativeMove(panSpeed, tiltSpeed, zoomSpeed, 300);
+                }
+
+                onvifClient.disconnect();
+
+                // Broadcast activity to other viewers
+                this.broadcastToViewers(user.stream_key, {
+                    type: 'onvif_activity',
+                    camera_name: camera.name,
+                    movement,
+                    by: client.user?.username || 'anonymous',
+                });
+
+                ws.send(JSON.stringify({ type: 'ok', message: 'Movement executed' }));
+
+            } catch (err) {
+                console.error('[Control] ONVIF error:', err.message);
+                ws.send(JSON.stringify({ type: 'error', message: 'Camera command failed: ' + err.message }));
+            }
+            return;
+        }
+
+        // Handle traditional hardware commands
+        if (!stream.is_live) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Stream not live' }));
+            return;
+        }
+
+        // Check if hardware client is connected
+        const hardwareWs = this.hardwareClients.get(user.stream_key);
+        if (!hardwareWs || hardwareWs.readyState !== WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Hardware not connected' }));
+            return;
         }
 
         // Forward command to hardware

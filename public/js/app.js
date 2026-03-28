@@ -285,6 +285,8 @@ function showModal(id) {
         cashout: hoboBucksCashoutModal(),
         'stream-key': streamKeyModal(),
         'add-control': addControlModal(),
+        'add-camera': addCameraModal(),
+        'discover-cameras': discoverCamerasModal(),
         'add-goal': addGoalModal(),
         'add-reward': addRewardModal(),
         'redeem-reward': (data) => redeemRewardModal(data),
@@ -3304,6 +3306,44 @@ function addControlModal() {
             <i class="fa-solid fa-plus"></i> Add Control
         </button>`;
 }
+
+function addCameraModal() {
+    return `
+        <h3><i class="fa-solid fa-video"></i> Add ONVIF Camera</h3>
+        <p class="muted" style="font-size:0.85rem;">Connect to an ONVIF-compatible camera (Hikvision, Axis, Dahua, etc.)</p>
+        <div class="form-group">
+            <label>Camera Name</label>
+            <input type="text" id="modal-cam-name" class="form-input" placeholder="e.g. Front Door">
+        </div>
+        <div class="form-group">
+            <label>ONVIF URL</label>
+            <input type="text" id="modal-cam-url" class="form-input" placeholder="http://192.168.1.100:8080">
+        </div>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="modal-cam-username" class="form-input" placeholder="admin">
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="modal-cam-password" class="form-input">
+        </div>
+        <button class="btn btn-primary btn-lg" onclick="doAddCamera()" style="width:100%;margin-top:8px">
+            <i class="fa-solid fa-plus"></i> Add Camera
+        </button>`;
+}
+
+function discoverCamerasModal() {
+    return `
+        <h3><i class="fa-solid fa-magnifying-glass"></i> Discover Cameras</h3>
+        <p class="muted" style="font-size:0.85rem;">Scan your network for ONVIF devices. This may take a few seconds.</p>
+        <button class="btn btn-primary btn-lg" onclick="doDiscoverCameras()" style="width:100%;margin-bottom:12px">
+            <i class="fa-solid fa-wifi"></i> Scan Network
+        </button>
+        <div id="discovery-status" style="min-height:100px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-hover)">
+            <p class="muted">Click "Scan Network" to discover devices...</p>
+        </div>`;
+}
+
 function addGoalModal() {
     return `
         <h3><i class="fa-solid fa-bullseye"></i> Add Donation Goal</h3>

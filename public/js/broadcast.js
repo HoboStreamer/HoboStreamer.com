@@ -1287,66 +1287,37 @@ async function resumeStreamView(stream) {
 }
 
 async function loadExistingStreams(excludeStreamId) {
-    const listEl = document.getElementById('bc-streams-list');
-    if (!listEl) return;
+    const activeListEl = document.getElementById('bc-active-list');
+    if (!activeListEl) return;
+    
     try {
         // Use the /mine endpoint to get all user's streams
         const data = await api('/streams/mine');
         // Exclude the just-ended stream (background DELETE may not have fired yet)
         const all = (data.streams || []).filter(s => !excludeStreamId || s.id !== excludeStreamId);
-
-        if (!all.length) {
-            listEl.innerHTML = `
-                <div class="bc-welcome">
-                    <i class="fa-solid fa-campground fa-3x" style="margin-bottom:12px;color:var(--accent)"></i>
-                    <h3>Welcome to HoboStreamer!</h3>
-                    <p>Ready to go live? Fill out the form on the left and click <strong>Create Stream</strong>.</p>
-                    <div class="bc-welcome-tips">
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-1" style="font-size:0.75rem"></i> <span>Pick a <strong>title</strong> &amp; <strong>method</strong> (WebRTC is the easiest — uses your browser camera)</span></div>
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-2" style="font-size:0.75rem"></i> <span>Allow camera/mic when prompted (WebRTC only)</span></div>
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-3" style="font-size:0.75rem"></i> <span>Click <strong>Create Stream</strong> and you're live!</span></div>
-                    </div>
-                    <div class="bc-welcome-methods" style="margin-top:14px;text-align:left">
-                        <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:8px"><strong>Three ways to stream:</strong></p>
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-globe"></i> <strong>WebRTC</strong> — Stream from your browser (camera, screen, or OBS WHIP) — no install needed</div>
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-server"></i> <strong>RTMP</strong> — Use OBS Studio, Streamlabs, IRL Pro, or any RTMP app — best quality</div>
-                        <div class="bc-welcome-tip"><i class="fa-solid fa-terminal"></i> <strong>JSMPEG</strong> — Run an FFmpeg command — perfect for Raspberry Pi &amp; headless servers</div>
-                    </div>
-                    <p class="muted" style="margin-top:14px"><i class="fa-solid fa-circle-info"></i> Your permanent stream link: <strong>hobostreamer.com/${esc(currentUser?.username || 'you')}</strong></p>
-                </div>`;
+        
+        // Only show ACTIVE streams in the top section
+        const live = all.filter(s => s.is_live);
+        
+        // Get the container
+        const container = document.getElementById('bc-active-streams-container');
+        
+        if (!live.length) {
+            // Hide container if no active streams
+            if (container) container.style.display = 'none';
             return;
         }
-
-        // Separate live and past streams
-        const live = all.filter(s => s.is_live);
-        const past = all.filter(s => !s.is_live);
-
-        let html = '';
-        if (live.length) {
-            html += '<div class="bc-streams-section"><h4 style="margin:0 0 8px;color:var(--accent)"><i class="fa-solid fa-circle live-dot"></i> Active Streams</h4>';
-            html += live.map(s => renderStreamItem(s)).join('');
-            html += '</div>';
-        }
-        if (past.length) {
-            html += '<div class="bc-streams-section"><h4 style="margin:12px 0 8px;color:var(--text-muted)"><i class="fa-solid fa-clock-rotate-left"></i> Past Streams</h4>';
-            html += past.slice(0, 10).map(s => renderStreamItem(s)).join('');
-            if (past.length > 10) html += `<p class="muted" style="text-align:center;padding:8px">+${past.length - 10} more streams in Settings → My Streams</p>`;
-            html += '</div>';
-        }
-        listEl.innerHTML = html;
+        
+        // Show container and populate
+        if (container) container.style.display = 'block';
+        
+        let html = live.map(s => renderStreamItem(s)).join('');
+        activeListEl.innerHTML = html;
     } catch (err) {
-        console.error('[Broadcast] Failed to load streams:', err);
-        listEl.innerHTML = `
-            <div class="bc-welcome">
-                <i class="fa-solid fa-campground fa-3x" style="margin-bottom:12px;color:var(--accent)"></i>
-                <h3>Welcome to HoboStreamer!</h3>
-                <p>Fill in the form on the left to create your stream. <strong>WebRTC</strong> is the easiest — it uses your browser camera directly.</p>
-                <div class="bc-welcome-tips">
-                    <div class="bc-welcome-tip"><i class="fa-solid fa-globe"></i> <strong>WebRTC</strong> — Stream from your browser (no install needed)</div>
-                    <div class="bc-welcome-tip"><i class="fa-solid fa-server"></i> <strong>RTMP</strong> — Use OBS, Streamlabs, or a mobile app (best quality)</div>
-                    <div class="bc-welcome-tip"><i class="fa-solid fa-terminal"></i> <strong>JSMPEG</strong> — FFmpeg command line (Raspberry Pi &amp; headless)</div>
-                </div>
-            </div>`;
+        console.error('[Broadcast] Failed to load active streams:', err);
+        // Silently hide container on error - the form is still available
+        const container = document.getElementById('bc-active-streams-container');
+        if (container) container.style.display = 'none';
     }
 }
 

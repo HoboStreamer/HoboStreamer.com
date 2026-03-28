@@ -1269,6 +1269,21 @@
                     </button>
                 </div>
 
+                <!-- ONVIF Camera Controls -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-video"></i> Camera Controls (ONVIF PTZ)</h3>
+                    <p class="muted" style="font-size: 0.85rem;">Add ONVIF-compatible cameras (Hikvision, Axis, Dahua, etc.) for pan/tilt/zoom viewer control.</p>
+                    <div id="dash-cameras-list"></div>
+                    <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        <button class="btn btn-outline" onclick="showModal('discover-cameras')">
+                            <i class="fa-solid fa-magnifying-glass"></i> Discover Cameras
+                        </button>
+                        <button class="btn btn-outline" onclick="showModal('add-camera')">
+                            <i class="fa-solid fa-plus"></i> Add Camera Manually
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Donation Goals -->
                 <div class="dash-card">
                     <h3><i class="fa-solid fa-bullseye"></i> Donation Goals</h3>
@@ -1455,8 +1470,16 @@
                     <h2><i class="fa-solid fa-tower-broadcast"></i> Go Live</h2>
                     <p class="bc-page-subtitle">Set up your stream in 3 easy steps — pick a method, configure your devices, and hit Go Live.</p>
 
+                    <!-- Active Streams Section (shown above if any live streams) -->
+                    <div id="bc-active-streams-container" class="bc-active-streams-section">
+                        <h3><i class="fa-solid fa-circle-pulse"></i> Active Streams</h3>
+                        <div id="bc-active-list" class="bc-streams-list">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                    </div>
+
                     <div class="bc-manager-grid">
-                    <!-- Create new stream (left / primary) -->
+                    <!-- Create new stream -->
                     <div class="bc-create-section" id="bc-create-section">
                         <h3>Create New Stream</h3>
 
@@ -3878,6 +3901,7 @@
 <script src="/js/chat.js?v=12"></script>
 <script src="/js/chat-autocomplete.js?v=1"></script>
 <script src="/js/controls.js?v=2"></script>
+<script src="/js/onvif-dashboard.js?v=1"></script>
 <script src="/js/dashboard.js?v=2"></script>
 <script src="/js/admin.js?v=3"></script>
 <!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
