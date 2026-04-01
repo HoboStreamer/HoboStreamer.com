@@ -987,7 +987,7 @@ async function loadBroadcastPage() {
     // (connecting signaling would override the existing broadcaster)
     hideBroadcastTabs();
     showStreamManager();
-    loadExistingStreams();
+    loadExistingStreams().catch(() => {});
 
     // Pre-fill form with last-used values
     _restoreLastBroadcastFields();
