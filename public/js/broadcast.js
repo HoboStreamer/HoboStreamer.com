@@ -1676,7 +1676,7 @@ function startRtmpStatusPoll(streamId) {
     const poll = async () => {
         try {
             const data = await api(`/streams/${streamId}/rtmp-status`);
-            setRtmpStatusUI(data.receiving);
+            setRtmpStatusUI(data.receiving, data.connected_at);
         } catch { /* ignore */ }
     };
     poll();
@@ -1687,7 +1687,7 @@ function stopRtmpStatusPoll() {
     if (_rtmpStatusPollTimer) { clearInterval(_rtmpStatusPollTimer); _rtmpStatusPollTimer = null; }
 }
 
-function setRtmpStatusUI(receiving) {
+function setRtmpStatusUI(receiving, connectedAt) {
     const wrap = document.getElementById('bc-rtmp-status');
     if (!wrap) return;
     const spinner = document.getElementById('bc-rtmp-status-spinner');
@@ -1699,7 +1699,14 @@ function setRtmpStatusUI(receiving) {
         spinner.style.display = 'none';
         ok.style.display = '';
         label.textContent = 'Receiving RTMP feed';
-        detail.textContent = 'Your stream is live and connected';
+        if (connectedAt) {
+            const secs = Math.floor((Date.now() - new Date(connectedAt).getTime()) / 1000);
+            const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+            const dur = h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+            detail.textContent = `Connected for ${dur}`;
+        } else {
+            detail.textContent = 'Your stream is live and connected';
+        }
     } else {
         wrap.className = 'bc-rtmp-status waiting';
         spinner.style.display = '';
@@ -5996,6 +6003,7 @@ async function deleteBroadcastVOD() {
  * Load Broadcast Settings form
  */
 function loadBroadcastSettingsForm() {
+    loadNewsPreference();
     try {
         const saved = localStorage.getItem('hobo_broadcast_settings_form') || '{}';
         const settings = JSON.parse(saved);
@@ -6160,5 +6168,26 @@ function loadBroadcastSettingsToForm() {
     } catch (err) {
         console.error('Error loading broadcast settings to form:', err);
         toast('Error loading settings', 'error');
+    }
+}
+
+/* ── Breaking News Preference ────────────────────────────────── */
+async function loadNewsPreference() {
+    try {
+        const data = await api('/news/my-settings');
+        const cb = document.getElementById('bc-settings-news-enabled');
+        const status = document.getElementById('bc-news-status');
+        if (cb) cb.checked = !!data.enabled;
+        if (status) status.textContent = data.enabled === null ? 'Inheriting global setting' : '';
+    } catch { /* non-critical */ }
+}
+
+async function updateNewsPreference(enabled) {
+    try {
+        await api('/news/my-settings', { method: 'PUT', body: { enabled } });
+        const status = document.getElementById('bc-news-status');
+        if (status) status.textContent = enabled ? 'News headlines enabled for your streams' : 'News headlines disabled';
+    } catch (err) {
+        toast(err.message || 'Failed to update news setting', 'error');
     }
 }

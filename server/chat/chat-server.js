@@ -826,6 +826,57 @@ class ChatServer {
                     return;
                 }
 
+                // ── Cozmo robot commands ───────────────
+                case '!forward':
+                case '!backward':
+                case '!left':
+                case '!right':
+                case '!liftup':
+                case '!liftdown':
+                case '!headup':
+                case '!headdown': {
+                    const controlServer = require('../controls/control-server');
+                    const cozmoMap = {
+                        '!forward': 'forward', '!backward': 'backward',
+                        '!left': 'turn_left', '!right': 'turn_right',
+                        '!liftup': 'lift_up', '!liftdown': 'lift_down',
+                        '!headup': 'head_up', '!headdown': 'head_down',
+                    };
+                    const user = db.getUserById(stream.user_id);
+                    if (!user) return;
+                    const hwWs = controlServer.hardwareClients.get(user.stream_key);
+                    if (!hwWs || hwWs.readyState !== 1) {
+                        this.sendTo(ws, { type: 'system', message: 'No hardware client connected.' });
+                        return;
+                    }
+                    hwWs.send(JSON.stringify({
+                        type: 'command',
+                        command: cozmoMap[cmd],
+                        from_user: client.user?.display_name || `anon${client.anonId || ''}`,
+                        timestamp: new Date().toISOString(),
+                    }));
+                    return;
+                }
+
+                case '!say': {
+                    if (!args) return;
+                    const controlServer2 = require('../controls/control-server');
+                    const user2 = db.getUserById(stream.user_id);
+                    if (!user2) return;
+                    const hwWs2 = controlServer2.hardwareClients.get(user2.stream_key);
+                    if (!hwWs2 || hwWs2.readyState !== 1) {
+                        this.sendTo(ws, { type: 'system', message: 'No hardware client connected.' });
+                        return;
+                    }
+                    hwWs2.send(JSON.stringify({
+                        type: 'command',
+                        command: `say:${args.slice(0, 200)}`,
+                        from_user: client.user?.display_name || `anon${client.anonId || ''}`,
+                        timestamp: new Date().toISOString(),
+                    }));
+                    return;
+                }
+
                 default:
                     return;
             }

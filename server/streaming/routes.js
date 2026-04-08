@@ -920,8 +920,8 @@ router.get('/:id/rtmp-status', requireAuth, (req, res) => {
         }
         const user = db.getUserById(stream.user_id);
         const rtmpServer = require('./rtmp-server');
-        const receiving = rtmpServer.isReceiving(user.stream_key);
-        res.json({ receiving });
+        const status = rtmpServer.getStatus(user.stream_key);
+        res.json(status);
     } catch (err) {
         console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to check RTMP status' });

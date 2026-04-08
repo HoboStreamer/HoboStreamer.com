@@ -116,6 +116,18 @@
             _dmSoundCooldowns.set(senderId, now);
         }
 
+        // In-app toast via HoboNotifications (always works, no permission needed)
+        if (typeof HoboNotifications !== 'undefined' && HoboNotifications.push) {
+            HoboNotifications.push({
+                title: senderName || 'New message',
+                message: messageText?.slice(0, 100) || '',
+                icon: '💬',
+                priority: 'normal',
+                rich_content: JSON.stringify({ url: null }),
+                _onClick: () => { if (!panelOpen) togglePanel(); openThread(convId); },
+            });
+        }
+
         // Desktop notification (if enabled + permission granted)
         if (settings.desktopNotifs && Notification.permission === 'granted') {
             try {

@@ -122,7 +122,7 @@ class RTMPServer extends EventEmitter {
             // Ensure heartbeat is always set (for stale-stream cleanup)
             db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
 
-            this.activeStreams.set(streamKey, { streamId, userId: user.id, sessionId: id });
+            this.activeStreams.set(streamKey, { streamId, userId: user.id, sessionId: id, connectedAt: new Date().toISOString() });
             console.log(`[RTMP] Stream started: ${user.username} (stream ${streamId})`);
 
             // Emit event for restream auto-start
@@ -175,6 +175,17 @@ class RTMPServer extends EventEmitter {
      */
     isReceiving(streamKey) {
         return this.activeStreams.has(streamKey);
+    }
+
+    /**
+     * Get status info for an active RTMP stream.
+     * @param {string} streamKey
+     * @returns {{ receiving: boolean, connected_at?: string }}
+     */
+    getStatus(streamKey) {
+        const info = this.activeStreams.get(streamKey);
+        if (!info) return { receiving: false };
+        return { receiving: true, connected_at: info.connectedAt };
     }
 
     stop() {

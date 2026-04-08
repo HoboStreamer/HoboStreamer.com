@@ -946,6 +946,7 @@ function addChatMessage(msg) {
     // Attach source platform for relay user identification
     if (msg.source_platform) el.dataset.sourcePlatform = msg.source_platform;
     if (msg.role === 'external') el.dataset.isRelay = '1';
+    if (msg.message_type === 'news') el.classList.add('news');
 
     const isGlobal = chatEl.isGlobal;
 
@@ -995,7 +996,11 @@ function addChatMessage(msg) {
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
     const coreUsername = esc(msg.core_username || '');
     const rawText = msg.message || msg.text || '';
-    const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
+    let text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
+    // Append clickable source link for news headlines
+    if (msg.message_type === 'news' && msg.url) {
+        text += ` <a href="${esc(msg.url)}" target="_blank" rel="noopener" class="news-link"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>`;
+    }
     const isAnon = displayName.startsWith('anon');
 
     // Mention highlighting

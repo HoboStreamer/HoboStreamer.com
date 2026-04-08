@@ -315,6 +315,8 @@ const dmRoutes = require('./chat/dm-routes');
 app.use('/api/dm', dmRoutes);
 const analyticsRoutes = require('./streaming/analytics-routes');
 app.use('/api/analytics', analyticsRoutes);
+const newsRoutes = require('./news/news-routes');
+app.use('/api/news', newsRoutes);
 
 // ── Internal Analytics API ───────────────────────────────────
 // Called by hobo-tools admin panel to fetch this service's analytics
@@ -528,6 +530,11 @@ async function start() {
 
     // 3. Initialize chat server
     chatServer.init(server);
+
+    // 3b. Initialize breaking news service
+    const newsService = require('./news/news-service');
+    newsService.setChatServer(chatServer);
+    newsService.start();
 
     // 4. Initialize control server
     controlServer.init(server);

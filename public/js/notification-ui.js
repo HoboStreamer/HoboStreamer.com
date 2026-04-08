@@ -233,7 +233,8 @@
         });
 
         toast.addEventListener('click', () => {
-            if (rich.url) window.open(rich.url, '_blank');
+            if (typeof notification._onClick === 'function') notification._onClick();
+            else if (rich.url) window.open(rich.url, '_blank');
             markRead(notification.id);
             dismissToast(toast);
         });

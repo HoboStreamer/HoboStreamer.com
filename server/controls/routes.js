@@ -158,4 +158,35 @@ router.delete('/:streamId/:id', requireAuth, (req, res) => {
     }
 });
 
+// ── Cozmo Presets ────────────────────────────────────────────
+const { applyCozmoPresets, removeCozmoPresets } = require('../integrations/cozmo-presets');
+
+router.post('/:streamId/presets/cozmo', requireAuth, (req, res) => {
+    try {
+        const stream = db.getStreamById(req.params.streamId);
+        if (!stream || (stream.user_id !== req.user.id && req.user.role !== 'admin')) {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+        const result = applyCozmoPresets(parseInt(req.params.streamId));
+        const controls = db.getStreamControls(req.params.streamId);
+        res.json({ ...result, controls });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to apply Cozmo presets' });
+    }
+});
+
+router.delete('/:streamId/presets/cozmo', requireAuth, (req, res) => {
+    try {
+        const stream = db.getStreamById(req.params.streamId);
+        if (!stream || (stream.user_id !== req.user.id && req.user.role !== 'admin')) {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+        const removed = removeCozmoPresets(parseInt(req.params.streamId));
+        const controls = db.getStreamControls(req.params.streamId);
+        res.json({ removed, controls });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to remove Cozmo presets' });
+    }
+});
+
 module.exports = router;

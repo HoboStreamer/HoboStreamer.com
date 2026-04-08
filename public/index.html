@@ -2000,6 +2000,19 @@
                             </div>
                         </div>
 
+                        <!-- Breaking News -->
+                        <div class="bc-settings-group">
+                            <h3><i class="fa-solid fa-newspaper"></i> Breaking News in Chat</h3>
+                            <div class="form-group">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-settings-news-enabled" onchange="updateNewsPreference(this.checked)">
+                                    Show breaking news headlines in chat while live
+                                </label>
+                                <span class="bc-field-hint">Headlines from configured sources are injected into your chat at most once every 3 minutes. You can turn this off at any time.</span>
+                            </div>
+                            <div id="bc-news-status" class="muted" style="font-size:0.8rem;margin-top:4px"></div>
+                        </div>
+
                         <!-- Save Settings Button -->
                         <div class="bc-settings-actions">
                             <button class="btn btn-primary" onclick="saveBroadcastSettingsForm()">
