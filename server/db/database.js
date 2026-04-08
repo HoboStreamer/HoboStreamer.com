@@ -537,6 +537,12 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] paste_likes migration:', e.message); }
 
+    // Migrate: add is_nsfw column to pastes
+    try {
+        const cols = database.prepare("PRAGMA table_info(pastes)").all().map(c => c.name);
+        if (!cols.includes('is_nsfw')) database.exec("ALTER TABLE pastes ADD COLUMN is_nsfw INTEGER DEFAULT 0");
+    } catch (e) { console.warn('[DB] pastes is_nsfw migration:', e.message); }
+
     // Seed paste-related site settings
     try {
         const pasteSettings = [
@@ -1527,11 +1533,11 @@ function addHoboCoins(userId, amount) {
 }
 
 function deductHoboCoins(userId, amount) {
-    const user = getUserById(userId);
-    if (!user || user.hobo_coins_balance < amount) return false;
-    run(`UPDATE users SET hobo_coins_balance = hobo_coins_balance - ? WHERE id = ?`,
-        [amount, userId]);
-    return true;
+    const result = run(
+        `UPDATE users SET hobo_coins_balance = hobo_coins_balance - ? WHERE id = ? AND hobo_coins_balance >= ?`,
+        [amount, userId, amount]
+    );
+    return result.changes > 0;
 }
 
 function createCoinTransaction({ user_id, stream_id, amount, type, reward_id, message }) {

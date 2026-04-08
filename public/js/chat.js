@@ -3534,6 +3534,41 @@ function _fcwStopDrag() {
     document.removeEventListener('mouseup', _fcwStopDrag);
 }
 
+/** Resize support for the floating widget */
+let _fcwResizing = false;
+let _fcwResizeStart = { x: 0, y: 0, w: 0, h: 0 };
+
+function fcwStartResize(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _fcwResizing = true;
+    const widget = document.getElementById('floating-chat-widget');
+    if (!widget) return;
+    const rect = widget.getBoundingClientRect();
+    _fcwResizeStart = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+    document.addEventListener('mousemove', _fcwResize);
+    document.addEventListener('mouseup', _fcwStopResize);
+}
+
+function _fcwResize(e) {
+    if (!_fcwResizing) return;
+    const widget = document.getElementById('floating-chat-widget');
+    if (!widget) return;
+    const dw = e.clientX - _fcwResizeStart.x;
+    const dh = e.clientY - _fcwResizeStart.y;
+    const newW = Math.max(260, Math.min(window.innerWidth - 40, _fcwResizeStart.w + dw));
+    const newH = Math.max(200, Math.min(window.innerHeight - 40, _fcwResizeStart.h + dh));
+    widget.style.width = newW + 'px';
+    widget.style.height = newH + 'px';
+}
+
+function _fcwStopResize() {
+    _fcwResizing = false;
+    document.removeEventListener('mousemove', _fcwResize);
+    document.removeEventListener('mouseup', _fcwStopResize);
+}
+
 // Hook into page navigation to show/hide FAB
 document.addEventListener('DOMContentLoaded', () => {
     // Watch all page sections for class changes

@@ -163,6 +163,7 @@ async function extractStreamUrl(url) {
         [...commonArgs(), ...cookies, '--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
     ];
 
+    let lastError = '';
     for (let i = 0; i < strategies.length; i++) {
         try {
             const result = await runYtdlp(strategies[i]);
@@ -172,12 +173,27 @@ async function extractStreamUrl(url) {
                 urlCache.set(url, entry);
                 return entry;
             }
-        } catch {
+        } catch (e) {
+            lastError = e.message || '';
             continue;
         }
     }
 
-    throw new Error('All stream URL extraction strategies failed');
+    // Surface provider-specific error messages
+    const lower = lastError.toLowerCase();
+    if (lower.includes('sign in') || lower.includes('age') || lower.includes('age-restricted')) {
+        throw new Error('This video is age-restricted and cannot be played');
+    }
+    if (lower.includes('unavailable') || lower.includes('private') || lower.includes('removed')) {
+        throw new Error('This video is unavailable (private, removed, or region-locked)');
+    }
+    if (lower.includes('copyright') || lower.includes('blocked')) {
+        throw new Error('This video is blocked due to copyright restrictions');
+    }
+    if (lower.includes('not a valid url') || lower.includes('unsupported url')) {
+        throw new Error('Unsupported or invalid URL');
+    }
+    throw new Error(`Could not extract playable URL: ${lastError.slice(0, 150) || 'all strategies failed'}`);
 }
 
 /**

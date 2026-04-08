@@ -115,6 +115,7 @@ function renderPasteCard(p) {
         ? `<span class="paste-card-lang">${escapeHtml(p.language)}</span>` : '';
     const pinBadge = p.pinned ? `<span class="paste-card-pin" title="Pinned"><i class="fa-solid fa-thumbtack"></i></span>` : '';
     const burnBadge = p.burn_after_read ? `<span class="paste-card-burn" title="Burns after reading"><i class="fa-solid fa-fire"></i></span>` : '';
+    const nsfwBadge = p.is_nsfw ? `<span class="paste-card-nsfw" title="NSFW">NSFW</span>` : '';
     const viewsBadge = `<span class="paste-card-views"><i class="fa-solid fa-eye"></i> ${p.views || 0}</span>`;
     const likesBadge = `<span class="paste-card-likes"><i class="fa-solid fa-thumbs-up"></i> ${p.likes || 0}</span>`;
 
@@ -126,12 +127,13 @@ function renderPasteCard(p) {
         const preview = (p.content || '').slice(0, 200).replace(/</g, '&lt;').replace(/>/g, '&gt;');
         thumb = `<div class="paste-card-code"><pre><code>${preview}${(p.content || '').length > 200 ? '…' : ''}</code></pre></div>`;
     }
+    const nsfwBlur = p.is_nsfw ? ' paste-card-nsfw-blur' : '';
 
     return `
-        <div class="paste-card" onclick="navigate('/p/${p.slug}')">
+        <div class="paste-card${nsfwBlur}" onclick="navigate('/p/${p.slug}')">
             ${thumb}
             <div class="paste-card-info">
-                <div class="paste-card-title">${pinBadge}${escapeHtml(p.title)}${burnBadge}</div>
+                <div class="paste-card-title">${pinBadge}${nsfwBadge}${escapeHtml(p.title)}${burnBadge}</div>
                 <div class="paste-card-meta">
                     <div class="paste-card-author">${avatar}<span>${escapeHtml(author)}</span></div>
                     <div class="paste-card-right">
@@ -175,7 +177,7 @@ async function loadPasteViewer(slug) {
         if (!p) throw new Error('Not found');
 
         // Check burn after read
-        if (p.burn_after_read && p.views > 1) {
+        if (p.burned || (p.burn_after_read && p.views > 1)) {
             container.innerHTML = `
                 <div class="paste-burned">
                     <i class="fa-solid fa-fire" style="font-size:3rem; color:var(--danger); margin-bottom:16px;"></i>
@@ -183,6 +185,26 @@ async function loadPasteViewer(slug) {
                     <p>It was set to self-destruct after being read.</p>
                     <button class="btn btn-primary" onclick="navigate('/pastes')">Back to Pastes</button>
                 </div>`;
+            return;
+        }
+
+        // NSFW interstitial — show warning unless user has already dismissed it
+        const nsfwDismissed = sessionStorage.getItem('nsfw-ok-' + p.slug);
+        if (p.is_nsfw && !nsfwDismissed) {
+            container.innerHTML = `
+                <div class="paste-nsfw-gate">
+                    <i class="fa-solid fa-triangle-exclamation" style="font-size:3rem; color:var(--warning, #f39c12); margin-bottom:16px;"></i>
+                    <h2>NSFW Content</h2>
+                    <p>This paste has been marked as containing content that may not be suitable for all audiences.</p>
+                    <div style="display:flex;gap:12px;margin-top:16px;">
+                        <button class="btn btn-outline" onclick="navigate('/pastes')">Go Back</button>
+                        <button class="btn btn-primary" id="nsfw-continue-btn">Continue</button>
+                    </div>
+                </div>`;
+            document.getElementById('nsfw-continue-btn').addEventListener('click', () => {
+                sessionStorage.setItem('nsfw-ok-' + p.slug, '1');
+                renderPasteView(slug); // re-render without gate
+            });
             return;
         }
 
@@ -238,6 +260,7 @@ async function loadPasteViewer(slug) {
                     ${isAdmin ? `<button class="btn btn-outline btn-xs" onclick="renamePaste('${p.slug}')" title="Rename"><i class="fa-solid fa-pencil"></i></button>` : ''}
                     ${p.pinned ? '<span class="paste-card-pin"><i class="fa-solid fa-thumbtack"></i> Pinned</span>' : ''}
                     ${p.burn_after_read ? '<span class="paste-card-burn"><i class="fa-solid fa-fire"></i> Burns after read</span>' : ''}
+                    ${p.is_nsfw ? '<span class="paste-card-nsfw">NSFW</span>' : ''}
                     ${p.visibility === 'unlisted' ? '<span class="paste-unlisted-badge"><i class="fa-solid fa-eye-slash"></i> Unlisted</span>' : ''}
                 </div>
                 <div class="paste-view-meta">
@@ -878,6 +901,8 @@ function openNewPasteModal(prefill = {}) {
     document.getElementById('paste-create-lang').value = prefill.language || 'auto';
     document.getElementById('paste-create-visibility').value = prefill.visibility || 'public';
     document.getElementById('paste-create-burn').checked = !!prefill.burn;
+    const nsfwEl = document.getElementById('paste-create-nsfw');
+    if (nsfwEl) nsfwEl.checked = !!prefill.is_nsfw;
     document.getElementById('paste-create-slug').value = prefill.slug || ''; // For edits
 
     // Update modal title and submit button for edit mode
@@ -925,6 +950,8 @@ async function submitPaste() {
     const language = document.getElementById('paste-create-lang').value;
     const visibility = document.getElementById('paste-create-visibility').value;
     const burn = document.getElementById('paste-create-burn').checked;
+    const nsfwEl = document.getElementById('paste-create-nsfw');
+    const is_nsfw = nsfwEl ? nsfwEl.checked : false;
     const editSlug = document.getElementById('paste-create-slug').value;
 
     if (!content.trim()) return toast('Content is required', 'error');
@@ -946,7 +973,7 @@ async function submitPaste() {
         } else {
             data = await api('/pastes', {
                 method: 'POST',
-                body: { title: title || 'Untitled', content, language, visibility, burn_after_read: burn },
+                body: { title: title || 'Untitled', content, language, visibility, burn_after_read: burn, is_nsfw },
             });
             toast('Paste created!', 'success');
             // Set cooldown

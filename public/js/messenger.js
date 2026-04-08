@@ -411,7 +411,7 @@
                 ${!isSelf ? avatarHtml(sender, 26).replace('msg-conv-avatar', 'msg-bubble-avatar') : ''}
                 <div class="msg-bubble">
                     ${showSender ? `<div class="msg-bubble-sender">${esc(msg.display_name || msg.username)}</div>` : ''}
-                    <div class="msg-bubble-text">${esc(msg.message)}</div>
+                    <div class="msg-bubble-text">${typeof _linkifyPlain === 'function' ? _linkifyPlain(msg.message) : esc(msg.message)}</div>
                     <div class="msg-bubble-time">${formatMessageTime(msg.created_at)}</div>
                     ${isSelf ? `<button class="msg-bubble-delete" data-mid="${msg.id}" title="Delete"><i class="fa-solid fa-trash-can"></i></button>` : ''}
                 </div>
