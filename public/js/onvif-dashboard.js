@@ -8,7 +8,7 @@
  * - Linking cameras to stream controls
  */
 
-let currentStreamId = null;
+// currentStreamId is declared in controls.js (shared global)
 
 /**
  * Load camera list on dashboard
