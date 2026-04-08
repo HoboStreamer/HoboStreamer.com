@@ -43,18 +43,21 @@ class RTMPServer extends EventEmitter {
                 allow_origin: '*',  // Public media — CORS open (CSP restricts which pages can load it)
                 mediaroot: './data/media',
             },
-            trans: {
-                ffmpeg: '/usr/bin/ffmpeg',
-                tasks: [
-                    {
-                        app: 'live',
-                        hls: true,
-                        hlsFlags: '[hls_time=2:hls_list_size=3:hls_flags=delete_segments]',
-                        hlsKeep: false,
-                        dash: false,
-                    },
-                ],
-            },
+            // NOTE: NMS trans server crashes on v2.7.4 with 'version is not defined'
+            // in node_trans_server.js. HTTP-FLV playback works without HLS transcoding.
+            // Revisit when NMS releases a fix or after upgrading to a newer version.
+            // trans: {
+            //     ffmpeg: '/usr/bin/ffmpeg',
+            //     tasks: [
+            //         {
+            //             app: 'live',
+            //             hls: true,
+            //             hlsFlags: '[hls_time=2:hls_list_size=3:hls_flags=delete_segments]',
+            //             hlsKeep: false,
+            //             dash: false,
+            //         },
+            //     ],
+            // },
         };
 
         this.nms = new NodeMediaServer(nmsConfig);
