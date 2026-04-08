@@ -209,7 +209,7 @@ class RestreamManager extends EventEmitter {
     async startRestream(streamId, destination, streamInfo) {
         const key = this._key(streamId, destination.id);
 
-        // Already running?
+        // Already running for this exact stream+dest?
         if (this.sessions.has(key)) {
             const existing = this.sessions.get(key);
             if (existing.status === 'live' || existing.status === 'starting') {
@@ -217,6 +217,16 @@ class RestreamManager extends EventEmitter {
                 return existing;
             }
             this._cleanup(key);
+        }
+
+        // Check if another stream is already restreaming to the same destination.
+        // Two streams pushing to the same RTMP ingest causes platform disconnects.
+        for (const [, session] of this.sessions) {
+            if (session.destId === destination.id && session.streamId !== streamId
+                && (session.status === 'live' || session.status === 'starting')) {
+                console.log(`[Restream] Destination ${destination.id} already active on stream ${session.streamId}, skipping for stream ${streamId}`);
+                return session;
+            }
         }
 
         const { protocol, streamKey } = streamInfo;
