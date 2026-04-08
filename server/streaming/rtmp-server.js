@@ -40,23 +40,21 @@ class RTMPServer extends EventEmitter {
             },
             http: {
                 port: config.rtmp.port + 8000, // HTTP-FLV port (9935 by default)
-                allow_origin: config.nodeEnv === 'production' ? config.baseUrl : '*',
+                allow_origin: '*',  // Public media — CORS open (CSP restricts which pages can load it)
                 mediaroot: './data/media',
             },
-            // NOTE: trans (HLS transcoding) disabled due to node-media-server
-            // compatibility issue with Node.js 24+. Enable when NMS updates.
-            // trans: {
-            //     ffmpeg: '/usr/bin/ffmpeg',
-            //     tasks: [
-            //         {
-            //             app: 'live',
-            //             hls: true,
-            //             hlsFlags: '[hls_time=2:hls_list_size=3:hls_flags=delete_segments]',
-            //             hlsKeep: false,
-            //             dash: false,
-            //         },
-            //     ],
-            // },
+            trans: {
+                ffmpeg: '/usr/bin/ffmpeg',
+                tasks: [
+                    {
+                        app: 'live',
+                        hls: true,
+                        hlsFlags: '[hls_time=2:hls_list_size=3:hls_flags=delete_segments]',
+                        hlsKeep: false,
+                        dash: false,
+                    },
+                ],
+            },
         };
 
         this.nms = new NodeMediaServer(nmsConfig);

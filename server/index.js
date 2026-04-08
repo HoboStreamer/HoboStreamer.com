@@ -134,17 +134,22 @@ const allowedOrigins = getAllowedOrigins();
 // ── Middleware ────────────────────────────────────────────────
 app.set('trust proxy', 2); // Two hops: Cloudflare → nginx → Node
 
+// Build CSP media/connect origins for RTMP HTTP-FLV/HLS server (different port from main app)
+const rtmpHttpOrigin = config.rtmp.host
+    ? `http://${config.rtmp.host}:${config.rtmp.port + 8000}`
+    : null;
+
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "https://hobo.tools", "https://jsmpeg.com", "https://esm.sh"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "https://hobo.tools", "https://jsmpeg.com", "https://esm.sh", "https://static.cloudflareinsights.com"],
             // esm.sh: mediasoup-client dynamic import for WebRTC SFU restreaming + RS restream
             styleSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
             fontSrc: ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
             imgSrc: ["'self'", "data:", "blob:", "image.tmdb.org", "https://hobo.tools", "cdn.frankerfacez.com", "cdn.betterttv.net", "cdn.7tv.app"],
-            connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest"],
-            mediaSrc: ["'self'", "blob:"],
+            connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest", ...(rtmpHttpOrigin ? [rtmpHttpOrigin] : [])],
+            mediaSrc: ["'self'", "blob:", ...(rtmpHttpOrigin ? [rtmpHttpOrigin] : [])],
             frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://player.vimeo.com"],
             workerSrc: ["'self'", "blob:"],
             scriptSrcAttr: ["'unsafe-inline'"],

@@ -2254,16 +2254,17 @@
                         <summary>
                             <span class="bc-app-guide-header">
                                 <i class="fa-solid fa-mobile-screen-button"></i>
-                                <strong>IRL Pro (Android)</strong>
+                                <strong>IRL Pro / Mobile Apps</strong>
                                 <span class="bc-app-guide-badge">Mobile</span>
                             </span>
                         </summary>
                         <div class="bc-app-guide-body">
-                            <p class="bc-app-guide-desc">Stream from your phone using <a href="https://play.google.com/store/apps/details?id=app.irlpro.android" target="_blank" rel="noopener">IRL Pro</a> — a mobile streaming app with SRTLA bonding, chat overlays, and multi-camera support.</p>
+                            <p class="bc-app-guide-desc">Stream from your phone using <a href="https://play.google.com/store/apps/details?id=app.irlpro.android" target="_blank" rel="noopener">IRL Pro</a>, <a href="https://play.google.com/store/apps/details?id=com.wmspanel.larix_broadcaster" target="_blank" rel="noopener">Larix</a>, <a href="https://play.google.com/store/apps/details?id=com.hecorat.screenrecorder.free" target="_blank" rel="noopener">Prism Live</a>, or any RTMP-capable mobile app.</p>
+
+                            <h4 style="margin:12px 0 8px">Option A — Separate URL + Key fields</h4>
+                            <p class="muted" style="margin-bottom:8px">Use this if your app has separate "Server URL" and "Stream Key" fields (like OBS):</p>
                             <ol>
-                                <li>Open <strong>IRL Pro</strong> and tap the <strong>⚙️ Settings</strong> gear icon</li>
-                                <li>Under <strong>Streaming</strong>, select <strong>Platform</strong> → choose <strong>Custom RTMP</strong></li>
-                                <li>In the <strong>RTMP URL</strong> field, paste:<br>
+                                <li>In the <strong>RTMP URL / Server</strong> field, paste:<br>
                                     <code class="bc-inline-code" id="bc-irlpro-url"></code>
                                     <button class="btn btn-small btn-inline-copy" onclick="copyToClipboard(document.getElementById('bc-rtmp-url').textContent)" title="Copy URL"><i class="fa-solid fa-copy"></i></button>
                                 </li>
@@ -2271,13 +2272,35 @@
                                     <code class="bc-inline-code" id="bc-irlpro-key"></code>
                                     <button class="btn btn-small btn-inline-copy" onclick="copyToClipboard(document.getElementById('bc-rtmp-key').textContent)" title="Copy Key"><i class="fa-solid fa-copy"></i></button>
                                 </li>
-                                <li>Set your preferred <strong>Resolution</strong> (720p recommended) and <strong>Bitrate</strong> (2500–4000 kbps)</li>
-                                <li>Go back to the main screen and tap <strong>Go Live</strong></li>
+                            </ol>
+
+                            <h4 style="margin:12px 0 8px">Option B — Single combined URL</h4>
+                            <p class="muted" style="margin-bottom:8px">Some apps only have one URL field. Paste the full URL with the key included:</p>
+                            <div class="bc-code-block" style="margin-bottom:12px">
+                                <div class="bc-code-copy">
+                                    <code id="bc-irlpro-combined">loading...</code>
+                                    <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-irlpro-combined').textContent)" title="Copy combined URL"><i class="fa-solid fa-copy"></i></button>
+                                </div>
+                            </div>
+
+                            <div class="bc-app-guide-tips" style="background:var(--surface-raised);border-radius:8px;padding:10px 14px;margin-bottom:12px">
+                                <p><i class="fa-solid fa-circle-exclamation" style="color:var(--accent)"></i> <strong>Username &amp; Password: Leave blank!</strong></p>
+                                <p class="muted" style="margin:4px 0 0">HoboStreamer uses your stream key for authentication — no username or password. If your app asks for credentials, leave both fields empty. The stream key in the URL is all you need.</p>
+                            </div>
+
+                            <h4 style="margin:12px 0 8px">IRL Pro Step-by-Step</h4>
+                            <ol>
+                                <li>Open <strong>IRL Pro</strong> → <strong>⚙️ Settings</strong> → <strong>Streaming</strong></li>
+                                <li>Select <strong>Platform</strong> → <strong>Custom RTMP</strong></li>
+                                <li>Paste the <strong>Server URL</strong> and <strong>Stream Key</strong> from Option A above</li>
+                                <li><strong>Leave Username and Password empty</strong></li>
+                                <li>Set <strong>Resolution</strong> to 720p, <strong>Bitrate</strong> to 2500–4000 kbps</li>
+                                <li>Go back and tap <strong>Go Live</strong></li>
                             </ol>
                             <div class="bc-app-guide-tips">
                                 <p><i class="fa-solid fa-lightbulb"></i> <strong>Tips:</strong></p>
                                 <ul>
-                                    <li>Enable <strong>SRTLA Bonding</strong> in IRL Pro settings for better mobile reliability — it combines WiFi + cellular for a more stable connection</li>
+                                    <li>Enable <strong>SRTLA Bonding</strong> in IRL Pro for better mobile reliability — combines WiFi + cellular</li>
                                     <li>Set the codec to <strong>H.264</strong> for best compatibility</li>
                                     <li>If you see buffering, lower your bitrate to <strong>1500–2000 kbps</strong></li>
                                     <li>IRL Pro's chat overlay can be pointed at <code>https://hobostreamer.com/embed/chat/<em>your-stream-id</em></code> for live chat on screen</li>

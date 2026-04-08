@@ -1650,8 +1650,10 @@ async function showRTMPInstructions(stream) {
         // Mirror into IRL Pro guide fields
         const irlUrl = document.getElementById('bc-irlpro-url');
         const irlKey = document.getElementById('bc-irlpro-key');
+        const irlCombined = document.getElementById('bc-irlpro-combined');
         if (irlUrl) irlUrl.textContent = rtmpUrl;
         if (irlKey) irlKey.textContent = streamKey;
+        if (irlCombined) irlCombined.textContent = `${rtmpUrl}/${streamKey}`;
     } catch {
         document.getElementById('bc-rtmp-url').textContent = `rtmp://${location.hostname}:1935/live`;
         document.getElementById('bc-rtmp-key').textContent = 'Error loading key';
@@ -1710,6 +1712,11 @@ async function regenerateStreamKey() {
         if (keyEl) keyEl.textContent = newKey;
         const irlKey = document.getElementById('bc-irlpro-key');
         if (irlKey) irlKey.textContent = newKey;
+        const irlCombined = document.getElementById('bc-irlpro-combined');
+        if (irlCombined) {
+            const rtmpUrl = document.getElementById('bc-rtmp-url')?.textContent || '';
+            irlCombined.textContent = `${rtmpUrl}/${newKey}`;
+        }
         toast('Stream key regenerated — update your streaming software', 'success');
     } catch (e) {
         toast(e.message || 'Failed to regenerate stream key', 'error');

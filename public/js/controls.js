@@ -6,7 +6,7 @@
 let controlWs = null;
 let controlCooldowns = {};
 let onvifCooldowns = {};
-let currentStreamId = null;
+// currentStreamId is declared in app.js (global scope)
 
 /**
  * Load and display interactive controls for a stream.
