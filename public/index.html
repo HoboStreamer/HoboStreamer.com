@@ -2201,7 +2201,7 @@
                 <!-- RTMP Instructions Panel -->
                 <div id="bc-rtmp-instructions" style="display:none" class="bc-instructions-panel">
                     <h2><i class="fa-solid fa-server"></i> RTMP Stream Setup</h2>
-                    <p class="bc-instructions-intro">Your stream is created! Now paste the info below into your streaming software (OBS Studio, Streamlabs, IRL Pro, or any RTMP-compatible app) and hit "Start Streaming".</p>
+                    <p class="bc-instructions-intro">Your stream is created! Paste the info below into your streaming software and hit "Start Streaming".</p>
                     <div class="bc-code-block">
                         <label>Server URL</label>
                         <div class="bc-code-copy">
@@ -2213,19 +2213,41 @@
                         <label>Stream Key</label>
                         <div class="bc-code-copy">
                             <code id="bc-rtmp-key">loading...</code>
-                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-rtmp-key').textContent)"><i class="fa-solid fa-copy"></i></button>
+                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-rtmp-key').textContent)" title="Copy"><i class="fa-solid fa-copy"></i></button>
+                            <button class="btn btn-small btn-outline" onclick="regenerateStreamKey()" title="Generate a new stream key"><i class="fa-solid fa-arrows-rotate"></i></button>
                         </div>
                     </div>
-                    <div class="bc-instructions-steps">
-                        <h3>OBS Setup</h3>
-                        <ol>
-                            <li>Open OBS → Settings → Stream</li>
-                            <li>Set Service to <strong>Custom</strong></li>
-                            <li>Paste the <strong>Server URL</strong> above</li>
-                            <li>Paste the <strong>Stream Key</strong></li>
-                            <li>Click "Start Streaming" in OBS</li>
-                        </ol>
+
+                    <!-- RTMP Feed Status Indicator -->
+                    <div id="bc-rtmp-status" class="bc-rtmp-status waiting">
+                        <div class="bc-rtmp-status-icon">
+                            <i class="fa-solid fa-circle-notch fa-spin" id="bc-rtmp-status-spinner"></i>
+                            <i class="fa-solid fa-check-circle" id="bc-rtmp-status-ok" style="display:none"></i>
+                        </div>
+                        <div class="bc-rtmp-status-text">
+                            <strong id="bc-rtmp-status-label">Waiting for OBS...</strong>
+                            <span id="bc-rtmp-status-detail">Start streaming in OBS to connect</span>
+                        </div>
                     </div>
+
+                    <!-- Quick Setup Guides (collapsed by default) -->
+                    <details class="bc-app-guide">
+                        <summary>
+                            <span class="bc-app-guide-header">
+                                <i class="fa-solid fa-desktop"></i>
+                                <strong>OBS Studio Setup</strong>
+                            </span>
+                        </summary>
+                        <div class="bc-app-guide-body">
+                            <ol>
+                                <li>Open OBS → Settings → Stream</li>
+                                <li>Set Service to <strong>Custom</strong></li>
+                                <li>Paste the <strong>Server URL</strong> above</li>
+                                <li>Paste the <strong>Stream Key</strong></li>
+                                <li>Click "Start Streaming" in OBS</li>
+                            </ol>
+                        </div>
+                    </details>
 
                     <!-- IRL Pro Mobile Setup -->
                     <details class="bc-app-guide" id="bc-irlpro-guide">
@@ -2264,19 +2286,39 @@
                         </div>
                     </details>
 
-                    <!-- RTMP Feed Status Indicator -->
-                    <div id="bc-rtmp-status" class="bc-rtmp-status waiting">
-                        <div class="bc-rtmp-status-icon">
-                            <i class="fa-solid fa-circle-notch fa-spin" id="bc-rtmp-status-spinner"></i>
-                            <i class="fa-solid fa-check-circle" id="bc-rtmp-status-ok" style="display:none"></i>
+                    <!-- Live Settings (TTS, Restreams, etc.) — shared with all methods -->
+                    <div id="bc-rtmp-live-settings" class="bc-live-settings-panel">
+                        <!-- TTS Settings -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Mode</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-rtmp-ttsMode" onchange="syncExternalTTSSetting('ttsMode', this.value)">
+                                        <option value="site-wide">Site-Wide TTS (Server Voices)</option>
+                                        <option value="self">Self TTS (Browser Voices)</option>
+                                        <option value="off">Off</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Volume</span>
+                                <div class="bc-setting-control"><input type="range" id="bc-rtmp-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
+                            </div>
                         </div>
-                        <div class="bc-rtmp-status-text">
-                            <strong id="bc-rtmp-status-label">Waiting for OBS...</strong>
-                            <span id="bc-rtmp-status-detail">Start streaming in OBS to connect</span>
+
+                        <!-- Restreams -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
+                            <div class="bc-restream-control" id="bc-rtmp-restream-control"></div>
+                            <p class="bc-call-explainer" id="bc-rtmp-restream-hint">
+                                <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
+                                <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
+                            </p>
                         </div>
                     </div>
 
-                    <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                    <button class="btn btn-outline" style="margin-top:16px" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
                 </div>
 
                 <!-- JSMPEG Instructions Panel -->
@@ -2462,11 +2504,40 @@
                         </ul>
                     </div>
 
-                    <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
-                </div>
+                    <!-- Live Settings (TTS, Restreams) — same as RTMP and WebRTC -->
+                    <div id="bc-jsmpeg-live-settings" class="bc-live-settings-panel">
+                        <!-- TTS Settings -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Mode</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-jsmpeg-ttsMode" onchange="syncExternalTTSSetting('ttsMode', this.value)">
+                                        <option value="site-wide">Site-Wide TTS (Server Voices)</option>
+                                        <option value="self">Self TTS (Browser Voices)</option>
+                                        <option value="off">Off</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Volume</span>
+                                <div class="bc-setting-control"><input type="range" id="bc-jsmpeg-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
+                            </div>
+                        </div>
 
-                <!-- WebRTC OBS (WHIP) Instructions Panel -->
-                <div id="bc-webrtc-obs-instructions" style="display:none" class="bc-instructions-panel">
+                        <!-- Restreams -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
+                            <div class="bc-restream-control" id="bc-jsmpeg-restream-control"></div>
+                            <p class="bc-call-explainer" id="bc-jsmpeg-restream-hint">
+                                <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
+                                <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
+                            </p>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-outline" style="margin-top:16px" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                </div>
                     <h2><i class="fa-solid fa-desktop"></i> WebRTC via OBS (WHIP)</h2>
                     <p class="bc-instructions-intro">Your stream is created! Paste the info below into OBS Studio 30+ to start streaming with ultra-low latency via WebRTC. This is newer and faster than RTMP.</p>
                     <div class="bc-code-block">
@@ -2494,7 +2565,37 @@
                         </ol>
                         <p class="muted"><i class="fa-solid fa-info-circle"></i> Requires OBS Studio 30.0 or newer. Older versions do not support WHIP.</p>
                     </div>
-                    <button class="btn btn-outline" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+
+                    <!-- Live Settings (TTS, Restreams) — unified across all methods -->
+                    <div id="bc-whip-live-settings" class="bc-live-settings-panel">
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Mode</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-whip-ttsMode" onchange="syncExternalTTSSetting('ttsMode', this.value)">
+                                        <option value="site-wide">Site-Wide TTS (Server Voices)</option>
+                                        <option value="self">Self TTS (Browser Voices)</option>
+                                        <option value="off">Off</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">TTS Volume</span>
+                                <div class="bc-setting-control"><input type="range" id="bc-whip-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
+                            </div>
+                        </div>
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
+                            <div class="bc-restream-control" id="bc-whip-restream-control"></div>
+                            <p class="bc-call-explainer" id="bc-whip-restream-hint">
+                                <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
+                                <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
+                            </p>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-outline" style="margin-top:16px" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
                 </div>
 
                 <!-- ═══ WebRTC Browser Broadcast (live controls) ═══ -->

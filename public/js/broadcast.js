@@ -1699,6 +1699,35 @@ function setRtmpStatusUI(receiving) {
     }
 }
 
+/* ── Stream Key Regeneration ─────────────────────────────────── */
+async function regenerateStreamKey() {
+    if (!confirm('Generate a new stream key? Your current key will stop working immediately. You will need to update it in OBS/Streamlabs/etc.')) return;
+    try {
+        const data = await api('/auth/stream-key/regenerate', { method: 'POST' });
+        const newKey = data.stream_key;
+        // Update all visible key displays
+        const keyEl = document.getElementById('bc-rtmp-key');
+        if (keyEl) keyEl.textContent = newKey;
+        const irlKey = document.getElementById('bc-irlpro-key');
+        if (irlKey) irlKey.textContent = newKey;
+        toast('Stream key regenerated — update your streaming software', 'success');
+    } catch (e) {
+        toast(e.message || 'Failed to regenerate stream key', 'error');
+    }
+}
+
+/* ── Sync TTS/settings from external method panels (RTMP/JSMPEG/WHIP) ─ */
+function syncExternalTTSSetting(key, value) {
+    // Mirror the value into the main WebRTC TTS controls so all methods share the same state
+    const mainEl = document.getElementById('bc-' + key);
+    if (mainEl) {
+        if (mainEl.type === 'range' || mainEl.tagName === 'SELECT') mainEl.value = value;
+        else if (mainEl.type === 'checkbox') mainEl.checked = !!value;
+    }
+    // Trigger the same save logic as the WebRTC settings
+    updateBroadcastSetting(key, value);
+}
+
 async function showJSMPEGInstructions(stream) {
     document.getElementById('bc-stream-manager').style.display = 'none';
     document.getElementById('bc-browser-broadcast').style.display = 'none';

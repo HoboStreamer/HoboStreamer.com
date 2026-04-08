@@ -154,9 +154,10 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                 const config = require('../config');
                 const user = db.getUserById(liveStream.user_id);
                 const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
+                const rtmpHost = config.rtmp.host || hostname;
                 liveStream.endpoint = {
-                    hlsUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
-                    flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                    hlsUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
+                    flvUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
                 };
             }
             delete liveStream.stream_key;
@@ -281,9 +282,10 @@ router.get('/channel/:username/live', (req, res) => {
                 const config = require('../config');
                 const user = db.getUserById(liveStream.user_id);
                 const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
+                const rtmpHost = config.rtmp.host || hostname;
                 liveStream.endpoint = {
-                    hlsUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
-                    flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                    hlsUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
+                    flvUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
                 };
             }
             delete liveStream.stream_key;
@@ -653,9 +655,10 @@ router.get('/:id', optionalAuth, (req, res) => {
             } else if (stream.protocol === 'rtmp') {
                 const config = require('../config');
                 const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
+                const rtmpHost = config.rtmp.host || hostname;
                 stream.endpoint = {
-                    hlsUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
-                    flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                    hlsUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}/index.m3u8`,
+                    flvUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
                 };
             }
         }
@@ -885,10 +888,11 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
         } else if (stream.protocol === 'webrtc') {
             endpoint = { roomId: `stream-${stream.id}`, signalingUrl: `/ws/broadcast?streamId=${stream.id}` };
         } else if (stream.protocol === 'rtmp') {
+            const rtmpHost = config.rtmp.host || hostname;
             endpoint = {
-                rtmpUrl: `rtmp://${hostname}:${config.rtmp.port}/live`,
+                rtmpUrl: `rtmp://${rtmpHost}:${config.rtmp.port}/live`,
                 streamKey: user.stream_key,
-                flvUrl: `http://${hostname}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                flvUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
             };
         }
 

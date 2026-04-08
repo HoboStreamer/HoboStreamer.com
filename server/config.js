@@ -25,6 +25,7 @@ module.exports = {
     rtmp: {
         port: parseInt(process.env.RTMP_PORT || '1935', 10),
         chunkSize: parseInt(process.env.RTMP_CHUNK_SIZE || '60000', 10),
+        host: process.env.RTMP_HOST || '',  // e.g. 'rtmp.hobostreamer.com' — unproxied DNS for RTMP ingest
     },
 
     jsmpeg: {

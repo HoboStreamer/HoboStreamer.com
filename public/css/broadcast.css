@@ -3046,3 +3046,13 @@
 .bc-rtmp-status-text span {
     font-size: 0.78rem; color: var(--text-secondary);
 }
+
+/* ── Live Settings Panel (shared across RTMP/JSMPEG/WHIP) ── */
+.bc-live-settings-panel {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+.bc-live-settings-panel .bc-settings-group {
+    margin-bottom: 16px;
+}
