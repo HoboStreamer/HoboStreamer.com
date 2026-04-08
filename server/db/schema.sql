@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS donation_goals (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- VODs (Video on Demand) — default PRIVATE for OpSec
+-- VODs (Video on Demand)
 CREATE TABLE IF NOT EXISTS vods (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stream_id INTEGER,
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS vods (
     file_size INTEGER DEFAULT 0,
     duration_seconds INTEGER DEFAULT 0,
     thumbnail_url TEXT,
-    is_public INTEGER DEFAULT 0,
+    is_public INTEGER DEFAULT 1,
     view_count INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE SET NULL,
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS clips (
     start_time REAL NOT NULL DEFAULT 0,
     end_time REAL NOT NULL DEFAULT 0,
     duration_seconds REAL DEFAULT 0,
-    is_public INTEGER DEFAULT 0,
+    is_public INTEGER DEFAULT 1,
     view_count INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (vod_id) REFERENCES vods(id) ON DELETE SET NULL,

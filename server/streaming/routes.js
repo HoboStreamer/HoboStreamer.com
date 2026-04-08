@@ -151,12 +151,8 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             } else if (liveStream.protocol === 'webrtc') {
                 liveStream.endpoint = { roomId: `stream-${liveStream.id}` };
             } else if (liveStream.protocol === 'rtmp') {
-                const config = require('../config');
-                const user = db.getUserById(liveStream.user_id);
-                const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
-                const rtmpHost = config.rtmp.host || hostname;
                 liveStream.endpoint = {
-                    flvUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                    flvUrl: `/api/streams/rtmp-proxy/${liveStream.id}.flv`,
                 };
             }
             delete liveStream.stream_key;
@@ -278,12 +274,8 @@ router.get('/channel/:username/live', (req, res) => {
             } else if (liveStream.protocol === 'webrtc') {
                 liveStream.endpoint = { roomId: `stream-${liveStream.id}` };
             } else if (liveStream.protocol === 'rtmp') {
-                const config = require('../config');
-                const user = db.getUserById(liveStream.user_id);
-                const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
-                const rtmpHost = config.rtmp.host || hostname;
                 liveStream.endpoint = {
-                    flvUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                    flvUrl: `/api/streams/rtmp-proxy/${liveStream.id}.flv`,
                 };
             }
             delete liveStream.stream_key;
@@ -651,11 +643,8 @@ router.get('/:id', optionalAuth, (req, res) => {
             } else if (stream.protocol === 'webrtc') {
                 stream.endpoint = { roomId: `stream-${stream.id}` };
             } else if (stream.protocol === 'rtmp') {
-                const config = require('../config');
-                const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
-                const rtmpHost = config.rtmp.host || hostname;
                 stream.endpoint = {
-                    flvUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                    flvUrl: `/api/streams/rtmp-proxy/${stream.id}.flv`,
                 };
             }
         }
@@ -889,7 +878,7 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             endpoint = {
                 rtmpUrl: `rtmp://${rtmpHost}:${config.rtmp.port}/live`,
                 streamKey: user.stream_key,
-                flvUrl: `http://${rtmpHost}:${config.rtmp.port + 8000}/live/${user.stream_key}.flv`,
+                flvUrl: `/api/streams/rtmp-proxy/${stream.id}.flv`,
             };
         }
 
@@ -1070,6 +1059,45 @@ router.get('/:id/call', optionalAuth, (req, res) => {
     } catch (err) {
         console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to get call status' });
+    }
+});
+
+// ── RTMP FLV Proxy ───────────────────────────────────────────
+// Proxies HTTP-FLV from the internal NMS server so the browser fetches
+// from the same HTTPS origin, avoiding CSP / mixed-content issues.
+router.get('/rtmp-proxy/:streamId.flv', (req, res) => {
+    try {
+        const stream = db.getStreamById(req.params.streamId);
+        if (!stream || !stream.is_live || stream.protocol !== 'rtmp') {
+            return res.status(404).end();
+        }
+        const user = db.getUserById(stream.user_id);
+        if (!user || !user.stream_key) return res.status(404).end();
+
+        const config = require('../config');
+        const nmsPort = config.rtmp.port + 8000;
+        const url = `http://127.0.0.1:${nmsPort}/live/${user.stream_key}.flv`;
+
+        const http = require('http');
+        const upstream = http.get(url, (nmsRes) => {
+            if (nmsRes.statusCode !== 200) {
+                res.status(502).end();
+                nmsRes.resume();
+                return;
+            }
+            res.writeHead(200, {
+                'Content-Type': 'video/x-flv',
+                'Cache-Control': 'no-cache, no-store',
+                'Transfer-Encoding': 'chunked',
+                'Access-Control-Allow-Origin': '*',
+            });
+            nmsRes.pipe(res);
+        });
+        upstream.on('error', () => res.status(502).end());
+        req.on('close', () => upstream.destroy());
+    } catch (err) {
+        console.error('[FLV Proxy]', err.message);
+        if (!res.headersSent) res.status(500).end();
     }
 });
 

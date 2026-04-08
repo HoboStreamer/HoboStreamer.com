@@ -3220,10 +3220,14 @@ async function handleThumbnailError(img) {
 }
 
 function thumbImg(thumbnailUrl, fallbackIcon, alt, regenerateUrl = null) {
-    if (thumbnailUrl || regenerateUrl) {
-        const src = thumbnailUrl || '/api/thumbnails/__missing__';
-        return `<img src="${esc(src)}" alt="${esc(alt || '')}" loading="lazy" data-regenerate-url="${esc(regenerateUrl || '')}" onerror="handleThumbnailError(this)">
+    if (thumbnailUrl) {
+        return `<img src="${esc(thumbnailUrl)}" alt="${esc(alt || '')}" loading="lazy" data-regenerate-url="${esc(regenerateUrl || '')}" onerror="handleThumbnailError(this)">
                 <i class="fa-solid ${fallbackIcon}" style="display:none"></i>`;
+    }
+    if (regenerateUrl) {
+        // No thumbnail yet but we can try generating one — show icon and trigger generation
+        return `<img src="" alt="${esc(alt || '')}" style="display:none" data-regenerate-url="${esc(regenerateUrl)}" data-regenerate-tried="" onerror="handleThumbnailError(this)">
+                <i class="fa-solid ${fallbackIcon}"></i>`;
     }
     return `<i class="fa-solid ${fallbackIcon}"></i>`;
 }

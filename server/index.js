@@ -134,10 +134,7 @@ const allowedOrigins = getAllowedOrigins();
 // ── Middleware ────────────────────────────────────────────────
 app.set('trust proxy', 2); // Two hops: Cloudflare → nginx → Node
 
-// Build CSP media/connect origins for RTMP HTTP-FLV/HLS server (different port from main app)
-const rtmpHttpOrigin = config.rtmp.host
-    ? `http://${config.rtmp.host}:${config.rtmp.port + 8000}`
-    : null;
+// RTMP FLV is now proxied same-origin via /api/streams/rtmp-proxy/:id.flv — no external CSP entry needed
 
 app.use(helmet({
     contentSecurityPolicy: {
@@ -148,8 +145,8 @@ app.use(helmet({
             styleSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
             fontSrc: ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
             imgSrc: ["'self'", "data:", "blob:", "image.tmdb.org", "https://hobo.tools", "cdn.frankerfacez.com", "cdn.betterttv.net", "cdn.7tv.app"],
-            connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest", ...(rtmpHttpOrigin ? [rtmpHttpOrigin] : [])],
-            mediaSrc: ["'self'", "blob:", ...(rtmpHttpOrigin ? [rtmpHttpOrigin] : [])],
+            connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest", "https://cdn.jsdelivr.net"],
+            mediaSrc: ["'self'", "blob:"],
             frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://player.vimeo.com"],
             workerSrc: ["'self'", "blob:"],
             scriptSrcAttr: ["'unsafe-inline'"],
