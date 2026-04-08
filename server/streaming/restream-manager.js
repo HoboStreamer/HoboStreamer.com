@@ -722,9 +722,38 @@ class RestreamManager extends EventEmitter {
         session.startedAt = Date.now();
 
         let stderrBuf = '';
+        let liveConfirmed = false;
+
+        const confirmLive = () => {
+            if (liveConfirmed) return;
+            if (session.process !== proc || session.status !== 'starting') return;
+            liveConfirmed = true;
+
+            session.status = 'live';
+            this.emit('status-change', {
+                streamId: session.streamId, destId: session.destId, status: 'live',
+            });
+
+            // Reset backoff after stable period
+            session.stableTimer = setTimeout(() => {
+                if (session.process === proc && session.status === 'live') {
+                    session.restartAttempts = 0;
+                    session.restartDelay = RESTART_BASE_DELAY;
+                    console.log(`[Restream] Session ${session.key} stable — reset backoff`);
+                }
+            }, STABLE_THRESHOLD_MS);
+        };
+
         proc.stderr.on('data', (data) => {
-            stderrBuf += data.toString();
+            const chunk = data.toString();
+            stderrBuf += chunk;
             if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-4096);
+
+            // FFmpeg prints "Output #0" when it opens the output and "frame=" when encoding frames.
+            // Either one confirms the RTMP connection is alive.
+            if (!liveConfirmed && (chunk.includes('Output #0') || chunk.includes('frame='))) {
+                confirmLive();
+            }
         });
 
         proc.stdout.on('data', () => {}); // drain stdout
@@ -766,24 +795,14 @@ class RestreamManager extends EventEmitter {
             }
         });
 
-        // Mark as live after FFmpeg has been running briefly without crashing
+        // Fallback: if stderr parsing hasn't confirmed live after 15s and FFmpeg is
+        // still running, assume it's connected (some FFmpeg builds suppress output)
         setTimeout(() => {
-            if (session.process === proc && session.status === 'starting') {
-                session.status = 'live';
-                this.emit('status-change', {
-                    streamId: session.streamId, destId: session.destId, status: 'live',
-                });
-
-                // Reset backoff after stable period
-                session.stableTimer = setTimeout(() => {
-                    if (session.process === proc && session.status === 'live') {
-                        session.restartAttempts = 0;
-                        session.restartDelay = RESTART_BASE_DELAY;
-                        console.log(`[Restream] Session ${session.key} stable — reset backoff`);
-                    }
-                }, STABLE_THRESHOLD_MS);
+            if (!liveConfirmed && session.process === proc && session.status === 'starting') {
+                console.log(`[Restream] Fallback live confirmation for ${session.key} (no stderr signal after 15s)`);
+                confirmLive();
             }
-        }, 2000);
+        }, 15000);
     }
 
     /**
@@ -1331,18 +1350,33 @@ class RestreamManager extends EventEmitter {
 
     /**
      * Get status of all restreams for a stream.
+     * Cross-checks platform API signals — if the platform reports not-live but
+     * our session says 'live', downgrade to 'error' and note the discrepancy.
      * @returns {Array<{destId, status, startedAt, restartAttempts, lastError}>}
      */
     getStreamStatus(streamId) {
         const statuses = [];
         for (const [, session] of this.sessions) {
             if (session.streamId === streamId) {
+                let effectiveStatus = session.status;
+                let effectiveError = session.lastError;
+
+                // If we think we're live, cross-check cached platform signal
+                if (effectiveStatus === 'live') {
+                    const platformLive = this.isPlatformLive(session.destId);
+                    if (platformLive === false) {
+                        // Platform API says not live — flag as stale
+                        effectiveStatus = 'error';
+                        effectiveError = 'FFmpeg running but platform reports offline';
+                    }
+                }
+
                 statuses.push({
                     destId: session.destId,
-                    status: session.status,
+                    status: effectiveStatus,
                     startedAt: session.startedAt,
                     restartAttempts: session.restartAttempts,
-                    lastError: session.lastError,
+                    lastError: effectiveError,
                 });
             }
         }

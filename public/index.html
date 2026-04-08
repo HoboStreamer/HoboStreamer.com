@@ -2010,6 +2010,189 @@
                             </button>
                             <span id="bc-settings-save-status" class="muted"></span>
                         </div>
+
+                        <!-- Restream Destinations -->
+                        <div class="bc-settings-group" id="bc-settings-restream-group">
+                            <h3><i class="fa-solid fa-tower-broadcast"></i> Restream Destinations</h3>
+                            <p class="bc-field-hint" style="margin:-8px 0 16px">Configure where your stream is relayed. Destinations with Auto-Start will begin restreaming automatically when you go live.</p>
+
+                            <!-- Active destination list (dynamically populated) -->
+                            <div id="bc-restream-destinations"></div>
+
+                            <!-- Add Destination button -->
+                            <div id="bc-restream-add-btn-row" style="margin-top:12px">
+                                <button class="btn btn-outline btn-small" type="button" onclick="showAddRestreamDestination()">
+                                    <i class="fa-solid fa-plus"></i> Add Destination
+                                </button>
+                            </div>
+
+                            <!-- Add Destination form (hidden by default) -->
+                            <div id="bc-restream-add-form" style="display:none;margin-top:12px;padding:16px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px">
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Platform</span>
+                                    <div class="bc-setting-control">
+                                        <select id="bc-restream-platform" onchange="onRestreamPlatformChange()">
+                                            <option value="youtube">YouTube</option>
+                                            <option value="twitch">Twitch</option>
+                                            <option value="kick">Kick</option>
+                                            <option value="custom">Custom RTMP</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Name</span>
+                                    <div class="bc-setting-control">
+                                        <input type="text" id="bc-restream-name" placeholder="My Channel">
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row" id="bc-restream-url-row">
+                                    <span class="bc-setting-label">Server URL</span>
+                                    <div class="bc-setting-control">
+                                        <input type="text" id="bc-restream-url" placeholder="rtmp://a.rtmp.youtube.com/live2">
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Stream Key</span>
+                                    <div class="bc-setting-control">
+                                        <input type="password" id="bc-restream-key" placeholder="Paste your stream key">
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Auto-Start</span>
+                                    <div class="bc-setting-control">
+                                        <label class="bc-toggle"><input type="checkbox" id="bc-restream-autostart"><span class="bc-toggle-slider"></span></label>
+                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Start restream automatically when you go live</span>
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Channel URL</span>
+                                    <div class="bc-setting-control">
+                                        <input type="text" id="bc-restream-channel-url" placeholder="https://twitch.tv/yourname">
+                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Viewable channel link (shown on live page)</span>
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Relay Chat</span>
+                                    <div class="bc-setting-control">
+                                        <label class="bc-toggle"><input type="checkbox" id="bc-restream-chat-relay"><span class="bc-toggle-slider"></span></label>
+                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Mirror chat from this platform into your HoboStreamer chat</span>
+                                    </div>
+                                </div>
+                                <div class="bc-setting-row">
+                                    <span class="bc-setting-label">Quality</span>
+                                    <div class="bc-setting-control">
+                                        <select id="bc-restream-quality">
+                                            <option value="auto">Auto (per-platform default)</option>
+                                            <option value="low">Low (720p 1500k)</option>
+                                            <option value="medium">Medium (720p 2500k)</option>
+                                            <option value="high">High (720p 4000k)</option>
+                                            <option value="ultra">Ultra (1080p 6000k)</option>
+                                            <option value="source">Source (native 8000k)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <!-- Advanced Encoding Overrides (collapsible) -->
+                                <details style="margin-top:4px">
+                                    <summary style="cursor:pointer;font-size:0.85rem;color:var(--text-secondary);user-select:none">
+                                        <i class="fa-solid fa-sliders"></i> Advanced Encoding Overrides
+                                    </summary>
+                                    <div style="margin-top:8px">
+                                        <div class="bc-setting-row">
+                                            <span class="bc-setting-label">Video Bitrate</span>
+                                            <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
+                                                <input type="number" id="bc-restream-custom-vbr" placeholder="Auto" min="500" max="50000" step="100" style="width:90px">
+                                                <span style="font-size:0.75rem;color:var(--text-secondary)">kbps</span>
+                                            </div>
+                                        </div>
+                                        <div class="bc-setting-row">
+                                            <span class="bc-setting-label">Audio Bitrate</span>
+                                            <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
+                                                <input type="number" id="bc-restream-custom-abr" placeholder="Auto" min="32" max="512" step="16" style="width:90px">
+                                                <span style="font-size:0.75rem;color:var(--text-secondary)">kbps</span>
+                                            </div>
+                                        </div>
+                                        <div class="bc-setting-row">
+                                            <span class="bc-setting-label">FPS</span>
+                                            <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
+                                                <input type="number" id="bc-restream-custom-fps" placeholder="Auto" min="15" max="120" step="1" style="width:90px">
+                                                <span style="font-size:0.75rem;color:var(--text-secondary)">(blank = preset)</span>
+                                            </div>
+                                        </div>
+                                        <div class="bc-setting-row">
+                                            <span class="bc-setting-label">Encoder Speed</span>
+                                            <div class="bc-setting-control">
+                                                <select id="bc-restream-custom-encoder" style="width:130px">
+                                                    <option value="">Auto (use preset)</option>
+                                                    <option value="ultrafast">Ultrafast</option>
+                                                    <option value="superfast">Superfast</option>
+                                                    <option value="veryfast">Veryfast</option>
+                                                    <option value="faster">Faster</option>
+                                                    <option value="fast">Fast</option>
+                                                    <option value="medium">Medium</option>
+                                                    <option value="slow">Slow</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </details>
+                                <div style="display:flex;gap:8px;margin-top:12px">
+                                    <button class="btn btn-primary btn-small" type="button" onclick="saveRestreamDestination()">
+                                        <i class="fa-solid fa-floppy-disk"></i> Save
+                                    </button>
+                                    <button class="btn btn-outline btn-small" type="button" onclick="cancelAddRestreamDestination()">
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+
+                            <p class="bc-field-hint" style="margin-top:12px">
+                                Restream to YouTube, Twitch, Kick, or any custom RTMP server. RTMP uses codec copy (zero CPU); JSMPEG and WebRTC are re-encoded to H.264/AAC.
+                            </p>
+                        </div>
+
+                        <!-- RobotStreamer Integration -->
+                        <div class="bc-settings-group" id="bc-settings-rs-group">
+                            <h3><i class="fa-solid fa-robot"></i> RobotStreamer</h3>
+                            <p class="bc-field-hint" style="margin:-8px 0 16px">Restream your broadcast to RobotStreamer via WebRTC. Requires browser-based streaming.</p>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Enable RS Restream</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsEnabled"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Mirror RS Chat</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsMirrorChat"><span class="bc-toggle-slider"></span></label></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">RS Token</span>
+                                <div class="bc-setting-control">
+                                    <input type="password" id="bc-rsToken" placeholder="Paste your robotstreamer-token cookie or JWT">
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Robot ID / URL</span>
+                                <div class="bc-setting-control">
+                                    <input type="text" id="bc-rsRobotInput" placeholder="1837 or https://robotstreamer.com/robot/1837">
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Detected Robots</span>
+                                <div class="bc-setting-control">
+                                    <select id="bc-rsRobotSelect">
+                                        <option value="">Validate to load your RobotStreamer streams</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+                                <button class="btn btn-primary btn-small" type="button" onclick="validateRobotStreamerIntegration()">
+                                    <i class="fa-solid fa-plug-circle-check"></i> Validate
+                                </button>
+                                <button class="btn btn-outline btn-small" type="button" onclick="saveRobotStreamerIntegration()">
+                                    <i class="fa-solid fa-floppy-disk"></i> Save
+                                </button>
+                            </div>
+                            <p class="bc-field-hint" id="bc-rsStatus" style="margin-top:8px">Configure your token and robot, then validate the connection.</p>
+                            <p class="bc-field-hint" id="bc-rsLiveStatus"></p>
+                        </div>
                     </div>
                 </div>
 
@@ -2430,9 +2613,6 @@
                             </div>
                         </div>
 
-                        <!-- Restream Control Panel (visible when destinations configured + streaming) -->
-                        <div class="bc-restream-control" id="bc-restream-control" style="display:none"></div>
-
                         <!-- Media Request PiP Player -->
                         <div id="bc-media-pip" class="bc-media-pip" style="display:none">
                             <div class="bc-media-pip-header">
@@ -2567,196 +2747,15 @@
                             </div>
                         </div>
 
-                        <!-- RobotStreamer Integration -->
-                        <!-- Restream Destinations -->
+                        <!-- Restreams — configured in Broadcast Settings tab -->
                         <div class="bc-settings-group">
                             <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
-
-                            <!-- Active destination list (dynamically populated) -->
-                            <div id="bc-restream-destinations"></div>
-
-                            <!-- Add Destination button -->
-                            <div class="bc-setting-row" id="bc-restream-add-btn-row">
-                                <button class="bc-ctrl-btn" type="button" onclick="showAddRestreamDestination()">
-                                    <i class="fa-solid fa-plus"></i> Add Destination
-                                </button>
-                            </div>
-
-                            <!-- Add Destination form (hidden by default) -->
-                            <div id="bc-restream-add-form" style="display:none">
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Platform</span>
-                                    <div class="bc-setting-control">
-                                        <select id="bc-restream-platform" onchange="onRestreamPlatformChange()">
-                                            <option value="youtube">YouTube</option>
-                                            <option value="twitch">Twitch</option>
-                                            <option value="kick">Kick</option>
-                                            <option value="custom">Custom RTMP</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Name</span>
-                                    <div class="bc-setting-control">
-                                        <input type="text" id="bc-restream-name" placeholder="My Channel">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row" id="bc-restream-url-row">
-                                    <span class="bc-setting-label">Server URL</span>
-                                    <div class="bc-setting-control">
-                                        <input type="text" id="bc-restream-url" placeholder="rtmp://a.rtmp.youtube.com/live2">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Stream Key</span>
-                                    <div class="bc-setting-control">
-                                        <input type="password" id="bc-restream-key" placeholder="Paste your stream key">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Auto-Start</span>
-                                    <div class="bc-setting-control">
-                                        <label class="bc-toggle"><input type="checkbox" id="bc-restream-autostart"><span class="bc-toggle-slider"></span></label>
-                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Start restream automatically when you go live</span>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Channel URL</span>
-                                    <div class="bc-setting-control">
-                                        <input type="text" id="bc-restream-channel-url" placeholder="https://twitch.tv/yourname">
-                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Viewable channel link (shown on live page). Kick chatroom ID is auto-detected for chat relay.</span>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Relay Chat</span>
-                                    <div class="bc-setting-control">
-                                        <label class="bc-toggle"><input type="checkbox" id="bc-restream-chat-relay"><span class="bc-toggle-slider"></span></label>
-                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Mirror chat from this platform into your HoboStreamer chat</span>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Quality</span>
-                                    <div class="bc-setting-control">
-                                        <select id="bc-restream-quality">
-                                            <option value="auto">Auto (per-platform default)</option>
-                                            <option value="low">Low (720p 1500k)</option>
-                                            <option value="medium">Medium (720p 2500k)</option>
-                                            <option value="high">High (720p 4000k)</option>
-                                            <option value="ultra">Ultra (1080p 6000k)</option>
-                                            <option value="source">Source (native 8000k)</option>
-                                        </select>
-                                        <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:8px">Encoding quality for JSMPEG/WebRTC streams (RTMP uses codec copy)</span>
-                                    </div>
-                                </div>
-                                <!-- Advanced Encoding Overrides (collapsible) -->
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label" style="cursor:pointer;user-select:none" onclick="document.getElementById('bc-restream-advanced').style.display = document.getElementById('bc-restream-advanced').style.display === 'none' ? '' : 'none'">
-                                        <i class="fa-solid fa-sliders"></i> Advanced <span style="font-size:0.7rem;color:var(--text-secondary)">(click to expand)</span>
-                                    </span>
-                                </div>
-                                <div id="bc-restream-advanced" style="display:none">
-                                    <div class="bc-setting-row">
-                                        <span class="bc-setting-label">Video Bitrate</span>
-                                        <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
-                                            <input type="number" id="bc-restream-custom-vbr" placeholder="Auto" min="500" max="50000" step="100" style="width:90px">
-                                            <span style="font-size:0.75rem;color:var(--text-secondary)">kbps (blank = use preset)</span>
-                                        </div>
-                                    </div>
-                                    <div class="bc-setting-row">
-                                        <span class="bc-setting-label">Audio Bitrate</span>
-                                        <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
-                                            <input type="number" id="bc-restream-custom-abr" placeholder="Auto" min="32" max="512" step="16" style="width:90px">
-                                            <span style="font-size:0.75rem;color:var(--text-secondary)">kbps (blank = use preset)</span>
-                                        </div>
-                                    </div>
-                                    <div class="bc-setting-row">
-                                        <span class="bc-setting-label">FPS</span>
-                                        <div class="bc-setting-control" style="display:flex;align-items:center;gap:6px">
-                                            <input type="number" id="bc-restream-custom-fps" placeholder="Auto" min="15" max="120" step="1" style="width:90px">
-                                            <span style="font-size:0.75rem;color:var(--text-secondary)">(blank = use preset, typically 30)</span>
-                                        </div>
-                                    </div>
-                                    <div class="bc-setting-row">
-                                        <span class="bc-setting-label">Encoder Speed</span>
-                                        <div class="bc-setting-control">
-                                            <select id="bc-restream-custom-encoder" style="width:130px">
-                                                <option value="">Auto (use preset)</option>
-                                                <option value="ultrafast">Ultrafast</option>
-                                                <option value="superfast">Superfast</option>
-                                                <option value="veryfast">Veryfast</option>
-                                                <option value="faster">Faster</option>
-                                                <option value="fast">Fast</option>
-                                                <option value="medium">Medium</option>
-                                                <option value="slow">Slow</option>
-                                            </select>
-                                            <span style="font-size:0.65rem;color:var(--text-secondary);margin-left:6px">Slower = better quality, more CPU</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Actions</span>
-                                    <div class="bc-setting-control" style="display:flex;gap:8px">
-                                        <button class="bc-ctrl-btn" type="button" onclick="saveRestreamDestination()">
-                                            <i class="fa-solid fa-floppy-disk"></i> Save
-                                        </button>
-                                        <button class="bc-ctrl-btn" type="button" onclick="cancelAddRestreamDestination()">
-                                            <i class="fa-solid fa-xmark"></i> Cancel
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <p class="bc-call-explainer" style="margin-top:8px">
-                                Restream to YouTube, Twitch, Kick, or any custom RTMP server. Works with all streaming methods (RTMP, JSMPEG, WebRTC). RTMP uses codec copy (no re-encoding); JSMPEG and WebRTC are re-encoded to H.264/AAC using the quality preset above.
+                            <div class="bc-restream-control" id="bc-restream-control" style="display:none"></div>
+                            <p class="bc-call-explainer" id="bc-restream-live-hint">
+                                <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
+                                <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
+                                Destinations with Auto-Start will begin automatically when you go live.
                             </p>
-
-                            <!-- RobotStreamer subsection -->
-                            <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:12px">
-                                <div class="bc-settings-subtitle" style="font-size:0.85rem;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px">
-                                    <i class="fa-solid fa-robot"></i> RobotStreamer (WebRTC)
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Enable RS Restream</span>
-                                    <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsEnabled"><span class="bc-toggle-slider"></span></label></div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Mirror RS Chat</span>
-                                    <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-rsMirrorChat"><span class="bc-toggle-slider"></span></label></div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">RS Token</span>
-                                    <div class="bc-setting-control">
-                                        <input type="password" id="bc-rsToken" placeholder="Paste your robotstreamer-token cookie or JWT">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Robot ID / URL</span>
-                                    <div class="bc-setting-control">
-                                        <input type="text" id="bc-rsRobotInput" placeholder="1837 or https://robotstreamer.com/robot/1837">
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Detected Robots</span>
-                                    <div class="bc-setting-control">
-                                        <select id="bc-rsRobotSelect">
-                                            <option value="">Validate to load your RobotStreamer streams</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="bc-setting-row">
-                                    <span class="bc-setting-label">Actions</span>
-                                    <div class="bc-setting-control" style="display:flex;gap:8px;flex-wrap:wrap">
-                                        <button class="bc-ctrl-btn" type="button" onclick="validateRobotStreamerIntegration()">
-                                            <i class="fa-solid fa-plug-circle-check"></i> Validate
-                                        </button>
-                                        <button class="bc-ctrl-btn" type="button" onclick="saveRobotStreamerIntegration()">
-                                            <i class="fa-solid fa-floppy-disk"></i> Save
-                                        </button>
-                                    </div>
-                                </div>
-                                <p class="bc-call-explainer" id="bc-rsStatus">RobotStreamer restreaming requires browser WebRTC broadcasting. Configure your token and robot, then go live.</p>
-                                <p class="bc-call-explainer" id="bc-rsLiveStatus">RobotStreamer restream is idle.</p>
-                            </div>
                         </div>
 
                         <!-- Video / Broadcast Settings -->

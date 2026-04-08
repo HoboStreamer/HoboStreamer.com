@@ -686,6 +686,18 @@ function isStreaming() {
  * Switch between broadcast tabs (Go Live, Past Streams, Broadcast Settings)
  */
 function switchBroadcastTab(tabName) {
+    // If switching away from the live broadcast view to a page-level tab,
+    // hide the live/instructions panels so the tab content is visible
+    const hidePanels = ['bc-browser-broadcast', 'bc-rtmp-instructions', 'bc-jsmpeg-instructions', 'bc-webrtc-obs-instructions'];
+    for (const id of hidePanels) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    }
+
+    // Show the page tabs nav (it may be hidden during live view)
+    const tabsNav = document.querySelector('.broadcast-page-tabs-nav');
+    if (tabsNav) tabsNav.style.display = '';
+
     // Hide all tab content
     const allTabs = document.querySelectorAll('.broadcast-tab-content');
     allTabs.forEach(tab => tab.classList.remove('active'));
@@ -711,6 +723,12 @@ function switchBroadcastTab(tabName) {
         loadBroadcastVODs();
     } else if (tabName === 'broadcast-settings') {
         loadBroadcastSettingsForm();
+    } else if (tabName === 'go-live') {
+        // If there's an active stream, restore the live broadcast view
+        const ss = getActiveStreamState?.();
+        if (ss && ss.localStream) {
+            showBrowserBroadcast();
+        }
     }
 
     // Save active tab preference
@@ -3056,7 +3074,9 @@ function showAddRestreamDestination() {
     document.getElementById('bc-restream-custom-abr').value = '';
     document.getElementById('bc-restream-custom-fps').value = '';
     document.getElementById('bc-restream-custom-encoder').value = '';
-    document.getElementById('bc-restream-advanced').style.display = 'none';
+    // Reset advanced details (now a <details> element)
+    const advDetails = document.getElementById('bc-restream-add-form')?.querySelector('details');
+    if (advDetails) advDetails.removeAttribute('open');
     onRestreamPlatformChange();
 }
 
@@ -3212,7 +3232,8 @@ function editRestreamDestination(destId) {
 
     // Auto-expand advanced section if any custom overrides are set
     const hasCustom = dest.custom_video_bitrate || dest.custom_audio_bitrate || dest.custom_fps || dest.custom_encoder_preset;
-    document.getElementById('bc-restream-advanced').style.display = hasCustom ? '' : 'none';
+    const advDetails = document.getElementById('bc-restream-add-form')?.querySelector('details');
+    if (advDetails) { if (hasCustom) advDetails.setAttribute('open', ''); else advDetails.removeAttribute('open'); }
 
     onRestreamPlatformChange();
 
@@ -5944,6 +5965,10 @@ function loadBroadcastSettingsForm() {
     } catch (err) {
         console.error('Error loading broadcast settings form:', err);
     }
+
+    // Refresh restream destinations and RS config into the settings tab
+    loadRestreamDestinations().catch(() => {});
+    loadRobotStreamerIntegration().catch(() => {});
 }
 
 /**
