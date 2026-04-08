@@ -2341,6 +2341,50 @@
                         </div>
                     </div>
 
+                    <!-- FFmpeg RTMP (for headless / CLI users) -->
+                    <details class="bc-app-guide">
+                        <summary>
+                            <span class="bc-app-guide-header">
+                                <i class="fa-solid fa-terminal"></i>
+                                <strong>FFmpeg CLI (No OBS)</strong>
+                                <span class="bc-app-guide-badge">Advanced</span>
+                            </span>
+                        </summary>
+                        <div class="bc-app-guide-body">
+                            <p class="bc-app-guide-desc">Stream directly from a terminal — great for headless servers, Raspberry Pi, 3D printer cams, and automated pipelines.</p>
+                            <div class="bc-code-block" style="margin-bottom:12px">
+                                <label><i class="fa-solid fa-video"></i> Webcam + Audio → RTMP</label>
+                                <div class="bc-code-copy">
+                                    <code id="bc-rtmp-ffmpeg-cam" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                                    <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-rtmp-ffmpeg-cam').textContent)"><i class="fa-solid fa-copy"></i></button>
+                                </div>
+                            </div>
+                            <div class="bc-code-block" style="margin-bottom:12px">
+                                <label><i class="fa-solid fa-display"></i> Screen Capture → RTMP</label>
+                                <div class="bc-code-copy">
+                                    <code id="bc-rtmp-ffmpeg-screen" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                                    <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-rtmp-ffmpeg-screen').textContent)"><i class="fa-solid fa-copy"></i></button>
+                                </div>
+                            </div>
+                            <div class="bc-code-block" style="margin-bottom:12px">
+                                <label><i class="fa-solid fa-print"></i> 3D Printer / IP Camera (low bitrate, 24/7)</label>
+                                <div class="bc-code-copy">
+                                    <code id="bc-rtmp-ffmpeg-printer" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                                    <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-rtmp-ffmpeg-printer').textContent)"><i class="fa-solid fa-copy"></i></button>
+                                </div>
+                            </div>
+                            <div class="bc-app-guide-tips" style="background:var(--surface-raised);border-radius:8px;padding:10px 14px;margin-top:12px">
+                                <p><i class="fa-solid fa-lightbulb"></i> <strong>24/7 Tips:</strong></p>
+                                <ul>
+                                    <li>Wrap in <code>while true; do ffmpeg ...; sleep 5; done</code> for auto-restart on disconnect</li>
+                                    <li>Use a <code>systemd</code> service or <code>tmux</code>/<code>screen</code> session for unattended streams</li>
+                                    <li>For IP cameras via RTSP, replace <code>-f v4l2 -i /dev/video0</code> with <code>-rtsp_transport tcp -i rtsp://camera-ip:554/stream</code></li>
+                                    <li><code>-tune zerolatency</code> minimizes delay; remove it for 24/7 streams where latency doesn't matter</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </details>
+
                     <button class="btn btn-outline" style="margin-top:16px" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
                 </div>
 
@@ -2525,6 +2569,62 @@
                             <li style="margin-bottom:6px"><strong>Permission denied on camera:</strong> Add yourself to the video group: <code>sudo usermod -aG video $USER</code> then log out and back in.</li>
                             <li style="margin-bottom:6px"><strong>macOS:</strong> Use <code>-f avfoundation -i "0:0"</code> instead of <code>-f v4l2 -i /dev/video0</code>. Device indices from <code>ffmpeg -f avfoundation -list_devices true -i ""</code>.</li>
                         </ul>
+                    </div>
+
+                    <!-- 3D Printer / Long-Running Streams -->
+                    <div class="bc-instructions-steps">
+                        <h3><i class="fa-solid fa-print"></i> 3D Printer &amp; 24/7 Streams</h3>
+                        <p class="muted">For unattended, always-on streams (3D printers, security cameras, aquariums, etc.) — optimize for stability over latency.</p>
+                        <div class="bc-code-block" style="margin-bottom:12px">
+                            <label>USB webcam — low bitrate, 10fps, no audio</label>
+                            <div class="bc-code-copy">
+                                <code id="bc-jsmpeg-cmd-printer" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                                <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-jsmpeg-cmd-printer').textContent)"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:12px">
+                            <label>IP camera (RTSP) → JSMPEG</label>
+                            <div class="bc-code-copy">
+                                <code id="bc-jsmpeg-cmd-ipcam" style="white-space:pre-wrap;word-break:break-all">loading...</code>
+                                <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-jsmpeg-cmd-ipcam').textContent)"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <h4 style="margin:12px 0 8px">Auto-Restart with systemd</h4>
+                        <p class="muted" style="margin-bottom:8px">Create a service file so your stream starts on boot and auto-restarts on failure:</p>
+                        <div class="bc-code-block" style="margin-bottom:12px">
+                            <label>sudo nano /etc/systemd/system/hobo-stream.service</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap;word-break:break-all;font-size:0.8rem">[Unit]
+Description=HoboStreamer JSMPEG Feed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ffmpeg -f v4l2 -framerate 10 -video_size 640x480 -i /dev/video0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 250k -bf 0 -muxdelay 0.001 http://YOUR_SERVER:PORT/KEY/640/480/
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target</code>
+                                <button class="btn btn-small" onclick="copyToClipboard(this.closest('.bc-code-copy').querySelector('code').textContent)"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-code-block" style="margin-bottom:12px">
+                            <label>Enable and start</label>
+                            <div class="bc-code-copy">
+                                <code style="white-space:pre-wrap">sudo systemctl daemon-reload && sudo systemctl enable --now hobo-stream</code>
+                                <button class="btn btn-small" onclick="copyToClipboard('sudo systemctl daemon-reload && sudo systemctl enable --now hobo-stream')"><i class="fa-solid fa-copy"></i></button>
+                            </div>
+                        </div>
+                        <div class="bc-app-guide-tips" style="background:var(--surface-raised);border-radius:8px;padding:10px 14px">
+                            <p><i class="fa-solid fa-lightbulb"></i> <strong>Tips:</strong></p>
+                            <ul>
+                                <li>10fps is plenty for 3D printers — saves bandwidth and CPU</li>
+                                <li>Use <code>-b:v 150k</code> to <code>-b:v 300k</code> depending on resolution and motion</li>
+                                <li>For Raspberry Pi, prefer 320x240 or 640x480 to reduce CPU load</li>
+                                <li>Shell loop alternative: <code>while true; do ffmpeg ...; sleep 5; done</code></li>
+                            </ul>
+                        </div>
                     </div>
 
                     <!-- Live Settings (TTS, Restreams) — same as RTMP and WebRTC -->
