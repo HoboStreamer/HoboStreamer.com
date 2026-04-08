@@ -24,6 +24,11 @@
     let _audioCache = {};
     let _preferences = { enabled: true, sound: true, toasts: true, muted_categories: [] };
 
+    /** Escape HTML to prevent XSS when injecting user-controlled text into innerHTML */
+    function esc(str) {
+        return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
     // ── Styles (injected once) ───────────────────────────────
     function injectStyles() {
         if (document.getElementById('hobo-notif-styles')) return;
@@ -180,11 +185,11 @@
         let userHtml = '';
         if (rich.user) {
             const u = rich.user;
-            const nameStyle = u.profile_color ? `color:${u.profile_color}` : '';
-            const nameClass = u.name_effect ? `hobo-name-fx-${u.name_effect}` : '';
+            const nameStyle = u.profile_color ? `color:${esc(u.profile_color)}` : '';
+            const nameClass = u.name_effect ? `hobo-name-fx-${esc(u.name_effect)}` : '';
             userHtml = `<div class="hobo-toast-user">
-                ${u.avatar_url ? `<img src="${u.avatar_url}" alt="">` : ''}
-                <span class="username ${nameClass}" style="${nameStyle}">${u.display_name || u.username}</span>
+                ${u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="">` : ''}
+                <span class="username ${esc(nameClass)}" style="${nameStyle}">${esc(u.display_name || u.username)}</span>
             </div>`;
         }
 
@@ -192,19 +197,19 @@
         if (rich.actions && rich.actions.length) {
             actionsHtml = '<div class="hobo-toast-actions">' +
                 rich.actions.filter(a => a.type !== 'input').map(a =>
-                    `<button data-action="${a.id}" class="${a.style === 'primary' ? 'primary' : ''}">${a.label}</button>`
+                    `<button data-action="${esc(a.id)}" class="${a.style === 'primary' ? 'primary' : ''}">${esc(a.label)}</button>`
                 ).join('') + '</div>';
         }
 
         const serviceLabel = notification.service && notification.service !== 'hobotools'
-            ? `<span class="service-badge">${notification.service}</span>` : '';
+            ? `<span class="service-badge">${esc(notification.service)}</span>` : '';
 
         toast.innerHTML = `
-            <div class="hobo-toast-icon">${notification.icon || '🔔'}</div>
+            <div class="hobo-toast-icon">${esc(notification.icon) || '🔔'}</div>
             <div class="hobo-toast-body">
                 ${userHtml}
-                <div class="hobo-toast-title">${notification.title}${serviceLabel}</div>
-                <div class="hobo-toast-msg">${notification.message}</div>
+                <div class="hobo-toast-title">${esc(notification.title)}${serviceLabel}</div>
+                <div class="hobo-toast-msg">${esc(notification.message)}</div>
                 ${actionsHtml}
             </div>
             <button class="hobo-toast-close">&times;</button>
@@ -374,12 +379,12 @@
                 const rich = n.rich_content ? JSON.parse(n.rich_content) : {};
                 const ago = timeAgo(n.created_at);
                 const serviceTag = n.service && n.service !== 'hobotools'
-                    ? `<span class="service-tag">${n.service}</span>` : '';
-                return `<div class="hobo-notif-item ${n.read ? '' : 'unread'}" data-id="${n.id}">
-                    <span class="icon">${n.icon || '🔔'}</span>
+                    ? `<span class="service-tag">${esc(n.service)}</span>` : '';
+                return `<div class="hobo-notif-item ${n.read ? '' : 'unread'}" data-id="${esc(n.id)}">
+                    <span class="icon">${esc(n.icon) || '🔔'}</span>
                     <div class="content">
-                        <div class="title">${n.title}</div>
-                        <div class="msg">${n.message}</div>
+                        <div class="title">${esc(n.title)}</div>
+                        <div class="msg">${esc(n.message)}</div>
                         <div class="meta"><span>${ago}</span>${serviceTag}</div>
                     </div>
                 </div>`;

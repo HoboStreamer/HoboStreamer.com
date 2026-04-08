@@ -382,7 +382,7 @@ class RobotStreamerService {
                 };
 
                 try {
-                    db.saveChatMessage({
+                    const result = db.saveChatMessage({
                         stream_id: stream.id,
                         user_id: null,
                         anon_id: null,
@@ -392,6 +392,7 @@ class RobotStreamerService {
                         is_global: 0,
                         source_platform: 'rs',
                     });
+                    if (result?.lastInsertRowid) mirrored.id = Number(result.lastInsertRowid);
                 } catch {}
 
                 chatServer.broadcastToStream(stream.id, mirrored);

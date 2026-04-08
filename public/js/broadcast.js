@@ -1654,6 +1654,14 @@ async function showRTMPInstructions(stream) {
         if (irlUrl) irlUrl.textContent = rtmpUrl;
         if (irlKey) irlKey.textContent = streamKey;
         if (irlCombined) irlCombined.textContent = `${rtmpUrl}/${streamKey}`;
+        // Populate FFmpeg CLI commands
+        const fullUrl = `${rtmpUrl}/${streamKey}`;
+        const camEl = document.getElementById('bc-rtmp-ffmpeg-cam');
+        if (camEl) camEl.textContent = `ffmpeg -f v4l2 -i /dev/video0 -f alsa -i default -c:v libx264 -preset veryfast -tune zerolatency -b:v 2500k -maxrate 2500k -bufsize 5000k -g 60 -c:a aac -b:a 128k -ar 44100 -f flv ${fullUrl}`;
+        const screenEl = document.getElementById('bc-rtmp-ffmpeg-screen');
+        if (screenEl) screenEl.textContent = `ffmpeg -f x11grab -s 1920x1080 -r 30 -i :0.0 -f pulse -i default -c:v libx264 -preset veryfast -tune zerolatency -b:v 3000k -g 60 -c:a aac -b:a 128k -ar 44100 -f flv ${fullUrl}`;
+        const printerEl = document.getElementById('bc-rtmp-ffmpeg-printer');
+        if (printerEl) printerEl.textContent = `ffmpeg -f v4l2 -framerate 10 -video_size 1280x720 -i /dev/video0 -c:v libx264 -preset ultrafast -b:v 500k -maxrate 600k -bufsize 1200k -g 100 -an -f flv ${fullUrl}`;
     } catch {
         document.getElementById('bc-rtmp-url').textContent = `rtmp://${location.hostname}:1935/live`;
         document.getElementById('bc-rtmp-key').textContent = 'Error loading key';
@@ -1770,6 +1778,12 @@ async function showJSMPEGInstructions(stream) {
         // HD 720p
         const hdEl = document.getElementById('bc-jsmpeg-cmd-hd');
         if (hdEl) hdEl.textContent = ep.ffmpegHD || `ffmpeg -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 -f alsa -i default -f mpegts -codec:v mpeg1video -s 1280x720 -b:v 1200k -r 30 -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 2 -muxdelay 0.001 ${hdUrl}`;
+        // 3D Printer / long-running (low bitrate, 10fps, no audio)
+        const printerEl = document.getElementById('bc-jsmpeg-cmd-printer');
+        if (printerEl) printerEl.textContent = `ffmpeg -f v4l2 -framerate 10 -video_size 640x480 -i /dev/video0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 250k -bf 0 -muxdelay 0.001 ${baseUrl}`;
+        // IP camera (RTSP) → JSMPEG
+        const ipcamEl = document.getElementById('bc-jsmpeg-cmd-ipcam');
+        if (ipcamEl) ipcamEl.textContent = `ffmpeg -rtsp_transport tcp -i rtsp://CAMERA_IP:554/stream -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -bf 0 -muxdelay 0.001 ${baseUrl}`;
     } catch { document.getElementById('bc-jsmpeg-cmd').textContent = 'Error loading command'; }
 }
 
