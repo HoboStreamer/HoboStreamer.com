@@ -1116,8 +1116,8 @@ function deductHoboBucks(userId, amount) {
 
 function createVod({ stream_id, user_id, title, description, file_path, file_size, duration_seconds, thumbnail_url }) {
     return run(
-        `INSERT INTO vods (stream_id, user_id, title, description, file_path, file_size, duration_seconds, thumbnail_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO vods (stream_id, user_id, title, description, file_path, file_size, duration_seconds, thumbnail_url, is_public)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
         [stream_id || null, user_id, title, description || '', file_path, file_size || 0, duration_seconds || 0, thumbnail_url || null]
     );
 }
@@ -1180,7 +1180,7 @@ function getOrphanedRecordingVods() {
 function createClip({ vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds }) {
     return run(
         `INSERT INTO clips (vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds, is_public)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
         [vod_id || null, stream_id || null, user_id, title || 'Untitled Clip', description || '', file_path || '', thumbnail_url || null, start_time || 0, end_time || 0, duration_seconds || 0]
     );
 }
@@ -2794,7 +2794,7 @@ function getChannelAnalyticsSummary(userId, days) {
     `, [userId]);
 
     const followerCount = get(
-        'SELECT COUNT(*) as cnt FROM follows WHERE followed_id = ?', [userId]
+        'SELECT COUNT(*) as cnt FROM follows WHERE streamer_id = ?', [userId]
     )?.cnt || 0;
 
     return {
