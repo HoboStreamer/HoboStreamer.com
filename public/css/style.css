@@ -4125,6 +4125,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .chat-voice-layout {
     display: flex; gap: 0;
     height: calc(100vh - var(--navbar-h, 56px) - 48px);
+    height: calc(100dvh - var(--navbar-h, 56px) - 48px);
     max-width: 1400px; margin: 0 auto; padding: 16px;
 }
 .global-chat-main {
@@ -6969,21 +6970,73 @@ body.theme-light .user-dropdown {
 @media (max-width: 768px) {
     .chat-voice-layout {
         flex-direction: column;
-        padding: 8px;
+        padding: 4px;
+        gap: 0;
+        height: calc(100vh - var(--navbar-h, 56px) - 48px);
+        height: calc(100dvh - var(--navbar-h, 56px) - 48px);
     }
     .vc-sidebar {
         width: 100%;
         border-radius: var(--radius) var(--radius) 0 0;
         border-right: 1px solid var(--border);
         border-bottom: none;
-        max-height: 45vh;
+        max-height: 40vh;
+        max-height: 40dvh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        flex-shrink: 0;
     }
     .global-chat-main {
         border-radius: 0 0 var(--radius) var(--radius);
-        min-height: 300px;
+        min-height: 0;
+        flex: 1;
     }
     .vc-participants-grid {
-        max-height: 120px;
+        max-height: 160px;
+    }
+    .vc-sidebar-header {
+        padding: 10px 12px 8px;
+    }
+    .vc-sidebar-header h3 {
+        font-size: 0.85rem;
+    }
+    .vc-setup-panel {
+        padding: 10px;
+    }
+    .vc-setup-avatar {
+        width: 56px;
+        height: 56px;
+    }
+    .vc-connected-header {
+        padding: 8px 10px;
+    }
+    .vc-controls {
+        padding: 8px 10px;
+    }
+    .global-chat-header {
+        padding: 10px 12px 8px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .global-chat-header h2 {
+        font-size: 1rem;
+    }
+    .global-chat-header .muted {
+        display: none;
+    }
+    .global-chat-main .chat-input-row {
+        padding: 8px;
+    }
+    .emote-picker {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        max-height: 50vh;
+        max-height: 50dvh;
+        margin-bottom: 0;
+        border-radius: var(--radius) var(--radius) 0 0;
+        z-index: 200;
     }
 }
 
