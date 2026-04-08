@@ -5270,8 +5270,10 @@ function setBroadcastClipLast30() {
 }
 
 function _formatClipTime(s) {
-    const m = Math.floor(s / 60);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
     const sec = Math.floor(s % 60);
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
@@ -5291,7 +5293,19 @@ function _updateBroadcastClipUI() {
 async function createBroadcastClip() {
     const ss = getActiveStreamState();
     if (!ss) return showToast('No active stream', 'error');
-    if (!ss.vodId) return showToast('VOD recording not ready yet — wait a few seconds after going live', 'error');
+
+    // Auto-retry if VOD not ready yet (up to 3 attempts, 2s apart)
+    if (!ss.vodId) {
+        const btn = document.getElementById('bc-clip-create-btn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Waiting for VOD…'; }
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await new Promise(r => setTimeout(r, 2000));
+            const retry = getActiveStreamState();
+            if (retry?.vodId) { ss.vodId = retry.vodId; break; }
+        }
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-scissors"></i> Create Clip'; }
+        if (!ss.vodId) return showToast('VOD recording not ready yet — try again in a few seconds', 'error');
+    }
 
     const duration = _bcClipEnd - _bcClipStart;
     if (duration <= 0) return showToast('End time must be after start time', 'error');

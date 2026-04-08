@@ -306,6 +306,12 @@ router.get('/:slug', optionalAuth, (req, res) => {
             paste.views += 1;
         }
 
+        // Burn-after-read: allow one non-owner read, then redact content and delete
+        if (paste.burn_after_read && !isOwner && paste.views > 1) {
+            db.run('DELETE FROM pastes WHERE id = ?', [paste.id]);
+            return res.json({ paste: { slug: paste.slug, burn_after_read: 1, burned: true, views: paste.views } });
+        }
+
         paste.screenshot_url = paste.screenshot_path
             ? `/data/pastes/screenshots/${path.basename(paste.screenshot_path)}`
             : null;
@@ -325,7 +331,7 @@ router.get('/:slug', optionalAuth, (req, res) => {
 // ── Create text paste ───────────────────────────────────────
 router.post('/', optionalAuth, (req, res) => {
     try {
-        const { title, content, language, visibility, stream_id, burn_after_read } = req.body;
+        const { title, content, language, visibility, stream_id, burn_after_read, is_nsfw } = req.body;
         if (!content || typeof content !== 'string' || content.trim().length === 0) {
             return res.status(400).json({ error: 'Content is required' });
         }
@@ -367,12 +373,13 @@ router.post('/', optionalAuth, (req, res) => {
         const vis = visibility === 'unlisted' ? 'unlisted' : 'public';
         const lang = detectLanguage(content, language);
         const burn = burn_after_read ? 1 : 0;
+        const nsfw = is_nsfw ? 1 : 0;
 
         db.run(
-            `INSERT INTO pastes (slug, user_id, type, title, content, language, visibility, stream_id, burn_after_read, ip_address)
-             VALUES (?, ?, 'paste', ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO pastes (slug, user_id, type, title, content, language, visibility, stream_id, burn_after_read, is_nsfw, ip_address)
+             VALUES (?, ?, 'paste', ?, ?, ?, ?, ?, ?, ?, ?)`,
             [slug, req.user?.id || null, sanitizeTitle(title), content.trim(), lang, vis,
-             stream_id || null, burn, req.ip]
+             stream_id || null, burn, nsfw, req.ip]
         );
 
         const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [slug]);
@@ -483,7 +490,7 @@ router.put('/:slug', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not your paste' });
         }
 
-        const { title, content, language, visibility, pinned } = req.body;
+        const { title, content, language, visibility, pinned, is_nsfw } = req.body;
         const updates = [];
         const params = [];
 
@@ -494,6 +501,7 @@ router.put('/:slug', requireAuth, (req, res) => {
             updates.push('language = ?'); params.push(detectLanguage(content, language));
         }
         if (visibility !== undefined) { updates.push('visibility = ?'); params.push(visibility === 'unlisted' ? 'unlisted' : 'public'); }
+        if (is_nsfw !== undefined) { updates.push('is_nsfw = ?'); params.push(is_nsfw ? 1 : 0); }
         if (pinned !== undefined && (req.user.role === 'admin' || req.user.role === 'global_mod')) {
             updates.push('pinned = ?'); params.push(pinned ? 1 : 0);
         }

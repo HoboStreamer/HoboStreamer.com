@@ -1044,9 +1044,13 @@ class RestreamManager extends EventEmitter {
     getViewerPollingConfig() {
         const db = require('../db/database');
         const hasKickApi = !!(db.getSetting('kick_client_id') && db.getSetting('kick_client_secret'));
+        const hasYoutubeApi = !!db.getSetting('youtube_api_key');
         return {
             kick: {
                 serverFetchEnabled: hasKickApi,
+            },
+            youtube: {
+                serverFetchEnabled: hasYoutubeApi,
             },
         };
     }
@@ -1115,8 +1119,15 @@ class RestreamManager extends EventEmitter {
                         count = result.count;
                         platformLive = result.platformLive;
                     }
+                } else if (dest.platform === 'youtube') {
+                    if (this.getViewerPollingConfig().youtube.serverFetchEnabled) {
+                        const result = await this._fetchYouTubeViewerCount(dest.channel_url);
+                        if (result != null) {
+                            count = result.count;
+                            platformLive = result.platformLive;
+                        }
+                    }
                 }
-                // YouTube API requires API key — skip for now
 
                 // Update cache with count AND platform live status
                 const now = Date.now();
@@ -1359,7 +1370,108 @@ class RestreamManager extends EventEmitter {
     }
 
     /**
-     * Get status of all restreams for a stream.
+     * Fetch YouTube live viewer count using the YouTube Data API v3.
+     * Requires 'youtube_api_key' in site settings.
+     * Extracts channel handle or ID from channel URL, searches for live broadcasts,
+     * and reads concurrentViewers from liveStreamingDetails.
+     */
+    async _fetchYouTubeViewerCount(channelUrl) {
+        const https = require('https');
+        const db = require('../db/database');
+        try {
+            const apiKey = db.getSetting('youtube_api_key');
+            if (!apiKey) return null;
+
+            // Extract channel identifier from URL
+            const url = new URL(channelUrl);
+            const parts = url.pathname.split('/').filter(Boolean);
+            let channelId = null;
+
+            // youtube.com/channel/UC... → direct channel ID
+            if (parts[0] === 'channel' && parts[1]) {
+                channelId = parts[1];
+            } else {
+                // youtube.com/@handle or youtube.com/c/name → resolve to channel ID via search
+                const handle = parts[0]?.startsWith('@') ? parts[0] : parts[1] || parts[0];
+                if (!handle) return null;
+                channelId = await this._resolveYouTubeChannelId(apiKey, handle);
+                if (!channelId) return null;
+            }
+
+            // Search for active live broadcast on this channel
+            return new Promise((resolve) => {
+                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&type=video&eventType=live&key=${encodeURIComponent(apiKey)}`;
+                const req = https.get(searchUrl, { timeout: 8000 }, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => {
+                        if (res.statusCode >= 400) return resolve(null);
+                        try {
+                            const parsed = JSON.parse(data);
+                            const videoId = parsed?.items?.[0]?.id?.videoId;
+                            if (!videoId) return resolve({ count: 0, platformLive: false });
+                            // Fetch viewer count from video details
+                            this._fetchYouTubeVideoViewers(apiKey, videoId).then(resolve);
+                        } catch { resolve(null); }
+                    });
+                });
+                req.on('error', () => resolve(null));
+                req.on('timeout', () => { req.destroy(); resolve(null); });
+            });
+        } catch {
+            return null;
+        }
+    }
+
+    /** Resolve a YouTube handle/username to a channel ID */
+    async _resolveYouTubeChannelId(apiKey, handle) {
+        const https = require('https');
+        const cleanHandle = handle.startsWith('@') ? handle.slice(1) : handle;
+        return new Promise((resolve) => {
+            const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(cleanHandle)}&type=channel&maxResults=1&key=${encodeURIComponent(apiKey)}`;
+            const req = https.get(url, { timeout: 8000 }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode >= 400) return resolve(null);
+                    try {
+                        const parsed = JSON.parse(data);
+                        resolve(parsed?.items?.[0]?.snippet?.channelId || null);
+                    } catch { resolve(null); }
+                });
+            });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => { req.destroy(); resolve(null); });
+        });
+    }
+
+    /** Fetch concurrent viewers for a live YouTube video */
+    async _fetchYouTubeVideoViewers(apiKey, videoId) {
+        const https = require('https');
+        return new Promise((resolve) => {
+            const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}&key=${encodeURIComponent(apiKey)}`;
+            const req = https.get(url, { timeout: 8000 }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode >= 400) return resolve(null);
+                    try {
+                        const parsed = JSON.parse(data);
+                        const details = parsed?.items?.[0]?.liveStreamingDetails;
+                        if (details?.concurrentViewers != null) {
+                            resolve({ count: parseInt(details.concurrentViewers) || 0, platformLive: true });
+                        } else {
+                            resolve({ count: 0, platformLive: true });
+                        }
+                    } catch { resolve(null); }
+                });
+            });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => { req.destroy(); resolve(null); });
+        });
+    }
+
+    /**
      * Cross-checks platform API signals — if the platform reports not-live but
      * our session says 'live', downgrade to 'error' and note the discrepancy.
      * @returns {Array<{destId, status, startedAt, restartAttempts, lastError}>}

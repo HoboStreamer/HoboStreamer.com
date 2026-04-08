@@ -387,16 +387,7 @@ router.post('/delete-user-messages', (req, res) => {
                 chatServer.broadcastToStream(scopedStreamId, deleteMsg);
                 chatServer.forwardToGlobal(scopedStreamId, deleteMsg);
             } else {
-                // Global deletion — broadcast to all streams + global
-                chatServer.broadcastGlobal(deleteMsg);
-                // Also broadcast to every stream audience
-                for (const [, client] of chatServer.clients) {
-                    if (client.streamId) {
-                        chatServer.broadcastToStream(client.streamId, deleteMsg);
-                        break; // broadcastToStream hits all clients in that stream
-                    }
-                }
-                // Broadcast to all connected clients for maximum coverage
+                // Global deletion — broadcast to every connected client
                 const msg = JSON.stringify(deleteMsg);
                 for (const [ws] of chatServer.clients) {
                     if (ws.readyState === 1) ws.send(msg);

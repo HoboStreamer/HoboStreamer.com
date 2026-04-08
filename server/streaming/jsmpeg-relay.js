@@ -67,7 +67,7 @@ class JSMPEGRelay {
                     // Feed data taps (restream FFmpeg processes)
                     if (dataTaps.size > 0) {
                         for (const tap of dataTaps) {
-                            try { tap('video', chunk); } catch {}
+                            try { tap('video', chunk); } catch (e) { console.error(`[JSMPEG] Video data tap error (${streamKey}):`, e.message); }
                         }
                     }
                 });
@@ -112,7 +112,7 @@ class JSMPEGRelay {
                     // Feed data taps (restream FFmpeg processes)
                     if (dataTaps.size > 0) {
                         for (const tap of dataTaps) {
-                            try { tap('audio', chunk); } catch {}
+                            try { tap('audio', chunk); } catch (e) { console.error(`[JSMPEG] Audio data tap error (${streamKey}):`, e.message); }
                         }
                     }
                 });
