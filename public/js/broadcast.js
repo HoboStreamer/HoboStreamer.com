@@ -1053,7 +1053,7 @@ async function buildBroadcastTabs(activeStreamId, excludeStreamId = null) {
         const dotClass = hasBrowserState ? 'bc-tab-dot bc-tab-dot-broadcasting' : 'bc-tab-dot';
         const vc = s.viewer_count || 0;
         return `<button class="bc-tab ${isActive ? 'active' : ''}"
-                    onclick="switchBroadcastTab(${s.id})"
+                    onclick="switchToStreamTab(${s.id})"
                     data-stream-id="${s.id}" title="${title}">
             <span class="${dotClass}"></span>
             <span>${truncTitle}</span>
@@ -1071,7 +1071,7 @@ function hideBroadcastTabs() {
 /**
  * Switch to a live stream's controls view when its tab is clicked.
  */
-async function switchBroadcastTab(streamId) {
+async function switchToStreamTab(streamId) {
     // Update tab highlight
     const scroll = document.getElementById('bc-tabs-scroll');
     if (scroll) scroll.querySelectorAll('.bc-tab').forEach(t => t.classList.toggle('active', parseInt(t.dataset.streamId) === streamId));
