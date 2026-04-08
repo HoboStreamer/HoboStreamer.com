@@ -58,14 +58,25 @@ const callState = {
     popoutWindow: null,
 };
 
-const ICE_SERVERS = [
+// ICE servers are fetched from the server at join time to avoid
+// hardcoding credentials into client-side JS.
+let _iceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    // TURN relay on HoboStreamer server — ensures connectivity behind symmetric NATs / firewalls
-    { urls: 'turn:40.160.240.222:3478', username: 'hobo', credential: 'hobostreamer-turn-2025' },
-    { urls: 'turn:40.160.240.222:3478?transport=tcp', username: 'hobo', credential: 'hobostreamer-turn-2025' },
 ];
+async function _ensureIceServers() {
+    try {
+        const res = await fetch('/api/auth/ice-servers');
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.iceServers) && data.iceServers.length) {
+                _iceServers = data.iceServers;
+            }
+        }
+    } catch (e) {
+        console.warn('[Call] Could not fetch ICE servers, using STUN-only fallback', e);
+    }
+}
 const CALL_WS_MAX_BUFFERED_AMOUNT = 256 * 1024;
 const CALL_AUDIO_MAX_BITRATE = 32000;
 const CALL_VIDEO_MAX_BITRATE = 350000;
@@ -527,6 +538,9 @@ async function joinCall() {
     if (callState.joined || callState.connecting || !(callState.channelId || callState.streamId)) return;
 
     callState.connecting = true;
+
+    // Fetch ICE/TURN server config from the server before creating any peer connections
+    await _ensureIceServers();
 
     if (callState.reconnectTimer) {
         clearTimeout(callState.reconnectTimer);
@@ -1166,7 +1180,7 @@ function _createPeerConnection(peerId, initiator, peerInfo) {
         _closePeer(peerId);
     }
 
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new RTCPeerConnection({ iceServers: _iceServers });
 
     const peer = {
         pc,

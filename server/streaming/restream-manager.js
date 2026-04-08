@@ -990,6 +990,7 @@ class RestreamManager extends EventEmitter {
     /**
      * Get total external viewer count for a user across all active restream destinations.
      * Returns { total, breakdown: [{ platform, name, count }] }
+     * count is null when the platform is live but viewer count is unavailable.
      */
     getExternalViewerCountsForUser(userId) {
         const db = require('../db/database');
@@ -999,9 +1000,13 @@ class RestreamManager extends EventEmitter {
         for (const d of dests) {
             if (!d.enabled) continue;
             const count = this.getCachedViewerCount(d.id);
+            const platformLive = this.isPlatformLive(d.id);
             if (count != null && count > 0) {
                 breakdown.push({ platform: d.platform, name: d.name || d.platform, count, destId: d.id });
                 total += count;
+            } else if (platformLive === true) {
+                // Platform is live but viewer count is unavailable (e.g. Kick without OAuth, YouTube)
+                breakdown.push({ platform: d.platform, name: d.name || d.platform, count: null, destId: d.id });
             }
         }
         return { total, breakdown };

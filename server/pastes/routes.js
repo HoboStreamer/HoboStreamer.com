@@ -82,14 +82,15 @@ const SLUG_NOUNS = [
     'trout', 'tulip', 'vale', 'vine', 'viper', 'wave', 'wren', 'wolf',
 ];
 
-function generateSlug() {
+function generateSlug(attempts = 0) {
+    if (attempts >= 10) throw new Error('Could not generate a unique paste slug after 10 attempts');
     const adj = SLUG_ADJECTIVES[crypto.randomInt(SLUG_ADJECTIVES.length)];
     const noun = SLUG_NOUNS[crypto.randomInt(SLUG_NOUNS.length)];
     const num = crypto.randomInt(10, 100); // 10–99
     const slug = `${adj}-${noun}-${num}`;
     // Check uniqueness — retry with fresh combo on collision (extremely unlikely)
     const existing = db.get('SELECT 1 FROM pastes WHERE slug = ?', [slug]);
-    if (existing) return generateSlug();
+    if (existing) return generateSlug(attempts + 1);
     return slug;
 }
 
@@ -210,9 +211,13 @@ router.get('/', optionalAuth, (req, res) => {
             likes: p.likes || 0,
         }));
 
-        const countSql = `SELECT COUNT(*) as total FROM pastes WHERE visibility = 'public'`
-            + (type ? ` AND type = '${type === 'screenshot' ? 'screenshot' : 'paste'}'` : '');
-        const { total } = db.get(countSql);
+        const countParams = [];
+        let countSql = `SELECT COUNT(*) as total FROM pastes WHERE visibility = 'public'`;
+        if (type) {
+            countSql += ` AND type = ?`;
+            countParams.push(type === 'screenshot' ? 'screenshot' : 'paste');
+        }
+        const { total } = db.get(countSql, countParams);
 
         res.json({ pastes, total, limit, offset });
     } catch (err) {

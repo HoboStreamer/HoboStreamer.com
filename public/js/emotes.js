@@ -49,20 +49,55 @@ async function loadEmotes(streamId) {
 /* ── URL detection regex ───────────────────────────────────────── */
 const _URL_RE = /^(https?:\/\/[^\s<>"'`]+|www\.[^\s<>"'`]+\.[^\s<>"'`]+)$/i;
 
+/* ── Kick inline emote format: [emote:name:id] → img tag ─────── */
+const _KICK_EMOTE_RE = /\[emote:([^\]:]+):(\d+)\]/g;
+
+/** Replace Kick inline [emote:name:id] tokens with <img> tags, return segments */
+function _substituteKickEmotes(text) {
+    // Returns an array of strings (plain text or img HTML) for eventual joining
+    const parts = [];
+    let last = 0;
+    let m;
+    _KICK_EMOTE_RE.lastIndex = 0;
+    while ((m = _KICK_EMOTE_RE.exec(text)) !== null) {
+        if (m.index > last) parts.push({ type: 'text', value: text.slice(last, m.index) });
+        const name = m[1];
+        const id   = m[2];
+        // Validate: id must be purely numeric (already matched \d+), name must be short
+        if (id.length <= 12 && name.length <= 64) {
+            const url = `https://files.kick.com/emotes/${id}/fullsize`;
+            parts.push({ type: 'html', value: `<img class="chat-emote" src="${_escEmote(url)}" alt="${_escEmote(':' + name + ':')}" title="${_escEmote(':' + name + ':')}" loading="lazy" draggable="false">` });
+        } else {
+            parts.push({ type: 'text', value: m[0] });
+        }
+        last = m.index + m[0].length;
+    }
+    if (last < text.length) parts.push({ type: 'text', value: text.slice(last) });
+    return parts;
+}
+
 /* ── Parse emote codes + linkify URLs in a message string → HTML ── */
 function parseEmotes(text) {
-    if (!emotesLoaded || emoteMap.size === 0) return _linkifyPlain(text);
+    // First pass: expand Kick inline [emote:name:id] tags regardless of loaded state
+    const segments = _substituteKickEmotes(text);
 
-    const tokens = text.split(/(\s+)/);
-    return tokens.map(token => {
-        if (/^\s+$/.test(token)) return token;
-        const emote = emoteMap.get(token);
-        if (emote) {
-            const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
-            return `<img class="${cls}" src="${_escEmote(emote.url)}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
-        }
-        if (_URL_RE.test(token)) return _makeChatLink(token);
-        return _escEmote(token);
+    if (!emotesLoaded || emoteMap.size === 0) {
+        return segments.map(seg => seg.type === 'html' ? seg.value : _linkifyPlain(seg.value)).join('');
+    }
+
+    return segments.map(seg => {
+        if (seg.type === 'html') return seg.value;
+        const tokens = seg.value.split(/(\s+)/);
+        return tokens.map(token => {
+            if (/^\s+$/.test(token)) return token;
+            const emote = emoteMap.get(token);
+            if (emote) {
+                const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
+                return `<img class="${cls}" src="${_escEmote(emote.url)}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
+            }
+            if (_URL_RE.test(token)) return _makeChatLink(token);
+            return _escEmote(token);
+        }).join('');
     }).join('');
 }
 

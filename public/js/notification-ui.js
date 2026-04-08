@@ -348,12 +348,29 @@
             const res = await apiFetch(`/api/notifications?${params}`);
             const data = await res.json();
 
-            if (!data.notifications || data.notifications.length === 0) {
+            // Client-side TTL: discard notifications older than 7 days
+            const TTL_MS = 7 * 24 * 60 * 60 * 1000;
+            const now = Date.now();
+            let notifs = (data.notifications || []).filter(n => {
+                if (!n.created_at) return true;
+                return (now - new Date(n.created_at).getTime()) < TTL_MS;
+            });
+
+            // Client-side dedup: keep only the newest notification per (type + source_id)
+            const seen = new Map();
+            notifs = notifs.filter(n => {
+                const key = `${n.type || ''}:${n.source_id || n.id}`;
+                if (seen.has(key)) return false;
+                seen.set(key, true);
+                return true;
+            });
+
+            if (notifs.length === 0) {
                 list.innerHTML = `<div class="hobo-notif-panel-empty"><span class="icon">🔔</span>No notifications yet</div>`;
                 return;
             }
 
-            list.innerHTML = data.notifications.map(n => {
+            list.innerHTML = notifs.map(n => {
                 const rich = n.rich_content ? JSON.parse(n.rich_content) : {};
                 const ago = timeAgo(n.created_at);
                 const serviceTag = n.service && n.service !== 'hobotools'
@@ -373,7 +390,7 @@
                     const id = item.dataset.id;
                     markRead(id);
                     item.classList.remove('unread');
-                    const notif = data.notifications.find(n => String(n.id) === id);
+                    const notif = notifs.find(n => String(n.id) === id);
                     const rich = notif?.rich_content ? JSON.parse(notif.rich_content) : {};
                     if (rich.url) window.open(rich.url, '_blank');
                 });

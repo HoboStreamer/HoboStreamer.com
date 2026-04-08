@@ -21,6 +21,7 @@ const fs = require('fs');
 const db = require('../db/database');
 const { requireAuth } = require('./auth');
 const permissions = require('./permissions');
+const config = require('../config');
 
 const router = express.Router();
 
@@ -488,5 +489,21 @@ function sanitizeUser(user, publicOnly = false) {
     }
     return safe;
 }
+
+// ── ICE / TURN server config (public — needed by unauthenticated voice chat) ─
+router.get('/ice-servers', (req, res) => {
+    const servers = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+    ];
+    if (config.turn?.url) {
+        servers.push(
+            { urls: config.turn.url, username: config.turn.username || '', credential: config.turn.credential || '' },
+            { urls: `${config.turn.url}?transport=tcp`, username: config.turn.username || '', credential: config.turn.credential || '' },
+        );
+    }
+    res.json({ iceServers: servers });
+});
 
 module.exports = router;

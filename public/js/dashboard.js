@@ -43,15 +43,7 @@ async function loadDashboard() {
 
 /* ── Channel Info ──────────────────────────────────────────────── */
 async function loadDashChannel() {
-    try {
-        const data = await api(`/streams/channel/${currentUser.username}`);
-        const ch = data.channel;
-        // Pre-fill stream form with channel defaults
-        const titleEl = document.getElementById('dash-title');
-        const catEl = document.getElementById('dash-category');
-        if (titleEl && !titleEl.value && ch.title) titleEl.value = ch.title;
-        if (catEl && ch.category) catEl.value = ch.category;
-    } catch { /* channel may not exist yet, that's fine */ }
+    // No-op: stream creation is handled by the Broadcast page
 }
 
 /* ── Stream Key ───────────────────────────────────────────────── */
@@ -85,33 +77,8 @@ async function regenerateStreamKey() {
 }
 
 /* ── Go Live / End Stream ─────────────────────────────────────── */
-async function goLive() {
-    const title = document.getElementById('dash-title').value.trim();
-    const description = document.getElementById('dash-description').value.trim();
-    const protocol = document.getElementById('dash-protocol').value;
-    const category = document.getElementById('dash-category').value;
-    const nsfw = document.getElementById('dash-nsfw').checked;
-
-    if (!title) return toast('Title is required', 'error');
-
-    try {
-        const data = await api('/streams', {
-            method: 'POST',
-            body: { title, description, protocol, category, nsfw }
-        });
-
-        const stream = data.stream || data;
-        activeStreamData = stream;
-        activeStreams.push(stream);
-        toast(`Now live: ${title} (${(protocol || 'webrtc').toUpperCase()})`, 'success');
-
-        // Refresh active streams list
-        loadDashActiveStreams();
-
-        // Show endpoint info for the new stream
-        showEndpointInfo(stream);
-    } catch (e) { toast(e.message || 'Failed to go live', 'error'); }
-}
+// Stream creation is handled by the Broadcast page (/broadcast).
+// goLive() has been removed — use broadcast.js instead.
 
 async function loadDashActiveStreams() {
     const listEl = document.getElementById('dash-active-streams');

@@ -2421,6 +2421,30 @@ function startGlobalDisplayTimers() {
             setT('bc-stat-resolution', resolution || '--');
             setT('bc-stat-status', connState);
             setT('bc-stat-codec', codec || '--');
+
+            // Health classification
+            const healthEl = document.getElementById('bc-stat-health');
+            if (healthEl) {
+                let health = 'unknown', color = '#888';
+                if (connState === 'connected' || connState === 'completed') {
+                    const fps = Math.round(frameRate);
+                    if (bitrateKbps >= 500 && fps >= 20) {
+                        health = 'Good'; color = '#22c55e';
+                    } else if (bitrateKbps >= 200 || fps >= 10) {
+                        health = 'Fair'; color = '#f59e0b';
+                    } else if (bitrateKbps > 0 || fps > 0) {
+                        health = 'Poor'; color = '#ef4444';
+                    } else {
+                        health = 'Measuring'; color = '#888';
+                    }
+                } else if (connState === 'disconnected' || connState === 'failed') {
+                    health = 'Offline'; color = '#ef4444';
+                } else if (connState === 'checking' || connState === 'new') {
+                    health = 'Connecting'; color = '#f59e0b';
+                }
+                healthEl.textContent = health;
+                healthEl.style.color = color;
+            }
         } finally {
             if (ss) ss.statsPollPending = false;
         }
@@ -4311,7 +4335,8 @@ function _updatePlatformViewerBadges() {
         const icon = platformIcons[entry.platform] || platformIcons.custom;
         const color = platformColors[entry.platform] || platformColors.custom;
         const name = entry.name || entry.platform;
-        html += `<div class="bc-info-item" style="color:${color}"><i class="${icon}"></i> <strong>${entry.count}</strong> on ${name}</div>`;
+        const countDisplay = entry.count != null ? `<strong>${entry.count}</strong>` : `<strong style="opacity:0.6">N/A</strong>`;
+        html += `<div class="bc-info-item" style="color:${color}"><i class="${icon}"></i> ${countDisplay} on ${name}</div>`;
     }
     container.innerHTML = html;
 }

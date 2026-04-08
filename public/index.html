@@ -1195,48 +1195,12 @@
             <div class="dash-grid">
                 <!-- Stream Control -->
                 <div class="dash-card">
-                    <h3><i class="fa-solid fa-broadcast-tower"></i> Stream</h3>
-                    <div class="form-group">
-                        <label>Title</label>
-                        <input type="text" id="dash-title" placeholder="Stream title" class="form-input">
-                    </div>
-                    <div class="form-group">
-                        <label>Description</label>
-                        <textarea id="dash-description" placeholder="Stream description..." class="form-input" rows="3"></textarea>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Protocol</label>
-                            <select id="dash-protocol" class="form-input">
-                                <option value="jsmpeg">JSMPEG (FFmpeg → WebSocket)</option>
-                                <option value="webrtc">WebRTC (Browser)</option>
-                                <option value="rtmp">RTMP (OBS / FFmpeg)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Category</label>
-                            <select id="dash-category" class="form-input">
-                                <option value="camping">Camping</option>
-                                <option value="outdoors">Outdoors</option>
-                                <option value="travel">Travel</option>
-                                <option value="cooking">Camp Cooking</option>
-                                <option value="building">Building/Craft</option>
-                                <option value="music">Music</option>
-                                <option value="gaming">Gaming</option>
-                                <option value="desktop">Desktop Stream</option>
-                                <option value="irl">IRL</option>
-                                <option value="other">Other</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label><input type="checkbox" id="dash-nsfw"> NSFW</label>
-                    </div>
-                    <button class="btn btn-primary btn-lg" id="dash-go-live" onclick="goLive()">
-                        <i class="fa-solid fa-broadcast-tower"></i> Go Live
-                    </button>
-                    <p class="muted" style="margin-top:8px;font-size:0.8rem"><i class="fa-solid fa-circle-info"></i> You can run multiple streams at once using different protocols.</p>
-                    <div id="dash-active-streams" style="margin-top:12px"></div>
+                    <h3><i class="fa-solid fa-broadcast-tower"></i> Broadcast</h3>
+                    <p style="margin-bottom:12px">Create and manage streams, configure your broadcast setup, and go live from the dedicated Broadcast page.</p>
+                    <a href="/broadcast" class="btn btn-primary btn-lg" onclick="navigate('/broadcast');return false;">
+                        <i class="fa-solid fa-broadcast-tower"></i> Go to Broadcast Page
+                    </a>
+                    <div id="dash-active-streams" style="margin-top:16px"></div>
                 </div>
 
                 <!-- Stream Key / Connection Info -->
@@ -2366,6 +2330,7 @@
                             <span><span class="bc-stat-label">Resolution</span> <span id="bc-stat-resolution">--</span></span>
                             <span><span class="bc-stat-label">Codec</span> <span id="bc-stat-codec">--</span></span>
                             <span><span class="bc-stat-label">Status</span> <span id="bc-stat-status">--</span></span>
+                            <span><span class="bc-stat-label">Health</span> <span id="bc-stat-health">--</span></span>
                         </div>
                         <!-- Live badge (hidden until live) -->
                         <div class="bc-live-badge" id="bc-live-badge" style="display:none">

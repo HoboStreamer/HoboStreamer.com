@@ -76,6 +76,12 @@ const CHAT_SETTINGS_DEFAULTS = {
     ttsEnabled: false,            // TTS toggle for regular pages (off by default)
     streamingTtsEnabled: true,    // Separate TTS toggle while broadcasting live
     ttsVolume: 80,                // TTS volume (0–100)
+    // Per-source TTS — which relay platforms contribute to TTS
+    ttsSrcNative: true,           // Native HoboStreamer chat
+    ttsSrcRS: true,               // RobotStreamer relay
+    ttsSrcKick: true,             // Kick relay
+    ttsSrcYoutube: true,          // YouTube relay
+    ttsSrcTwitch: true,           // Twitch relay
 };
 let chatSettings = { ...CHAT_SETTINGS_DEFAULTS };
 let chatSettingsPanelOpen = false;
@@ -150,6 +156,17 @@ function getChatTTSSettingKey(options = {}) {
 function isChatTTSEnabled(options = {}) {
     const key = getChatTTSSettingKey(options);
     return !!chatSettings[key];
+}
+
+/** Returns true if TTS should fire for a message with the given source_platform string */
+function _isTTSEnabledForSource(sourcePlatform) {
+    const src = (sourcePlatform || '').toLowerCase();
+    if (!src || src === 'native' || src === 'hobostreamer') return chatSettings.ttsSrcNative !== false;
+    if (src === 'rs' || src === 'robotstreamer') return chatSettings.ttsSrcRS !== false;
+    if (src === 'kick') return chatSettings.ttsSrcKick !== false;
+    if (src === 'youtube') return chatSettings.ttsSrcYoutube !== false;
+    if (src === 'twitch') return chatSettings.ttsSrcTwitch !== false;
+    return true; // unknown source: allow by default
 }
 
 function refreshChatTTSContext() {
@@ -360,12 +377,20 @@ function setupFullscreenChatOverlay() {
 async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
     const { messages } = getChatEl();
     if (!messages) return;
-    if (clear) messages.innerHTML = '';
+
+    // If clearing, show a loading skeleton rather than an empty panel while
+    // we wait for history to arrive — avoids a blank flash on stream restart.
+    if (clear) {
+        messages.innerHTML = '<div class="chat-loading-history" style="padding:12px;color:var(--text-muted);text-align:center;font-size:0.85rem"><i class="fa-solid fa-spinner fa-spin"></i> Loading history…</div>';
+    }
 
     _loadingHistory = true;
     try {
         if (streamId) await loadChatHistory(streamId);
         else await loadGlobalChatHistory();
+    } catch {
+        // History failed — just clear the skeleton and let chat continue live
+        if (clear) messages.innerHTML = '';
     } finally {
         _loadingHistory = false;
     }
@@ -699,7 +724,7 @@ function handleChatMessage(msg) {
             addChatMessage(msg);
             // Self-mode TTS: speak every incoming chat message via browser synthesis
             if (typeof isStreaming === 'function' && isStreaming() && broadcastState?.settings?.ttsMode === 'self') {
-                if (typeof speakBroadcastTTS === 'function') {
+                if (typeof speakBroadcastTTS === 'function' && _isTTSEnabledForSource(msg.source_platform)) {
                     speakBroadcastTTS(msg.message || msg.text, msg.username);
                 }
             }
@@ -808,10 +833,10 @@ function handleChatMessage(msg) {
             // Legacy browser-side TTS (Self TTS mode)
             if (typeof isStreaming === 'function' && isStreaming() && broadcastState?.settings?.ttsMode === 'self') {
                 // Broadcaster is live — use broadcast TTS with its volume/pitch/rate settings
-                if (isChatTTSEnabled({ streaming: true }) && typeof speakBroadcastTTS === 'function') {
+                if (isChatTTSEnabled({ streaming: true }) && typeof speakBroadcastTTS === 'function' && _isTTSEnabledForSource(msg.source_platform)) {
                     speakBroadcastTTS(msg.message || msg.text, msg.username);
                 }
-            } else if (isChatTTSEnabled()) {
+            } else if (isChatTTSEnabled() && _isTTSEnabledForSource(msg.source_platform)) {
                 speakTTS(msg.message || msg.text, msg.voiceFX, msg.username);
             }
             break;
@@ -819,8 +844,8 @@ function handleChatMessage(msg) {
             // Server-synthesized TTS audio (Site-Wide TTS mode)
             if (typeof isStreaming === 'function' && isStreaming() && typeof playBroadcastTTSAudio === 'function') {
                 // Broadcaster is live — route to broadcast audio queue
-                if (isChatTTSEnabled({ streaming: true })) playBroadcastTTSAudio(msg);
-            } else if (isChatTTSEnabled()) {
+                if (isChatTTSEnabled({ streaming: true }) && _isTTSEnabledForSource(msg.source_platform)) playBroadcastTTSAudio(msg);
+            } else if (isChatTTSEnabled() && _isTTSEnabledForSource(msg.source_platform)) {
                 // Regular chat viewer — play through chat TTS queue
                 playTTSAudio(msg);
             }
@@ -1543,8 +1568,12 @@ function _chatTextareaKeydown(e) {
 document.addEventListener('keydown', (e) => {
     if (e.target.classList.contains('chat-textarea')) _chatTextareaKeydown(e);
 }, true);
+let _autoResizeTimer = null;
 document.addEventListener('input', (e) => {
-    if (e.target.classList.contains('chat-textarea')) _autoResizeTextarea(e.target);
+    if (!e.target.classList.contains('chat-textarea')) return;
+    const el = e.target;
+    clearTimeout(_autoResizeTimer);
+    _autoResizeTimer = setTimeout(() => _autoResizeTextarea(el), 40);
 }, true);
 
 /* ── History ──────────────────────────────────────────────────── */
@@ -1553,6 +1582,9 @@ async function loadChatHistory(streamId) {
     try {
         const data = await api(`/chat/${streamId}/history?limit=500`);
         const msgs = data.messages || [];
+        // Clear any loading skeleton / stale messages before inserting history
+        const { messages } = getChatEl();
+        if (messages) messages.innerHTML = '';
         msgs.forEach(m => {
             addChatMessage({
                 id: m.id,
@@ -1575,6 +1607,9 @@ async function loadGlobalChatHistory() {
     try {
         const data = await api('/chat/global/history?limit=500');
         const msgs = data.messages || [];
+        // Clear any loading skeleton / stale messages before inserting history
+        const { messages } = getChatEl();
+        if (messages) messages.innerHTML = '';
         msgs.forEach(m => {
             if (m.message_type === 'system') {
                 // Render system messages (update announcements, etc.) with system styling
@@ -3049,6 +3084,27 @@ function buildSettingsPanelHTML() {
             <label class="csp-row">
                 <span>TTS Volume</span>
                 <input type="range" min="0" max="100" step="5" data-setting="ttsVolume" onchange="onChatSettingChange(this)" oninput="onChatSettingChange(this)">
+            </label>
+            <div class="csp-sub-title" style="margin-top:8px;font-size:0.8rem;color:var(--text-muted)">TTS Sources</div>
+            <label class="csp-row">
+                <span>Native chat</span>
+                <input type="checkbox" data-setting="ttsSrcNative" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row">
+                <span>RobotStreamer relay</span>
+                <input type="checkbox" data-setting="ttsSrcRS" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row">
+                <span>Kick relay</span>
+                <input type="checkbox" data-setting="ttsSrcKick" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row">
+                <span>YouTube relay</span>
+                <input type="checkbox" data-setting="ttsSrcYoutube" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row">
+                <span>Twitch relay</span>
+                <input type="checkbox" data-setting="ttsSrcTwitch" onchange="onChatSettingChange(this)">
             </label>
         </div>
         <div class="csp-footer">
