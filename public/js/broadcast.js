@@ -1536,7 +1536,7 @@ async function createNewStream() {
     const screenCamera = document.getElementById('bc-screen-camera')?.value || 'default';
 
     try {
-        const data = await api('/streams', { method: 'POST', body: { title, description, protocol: method, category, nsfw: false } });
+        const data = await api('/streams', { method: 'POST', body: { title, description, protocol: method, category, is_nsfw: document.getElementById('bc-nsfw')?.checked || false } });
         const streamData = data.stream || data;
 
         // Create per-stream state

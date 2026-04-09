@@ -820,6 +820,10 @@ main#app { position: relative; z-index: 1; }
     padding: 2px 6px; border-radius: var(--radius-sm);
     font-size: 0.65rem; font-weight: 700;
 }
+.stream-card-nsfw-blur img,
+.stream-card-nsfw-blur .thumb-placeholder {
+    filter: blur(16px);
+}
 .badge-unlisted {
     display: inline-block;
     background: var(--text-muted); color: #fff;

@@ -705,6 +705,47 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] chat_messages source_platform migration:', e.message); }
 
+    // Migrate: add force_nsfw column to channels (admin-set, overrides user toggle)
+    try {
+        const cols = database.pragma('table_info(channels)').map(c => c.name);
+        if (!cols.includes('force_nsfw')) {
+            database.exec('ALTER TABLE channels ADD COLUMN force_nsfw INTEGER DEFAULT 0');
+            console.log('[DB] Added force_nsfw column to channels');
+        }
+    } catch (e) { console.warn('[DB] channels force_nsfw migration:', e.message); }
+
+    // Migrate: add control settings to channels
+    try {
+        const cols = database.pragma('table_info(channels)').map(c => c.name);
+        if (!cols.includes('control_mode')) {
+            database.exec("ALTER TABLE channels ADD COLUMN control_mode TEXT DEFAULT 'open'");
+            console.log('[DB] Added control_mode column to channels');
+        }
+        if (!cols.includes('anon_controls_enabled')) {
+            database.exec('ALTER TABLE channels ADD COLUMN anon_controls_enabled INTEGER DEFAULT 1');
+            console.log('[DB] Added anon_controls_enabled column to channels');
+        }
+        if (!cols.includes('control_rate_limit_ms')) {
+            database.exec('ALTER TABLE channels ADD COLUMN control_rate_limit_ms INTEGER DEFAULT 500');
+            console.log('[DB] Added control_rate_limit_ms column to channels');
+        }
+    } catch (e) { console.warn('[DB] channel control settings migration:', e.message); }
+
+    // Migrate: create control_whitelist table
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS control_whitelist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            added_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(channel_id, user_id),
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_control_whitelist_channel ON control_whitelist(channel_id)');
+    } catch (e) { console.warn('[DB] control_whitelist migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -883,7 +924,7 @@ function updateChannel(userId, fields) {
     const updates = [];
     const params = [];
     for (const [key, val] of Object.entries(fields)) {
-        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'auto_record', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location'].includes(key)) {
+        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms'].includes(key)) {
             updates.push(`${key} = ?`);
             params.push(['tags', 'panels', 'emote_sources'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
         }
