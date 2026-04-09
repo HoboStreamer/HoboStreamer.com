@@ -19,7 +19,7 @@ class ControlServer {
         this.hardwareClients = new Map();
         /** @type {Map<WebSocket, { user: object, streamId: number }>} */
         this.viewerClients = new Map();
-        /** @type {Map<string, number>} streamKey → command count (cooldown) */
+        /** @type {Map<string, number>} `${streamId}-${controlId}-${userId}` → last command timestamp */
         this.commandCounts = new Map();
     }
 
@@ -114,10 +114,21 @@ class ControlServer {
 
         this.viewerClients.set(ws, { user, streamId });
 
-        // Send available controls
+        // Send available controls + channel control settings
         if (streamId) {
             const controls = db.getStreamControls(streamId);
-            ws.send(JSON.stringify({ type: 'controls', controls }));
+            const stream = db.getStreamById(streamId);
+            let controlSettings = {};
+            if (stream) {
+                const channel = db.getChannelByUserId(stream.user_id);
+                if (channel) {
+                    controlSettings = {
+                        control_mode: channel.control_mode || 'open',
+                        anon_controls_enabled: !!channel.anon_controls_enabled,
+                    };
+                }
+            }
+            ws.send(JSON.stringify({ type: 'controls', controls, settings: controlSettings }));
         }
 
         ws.on('message', (data) => {
@@ -151,16 +162,54 @@ class ControlServer {
         const user = db.getUserById(stream.user_id);
         if (!user) return;
 
-        // Check cooldown
+        // ── Control Mode & Permission Checks ──────────────────
+        const channel = db.getChannelByUserId(stream.user_id);
+        if (channel) {
+            const mode = channel.control_mode || 'open';
+
+            // Disabled mode — no controls
+            if (mode === 'disabled') {
+                ws.send(JSON.stringify({ type: 'error', message: 'Controls are disabled' }));
+                return;
+            }
+
+            // Anonymous check
+            if (!channel.anon_controls_enabled && !client.user) {
+                ws.send(JSON.stringify({ type: 'error', message: 'Login required to use controls' }));
+                return;
+            }
+
+            // Whitelist mode — only whitelisted users
+            if (mode === 'whitelist' && client.user) {
+                const isOwner = client.user.id === stream.user_id;
+                const isWhitelisted = db.get(
+                    'SELECT 1 FROM control_whitelist WHERE channel_id = ? AND user_id = ?',
+                    [channel.id, client.user.id]
+                );
+                if (!isOwner && !isWhitelisted) {
+                    ws.send(JSON.stringify({ type: 'error', message: 'You are not on the control whitelist' }));
+                    return;
+                }
+            } else if (mode === 'whitelist' && !client.user) {
+                ws.send(JSON.stringify({ type: 'error', message: 'Login required for whitelist mode' }));
+                return;
+            }
+        }
+
+        // ── Per-User Rate Limiting ────────────────────────────
+        const rateLimitMs = (channel && channel.control_rate_limit_ms) || 500;
         if (control_id) {
             const control = db.get('SELECT * FROM stream_controls WHERE id = ?', [control_id]);
             if (control) {
-                const lastCmd = this.commandCounts.get(`${client.streamId}-${control_id}`) || 0;
-                if (Date.now() - lastCmd < (control.cooldown_ms || 500)) {
+                const cooldown = Math.max(control.cooldown_ms || 500, rateLimitMs);
+                const userId = client.user?.id || 'anon';
+                const key = `${client.streamId}-${control_id}-${userId}`;
+                const lastCmd = this.commandCounts.get(key) || 0;
+                if (Date.now() - lastCmd < cooldown) {
                     ws.send(JSON.stringify({ type: 'cooldown', message: 'Command on cooldown' }));
                     return;
                 }
-                this.commandCounts.set(`${client.streamId}-${control_id}`, Date.now());
+                this.commandCounts.set(key, Date.now());
             }
         }
 

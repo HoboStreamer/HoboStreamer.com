@@ -698,7 +698,7 @@ router.post('/', requireAuth, (req, res) => {
             description: description ?? cleanText(channel.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true }) ?? '',
             category: streamCategory,
             protocol: streamProtocol,
-            is_nsfw: hasOwn(req.body, 'is_nsfw') ? cleanBooleanFlag(req.body.is_nsfw) : !!channel.is_nsfw,
+            is_nsfw: channel.force_nsfw ? 1 : (hasOwn(req.body, 'is_nsfw') ? cleanBooleanFlag(req.body.is_nsfw) : !!channel.is_nsfw),
         });
 
         const streamId = result.lastInsertRowid;
@@ -773,7 +773,15 @@ router.put('/:id', requireAuth, (req, res) => {
         if (title !== undefined) { updates.push('title = ?'); params.push(title); }
         if (description !== undefined) { updates.push('description = ?'); params.push(description); }
         if (category !== undefined) { updates.push('category = ?'); params.push(category); }
-        if (hasOwn(req.body, 'is_nsfw')) { updates.push('is_nsfw = ?'); params.push(cleanBooleanFlag(req.body.is_nsfw) ? 1 : 0); }
+        if (hasOwn(req.body, 'is_nsfw')) {
+            // Admin force_nsfw cannot be overridden by streamer
+            const channel = db.getChannelByUserId(req.user.id);
+            if (channel && channel.force_nsfw) {
+                updates.push('is_nsfw = 1');
+            } else {
+                updates.push('is_nsfw = ?'); params.push(cleanBooleanFlag(req.body.is_nsfw) ? 1 : 0);
+            }
+        }
         if (tags !== undefined) { updates.push('tags = ?'); params.push(JSON.stringify(tags)); }
 
         if (updates.length > 0) {

@@ -864,11 +864,11 @@ function renderStreamGrid(containerId, streams, isLive) {
         const endedAgo = !isLive && s.ended_at ? `<span class="stream-card-ago">${timeAgo(s.ended_at)}</span>` : '';
         return `
         <div class="stream-card" onclick="navigate('${navUrl}')">
-            <div class="stream-card-thumb">
+            <div class="stream-card-thumb${s.is_nsfw ? ' stream-card-nsfw-blur' : ''}">
                 ${thumbImg(thumb, 'fa-campground', s.title, !isLive && s.vod_id ? `/api/thumbnails/generate/vod/${s.vod_id}` : null)}
                 ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
                 ${s.protocol ? protocolBadge(s.protocol) : ''}
-                ${s.is_nsfw ? '<span class="stream-card-nsfw">NSFW</span>' : ''}
+                ${s.is_nsfw ? '<span class="stream-card-nsfw">18+</span>' : ''}
                 ${isLive ? `<span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${s.total_viewer_count || s.viewer_count || 0}</span>` : ''}
                 ${duration}
             </div>
@@ -1765,6 +1765,38 @@ function switchToLiveStream(username, streamId, btn) {
 }
 
 function activateChannelStream(stream) {
+    // NSFW age gate — block player init until viewer confirms
+    if (stream.is_nsfw && !sessionStorage.getItem('nsfw-ok-stream-' + stream.id)) {
+        currentStreamId = stream.id;
+        currentStreamData = stream;
+        document.getElementById('ch-stream-title').textContent = stream.title || 'Untitled Stream';
+        const container = document.getElementById('video-container');
+        if (container) {
+            container.innerHTML = `
+                <div class="stream-nsfw-gate" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:60px 20px;min-height:400px;background:var(--bg-secondary);border-radius:var(--radius);">
+                    <i class="fa-solid fa-triangle-exclamation" style="font-size:3rem;color:var(--warning, #f39c12);margin-bottom:16px;"></i>
+                    <h2 style="margin:0 0 8px">NSFW Content (18+)</h2>
+                    <p style="color:var(--text-secondary);max-width:400px;">This stream has been marked as containing content that may not be suitable for all audiences. You must be 18 or older to view.</p>
+                    <div style="display:flex;gap:12px;margin-top:20px;">
+                        <button class="btn btn-outline" onclick="navigate('/')">Go Back</button>
+                        <button class="btn btn-primary" id="nsfw-stream-continue-btn">I'm 18+ — Continue</button>
+                    </div>
+                </div>`;
+            document.getElementById('nsfw-stream-continue-btn').addEventListener('click', () => {
+                sessionStorage.setItem('nsfw-ok-stream-' + stream.id, '1');
+                // Restore video container and activate stream
+                container.innerHTML = `
+                    <div class="video-placeholder"><i class="fa-solid fa-satellite-dish fa-3x"></i><p>Connecting to stream...</p></div>
+                    <div class="stream-switch-overlay" id="stream-switch-overlay"><div class="stream-switch-spinner"></div><p>Switching stream…</p></div>
+                    <canvas id="video-canvas"></canvas>
+                    <video id="video-element" autoplay playsinline></video>
+                    <div class="video-overlay" id="video-overlay"></div>`;
+                activateChannelStream(stream);
+            });
+        }
+        return;
+    }
+
     // Avoid no-op reactivation of same stream (prevents double-init bugs)
     const isSameStream = currentStreamId === stream.id;
     currentStreamId = stream.id;

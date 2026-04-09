@@ -319,11 +319,12 @@ class RestreamManager extends EventEmitter {
             '-rw_timeout', '10000000',  // 10s read/write timeout (microseconds)
             '-i', flvUrl,
             '-c', 'copy',               // Codec copy — no re-encoding
+            '-fflags', '+nobuffer+discardcorrupt',
             '-muxdelay', '0',
             '-muxpreload', '0',
             '-flush_packets', '1',
             '-rtmp_live', 'live',
-            '-rtmp_buffer', String(LIVE_OUTPUT_BUFFER_MS),
+            '-rtmp_buffer', '2000',      // 2s output buffer — absorbs input jitter
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
             destUrl,
@@ -352,7 +353,7 @@ class RestreamManager extends EventEmitter {
             '-muxpreload', '0',
             '-flush_packets', '1',
             '-rtmp_live', 'live',
-            '-rtmp_buffer', String(LIVE_OUTPUT_BUFFER_MS),
+            '-rtmp_buffer', '2000',
             '-max_muxing_queue_size', '4096',
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
@@ -493,19 +494,22 @@ class RestreamManager extends EventEmitter {
             '-hide_banner',
             '-loglevel', 'warning',
             '-protocol_whitelist', 'file,rtp,udp',
-            '-thread_queue_size', '1024',      // Prevent input queue blocking (video+audio demux interleave)
-            '-analyzeduration', '2000000',     // 2s — SDP is known, don't over-probe
-            '-probesize', '2000000',           // 2MB — plenty for known RTP streams
+            '-thread_queue_size', '2048',      // Prevent input queue blocking (video+audio demux interleave)
+            '-analyzeduration', '5000000',     // 5s — give more time for jittery RTP to stabilize
+            '-probesize', '5000000',           // 5MB — handle missed packets and late arrivals
+            '-max_delay', '500000',            // 500ms max delay for packet reordering
+            '-reorder_queue_size', '200',      // Allow reordering up to 200 packets before stalling
             '-use_wallclock_as_timestamps', '1',
-            '-fflags', '+genpts+discardcorrupt+nobuffer',
+            '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
             '-err_detect', 'ignore_err',       // Don't bail on corrupt RTP packets (missed packets → partial frames)
+            '-avoid_negative_ts', 'make_zero', // Handle timestamp resets from packet gaps gracefully
             '-i', sdpPath,
             ...this._getEncodingArgs(preset, { hasAudio: !!audioConsumer, customOverrides }),
             '-muxdelay', '0',
             '-muxpreload', '0',
             '-flush_packets', '1',
             '-rtmp_live', 'live',
-            '-rtmp_buffer', String(LIVE_OUTPUT_BUFFER_MS),
+            '-rtmp_buffer', '2000',            // 2s output buffer (was 1s) — absorbs input jitter
             '-max_muxing_queue_size', '4096',  // Prevent FLV muxer stalls from interleave gaps
             '-f', 'flv',
             '-flvflags', 'no_duration_filesize',
@@ -717,6 +721,10 @@ class RestreamManager extends EventEmitter {
         const isRtmps = destUrl.startsWith('rtmps://');
         const useOpenSslBinary = isRtmps && fs.existsSync(OPENSSL_FFMPEG_PATH);
         const ffmpegBin = useOpenSslBinary ? OPENSSL_FFMPEG_PATH : 'ffmpeg';
+
+        if (isRtmps && !useOpenSslBinary) {
+            console.warn(`[Restream] RTMPS destination but OpenSSL FFmpeg not found at ${OPENSSL_FFMPEG_PATH} — using system ffmpeg (GnuTLS TLS rekeying issues likely)`);
+        }
 
         const maskedArgs = args.map(a =>
             (a.includes('rtmp://') || a.includes('rtmps://')) ? a.replace(/\/[^/]+$/, '/****') : a

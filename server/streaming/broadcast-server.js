@@ -18,6 +18,7 @@ const { authenticateWs } = require('../auth/auth');
 const db = require('../db/database');
 const webrtcSFU = require('./webrtc-sfu');
 const config = require('../config');
+const whipHandler = require('./whip-handler');
 
 const WS_HEARTBEAT_MS = 30000;
 const MAX_SEND_BACKPRESSURE = 512 * 1024;
@@ -41,11 +42,19 @@ class BroadcastServer extends EventEmitter {
             { urls: 'stun:stun1.l.google.com:19302' },
         ];
         if (config.turn?.url) {
-            servers.push({
-                urls: config.turn.url,
+            const turnUrl = config.turn.url;
+            const cred = {
                 username: config.turn.username || '',
                 credential: config.turn.credential || '',
-            });
+            };
+            // Add configured TURN URL
+            servers.push({ urls: turnUrl, ...cred });
+            // Also add TURNS (TLS on 443) variant — works through strict firewalls/VPNs
+            // that block non-443 UDP. Only add if not already a turns: URL.
+            if (turnUrl.startsWith('turn:')) {
+                const host = turnUrl.replace(/^turn:/, '').replace(/:\d+$/, '');
+                servers.push({ urls: `turns:${host}:443?transport=tcp`, ...cred });
+            }
         }
         return servers;
     }
@@ -71,6 +80,16 @@ class BroadcastServer extends EventEmitter {
         });
 
         console.log('[Broadcast] WebSocket broadcast server initialized');
+
+        // When a WHIP producer is added to the SFU, notify any pending viewers
+        webrtcSFU.on('producer-added', ({ roomId, kind }) => {
+            if (kind !== 'video') return; // Notify only on video producer
+            const match = roomId.match(/^stream-(\d+)$/);
+            if (!match) return;
+            const streamId = parseInt(match[1]);
+            this._notifyPendingWatchers(streamId);
+        });
+
         return this.wss;
     }
 
@@ -218,6 +237,15 @@ class BroadcastServer extends EventEmitter {
             case 'offer':
             case 'answer':
             case 'ice-candidate':
+                // Check if this is an SFU viewer answer (WHIP stream)
+                if (msg.type === 'answer' && client.role === 'viewer' && client._sfuViewerState) {
+                    this._handleSfuViewerAnswer(ws, client, msg).catch(err => {
+                        console.error(`[Broadcast] SFU viewer answer error:`, err.message);
+                    });
+                    break;
+                }
+                // For SFU viewers, ignore ice-candidate — mediasoup handles ICE internally
+                if (msg.type === 'ice-candidate' && client._sfuViewerState) break;
                 // Relay signaling messages between broadcaster and viewers
                 this.relaySignaling(ws, client, room, msg);
                 break;
@@ -232,11 +260,18 @@ class BroadcastServer extends EventEmitter {
                             peerId: client.peerId,
                         });
                     } else {
-                        // Broadcaster not connected — mark viewer as pending so they get
-                        // broadcaster-ready as soon as the broadcaster reconnects
-                        if (!room._pendingWatchers) room._pendingWatchers = new Set();
-                        room._pendingWatchers.add(client.peerId);
-                        console.log(`[Broadcast] Viewer ${client.peerId} wants to watch stream ${client.streamId} but broadcaster is not connected — queued as pending`);
+                        // No WS broadcaster — try SFU viewer path (WHIP streams)
+                        this._tryCreateSfuViewer(ws, client).then(handled => {
+                            if (!handled) {
+                                if (!room._pendingWatchers) room._pendingWatchers = new Set();
+                                room._pendingWatchers.add(client.peerId);
+                                console.log(`[Broadcast] Viewer ${client.peerId} wants to watch stream ${client.streamId} but no broadcaster or SFU — queued as pending`);
+                            }
+                        }).catch(err => {
+                            console.error(`[Broadcast] SFU viewer error for ${client.peerId}:`, err.message);
+                            if (!room._pendingWatchers) room._pendingWatchers = new Set();
+                            room._pendingWatchers.add(client.peerId);
+                        });
                     }
                 }
                 break;
@@ -380,6 +415,13 @@ class BroadcastServer extends EventEmitter {
             } else {
                 room.viewers.delete(client.peerId);
                 if (room._pendingWatchers) room._pendingWatchers.delete(client.peerId);
+
+                // Clean up SFU viewer state if this was an SFU consumer
+                if (client._sfuViewerState) {
+                    const { roomId, transportId, consumerIds } = client._sfuViewerState;
+                    whipHandler.cleanupSfuViewer(roomId, client.peerId, transportId, consumerIds);
+                }
+
                 console.log(`[Broadcast] Viewer disconnected: stream ${client.streamId} (${client.peerId})`);
 
                 // Notify broadcaster
@@ -532,6 +574,75 @@ class BroadcastServer extends EventEmitter {
         }
         for (const id of toRemove) room.producers.delete(id);
         if (toRemove.length) console.log(`[Broadcast] SFU: Closed ${toRemove.length} producer(s) for ${peerId}`);
+    }
+
+    // ── SFU Viewer Path (WHIP streams) ───────────────────────
+
+    /**
+     * Try to create an SFU consumer for a viewer watching a WHIP stream.
+     * Returns true if an offer was sent to the viewer.
+     */
+    async _tryCreateSfuViewer(ws, client) {
+        const roomId = `stream-${client.streamId}`;
+        if (!whipHandler.hasSfuProducers(client.streamId)) return false;
+
+        const result = await whipHandler.createSfuViewerOffer(roomId, client.peerId);
+        if (!result) return false;
+
+        // Store SFU viewer state on the client for answer handling and cleanup
+        client._sfuViewerState = {
+            roomId,
+            transportId: result.transportId,
+            consumerIds: result.consumerIds,
+        };
+
+        // Send the SDP offer to the viewer in the same format as a P2P offer
+        this.safeSend(ws, {
+            type: 'offer',
+            sdp: { type: 'offer', sdp: result.sdpOffer },
+            fromPeerId: 'broadcaster',
+        });
+
+        console.log(`[Broadcast] SFU viewer offer sent to ${client.peerId} for stream ${client.streamId} (${result.consumerIds.length} consumer(s))`);
+        return true;
+    }
+
+    /**
+     * Handle an SFU viewer's SDP answer.
+     */
+    async _handleSfuViewerAnswer(ws, client, msg) {
+        const state = client._sfuViewerState;
+        if (!state) return;
+
+        // Extract raw SDP string from the answer message
+        const rawSdp = typeof msg.sdp === 'string' ? msg.sdp : msg.sdp?.sdp;
+        if (!rawSdp) {
+            console.warn(`[Broadcast] SFU viewer ${client.peerId} sent answer without SDP`);
+            return;
+        }
+
+        await whipHandler.handleSfuViewerAnswer(
+            state.roomId, client.peerId, state.transportId, rawSdp
+        );
+        console.log(`[Broadcast] SFU viewer ${client.peerId} connected for stream ${client.streamId}`);
+    }
+
+    /**
+     * Notify pending viewers that SFU producers are now available.
+     * Called when a WHIP producer is added.
+     */
+    _notifyPendingWatchers(streamId) {
+        const room = this.rooms.get(streamId);
+        if (!room?._pendingWatchers?.size) return;
+
+        for (const peerId of room._pendingWatchers) {
+            const viewerWs = room.viewers.get(peerId);
+            if (viewerWs?.readyState === WebSocket.OPEN) {
+                this.safeSend(viewerWs, { type: 'broadcaster-ready', peerId });
+            }
+        }
+        room._pendingWatchers.clear();
+        console.log(`[Broadcast] Notified pending viewers of SFU producers for stream ${streamId}`);
     }
 
     /**

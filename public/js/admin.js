@@ -573,16 +573,20 @@ async function loadAdminStreams() {
         c.innerHTML = `
             <table class="admin-table">
                 <thead><tr>
-                    <th>Title</th><th>Streamer</th><th>Protocol</th><th>Viewers</th><th>Started</th><th>Actions</th>
+                    <th>Title</th><th>Streamer</th><th>Protocol</th><th>NSFW</th><th>Viewers</th><th>Started</th><th>Actions</th>
                 </tr></thead>
                 <tbody>${streams.map(s => `
                     <tr>
                         <td>${esc(s.title || 'Untitled')}</td>
                         <td>${esc(s.username || '-')}</td>
                         <td>${esc(s.protocol)}</td>
+                        <td>${s.is_nsfw ? '<span style="color:var(--danger);font-weight:700">18+</span>' : '-'}</td>
                         <td>${s.viewer_count || 0}</td>
                         <td>${new Date(s.started_at).toLocaleString()}</td>
-                        <td>
+                        <td style="display:flex;gap:4px;flex-wrap:wrap">
+                            <button class="btn btn-small ${s.is_nsfw ? 'btn-outline' : 'btn-warning'}" onclick="adminToggleStreamNsfw('${s.id}', ${!s.is_nsfw})" title="${s.is_nsfw ? 'Remove NSFW' : 'Mark NSFW'}">
+                                <i class="fa-solid fa-triangle-exclamation"></i> ${s.is_nsfw ? 'Un-NSFW' : 'NSFW'}
+                            </button>
                             <button class="btn btn-small btn-danger" onclick="forceEndStream('${s.id}')">
                                 <i class="fa-solid fa-stop"></i> End
                             </button>
@@ -600,6 +604,14 @@ async function forceEndStream(streamId) {
         toast('Stream ended', 'success');
         loadAdminStreams();
         loadAdminStats();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function adminToggleStreamNsfw(streamId, isNsfw) {
+    try {
+        await api(`/admin/streams/${streamId}/nsfw`, { method: 'PUT', body: { is_nsfw: isNsfw } });
+        toast(isNsfw ? 'Stream marked as NSFW' : 'NSFW removed', 'success');
+        loadAdminStreams();
     } catch (e) { toast(e.message, 'error'); }
 }
 

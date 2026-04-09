@@ -187,6 +187,80 @@ async function loadDashControls() {
             </div>
         `).join('');
     } catch { list.innerHTML = '<p class="muted">Failed to load controls</p>'; }
+
+    // Load control settings
+    loadControlSettings();
+}
+
+async function loadControlSettings() {
+    try {
+        const data = await api('/controls/settings/channel');
+        const modeEl = document.getElementById('dash-control-mode');
+        const rateEl = document.getElementById('dash-control-rate-limit');
+        const anonEl = document.getElementById('dash-anon-controls');
+        const whitelistSection = document.getElementById('dash-control-whitelist-section');
+        if (modeEl) modeEl.value = data.control_mode || 'open';
+        if (rateEl) rateEl.value = data.control_rate_limit_ms || 500;
+        if (anonEl) anonEl.checked = data.anon_controls_enabled !== false;
+        if (whitelistSection) whitelistSection.style.display = data.control_mode === 'whitelist' ? '' : 'none';
+        if (data.control_mode === 'whitelist') loadControlWhitelist();
+    } catch { /* silent — settings panel is optional */ }
+}
+
+async function updateControlSettings() {
+    try {
+        const mode = document.getElementById('dash-control-mode')?.value || 'open';
+        const rate = parseInt(document.getElementById('dash-control-rate-limit')?.value) || 500;
+        const anon = document.getElementById('dash-anon-controls')?.checked ?? true;
+        await api('/controls/settings/channel', {
+            method: 'PUT',
+            body: { control_mode: mode, anon_controls_enabled: anon, control_rate_limit_ms: rate }
+        });
+        const whitelistSection = document.getElementById('dash-control-whitelist-section');
+        if (whitelistSection) whitelistSection.style.display = mode === 'whitelist' ? '' : 'none';
+        if (mode === 'whitelist') loadControlWhitelist();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadControlWhitelist() {
+    const container = document.getElementById('dash-control-whitelist');
+    if (!container) return;
+    try {
+        const data = await api('/controls/whitelist');
+        const list = data.whitelist || [];
+        if (!list.length) {
+            container.innerHTML = '<p class="muted" style="font-size:0.85rem">No users whitelisted</p>';
+            return;
+        }
+        container.innerHTML = list.map(u => `
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
+                <span>${esc(u.display_name || u.username)}</span>
+                <span class="muted" style="flex:1;font-size:0.8rem">@${esc(u.username)}</span>
+                <button class="btn btn-small btn-danger" onclick="removeFromControlWhitelist(${u.id})"><i class="fa-solid fa-times"></i></button>
+            </div>
+        `).join('');
+    } catch { container.innerHTML = '<p class="muted">Failed to load whitelist</p>'; }
+}
+
+async function addToControlWhitelist() {
+    const input = document.getElementById('dash-whitelist-username');
+    const username = input?.value.trim();
+    if (!username) return toast('Enter a username', 'error');
+    try {
+        await api('/controls/whitelist', { method: 'POST', body: { username } });
+        toast(`${username} added to whitelist`, 'success');
+        if (input) input.value = '';
+        loadControlWhitelist();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function removeFromControlWhitelist(id) {
+    try {
+        await api(`/controls/whitelist/${id}`, { method: 'DELETE' });
+        toast('Removed from whitelist', 'success');
+        loadControlWhitelist();
+    } catch (e) { toast(e.message, 'error'); }
+}
 }
 
 async function doAddControl() {

@@ -1228,9 +1228,56 @@
                 <div class="dash-card">
                     <h3><i class="fa-solid fa-gamepad"></i> Interactive Controls</h3>
                     <div id="dash-controls-list"></div>
-                    <button class="btn btn-outline" onclick="showModal('add-control')">
-                        <i class="fa-solid fa-plus"></i> Add Control Button
-                    </button>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+                        <button class="btn btn-outline" onclick="showModal('add-control')">
+                            <i class="fa-solid fa-plus"></i> Add Control Button
+                        </button>
+                    </div>
+
+                    <!-- Control Settings -->
+                    <details class="dash-control-settings" style="margin-top:12px;">
+                        <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-sliders"></i> Control Settings</summary>
+                        <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">
+                            <div class="form-group" style="margin:0">
+                                <label style="font-size:0.85rem">Control Mode</label>
+                                <select id="dash-control-mode" class="form-input form-input-sm" onchange="updateControlSettings()">
+                                    <option value="open">Open (anyone can control)</option>
+                                    <option value="whitelist">Whitelist Only</option>
+                                    <option value="disabled">Disabled</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin:0">
+                                <label style="font-size:0.85rem">Rate Limit (ms)</label>
+                                <input type="number" id="dash-control-rate-limit" class="form-input form-input-sm" min="100" max="30000" step="100" value="500" onchange="updateControlSettings()">
+                                <span class="bc-field-hint">Minimum time between commands per user</span>
+                            </div>
+                            <label class="bc-toggle-label" style="font-size:0.85rem;gap:8px">
+                                <input type="checkbox" id="dash-anon-controls" checked onchange="updateControlSettings()">
+                                Allow anonymous users to use controls
+                            </label>
+                        </div>
+                    </details>
+
+                    <!-- Whitelist -->
+                    <details id="dash-control-whitelist-section" style="margin-top:8px;display:none">
+                        <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-list-check"></i> Control Whitelist</summary>
+                        <div style="margin-top:8px">
+                            <div id="dash-control-whitelist"></div>
+                            <div style="display:flex;gap:8px;margin-top:8px">
+                                <input type="text" id="dash-whitelist-username" class="form-input form-input-sm" placeholder="Username" style="flex:1">
+                                <button class="btn btn-small btn-outline" onclick="addToControlWhitelist()"><i class="fa-solid fa-plus"></i> Add</button>
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- Cozmo -->
+                    <details style="margin-top:8px">
+                        <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-robot"></i> Cozmo Robot</summary>
+                        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+                            <a class="btn btn-small btn-outline" href="/api/controls/cozmo-script" download><i class="fa-solid fa-download"></i> Download Cozmo Script</a>
+                        </div>
+                        <p class="bc-field-hint" style="margin-top:6px">Download a pre-configured Python script to connect your Cozmo robot. Requires pycozmo and websocket-client.</p>
+                    </details>
                 </div>
 
                 <!-- ONVIF Camera Controls -->
@@ -1486,6 +1533,12 @@
                                 <option value="irl" selected>IRL</option>
                                 <option value="other">Other</option>
                             </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="bc-toggle-label" style="gap:8px">
+                                <input type="checkbox" id="bc-nsfw"> <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger)"></i> NSFW (18+)
+                            </label>
+                            <span class="bc-field-hint">Viewers will see an age verification gate before watching</span>
                         </div>
 
                         <!-- STEP 2: Method Selection -->

@@ -81,6 +81,9 @@ const restreamRoutes = require('./streaming/restream-routes');
 const restreamManager = require('./streaming/restream-manager');
 const { AnalyticsTracker } = require('hobo-shared/analytics');
 
+// WHIP (WebRTC-HTTP Ingestion Protocol)
+const whipHandler = require('./streaming/whip-handler');
+
 // Game & Canvas — migrated to hobo.quest (game/canvas code removed)
 
 // ── Express App ──────────────────────────────────────────────
@@ -406,6 +409,15 @@ app.get('/obs/chat/:username', (req, res) => {
 app.get('/media/:username', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/media-player.html'));
 });
+
+// ── WHIP Endpoint (WebRTC-HTTP Ingestion Protocol) ───────────
+// OBS and other WHIP-compatible encoders send WebRTC media via HTTP POST.
+// Body is raw SDP (application/sdp), auth via Bearer token.
+app.options('/whip/:streamId', whipHandler.handleWhipOptions);
+app.options('/whip/:streamId/:resourceId', whipHandler.handleWhipOptions);
+app.post('/whip/:streamId', express.text({ type: 'application/sdp', limit: '64kb' }), whipHandler.handleWhipPost);
+app.patch('/whip/:streamId/:resourceId', express.text({ type: 'application/trickle-ice-sdpfrag', limit: '16kb' }), whipHandler.handleWhipPatch);
+app.delete('/whip/:streamId/:resourceId', whipHandler.handleWhipDelete);
 
 // ── SPA Fallback ─────────────────────────────────────────────
 app.get('*', (req, res) => {

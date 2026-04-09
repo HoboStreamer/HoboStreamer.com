@@ -615,13 +615,27 @@ class ChatRelayService {
     async _connectYouTube(bridge) {
         if (bridge.stopped) return;
 
+        // Track consecutive YouTube failures — give up after 5 to avoid log spam
+        if (!bridge._ytFailures) bridge._ytFailures = 0;
+        const MAX_YT_FAILURES = 5;
+
+        if (bridge._ytFailures >= MAX_YT_FAILURES) {
+            // Only log once when giving up
+            if (bridge._ytFailures === MAX_YT_FAILURES) {
+                console.warn(`[ChatRelay] YouTube: Giving up on chat relay for stream ${bridge.streamId} after ${MAX_YT_FAILURES} consecutive failures (scraping may be blocked by YouTube)`);
+                bridge._ytFailures++; // increment past max so this log only fires once
+            }
+            return; // Stop retrying
+        }
+
         // YouTube chat relay uses internal API scraping (no API key required).
         // The channel_url can be a video URL or a channel URL.
         // For live streams, we need the video ID to fetch the live chat.
         try {
             const videoId = await this._resolveYouTubeVideoId(bridge.channelName, bridge.channelUrl);
             if (!videoId) {
-                console.warn(`[ChatRelay] YouTube: Could not resolve video ID for ${bridge.channelName}`);
+                bridge._ytFailures++;
+                console.warn(`[ChatRelay] YouTube: Could not resolve video ID for ${bridge.channelName} (attempt ${bridge._ytFailures}/${MAX_YT_FAILURES})`);
                 this._scheduleReconnect(bridge, (b) => this._connectYouTube(b));
                 return;
             }
@@ -639,7 +653,8 @@ class ChatRelayService {
             // Extract ytInitialData
             const match = html.match(/ytInitialData\s*=\s*({.+?});\s*<\/script>/s);
             if (!match) {
-                console.warn(`[ChatRelay] YouTube: Could not extract ytInitialData for video ${videoId}`);
+                bridge._ytFailures++;
+                console.warn(`[ChatRelay] YouTube: Could not extract ytInitialData for video ${videoId} (attempt ${bridge._ytFailures}/${MAX_YT_FAILURES})`);
                 this._scheduleReconnect(bridge, (b) => this._connectYouTube(b));
                 return;
             }
@@ -647,7 +662,8 @@ class ChatRelayService {
             const ytData = safeJsonParse(match[1]);
             const chatContents = ytData?.contents?.liveChatRenderer;
             if (!chatContents) {
-                console.warn(`[ChatRelay] YouTube: No liveChatRenderer found — stream may not be live`);
+                bridge._ytFailures++;
+                console.warn(`[ChatRelay] YouTube: No liveChatRenderer found — stream may not be live (attempt ${bridge._ytFailures}/${MAX_YT_FAILURES})`);
                 this._scheduleReconnect(bridge, (b) => this._connectYouTube(b));
                 return;
             }
@@ -658,19 +674,22 @@ class ChatRelayService {
                 || cont?.timedContinuationData?.continuation;
 
             if (!continuationToken) {
-                console.warn(`[ChatRelay] YouTube: No continuation token found`);
+                bridge._ytFailures++;
+                console.warn(`[ChatRelay] YouTube: No continuation token found (attempt ${bridge._ytFailures}/${MAX_YT_FAILURES})`);
                 this._scheduleReconnect(bridge, (b) => this._connectYouTube(b));
                 return;
             }
 
             console.log(`[ChatRelay] YouTube: Connected to video ${videoId} for stream ${bridge.streamId}`);
             bridge.reconnectDelay = RECONNECT_BASE_MS;
+            bridge._ytFailures = 0; // Reset on successful connection
 
             // Start polling
             this._pollYouTubeChat(bridge, continuationToken);
 
         } catch (err) {
-            console.warn(`[ChatRelay] YouTube: Setup failed for ${bridge.channelName}:`, err.message);
+            bridge._ytFailures = (bridge._ytFailures || 0) + 1;
+            console.warn(`[ChatRelay] YouTube: Setup failed for ${bridge.channelName} (attempt ${bridge._ytFailures}):`, err.message);
             this._scheduleReconnect(bridge, (b) => this._connectYouTube(b));
         }
     }

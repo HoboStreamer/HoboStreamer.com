@@ -274,6 +274,45 @@ router.delete('/streams/:id', (req, res) => {
     }
 });
 
+// ── Force NSFW on a Channel ──────────────────────────────────
+router.put('/channels/:id/force-nsfw', (req, res) => {
+    try {
+        const { force } = req.body; // true or false
+        const forceVal = force ? 1 : 0;
+        db.run('UPDATE channels SET force_nsfw = ?, is_nsfw = CASE WHEN ? = 1 THEN 1 ELSE is_nsfw END, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [forceVal, forceVal, req.params.id]);
+        // Also update any currently live streams for this channel
+        if (forceVal) {
+            db.run('UPDATE streams SET is_nsfw = 1 WHERE channel_id = ? AND is_live = 1', [req.params.id]);
+        }
+        res.json({ message: force ? 'Channel force-marked as NSFW' : 'Force-NSFW removed from channel' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update NSFW status' });
+    }
+});
+
+// ── Force NSFW on a Stream ───────────────────────────────────
+router.put('/streams/:id/nsfw', (req, res) => {
+    try {
+        const { is_nsfw } = req.body;
+        db.run('UPDATE streams SET is_nsfw = ? WHERE id = ?', [is_nsfw ? 1 : 0, req.params.id]);
+        res.json({ message: is_nsfw ? 'Stream marked as NSFW' : 'NSFW removed from stream' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update stream NSFW' });
+    }
+});
+
+// ── Force NSFW on a Paste ────────────────────────────────────
+router.put('/pastes/:id/nsfw', (req, res) => {
+    try {
+        const { is_nsfw } = req.body;
+        db.run('UPDATE pastes SET is_nsfw = ? WHERE id = ?', [is_nsfw ? 1 : 0, req.params.id]);
+        res.json({ message: is_nsfw ? 'Paste marked as NSFW' : 'NSFW removed from paste' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update paste NSFW' });
+    }
+});
+
 // ── List Bans ────────────────────────────────────────────────
 router.get('/bans', (req, res) => {
     try {
