@@ -251,28 +251,39 @@ class BroadcastServer extends EventEmitter {
                 break;
 
             case 'watch':
-                // Viewer requests to watch — tell broadcaster to create offer for this viewer
+                // Viewer requests to watch
                 if (client.role === 'viewer') {
-                    if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
-                        console.log(`[Broadcast] Viewer ${client.peerId} requests watch on stream ${client.streamId} — notifying broadcaster`);
-                        this.safeSend(room.broadcaster, {
-                            type: 'viewer-joined',
-                            peerId: client.peerId,
-                        });
-                    } else {
-                        // No WS broadcaster — try SFU viewer path (WHIP streams)
-                        this._tryCreateSfuViewer(ws, client).then(handled => {
-                            if (!handled) {
-                                if (!room._pendingWatchers) room._pendingWatchers = new Set();
-                                room._pendingWatchers.add(client.peerId);
-                                console.log(`[Broadcast] Viewer ${client.peerId} wants to watch stream ${client.streamId} but no broadcaster or SFU — queued as pending`);
-                            }
-                        }).catch(err => {
-                            console.error(`[Broadcast] SFU viewer error for ${client.peerId}:`, err.message);
+                    // Prefer SFU relay when producers exist — avoids burdening broadcaster
+                    // upstream with N separate P2P connections. SFU distributes to viewers
+                    // from the server, freeing broadcaster bandwidth.
+                    this._tryCreateSfuViewer(ws, client).then(handled => {
+                        if (handled) return; // SFU viewer created successfully
+
+                        // No SFU producers — fall back to P2P with broadcaster
+                        if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                            console.log(`[Broadcast] Viewer ${client.peerId} requests watch on stream ${client.streamId} — notifying broadcaster (P2P)`);
+                            this.safeSend(room.broadcaster, {
+                                type: 'viewer-joined',
+                                peerId: client.peerId,
+                            });
+                        } else {
                             if (!room._pendingWatchers) room._pendingWatchers = new Set();
                             room._pendingWatchers.add(client.peerId);
-                        });
-                    }
+                            console.log(`[Broadcast] Viewer ${client.peerId} wants to watch stream ${client.streamId} but no broadcaster or SFU — queued as pending`);
+                        }
+                    }).catch(err => {
+                        console.error(`[Broadcast] SFU viewer error for ${client.peerId}:`, err.message);
+                        // Fall back to P2P on SFU error
+                        if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                            this.safeSend(room.broadcaster, {
+                                type: 'viewer-joined',
+                                peerId: client.peerId,
+                            });
+                        } else {
+                            if (!room._pendingWatchers) room._pendingWatchers = new Set();
+                            room._pendingWatchers.add(client.peerId);
+                        }
+                    });
                 }
                 break;
 
@@ -576,10 +587,11 @@ class BroadcastServer extends EventEmitter {
         if (toRemove.length) console.log(`[Broadcast] SFU: Closed ${toRemove.length} producer(s) for ${peerId}`);
     }
 
-    // ── SFU Viewer Path (WHIP streams) ───────────────────────
+    // ── SFU Viewer Path ─────────────────────────────────────
 
     /**
-     * Try to create an SFU consumer for a viewer watching a WHIP stream.
+     * Try to create an SFU consumer for a viewer.
+     * Works when the SFU has producers (from WHIP or SFU-produce signaling).
      * Returns true if an offer was sent to the viewer.
      */
     async _tryCreateSfuViewer(ws, client) {

@@ -2753,12 +2753,12 @@ function computeAndCacheStreamAnalytics(streamId) {
     );
     const coinsEarned = coinsRow?.total || 0;
 
-    // New followers — approximate: follows where followed_at is during stream
+    // New followers — approximate: follows where created_at is during stream
     let newFollowers = 0;
     if (stream.started_at && stream.ended_at) {
         const fRow = get(
             `SELECT COUNT(*) as cnt FROM follows
-             WHERE followed_id = ? AND followed_at >= ? AND followed_at <= ?`,
+             WHERE streamer_id = ? AND created_at >= ? AND created_at <= ?`,
             [stream.user_id, stream.started_at, stream.ended_at]
         );
         newFollowers = fRow?.cnt || 0;
