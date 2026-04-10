@@ -933,6 +933,16 @@ async function loadChannelPage(username, preferredStreamId = null) {
             }
         };
 
+        // Ban button helper (admin / global_mod only)
+        const setupBanBtn = (btn) => {
+            if (!btn) return;
+            const canBan = currentUser?.capabilities?.manage_site_bans;
+            const isSelf = currentUser && currentUser.username === username;
+            if (!canBan || isSelf) { btn.style.display = 'none'; return; }
+            btn.style.display = '';
+            btn.onclick = () => banChannelUser(ch.user_id, ch.username || username);
+        };
+
         if (liveStreams.length > 0) {
             // ── LIVE STATE ──
             document.getElementById('ch-live-area').style.display = '';
@@ -945,6 +955,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
             document.getElementById('ch-category-badge').textContent = ch.category || 'irl';
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
+            setupBanBtn(document.getElementById('ch-btn-ban'));
 
             // Pick the preferred stream:
             // 1. URL ?stream=ID (deep link / shared link)
@@ -994,6 +1005,7 @@ async function loadChannelPage(username, preferredStreamId = null) {
             document.getElementById('ch-follower-count-offline').textContent = `${ch.follower_count || 0} followers`;
             document.getElementById('ch-category-badge-offline').textContent = ch.category || 'irl';
             setupFollowBtn(document.getElementById('ch-btn-follow-offline'));
+            setupBanBtn(document.getElementById('ch-btn-ban-offline'));
 
             // Show global chat on offline channel pages
             initChat(null);
@@ -1933,6 +1945,23 @@ async function toggleChannelFollow(username) {
         });
         toast(data.following ? 'Followed!' : 'Unfollowed', 'info');
     } catch (e) { toast(e.message, 'error'); }
+}
+
+async function banChannelUser(userId, username) {
+    if (!userId || !username) return;
+    const reason = prompt(`⚠️ GLOBAL BAN: Ban ${username} from the entire site?\n\nEnter reason:`);
+    if (reason === null) return;
+    try {
+        if (typeof staffBanUser === 'function') {
+            await staffBanUser(userId, username, reason || 'Banned from channel page', 0);
+        } else {
+            await api('/mod/global-ban', {
+                method: 'POST',
+                body: { user_id: userId, reason: reason || 'Banned from channel page' },
+            });
+            toast(`${username} banned from site`, 'success');
+        }
+    } catch (e) { toast(e.message || 'Ban failed', 'error'); }
 }
 
 /* ── Stream Viewer (legacy /stream/:id) ──────────────────────── */

@@ -137,6 +137,93 @@ router.post('/global-ban', permissions.requireGlobalMod, (req, res) => {
     }
 });
 
+// ── Per-User Ban/Unban (staff console) ───────────────────────
+// Aliases for /global-ban and unban — the staff console calls /mod/users/:id/ban
+router.post('/users/:id/ban', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        const { reason, duration_hours } = req.body;
+
+        const targetUser = db.getUserById(userId);
+        if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+        const banReason = reason || 'Banned by moderator';
+        const expires = duration_hours
+            ? new Date(Date.now() + parseInt(duration_hours) * 3600000).toISOString()
+            : null;
+
+        let resolvedIp = chatServer.getConnectedUserIp(targetUser.id);
+        if (!resolvedIp) {
+            const latest = db.getLatestIpForUser(targetUser.id);
+            if (latest) resolvedIp = latest.ip_address;
+        }
+
+        db.run('UPDATE users SET is_banned = 1, ban_reason = ? WHERE id = ?',
+            [banReason, targetUser.id]);
+        db.run(
+            `INSERT INTO bans (user_id, ip_address, reason, banned_by, expires_at) VALUES (?, ?, ?, ?, ?)`,
+            [targetUser.id, resolvedIp, banReason, req.user.id, expires]
+        );
+
+        if (resolvedIp) {
+            db.run(
+                `INSERT INTO bans (ip_address, reason, banned_by, expires_at) VALUES (?, ?, ?, ?)`,
+                [resolvedIp, banReason + ` (IP of ${targetUser.username})`, req.user.id, expires]
+            );
+            const linked = db.getLinkedAccounts(targetUser.id);
+            for (const alt of linked) {
+                if (alt.is_banned) continue;
+                db.run('UPDATE users SET is_banned = 1, ban_reason = ? WHERE id = ?',
+                    [banReason + ` (alt of ${targetUser.username})`, alt.id]);
+                db.run(`INSERT INTO bans (user_id, reason, banned_by, expires_at) VALUES (?, ?, ?, ?)`,
+                    [alt.id, banReason + ` (alt of ${targetUser.username})`, req.user.id, expires]);
+                chatServer.disconnectUser({ userId: alt.id });
+            }
+        }
+
+        chatServer.disconnectUser({ userId: targetUser.id, ip: resolvedIp });
+
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: targetUser.id,
+            action_type: 'global_ban',
+            details: { reason: banReason, duration_hours: duration_hours || null, ip: resolvedIp },
+        });
+
+        res.json({ message: `${targetUser.username} globally banned` });
+    } catch (err) {
+        console.error('[Mod] User ban error:', err.message);
+        res.status(500).json({ error: 'Failed to ban user' });
+    }
+});
+
+router.delete('/users/:id/ban', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        const targetUser = db.getUserById(userId);
+        if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+        db.run('UPDATE users SET is_banned = 0, ban_reason = NULL WHERE id = ?', [userId]);
+        db.run('DELETE FROM bans WHERE user_id = ? AND stream_id IS NULL', [userId]);
+
+        chatServer.disconnectUser({ userId });
+
+        db.logModerationAction({
+            scope_type: 'site',
+            actor_user_id: req.user.id,
+            target_user_id: userId,
+            action_type: 'global_unban',
+            details: { username: targetUser.username },
+        });
+
+        res.json({ message: `${targetUser.username} unbanned` });
+    } catch (err) {
+        console.error('[Mod] User unban error:', err.message);
+        res.status(500).json({ error: 'Failed to unban user' });
+    }
+});
+
 // ── Stream Ban (any mod with stream moderation powers) ───────
 // Local ban: creates bans entry scoped to a specific stream
 router.post('/stream-ban', (req, res) => {
