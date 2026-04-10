@@ -913,12 +913,15 @@ router.get('/media-tools/status', (req, res) => {
             cookiesExist = stat.size > 0;
             cookiesSize = stat.size;
         } catch {}
+        const extraArgs = downloader.getExtraArgs();
         res.json({
             ytdlp_available: downloader.isAvailable(),
             ytdlp_path: downloader.getYtdlpPath(),
             cookies_configured: cookiesExist,
             cookies_size: cookiesSize,
             cookies_path: cookiesPath,
+            extra_args: extraArgs,
+            extra_args_configured: extraArgs.trim().length > 0,
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -950,6 +953,32 @@ router.delete('/media-tools/cookies', (req, res) => {
         try { fs.unlinkSync(cookiesPath); } catch {}
         console.log(`[Admin] yt-dlp cookies removed by ${req.user.username}`);
         res.json({ message: 'Cookies removed' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PUT  /api/admin/media-tools/extra-args — Save extra yt-dlp CLI arguments
+router.put('/media-tools/extra-args', (req, res) => {
+    try {
+        const { extra_args } = req.body;
+        if (typeof extra_args !== 'string') {
+            return res.status(400).json({ error: 'extra_args must be a string' });
+        }
+        db.setSetting('ytdlp_extra_args', extra_args.trim());
+        console.log(`[Admin] yt-dlp extra args updated by ${req.user.username}`);
+        res.json({ message: 'Extra args saved' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/admin/media-tools/extra-args — Clear extra yt-dlp CLI arguments
+router.delete('/media-tools/extra-args', (req, res) => {
+    try {
+        db.setSetting('ytdlp_extra_args', '');
+        console.log(`[Admin] yt-dlp extra args cleared by ${req.user.username}`);
+        res.json({ message: 'Extra args cleared' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

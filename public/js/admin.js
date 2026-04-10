@@ -1604,6 +1604,10 @@ async function loadAdminMediaTools() {
                         ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-cookie"></i> Configured (' + status.cookies_size + ' bytes)</span>'
                         : '<span class="muted"><i class="fa-solid fa-cookie-bite"></i> Not configured</span>'
                     }</div>
+                    <div><strong>Extra Args:</strong> ${status.extra_args_configured
+                        ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-terminal"></i> Configured</span>'
+                        : '<span class="muted"><i class="fa-solid fa-terminal"></i> None</span>'
+                    }</div>
                 </div>
             </div>
 
@@ -1622,6 +1626,25 @@ async function loadAdminMediaTools() {
                     </button>
                     <button class="btn btn-outline" onclick="deleteAdminCookies()" ${status.cookies_configured ? '' : 'disabled'}>
                         <i class="fa-solid fa-trash"></i> Remove Cookies
+                    </button>
+                </div>
+            </div>
+
+            <!-- Extra Args card -->
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+                <h3 style="margin:0 0 8px;font-size:1rem"><i class="fa-solid fa-terminal"></i> Extra yt-dlp Arguments</h3>
+                <p class="muted" style="font-size:0.82rem;margin:0 0 12px">
+                    Additional CLI arguments passed to yt-dlp on every call. One argument per line (e.g. <code>--proxy socks5://user:pass@host:port</code>).
+                    Use <code>--extractor-args</code> for player client overrides. Lines starting with <code>#</code> are ignored.
+                </p>
+                <textarea id="admin-extra-args-input" rows="6" placeholder="# Extra yt-dlp arguments (one per line)&#10;--extractor-args&#10;youtube:player_client=android_vr&#10;--proxy&#10;socks5://user:pass@host:1080"
+                    style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:10px;border-radius:6px;font-family:monospace;font-size:0.82rem;resize:vertical">${esc(status.extra_args || '')}</textarea>
+                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+                    <button class="btn btn-primary" onclick="saveAdminExtraArgs()">
+                        <i class="fa-solid fa-floppy-disk"></i> Save Args
+                    </button>
+                    <button class="btn btn-outline" onclick="clearAdminExtraArgs()" ${status.extra_args_configured ? '' : 'disabled'}>
+                        <i class="fa-solid fa-trash"></i> Clear
                     </button>
                 </div>
             </div>
@@ -1662,6 +1685,25 @@ async function deleteAdminCookies() {
     try {
         await api('/admin/media-tools/cookies', { method: 'DELETE' });
         toast('Cookies removed', 'success');
+        loadAdminMediaTools();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function saveAdminExtraArgs() {
+    const ta = document.getElementById('admin-extra-args-input');
+    if (!ta) return;
+    try {
+        await api('/admin/media-tools/extra-args', { method: 'PUT', body: { extra_args: ta.value } });
+        toast('Extra args saved', 'success');
+        loadAdminMediaTools();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function clearAdminExtraArgs() {
+    if (!confirm('Clear yt-dlp extra arguments?')) return;
+    try {
+        await api('/admin/media-tools/extra-args', { method: 'DELETE' });
+        toast('Extra args cleared', 'success');
         loadAdminMediaTools();
     } catch (e) { toast(e.message, 'error'); }
 }

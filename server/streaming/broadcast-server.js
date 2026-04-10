@@ -598,6 +598,13 @@ class BroadcastServer extends EventEmitter {
         const roomId = `stream-${client.streamId}`;
         if (!whipHandler.hasSfuProducers(client.streamId)) return false;
 
+        // Clean up previous SFU viewer state (e.g. on re-watch after ICE failure)
+        if (client._sfuViewerState) {
+            const prev = client._sfuViewerState;
+            whipHandler.cleanupSfuViewer(prev.roomId, client.peerId, prev.transportId, prev.consumerIds);
+            client._sfuViewerState = null;
+        }
+
         const result = await whipHandler.createSfuViewerOffer(roomId, client.peerId);
         if (!result) return false;
 

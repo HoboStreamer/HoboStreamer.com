@@ -248,20 +248,24 @@ function buildSdpAnswer(transport, offerSdp, producersByKind) {
             fingerprint: { type: fingerprint.algorithm, hash: fingerprint.value },
             setup: 'passive',
             direction: 'recvonly',
-            rtcpMux: true,
+            rtcpMux: 'rtcp-mux',
             rtp: [],
             fmtp: [],
             rtcpFb: [],
             ext: [],
-            candidates: iceCandidates.map(c => ({
-                foundation: c.foundation,
-                component: 1,
-                transport: c.protocol.toLowerCase(),
-                priority: c.priority,
-                ip: c.ip,
-                port: c.port,
-                type: c.type,
-            })),
+            candidates: iceCandidates.map(c => {
+                const cand = {
+                    foundation: c.foundation,
+                    component: 1,
+                    transport: c.protocol.toLowerCase(),
+                    priority: c.priority,
+                    ip: c.ip,
+                    port: c.port,
+                    type: c.type,
+                };
+                if (c.tcpType) cand.tcptype = c.tcpType;
+                return cand;
+            }),
         };
 
         const pts = [];
@@ -338,21 +342,25 @@ function buildViewerSdpOffer(transport, consumers) {
             fingerprint: { type: fingerprint.algorithm, hash: fingerprint.value },
             setup: 'actpass',
             direction: 'sendonly',
-            rtcpMux: true,
+            rtcpMux: 'rtcp-mux',
             rtp: [],
             fmtp: [],
             rtcpFb: [],
             ext: [],
             ssrcs: [],
-            candidates: iceCandidates.map(c => ({
-                foundation: c.foundation,
-                component: 1,
-                transport: c.protocol.toLowerCase(),
-                priority: c.priority,
-                ip: c.ip,
-                port: c.port,
-                type: c.type,
-            })),
+            candidates: iceCandidates.map(c => {
+                const cand = {
+                    foundation: c.foundation,
+                    component: 1,
+                    transport: c.protocol.toLowerCase(),
+                    priority: c.priority,
+                    ip: c.ip,
+                    port: c.port,
+                    type: c.type,
+                };
+                if (c.tcpType) cand.tcptype = c.tcpType;
+                return cand;
+            }),
         };
 
         const pts = [];

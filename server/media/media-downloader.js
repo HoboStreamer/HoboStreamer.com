@@ -14,6 +14,13 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// Lazy DB reference — avoids require-time circular issues
+let _db = null;
+function getDb() {
+    if (!_db) _db = require('../db/database');
+    return _db;
+}
+
 // ── Config ──────────────────────────────────────────────────
 const YTDLP_PATH = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
 const CACHE_DIR = path.resolve('./data/media/cache');
@@ -93,6 +100,22 @@ function cookieArgs() {
 }
 
 /**
+ * Return admin-configured extra yt-dlp arguments from the DB.
+ * Each non-empty, non-comment line is treated as a separate argument.
+ */
+function extraArgs() {
+    try {
+        const raw = getDb().getSetting('ytdlp_extra_args');
+        if (!raw || typeof raw !== 'string') return [];
+        return raw.split('\n')
+            .map(l => l.trim())
+            .filter(l => l && !l.startsWith('#'));
+    } catch {
+        return [];
+    }
+}
+
+/**
  * Get video info (metadata only, no download).
  * Returns: { title, duration, thumbnail, url, id, isLive, uploadDate }
  */
@@ -101,6 +124,7 @@ async function getInfo(url) {
         const args = [
             ...commonArgs(),
             ...cookieArgs(),
+            ...extraArgs(),
             '--no-download',
             '--print', '%(title)s\n%(duration)s\n%(thumbnail)s\n%(webpage_url)s\n%(id)s\n%(extractor)s\n%(is_live)s\n%(upload_date)s',
             '--no-warnings',
@@ -154,13 +178,14 @@ async function extractStreamUrl(url) {
     }
 
     const cookies = cookieArgs();
+    const extra = extraArgs();
     const strategies = [
         // Best audio+video combined, prefer mp4
-        [...commonArgs(), ...cookies, '--format', 'best[ext=mp4]/best[ext=webm]/best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
+        [...commonArgs(), ...cookies, ...extra, '--format', 'best[ext=mp4]/best[ext=webm]/best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
         // Lower quality fallback
-        [...commonArgs(), ...cookies, '--format', 'worst[ext=mp4]/worst', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
+        [...commonArgs(), ...cookies, ...extra, '--format', 'worst[ext=mp4]/worst', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
         // Force generic
-        [...commonArgs(), ...cookies, '--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
+        [...commonArgs(), ...cookies, ...extra, '--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
     ];
 
     let lastError = '';
@@ -219,6 +244,7 @@ async function downloadToFile(url, maxDurationSeconds = 600) {
         const args = [
             ...commonArgs(),
             ...cookieArgs(),
+            ...extraArgs(),
             '--format', 'best[ext=mp4][filesize<200M]/best[ext=mp4]/best[filesize<200M]/best',
             '--output', filePath,
             '--no-playlist',
@@ -338,5 +364,8 @@ module.exports = {
     purgeCache,
     getCookiesPath,
     getYtdlpPath,
+    getExtraArgs: () => {
+        try { return getDb().getSetting('ytdlp_extra_args') || ''; } catch { return ''; }
+    },
     CACHE_DIR,
 };
