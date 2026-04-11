@@ -2153,6 +2153,7 @@ main#app { position: relative; z-index: 1; }
     border-left: 1px solid var(--border);
     display: flex; flex-direction: column;
     flex-shrink: 0;
+    overscroll-behavior: contain;
 }
 .chat-header {
     padding: 10px 14px; border-bottom: 1px solid var(--border);
@@ -2290,6 +2291,9 @@ main#app { position: relative; z-index: 1; }
     padding: 8px 12px;
     display: flex; flex-direction: column;
     gap: 2px;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    scrollbar-gutter: stable;
 }
 .chat-msg {
     font-size: 0.85rem; line-height: 1.4;
@@ -4258,7 +4262,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     display: flex; flex-direction: column; height: 400px;
 }
 .offline-global-chat .chat-header { padding: 10px 16px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 0.85rem; letter-spacing: 0.05em; color: var(--text-muted); }
-.offline-global-chat .chat-messages { flex: 1; overflow-y: auto; padding: 8px; }
+.offline-global-chat .chat-messages { flex: 1; overflow-y: auto; padding: 8px; overscroll-behavior-y: contain; touch-action: pan-y; scrollbar-gutter: stable; }
 .offline-global-chat .chat-input-area { border-top: 1px solid var(--border); }
 .offline-global-chat .chat-input-row { display: flex; gap: 6px; padding: 8px; }
 .offline-global-chat .chat-input-row input,
@@ -4275,12 +4279,16 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     flex: 1; display: flex; flex-direction: column; min-height: 0;
     background: var(--bg-secondary); border: 1px solid var(--border);
     border-radius: 0 var(--radius) var(--radius) 0; overflow: hidden;
+    overscroll-behavior: contain;
 }
 .global-chat-header { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; }
 .global-chat-header h2 { margin: 0 0 4px; font-size: 1.2rem; }
 .global-chat-header .muted { margin: 0; font-size: 0.85rem; }
 .global-chat-messages {
     flex: 1; overflow-y: auto; padding: 8px 12px;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    scrollbar-gutter: stable;
 }
 .global-chat-main .chat-input-area { border-top: 1px solid var(--border); }
 .global-chat-main .chat-input-row { display: flex; gap: 6px; padding: 10px 12px; }

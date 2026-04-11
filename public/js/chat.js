@@ -124,7 +124,64 @@ function saveChatSettings() {
     try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch {}
     applyChatSettings();
 }
+function bindContainedChatScroll() {
+    const selectors = [
+        '.chat-sidebar',
+        '.global-chat-main',
+        '.offline-global-chat',
+        '.chat-messages',
+        '.global-chat-messages',
+        '.fullscreen-chat-messages',
+        '.chat-users-panel',
+        '.rewards-panel',
+    ];
+
+    document.querySelectorAll(selectors.join(', ')).forEach(el => {
+        if (!el || el.dataset.scrollContainBound === '1') return;
+        el.dataset.scrollContainBound = '1';
+
+        const containScroll = (deltaY, event) => {
+            const canScroll = el.scrollHeight > (el.clientHeight + 1);
+            if (!canScroll) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+
+            const atTop = el.scrollTop <= 0;
+            const atBottom = Math.ceil(el.scrollTop + el.clientHeight) >= el.scrollHeight;
+            if ((deltaY < 0 && atTop) || (deltaY > 0 && atBottom)) {
+                event.preventDefault();
+            }
+            event.stopPropagation();
+        };
+
+        el.addEventListener('wheel', (event) => {
+            if (Math.abs(event.deltaY) >= Math.abs(event.deltaX || 0)) {
+                containScroll(event.deltaY, event);
+            }
+        }, { passive: false });
+
+        let lastTouchY = null;
+        el.addEventListener('touchstart', (event) => {
+            if (event.touches && event.touches.length) {
+                lastTouchY = event.touches[0].clientY;
+            }
+        }, { passive: true });
+        el.addEventListener('touchmove', (event) => {
+            if (!event.touches || !event.touches.length || lastTouchY == null) return;
+            const currentY = event.touches[0].clientY;
+            const deltaY = lastTouchY - currentY;
+            lastTouchY = currentY;
+            containScroll(deltaY, event);
+        }, { passive: false });
+        el.addEventListener('touchend', () => { lastTouchY = null; }, { passive: true });
+        el.addEventListener('touchcancel', () => { lastTouchY = null; }, { passive: true });
+    });
+}
+
 function applyChatSettings() {
+    bindContainedChatScroll();
     // Font size
     document.querySelectorAll('.chat-messages, .global-chat-messages').forEach(el => {
         el.classList.remove('chat-font-small', 'chat-font-large');
