@@ -209,11 +209,30 @@ function extractToken(req) {
     if (authHeader && authHeader.startsWith('Bearer ')) {
         return authHeader.slice(7);
     }
+
     // Check both cookie names: 'token' (legacy hobostreamer) and 'hobo_token' (shared network)
     if (req.cookies) {
-        if (req.cookies.token) return req.cookies.token;
         if (req.cookies.hobo_token) return req.cookies.hobo_token;
+        if (req.cookies.token) return req.cookies.token;
     }
+
+    // Raw Node/WebSocket upgrade requests do not go through cookie-parser,
+    // so parse the Cookie header directly as a fallback.
+    const cookieHeader = req.headers?.cookie;
+    if (cookieHeader && typeof cookieHeader === 'string') {
+        const parsed = {};
+        for (const part of cookieHeader.split(';')) {
+            const idx = part.indexOf('=');
+            if (idx === -1) continue;
+            const key = part.slice(0, idx).trim();
+            const value = part.slice(idx + 1).trim();
+            if (!key) continue;
+            parsed[key] = decodeURIComponent(value);
+        }
+        if (parsed.hobo_token) return parsed.hobo_token;
+        if (parsed.token) return parsed.token;
+    }
+
     return null;
 }
 
@@ -221,7 +240,15 @@ function extractToken(req) {
  * Extract JWT from query parameter (WebSocket upgrade requests)
  */
 function extractWsToken(req) {
-    return extractToken(req) || (req.query && req.query.token) || null;
+    const direct = extractToken(req);
+    if (direct) return direct;
+
+    try {
+        const url = new URL(req.url || '/', 'http://localhost');
+        return url.searchParams.get('token') || null;
+    } catch {
+        return (req.query && req.query.token) || null;
+    }
 }
 
 /**

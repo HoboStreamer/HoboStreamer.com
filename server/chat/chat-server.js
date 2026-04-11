@@ -13,7 +13,7 @@
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
-const { authenticateWs } = require('../auth/auth');
+const { extractWsToken, authenticateWs } = require('../auth/auth');
 const permissions = require('../auth/permissions');
 const wordFilter = require('./word-filter');
 const cosmetics = require('../monetization/cosmetics');
@@ -265,7 +265,7 @@ class ChatServer {
         }
 
         const urlParams = new URL(req.url, 'http://localhost').searchParams;
-        const token = urlParams.get('token');
+        const token = extractWsToken(req);
         const streamId = parseInt(urlParams.get('stream')) || null;
 
         ws.isAlive = true;
@@ -362,8 +362,12 @@ class ChatServer {
                 if (msg.token) {
                     const user = authenticateWs(msg.token);
                     if (user) {
-                        client.user = user;
-                        client.anonId = null; // no longer anonymous
+                        if (!client.user || client.user.id === user.id) {
+                            client.user = user;
+                            client.anonId = null; // no longer anonymous
+                        } else {
+                            console.warn(`[Chat] Ignoring token identity mismatch for ${client.user.username} -> ${user.username}`);
+                        }
                     }
                 }
                 const oldStream = client.streamId;

@@ -2634,11 +2634,16 @@ window.addEventListener('hobo-auth-changed', () => {
 });
 
 function _getAuthToken() {
-    // Primary auth storage is localStorage; cookie is a fallback.
+    // Prefer the live auth cookie over localStorage so account switches
+    // do not leave stale websocket identities behind.
     try {
+        const hoboMatch = document.cookie.match(/(?:^|;\s*)hobo_token=([^;]+)/);
+        if (hoboMatch) return decodeURIComponent(hoboMatch[1]);
+        const legacyMatch = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
+        if (legacyMatch) return decodeURIComponent(legacyMatch[1]);
         const stored = localStorage.getItem('token');
-        if (stored) return stored;
-        const match = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
-        return match ? match[1] : null;
-    } catch { return null; }
+        return stored || null;
+    } catch {
+        return null;
+    }
 }
