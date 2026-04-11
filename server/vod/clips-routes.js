@@ -43,14 +43,18 @@ router.get('/', (req, res) => {
     try {
         const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
         const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
-        const clips = db.getPublicClips(limit, offset);
-        const total = db.countPublicClips();
+        const usernameFilter = String(req.query.username || '').trim();
+        const normalizedUsername = usernameFilter || null;
+        const clips = db.getPublicClips(limit, offset, { username: normalizedUsername });
+        const total = db.countPublicClips({ username: normalizedUsername });
         res.json({
             clips,
             total,
             limit,
             offset,
             hasMore: offset + clips.length < total,
+            streamers: db.listClipStreamers(),
+            activeFilter: normalizedUsername,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list clips' });

@@ -1353,25 +1353,63 @@ function setClipPublic(clipId, isPublic) {
     return run('UPDATE clips SET is_public = ? WHERE id = ?', [isPublic ? 1 : 0, clipId]);
 }
 
-function getPublicClips(limit = 50, offset = 0) {
+function getPublicClips(limit = 50, offset = 0, { username = null } = {}) {
+    const conditions = ['c.is_public = 1'];
+    const params = [];
+
+    if (username) {
+        conditions.push('LOWER(COALESCE(su.username, u.username)) = LOWER(?)');
+        params.push(String(username).trim());
+    }
+
+    params.push(limit, offset);
     return all(`
         SELECT c.*, u.username, u.display_name, u.avatar_url,
-               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol,
+               su.username AS streamer_username, su.display_name AS streamer_display_name, su.avatar_url AS streamer_avatar_url
         FROM clips c
         JOIN users u ON c.user_id = u.id
         LEFT JOIN streams s ON c.stream_id = s.id
-        WHERE c.is_public = 1
+        LEFT JOIN users su ON s.user_id = su.id
+        WHERE ${conditions.join(' AND ')}
         ORDER BY c.created_at DESC
         LIMIT ? OFFSET ?
-    `, [limit, offset]);
+    `, params);
 }
 
-function countPublicClips() {
+function countPublicClips({ username = null } = {}) {
+    const conditions = ['c.is_public = 1'];
+    const params = [];
+
+    if (username) {
+        conditions.push('LOWER(COALESCE(su.username, u.username)) = LOWER(?)');
+        params.push(String(username).trim());
+    }
+
     return get(`
         SELECT COUNT(*) AS count
         FROM clips c
+        JOIN users u ON c.user_id = u.id
+        LEFT JOIN streams s ON c.stream_id = s.id
+        LEFT JOIN users su ON s.user_id = su.id
+        WHERE ${conditions.join(' AND ')}
+    `, params)?.count || 0;
+}
+
+function listClipStreamers() {
+    return all(`
+        SELECT COALESCE(su.id, u.id) AS user_id,
+               COALESCE(su.username, u.username) AS username,
+               COALESCE(su.display_name, u.display_name) AS display_name,
+               COUNT(*) AS clip_count
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        LEFT JOIN streams s ON c.stream_id = s.id
+        LEFT JOIN users su ON s.user_id = su.id
         WHERE c.is_public = 1
-    `, [])?.count || 0;
+        GROUP BY COALESCE(su.id, u.id), COALESCE(su.username, u.username), COALESCE(su.display_name, u.display_name)
+        ORDER BY LOWER(COALESCE(COALESCE(su.display_name, u.display_name), COALESCE(su.username, u.username))) ASC
+    `, []);
 }
 
 function getClipsByStream(streamId) {
@@ -3083,7 +3121,7 @@ module.exports = {
     // VODs
     createVod, getVodById, getVodsByUser, countVodsByUser, getPublicVods, countPublicVods, listVodStreamers, getActiveVodByStream, getOrphanedRecordingVods,
     // Clips
-    createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
+    createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, listClipStreamers, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
     // Controls
     getStreamControls, createControl,
     // ONVIF Cameras

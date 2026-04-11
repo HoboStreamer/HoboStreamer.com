@@ -894,6 +894,7 @@ const CHANNEL_CLIPS_PAGE_SIZE = 12;
 let currentVodsPage = 1;
 let currentClipsPage = 1;
 let currentVodsStreamerFilter = 'all';
+let currentClipsStreamerFilter = 'all';
 const channelVodsPageByUser = Object.create(null);
 const channelClipsPageByUser = Object.create(null);
 
@@ -1055,8 +1056,15 @@ function setClipsPage(page) {
     if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function renderVodsStreamerFilters(streamers = [], activeFilter = 'all') {
-    const bar = document.getElementById('vods-streamer-filters');
+function renderMediaStreamerFilters({
+    barId,
+    streamers = [],
+    activeFilter = 'all',
+    onSelect = 'setVodsStreamerFilter',
+    countKey = 'vod_count',
+    allLabel = 'All streamers',
+} = {}) {
+    const bar = document.getElementById(barId);
     if (!bar) return;
 
     const normalizedActive = (activeFilter || 'all').toLowerCase();
@@ -1079,22 +1087,44 @@ function renderVodsStreamerFilters(streamers = [], activeFilter = 'all') {
 
     bar.style.display = 'flex';
     bar.innerHTML = `
-        <button class="media-filter-chip ${normalizedActive === 'all' ? 'active' : ''}" onclick="setVodsStreamerFilter('all')">
+        <button class="media-filter-chip ${normalizedActive === 'all' ? 'active' : ''}" onclick="${onSelect}('all')">
             <i class="fa-solid fa-layer-group"></i>
-            <span>All streamers</span>
+            <span>${esc(allLabel)}</span>
         </button>
         ${unique.map(streamer => {
             const username = String(streamer.username || '').trim();
             const label = streamer.display_name || username;
-            const count = Number(streamer.vod_count || 0);
+            const count = Number(streamer[countKey] || 0);
             return `
-                <button class="media-filter-chip ${normalizedActive === username.toLowerCase() ? 'active' : ''}" onclick="setVodsStreamerFilter('${esc(username)}')">
+                <button class="media-filter-chip ${normalizedActive === username.toLowerCase() ? 'active' : ''}" onclick="${onSelect}('${esc(username)}')">
                     <span>${esc(label)}</span>
                     ${count > 0 ? `<span class="media-filter-chip-count">${count}</span>` : ''}
                 </button>
             `;
         }).join('')}
     `;
+}
+
+function renderVodsStreamerFilters(streamers = [], activeFilter = 'all') {
+    renderMediaStreamerFilters({
+        barId: 'vods-streamer-filters',
+        streamers,
+        activeFilter,
+        onSelect: 'setVodsStreamerFilter',
+        countKey: 'vod_count',
+        allLabel: 'All streamers',
+    });
+}
+
+function renderClipsStreamerFilters(streamers = [], activeFilter = 'all') {
+    renderMediaStreamerFilters({
+        barId: 'clips-streamer-filters',
+        streamers,
+        activeFilter,
+        onSelect: 'setClipsStreamerFilter',
+        countKey: 'clip_count',
+        allLabel: 'All streamers',
+    });
 }
 
 function setVodsStreamerFilter(username = 'all') {
@@ -1104,6 +1134,16 @@ function setVodsStreamerFilter(username = 'all') {
     currentVodsPage = 1;
     loadVodsPage();
     const top = document.getElementById('page-vods');
+    if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function setClipsStreamerFilter(username = 'all') {
+    const nextFilter = String(username || 'all').trim() || 'all';
+    if (nextFilter === currentClipsStreamerFilter) return;
+    currentClipsStreamerFilter = nextFilter;
+    currentClipsPage = 1;
+    loadClipsPage();
+    const top = document.getElementById('page-clips');
     if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -2325,16 +2365,27 @@ async function loadVodsPage() {
 async function loadClipsPage() {
     const grid = document.getElementById('clips-grid-page');
     const pager = document.getElementById('clips-pagination-page');
+    const filterBar = document.getElementById('clips-streamer-filters');
     if (!grid) return console.error('[Clips] grid element not found');
     grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p>Loading clips...</p></div>';
     if (pager) { pager.style.display = 'none'; pager.innerHTML = ''; }
+    if (filterBar) {
+        filterBar.style.display = 'none';
+        filterBar.innerHTML = '';
+    }
     try {
         const limit = CLIPS_PAGE_SIZE;
         const offset = (currentClipsPage - 1) * limit;
-        const data = await api(`/clips?limit=${limit}&offset=${offset}`);
+        const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+        if (currentClipsStreamerFilter && currentClipsStreamerFilter !== 'all') {
+            params.set('username', currentClipsStreamerFilter);
+        }
+        const data = await api(`/clips?${params.toString()}`);
         const clips = data.clips || [];
         const total = data.total ?? clips.length;
         const totalPages = Math.max(1, Math.ceil(total / limit));
+
+        renderClipsStreamerFilters(data.streamers || [], currentClipsStreamerFilter);
 
         if (currentClipsPage > totalPages) {
             currentClipsPage = totalPages;
