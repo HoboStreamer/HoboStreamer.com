@@ -492,6 +492,20 @@ main#app { position: relative; z-index: 1; }
     line-height: 1.4;
     white-space: nowrap;
 }
+.hero-note {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6ch;
+    margin: -4px auto 20px;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.4;
+    max-width: 80vw;
+}
+.hero-note i {
+    color: var(--accent);
+}
 .hero-cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 
 .network-hub {
