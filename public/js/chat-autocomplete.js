@@ -522,6 +522,9 @@ if (document.readyState === 'loading') {
     _acInit();
 }
 
+/* ── Public API ─────────────────────────────────────────────── */
+function acIsActive() { return _acActive; }
+
 /* ── Utility ─────────────────────────────────────────────────── */
 function _escAc(s) {
     if (!s) return '';

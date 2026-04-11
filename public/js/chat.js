@@ -1510,6 +1510,8 @@ function _chatTextareaKeydown(e) {
     const isFullscreen = el.id === 'fullscreen-chat-input';
 
     if (e.key === 'Enter' && !e.shiftKey) {
+        // Let autocomplete handle Enter when its menu is open
+        if (typeof acIsActive === 'function' && acIsActive()) return;
         e.preventDefault();
         if (isFcw) fcwSendChat();
         else if (isFullscreen) sendChat(el);
