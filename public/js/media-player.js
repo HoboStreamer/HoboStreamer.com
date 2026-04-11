@@ -184,7 +184,9 @@ function renderPage() {
     document.getElementById('mp-subtitle').textContent = mpOwner
         ? 'Manage requests, playback, and your queue from this page.'
         : `Request media in chat with !sr, !yt, !youtube, !req, or !request while watching ${mpChannel.display_name}.`;
-    document.getElementById('mp-channel-link').href = `/${mpChannel.username}`;
+    document.getElementById('mp-channel-link').href = (typeof channelPath === 'function')
+        ? channelPath(mpChannel.username)
+        : `/@${encodeURIComponent(mpChannel.username || '')}`;
     document.getElementById('mp-owner-controls').hidden = !mpOwner;
     document.getElementById('mp-settings-card').hidden = !mpOwner;
 
