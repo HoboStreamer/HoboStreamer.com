@@ -1010,7 +1010,16 @@ router.post('/media-tools/test', async (req, res) => {
         // Step 3: Extract stream URL
         try {
             const stream = await downloader.extractStreamUrl(url);
-            results.steps.push({ name: 'extractStreamUrl', ok: true, data: { streamUrl: stream.streamUrl.substring(0, 120) + '...' } });
+            const previewUrl = stream?.streamUrl || stream?.embedUrl || null;
+            if (!previewUrl) throw new Error('No playable URL returned');
+            results.steps.push({
+                name: 'extractStreamUrl',
+                ok: true,
+                data: {
+                    streamUrl: previewUrl.substring(0, 120) + '...',
+                    transport: stream?.transport || (stream?.embedUrl ? 'embed' : 'direct'),
+                },
+            });
         } catch (err) {
             results.steps.push({ name: 'extractStreamUrl', ok: false, error: err.message });
         }

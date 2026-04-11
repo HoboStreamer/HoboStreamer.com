@@ -161,10 +161,15 @@ class MediaQueue {
             db.updateMediaRequest(requestId, { download_status: 'extracting' });
             this.broadcastQueueUpdate(request.streamer_id);
 
-            const { streamUrl } = await downloader.extractStreamUrl(request.canonical_url);
+            const extracted = await downloader.extractStreamUrl(request.canonical_url);
+            const resolvedUrl = extracted?.streamUrl || extracted?.embedUrl || request.embed_url || null;
             db.updateMediaRequest(requestId, {
-                stream_url: streamUrl,
-                download_status: 'ready',
+                stream_url: resolvedUrl,
+                embed_url: request.embed_url || extracted?.embedUrl || null,
+                download_status: resolvedUrl ? 'ready' : 'failed',
+                last_error: extracted?.transport === 'embed'
+                    ? 'Direct extraction was blocked; using embedded playback instead.'
+                    : null,
             });
             this.broadcastQueueUpdate(request.streamer_id);
             return db.getMediaRequestById(requestId);
@@ -173,6 +178,16 @@ class MediaQueue {
             try {
                 return await this.downloadFileForRequest(requestId);
             } catch (downloadErr) {
+                if (request.embed_url && ['youtube', 'vimeo'].includes(request.provider)) {
+                    db.updateMediaRequest(requestId, {
+                        stream_url: request.embed_url,
+                        embed_url: request.embed_url,
+                        download_status: 'ready',
+                        last_error: `Server-side extraction was blocked (${err.message}). Using embedded playback instead.`,
+                    });
+                    this.broadcastQueueUpdate(request.streamer_id);
+                    return db.getMediaRequestById(requestId);
+                }
                 db.updateMediaRequest(requestId, {
                     stream_url: null,
                     download_status: 'failed',

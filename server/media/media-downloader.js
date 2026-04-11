@@ -119,6 +119,104 @@ function extraArgs() {
  * Get video info (metadata only, no download).
  * Returns: { title, duration, thumbnail, url, id, isLive, uploadDate }
  */
+function safeParseUrl(raw) {
+    try {
+        return new URL(String(raw || '').trim());
+    } catch {
+        return null;
+    }
+}
+
+function getYouTubeId(parsedUrl) {
+    if (!parsedUrl) return null;
+    const hostname = parsedUrl.hostname.replace(/^www\./i, '').toLowerCase();
+    if (hostname === 'youtu.be') {
+        const id = parsedUrl.pathname.slice(1).split('/')[0];
+        return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
+    }
+    if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com')) {
+        if (parsedUrl.pathname === '/watch') {
+            const id = parsedUrl.searchParams.get('v');
+            return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
+        }
+        const match = parsedUrl.pathname.match(/\/(embed|shorts)\/([A-Za-z0-9_-]{11})/);
+        return match ? match[2] : null;
+    }
+    return null;
+}
+
+function getVimeoId(parsedUrl) {
+    if (!parsedUrl) return null;
+    const hostname = parsedUrl.hostname.replace(/^www\./i, '').toLowerCase();
+    if (hostname === 'vimeo.com' || hostname === 'player.vimeo.com') {
+        const match = parsedUrl.pathname.match(/\/(?:video\/)?(\d+)/);
+        return match ? match[1] : null;
+    }
+    return null;
+}
+
+function getEmbedFallbackUrl(rawUrl) {
+    const parsedUrl = safeParseUrl(rawUrl);
+    const ytId = getYouTubeId(parsedUrl);
+    if (ytId) return `https://www.youtube.com/embed/${ytId}?autoplay=1&rel=0`;
+    const vimeoId = getVimeoId(parsedUrl);
+    if (vimeoId) return `https://player.vimeo.com/video/${vimeoId}?autoplay=1`;
+    return null;
+}
+
+async function fallbackInfoFromOEmbed(rawUrl) {
+    const parsedUrl = safeParseUrl(rawUrl);
+    if (!parsedUrl) return null;
+
+    const ytId = getYouTubeId(parsedUrl);
+    if (ytId) {
+        const canonical = `https://www.youtube.com/watch?v=${ytId}`;
+        let meta = null;
+        try {
+            const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(canonical)}&format=json`, {
+                headers: { 'User-Agent': 'HoboStreamer/1.0 media requests' },
+            });
+            if (res.ok) meta = await res.json();
+        } catch {}
+        return {
+            title: meta?.title || `YouTube video ${ytId}`,
+            duration: 0,
+            thumbnail: meta?.thumbnail_url || `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
+            url: canonical,
+            id: ytId,
+            extractor: 'youtube-oembed',
+            isLive: false,
+            uploadDate: '',
+            embedUrl: getEmbedFallbackUrl(canonical),
+        };
+    }
+
+    const vimeoId = getVimeoId(parsedUrl);
+    if (vimeoId) {
+        const canonical = `https://vimeo.com/${vimeoId}`;
+        let meta = null;
+        try {
+            const res = await fetch(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(canonical)}`, {
+                headers: { 'User-Agent': 'HoboStreamer/1.0 media requests' },
+            });
+            if (res.ok) meta = await res.json();
+        } catch {}
+        return {
+            title: meta?.title || `Vimeo video ${vimeoId}`,
+            duration: Number.isFinite(meta?.duration) ? meta.duration : 0,
+            thumbnail: meta?.thumbnail_url || '',
+            url: canonical,
+            id: vimeoId,
+            extractor: 'vimeo-oembed',
+            isLive: false,
+            uploadDate: '',
+            embedUrl: getEmbedFallbackUrl(canonical),
+        };
+    }
+
+    return null;
+}
+
 function normalizeUploadDate(raw) {
     const value = String(raw || '').trim();
     if (/^\d{8}$/.test(value)) {
@@ -132,7 +230,7 @@ function normalizeUploadDate(raw) {
 
 function parseStructuredInfo(stdout, fallbackUrl) {
     const text = String(stdout || '').trim();
-    if (!text) return null;
+    if (!text || /^(null|undefined)$/i.test(text)) return null;
 
     const candidates = [text, text.split('\n').filter(Boolean).pop() || ''];
     for (const candidate of candidates) {
@@ -210,6 +308,9 @@ async function getInfo(url) {
         }
     }
 
+    const fallback = await fallbackInfoFromOEmbed(url);
+    if (fallback) return fallback;
+
     throw lastError || new Error('Failed to get video info');
 }
 
@@ -254,8 +355,22 @@ async function extractStreamUrl(url) {
 
     // Surface provider-specific error messages
     const lower = lastError.toLowerCase();
-    if (lower.includes('sign in') || lower.includes('age') || lower.includes('age-restricted')) {
-        throw new Error('This video is age-restricted and cannot be played');
+    const embedFallbackUrl = getEmbedFallbackUrl(url);
+    if (embedFallbackUrl && (lower.includes('sign in') || lower.includes('not a bot') || lower.includes('bot') || lower.includes('age') || lower.includes('age-restricted'))) {
+        const entry = {
+            streamUrl: embedFallbackUrl,
+            embedUrl: embedFallbackUrl,
+            transport: 'embed',
+            expiresAt: Date.now() + URL_CACHE_TTL_MS,
+        };
+        urlCache.set(url, entry);
+        return entry;
+    }
+    if (lower.includes('sign in') || lower.includes('not a bot') || lower.includes('bot')) {
+        throw new Error('YouTube blocked direct server extraction for this video (sign-in/bot check)');
+    }
+    if (lower.includes('age') || lower.includes('age-restricted')) {
+        throw new Error('This video is age-restricted and cannot be played directly');
     }
     if (lower.includes('unavailable') || lower.includes('private') || lower.includes('removed')) {
         throw new Error('This video is unavailable (private, removed, or region-locked)');

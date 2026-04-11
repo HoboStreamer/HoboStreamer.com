@@ -182,25 +182,48 @@ async function loadPlayer(request) {
 
     // Try to get a stream URL from the server
     let streamUrl = request.stream_url;
+    let embedUrl = request.embed_url || null;
+    let lastError = '';
     if (!streamUrl || request.download_status !== 'ready') {
         document.getElementById('mp-loading-text').textContent = 'Preparing server-side media…';
         try {
             const data = await mpApi(`/api/media/queue/${request.id}/stream-url`);
             streamUrl = data.stream_url;
+            embedUrl = data.embed_url || embedUrl;
+            lastError = data.last_error || '';
             // If still extracting, poll until ready
             if (data.download_status !== 'ready' && data.download_status !== 'failed') {
                 streamUrl = await pollStreamUrl(request.id);
             }
-        } catch {
+        } catch (err) {
             streamUrl = null;
+            lastError = err?.message || '';
         }
     }
 
-    const playUrl = streamUrl;
+    const playUrl = streamUrl || embedUrl;
+    const useEmbed = !!embedUrl && (!streamUrl || streamUrl === embedUrl || /youtube\.com\/embed|youtube-nocookie\.com\/embed|player\.vimeo\.com\/video/i.test(playUrl));
 
     if (!playUrl) {
-        showError('Server could not prepare a playable media file for this request.');
-        if (mpOwner) reportFailure(request.id, 'Server could not prepare a playable media file');
+        const msg = lastError || 'Server could not prepare a playable media file for this request.';
+        showError(msg);
+        if (mpOwner) reportFailure(request.id, msg);
+        return;
+    }
+
+    if (useEmbed) {
+        const iframe = document.createElement('iframe');
+        iframe.src = embedUrl;
+        iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+        iframe.allowFullscreen = true;
+        iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+        iframe.style.cssText = 'width:100%;height:100%;display:block;border:0;background:#000;';
+        const existingMedia = host.querySelector('video, audio, iframe');
+        if (existingMedia) existingMedia.remove();
+        host.appendChild(iframe);
+        loading.hidden = true;
+        controls.hidden = true;
+        mpMedia = null;
         return;
     }
 
@@ -277,7 +300,7 @@ async function loadPlayer(request) {
     });
 
     // Clear old content and insert
-    const existingMedia = host.querySelector('video, audio');
+    const existingMedia = host.querySelector('video, audio, iframe');
     if (existingMedia) existingMedia.remove();
     host.appendChild(media);
     mpMedia = media;
@@ -290,7 +313,7 @@ function destroyPlayer() {
     stopPositionSave();
     const host = document.getElementById('mp-player-host');
     if (host) {
-        const el = host.querySelector('video, audio');
+        const el = host.querySelector('video, audio, iframe');
         if (el) {
             try { el.pause(); } catch {}
             el.remove();

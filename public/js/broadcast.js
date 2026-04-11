@@ -5645,25 +5645,43 @@ async function _loadMediaPipPlayer(request) {
     _destroyMediaPipPlayer();
 
     let url = request.stream_url;
+    let embedUrl = request.embed_url || null;
     if (!url || request.download_status !== 'ready') {
         try {
             const data = await api(`/media/queue/${request.id}/stream-url`);
             url = data?.stream_url || null;
+            embedUrl = data?.embed_url || embedUrl;
         } catch {
             url = null;
         }
     }
 
-    if (!url) {
+    const playUrl = url || embedUrl;
+    const useEmbed = !!embedUrl && (!url || url === embedUrl || /youtube\.com\/embed|youtube-nocookie\.com\/embed|player\.vimeo\.com\/video/i.test(playUrl));
+
+    if (!playUrl) {
         empty.style.display = '';
         empty.querySelector('span').textContent = 'Server is still preparing this media';
         loading.style.display = 'none';
         return;
     }
 
+    if (useEmbed) {
+        const iframe = document.createElement('iframe');
+        iframe.src = embedUrl;
+        iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+        iframe.allowFullscreen = true;
+        iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+        iframe.style.cssText = 'width:100%;height:100%;display:block;border:0;background:#000';
+        host.appendChild(iframe);
+        empty.style.display = 'none';
+        loading.style.display = 'none';
+        return;
+    }
+
     const isAudio = request.provider === 'audio';
     const media = document.createElement(isAudio ? 'audio' : 'video');
-    media.src = url;
+    media.src = playUrl;
     media.autoplay = true;
     media.controls = true;
     if (!isAudio) media.style.cssText = 'width:100%;height:100%;display:block;background:#000';
@@ -5680,7 +5698,7 @@ async function _loadMediaPipPlayer(request) {
 function _destroyMediaPipPlayer() {
     const host = document.getElementById('bc-media-pip-host');
     if (!host) return;
-    const el = host.querySelector('video, audio');
+    const el = host.querySelector('video, audio, iframe');
     if (el) {
         try { el.pause?.(); } catch {}
         el.remove();
