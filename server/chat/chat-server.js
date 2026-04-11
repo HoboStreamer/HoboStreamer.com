@@ -21,6 +21,9 @@ const ttsEngine = require('./tts-engine');
 const ipUtils = require('../admin/ip-utils');
 
 const WS_HEARTBEAT_MS = 30000;
+const CHAT_AUTO_DELETE_SWEEP_MS = 30000;
+const MIN_CHAT_AUTO_DELETE_MINUTES = 3;
+const MAX_CHAT_AUTO_DELETE_MINUTES = 10080;
 const MAX_SEND_BACKPRESSURE = 256 * 1024;
 const RATE_LIMIT_CACHE_TTL_MS = 10 * 60 * 1000;
 const GOTTI_GIF_URL = 'https://media1.tenor.com/m/Y-GsLUQT9LQAAAAd/deez-something-came-in-the-mail-today.gif';
@@ -45,6 +48,7 @@ class ChatServer {
         this.ttsQueueSize = new Map();
         /** @type {Map<string, number>} `${streamId}:${userId}` → user's TTS queue count */
         this.ttsUserCounts = new Map();
+        this._autoDeleteSweepInterval = null;
 
         // ── Unified anon resolution via hobo.tools internal API ──
         this._hoboToolsUrl = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
@@ -218,6 +222,12 @@ class ChatServer {
             this._recordViewerSnapshots();
         }, 60_000);
 
+        if (this._autoDeleteSweepInterval) clearInterval(this._autoDeleteSweepInterval);
+        this._autoDeleteSweepInterval = setInterval(() => {
+            this._sweepExpiredChatMessages();
+        }, CHAT_AUTO_DELETE_SWEEP_MS);
+        this._sweepExpiredChatMessages();
+
         this.wss.on('connection', (ws, req) => {
             this.handleConnection(ws, req);
         });
@@ -343,6 +353,9 @@ class ChatServer {
             case 'chat':
                 this.handleChatMessage(ws, client, msg);
                 break;
+            case 'self-delete-history':
+                this.handleSelfDeleteHistory(ws, client);
+                break;
             case 'join':
             case 'join_stream': {
                 // (Re-)authenticate if a token is provided
@@ -363,6 +376,7 @@ class ChatServer {
                 // Send identity confirmation so the client knows who it is
                 const displayName = client.user ? (client.user.display_name || client.user.username) : client.anonId;
                 const streamSlowSec = client.streamId ? Math.round((this.slowModeByStream.get(client.streamId) || 0) / 1000) : 0;
+                const streamSettings = this._getChannelChatSettings(client.streamId);
                 this.sendTo(ws, {
                     type: 'auth',
                     authenticated: !!client.user,
@@ -371,6 +385,9 @@ class ChatServer {
                     role: client.user ? client.user.role : 'anon',
                     user_id: client.user?.id || null,
                     slowmode_seconds: streamSlowSec,
+                    allow_auto_delete: !client.streamId || streamSettings.viewer_auto_delete_enabled !== 0,
+                    allow_self_delete_all: !client.streamId || streamSettings.viewer_delete_all_enabled !== 0,
+                    min_auto_delete_minutes: MIN_CHAT_AUTO_DELETE_MINUTES,
                 });
                 break;
             }
@@ -383,6 +400,55 @@ class ChatServer {
             default:
                 break;
         }
+    }
+
+    handleSelfDeleteHistory(ws, client) {
+        if (!client) return;
+
+        const canBypass = client.streamId ? permissions.canModerateStream(client.user, client.streamId) : false;
+        const chatSettings = this._getChannelChatSettings(client.streamId);
+        if (client.streamId && !canBypass && chatSettings.viewer_delete_all_enabled === 0) {
+            this.sendTo(ws, { type: 'error', message: 'This streamer has disabled viewer self-delete for this chat.' });
+            return;
+        }
+
+        let ids = [];
+        if (client.user?.id) {
+            ids = db.deleteUserChatMessages(client.user.id, {
+                streamId: client.streamId || null,
+                deletedBy: client.user.id,
+            });
+        } else if (client.anonId) {
+            ids = db.deleteAnonChatMessages(client.anonId, {
+                streamId: client.streamId || null,
+                deletedBy: null,
+            });
+        } else {
+            this.sendTo(ws, { type: 'error', message: 'Join chat first before deleting history.' });
+            return;
+        }
+
+        this._broadcastDeletedMessages(client.streamId || null, ids);
+
+        try {
+            db.logModerationAction({
+                scope_type: client.streamId ? 'stream' : 'site',
+                scope_id: client.streamId || undefined,
+                actor_user_id: client.user?.id || undefined,
+                action_type: 'self_message_delete_all',
+                details: {
+                    count: ids.length,
+                    stream_id: client.streamId || null,
+                    anon_id: client.user ? null : client.anonId,
+                },
+            });
+        } catch { /* non-critical */ }
+
+        this.sendTo(ws, {
+            type: 'self-delete-result',
+            count: ids.length,
+            scope: client.streamId ? 'stream' : 'global',
+        });
     }
 
     /**
@@ -553,7 +619,9 @@ class ChatServer {
         if (replyToId) {
             try {
                 const parent = db.getChatMessageById(replyToId);
-                if (parent && !parent.is_deleted) {
+                const parentStillVisible = parent && !parent.is_deleted
+                    && (!parent.auto_delete_at || new Date(parent.auto_delete_at).getTime() > Date.now());
+                if (parentStillVisible) {
                     replyTo = {
                         id: parent.id,
                         username: parent.username,
@@ -563,6 +631,16 @@ class ChatServer {
                 }
             } catch { /* non-critical */ }
         }
+
+        const requestedAutoDeleteMinutes = parseInt(msg.auto_delete_minutes, 10);
+        const allowViewerAutoDelete = !client.streamId
+            || this._getChannelChatSettings(client.streamId).viewer_auto_delete_enabled !== 0
+            || permissions.canModerateStream(client.user, client.streamId);
+        const autoDeleteAt = Number.isFinite(requestedAutoDeleteMinutes)
+            && requestedAutoDeleteMinutes >= MIN_CHAT_AUTO_DELETE_MINUTES
+            && allowViewerAutoDelete
+            ? new Date(Date.now() + Math.min(MAX_CHAT_AUTO_DELETE_MINUTES, requestedAutoDeleteMinutes) * 60 * 1000).toISOString()
+            : null;
 
         const chatMsg = {
             type: 'chat',
@@ -578,6 +656,7 @@ class ChatServer {
             profile_color: client.user?.profile_color || '#999',
             filtered: false,
             timestamp: new Date().toISOString(),
+            auto_delete_at: autoDeleteAt,
         };
 
         // Preserve voice channel tag so clients can filter voice-call messages
@@ -612,6 +691,7 @@ class ChatServer {
                 message_type: 'chat',
                 is_global: !client.streamId,
                 reply_to_id: replyToId,
+                auto_delete_at: autoDeleteAt,
             });
             if (result.lastInsertRowid) chatMsg.id = Number(result.lastInsertRowid);
         } catch { /* non-critical */ }
@@ -1351,6 +1431,36 @@ class ChatServer {
         }
     }
 
+    _broadcastDeletedMessages(streamId, ids) {
+        if (!Array.isArray(ids) || ids.length === 0) return;
+        const payload = { type: 'delete-messages', ids };
+        if (streamId) {
+            this.broadcastToStream(streamId, payload);
+            this.forwardToGlobal(streamId, payload);
+            return;
+        }
+        this.broadcastAll(payload);
+    }
+
+    _sweepExpiredChatMessages() {
+        try {
+            const expired = db.deleteExpiredChatMessages(500);
+            if (!expired.length) return;
+            const byScope = new Map();
+            for (const row of expired) {
+                const key = row.stream_id ? `stream:${row.stream_id}` : 'global';
+                if (!byScope.has(key)) byScope.set(key, []);
+                byScope.get(key).push(row.id);
+            }
+            for (const [key, ids] of byScope.entries()) {
+                const streamId = key === 'global' ? null : parseInt(key.split(':')[1], 10);
+                this._broadcastDeletedMessages(streamId, ids);
+            }
+        } catch (err) {
+            console.warn('[Chat] Failed to sweep expired auto-delete messages:', err.message);
+        }
+    }
+
     broadcastUserCount(streamId) {
         const count = this.getStreamViewerCount(streamId);
         const data = JSON.stringify({ type: 'user-count', count, stream_id: streamId });
@@ -1492,6 +1602,10 @@ class ChatServer {
                 clearInterval(this._snapshotInterval);
                 this._snapshotInterval = null;
             }
+            if (this._autoDeleteSweepInterval) {
+                clearInterval(this._autoDeleteSweepInterval);
+                this._autoDeleteSweepInterval = null;
+            }
             this.wss.clients.forEach(ws => ws.close());
             this.wss.close();
         }
@@ -1527,6 +1641,8 @@ class ChatServer {
             allow_anonymous: 1, links_allowed: 1, account_age_gate_hours: 0,
             caps_percentage_limit: 0, aggressive_filter: 0, max_message_length: 500,
             ip_approval_mode: 0,
+            viewer_auto_delete_enabled: 1,
+            viewer_delete_all_enabled: 1,
         };
         if (!streamId) return defaults;
         try {

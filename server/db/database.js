@@ -467,6 +467,8 @@ function initDb() {
         if (!cols.includes('caps_percentage_limit')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN caps_percentage_limit INTEGER DEFAULT 0');
         if (!cols.includes('aggressive_filter')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN aggressive_filter INTEGER DEFAULT 0');
         if (!cols.includes('max_message_length')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN max_message_length INTEGER DEFAULT 500');
+        if (!cols.includes('viewer_auto_delete_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_auto_delete_enabled INTEGER DEFAULT 1');
+        if (!cols.includes('viewer_delete_all_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_delete_all_enabled INTEGER DEFAULT 1');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
 
     // Migrate: create moderation_actions table for audit logging
@@ -704,6 +706,14 @@ function initDb() {
             database.exec("ALTER TABLE chat_messages ADD COLUMN source_platform TEXT");
         }
     } catch (e) { console.warn('[DB] chat_messages source_platform migration:', e.message); }
+
+    // Migrate: add auto_delete_at to chat_messages for viewer-controlled history cleanup
+    try {
+        const cols = database.pragma('table_info(chat_messages)').map(c => c.name);
+        if (!cols.includes('auto_delete_at')) {
+            database.exec("ALTER TABLE chat_messages ADD COLUMN auto_delete_at DATETIME");
+        }
+    } catch (e) { console.warn('[DB] chat_messages auto_delete_at migration:', e.message); }
 
     // Migrate: add force_nsfw column to channels (admin-set, overrides user toggle)
     try {
@@ -1039,11 +1049,11 @@ function deleteRestreamDestination(id) {
 
 // ── Chat helpers ─────────────────────────────────────────────
 
-function saveChatMessage({ stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform }) {
+function saveChatMessage({ stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at }) {
     return run(
-        `INSERT INTO chat_messages (stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [stream_id, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null, source_platform || null]
+        `INSERT INTO chat_messages (stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null, source_platform || null, auto_delete_at || null]
     );
 }
 
@@ -1051,7 +1061,8 @@ function searchChatMessages({ query, userId, anonId, streamId, limit = 50, offse
     let sql = `SELECT cm.*, u.display_name, u.role, u.avatar_url, u.profile_color
                FROM chat_messages cm
                LEFT JOIN users u ON cm.user_id = u.id
-               WHERE cm.is_deleted = 0`;
+               WHERE cm.is_deleted = 0
+                 AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
     const params = [];
 
     if (query) {
@@ -1085,9 +1096,15 @@ function getUserChatHistory(userId, limit = 50, offset = 0) {
                  FROM chat_messages cm
                  LEFT JOIN streams s ON cm.stream_id = s.id
                  WHERE cm.user_id = ? AND cm.is_deleted = 0
+                   AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)
                  ORDER BY cm.timestamp DESC LIMIT ? OFFSET ?`;
     const messages = all(sql, [userId, limit, offset]);
-    const total = get('SELECT COUNT(*) as c FROM chat_messages WHERE user_id = ? AND is_deleted = 0', [userId])?.c || 0;
+    const total = get(
+        `SELECT COUNT(*) as c FROM chat_messages
+         WHERE user_id = ? AND is_deleted = 0
+           AND (auto_delete_at IS NULL OR datetime(auto_delete_at) > CURRENT_TIMESTAMP)`,
+        [userId]
+    )?.c || 0;
     return { messages, total };
 }
 
@@ -1096,7 +1113,12 @@ function getUserProfile(userId) {
                       hobo_bucks_balance, hobo_coins_balance, created_at, last_seen
                       FROM users WHERE id = ?`, [userId]);
     if (!user) return null;
-    user.messageCount = get('SELECT COUNT(*) as c FROM chat_messages WHERE user_id = ? AND is_deleted = 0', [userId])?.c || 0;
+    user.messageCount = get(
+        `SELECT COUNT(*) as c FROM chat_messages
+         WHERE user_id = ? AND is_deleted = 0
+           AND (auto_delete_at IS NULL OR datetime(auto_delete_at) > CURRENT_TIMESTAMP)`,
+        [userId]
+    )?.c || 0;
     user.followerCount = get('SELECT COUNT(*) as c FROM follows WHERE streamer_id = ?', [userId])?.c || 0;
     user.followingCount = get('SELECT COUNT(*) as c FROM follows WHERE follower_id = ?', [userId])?.c || 0;
     return user;
@@ -1907,7 +1929,8 @@ function getChatReplay(streamId, fromTime, toTime) {
     let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name
                FROM chat_messages cm
                LEFT JOIN users u ON cm.user_id = u.id
-               WHERE cm.stream_id = ? AND cm.is_deleted = 0 AND cm.message_type = 'chat'`;
+               WHERE cm.stream_id = ? AND cm.is_deleted = 0 AND cm.message_type = 'chat'
+                 AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
     const params = [streamId];
     if (fromTime) { sql += ` AND cm.timestamp >= ?`; params.push(fromTime); }
     if (toTime) { sql += ` AND cm.timestamp <= ?`; params.push(toTime); }
@@ -1966,7 +1989,21 @@ function getChannelsByModerator(userId) {
 
 function getChannelModerationSettings(channelId) {
     return get('SELECT * FROM channel_moderation_settings WHERE channel_id = ?', [channelId])
-        || { channel_id: channelId, slow_mode_seconds: 0, followers_only: 0, emote_only: 0 };
+        || {
+            channel_id: channelId,
+            slow_mode_seconds: 0,
+            followers_only: 0,
+            emote_only: 0,
+            allow_anonymous: 1,
+            links_allowed: 1,
+            account_age_gate_hours: 0,
+            caps_percentage_limit: 0,
+            aggressive_filter: 0,
+            max_message_length: 500,
+            ip_approval_mode: 0,
+            viewer_auto_delete_enabled: 1,
+            viewer_delete_all_enabled: 1,
+        };
 }
 
 function upsertChannelModerationSettings(channelId, fields) {
@@ -1984,6 +2021,8 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.aggressive_filter !== undefined) { updates.push('aggressive_filter = ?'); params.push(fields.aggressive_filter ? 1 : 0); }
         if (fields.max_message_length !== undefined) { updates.push('max_message_length = ?'); params.push(Math.max(50, Number(fields.max_message_length) || 500)); }
         if (fields.ip_approval_mode !== undefined) { updates.push('ip_approval_mode = ?'); params.push(fields.ip_approval_mode ? 1 : 0); }
+        if (fields.viewer_auto_delete_enabled !== undefined) { updates.push('viewer_auto_delete_enabled = ?'); params.push(fields.viewer_auto_delete_enabled ? 1 : 0); }
+        if (fields.viewer_delete_all_enabled !== undefined) { updates.push('viewer_delete_all_enabled = ?'); params.push(fields.viewer_delete_all_enabled ? 1 : 0); }
         if (updates.length > 0) {
             updates.push('updated_at = CURRENT_TIMESTAMP');
             params.push(channelId);
@@ -1991,8 +2030,27 @@ function upsertChannelModerationSettings(channelId, fields) {
         }
     } else {
         run(
-            'INSERT INTO channel_moderation_settings (channel_id, slow_mode_seconds, followers_only, emote_only) VALUES (?, ?, ?, ?)',
-            [channelId, fields.slow_mode_seconds || 0, fields.followers_only ? 1 : 0, fields.emote_only ? 1 : 0]
+            `INSERT INTO channel_moderation_settings (
+                channel_id, slow_mode_seconds, followers_only, emote_only,
+                allow_anonymous, links_allowed, account_age_gate_hours,
+                caps_percentage_limit, aggressive_filter, max_message_length,
+                ip_approval_mode, viewer_auto_delete_enabled, viewer_delete_all_enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                channelId,
+                fields.slow_mode_seconds || 0,
+                fields.followers_only ? 1 : 0,
+                fields.emote_only ? 1 : 0,
+                fields.allow_anonymous !== undefined ? (fields.allow_anonymous ? 1 : 0) : 1,
+                fields.links_allowed !== undefined ? (fields.links_allowed ? 1 : 0) : 1,
+                Number(fields.account_age_gate_hours) || 0,
+                Number(fields.caps_percentage_limit) || 0,
+                fields.aggressive_filter ? 1 : 0,
+                Math.max(50, Number(fields.max_message_length) || 500),
+                fields.ip_approval_mode ? 1 : 0,
+                fields.viewer_auto_delete_enabled !== undefined ? (fields.viewer_auto_delete_enabled ? 1 : 0) : 1,
+                fields.viewer_delete_all_enabled !== undefined ? (fields.viewer_delete_all_enabled ? 1 : 0) : 1,
+            ]
         );
     }
     return getChannelModerationSettings(channelId);
@@ -2393,6 +2451,30 @@ function deleteRelayUserMessages(username, { streamId = null, deletedBy = null }
     return ids;
 }
 
+function deleteExpiredChatMessages(limit = 500) {
+    const rows = all(
+        `SELECT id, stream_id
+         FROM chat_messages
+         WHERE is_deleted = 0
+           AND auto_delete_at IS NOT NULL
+           AND datetime(auto_delete_at) <= CURRENT_TIMESTAMP
+         ORDER BY auto_delete_at ASC
+         LIMIT ?`,
+        [Math.max(1, Number(limit) || 500)]
+    );
+    if (!rows.length) return [];
+
+    const ids = rows.map(row => row.id);
+    const placeholders = ids.map(() => '?').join(',');
+    run(
+        `UPDATE chat_messages
+         SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP
+         WHERE id IN (${placeholders})`,
+        ids
+    );
+    return rows;
+}
+
 // ── Approved IPs (Anti-VPN Mode) ─────────────────────────────
 
 /**
@@ -2533,7 +2615,11 @@ function getHiddenRelayUsers(channelId, { limit = 100 } = {}) {
  * Search chat messages within a specific channel's streams.
  */
 function searchChannelChatMessages(channelId, { query, userId, limit = 50, offset = 0 } = {}) {
-    const conditions = ['cm.stream_id IN (SELECT id FROM streams WHERE channel_id = ?)'];
+    const conditions = [
+        'cm.stream_id IN (SELECT id FROM streams WHERE channel_id = ?)',
+        'cm.is_deleted = 0',
+        '(cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)',
+    ];
     const params = [channelId];
     if (query) {
         conditions.push('cm.message LIKE ?');
@@ -3007,7 +3093,7 @@ module.exports = {
     // Moderation Action Logging
     logModerationAction, getModerationActions,
     getChatMessageById, deleteChatMessage, searchChannelChatMessages,
-    deleteUserChatMessages, deleteAnonChatMessages, deleteRelayUserMessages,
+    deleteUserChatMessages, deleteAnonChatMessages, deleteRelayUserMessages, deleteExpiredChatMessages,
     // Approved IPs (Anti-VPN)
     isIpApproved, approveIp, revokeIpApproval, getApprovedIps,
     holdMessageForApproval, getPendingIpMessages, reviewPendingIpMessage,

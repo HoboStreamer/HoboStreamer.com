@@ -99,11 +99,13 @@ function renderDashModerationChannels(channels) {
                             <label><span>Max Message Length</span><input type="number" id="dash-mod-maxlen-${channel.id}" class="form-input" value="${Number(settings.max_message_length || 500)}"></label>
                             <label><span>Account Age Gate (hours)</span><input type="number" id="dash-mod-age-${channel.id}" class="form-input" value="${Number(settings.account_age_gate_hours || 0)}"></label>
                             <label><span>Caps Limit (%)</span><input type="number" id="dash-mod-caps-${channel.id}" class="form-input" value="${Number(settings.caps_percentage_limit || 70)}"></label>
-                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-anon-${channel.id}" ${settings.allow_anonymous !== false ? 'checked' : ''}> Allow Anonymous</label>
-                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-links-${channel.id}" ${settings.links_allowed !== false ? 'checked' : ''}> Allow Links</label>
-                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-filter-${channel.id}" ${settings.aggressive_filter ? 'checked' : ''}> Aggressive Filter</label>
-                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-followers-${channel.id}" ${settings.followers_only ? 'checked' : ''}> Followers Only</label>
-                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-ipapproval-${channel.id}" ${settings.ip_approval_mode ? 'checked' : ''}> <span>IP Approval Mode <i class="fa-solid fa-shield-halved" title="New IPs must be approved before messages are visible"></i></span></label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-anon-${channel.id}" ${Number(settings.allow_anonymous ?? 1) ? 'checked' : ''}> Allow Anonymous</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-links-${channel.id}" ${Number(settings.links_allowed ?? 1) ? 'checked' : ''}> Allow Links</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-filter-${channel.id}" ${Number(settings.aggressive_filter || 0) ? 'checked' : ''}> Aggressive Filter</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-followers-${channel.id}" ${Number(settings.followers_only || 0) ? 'checked' : ''}> Followers Only</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-viewer-autodel-${channel.id}" ${Number(settings.viewer_auto_delete_enabled ?? 1) ? 'checked' : ''}> Allow viewers to auto-delete their own messages</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-viewer-deleteall-${channel.id}" ${Number(settings.viewer_delete_all_enabled ?? 1) ? 'checked' : ''}> Allow viewers to delete all their own messages</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-ipapproval-${channel.id}" ${Number(settings.ip_approval_mode || 0) ? 'checked' : ''}> <span>IP Approval Mode <i class="fa-solid fa-shield-halved" title="New IPs must be approved before messages are visible"></i></span></label>
                         </div>
                         <button class="btn btn-primary" onclick="dashSaveChannelModerationSettings(${channel.id})"><i class="fa-solid fa-floppy-disk"></i> Save Settings</button>
                     </div>
@@ -232,6 +234,8 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 links_allowed: !!document.getElementById(`dash-mod-links-${channelId}`)?.checked,
                 aggressive_filter: !!document.getElementById(`dash-mod-filter-${channelId}`)?.checked,
                 followers_only: !!document.getElementById(`dash-mod-followers-${channelId}`)?.checked,
+                viewer_auto_delete_enabled: !!document.getElementById(`dash-mod-viewer-autodel-${channelId}`)?.checked,
+                viewer_delete_all_enabled: !!document.getElementById(`dash-mod-viewer-deleteall-${channelId}`)?.checked,
                 ip_approval_mode: !!document.getElementById(`dash-mod-ipapproval-${channelId}`)?.checked,
             },
         });
