@@ -887,6 +887,140 @@ function renderStreamGrid(containerId, streams, isLive) {
 
 /* ── Channel Page (/:username) ────────────────────────────────── */
 let currentChannelUsername = null;
+const VODS_PAGE_SIZE = 24;
+const CHANNEL_VODS_PAGE_SIZE = 12;
+let currentVodsPage = 1;
+const channelVodsPageByUser = Object.create(null);
+
+function renderVodsPagination(containerId, page, total, pageSize, setterName) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+
+    const totalItems = Math.max(0, Number(total) || 0);
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+    if (totalPages <= 1) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+        return;
+    }
+
+    const start = totalItems ? ((page - 1) * pageSize) + 1 : 0;
+    const end = Math.min(page * pageSize, totalItems);
+
+    el.style.display = '';
+    el.innerHTML = `
+        <button class="btn btn-small btn-outline" ${page <= 1 ? 'disabled' : ''} onclick="${setterName}(${page - 1})">
+            <i class="fa-solid fa-chevron-left"></i> Newer
+        </button>
+        <span class="pastes-page-info">Showing ${start}-${end} of ${totalItems} videos • Page ${page}/${totalPages}</span>
+        <button class="btn btn-small btn-outline" ${page >= totalPages ? 'disabled' : ''} onclick="${setterName}(${page + 1})">
+            Older <i class="fa-solid fa-chevron-right"></i>
+        </button>
+    `;
+}
+
+async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) {
+    const vodsGrid = document.getElementById('ch-vods-grid');
+    if (!vodsGrid) return;
+
+    const pageSize = meta.limit || CHANNEL_VODS_PAGE_SIZE;
+    const offset = meta.offset || 0;
+    const total = meta.total || vods.length;
+    const page = Math.floor(offset / pageSize) + 1;
+    let liveVodHtml = '';
+
+    if (liveStreams.length > 0) {
+        for (const ls of liveStreams) {
+            try {
+                const liveVod = await api(`/vods/stream/${ls.id}/live`);
+                if (liveVod && liveVod.vod) {
+                    const v = liveVod.vod;
+                    liveVodHtml += `
+                        <div class="stream-card" onclick="navigate('/vod/${v.id}')" style="border:2px solid var(--accent);position:relative">
+                            <div class="stream-card-thumb">
+                                ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
+                                <span class="stream-card-nsfw" style="background:#e53e3e;animation:pulse 2s infinite">● RECORDING</span>
+                                <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || 0)}</span>
+                            </div>
+                            <div class="stream-card-info">
+                                <div class="stream-card-title">${esc(v.title || 'Live Recording')}</div>
+                                <div class="stream-card-streamer muted">In progress — ${esc(ls.title || 'Live Stream')}</div>
+                            </div>
+                        </div>`;
+                }
+            } catch {}
+        }
+    }
+
+    if (liveVodHtml || vods.length) {
+        const isOwner = currentUser && currentUser.username === username;
+        vodsGrid.innerHTML = liveVodHtml + vods.map(v => `
+            <div class="stream-card" onclick="navigate('/vod/${v.id}')">
+                <div class="stream-card-thumb">
+                    ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
+                    ${!v.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
+                    ${v.stream_protocol ? protocolBadge(v.stream_protocol) : ''}
+                    <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || v.duration)}</span>
+                </div>
+                <div class="stream-card-info">
+                    <div class="stream-card-title">${esc(v.title || 'VOD')}</div>
+                    <div class="stream-card-streamer muted">${formatDateTime(v.created_at)}</div>
+                </div>
+            </div>
+        `).join('');
+    } else {
+        vodsGrid.innerHTML = '<p class="muted">No VODs yet</p>';
+    }
+
+    renderVodsPagination('ch-vods-pagination', page, total, pageSize, 'setChannelVodsPage');
+}
+
+async function refreshChannelVodsPage(username = currentChannelUsername) {
+    if (!username) return;
+
+    const page = channelVodsPageByUser[username] || 1;
+    const limit = CHANNEL_VODS_PAGE_SIZE;
+    const offset = (page - 1) * limit;
+    const data = await api(`/streams/channel/${username}?vodLimit=${limit}&vodOffset=${offset}`);
+    const liveStreams = (data.streams || []).filter(s => s && s.is_live);
+    const totalPages = Math.max(1, Math.ceil((data.vodTotal || 0) / limit));
+
+    if (page > totalPages) {
+        channelVodsPageByUser[username] = totalPages;
+        return refreshChannelVodsPage(username);
+    }
+
+    await renderChannelVodsSection(username, liveStreams, data.vods || [], {
+        total: data.vodTotal || (data.vods || []).length,
+        limit: data.vodLimit || limit,
+        offset: data.vodOffset || offset,
+    });
+}
+
+function setVodsPage(page) {
+    const safePage = Math.max(1, page | 0);
+    if (safePage === currentVodsPage) return;
+    currentVodsPage = safePage;
+    loadVodsPage();
+    const top = document.getElementById('page-vods');
+    if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function setChannelVodsPage(page) {
+    if (!currentChannelUsername) return;
+    const safePage = Math.max(1, page | 0);
+    if (safePage === (channelVodsPageByUser[currentChannelUsername] || 1)) return;
+
+    channelVodsPageByUser[currentChannelUsername] = safePage;
+    const grid = document.getElementById('ch-vods-grid');
+    if (grid) {
+        grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p>Loading videos...</p></div>';
+    }
+    await refreshChannelVodsPage(currentChannelUsername);
+    const top = document.getElementById('ch-vods-grid');
+    if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 /* ── Global Chat Page ──────────────────────────────────────── */
 function loadChatPage() {
@@ -898,10 +1032,15 @@ function loadChatPage() {
 
 async function loadChannelPage(username, preferredStreamId = null) {
     try {
+        const isNewChannel = currentChannelUsername !== username;
         currentChannelUsername = username;
+        if (isNewChannel) channelVodsPageByUser[username] = 1;
+        const channelVodPage = channelVodsPageByUser[username] || 1;
+        const channelVodOffset = (channelVodPage - 1) * CHANNEL_VODS_PAGE_SIZE;
+
         // Fetch channel data and media in parallel — player init shouldn't wait for media strip
         const [data, mediaData] = await Promise.all([
-            api(`/streams/channel/${username}`),
+            api(`/streams/channel/${username}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${channelVodOffset}`),
             api(`/media/channel/${username}`).catch(() => null),
         ]);
         const ch = data.channel;
@@ -1019,53 +1158,11 @@ async function loadChannelPage(username, preferredStreamId = null) {
             startOfflineStatusPoll(username);
         }
 
-        // VODs section
-        const vodsGrid = document.getElementById('ch-vods-grid');
-        let liveVodHtml = '';
-
-        // Check for in-progress VOD recording on any live stream
-        if (liveStreams.length > 0) {
-            for (const ls of liveStreams) {
-                try {
-                    const liveVod = await api(`/vods/stream/${ls.id}/live`);
-                    if (liveVod && liveVod.vod) {
-                        const v = liveVod.vod;
-                        liveVodHtml += `
-                            <div class="stream-card" onclick="navigate('/vod/${v.id}')" style="border:2px solid var(--accent);position:relative">
-                                <div class="stream-card-thumb">
-                                    ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
-                                    <span class="stream-card-nsfw" style="background:#e53e3e;animation:pulse 2s infinite">● RECORDING</span>
-                                    <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || 0)}</span>
-                                </div>
-                                <div class="stream-card-info">
-                                    <div class="stream-card-title">${esc(v.title || 'Live Recording')}</div>
-                                    <div class="stream-card-streamer muted">In progress — ${esc(ls.title || 'Live Stream')}</div>
-                                </div>
-                            </div>`;
-                    }
-                } catch {}
-            }
-        }
-
-        if (liveVodHtml || vods.length) {
-            const isOwner = currentUser && currentUser.username === username;
-            vodsGrid.innerHTML = liveVodHtml + vods.map(v => `
-                <div class="stream-card" onclick="navigate('/vod/${v.id}')">
-                    <div class="stream-card-thumb">
-                        ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
-                        ${!v.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
-                        ${v.stream_protocol ? protocolBadge(v.stream_protocol) : ''}
-                        <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || v.duration)}</span>
-                    </div>
-                    <div class="stream-card-info">
-                        <div class="stream-card-title">${esc(v.title || 'VOD')}</div>
-                        <div class="stream-card-streamer muted">${formatDateTime(v.created_at)}</div>
-                    </div>
-                </div>
-            `).join('');
-        } else {
-            vodsGrid.innerHTML = '<p class="muted">No VODs yet</p>';
-        }
+        await renderChannelVodsSection(username, liveStreams, vods, {
+            total: data.vodTotal || vods.length,
+            limit: data.vodLimit || CHANNEL_VODS_PAGE_SIZE,
+            offset: data.vodOffset || channelVodOffset,
+        });
 
         // Clips section
         const clipsGrid = document.getElementById('ch-clips-grid');
@@ -2048,15 +2145,29 @@ async function toggleFollow() {
 /* ── VODs Page ────────────────────────────────────────────────── */
 async function loadVodsPage() {
     const grid = document.getElementById('vods-grid-page');
+    const pager = document.getElementById('vods-pagination-page');
     if (!grid) return console.error('[VODs] grid element #vods-grid-page not found');
     grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p>Loading videos...</p></div>';
+    if (pager) { pager.style.display = 'none'; pager.innerHTML = ''; }
+
     try {
-        const data = await api('/vods');
+        const limit = VODS_PAGE_SIZE;
+        const offset = (currentVodsPage - 1) * limit;
+        const data = await api(`/vods?limit=${limit}&offset=${offset}`);
         const vods = data.vods || [];
+        const total = data.total ?? vods.length;
+        const totalPages = Math.max(1, Math.ceil(total / limit));
+
+        if (currentVodsPage > totalPages) {
+            currentVodsPage = totalPages;
+            return loadVodsPage();
+        }
+
         if (!vods.length) {
             grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-video fa-3x"></i><p>No videos yet</p><p class="muted">Videos are recorded automatically when streamers go live</p></div>';
             return;
         }
+
         const myId = currentUser ? currentUser.id : null;
         grid.innerHTML = vods.map(v => `
             <div class="stream-card" onclick="navigate('/vod/${v.id}')">
@@ -2076,6 +2187,8 @@ async function loadVodsPage() {
                 </div>
             </div>
         `).join('');
+
+        renderVodsPagination('vods-pagination-page', currentVodsPage, total, limit, 'setVodsPage');
     } catch (e) {
         console.error('Failed to load videos', e);
         grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation fa-3x"></i><p>Failed to load videos</p><p class="muted">' + esc(e.message || String(e)) + '</p></div>';

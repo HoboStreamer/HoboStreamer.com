@@ -746,21 +746,36 @@ router.remuxForLiveSeeking = remuxForLiveSeeking;
 // ── List Public VODs (+ own private VODs when logged in) ────
 router.get('/', optionalAuth, (req, res) => {
     try {
-        const limit = Math.min(parseInt(req.query.limit || '20'), 100);
-        const offset = parseInt(req.query.offset || '0');
-        const vods = db.getPublicVods(limit, offset);
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
 
-        // If logged in, also include the user's own private VODs
+        let vods = [];
+        let myPrivate = [];
+
         if (req.user) {
-            const myVods = db.getVodsByUser(req.user.id, true);
-            const publicIds = new Set(vods.map(v => v.id));
-            const myPrivate = myVods.filter(v => !publicIds.has(v.id));
-            // Prepend own VODs and re-sort by date
-            vods.push(...myPrivate);
-            vods.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            myPrivate = (db.getVodsByUser(req.user.id, true) || []).filter(v => !v.is_public);
         }
 
-        res.json({ vods });
+        const publicCount = db.countPublicVods();
+        const total = publicCount + myPrivate.length;
+
+        if (myPrivate.length > 0) {
+            const publicFetchCount = Math.min(Math.max(offset + limit, limit), publicCount);
+            const publicVods = db.getPublicVods(publicFetchCount, 0);
+            vods = [...publicVods, ...myPrivate]
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                .slice(offset, offset + limit);
+        } else {
+            vods = db.getPublicVods(limit, offset);
+        }
+
+        res.json({
+            vods,
+            total,
+            limit,
+            offset,
+            hasMore: offset + vods.length < total,
+        });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list VODs' });
     }

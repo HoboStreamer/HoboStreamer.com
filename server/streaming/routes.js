@@ -160,7 +160,10 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
 
         // Show private VODs to the channel owner, only public to others
         const isOwner = req.user && req.user.id === channel.user_id;
-        const vods = db.getVodsByUser(channel.user_id, isOwner) || [];
+        const vodLimit = Math.min(Math.max(parseInt(req.query.vodLimit || '12', 10), 1), 48);
+        const vodOffset = Math.max(parseInt(req.query.vodOffset || '0', 10), 0);
+        const vods = db.getVodsByUser(channel.user_id, isOwner, vodLimit, vodOffset) || [];
+        const vodTotal = db.countVodsByUser(channel.user_id, isOwner);
         const clips = db.getClipsByUser(channel.user_id, isOwner) || [];
         const followerCount = db.getFollowerCount(channel.user_id);
         const isFollowing = req.user ? db.isFollowing(req.user.id, channel.user_id) : false;
@@ -251,6 +254,10 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             restream_links: restreamLinks,
             external_viewers: externalViewers,
             vods,
+            vodTotal,
+            vodLimit,
+            vodOffset,
+            vodHasMore: vodOffset + vods.length < vodTotal,
             clips,
         });
     } catch (err) {

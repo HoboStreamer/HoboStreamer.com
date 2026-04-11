@@ -1180,16 +1180,29 @@ function getVodById(id) {
     `, [id]);
 }
 
-function getVodsByUser(userId, includePrivate = false) {
-    const clause = includePrivate ? '' : ' AND is_public = 1';
+function getVodsByUser(userId, includePrivate = false, limit = null, offset = 0) {
+    const clause = includePrivate ? '' : ' AND v.is_public = 1';
+    const usePaging = Number.isFinite(limit);
+    const pagingSql = usePaging ? ' LIMIT ? OFFSET ?' : '';
+    const params = [userId];
+    if (usePaging) params.push(limit, offset);
     return all(`
         SELECT v.*, u.username, u.display_name, u.avatar_url,
                s.protocol AS stream_protocol
         FROM vods v JOIN users u ON v.user_id = u.id
         LEFT JOIN streams s ON v.stream_id = s.id
         WHERE v.user_id = ?${clause} AND COALESCE(v.is_recording, 0) = 0
-        ORDER BY v.created_at DESC
-    `, [userId]);
+        ORDER BY v.created_at DESC${pagingSql}
+    `, params);
+}
+
+function countVodsByUser(userId, includePrivate = false) {
+    const clause = includePrivate ? '' : ' AND v.is_public = 1';
+    return get(`
+        SELECT COUNT(*) AS count
+        FROM vods v
+        WHERE v.user_id = ?${clause} AND COALESCE(v.is_recording, 0) = 0
+    `, [userId])?.count || 0;
 }
 
 function getPublicVods(limit = 50, offset = 0) {
@@ -1202,6 +1215,14 @@ function getPublicVods(limit = 50, offset = 0) {
         ORDER BY v.created_at DESC
         LIMIT ? OFFSET ?
     `, [limit, offset]);
+}
+
+function countPublicVods() {
+    return get(`
+        SELECT COUNT(*) AS count
+        FROM vods v
+        WHERE v.is_public = 1 AND COALESCE(v.is_recording, 0) = 0
+    `, [])?.count || 0;
 }
 
 function getActiveVodByStream(streamId) {
@@ -2916,7 +2937,7 @@ module.exports = {
     findActiveMediaRequestByCanonicalUrl, updateMediaRequest,
     renormalizePendingMediaRequestPositions,
     // VODs
-    createVod, getVodById, getVodsByUser, getPublicVods, getActiveVodByStream, getOrphanedRecordingVods,
+    createVod, getVodById, getVodsByUser, countVodsByUser, getPublicVods, countPublicVods, getActiveVodByStream, getOrphanedRecordingVods,
     // Clips
     createClip, getClipById, getClipsByUser, getPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
     // Controls
