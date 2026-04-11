@@ -34,7 +34,20 @@ function isStaffUser(user = currentUser) {
 }
 
 // Reserved paths (not usernames)
-const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'canvas', 'chat', 'api', 'ws', 'media', 'pastes', 'p', 'updates']);
+const RESERVED = new Set(['vods', 'clips', 'vod', 'clip', 'dashboard', 'settings', 'broadcast', 'admin', 'themes', 'game', 'canvas', 'chat', 'api', 'ws', 'media', 'pastes', 'p', 'updates', 'dmca', 'tos', 'terms']);
+const CHANNEL_USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
+
+function normalizeChannelUsername(username) {
+    return String(username || '').trim().replace(/^@+/, '');
+}
+
+function channelPath(username, streamId = null) {
+    const clean = normalizeChannelUsername(username);
+    if (!clean) return '/';
+    const base = `/@${encodeURIComponent(clean)}`;
+    if (streamId === null || streamId === undefined || streamId === '') return base;
+    return `${base}?stream=${encodeURIComponent(String(streamId))}`;
+}
 
 /* ── API helpers ──────────────────────────────────────────────── */
 function authHeaders() {
@@ -546,6 +559,12 @@ function routeFromURL() {
     } else if (segments[0] === 'updates') {
         showPage('updates');
         loadUpdatesPage();
+    } else if (segments[0] === 'dmca') {
+        window.location.replace('/dmca');
+        return;
+    } else if (segments[0] === 'tos' || segments[0] === 'terms') {
+        window.location.replace('/tos');
+        return;
     } else if (segments[0] === 'p' && segments[1]) {
         showPage('paste-viewer');
         loadPasteViewer(segments[1]);
@@ -553,11 +572,17 @@ function routeFromURL() {
         // Legacy stream URL: /stream/:id
         showPage('stream');
         openStream(segments[1]);
-    } else if (segments.length === 1 && !RESERVED.has(segments[0])) {
-        // Channel page: /:username?stream=ID
-        showPage('channel');
-        const streamParam = new URLSearchParams(window.location.search).get('stream');
-        loadChannelPage(segments[0], streamParam ? parseInt(streamParam) : null);
+    } else if (segments.length === 1 && segments[0].startsWith('@')) {
+        // Channel page: /@username?stream=ID
+        const username = normalizeChannelUsername(segments[0]);
+        if (CHANNEL_USERNAME_RE.test(username)) {
+            showPage('channel');
+            const streamParam = new URLSearchParams(window.location.search).get('stream');
+            loadChannelPage(username, streamParam ? parseInt(streamParam, 10) : null);
+        } else {
+            showPage('home');
+            loadHome();
+        }
     } else {
         // 404 fallback
         showPage('home');
@@ -871,11 +896,11 @@ function renderStreamGrid(containerId, streams, isLive) {
         // Navigate to channel with ?stream=ID for live, VOD for recent if available, else channel
         let navUrl;
         if (isLive && s.id) {
-            navUrl = `/${esc(s.username)}?stream=${s.id}`;
+            navUrl = channelPath(s.username, s.id);
         } else if (!isLive && s.vod_id && s.vod_is_public) {
             navUrl = `/vod/${s.vod_id}`;
         } else {
-            navUrl = `/${esc(s.username)}`;
+            navUrl = channelPath(s.username);
         }
         const thumb = (!isLive && s.vod_thumbnail_url) ? s.vod_thumbnail_url : s.thumbnail_url;
         const duration = !isLive && s.vod_duration ? `<span class="stream-card-duration">${formatDuration(s.vod_duration)}</span>` : '';
@@ -1302,14 +1327,14 @@ async function loadChannelPage(username, preferredStreamId = null) {
                 , liveStreams[0]);
                 // Clean up stale ?stream= param — the requested stream isn't live
                 if (preferredStreamId && targetStream) {
-                    history.replaceState(null, '', `/${username}?stream=${targetStream.id}`);
+                    history.replaceState(null, '', channelPath(username, targetStream.id));
                 }
             }
 
             // Remember selection and update URL
             rememberLastStream(username, targetStream.id);
             if (!preferredStreamId && liveStreams.length > 1) {
-                history.replaceState(null, '', `/${username}?stream=${targetStream.id}`);
+                history.replaceState(null, '', channelPath(username, targetStream.id));
             }
 
             loadLiveStreamTabs(username, targetStream.id, liveStreams, rsRestream);
@@ -1999,7 +2024,7 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
 function switchToLiveStream(username, streamId, btn) {
     // If switching to a different channel, navigate there with stream preference
     if (username !== currentChannelUsername) {
-        navigate('/' + username + '?stream=' + streamId);
+        navigate(channelPath(username, streamId));
         return;
     }
 
@@ -2031,7 +2056,7 @@ function switchToLiveStream(username, streamId, btn) {
         if (target) {
             activateChannelStream(target);
             // Update URL to reflect stream selection (without full nav)
-            history.replaceState(null, '', `/${username}?stream=${streamId}`);
+            history.replaceState(null, '', channelPath(username, streamId));
             // Remember for return visits
             rememberLastStream(username, streamId);
             // Update cumulative viewers with fresh data
@@ -2156,7 +2181,7 @@ function startStreamStatusPoll(stream) {
                 activateChannelStream(best);
                 updateCumulativeViewers(liveStreams, rsRestream, restreamLinks, extViewers);
                 rememberLastStream(username, best.id);
-                history.replaceState(null, '', `/${username}?stream=${best.id}`);
+                history.replaceState(null, '', channelPath(username, best.id));
                 toast(`Stream ended — switched to "${bestTitle}"`, 'info');
                 return;
             }
@@ -2246,7 +2271,7 @@ async function openStream(streamId) {
 
         // If stream has a username, redirect to channel
         if (s.username) {
-            return navigate(`/${s.username}`, true);
+            return navigate(channelPath(s.username), true);
         }
 
         document.getElementById('stream-title').textContent = s.title || 'Untitled';
@@ -2605,7 +2630,7 @@ async function loadVodPlayer(vodId) {
         // Navigate to streamer on click
         const streamerLink = document.getElementById('vp-streamer-link');
         if (streamerLink && v.username) {
-            const targetUrl = `/${v.username}`;
+            const targetUrl = channelPath(v.username);
             streamerLink.href = targetUrl;
             streamerLink.onclick = (event) => handleLinkClick(event, targetUrl);
         }
@@ -3166,7 +3191,7 @@ async function loadClipPlayer(clipId) {
 
         const streamerLink = document.getElementById('clp-streamer-link');
         if (streamerLink && cl.username) {
-            const targetUrl = `/${cl.username}`;
+            const targetUrl = channelPath(cl.username);
             streamerLink.href = targetUrl;
             streamerLink.onclick = (event) => handleLinkClick(event, targetUrl);
         }
@@ -3232,7 +3257,7 @@ async function loadClipPlayer(clipId) {
 async function loadProfile(username) {
     username = username || (currentUser && currentUser.username);
     if (!username) return navigate('/');
-    navigate(`/${username}`, true);
+    navigate(channelPath(username), true);
 }
 
 /* ═══════════════════════════════════════════════════════════════

@@ -423,6 +423,9 @@ app.get('/dmca', (req, res) => {
 app.get('/tos', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/tos.html'));
 });
+app.get('/terms', (req, res) => {
+    res.redirect(302, '/tos');
+});
 
 // ── WHIP Endpoint (WebRTC-HTTP Ingestion Protocol) ───────────
 // OBS and other WHIP-compatible encoders send WebRTC media via HTTP POST.
