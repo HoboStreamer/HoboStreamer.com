@@ -119,50 +119,98 @@ function extraArgs() {
  * Get video info (metadata only, no download).
  * Returns: { title, duration, thumbnail, url, id, isLive, uploadDate }
  */
-async function getInfo(url) {
+function normalizeUploadDate(raw) {
+    const value = String(raw || '').trim();
+    if (/^\d{8}$/.test(value)) {
+        const y = value.slice(0, 4);
+        const m = value.slice(4, 6);
+        const d = value.slice(6, 8);
+        return `${y}-${m}-${d}`;
+    }
+    return value;
+}
+
+function parseStructuredInfo(stdout, fallbackUrl) {
+    const text = String(stdout || '').trim();
+    if (!text) return null;
+
+    const candidates = [text, text.split('\n').filter(Boolean).pop() || ''];
+    for (const candidate of candidates) {
+        if (!candidate || candidate[0] !== '{') continue;
+        try {
+            const info = JSON.parse(candidate);
+            return {
+                title: info.title || 'Unknown',
+                duration: Number.isFinite(info.duration) ? info.duration : 0,
+                thumbnail: info.thumbnail || '',
+                url: info.webpage_url || info.original_url || fallbackUrl,
+                id: info.id || '',
+                extractor: info.extractor_key || info.extractor || 'unknown',
+                isLive: !!(info.is_live || info.live_status === 'is_live' || info.live_status === 'post_live'),
+                uploadDate: normalizeUploadDate(info.upload_date || info.release_date || ''),
+            };
+        } catch {
+            // try next candidate
+        }
+    }
+
+    const lines = text.split(/\r?\n/);
+    if (!lines.length || !lines[0]) return null;
+    return {
+        title: lines[0] || 'Unknown',
+        duration: parseInt(lines[1], 10) || 0,
+        thumbnail: lines[2] || '',
+        url: lines[3] || fallbackUrl,
+        id: lines[4] || '',
+        extractor: lines[5] || 'unknown',
+        isLive: /^(true|1|yes)$/i.test(lines[6] || ''),
+        uploadDate: normalizeUploadDate(lines[7] || ''),
+    };
+}
+
+function runInfoProbe(args, url) {
     return new Promise((resolve, reject) => {
-        const args = [
-            ...commonArgs(),
-            ...cookieArgs(),
-            ...extraArgs(),
-            '--no-download',
-            '--print', '%(title)s\n%(duration)s\n%(thumbnail)s\n%(webpage_url)s\n%(id)s\n%(extractor)s\n%(is_live)s\n%(upload_date)s',
-            '--no-warnings',
-            '--no-playlist',
-            '--age-limit', '99',
-            '--geo-bypass',
-            '--no-check-certificates',
-            url,
-        ];
-
-        execFile(YTDLP_PATH, args, { timeout: INFO_TIMEOUT_MS, env: ytdlpEnv() }, (err, stdout, stderr) => {
-            if (err) {
-                const msg = (stderr || err.message || '').slice(0, 300);
-                return reject(new Error(`Failed to get video info: ${msg}`));
+        execFile(
+            YTDLP_PATH,
+            args,
+            { timeout: INFO_TIMEOUT_MS, env: ytdlpEnv(), maxBuffer: 4 * 1024 * 1024 },
+            (err, stdout, stderr) => {
+                const parsed = parseStructuredInfo(stdout, url);
+                if (parsed) return resolve(parsed);
+                const msg = (stderr || err?.message || 'Unknown yt-dlp error').slice(0, 300);
+                reject(new Error(`Failed to get video info: ${msg}`));
             }
-
-            const lines = stdout.trim().split('\n');
-            const durationRaw = parseInt(lines[1]) || 0;
-            const isLive = lines[6] === 'True';
-
-            let uploadDate = '';
-            if (lines[7] && /^\d{8}$/.test(lines[7])) {
-                const y = lines[7].slice(0, 4), m = lines[7].slice(4, 6), d = lines[7].slice(6, 8);
-                uploadDate = `${y}-${m}-${d}`;
-            }
-
-            resolve({
-                title: lines[0] || 'Unknown',
-                duration: durationRaw,
-                thumbnail: lines[2] || '',
-                url: lines[3] || url,
-                id: lines[4] || '',
-                extractor: lines[5] || 'unknown',
-                isLive,
-                uploadDate,
-            });
-        });
+        );
     });
+}
+
+async function getInfo(url) {
+    const shared = [
+        ...commonArgs(),
+        ...cookieArgs(),
+        ...extraArgs(),
+        '--no-warnings',
+        '--no-playlist',
+        '--age-limit', '99',
+        '--geo-bypass',
+        '--no-check-certificates',
+    ];
+    const strategies = [
+        [...shared, '--dump-single-json', '--skip-download', url],
+        [...shared, '--dump-single-json', '--skip-download', '--extractor-args', 'youtube:player_client=web', url],
+        [...shared, '--no-download', '--print', '%(title)s\n%(duration)s\n%(thumbnail)s\n%(webpage_url)s\n%(id)s\n%(extractor)s\n%(is_live)s\n%(upload_date)s', url],
+    ];
+
+    let lastError = null;
+    for (const args of strategies) {
+        try {
+            return await runInfoProbe(args, url);
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    throw lastError || new Error('Failed to get video info');
 }
 
 /**

@@ -151,9 +151,7 @@ class MediaQueue {
             return db.getMediaRequestById(requestId);
         }
 
-        const forceServerDownload = settings.download_mode === 'download'
-            || request.provider === 'youtube'
-            || request.provider === 'vimeo';
+        const forceServerDownload = settings.download_mode === 'download';
 
         if (forceServerDownload) {
             return this.downloadFileForRequest(requestId);

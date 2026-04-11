@@ -83,33 +83,33 @@
 <!--  NAVBAR                                                     -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <nav class="navbar">
-    <div class="nav-brand" onclick="navigate('/')" data-brand-tooltip="This platform is in early alpha — features may be incomplete, buggy, or change without notice. Data will likely be reset multiple times during the alpha phase. Thanks for testing!">
+    <a class="nav-brand" href="/" onclick="return handleLinkClick(event, '/')" data-brand-tooltip="This platform is in early alpha — features may be incomplete, buggy, or change without notice. Data will likely be reset multiple times during the alpha phase. Thanks for testing!">
         <i class="fa-solid fa-campground"></i>
         <span class="brand-text-wrap">
             <span class="alpha-badge">ALPHA</span>
             <span class="brand-text"><span class="brand-hobo">Hobo</span><strong class="brand-streamer">Streamer</strong></span>
         </span>
-    </div>
+    </a>
     <div class="nav-links-wrap">
         <button class="nav-scroll-btn nav-scroll-left" id="nav-scroll-left" onclick="scrollNavLinks(-1)" title="Scroll left"><i class="fa-solid fa-chevron-left"></i></button>
         <div class="nav-links">
-            <a href="/" onclick="event.preventDefault();navigate('/')" class="nav-link active" data-page="home" data-tooltip="Home">
+            <a href="/" onclick="return handleLinkClick(event, '/')" class="nav-link active" data-page="home" data-tooltip="Home">
             <i class="fa-solid fa-house"></i> <span>Home</span>
         </a>
-        <a href="/vods" onclick="event.preventDefault();navigate('/vods')" class="nav-link" data-page="vods" data-tooltip="VODs">
+        <a href="/vods" onclick="return handleLinkClick(event, '/vods')" class="nav-link" data-page="vods" data-tooltip="VODs">
             <i class="fa-solid fa-video"></i> <span>VODs</span>
         </a>
-        <a href="/clips" onclick="event.preventDefault();navigate('/clips')" class="nav-link" data-page="clips" data-tooltip="Clips">
+        <a href="/clips" onclick="return handleLinkClick(event, '/clips')" class="nav-link" data-page="clips" data-tooltip="Clips">
             <i class="fa-solid fa-scissors"></i> <span>Clips</span>
         </a>
-        <a href="/pastes" onclick="event.preventDefault();navigate('/pastes')" class="nav-link" data-page="pastes" data-tooltip="Pastes">
+        <a href="/pastes" onclick="return handleLinkClick(event, '/pastes')" class="nav-link" data-page="pastes" data-tooltip="Pastes">
             <i class="fa-solid fa-paste"></i> <span>Pastes</span>
         </a>
-        <a href="/chat" onclick="event.preventDefault();navigate('/chat')" class="nav-link" data-page="chat" data-tooltip="Chat">
+        <a href="/chat" onclick="return handleLinkClick(event, '/chat')" class="nav-link" data-page="chat" data-tooltip="Chat">
             <i class="fa-solid fa-comments"></i> <span>Chat</span>
         </a>
         <div class="nav-dropdown" id="nav-game-dropdown">
-            <a href="https://hobo.quest" onclick="event.preventDefault();toggleNavDropdown('nav-game-dropdown')" class="nav-link" data-page="game" data-tooltip="Game">
+            <a href="https://hobo.quest" onclick="return handleDropdownLinkClick(event, 'nav-game-dropdown')" class="nav-link" data-page="game" data-tooltip="Game">
                 <i class="fa-solid fa-gamepad"></i> <span>Game</span> <i class="fa-solid fa-caret-down nav-dd-caret"></i>
             </a>
             <div class="nav-dropdown-menu">
@@ -121,13 +121,13 @@
                 </a>
             </div>
         </div>
-        <a href="/broadcast" onclick="event.preventDefault();navigate('/broadcast')" class="nav-link" data-page="broadcast" id="nav-broadcast" style="display:none" data-tooltip="Go Live">
+        <a href="/broadcast" onclick="return handleLinkClick(event, '/broadcast')" class="nav-link" data-page="broadcast" id="nav-broadcast" style="display:none" data-tooltip="Go Live">
             <i class="fa-solid fa-tower-broadcast"></i> <span>Go Live</span><span class="nav-live-dot" id="nav-live-dot" style="display:none"><i class="fa-solid fa-circle"></i></span>
         </a>
-        <a href="/dashboard" onclick="event.preventDefault();navigate('/dashboard')" class="nav-link" data-page="dashboard" id="nav-dashboard" style="display:none" data-tooltip="Dashboard">
+        <a href="/dashboard" onclick="return handleLinkClick(event, '/dashboard')" class="nav-link" data-page="dashboard" id="nav-dashboard" style="display:none" data-tooltip="Dashboard">
             <i class="fa-solid fa-gauge-high"></i> <span>Dashboard</span>
         </a>
-        <a href="https://hobo.tools/admin" onclick="event.preventDefault();window.location.href='https://hobo.tools/admin'" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin">
+        <a href="https://hobo.tools/admin" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin" rel="noopener noreferrer">
             <i class="fa-solid fa-shield-halved"></i> <span>Admin</span>
         </a>
         </div>
@@ -153,13 +153,13 @@
                 <i class="fa-solid fa-caret-down"></i>
             </div>
             <div class="user-dropdown" id="user-dropdown">
-                <a href="#" onclick="event.preventDefault();navigate('/'+currentUser?.username)"><i class="fa-solid fa-user"></i> My Channel</a>
-                <a href="/broadcast" onclick="event.preventDefault();navigate('/broadcast')"><i class="fa-solid fa-tower-broadcast"></i> Go Live</a>
-                <a href="/dashboard" onclick="event.preventDefault();navigate('/dashboard')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
-                <a href="/settings" onclick="event.preventDefault();navigate('/settings')"><i class="fa-solid fa-gear"></i> Settings</a>
+                <a href="#" onclick="return handleLinkClick(event, '/'+currentUser?.username)"><i class="fa-solid fa-user"></i> My Channel</a>
+                <a href="/broadcast" onclick="return handleLinkClick(event, '/broadcast')"><i class="fa-solid fa-tower-broadcast"></i> Go Live</a>
+                <a href="/dashboard" onclick="return handleLinkClick(event, '/dashboard')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+                <a href="/settings" onclick="return handleLinkClick(event, '/settings')"><i class="fa-solid fa-gear"></i> Settings</a>
                 <a href="#" onclick="event.preventDefault();showModal('stream-key')"><i class="fa-solid fa-key"></i> Stream Key</a>
                 <a href="#" onclick="event.preventDefault();showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
-                <a href="/themes" onclick="event.preventDefault();navigate('/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
+                <a href="/themes" onclick="return handleLinkClick(event, '/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
                 <a href="https://my.hobo.tools" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
                 <hr>
                 <a href="#" onclick="event.preventDefault();captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
@@ -189,9 +189,9 @@
                     <a href="#founder-story" class="hero-philosophy-btn" onclick="event.preventDefault();document.getElementById('founder-story')?.scrollIntoView({behavior:'smooth', block:'start'})">
                         <i class="fa-solid fa-book-open"></i> Read the Philosophy
                     </a>
-                    <a href="/tos" class="hero-philosophy-link" onclick="event.preventDefault();navigate('/tos')">Terms</a>
+                    <a href="/tos" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/tos')">Terms</a>
                     <span aria-hidden="true">•</span>
-                    <a href="/dmca" class="hero-philosophy-link" onclick="event.preventDefault();navigate('/dmca')">DMCA</a>
+                    <a href="/dmca" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/dmca')">DMCA</a>
                 </div>
                 <div class="hero-cta">
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
@@ -472,14 +472,14 @@
             <!-- Recent Clips -->
             <div class="section-header" id="home-clips-header" style="display:none">
                 <h2><i class="fa-solid fa-scissors"></i> Recent Clips</h2>
-                <a href="/clips" onclick="event.preventDefault();navigate('/clips')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
+                <a href="/clips" onclick="return handleLinkClick(event, '/clips')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
             </div>
             <div class="stream-grid home-clips-grid" id="home-clips-grid"></div>
 
             <!-- Recent Pastes -->
             <div class="section-header" id="home-pastes-header" style="display:none">
                 <h2><i class="fa-solid fa-paste"></i> Recent Pastes</h2>
-                <a href="/pastes" onclick="event.preventDefault();navigate('/pastes')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
+                <a href="/pastes" onclick="return handleLinkClick(event, '/pastes')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
             </div>
             <div class="home-pastes-list" id="home-pastes-list"></div>
 
@@ -502,7 +502,7 @@
                 <h2><i class="fa-solid fa-code-commit"></i> Recent Changes</h2>
                 <div style="display:flex;gap:8px;align-items:center;">
                     <button id="home-changelog-toggle" class="badge" onclick="toggleHomeChangelog()" style="cursor:pointer;border:none;background:var(--surface);padding:4px 10px;border-radius:6px;color:var(--text);font-size:0.78rem;">Show All</button>
-                    <a href="/updates" onclick="event.preventDefault();navigate('/updates')" class="badge" style="cursor:pointer;text-decoration:none;">View All</a>
+                    <a href="/updates" onclick="return handleLinkClick(event, '/updates')" class="badge" style="cursor:pointer;text-decoration:none;">View All</a>
                 </div>
             </div>
             <div id="home-changelog-wrapper" class="home-changelog-wrapper collapsed">
@@ -1008,10 +1008,10 @@
                 <div class="vod-player-info">
                     <h2 id="vp-title">Video</h2>
                     <div class="vod-player-meta">
-                        <div class="vod-player-streamer" id="vp-streamer-link" style="cursor:pointer">
+                        <a href="#" class="vod-player-streamer" id="vp-streamer-link" style="cursor:pointer;text-decoration:none;color:inherit">
                             <span class="stream-card-avatar" id="vp-avatar">?</span>
                             <span id="vp-streamer">Streamer</span>
-                        </div>
+                        </a>
                         <span class="muted" id="vp-date"></span>
                         <span class="muted"><i class="fa-solid fa-clock"></i> <span id="vp-duration">0:00</span></span>
                         <span class="muted"><i class="fa-solid fa-eye"></i> <span id="vp-views">0</span></span>
@@ -1176,10 +1176,10 @@
                     <h2 id="clp-title">Clip Title</h2>
                     <span id="clp-unlisted-badge" class="badge-unlisted" style="display:none"><i class="fa-solid fa-eye-slash"></i> Unlisted</span>
                     <div class="vod-player-meta">
-                        <div class="vod-player-streamer" id="clp-streamer-link" style="cursor:pointer">
+                        <a href="#" class="vod-player-streamer" id="clp-streamer-link" style="cursor:pointer;text-decoration:none;color:inherit">
                             <span class="stream-card-avatar" id="clp-avatar">?</span>
                             <span id="clp-streamer">Streamer</span>
-                        </div>
+                        </a>
                         <span class="muted" id="clp-date"></span>
                         <span class="muted"><i class="fa-solid fa-clock"></i> <span id="clp-duration">0:00</span></span>
                         <span class="muted"><i class="fa-solid fa-eye"></i> <span id="clp-views">0</span></span>

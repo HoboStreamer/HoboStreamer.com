@@ -420,6 +420,24 @@ function toggleMobileNav() {
     hamburger?.classList.toggle('open', navLinks.classList.contains('show'));
 }
 
+function isModifiedLinkClick(event) {
+    return !!(event && (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey));
+}
+
+function handleLinkClick(event, urlPath, replace = false) {
+    if (isModifiedLinkClick(event)) return true;
+    event?.preventDefault?.();
+    navigate(urlPath, replace);
+    return false;
+}
+
+function handleDropdownLinkClick(event, dropdownId) {
+    if (isModifiedLinkClick(event)) return true;
+    event?.preventDefault?.();
+    toggleNavDropdown(dropdownId);
+    return false;
+}
+
 /* ── SPA Router (URL-based) ───────────────────────────────────── */
 function navigate(urlPath, replace = false) {
     closeMobileNav();
@@ -710,7 +728,7 @@ async function loadHomeClips() {
         if (!clips.length) { if (header) header.style.display = 'none'; return; }
         if (header) header.style.display = '';
         grid.innerHTML = clips.map(c => `
-            <div class="stream-card" onclick="navigate('/clip/${c.id}')">
+            <a class="stream-card" href="/clip/${c.id}" onclick="return handleLinkClick(event, '/clip/${c.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(c.thumbnail_url, 'fa-scissors', c.title, `/api/thumbnails/generate/clip/${c.id}`)}
                     <span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${c.view_count || 0}</span>
@@ -724,7 +742,7 @@ async function loadHomeClips() {
                         <span class="muted" style="margin-left:auto;font-size:0.75rem">${timeAgo(c.created_at)}</span>
                     </div>
                 </div>
-            </div>
+            </a>
         `).join('');
     } catch { /* silent */ }
 }
@@ -744,7 +762,7 @@ async function loadHomePastes() {
                 ? `<div class="home-paste-media"><img src="${esc(p.screenshot_url)}" alt="${esc(p.title || 'Screenshot paste')}" loading="lazy"><span class="home-paste-type">Image</span></div>`
                 : `<div class="home-paste-media"><div class="home-paste-snippet">${preview || esc(p.title || 'Untitled paste')}</div><div class="home-paste-icon"><i class="fa-solid ${icon}"></i></div><span class="home-paste-type">${p.language && p.language !== 'plaintext' ? esc(p.language) : 'Text'}</span></div>`;
             return `
-            <a class="home-paste-card" href="/p/${esc(p.slug)}" onclick="event.preventDefault();navigate('/p/${esc(p.slug)}')">
+            <a class="home-paste-card" href="/p/${esc(p.slug)}" onclick="return handleLinkClick(event, '/p/${esc(p.slug)}')">
                 ${media}
                 <div class="home-paste-body">
                 <div class="home-paste-info">
@@ -863,7 +881,7 @@ function renderStreamGrid(containerId, streams, isLive) {
         const duration = !isLive && s.vod_duration ? `<span class="stream-card-duration">${formatDuration(s.vod_duration)}</span>` : '';
         const endedAgo = !isLive && s.ended_at ? `<span class="stream-card-ago">${timeAgo(s.ended_at)}</span>` : '';
         return `
-        <div class="stream-card" onclick="navigate('${navUrl}')">
+        <a class="stream-card" href="${esc(navUrl)}" onclick="return handleLinkClick(event, '${esc(navUrl)}')">
             <div class="stream-card-thumb${s.is_nsfw ? ' stream-card-nsfw-blur' : ''}">
                 ${thumbImg(thumb, 'fa-campground', s.title, !isLive && s.vod_id ? `/api/thumbnails/generate/vod/${s.vod_id}` : null)}
                 ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
@@ -881,7 +899,7 @@ function renderStreamGrid(containerId, streams, isLive) {
                 </div>
                 ${s.category ? `<div class="stream-card-tags"><span class="stream-card-tag">${esc(s.category)}</span></div>` : ''}
             </div>
-        </div>`;
+        </a>`;
     }).join('');
 }
 
@@ -943,7 +961,7 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
                 if (liveVod && liveVod.vod) {
                     const v = liveVod.vod;
                     liveVodHtml += `
-                        <div class="stream-card" onclick="navigate('/vod/${v.id}')" style="border:2px solid var(--accent);position:relative">
+                        <a class="stream-card" href="/vod/${v.id}" onclick="return handleLinkClick(event, '/vod/${v.id}')" style="border:2px solid var(--accent);position:relative">
                             <div class="stream-card-thumb">
                                 ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
                                 <span class="stream-card-nsfw" style="background:#e53e3e;animation:pulse 2s infinite">● RECORDING</span>
@@ -953,7 +971,7 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
                                 <div class="stream-card-title">${esc(v.title || 'Live Recording')}</div>
                                 <div class="stream-card-streamer muted">In progress — ${esc(ls.title || 'Live Stream')}</div>
                             </div>
-                        </div>`;
+                        </a>`;
                 }
             } catch {}
         }
@@ -962,7 +980,7 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
     if (liveVodHtml || vods.length) {
         const isOwner = currentUser && currentUser.username === username;
         vodsGrid.innerHTML = liveVodHtml + vods.map(v => `
-            <div class="stream-card" onclick="navigate('/vod/${v.id}')">
+            <a class="stream-card" href="/vod/${v.id}" onclick="return handleLinkClick(event, '/vod/${v.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
                     ${!v.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
@@ -973,7 +991,7 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
                     <div class="stream-card-title">${esc(v.title || 'VOD')}</div>
                     <div class="stream-card-streamer muted">${formatDateTime(v.created_at)}</div>
                 </div>
-            </div>
+            </a>
         `).join('');
     } else {
         vodsGrid.innerHTML = '<p class="muted">No VODs yet</p>';
@@ -994,7 +1012,7 @@ function renderChannelClipsSection(username, clips, meta = {}) {
     if (clips.length) {
         const isOwner = currentUser && currentUser.username === username;
         clipsGrid.innerHTML = clips.map(cl => `
-            <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
+            <a class="stream-card" href="/clip/${cl.id}" onclick="return handleLinkClick(event, '/clip/${cl.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
                     ${!cl.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">UNLISTED</span>' : ''}
@@ -1005,7 +1023,7 @@ function renderChannelClipsSection(username, clips, meta = {}) {
                     <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
                     <div class="stream-card-streamer muted">${formatDateTime(cl.created_at)}</div>
                 </div>
-            </div>
+            </a>
         `).join('');
     } else {
         clipsGrid.innerHTML = '<p class="muted">No clips yet</p>';
@@ -2336,7 +2354,7 @@ async function loadVodsPage() {
 
         const myId = currentUser ? currentUser.id : null;
         grid.innerHTML = vods.map(v => `
-            <div class="stream-card" onclick="navigate('/vod/${v.id}')">
+            <a class="stream-card" href="/vod/${v.id}" onclick="return handleLinkClick(event, '/vod/${v.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
                     ${!v.is_public && v.user_id === myId ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
@@ -2351,7 +2369,7 @@ async function loadVodsPage() {
                         <span class="stream-card-date">${timeAgo(v.created_at)}</span>
                     </div>
                 </div>
-            </div>
+            </a>
         `).join('');
 
         renderVodsPagination('vods-pagination-page', currentVodsPage, total, limit, 'setVodsPage');
@@ -2397,7 +2415,7 @@ async function loadClipsPage() {
             return;
         }
         grid.innerHTML = clips.map(cl => `
-            <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
+            <a class="stream-card" href="/clip/${cl.id}" onclick="return handleLinkClick(event, '/clip/${cl.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
                     ${cl.stream_protocol ? protocolBadge(cl.stream_protocol) : ''}
@@ -2411,7 +2429,7 @@ async function loadClipsPage() {
                         <span class="stream-card-date">${timeAgo(cl.created_at)}</span>
                     </div>
                 </div>
-            </div>
+            </a>
         `).join('');
 
         renderVodsPagination('clips-pagination-page', currentClipsPage, total, limit, 'setClipsPage', 'clips');
@@ -2587,7 +2605,9 @@ async function loadVodPlayer(vodId) {
         // Navigate to streamer on click
         const streamerLink = document.getElementById('vp-streamer-link');
         if (streamerLink && v.username) {
-            streamerLink.onclick = () => navigate(`/${v.username}`);
+            const targetUrl = `/${v.username}`;
+            streamerLink.href = targetUrl;
+            streamerLink.onclick = (event) => handleLinkClick(event, targetUrl);
         }
 
         // Show delete button if user is the VOD owner or admin
@@ -2606,7 +2626,7 @@ async function loadVodPlayer(vodId) {
         const clipsGrid = document.getElementById('vp-clips-grid');
         if (clips.length) {
             clipsGrid.innerHTML = clips.map(cl => `
-                <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
+                <a class="stream-card" href="/clip/${cl.id}" onclick="return handleLinkClick(event, '/clip/${cl.id}')">
                     <div class="stream-card-thumb">
                         ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
                         <span class="stream-card-viewers">${formatDuration(cl.duration_seconds)}</span>
@@ -2614,7 +2634,7 @@ async function loadVodPlayer(vodId) {
                     <div class="stream-card-info">
                         <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
                     </div>
-                </div>
+                </a>
             `).join('');
         } else {
             clipsGrid.innerHTML = '<p class="muted">No clips from this stream</p>';
@@ -3101,7 +3121,7 @@ async function loadClipPlayer(clipId) {
             if (cl.stream_title) {
                 const titleText = esc(cl.stream_title);
                 if (cl.vod_id) {
-                    sourceHtml += `<i class="fa-solid fa-tower-broadcast"></i> From stream: <a href="#" onclick="event.preventDefault();navigate('/vod/${cl.vod_id}')" style="color:var(--accent);text-decoration:none;font-weight:600">${titleText}</a>`;
+                    sourceHtml += `<i class="fa-solid fa-tower-broadcast"></i> From stream: <a href="/vod/${cl.vod_id}" onclick="return handleLinkClick(event, '/vod/${cl.vod_id}')" style="color:var(--accent);text-decoration:none;font-weight:600">${titleText}</a>`;
                 } else {
                     sourceHtml += `<i class="fa-solid fa-tower-broadcast"></i> From stream: <strong>${titleText}</strong>`;
                 }
@@ -3146,7 +3166,9 @@ async function loadClipPlayer(clipId) {
 
         const streamerLink = document.getElementById('clp-streamer-link');
         if (streamerLink && cl.username) {
-            streamerLink.onclick = () => navigate(`/${cl.username}`);
+            const targetUrl = `/${cl.username}`;
+            streamerLink.href = targetUrl;
+            streamerLink.onclick = (event) => handleLinkClick(event, targetUrl);
         }
 
         // Show "Clipped by" info
