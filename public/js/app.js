@@ -893,6 +893,7 @@ const CLIPS_PAGE_SIZE = 24;
 const CHANNEL_CLIPS_PAGE_SIZE = 12;
 let currentVodsPage = 1;
 let currentClipsPage = 1;
+let currentVodsStreamerFilter = 'all';
 const channelVodsPageByUser = Object.create(null);
 const channelClipsPageByUser = Object.create(null);
 
@@ -1051,6 +1052,58 @@ function setClipsPage(page) {
     currentClipsPage = safePage;
     loadClipsPage();
     const top = document.getElementById('page-clips');
+    if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderVodsStreamerFilters(streamers = [], activeFilter = 'all') {
+    const bar = document.getElementById('vods-streamer-filters');
+    if (!bar) return;
+
+    const normalizedActive = (activeFilter || 'all').toLowerCase();
+    const unique = [];
+    const seen = new Set();
+    for (const streamer of (streamers || [])) {
+        const username = String(streamer?.username || '').trim();
+        if (!username) continue;
+        const key = username.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(streamer);
+    }
+
+    if (!unique.length) {
+        bar.style.display = 'none';
+        bar.innerHTML = '';
+        return;
+    }
+
+    bar.style.display = 'flex';
+    bar.innerHTML = `
+        <button class="media-filter-chip ${normalizedActive === 'all' ? 'active' : ''}" onclick="setVodsStreamerFilter('all')">
+            <i class="fa-solid fa-layer-group"></i>
+            <span>All streamers</span>
+        </button>
+        ${unique.map(streamer => {
+            const username = String(streamer.username || '').trim();
+            const label = streamer.display_name || username;
+            const count = Number(streamer.vod_count || 0);
+            return `
+                <button class="media-filter-chip ${normalizedActive === username.toLowerCase() ? 'active' : ''}" onclick="setVodsStreamerFilter('${esc(username)}')">
+                    <span>${esc(label)}</span>
+                    ${count > 0 ? `<span class="media-filter-chip-count">${count}</span>` : ''}
+                </button>
+            `;
+        }).join('')}
+    `;
+}
+
+function setVodsStreamerFilter(username = 'all') {
+    const nextFilter = String(username || 'all').trim() || 'all';
+    if (nextFilter === currentVodsStreamerFilter) return;
+    currentVodsStreamerFilter = nextFilter;
+    currentVodsPage = 1;
+    loadVodsPage();
+    const top = document.getElementById('page-vods');
     if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -2208,17 +2261,28 @@ async function toggleFollow() {
 async function loadVodsPage() {
     const grid = document.getElementById('vods-grid-page');
     const pager = document.getElementById('vods-pagination-page');
+    const filterBar = document.getElementById('vods-streamer-filters');
     if (!grid) return console.error('[VODs] grid element #vods-grid-page not found');
     grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p>Loading videos...</p></div>';
     if (pager) { pager.style.display = 'none'; pager.innerHTML = ''; }
+    if (filterBar) {
+        filterBar.style.display = 'none';
+        filterBar.innerHTML = '';
+    }
 
     try {
         const limit = VODS_PAGE_SIZE;
         const offset = (currentVodsPage - 1) * limit;
-        const data = await api(`/vods?limit=${limit}&offset=${offset}`);
+        const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+        if (currentVodsStreamerFilter && currentVodsStreamerFilter !== 'all') {
+            params.set('username', currentVodsStreamerFilter);
+        }
+        const data = await api(`/vods?${params.toString()}`);
         const vods = data.vods || [];
         const total = data.total ?? vods.length;
         const totalPages = Math.max(1, Math.ceil(total / limit));
+
+        renderVodsStreamerFilters(data.streamers || [], currentVodsStreamerFilter);
 
         if (currentVodsPage > totalPages) {
             currentVodsPage = totalPages;
