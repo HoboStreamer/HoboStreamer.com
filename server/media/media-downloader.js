@@ -55,6 +55,45 @@ function isAvailable() {
     }
 }
 
+/**
+ * Get yt-dlp version string (cached for 60s).
+ */
+let _versionCache = { value: null, expiresAt: 0 };
+function getVersion() {
+    if (_versionCache.value && Date.now() < _versionCache.expiresAt) {
+        return Promise.resolve(_versionCache.value);
+    }
+    return new Promise((resolve) => {
+        execFile(YTDLP_PATH, ['--version'], { timeout: 5000, env: ytdlpEnv() }, (err, stdout) => {
+            const ver = (stdout || '').trim() || null;
+            _versionCache = { value: ver, expiresAt: Date.now() + 60000 };
+            resolve(ver);
+        });
+    });
+}
+
+/**
+ * Check if the bgutil POT provider plugin is loaded by yt-dlp.
+ */
+function checkPotProvider() {
+    return new Promise((resolve) => {
+        execFile(YTDLP_PATH, [
+            ...commonArgs(),
+            '-v', '--skip-download', '--extractor-args', 'youtube:player_client=web;fetch_pot=auto',
+            '--print', '%(id)s', 'https://www.youtube.com/watch?v=jNQXAC9IVRw',
+        ], { timeout: 10000, env: ytdlpEnv(), maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+            const log = (stderr || '') + (stdout || '');
+            const providers = [];
+            const providerMatch = log.match(/\[pot\] PO Token Providers: (.+)/);
+            if (providerMatch) {
+                providers.push(...providerMatch[1].split(',').map(s => s.trim()));
+            }
+            const hasExternal = providers.some(p => p.includes('external') && !p.includes('unavailable'));
+            resolve({ providers, hasExternal });
+        });
+    });
+}
+
 function getCookiesPath() { return COOKIES_PATH; }
 function getYtdlpPath() { return YTDLP_PATH; }
 
@@ -452,6 +491,8 @@ function runYtdlp(args) {
 
 module.exports = {
     isAvailable,
+    getVersion,
+    checkPotProvider,
     getInfo,
     extractStreamUrl,
     downloadToFile,
@@ -459,6 +500,7 @@ module.exports = {
     purgeCache,
     getCookiesPath,
     getYtdlpPath,
+    isHlsManifestUrl,
     getExtraArgs: () => {
         try { return getDb().getSetting('ytdlp_extra_args') || ''; } catch { return ''; }
     },

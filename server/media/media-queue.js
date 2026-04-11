@@ -1,5 +1,7 @@
 const db = require('../db/database');
 const downloader = require('./media-downloader');
+const https = require('https');
+const http = require('http');
 
 const DEFAULTS = {
     enabled: 1,
@@ -21,6 +23,29 @@ const DIRECT_VIDEO_EXT = /\.(mp4|webm|ogv|mov|m4v)(\?.*)?$/i;
 
 // Active extraction/download jobs: requestId → { cancel, promise }
 const activeJobs = new Map();
+
+/**
+ * Fetch YouTube video title via oEmbed API (no auth/cookies required).
+ * Returns { title } or null on failure.
+ */
+function fetchYouTubeOEmbed(videoId) {
+    return new Promise((resolve) => {
+        const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&format=json`;
+        const req = https.get(url, { timeout: 6000 }, (res) => {
+            if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    resolve({ title: json.title || null });
+                } catch { resolve(null); }
+            });
+        });
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+    });
+}
 
 class MediaQueue {
     getSettings(streamerId) {
@@ -400,6 +425,7 @@ class MediaQueue {
             const canonical = `https://www.youtube.com/watch?v=${ytId}`;
 
             // Use yt-dlp for accurate metadata (duration, title, thumbnail)
+            let ytdlpError = null;
             if (downloader.isAvailable()) {
                 try {
                     const info = await downloader.getInfo(canonical);
@@ -413,18 +439,27 @@ class MediaQueue {
                         isLive: info.isLive || false,
                     };
                 } catch (err) {
+                    ytdlpError = err.message;
                     console.warn(`[MediaQueue] YouTube metadata probe failed for ${canonical}:`, err.message);
                 }
             }
+
+            // Fallback: try YouTube oEmbed API for at least the title (no auth needed)
+            let oembedTitle = null;
+            try {
+                const oembed = await fetchYouTubeOEmbed(ytId);
+                if (oembed?.title) oembedTitle = oembed.title;
+            } catch {}
 
             return {
                 canonical_url: canonical,
                 embed_url: null,
                 provider: 'youtube',
-                title: `YouTube video ${ytId}`,
+                title: oembedTitle || `YouTube video ${ytId}`,
                 thumbnail_url: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
                 duration_seconds: null,
                 isLive: false,
+                _ytdlpError: ytdlpError,  // carried for diagnostics
             };
         }
 

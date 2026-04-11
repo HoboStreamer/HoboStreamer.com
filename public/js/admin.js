@@ -1589,21 +1589,59 @@ async function loadAdminMediaTools() {
         return;
     }
 
+    const potOk = status.pot_available;
+    const cookiesOk = status.cookies_configured;
+    const ytdlpOk = status.ytdlp_available;
+
+    // Overall health
+    let healthIcon, healthText, healthColor;
+    if (ytdlpOk && cookiesOk && potOk) {
+        healthIcon = 'fa-circle-check';
+        healthText = 'All systems go — YouTube extraction should work.';
+        healthColor = 'var(--success,#22c55e)';
+    } else if (ytdlpOk && (cookiesOk || potOk)) {
+        healthIcon = 'fa-triangle-exclamation';
+        healthText = 'Partially configured — some YouTube videos may fail.';
+        healthColor = 'var(--warning,#f59e0b)';
+    } else if (ytdlpOk) {
+        healthIcon = 'fa-circle-xmark';
+        healthText = 'yt-dlp installed but cookies & PO Token provider are missing — YouTube will not work.';
+        healthColor = 'var(--danger,#ef4444)';
+    } else {
+        healthIcon = 'fa-circle-xmark';
+        healthText = 'yt-dlp is not installed — media requests are disabled.';
+        healthColor = 'var(--danger,#ef4444)';
+    }
+
     c.innerHTML = `
-        <div style="display:grid;gap:16px;max-width:800px">
+        <div style="display:grid;gap:16px;max-width:860px">
+            <!-- Health banner -->
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:12px">
+                <i class="fa-solid ${healthIcon}" style="font-size:1.5rem;color:${healthColor}"></i>
+                <div>
+                    <div style="font-weight:600;font-size:0.95rem">${healthText}</div>
+                    <div class="muted" style="font-size:0.8rem;margin-top:2px">Scroll down for setup guide if something is missing.</div>
+                </div>
+            </div>
+
             <!-- Status card -->
             <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
                 <h3 style="margin:0 0 12px;font-size:1rem"><i class="fa-solid fa-wrench"></i> yt-dlp Status</h3>
                 <div style="display:grid;gap:6px;font-size:0.9rem">
-                    <div><strong>yt-dlp available:</strong> ${status.ytdlp_available
-                        ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-check-circle"></i> Yes</span>'
-                        : '<span style="color:var(--danger,#ef4444)"><i class="fa-solid fa-xmark-circle"></i> No</span>'
-                    }</div>
+                    <div><strong>yt-dlp:</strong> ${ytdlpOk
+                        ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-check-circle"></i> Installed</span>'
+                        : '<span style="color:var(--danger,#ef4444)"><i class="fa-solid fa-xmark-circle"></i> Not found</span>'
+                    }${status.ytdlp_version ? ' <span class="muted" style="font-size:0.82rem">v' + esc(status.ytdlp_version) + '</span>' : ''}</div>
                     <div><strong>Path:</strong> <code style="background:var(--bg-tertiary,var(--bg-input));padding:2px 6px;border-radius:4px;font-size:0.85rem">${esc(status.ytdlp_path)}</code></div>
-                    <div><strong>Cookies:</strong> ${status.cookies_configured
+                    <div><strong>Cookies:</strong> ${cookiesOk
                         ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-cookie"></i> Configured (' + status.cookies_size + ' bytes)</span>'
-                        : '<span class="muted"><i class="fa-solid fa-cookie-bite"></i> Not configured</span>'
+                        : '<span style="color:var(--danger,#ef4444)"><i class="fa-solid fa-cookie-bite"></i> Not configured</span>'
                     }</div>
+                    <div><strong>PO Token Provider:</strong> ${potOk
+                        ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-shield-check"></i> Available</span>'
+                        : '<span style="color:var(--danger,#ef4444)"><i class="fa-solid fa-shield-xmark"></i> Not available</span>'
+                    }</div>
+                    ${(status.pot_providers || []).length > 0 ? '<div class="muted" style="font-size:0.8rem;padding-left:12px">' + esc(status.pot_providers.join(', ')) + '</div>' : ''}
                     <div><strong>Extra Args:</strong> ${status.extra_args_configured
                         ? '<span style="color:var(--success,#22c55e)"><i class="fa-solid fa-terminal"></i> Configured</span>'
                         : '<span class="muted"><i class="fa-solid fa-terminal"></i> None</span>'
@@ -1611,12 +1649,99 @@ async function loadAdminMediaTools() {
                 </div>
             </div>
 
+            <!-- Setup Guide -->
+            <details style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px" ${(!ytdlpOk || !cookiesOk || !potOk) ? 'open' : ''}>
+                <summary style="cursor:pointer;font-weight:600;font-size:1rem;display:flex;align-items:center;gap:8px">
+                    <i class="fa-solid fa-book"></i> Setup Guide — How to Make YouTube Extraction Work
+                </summary>
+                <div style="margin-top:14px;font-size:0.87rem;line-height:1.6">
+                    <p style="margin:0 0 10px">YouTube requires three things for server-side video extraction to work:</p>
+
+                    <div style="background:var(--bg-tertiary,var(--bg-input));border-radius:6px;padding:14px;margin-bottom:14px">
+                        <h4 style="margin:0 0 8px;font-size:0.92rem">
+                            ${ytdlpOk ? '<i class="fa-solid fa-check-circle" style="color:var(--success,#22c55e)"></i>' : '<i class="fa-solid fa-circle" style="color:var(--danger,#ef4444)"></i>'}
+                            Step 1: Install yt-dlp
+                        </h4>
+                        <p class="muted" style="margin:0 0 6px;font-size:0.82rem">
+                            yt-dlp is the media extraction engine. Install it system-wide on your server.
+                        </p>
+                        <code style="display:block;background:var(--bg-primary);padding:8px 10px;border-radius:4px;font-size:0.8rem;white-space:pre-wrap">sudo pip3 install --break-system-packages yt-dlp</code>
+                        <p class="muted" style="margin:6px 0 0;font-size:0.78rem">
+                            Keep it updated regularly: <code>sudo pip3 install --break-system-packages --pre yt-dlp -U</code><br>
+                            YouTube changes frequently — nightly builds often have fixes before stable releases.
+                        </p>
+                    </div>
+
+                    <div style="background:var(--bg-tertiary,var(--bg-input));border-radius:6px;padding:14px;margin-bottom:14px">
+                        <h4 style="margin:0 0 8px;font-size:0.92rem">
+                            ${cookiesOk ? '<i class="fa-solid fa-check-circle" style="color:var(--success,#22c55e)"></i>' : '<i class="fa-solid fa-circle" style="color:var(--danger,#ef4444)"></i>'}
+                            Step 2: YouTube Cookies
+                        </h4>
+                        <p class="muted" style="margin:0 0 6px;font-size:0.82rem">
+                            YouTube blocks requests from servers without valid cookies. You need to export cookies from a logged-in browser session.
+                        </p>
+                        <ol style="margin:0;padding-left:20px;font-size:0.82rem" class="muted">
+                            <li>Install the <strong>Get cookies.txt LOCALLY</strong> browser extension (Chrome/Firefox)</li>
+                            <li>Open a <strong>private/incognito window</strong> and log into YouTube</li>
+                            <li>Navigate to <code>https://www.youtube.com/robots.txt</code> (keep this as the only tab)</li>
+                            <li>Click the extension icon → export YouTube cookies</li>
+                            <li><strong>Close the incognito window immediately</strong> so the session is never rotated</li>
+                            <li>Paste the exported cookies.txt content into the Cookies field below</li>
+                        </ol>
+                        <p style="margin:8px 0 0;font-size:0.78rem;color:var(--warning,#f59e0b)">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                            Cookies expire! If extraction starts failing with "Sign in to confirm you're not a bot", you need to re-export fresh cookies.
+                            Using a dedicated/throwaway Google account is recommended.
+                        </p>
+                    </div>
+
+                    <div style="background:var(--bg-tertiary,var(--bg-input));border-radius:6px;padding:14px;margin-bottom:14px">
+                        <h4 style="margin:0 0 8px;font-size:0.92rem">
+                            ${potOk ? '<i class="fa-solid fa-check-circle" style="color:var(--success,#22c55e)"></i>' : '<i class="fa-solid fa-circle" style="color:var(--danger,#ef4444)"></i>'}
+                            Step 3: PO Token Provider (bgutil)
+                        </h4>
+                        <p class="muted" style="margin:0 0 6px;font-size:0.82rem">
+                            YouTube requires a Proof of Origin (PO) token to prove requests come from a real client.
+                            The <strong>bgutil-ytdlp-pot-provider</strong> plugin generates these automatically.
+                        </p>
+                        <code style="display:block;background:var(--bg-primary);padding:8px 10px;border-radius:4px;font-size:0.8rem;white-space:pre-wrap"># Install the yt-dlp plugin
+pip3 install --break-system-packages bgutil-ytdlp-pot-provider
+
+# Clone and build the server component
+cd /home/ubuntu
+git clone https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git
+cd bgutil-ytdlp-pot-provider/server
+npm install && npm run build
+
+# Start the POT server (keep running as a service)
+node build/main.js</code>
+                        <p class="muted" style="margin:8px 0 0;font-size:0.78rem">
+                            The POT server must stay running. Consider setting it up as a systemd service.<br>
+                            Node.js must be available in PATH for the script-node provider to work.<br>
+                            Verify it works: <code>curl http://localhost:4416/ping</code>
+                        </p>
+                    </div>
+
+                    <div style="background:var(--bg-tertiary,var(--bg-input));border-radius:6px;padding:14px">
+                        <h4 style="margin:0 0 8px;font-size:0.92rem"><i class="fa-solid fa-lightbulb" style="color:var(--warning,#f59e0b)"></i> Troubleshooting</h4>
+                        <ul style="margin:0;padding-left:20px;font-size:0.82rem" class="muted">
+                            <li><strong>"Sign in to confirm you're not a bot"</strong> — Cookies are expired/invalid. Re-export from a fresh incognito session.</li>
+                            <li><strong>"LOGIN_REQUIRED"</strong> — Same as above. Make sure cookies are from a logged-in YouTube session.</li>
+                            <li><strong>Extraction works in test but fails in queue</strong> — Stream URLs expire after a few hours. If a request sits in queue too long, re-extraction may be needed.</li>
+                            <li><strong>No title / "YouTube video [ID]"</strong> — Metadata extraction failed (cookies issue). The request was added but will fail playback.</li>
+                            <li><strong>Update yt-dlp frequently</strong> — YouTube changes their systems regularly. Run: <code>sudo pip3 install --break-system-packages --pre yt-dlp -U</code></li>
+                            <li><strong>Use the Test Extraction tool below</strong> to verify everything works before enabling media requests.</li>
+                        </ul>
+                    </div>
+                </div>
+            </details>
+
             <!-- Cookies card -->
             <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
                 <h3 style="margin:0 0 8px;font-size:1rem"><i class="fa-solid fa-cookie"></i> YouTube Cookies</h3>
                 <p class="muted" style="font-size:0.82rem;margin:0 0 12px">
-                    Paste a Netscape-format cookies.txt file to bypass YouTube bot detection.
-                    Export using a browser extension like <em>Get cookies.txt LOCALLY</em> while logged into YouTube.
+                    Paste a Netscape-format cookies.txt exported from a logged-in YouTube session in an incognito window.
+                    See the setup guide above for detailed steps.
                 </p>
                 <textarea id="admin-cookies-input" rows="8" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;0&#9;SID&#9;value..."
                     style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:10px;border-radius:6px;font-family:monospace;font-size:0.82rem;resize:vertical"></textarea>
@@ -1624,7 +1749,7 @@ async function loadAdminMediaTools() {
                     <button class="btn btn-primary" onclick="saveAdminCookies()">
                         <i class="fa-solid fa-floppy-disk"></i> Save Cookies
                     </button>
-                    <button class="btn btn-outline" onclick="deleteAdminCookies()" ${status.cookies_configured ? '' : 'disabled'}>
+                    <button class="btn btn-outline" onclick="deleteAdminCookies()" ${cookiesOk ? '' : 'disabled'}>
                         <i class="fa-solid fa-trash"></i> Remove Cookies
                     </button>
                 </div>
@@ -1634,10 +1759,19 @@ async function loadAdminMediaTools() {
             <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
                 <h3 style="margin:0 0 8px;font-size:1rem"><i class="fa-solid fa-terminal"></i> Extra yt-dlp Arguments</h3>
                 <p class="muted" style="font-size:0.82rem;margin:0 0 12px">
-                    Additional CLI arguments passed to yt-dlp on every call. One argument per line (e.g. <code>--proxy socks5://user:pass@host:port</code>).
-                    Use <code>--extractor-args</code> for player client overrides. Lines starting with <code>#</code> are ignored.
+                    Additional CLI arguments passed to yt-dlp on every call. One argument per line.
+                    Lines starting with <code>#</code> are ignored.
                 </p>
-                <textarea id="admin-extra-args-input" rows="6" placeholder="# Extra yt-dlp arguments (one per line)&#10;--extractor-args&#10;youtube:player_client=android_vr&#10;--proxy&#10;socks5://user:pass@host:1080"
+                <details class="muted" style="font-size:0.8rem;margin-bottom:10px">
+                    <summary style="cursor:pointer">Common examples</summary>
+                    <div style="padding:8px 0 0 8px;line-height:1.8">
+                        <code>--extractor-args</code> + <code>youtube:player_client=mweb;fetch_pot=auto</code> — Use mweb client with auto PO tokens<br>
+                        <code>--proxy</code> + <code>socks5://user:pass@host:1080</code> — Route through a proxy<br>
+                        <code>--geo-bypass-country</code> + <code>US</code> — Bypass geo-restrictions as a specific country<br>
+                        <code>--sleep-interval</code> + <code>2</code> — Wait between requests to avoid rate limiting
+                    </div>
+                </details>
+                <textarea id="admin-extra-args-input" rows="6" placeholder="# Extra yt-dlp arguments (one per line)&#10;--extractor-args&#10;youtube:player_client=mweb;fetch_pot=auto"
                     style="width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:10px;border-radius:6px;font-family:monospace;font-size:0.82rem;resize:vertical">${esc(status.extra_args || '')}</textarea>
                 <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
                     <button class="btn btn-primary" onclick="saveAdminExtraArgs()">
@@ -1653,10 +1787,11 @@ async function loadAdminMediaTools() {
             <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
                 <h3 style="margin:0 0 8px;font-size:1rem"><i class="fa-solid fa-flask-vial"></i> Test Extraction</h3>
                 <p class="muted" style="font-size:0.82rem;margin:0 0 12px">
-                    Test yt-dlp extraction on a URL to verify cookies and extraction work.
+                    Test yt-dlp extraction on a URL to verify cookies, PO token, and extraction all work.
+                    A successful test means media requests will work for viewers.
                 </p>
                 <div style="display:flex;gap:8px">
-                    <input type="text" id="admin-media-test-url" placeholder="https://www.youtube.com/watch?v=..."
+                    <input type="text" id="admin-media-test-url" placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
                         style="flex:1;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:8px 12px;border-radius:6px;font-size:0.9rem">
                     <button class="btn btn-primary" onclick="testAdminExtraction()">
                         <i class="fa-solid fa-play"></i> Test

@@ -903,7 +903,7 @@ router.post('/storage/tiers/bulk-move', (req, res) => {
 const downloader = require('../media/media-downloader');
 
 // GET  /api/admin/media-tools/status — yt-dlp availability + cookies status
-router.get('/media-tools/status', (req, res) => {
+router.get('/media-tools/status', async (req, res) => {
     try {
         const cookiesPath = downloader.getCookiesPath();
         let cookiesExist = false;
@@ -914,14 +914,28 @@ router.get('/media-tools/status', (req, res) => {
             cookiesSize = stat.size;
         } catch {}
         const extraArgs = downloader.getExtraArgs();
+        let ytdlpVersion = null;
+        let potProviders = [];
+        let potAvailable = false;
+        if (downloader.isAvailable()) {
+            try { ytdlpVersion = await downloader.getVersion(); } catch {}
+            try {
+                const pot = await downloader.checkPotProvider();
+                potProviders = pot.providers;
+                potAvailable = pot.hasExternal;
+            } catch {}
+        }
         res.json({
             ytdlp_available: downloader.isAvailable(),
             ytdlp_path: downloader.getYtdlpPath(),
+            ytdlp_version: ytdlpVersion,
             cookies_configured: cookiesExist,
             cookies_size: cookiesSize,
             cookies_path: cookiesPath,
             extra_args: extraArgs,
             extra_args_configured: extraArgs.trim().length > 0,
+            pot_available: potAvailable,
+            pot_providers: potProviders,
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
