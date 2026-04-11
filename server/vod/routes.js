@@ -748,25 +748,31 @@ router.get('/', optionalAuth, (req, res) => {
     try {
         const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
         const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const usernameFilter = String(req.query.username || '').trim();
+        const normalizedUsername = usernameFilter || null;
 
         let vods = [];
         let myPrivate = [];
 
         if (req.user) {
-            myPrivate = (db.getVodsByUser(req.user.id, true) || []).filter(v => !v.is_public);
+            const includeMyPrivate = !normalizedUsername
+                || req.user.username?.toLowerCase() === normalizedUsername.toLowerCase();
+            if (includeMyPrivate) {
+                myPrivate = (db.getVodsByUser(req.user.id, true) || []).filter(v => !v.is_public);
+            }
         }
 
-        const publicCount = db.countPublicVods();
+        const publicCount = db.countPublicVods({ username: normalizedUsername });
         const total = publicCount + myPrivate.length;
 
         if (myPrivate.length > 0) {
             const publicFetchCount = Math.min(Math.max(offset + limit, limit), publicCount);
-            const publicVods = db.getPublicVods(publicFetchCount, 0);
+            const publicVods = db.getPublicVods(publicFetchCount, 0, { username: normalizedUsername });
             vods = [...publicVods, ...myPrivate]
                 .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
                 .slice(offset, offset + limit);
         } else {
-            vods = db.getPublicVods(limit, offset);
+            vods = db.getPublicVods(limit, offset, { username: normalizedUsername });
         }
 
         res.json({
@@ -775,6 +781,8 @@ router.get('/', optionalAuth, (req, res) => {
             limit,
             offset,
             hasMore: offset + vods.length < total,
+            streamers: db.listVodStreamers(req.user?.id || null),
+            activeFilter: normalizedUsername,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list VODs' });

@@ -1227,24 +1227,61 @@ function countVodsByUser(userId, includePrivate = false) {
     `, [userId])?.count || 0;
 }
 
-function getPublicVods(limit = 50, offset = 0) {
+function getPublicVods(limit = 50, offset = 0, { username = null } = {}) {
+    const conditions = ['v.is_public = 1', 'COALESCE(v.is_recording, 0) = 0'];
+    const params = [];
+
+    if (username) {
+        conditions.push('LOWER(u.username) = LOWER(?)');
+        params.push(String(username).trim());
+    }
+
+    params.push(limit, offset);
     return all(`
         SELECT v.*, u.username, u.display_name, u.avatar_url,
                s.protocol AS stream_protocol
         FROM vods v JOIN users u ON v.user_id = u.id
         LEFT JOIN streams s ON v.stream_id = s.id
-        WHERE v.is_public = 1 AND COALESCE(v.is_recording, 0) = 0
+        WHERE ${conditions.join(' AND ')}
         ORDER BY v.created_at DESC
         LIMIT ? OFFSET ?
-    `, [limit, offset]);
+    `, params);
 }
 
-function countPublicVods() {
+function countPublicVods({ username = null } = {}) {
+    const conditions = ['v.is_public = 1', 'COALESCE(v.is_recording, 0) = 0'];
+    const params = [];
+
+    if (username) {
+        conditions.push('LOWER(u.username) = LOWER(?)');
+        params.push(String(username).trim());
+    }
+
     return get(`
         SELECT COUNT(*) AS count
         FROM vods v
-        WHERE v.is_public = 1 AND COALESCE(v.is_recording, 0) = 0
-    `, [])?.count || 0;
+        JOIN users u ON v.user_id = u.id
+        WHERE ${conditions.join(' AND ')}
+    `, params)?.count || 0;
+}
+
+function listVodStreamers(includeUserId = null) {
+    const params = [];
+    let visibilityClause = 'v.is_public = 1';
+    if (includeUserId) {
+        visibilityClause = '(v.is_public = 1 OR v.user_id = ?)';
+        params.push(includeUserId);
+    }
+
+    return all(`
+        SELECT u.id AS user_id, u.username, u.display_name, COUNT(*) AS vod_count
+        FROM vods v
+        JOIN users u ON v.user_id = u.id
+        WHERE ${visibilityClause}
+          AND COALESCE(v.is_recording, 0) = 0
+        GROUP BY u.id, u.username, u.display_name
+        ORDER BY LOWER(COALESCE(u.display_name, u.username)) ASC
+    `, params);
 }
 
 function getActiveVodByStream(streamId) {
@@ -3044,7 +3081,7 @@ module.exports = {
     findActiveMediaRequestByCanonicalUrl, updateMediaRequest,
     renormalizePendingMediaRequestPositions,
     // VODs
-    createVod, getVodById, getVodsByUser, countVodsByUser, getPublicVods, countPublicVods, getActiveVodByStream, getOrphanedRecordingVods,
+    createVod, getVodById, getVodsByUser, countVodsByUser, getPublicVods, countPublicVods, listVodStreamers, getActiveVodByStream, getOrphanedRecordingVods,
     // Clips
     createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
     // Controls

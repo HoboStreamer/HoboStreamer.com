@@ -812,6 +812,50 @@ main#app { position: relative; z-index: 1; }
     50% { opacity: 0.3; }
 }
 
+.media-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 0 0 18px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+}
+.media-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 0.84rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+.media-filter-chip:hover {
+    border-color: var(--accent-dark);
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+.media-filter-chip.active {
+    border-color: rgba(192,150,92,0.45);
+    background: rgba(192,150,92,0.14);
+    color: var(--accent-light);
+}
+.media-filter-chip-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.22);
+    color: inherit;
+    font-size: 0.74rem;
+}
 .stream-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
