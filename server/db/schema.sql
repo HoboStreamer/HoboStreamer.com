@@ -112,13 +112,18 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     stream_id INTEGER,
     user_id INTEGER,                       -- NULL for anon
-    anon_id TEXT,                           -- 'anon12345' format
+    anon_id TEXT,                          -- 'anon12345' format
     username TEXT,
     message TEXT NOT NULL,
     message_type TEXT DEFAULT 'chat' CHECK(message_type IN ('chat', 'system', 'donation', 'command', 'tts')),
     is_global INTEGER DEFAULT 0,
     is_deleted INTEGER DEFAULT 0,
     is_filtered INTEGER DEFAULT 0,
+    reply_to_id INTEGER REFERENCES chat_messages(id) ON DELETE SET NULL,
+    source_platform TEXT,
+    deleted_by INTEGER,
+    deleted_at DATETIME,
+    auto_delete_at DATETIME,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
@@ -396,6 +401,15 @@ CREATE TABLE IF NOT EXISTS channel_moderation_settings (
     slow_mode_seconds INTEGER DEFAULT 0,
     followers_only INTEGER DEFAULT 0,
     emote_only INTEGER DEFAULT 0,
+    allow_anonymous INTEGER DEFAULT 1,
+    links_allowed INTEGER DEFAULT 1,
+    account_age_gate_hours INTEGER DEFAULT 0,
+    caps_percentage_limit INTEGER DEFAULT 0,
+    aggressive_filter INTEGER DEFAULT 0,
+    max_message_length INTEGER DEFAULT 500,
+    ip_approval_mode INTEGER DEFAULT 0,
+    viewer_auto_delete_enabled INTEGER DEFAULT 1,
+    viewer_delete_all_enabled INTEGER DEFAULT 1,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );

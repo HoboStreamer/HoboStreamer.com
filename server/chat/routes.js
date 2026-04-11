@@ -14,6 +14,14 @@ const { optionalAuth, requireAuth, requireAdmin } = require('../auth/auth');
 const permissions = require('../auth/permissions');
 
 const router = express.Router();
+const MIN_SELF_DELETE_MINUTES = 3;
+const MAX_SELF_DELETE_MINUTES = 10080;
+
+function normalizeAutoDeleteMinutes(value) {
+    const mins = parseInt(value, 10);
+    if (!Number.isFinite(mins) || mins < MIN_SELF_DELETE_MINUTES) return 0;
+    return Math.min(MAX_SELF_DELETE_MINUTES, mins);
+}
 
 /**
  * Hydrate reply_to context onto an array of message rows.
@@ -25,7 +33,11 @@ function hydrateReplies(messages) {
     if (!replyIds.length) return messages;
     const placeholders = replyIds.map(() => '?').join(',');
     const parents = db.all(
-        `SELECT id, username, user_id, message FROM chat_messages WHERE id IN (${placeholders})`,
+        `SELECT id, username, user_id, message
+         FROM chat_messages
+         WHERE id IN (${placeholders})
+           AND is_deleted = 0
+           AND (auto_delete_at IS NULL OR datetime(auto_delete_at) > CURRENT_TIMESTAMP)`,
         replyIds
     );
     const parentMap = new Map(parents.map(p => [p.id, p]));
@@ -68,6 +80,10 @@ router.post('/send', requireAuth, (req, res) => {
         }
 
         const username = req.user.display_name || req.user.username;
+        const autoDeleteMinutes = normalizeAutoDeleteMinutes(req.body.auto_delete_minutes);
+        const autoDeleteAt = autoDeleteMinutes
+            ? new Date(Date.now() + autoDeleteMinutes * 60 * 1000).toISOString()
+            : null;
 
         // Reply-to support
         const replyToId = req.body.reply_to_id ? parseInt(req.body.reply_to_id) : null;
@@ -98,6 +114,7 @@ router.post('/send', requireAuth, (req, res) => {
             profile_color: req.user.profile_color || '#999',
             filtered: !filterResult.safe,
             timestamp: new Date().toISOString(),
+            auto_delete_at: autoDeleteAt,
         };
 
         // Attach cosmetics
@@ -129,6 +146,7 @@ router.post('/send', requireAuth, (req, res) => {
                 message_type: 'chat',
                 is_global: true,
                 reply_to_id: replyToId,
+                auto_delete_at: autoDeleteAt,
             });
             savedId = result.lastInsertRowid;
         } catch { /* non-critical */ }
@@ -243,7 +261,8 @@ router.get('/global/history', optionalAuth, (req, res) => {
                    LEFT JOIN users u ON cm.user_id = u.id
                    LEFT JOIN streams s ON cm.stream_id = s.id
                    LEFT JOIN users su ON s.user_id = su.id
-                   WHERE cm.is_deleted = 0 AND cm.message_type IN ('chat', 'system')`;
+                   WHERE cm.is_deleted = 0 AND cm.message_type IN ('chat', 'system')
+                     AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
         const params = [];
 
         if (before) {
@@ -287,7 +306,8 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
                           u.username AS core_username
                    FROM chat_messages cm
                    LEFT JOIN users u ON cm.user_id = u.id
-                   WHERE cm.stream_id = ? AND cm.is_deleted = 0`;
+                   WHERE cm.stream_id = ? AND cm.is_deleted = 0
+                     AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
         const params = [req.params.streamId];
 
         if (before) {

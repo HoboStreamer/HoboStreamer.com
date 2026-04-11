@@ -188,6 +188,10 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? Math.min(2000, Math.max(1, parseInt(req.body.max_message_length) || 500)) : undefined,
             ip_approval_mode: req.body.ip_approval_mode !== undefined
                 ? parseBoolean(req.body.ip_approval_mode, false) : undefined,
+            viewer_auto_delete_enabled: req.body.viewer_auto_delete_enabled !== undefined
+                ? parseBoolean(req.body.viewer_auto_delete_enabled, true) : undefined,
+            viewer_delete_all_enabled: req.body.viewer_delete_all_enabled !== undefined
+                ? parseBoolean(req.body.viewer_delete_all_enabled, true) : undefined,
         });
 
         db.logModerationAction({

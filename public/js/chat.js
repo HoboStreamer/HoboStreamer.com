@@ -63,6 +63,7 @@ const CHAT_SETTINGS_DEFAULTS = {
     showSystemMessages: true,     // Join/part/system messages
     mentionHighlight: true,       // Highlight messages containing your @name
     autoScroll: true,             // Auto-scroll to bottom on new messages
+    autoDeleteMinutes: 0,         // Auto-delete your own new messages after N minutes (0 = off)
     // Notifications
     flashOnMention: true,         // Flash browser tab on @mention
     soundOnMention: false,        // Play a sound on @mention
@@ -85,19 +86,41 @@ const CHAT_SETTINGS_DEFAULTS = {
 };
 let chatSettings = { ...CHAT_SETTINGS_DEFAULTS };
 let chatSettingsPanelOpen = false;
+const CHAT_SELF_DELETE_MINUTES = 3;
+let chatSelfDeletePolicy = {
+    allowAutoDelete: true,
+    allowDeleteAll: true,
+    minMinutes: CHAT_SELF_DELETE_MINUTES,
+};
 const FULLSCREEN_CHAT_IDLE_MS = 2600;
 const FULLSCREEN_CHAT_FADE_MS = 9000;
 const FULLSCREEN_CHAT_MAX_MESSAGES = 7;
 let _fullscreenChatIdleTimer = null;
 let _fullscreenChatRecent = [];
 
+function normalizeChatAutoDeleteMinutes(value) {
+    const minutes = parseInt(value, 10);
+    if (!Number.isFinite(minutes) || minutes <= 0) return 0;
+    return Math.max(CHAT_SELF_DELETE_MINUTES, minutes);
+}
+
+function canUseViewerAutoDeleteHere() {
+    return !chatStreamId || !!chatSelfDeletePolicy.allowAutoDelete;
+}
+
+function canUseViewerDeleteAllHere() {
+    return !chatStreamId || !!chatSelfDeletePolicy.allowDeleteAll;
+}
+
 function loadChatSettings() {
     try {
         const saved = JSON.parse(localStorage.getItem(CHAT_SETTINGS_KEY));
         if (saved) chatSettings = { ...CHAT_SETTINGS_DEFAULTS, ...saved };
     } catch { /* use defaults */ }
+    chatSettings.autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
 }
 function saveChatSettings() {
+    chatSettings.autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
     try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch {}
     applyChatSettings();
 }
@@ -134,6 +157,35 @@ function syncSettingsPanelUI() {
             else if (el.type === 'range') el.value = chatSettings[key];
             else if (el.tagName === 'SELECT') el.value = chatSettings[key];
         });
+
+        const autoDeleteSelect = panel.querySelector('[data-setting="autoDeleteMinutes"]');
+        if (autoDeleteSelect) {
+            autoDeleteSelect.disabled = !canUseViewerAutoDeleteHere();
+        }
+
+        const deleteBtn = panel.querySelector('.csp-delete-own-btn');
+        if (deleteBtn) {
+            deleteBtn.disabled = !canUseViewerDeleteAllHere();
+            deleteBtn.title = canUseViewerDeleteAllHere()
+                ? 'Delete all of your messages from this chat'
+                : 'Disabled by the streamer for this chat';
+        }
+
+        const hint = panel.querySelector('.csp-self-delete-hint');
+        if (hint) {
+            const scopeLabel = chatStreamId ? 'this stream chat' : 'global chat';
+            if (!chatStreamId) {
+                hint.textContent = `Applies to your own new messages in ${scopeLabel}. Minimum ${chatSelfDeletePolicy.minMinutes} minutes.`;
+            } else if (!canUseViewerAutoDeleteHere() && !canUseViewerDeleteAllHere()) {
+                hint.textContent = 'This streamer has disabled viewer self-delete tools in this chat.';
+            } else if (!canUseViewerAutoDeleteHere()) {
+                hint.textContent = 'Manual delete-all is allowed here, but auto-delete timers are disabled by the streamer.';
+            } else if (!canUseViewerDeleteAllHere()) {
+                hint.textContent = `Auto-delete is allowed here, but manual delete-all is disabled by the streamer. Minimum ${chatSelfDeletePolicy.minMinutes} minutes.`;
+            } else {
+                hint.textContent = `Applies to your own new messages in ${scopeLabel}. Minimum ${chatSelfDeletePolicy.minMinutes} minutes.`;
+            }
+        }
     });
     syncTTSToggleButtons();
 }
@@ -783,6 +835,12 @@ function handleChatMessage(msg) {
                 chatSlowModeSeconds = msg.slowmode_seconds;
                 updateSlowModeIndicator();
             }
+            chatSelfDeletePolicy = {
+                allowAutoDelete: msg.allow_auto_delete !== false,
+                allowDeleteAll: msg.allow_self_delete_all !== false,
+                minMinutes: Math.max(CHAT_SELF_DELETE_MINUTES, parseInt(msg.min_auto_delete_minutes, 10) || CHAT_SELF_DELETE_MINUTES),
+            };
+            syncSettingsPanelUI();
             break;
         case 'slowmode':
             chatSlowModeSeconds = msg.seconds || 0;
@@ -827,6 +885,11 @@ function handleChatMessage(msg) {
                     }
                 });
             }
+            break;
+        }
+        case 'self-delete-result': {
+            const scopeLabel = msg.scope === 'stream' ? 'this chat' : 'your chat history';
+            toast(`Deleted ${msg.count || 0} of your message(s) from ${scopeLabel}`, 'success');
             break;
         }
         case 'tts':
@@ -1375,6 +1438,11 @@ function sendChat(overrideInput = null) {
         streamId: chatStreamId,
     };
 
+    const autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
+    if (autoDeleteMinutes >= (chatSelfDeletePolicy.minMinutes || CHAT_SELF_DELETE_MINUTES) && canUseViewerAutoDeleteHere()) {
+        msg.auto_delete_minutes = autoDeleteMinutes;
+    }
+
     // Attach reply-to if replying
     if (_chatReplyTo) {
         msg.reply_to_id = _chatReplyTo.id;
@@ -1406,13 +1474,19 @@ async function _sendChatViaRest(text, input) {
         return;
     }
     try {
+        const autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
+        const payload = { message: text, reply_to_id: _chatReplyTo?.id || undefined };
+        if (autoDeleteMinutes >= (chatSelfDeletePolicy.minMinutes || CHAT_SELF_DELETE_MINUTES) && canUseViewerAutoDeleteHere()) {
+            payload.auto_delete_minutes = autoDeleteMinutes;
+        }
+
         const res = await fetch('/api/chat/send', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message: text, reply_to_id: _chatReplyTo?.id || undefined }),
+            body: JSON.stringify(payload),
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -2970,6 +3044,27 @@ function toggleChatSettings(btn) {
     }, 0);
 }
 
+function deleteMyChatMessagesNow() {
+    if (!chatWs || chatWs.readyState !== WebSocket.OPEN) {
+        toast('Chat must be connected before deleting your history', 'error');
+        return;
+    }
+    if (!canUseViewerDeleteAllHere()) {
+        toast('This streamer has disabled viewer self-delete for this chat', 'error');
+        return;
+    }
+
+    const scopeLabel = chatStreamId
+        ? 'from this stream chat'
+        : 'from your HoboStreamer chat history';
+    if (!confirm(`Delete all of your messages ${scopeLabel}? This cannot be undone.`)) return;
+
+    chatWs.send(JSON.stringify({
+        type: 'self-delete-history',
+        streamId: chatStreamId || null,
+    }));
+}
+
 function buildSettingsPanelHTML() {
     return `
         <div class="csp-section">
@@ -3043,6 +3138,28 @@ function buildSettingsPanelHTML() {
                 <span>Auto-Scroll</span>
                 <input type="checkbox" data-setting="autoScroll" onchange="onChatSettingChange(this)">
             </label>
+        </div>
+        <div class="csp-section">
+            <div class="csp-title"><i class="fa-solid fa-user-shield"></i> Privacy</div>
+            <p class="csp-hint csp-self-delete-hint">Control how long your own messages stay in chat history.</p>
+            <label class="csp-row">
+                <span>Auto-Delete My Messages</span>
+                <select data-setting="autoDeleteMinutes" onchange="onChatSettingChange(this)">
+                    <option value="0">Off</option>
+                    <option value="3">3 minutes</option>
+                    <option value="5">5 minutes</option>
+                    <option value="10">10 minutes</option>
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="360">6 hours</option>
+                    <option value="1440">24 hours</option>
+                </select>
+            </label>
+            <div style="margin-top:10px">
+                <button class="btn btn-small btn-danger csp-delete-own-btn" onclick="deleteMyChatMessagesNow()">
+                    <i class="fa-solid fa-trash-can"></i> Delete All My Messages
+                </button>
+            </div>
         </div>
         <div class="csp-section">
             <div class="csp-title"><i class="fa-solid fa-bell"></i> Notifications</div>
@@ -3123,7 +3240,10 @@ function buildSettingsPanelHTML() {
 function onChatSettingChange(el) {
     const key = el.dataset.setting;
     if (!key) return;
-    if (el.type === 'checkbox') chatSettings[key] = el.checked;
+    if (key === 'autoDeleteMinutes') {
+        chatSettings[key] = normalizeChatAutoDeleteMinutes(el.value);
+        el.value = String(chatSettings[key]);
+    } else if (el.type === 'checkbox') chatSettings[key] = el.checked;
     else if (el.type === 'range') chatSettings[key] = parseInt(el.value, 10);
     else chatSettings[key] = el.value;
     saveChatSettings();
