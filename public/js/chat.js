@@ -3767,7 +3767,7 @@ function popoutChat(mode = 'global', streamId = null) {
                     const nameColor = msg.profile_color || '#999';
                     let badge = '';
                     if (msg.stream_channel) badge = `<span class="chat-stream-badge">${esc(msg.stream_channel)}</span> `;
-                    appendMsg(`<span class="chat-time-inline">${ts}</span> ${badge}<span class="chat-user" style="color:${esc(nameColor)}">${esc(msg.username)}</span>: ${esc(msg.message)}`);
+                    appendMsg(`<span class="chat-time-inline">${ts}</span> ${badge}<span class="chat-user" style="color:${esc(nameColor)}">${esc(msg.username)}</span>: ${(typeof parseEmotes === 'function') ? parseEmotes(msg.message) : esc(msg.message)}`);
                 } else if (msg.type === 'system') {
                     appendMsg(`<span class="chat-msg system">${esc(msg.message)}</span>`);
                 }

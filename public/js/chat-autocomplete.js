@@ -324,7 +324,7 @@ function _acAccept(idx) {
     if (_acTriggerChar === '@') {
         insertText = '@' + item.value;
     } else if (_acTriggerChar === ':') {
-        insertText = ':' + item.value;
+        insertText = item.value;
     } else if (_acTriggerChar === '/') {
         insertText = '/' + item.value;
     } else {
