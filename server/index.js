@@ -410,6 +410,14 @@ app.get('/media/:username', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/media-player.html'));
 });
 
+// ── Legal Pages ───────────────────────────────────────────────
+app.get('/dmca', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/dmca.html'));
+});
+app.get('/tos', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/tos.html'));
+});
+
 // ── WHIP Endpoint (WebRTC-HTTP Ingestion Protocol) ───────────
 // OBS and other WHIP-compatible encoders send WebRTC media via HTTP POST.
 // Body is raw SDP (application/sdp), auth via Bearer token.
