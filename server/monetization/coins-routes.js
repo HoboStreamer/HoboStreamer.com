@@ -238,7 +238,7 @@ router.post('/admin/grant', requireAdmin, (req, res) => {
         if (!userId || !amount) return res.status(400).json({ error: 'userId and amount required' });
 
         const newBalance = hoboCoins.adminGrant(userId, amount, reason);
-        res.json({ message: `Granted ${amount} Hobo Coins`, balance: newBalance });
+        res.json({ message: `Granted ${amount} Hobo Nickels`, balance: newBalance });
     } catch (err) {
         res.status(400).json({ error: err.message });
     }

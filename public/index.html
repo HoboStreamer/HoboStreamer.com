@@ -143,7 +143,7 @@
             <span class="nav-balance" id="nav-balance" title="Hobo Bucks balance" onclick="showModal('buy-funds')">
                 <i class="fa-solid fa-wallet"></i> <span id="nav-balance-amount">0</span>
             </span>
-            <span class="nav-coins" id="nav-coins" title="Hobo Coins — Click to open inventory" onclick="openCosmeticsModal()">
+            <span class="nav-coins" id="nav-coins" title="Hobo Nickels — Click to open inventory" onclick="openCosmeticsModal()">
                 <i class="fa-solid fa-coins"></i> <span id="nav-coins-amount">0</span>
             </span>
             <span id="hobo-bell-mount" style="display:inline-flex;align-items:center"></span>
@@ -806,7 +806,7 @@
                             <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                                 <i class="fa-solid fa-volume-high"></i>
                             </button>
-                            <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Coins">
+                            <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Nickels">
                                 <i class="fa-solid fa-gem"></i>
                             </button>
                             <button class="btn btn-hobo-bucks-mini" onclick="showModal('donate')" title="Send Hobo Bucks">
@@ -819,7 +819,7 @@
                         <!-- Rewards Panel (Hobo Coins) -->
                         <div class="rewards-panel" id="ch-rewards-panel" style="display:none">
                             <div class="rewards-panel-header">
-                                <span><i class="fa-solid fa-gem"></i> Hobo Coins Rewards</span>
+                                <span><i class="fa-solid fa-gem"></i> Hobo Nickels Rewards</span>
                                 <span class="rewards-coin-bal"><i class="fa-solid fa-coins"></i> <span class="rewards-coin-balance">0</span></span>
                             </div>
                             <div class="rewards-grid ch-rewards-grid">
@@ -1422,20 +1422,20 @@
 
                 <!-- Hobo Coins -->
                 <div class="dash-card">
-                    <h3><i class="fa-solid fa-gem"></i> Hobo Coins</h3>
+                    <h3><i class="fa-solid fa-gem"></i> Hobo Nickels</h3>
                     <div class="funds-display">
                         <span class="funds-amount coins-color" id="dash-coins-amount">0</span>
                         <span class="funds-usd" id="dash-coins-info">Free loyalty currency</span>
                     </div>
                     <p class="muted" style="font-size:0.8rem;margin-bottom:12px">
-                        Viewers earn coins by watching your stream and chatting. They can spend coins on rewards you create below.
+                        Viewers earn Hobo Nickels by watching your stream and chatting. They can spend them on rewards you create below.
                     </p>
                 </div>
 
                 <!-- Coin Rewards (Streamer Configuration) -->
                 <div class="dash-card dash-card-wide">
                     <h3><i class="fa-solid fa-gift"></i> Coin Rewards</h3>
-                    <p class="muted">Create rewards your viewers can redeem with Hobo Coins. Think TTS, sound effects, chat highlights, streamer challenges, etc.</p>
+                    <p class="muted">Create rewards your viewers can redeem with Hobo Nickels. Think TTS, sound effects, chat highlights, streamer challenges, etc.</p>
                     <div id="dash-rewards-list" class="dash-rewards-grid"></div>
                     <button class="btn btn-outline" onclick="showModal('add-reward')" style="margin-top:12px">
                         <i class="fa-solid fa-plus"></i> Add Reward
@@ -3288,7 +3288,7 @@ WantedBy=multi-user.target</code>
                         <button class="chat-tts-toggle tts-active" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
                             <i class="fa-solid fa-volume-high"></i>
                         </button>
-                        <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Coins">
+                        <button class="btn btn-hobo-coins-mini" onclick="toggleRewardsPanel()" title="Redeem Hobo Nickels">
                             <i class="fa-solid fa-gem"></i>
                         </button>
                         <button class="btn btn-hobo-bucks-mini" onclick="showModal('donate')" title="Send Hobo Bucks">
@@ -3298,10 +3298,10 @@ WantedBy=multi-user.target</code>
                             <i class="fa-solid fa-paper-plane"></i>
                         </button>
                     </div>
-                    <!-- Rewards Panel (Hobo Coins) — broadcast page -->
+                    <!-- Rewards Panel (Hobo Nickels) — broadcast page -->
                     <div class="rewards-panel" id="bc-rewards-panel" style="display:none">
                         <div class="rewards-panel-header">
-                            <span><i class="fa-solid fa-gem"></i> Hobo Coins Rewards</span>
+                            <span><i class="fa-solid fa-gem"></i> Hobo Nickels Rewards</span>
                             <span class="rewards-coin-bal"><i class="fa-solid fa-coins"></i> <span class="rewards-coin-balance">0</span></span>
                         </div>
                         <div class="rewards-grid bc-rewards-grid">

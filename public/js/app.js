@@ -156,15 +156,31 @@ function protocolBadge(protocol) {
 /* ── Toast ────────────────────────────────────────────────────── */
 function toast(msg, type = 'info') {
     const c = document.getElementById('toast-container');
-    const icons = { success: 'fa-check-circle', error: 'fa-circle-exclamation', info: 'fa-info-circle' };
+    if (!c) return;
+    const icons = {
+        success: 'fa-check-circle',
+        error: 'fa-circle-exclamation',
+        warning: 'fa-triangle-exclamation',
+        info: 'fa-info-circle',
+    };
+    while (c.children.length >= 3) c.firstChild?.remove();
+    const text = msg == null ? '' : String(msg);
+    const isPassiveEarnToast = /\+\d+\s+Hobo\s+(Coins|Nickels)\s+earned/i.test(text);
+    const durations = { success: 2400, info: 2400, warning: 3000, error: 3400 };
     const el = document.createElement('div');
-    el.className = `toast ${type}`;
+    el.className = `toast ${type}${isPassiveEarnToast ? ' toast-passive' : ''}`;
+    el.setAttribute('role', 'status');
     const icon = document.createElement('i');
     icon.className = `fa-solid ${icons[type] || icons.info}`;
     el.appendChild(icon);
-    el.appendChild(document.createTextNode(` ${msg == null ? '' : String(msg)}`));
+    el.appendChild(document.createTextNode(` ${text}`));
     c.appendChild(el);
-    setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 4000);
+    const timeout = isPassiveEarnToast ? 1600 : (durations[type] || 2600);
+    setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transform = 'translate3d(0, -8px, 0) scale(0.98)';
+        setTimeout(() => el.remove(), 220);
+    }, timeout);
 }
 
 /* ── HoboApp Popover ─────────────────────────────────────────── */

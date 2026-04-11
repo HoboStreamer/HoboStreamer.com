@@ -843,7 +843,7 @@ class ChatServer {
                     }).then((request) => {
                         this.broadcastToStream(client.streamId, {
                             type: 'system',
-                            message: `${request.username} added “${request.title}”${request.duration_seconds ? ` (${Math.floor(request.duration_seconds / 60)}m${request.duration_seconds % 60}s)` : ''} to the media queue for ${request.cost} Hobo Coins.`,
+                            message: `${request.username} added “${request.title}”${request.duration_seconds ? ` (${Math.floor(request.duration_seconds / 60)}m${request.duration_seconds % 60}s)` : ''} to the media queue for ${request.cost} Hobo Nickels.`,
                             timestamp: new Date().toISOString(),
                         });
                         this.sendTo(ws, {

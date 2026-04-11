@@ -10,8 +10,8 @@
     'use strict';
 
     const POLL_INTERVAL = 15_000; // 15s for unread count
-    const TOAST_DURATION = { low: 0, normal: 5000, high: 8000, critical: 0 }; // 0 = sticky
-    const MAX_TOASTS = 4;
+    const TOAST_DURATION = { low: 0, normal: 3800, high: 6000, critical: 0 }; // 0 = sticky
+    const MAX_TOASTS = 3;
     const SOUNDS = { normal: 'notification.mp3', high: 'notification-high.mp3', critical: 'notification-alarm.mp3' };
 
     let _config = { token: null, apiBase: 'https://hobo.tools', soundBase: '/assets/sounds', onAction: null };
@@ -43,16 +43,17 @@
             @keyframes hobo-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
             .hobo-toast-container {
-                position: fixed; top: 72px; right: 16px; z-index: 100000;
-                display: flex; flex-direction: column; gap: 8px;
-                pointer-events: none; max-width: 380px; width: 100%;
+                position: fixed; top: 82px; right: 14px; z-index: 100000;
+                display: flex; flex-direction: column; gap: 6px;
+                pointer-events: none; max-width: 320px; width: 100%;
             }
             .hobo-toast {
                 pointer-events: all;
-                background: var(--bg-card, #22222c); border: 1px solid var(--border, #333340);
-                border-radius: 10px; padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start;
-                box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.5));
-                animation: hobo-toast-in .35s cubic-bezier(.34,1.56,.64,1);
+                background: color-mix(in srgb, var(--bg-card, #22222c) 92%, transparent);
+                border: 1px solid color-mix(in srgb, var(--border, #333340) 82%, transparent);
+                border-radius: 10px; padding: 11px 12px; display: flex; gap: 10px; align-items: flex-start;
+                box-shadow: 0 10px 24px rgba(0,0,0,0.28);
+                animation: hobo-toast-in .24s cubic-bezier(.34,1.56,.64,1);
                 cursor: pointer; position: relative; overflow: hidden;
                 font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
                 color: var(--text-primary, #e0e0e0);
@@ -60,11 +61,11 @@
             }
             .hobo-toast:hover { border-color: var(--accent, #c0965c); }
             .hobo-toast.removing { animation: hobo-toast-out .3s ease forwards; }
-            .hobo-toast-icon { font-size: 22px; flex-shrink: 0; line-height: 1; margin-top: 1px; }
+            .hobo-toast-icon { font-size: 18px; flex-shrink: 0; line-height: 1; margin-top: 1px; }
             .hobo-toast-body { flex: 1; min-width: 0; }
-            .hobo-toast-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; }
-            .hobo-toast-title .service-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: rgba(192,150,92,0.15); color: var(--accent-light, #dbb077); font-weight: 500; }
-            .hobo-toast-msg { font-size: 12px; color: var(--text-secondary, #b0b0b8); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+            .hobo-toast-title { font-weight: 600; font-size: 12px; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; }
+            .hobo-toast-title .service-badge { font-size: 9px; padding: 1px 6px; border-radius: 3px; background: rgba(192,150,92,0.15); color: var(--accent-light, #dbb077); font-weight: 500; }
+            .hobo-toast-msg { font-size: 11px; color: var(--text-secondary, #b0b0b8); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
             .hobo-toast-close { position: absolute; top: 8px; right: 10px; background: none; border: none; color: var(--text-muted, #707080); cursor: pointer; font-size: 14px; padding: 2px; line-height: 1; }
             .hobo-toast-close:hover { color: var(--text-primary, #e0e0e0); }
             .hobo-toast-progress { position: absolute; bottom: 0; left: 0; height: 2px; background: var(--accent, #c0965c); border-radius: 0 0 0 10px; }
