@@ -1887,6 +1887,7 @@ function _setSelectValueIfPresent(select, value) {
     select.value = hasExact ? normalized : 'default';
 }
 
+let _switchingCamera = false;
 function _syncCameraSelectionUI(cameraId, { persist = true } = {}) {
     const normalized = cameraId || 'default';
     _setSelectValueIfPresent(document.getElementById('bc-forceCamera'), normalized);
@@ -1896,9 +1897,18 @@ function _syncCameraSelectionUI(cameraId, { persist = true } = {}) {
     if (persist) {
         saveBroadcastSettings();
         try { localStorage.setItem('bc-last-camera', normalized); } catch {}
+        // If currently streaming (non-screen-share), switch the live camera track
+        const ss = getActiveStreamState();
+        if (ss && ss.localStream && !broadcastState.settings.screenShare && !_switchingCamera) {
+            _switchingCamera = true;
+            _switchActiveCamera(normalized).catch(err => {
+                console.warn('[Broadcast] Live camera switch failed:', err.message);
+            }).finally(() => { _switchingCamera = false; });
+        }
     }
 }
 
+let _switchingAudio = false;
 function _syncAudioSelectionUI(audioId, { persist = true } = {}) {
     const normalized = audioId || 'default';
     _setSelectValueIfPresent(document.getElementById('bc-forceAudio'), normalized);
@@ -1908,6 +1918,16 @@ function _syncAudioSelectionUI(audioId, { persist = true } = {}) {
     if (persist) {
         saveBroadcastSettings();
         try { localStorage.setItem('bc-last-audio', normalized); } catch {}
+        // If currently streaming, switch the live audio track
+        const ss = getActiveStreamState();
+        const streamId = broadcastState.activeStreamId;
+        if (ss && ss.localStream && streamId && !broadcastState.settings.screenShare && !_switchingAudio) {
+            _switchingAudio = true;
+            _switchActiveAudio(normalized).catch(err => {
+                console.warn('[Broadcast] Live audio switch failed:', err.message);
+                toast('Could not switch mic: ' + err.message, 'error');
+            }).finally(() => { _switchingAudio = false; });
+        }
     }
 }
 
@@ -2061,6 +2081,19 @@ async function requestMediaPermissions() {
         if (dbg) dbg.textContent = 'Enumerating devices...';
         const devices = await navigator.mediaDevices.enumerateDevices();
         _populateCreateDeviceDropdowns(devices);
+
+        // After permission grant, re-check what the browser actually gave us
+        // and try to match to the user's saved preference. If no preference exists,
+        // the browser's default selection stands.
+        const savedAudio = broadcastState.settings.forceAudio || localStorage.getItem('bc-last-audio');
+        if (savedAudio && savedAudio !== 'default') {
+            _syncAudioSelectionUI(savedAudio, { persist: false });
+        }
+        const savedCamera = broadcastState.settings.forceCamera || localStorage.getItem('bc-last-camera');
+        if (savedCamera && savedCamera !== 'default') {
+            _syncCameraSelectionUI(savedCamera, { persist: false });
+        }
+
         if (permReq) permReq.style.display = 'none';
         if (devSelects) devSelects.style.display = '';
         toast('Camera & microphone access granted', 'success');
@@ -4634,6 +4667,39 @@ async function openCameraSwitcher() {
     }
 }
 
+/**
+ * Switch the live audio track to a different device while streaming.
+ */
+async function _switchActiveAudio(audioId) {
+    const ss = getActiveStreamState();
+    const streamId = broadcastState.activeStreamId;
+    if (!ss || !ss.localStream || !streamId) return;
+
+    const s = broadcastState.settings;
+    const audioConstraints = buildAudioConstraints(s, audioId);
+    let newStream;
+    try {
+        newStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false });
+    } catch (err) {
+        throw new Error('Could not access microphone: ' + err.message);
+    }
+    const newTrack = newStream.getAudioTracks()[0];
+    if (!newTrack) { newStream.getTracks().forEach(t => t.stop()); throw new Error('No audio track returned'); }
+
+    // Stop old audio track
+    const oldTrack = ss.localStream.getAudioTracks()[0];
+    if (oldTrack) { oldTrack.stop(); ss.localStream.removeTrack(oldTrack); }
+    ss.localStream.addTrack(newTrack);
+
+    // Replace on all viewer connections
+    _replaceAllViewerTracks(streamId);
+
+    // Apply manual gain if enabled
+    applyManualGain(streamId);
+
+    toast('Microphone switched', 'success');
+}
+
 async function _switchActiveCamera(cameraId) {
     const ss = getActiveStreamState();
     if (!ss || !ss.localStream) return;
@@ -5225,7 +5291,19 @@ function initBroadcastSettingsListeners() {
     }
     ['autoGain', 'echoCancellation', 'noiseSuppression', 'manualGainEnabled', 'force48kSampleRate'].forEach(key => {
         const el = document.getElementById(`bc-${key}`);
-        if (el) el.addEventListener('change', () => updateBroadcastSetting(key, el.checked));
+        if (el) el.addEventListener('change', () => {
+            updateBroadcastSetting(key, el.checked);
+            // Re-acquire audio track live if an audio processing setting changed while streaming
+            if (['autoGain', 'echoCancellation', 'noiseSuppression', 'force48kSampleRate'].includes(key)) {
+                const ss = getActiveStreamState();
+                const streamId = broadcastState.activeStreamId;
+                if (ss && ss.localStream && streamId && !broadcastState.settings.screenShare) {
+                    _switchActiveAudio(broadcastState.settings.forceAudio).catch(err => {
+                        console.warn('[Broadcast] Live audio re-acquire after settings change failed:', err.message);
+                    });
+                }
+            }
+        });
     });
     // Screen share checkbox: toggle live if streaming, otherwise just save setting
     const screenShareEl = document.getElementById('bc-screenShare');
