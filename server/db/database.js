@@ -1264,8 +1264,12 @@ function getClipById(id) {
     `, [id]);
 }
 
-function getClipsByUser(userId, includePrivate = false) {
+function getClipsByUser(userId, includePrivate = false, limit = null, offset = 0) {
     const publicFilter = includePrivate ? '' : 'AND c.is_public = 1';
+    const usePaging = Number.isFinite(limit);
+    const pagingSql = usePaging ? ' LIMIT ? OFFSET ?' : '';
+    const params = [userId];
+    if (usePaging) params.push(limit, offset);
     return all(`
         SELECT c.*, u.username, u.display_name, u.avatar_url,
                s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol
@@ -1273,8 +1277,17 @@ function getClipsByUser(userId, includePrivate = false) {
         JOIN users u ON c.user_id = u.id
         LEFT JOIN streams s ON c.stream_id = s.id
         WHERE c.user_id = ? ${publicFilter}
-        ORDER BY c.created_at DESC
-    `, [userId]);
+        ORDER BY c.created_at DESC${pagingSql}
+    `, params);
+}
+
+function countClipsByUser(userId, includePrivate = false) {
+    const publicFilter = includePrivate ? '' : 'AND c.is_public = 1';
+    return get(`
+        SELECT COUNT(*) AS count
+        FROM clips c
+        WHERE c.user_id = ? ${publicFilter}
+    `, [userId])?.count || 0;
 }
 
 function setClipPublic(clipId, isPublic) {
@@ -1292,6 +1305,14 @@ function getPublicClips(limit = 50, offset = 0) {
         ORDER BY c.created_at DESC
         LIMIT ? OFFSET ?
     `, [limit, offset]);
+}
+
+function countPublicClips() {
+    return get(`
+        SELECT COUNT(*) AS count
+        FROM clips c
+        WHERE c.is_public = 1
+    `, [])?.count || 0;
 }
 
 function getClipsByStream(streamId) {
@@ -2939,7 +2960,7 @@ module.exports = {
     // VODs
     createVod, getVodById, getVodsByUser, countVodsByUser, getPublicVods, countPublicVods, getActiveVodByStream, getOrphanedRecordingVods,
     // Clips
-    createClip, getClipById, getClipsByUser, getPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
+    createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
     // Controls
     getStreamControls, createControl,
     // ONVIF Cameras

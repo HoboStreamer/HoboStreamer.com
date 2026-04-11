@@ -158,13 +158,16 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             delete liveStream.stream_key;
         }
 
-        // Show private VODs to the channel owner, only public to others
+        // Show private VODs/clips to the channel owner, only public to others
         const isOwner = req.user && req.user.id === channel.user_id;
         const vodLimit = Math.min(Math.max(parseInt(req.query.vodLimit || '12', 10), 1), 48);
         const vodOffset = Math.max(parseInt(req.query.vodOffset || '0', 10), 0);
+        const clipLimit = Math.min(Math.max(parseInt(req.query.clipLimit || '12', 10), 1), 48);
+        const clipOffset = Math.max(parseInt(req.query.clipOffset || '0', 10), 0);
         const vods = db.getVodsByUser(channel.user_id, isOwner, vodLimit, vodOffset) || [];
         const vodTotal = db.countVodsByUser(channel.user_id, isOwner);
-        const clips = db.getClipsByUser(channel.user_id, isOwner) || [];
+        const clips = db.getClipsByUser(channel.user_id, isOwner, clipLimit, clipOffset) || [];
+        const clipTotal = db.countClipsByUser(channel.user_id, isOwner);
         const followerCount = db.getFollowerCount(channel.user_id);
         const isFollowing = req.user ? db.isFollowing(req.user.id, channel.user_id) : false;
 
@@ -259,6 +262,10 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             vodOffset,
             vodHasMore: vodOffset + vods.length < vodTotal,
             clips,
+            clipTotal,
+            clipLimit,
+            clipOffset,
+            clipHasMore: clipOffset + clips.length < clipTotal,
         });
     } catch (err) {
         console.error('[Channels] Get error:', err.message);
