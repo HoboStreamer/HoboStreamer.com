@@ -41,10 +41,17 @@ router.get('/my-stream', requireAuth, (req, res) => {
 // ── List Public Clips ────────────────────────────────────────
 router.get('/', (req, res) => {
     try {
-        const limit = Math.min(parseInt(req.query.limit || '20'), 100);
-        const offset = parseInt(req.query.offset || '0');
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
         const clips = db.getPublicClips(limit, offset);
-        res.json({ clips });
+        const total = db.countPublicClips();
+        res.json({
+            clips,
+            total,
+            limit,
+            offset,
+            hasMore: offset + clips.length < total,
+        });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list clips' });
     }

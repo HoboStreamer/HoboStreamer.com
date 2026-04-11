@@ -889,10 +889,14 @@ function renderStreamGrid(containerId, streams, isLive) {
 let currentChannelUsername = null;
 const VODS_PAGE_SIZE = 24;
 const CHANNEL_VODS_PAGE_SIZE = 12;
+const CLIPS_PAGE_SIZE = 24;
+const CHANNEL_CLIPS_PAGE_SIZE = 12;
 let currentVodsPage = 1;
+let currentClipsPage = 1;
 const channelVodsPageByUser = Object.create(null);
+const channelClipsPageByUser = Object.create(null);
 
-function renderVodsPagination(containerId, page, total, pageSize, setterName) {
+function renderVodsPagination(containerId, page, total, pageSize, setterName, itemLabel = 'videos') {
     const el = document.getElementById(containerId);
     if (!el) return;
 
@@ -913,7 +917,7 @@ function renderVodsPagination(containerId, page, total, pageSize, setterName) {
         <button class="btn btn-small btn-outline" ${page <= 1 ? 'disabled' : ''} onclick="${setterName}(${page - 1})">
             <i class="fa-solid fa-chevron-left"></i> Newer
         </button>
-        <span class="pastes-page-info">Showing ${start}-${end} of ${totalItems} videos • Page ${page}/${totalPages}</span>
+        <span class="pastes-page-info">Showing ${start}-${end} of ${totalItems} ${itemLabel} • Page ${page}/${totalPages}</span>
         <button class="btn btn-small btn-outline" ${page >= totalPages ? 'disabled' : ''} onclick="${setterName}(${page + 1})">
             Older <i class="fa-solid fa-chevron-right"></i>
         </button>
@@ -973,7 +977,39 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
         vodsGrid.innerHTML = '<p class="muted">No VODs yet</p>';
     }
 
-    renderVodsPagination('ch-vods-pagination', page, total, pageSize, 'setChannelVodsPage');
+    renderVodsPagination('ch-vods-pagination', page, total, pageSize, 'setChannelVodsPage', 'videos');
+}
+
+function renderChannelClipsSection(username, clips, meta = {}) {
+    const clipsGrid = document.getElementById('ch-clips-grid');
+    if (!clipsGrid) return;
+
+    const pageSize = meta.limit || CHANNEL_CLIPS_PAGE_SIZE;
+    const offset = meta.offset || 0;
+    const total = meta.total || clips.length;
+    const page = Math.floor(offset / pageSize) + 1;
+
+    if (clips.length) {
+        const isOwner = currentUser && currentUser.username === username;
+        clipsGrid.innerHTML = clips.map(cl => `
+            <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
+                <div class="stream-card-thumb">
+                    ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
+                    ${!cl.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">UNLISTED</span>' : ''}
+                    ${cl.stream_protocol ? protocolBadge(cl.stream_protocol) : ''}
+                    <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(cl.duration_seconds)}</span>
+                </div>
+                <div class="stream-card-info">
+                    <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
+                    <div class="stream-card-streamer muted">${formatDateTime(cl.created_at)}</div>
+                </div>
+            </div>
+        `).join('');
+    } else {
+        clipsGrid.innerHTML = '<p class="muted">No clips yet</p>';
+    }
+
+    renderVodsPagination('ch-clips-pagination', page, total, pageSize, 'setChannelClipsPage', 'clips');
 }
 
 async function refreshChannelVodsPage(username = currentChannelUsername) {
@@ -982,7 +1018,9 @@ async function refreshChannelVodsPage(username = currentChannelUsername) {
     const page = channelVodsPageByUser[username] || 1;
     const limit = CHANNEL_VODS_PAGE_SIZE;
     const offset = (page - 1) * limit;
-    const data = await api(`/streams/channel/${username}?vodLimit=${limit}&vodOffset=${offset}`);
+    const clipPage = channelClipsPageByUser[username] || 1;
+    const clipOffset = (clipPage - 1) * CHANNEL_CLIPS_PAGE_SIZE;
+    const data = await api(`/streams/channel/${username}?vodLimit=${limit}&vodOffset=${offset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${clipOffset}`);
     const liveStreams = (data.streams || []).filter(s => s && s.is_live);
     const totalPages = Math.max(1, Math.ceil((data.vodTotal || 0) / limit));
 
@@ -1007,6 +1045,15 @@ function setVodsPage(page) {
     if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+function setClipsPage(page) {
+    const safePage = Math.max(1, page | 0);
+    if (safePage === currentClipsPage) return;
+    currentClipsPage = safePage;
+    loadClipsPage();
+    const top = document.getElementById('page-clips');
+    if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 async function setChannelVodsPage(page) {
     if (!currentChannelUsername) return;
     const safePage = Math.max(1, page | 0);
@@ -1022,6 +1069,31 @@ async function setChannelVodsPage(page) {
     if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+async function setChannelClipsPage(page) {
+    if (!currentChannelUsername) return;
+    const safePage = Math.max(1, page | 0);
+    if (safePage === (channelClipsPageByUser[currentChannelUsername] || 1)) return;
+
+    channelClipsPageByUser[currentChannelUsername] = safePage;
+    const grid = document.getElementById('ch-clips-grid');
+    if (grid) {
+        grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p>Loading clips...</p></div>';
+    }
+
+    const vodPage = channelVodsPageByUser[currentChannelUsername] || 1;
+    const vodOffset = (vodPage - 1) * CHANNEL_VODS_PAGE_SIZE;
+    const clipOffset = (safePage - 1) * CHANNEL_CLIPS_PAGE_SIZE;
+    const data = await api(`/streams/channel/${currentChannelUsername}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${vodOffset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${clipOffset}`);
+    renderChannelClipsSection(currentChannelUsername, data.clips || [], {
+        total: data.clipTotal || (data.clips || []).length,
+        limit: data.clipLimit || CHANNEL_CLIPS_PAGE_SIZE,
+        offset: data.clipOffset || clipOffset,
+    });
+
+    const top = document.getElementById('ch-clips-grid');
+    if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 /* ── Global Chat Page ──────────────────────────────────────── */
 function loadChatPage() {
     // Connect to global chat (no streamId)
@@ -1034,13 +1106,18 @@ async function loadChannelPage(username, preferredStreamId = null) {
     try {
         const isNewChannel = currentChannelUsername !== username;
         currentChannelUsername = username;
-        if (isNewChannel) channelVodsPageByUser[username] = 1;
+        if (isNewChannel) {
+            channelVodsPageByUser[username] = 1;
+            channelClipsPageByUser[username] = 1;
+        }
         const channelVodPage = channelVodsPageByUser[username] || 1;
+        const channelClipPage = channelClipsPageByUser[username] || 1;
         const channelVodOffset = (channelVodPage - 1) * CHANNEL_VODS_PAGE_SIZE;
+        const channelClipOffset = (channelClipPage - 1) * CHANNEL_CLIPS_PAGE_SIZE;
 
         // Fetch channel data and media in parallel — player init shouldn't wait for media strip
         const [data, mediaData] = await Promise.all([
-            api(`/streams/channel/${username}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${channelVodOffset}`),
+            api(`/streams/channel/${username}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${channelVodOffset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${channelClipOffset}`),
             api(`/media/channel/${username}`).catch(() => null),
         ]);
         const ch = data.channel;
@@ -1165,26 +1242,11 @@ async function loadChannelPage(username, preferredStreamId = null) {
         });
 
         // Clips section
-        const clipsGrid = document.getElementById('ch-clips-grid');
-        if (clips.length) {
-            const isOwner = currentUser && currentUser.username === username;
-            clipsGrid.innerHTML = clips.map(cl => `
-                <div class="stream-card" onclick="navigate('/clip/${cl.id}')">
-                    <div class="stream-card-thumb">
-                        ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
-                        ${!cl.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">UNLISTED</span>' : ''}
-                        ${cl.stream_protocol ? protocolBadge(cl.stream_protocol) : ''}
-                        <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(cl.duration_seconds)}</span>
-                    </div>
-                    <div class="stream-card-info">
-                        <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
-                        <div class="stream-card-streamer muted">${formatDateTime(cl.created_at)}</div>
-                    </div>
-                </div>
-            `).join('');
-        } else {
-            clipsGrid.innerHTML = '<p class="muted">No clips yet</p>';
-        }
+        renderChannelClipsSection(username, clips, {
+            total: data.clipTotal || clips.length,
+            limit: data.clipLimit || CHANNEL_CLIPS_PAGE_SIZE,
+            offset: data.clipOffset || channelClipOffset,
+        });
 
         // Load channel analytics (non-blocking)
         loadChannelAnalytics(username);
@@ -2198,11 +2260,23 @@ async function loadVodsPage() {
 /* ── Clips Page ───────────────────────────────────────────────── */
 async function loadClipsPage() {
     const grid = document.getElementById('clips-grid-page');
+    const pager = document.getElementById('clips-pagination-page');
     if (!grid) return console.error('[Clips] grid element not found');
     grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p>Loading clips...</p></div>';
+    if (pager) { pager.style.display = 'none'; pager.innerHTML = ''; }
     try {
-        const data = await api('/clips');
+        const limit = CLIPS_PAGE_SIZE;
+        const offset = (currentClipsPage - 1) * limit;
+        const data = await api(`/clips?limit=${limit}&offset=${offset}`);
         const clips = data.clips || [];
+        const total = data.total ?? clips.length;
+        const totalPages = Math.max(1, Math.ceil(total / limit));
+
+        if (currentClipsPage > totalPages) {
+            currentClipsPage = totalPages;
+            return loadClipsPage();
+        }
+
         if (!clips.length) {
             grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-scissors fa-3x"></i><p>No public clips yet</p><p class="muted">Viewers can create clips during live streams using the clip button</p></div>';
             return;
@@ -2224,6 +2298,8 @@ async function loadClipsPage() {
                 </div>
             </div>
         `).join('');
+
+        renderVodsPagination('clips-pagination-page', currentClipsPage, total, limit, 'setClipsPage', 'clips');
     } catch (e) {
         console.error('Failed to load clips', e);
         grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation fa-3x"></i><p>Failed to load clips</p><p class="muted">' + esc(e.message || String(e)) + '</p></div>';
