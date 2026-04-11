@@ -403,9 +403,7 @@ function _acOnKeydown(e) {
             if (found && found.query.length >= AC_MIN_QUERY_LEN) {
                 e.preventDefault();
                 _acEvaluate(el);
-                if (_acActive && _acItems.length > 0) {
-                    _acAccept(0);
-                }
+                // Just open the popup — Tab will cycle from here
             }
             return;
         }
@@ -430,11 +428,13 @@ function _acOnKeydown(e) {
         case 'Tab':
             e.preventDefault();
             e.stopPropagation();
-            if (_acSelectedIdx >= 0) {
-                _acAccept(_acSelectedIdx);
-            } else if (_acItems.length > 0) {
-                _acAccept(0);
+            // Cycle forward through items (Shift+Tab goes backward)
+            if (e.shiftKey) {
+                _acSelectedIdx = (_acSelectedIdx - 1 + _acItems.length) % _acItems.length;
+            } else {
+                _acSelectedIdx = (_acSelectedIdx + 1) % _acItems.length;
             }
+            _acRender();
             break;
 
         case 'Enter':
