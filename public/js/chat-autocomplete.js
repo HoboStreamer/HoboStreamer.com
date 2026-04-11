@@ -523,7 +523,8 @@ if (document.readyState === 'loading') {
 }
 
 /* ── Public API ─────────────────────────────────────────────── */
-function acIsActive() { return _acActive; }
+window.acIsActive  = () => _acActive;
+window.acTrackUser = acTrackUser;
 
 /* ── Utility ─────────────────────────────────────────────────── */
 function _escAc(s) {
