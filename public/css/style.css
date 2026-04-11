@@ -506,6 +506,41 @@ main#app { position: relative; z-index: 1; }
 .hero-note i {
     color: var(--accent);
 }
+.hero-philosophy-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: -4px auto 20px;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+}
+.hero-philosophy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(192,150,92,0.28);
+    background: rgba(192,150,92,0.08);
+    color: var(--accent-light);
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+.hero-philosophy-btn:hover {
+    color: #fff;
+    border-color: rgba(192,150,92,0.5);
+    background: rgba(192,150,92,0.16);
+    transform: translateY(-1px);
+}
+.hero-philosophy-link {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+.hero-philosophy-link:hover {
+    color: var(--accent-light);
+}
 .hero-cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 
 .network-hub {
