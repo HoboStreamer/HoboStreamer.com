@@ -249,7 +249,7 @@ let broadcastState = {
     // Settings (persisted to localStorage) — global across all streams
     settings: {
         ttsMode: 'site-wide', ttsVolume: 800, ttsPitch: 100, ttsRate: 10, ttsVoice: '', ttsDuration: 10, ttsNames: 'off', ttsQueue: 5,
-        notificationVolume: 800, forceAudio: 'default', autoGain: true, echoCancellation: true, noiseSuppression: true,
+        notificationVolume: 800, forceAudio: 'default', autoGain: false, echoCancellation: false, noiseSuppression: false,
         manualGainEnabled: false, manualGain: 100, force48kSampleRate: false,
         forceCamera: 'default', broadcastRes: '720', broadcastFps: '30', broadcastCodec: 'auto',
         broadcastBps: '2500', broadcastBpsMin: '500', broadcastLimit: 'restart', screenShare: false,
@@ -1525,9 +1525,11 @@ async function createNewStream() {
     const existingEl = document.getElementById('bc-existing-streams');
     if (existingEl) existingEl.style.display = '';
 
-    // Read device selection from create form (camera mode)
+    // Read device selection from create form (camera mode) and sync to broadcastState
     const createCamera = document.getElementById('bc-create-camera')?.value || 'default';
     const createAudio = document.getElementById('bc-create-audio')?.value || 'default';
+    _syncCameraSelectionUI(createCamera);
+    _syncAudioSelectionUI(createAudio);
 
     // Read screen share device selections
     const screenMicEnabled = document.getElementById('bc-screen-mic-enabled')?.checked ?? true;
@@ -1869,7 +1871,7 @@ async function populateDeviceLists() {
         });
         const preferredCamera = broadcastState.settings.forceCamera || localStorage.getItem('bc-last-camera') || 'default';
         _syncCameraSelectionUI(preferredCamera, { persist: false });
-        if (broadcastState.settings.forceAudio !== 'default') audioSelect.value = broadcastState.settings.forceAudio;
+        _syncAudioSelectionUI(broadcastState.settings.forceAudio || 'default', { persist: false });
         if (tempStream) tempStream.getTracks().forEach(t => t.stop());
     } catch (err) { console.warn('Could not enumerate devices:', err.message); }
 }
@@ -1894,6 +1896,18 @@ function _syncCameraSelectionUI(cameraId, { persist = true } = {}) {
     if (persist) {
         saveBroadcastSettings();
         try { localStorage.setItem('bc-last-camera', normalized); } catch {}
+    }
+}
+
+function _syncAudioSelectionUI(audioId, { persist = true } = {}) {
+    const normalized = audioId || 'default';
+    _setSelectValueIfPresent(document.getElementById('bc-forceAudio'), normalized);
+    _setSelectValueIfPresent(document.getElementById('bc-create-audio'), normalized);
+    _setSelectValueIfPresent(document.getElementById('bc-screen-audio'), normalized);
+    broadcastState.settings.forceAudio = normalized;
+    if (persist) {
+        saveBroadcastSettings();
+        try { localStorage.setItem('bc-last-audio', normalized); } catch {}
     }
 }
 
@@ -2095,12 +2109,9 @@ function _populateCreateDeviceDropdowns(devices) {
             opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
             audioSelect.appendChild(opt);
         });
-        // Restore saved microphone selection
-        const savedMic = localStorage.getItem('bc-last-audio');
-        if (savedMic && audioSelect.querySelector(`option[value="${CSS.escape(savedMic)}"]`)) {
-            audioSelect.value = savedMic;
-        }
-        audioSelect.onchange = () => localStorage.setItem('bc-last-audio', audioSelect.value);
+        // Restore saved microphone selection (unified with broadcastState)
+        _syncAudioSelectionUI(broadcastState.settings.forceAudio || localStorage.getItem('bc-last-audio') || 'default', { persist: false });
+        audioSelect.onchange = () => _syncAudioSelectionUI(audioSelect.value);
     }
 
     // Also populate screen share device selects (same device lists)
@@ -2113,10 +2124,9 @@ function _populateCreateDeviceDropdowns(devices) {
             opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
             screenAudioSelect.appendChild(opt);
         });
-        const savedMic = localStorage.getItem('bc-last-audio');
-        if (savedMic && screenAudioSelect.querySelector(`option[value="${CSS.escape(savedMic)}"]`)) {
-            screenAudioSelect.value = savedMic;
-        }
+        // Sync from unified audio state
+        _syncAudioSelectionUI(broadcastState.settings.forceAudio || 'default', { persist: false });
+        screenAudioSelect.onchange = () => _syncAudioSelectionUI(screenAudioSelect.value);
     }
     const screenCamSelect = document.getElementById('bc-screen-camera');
     if (screenCamSelect) {
@@ -2164,7 +2174,7 @@ function syncSettingsUI() {
     setVal('bc-broadcastBpsMin', s.broadcastBpsMin); setVal('bc-broadcastLimit', s.broadcastLimit);
     setCheck('bc-serverReconnect', s.serverReconnect !== false);
     setVal('bc-allowSounds', s.allowSounds); setVal('bc-soundVolume', s.soundVolume);
-    setVal('bc-forceAudio', s.forceAudio || 'default');
+    _syncAudioSelectionUI(s.forceAudio || 'default', { persist: false });
     setCheck('bc-screenShare', s.screenShare);
     // Screen share capture settings
     setVal('bc-screenCaptureSource', s.screenCaptureSource || 'auto');
@@ -5201,10 +5211,14 @@ function initBroadcastSettingsListeners() {
         if (el) el.addEventListener('input', () => updateBroadcastSetting(key, parseInt(el.value)));
     });
     ['ttsDuration', 'ttsNames', 'ttsQueue', 'ttsMode', 'broadcastLimit', 'broadcastBps', 'broadcastBpsMin',
-     'broadcastRes', 'broadcastFps', 'broadcastCodec', 'forceAudio', 'allowSounds', 'ttsVoice'].forEach(key => {
+     'broadcastRes', 'broadcastFps', 'broadcastCodec', 'allowSounds', 'ttsVoice'].forEach(key => {
         const el = document.getElementById(`bc-${key}`);
         if (el) el.addEventListener('change', () => updateBroadcastSetting(key, el.value));
     });
+    const forceAudioEl = document.getElementById('bc-forceAudio');
+    if (forceAudioEl) {
+        forceAudioEl.addEventListener('change', () => _syncAudioSelectionUI(forceAudioEl.value));
+    }
     const forceCameraEl = document.getElementById('bc-forceCamera');
     if (forceCameraEl) {
         forceCameraEl.addEventListener('change', () => _syncCameraSelectionUI(forceCameraEl.value));
@@ -6153,8 +6167,8 @@ function saveBroadcastSettingsForm() {
             camera: document.getElementById('bc-settings-camera')?.value || 'default',
             microphone: document.getElementById('bc-settings-microphone')?.value || 'default',
             micGain: parseInt(document.getElementById('bc-settings-mic-gain')?.value || 100),
-            echoCancellation: document.getElementById('bc-settings-echo-cancellation')?.checked !== false,
-            noiseSuppression: document.getElementById('bc-settings-noise-suppression')?.checked !== false,
+            echoCancellation: document.getElementById('bc-settings-echo-cancellation')?.checked === true,
+            noiseSuppression: document.getElementById('bc-settings-noise-suppression')?.checked === true,
             resolution: document.getElementById('bc-settings-resolution')?.value || '480p',
             fps: document.getElementById('bc-settings-fps')?.value || '30',
             bitrate: parseInt(document.getElementById('bc-settings-bitrate')?.value || 2500),
@@ -6164,6 +6178,16 @@ function saveBroadcastSettingsForm() {
         };
 
         localStorage.setItem('hobo_broadcast_settings_form', JSON.stringify(settings));
+
+        // Sync settings form values to the live broadcastState so go-live uses them
+        if (settings.microphone) _syncAudioSelectionUI(settings.microphone);
+        if (settings.echoCancellation !== undefined) {
+            broadcastState.settings.echoCancellation = settings.echoCancellation;
+        }
+        if (settings.noiseSuppression !== undefined) {
+            broadcastState.settings.noiseSuppression = settings.noiseSuppression;
+        }
+        saveBroadcastSettings();
 
         // Show save confirmation
         const status = document.getElementById('bc-settings-save-status');
