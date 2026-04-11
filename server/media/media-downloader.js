@@ -127,94 +127,13 @@ function safeParseUrl(raw) {
     }
 }
 
-function getYouTubeId(parsedUrl) {
-    if (!parsedUrl) return null;
-    const hostname = parsedUrl.hostname.replace(/^www\./i, '').toLowerCase();
-    if (hostname === 'youtu.be') {
-        const id = parsedUrl.pathname.slice(1).split('/')[0];
-        return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
-    }
-    if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com')) {
-        if (parsedUrl.pathname === '/watch') {
-            const id = parsedUrl.searchParams.get('v');
-            return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
-        }
-        const match = parsedUrl.pathname.match(/\/(embed|shorts)\/([A-Za-z0-9_-]{11})/);
-        return match ? match[2] : null;
-    }
-    return null;
-}
-
-function getVimeoId(parsedUrl) {
-    if (!parsedUrl) return null;
-    const hostname = parsedUrl.hostname.replace(/^www\./i, '').toLowerCase();
-    if (hostname === 'vimeo.com' || hostname === 'player.vimeo.com') {
-        const match = parsedUrl.pathname.match(/\/(?:video\/)?(\d+)/);
-        return match ? match[1] : null;
-    }
-    return null;
-}
-
-function getEmbedFallbackUrl(rawUrl) {
-    const parsedUrl = safeParseUrl(rawUrl);
-    const ytId = getYouTubeId(parsedUrl);
-    if (ytId) return `https://www.youtube.com/embed/${ytId}?autoplay=1&rel=0`;
-    const vimeoId = getVimeoId(parsedUrl);
-    if (vimeoId) return `https://player.vimeo.com/video/${vimeoId}?autoplay=1`;
-    return null;
-}
-
-async function fallbackInfoFromOEmbed(rawUrl) {
-    const parsedUrl = safeParseUrl(rawUrl);
-    if (!parsedUrl) return null;
-
-    const ytId = getYouTubeId(parsedUrl);
-    if (ytId) {
-        const canonical = `https://www.youtube.com/watch?v=${ytId}`;
-        let meta = null;
-        try {
-            const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(canonical)}&format=json`, {
-                headers: { 'User-Agent': 'HoboStreamer/1.0 media requests' },
-            });
-            if (res.ok) meta = await res.json();
-        } catch {}
-        return {
-            title: meta?.title || `YouTube video ${ytId}`,
-            duration: 0,
-            thumbnail: meta?.thumbnail_url || `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
-            url: canonical,
-            id: ytId,
-            extractor: 'youtube-oembed',
-            isLive: false,
-            uploadDate: '',
-            embedUrl: getEmbedFallbackUrl(canonical),
-        };
-    }
-
-    const vimeoId = getVimeoId(parsedUrl);
-    if (vimeoId) {
-        const canonical = `https://vimeo.com/${vimeoId}`;
-        let meta = null;
-        try {
-            const res = await fetch(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(canonical)}`, {
-                headers: { 'User-Agent': 'HoboStreamer/1.0 media requests' },
-            });
-            if (res.ok) meta = await res.json();
-        } catch {}
-        return {
-            title: meta?.title || `Vimeo video ${vimeoId}`,
-            duration: Number.isFinite(meta?.duration) ? meta.duration : 0,
-            thumbnail: meta?.thumbnail_url || '',
-            url: canonical,
-            id: vimeoId,
-            extractor: 'vimeo-oembed',
-            isLive: false,
-            uploadDate: '',
-            embedUrl: getEmbedFallbackUrl(canonical),
-        };
-    }
-
-    return null;
+function isHlsManifestUrl(rawUrl) {
+    const value = String(rawUrl || '').trim();
+    return !!value && (
+        /\.m3u8(?:$|[?#])/i.test(value) ||
+        /\/api\/manifest\/(?:hls|dash)_playlist\//i.test(value) ||
+        /[?&]mime=application%2Fvnd\.apple\.mpegurl/i.test(value)
+    );
 }
 
 function normalizeUploadDate(raw) {
@@ -295,7 +214,7 @@ async function getInfo(url) {
     ];
     const strategies = [
         [...shared, '--dump-single-json', '--skip-download', url],
-        [...shared, '--dump-single-json', '--skip-download', '--extractor-args', 'youtube:player_client=web', url],
+        [...shared, '--dump-single-json', '--skip-download', '--extractor-args', 'youtube:player_client=web;fetch_pot=auto', url],
         [...shared, '--no-download', '--print', '%(title)s\n%(duration)s\n%(thumbnail)s\n%(webpage_url)s\n%(id)s\n%(extractor)s\n%(is_live)s\n%(upload_date)s', url],
     ];
 
@@ -307,9 +226,6 @@ async function getInfo(url) {
             lastError = err;
         }
     }
-
-    const fallback = await fallbackInfoFromOEmbed(url);
-    if (fallback) return fallback;
 
     throw lastError || new Error('Failed to get video info');
 }
@@ -328,44 +244,59 @@ async function extractStreamUrl(url) {
 
     const cookies = cookieArgs();
     const extra = extraArgs();
+    const baseArgs = [
+        ...commonArgs(),
+        ...cookies,
+        ...extra,
+        '--get-url',
+        '--age-limit', '99',
+        '--geo-bypass',
+        '--no-check-certificates',
+        '--no-playlist',
+        '--no-warnings',
+    ];
     const strategies = [
-        // Best audio+video combined, prefer mp4
-        [...commonArgs(), ...cookies, ...extra, '--format', 'best[ext=mp4]/best[ext=webm]/best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
-        // Lower quality fallback
-        [...commonArgs(), ...cookies, ...extra, '--format', 'worst[ext=mp4]/worst', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', url],
-        // Force generic
-        [...commonArgs(), ...cookies, ...extra, '--format', 'best', '--get-url', '--age-limit', '99', '--geo-bypass', '--no-check-certificates', '--no-playlist', '--no-warnings', '--extractor-args', 'youtube:player_client=web', url],
+        // Prefer progressive MP4/direct URLs first — these are the most browser-friendly.
+        [...baseArgs, '--extractor-args', 'youtube:player_client=web;fetch_pot=auto', '--format', '18/22/best[protocol=https][ext=mp4][acodec!=none][vcodec!=none]/best[protocol=https][acodec!=none][vcodec!=none]/bestaudio[protocol=https][ext=m4a]/bestaudio[protocol=https]/best', url],
+        // Generic direct fallback
+        [...baseArgs, '--extractor-args', 'youtube:player_client=web;fetch_pot=auto', '--format', 'best[ext=mp4]/best[ext=webm]/best', url],
+        // Lowest-quality fallback if the above formats are unavailable
+        [...baseArgs, '--format', 'worst[ext=mp4]/worst', url],
     ];
 
     let lastError = '';
-    for (let i = 0; i < strategies.length; i++) {
+    let manifestCandidate = null;
+    for (const args of strategies) {
         try {
-            const result = await runYtdlp(strategies[i]);
-            const streamUrl = result.split('\n')[0];
-            if (streamUrl && streamUrl.startsWith('http')) {
-                const entry = { streamUrl, expiresAt: Date.now() + URL_CACHE_TTL_MS };
-                urlCache.set(url, entry);
-                return entry;
+            const result = await runYtdlp(args);
+            const streamUrl = result.split('\n').find(line => /^https?:\/\//i.test(line)) || '';
+            if (!streamUrl) continue;
+
+            const entry = {
+                streamUrl,
+                transport: isHlsManifestUrl(streamUrl) ? 'hls' : 'direct',
+                expiresAt: Date.now() + URL_CACHE_TTL_MS,
+            };
+
+            if (entry.transport === 'hls') {
+                manifestCandidate = manifestCandidate || entry;
+                continue;
             }
+
+            urlCache.set(url, entry);
+            return entry;
         } catch (e) {
             lastError = e.message || '';
-            continue;
         }
+    }
+
+    if (manifestCandidate) {
+        urlCache.set(url, manifestCandidate);
+        return manifestCandidate;
     }
 
     // Surface provider-specific error messages
     const lower = lastError.toLowerCase();
-    const embedFallbackUrl = getEmbedFallbackUrl(url);
-    if (embedFallbackUrl && (lower.includes('sign in') || lower.includes('not a bot') || lower.includes('bot') || lower.includes('age') || lower.includes('age-restricted'))) {
-        const entry = {
-            streamUrl: embedFallbackUrl,
-            embedUrl: embedFallbackUrl,
-            transport: 'embed',
-            expiresAt: Date.now() + URL_CACHE_TTL_MS,
-        };
-        urlCache.set(url, entry);
-        return entry;
-    }
     if (lower.includes('sign in') || lower.includes('not a bot') || lower.includes('bot')) {
         throw new Error('YouTube blocked direct server extraction for this video (sign-in/bot check)');
     }
@@ -408,7 +339,8 @@ async function downloadToFile(url, maxDurationSeconds = 600) {
             ...commonArgs(),
             ...cookieArgs(),
             ...extraArgs(),
-            '--format', 'best[ext=mp4][filesize<200M]/best[ext=mp4]/best[filesize<200M]/best',
+            '--extractor-args', 'youtube:player_client=web;fetch_pot=auto',
+            '--format', '18/22/best[ext=mp4][acodec!=none][vcodec!=none][filesize<200M]/best[ext=mp4][filesize<200M]/best[filesize<200M]/best',
             '--output', filePath,
             '--no-playlist',
             '--age-limit', '99',

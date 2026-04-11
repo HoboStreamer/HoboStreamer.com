@@ -162,14 +162,12 @@ class MediaQueue {
             this.broadcastQueueUpdate(request.streamer_id);
 
             const extracted = await downloader.extractStreamUrl(request.canonical_url);
-            const resolvedUrl = extracted?.streamUrl || extracted?.embedUrl || request.embed_url || null;
+            const resolvedUrl = extracted?.streamUrl || null;
             db.updateMediaRequest(requestId, {
                 stream_url: resolvedUrl,
-                embed_url: request.embed_url || extracted?.embedUrl || null,
+                embed_url: null,
                 download_status: resolvedUrl ? 'ready' : 'failed',
-                last_error: extracted?.transport === 'embed'
-                    ? 'Direct extraction was blocked; using embedded playback instead.'
-                    : null,
+                last_error: null,
             });
             this.broadcastQueueUpdate(request.streamer_id);
             return db.getMediaRequestById(requestId);
@@ -178,18 +176,9 @@ class MediaQueue {
             try {
                 return await this.downloadFileForRequest(requestId);
             } catch (downloadErr) {
-                if (request.embed_url && ['youtube', 'vimeo'].includes(request.provider)) {
-                    db.updateMediaRequest(requestId, {
-                        stream_url: request.embed_url,
-                        embed_url: request.embed_url,
-                        download_status: 'ready',
-                        last_error: `Server-side extraction was blocked (${err.message}). Using embedded playback instead.`,
-                    });
-                    this.broadcastQueueUpdate(request.streamer_id);
-                    return db.getMediaRequestById(requestId);
-                }
                 db.updateMediaRequest(requestId, {
                     stream_url: null,
+                    embed_url: null,
                     download_status: 'failed',
                     last_error: `Extraction failed: ${err.message}. Download fallback failed: ${downloadErr.message}`,
                 });
@@ -392,7 +381,6 @@ class MediaQueue {
     /**
      * Normalize user input into a canonical media request.
      * Uses yt-dlp for metadata when available (title, duration, thumbnail).
-     * Falls back to oEmbed API if yt-dlp not installed.
      */
     async normalizeInput(rawInput, settings) {
         let url;
@@ -417,25 +405,24 @@ class MediaQueue {
                     const info = await downloader.getInfo(canonical);
                     return {
                         canonical_url: canonical,
-                        embed_url: `https://www.youtube.com/embed/${ytId}?autoplay=1&rel=0`,
+                        embed_url: null,
                         provider: 'youtube',
                         title: info.title || `YouTube video ${ytId}`,
                         thumbnail_url: info.thumbnail || `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
                         duration_seconds: info.duration || null,
                         isLive: info.isLive || false,
                     };
-                } catch {
-                    // Fall through to oEmbed fallback
+                } catch (err) {
+                    console.warn(`[MediaQueue] YouTube metadata probe failed for ${canonical}:`, err.message);
                 }
             }
 
-            const meta = await this.fetchOEmbed(`https://www.youtube.com/oembed?url=${encodeURIComponent(canonical)}&format=json`);
             return {
                 canonical_url: canonical,
-                embed_url: `https://www.youtube.com/embed/${ytId}?autoplay=1&rel=0`,
+                embed_url: null,
                 provider: 'youtube',
-                title: meta?.title || `YouTube video ${ytId}`,
-                thumbnail_url: meta?.thumbnail_url || `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
+                title: `YouTube video ${ytId}`,
+                thumbnail_url: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
                 duration_seconds: null,
                 isLive: false,
             };
@@ -455,26 +442,25 @@ class MediaQueue {
                     const info = await downloader.getInfo(canonical);
                     return {
                         canonical_url: canonical,
-                        embed_url: `https://player.vimeo.com/video/${videoId}?autoplay=1`,
+                        embed_url: null,
                         provider: 'vimeo',
                         title: info.title || `Vimeo video ${videoId}`,
                         thumbnail_url: info.thumbnail || null,
                         duration_seconds: info.duration || null,
                         isLive: info.isLive || false,
                     };
-                } catch {
-                    // Fall through to oEmbed
+                } catch (err) {
+                    console.warn(`[MediaQueue] Vimeo metadata probe failed for ${canonical}:`, err.message);
                 }
             }
 
-            const meta = await this.fetchOEmbed(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(canonical)}`);
             return {
                 canonical_url: canonical,
-                embed_url: `https://player.vimeo.com/video/${videoId}?autoplay=1`,
+                embed_url: null,
                 provider: 'vimeo',
-                title: meta?.title || `Vimeo video ${videoId}`,
-                thumbnail_url: meta?.thumbnail_url || null,
-                duration_seconds: Number.isFinite(meta?.duration) ? meta.duration : null,
+                title: `Vimeo video ${videoId}`,
+                thumbnail_url: null,
+                duration_seconds: null,
                 isLive: false,
             };
         }
@@ -484,7 +470,7 @@ class MediaQueue {
             if (!settings.allow_direct_media) throw new Error('Direct media requests are disabled for this channel');
             return {
                 canonical_url: href,
-                embed_url: href,
+                embed_url: null,
                 provider: 'audio',
                 title: this.filenameTitle(url.pathname),
                 thumbnail_url: null,
@@ -498,7 +484,7 @@ class MediaQueue {
             if (!settings.allow_direct_media) throw new Error('Direct media requests are disabled for this channel');
             return {
                 canonical_url: href,
-                embed_url: href,
+                embed_url: null,
                 provider: 'video',
                 title: this.filenameTitle(url.pathname),
                 thumbnail_url: null,
@@ -548,16 +534,6 @@ class MediaQueue {
     filenameTitle(pathname) {
         const last = decodeURIComponent((pathname || '').split('/').pop() || 'Media request');
         return last.replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ').trim() || 'Media request';
-    }
-
-    async fetchOEmbed(url) {
-        try {
-            const res = await fetch(url, { headers: { 'User-Agent': 'HoboStreamer/1.0 media requests' } });
-            if (!res.ok) return null;
-            return await res.json();
-        } catch {
-            return null;
-        }
     }
 
     broadcastNowPlaying(streamerId, request) {
