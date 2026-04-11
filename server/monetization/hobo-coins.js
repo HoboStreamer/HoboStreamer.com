@@ -143,7 +143,7 @@ class HoboCoins {
 
         // Check user has enough coins
         if (!db.deductHoboCoins(userId, reward.cost)) {
-            throw new Error('Not enough Hobo Coins');
+            throw new Error('Not enough Hobo Nickels');
         }
 
         // Check per-user cooldown

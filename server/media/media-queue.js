@@ -112,7 +112,7 @@ class MediaQueue {
             const costDesc = settings.cost_mode === 'per_minute'
                 ? `${settings.cost_per_minute} coins/min`
                 : `${cost} coins`;
-            throw new Error(`Not enough Hobo Coins. This channel charges ${costDesc} per request.`);
+            throw new Error(`Not enough Hobo Nickels. This channel charges ${costDesc} per request.`);
         }
 
         const queuePosition = db.getMediaRequestMaxQueuePosition(streamerId) + 1;

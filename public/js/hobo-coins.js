@@ -39,7 +39,7 @@ function stopCoinHeartbeat() {
 }
 
 function showCoinToast(earned, total) {
-    toast(`+${earned} Hobo Coins earned!`, 'success');
+    toast(`+${earned} Hobo Nickels earned!`, 'success');
 }
 
 // ── Rewards Panel Toggle ─────────────────────────────────────
@@ -120,7 +120,7 @@ function showRedeemModal(rewardId, title, cost) {
     const content = document.getElementById('modal-content');
     content.innerHTML = `
         <h3><i class="fa-solid fa-gem"></i> ${esc(title)}</h3>
-        <p class="muted" style="margin-bottom:12px">Cost: <strong>${cost.toLocaleString()} Hobo Coins</strong></p>
+        <p class="muted" style="margin-bottom:12px">Cost: <strong>${cost.toLocaleString()} Hobo Nickels</strong></p>
         <div class="form-group">
             <label>Your Message</label>
             <input type="text" id="modal-redeem-input" class="form-input" placeholder="Type your message..." maxlength="200">
@@ -165,7 +165,7 @@ function handleCoinEarned(msg) {
 function renderRedemption(msg, container) {
     const el = document.createElement('div');
     el.className = 'chat-msg redemption';
-    el.innerHTML = `<i class="fa-solid fa-gem" style="color:${esc(msg.reward_color || 'var(--accent)')}"></i> <strong>${esc(msg.username || 'Someone')}</strong> redeemed <strong>${esc(msg.reward_title || 'a reward')}</strong>${msg.user_input ? `: ${esc(msg.user_input)}` : ''} <span class="muted">(${(msg.cost || 0).toLocaleString()} coins)</span>`;
+    el.innerHTML = `<i class="fa-solid fa-gem" style="color:${esc(msg.reward_color || 'var(--accent)')}"></i> <strong>${esc(msg.username || 'Someone')}</strong> redeemed <strong>${esc(msg.reward_title || 'a reward')}</strong>${msg.user_input ? `: ${esc(msg.user_input)}` : ''} <span class="muted">(${(msg.cost || 0).toLocaleString()} nickels)</span>`;
     container.appendChild(el);
     container.scrollTop = container.scrollHeight;
 }
@@ -173,8 +173,8 @@ function renderRedemption(msg, container) {
 // ── Add Reward Modal (Dashboard) ─────────────────────────────
 function addRewardModal() {
     return `
-        <h3><i class="fa-solid fa-gift"></i> Add Coin Reward</h3>
-        <p class="muted" style="margin-bottom:12px">Create a reward viewers can redeem with Hobo Coins</p>
+        <h3><i class="fa-solid fa-gift"></i> Add Hobo Nickels Reward</h3>
+        <p class="muted" style="margin-bottom:12px">Create a reward viewers can redeem with Hobo Nickels</p>
         <div class="form-group">
             <label>Reward Title</label>
             <input type="text" id="modal-reward-title" class="form-input" placeholder="e.g. Play Theme Song">
@@ -184,7 +184,7 @@ function addRewardModal() {
             <input type="text" id="modal-reward-desc" class="form-input" placeholder="What happens when redeemed?">
         </div>
         <div class="form-group">
-            <label>Cost (Hobo Coins)</label>
+            <label>Cost (Hobo Nickels)</label>
             <input type="number" id="modal-reward-cost" class="form-input" placeholder="100" min="1" value="100">
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">

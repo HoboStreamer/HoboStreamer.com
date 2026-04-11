@@ -362,7 +362,7 @@ function initDb() {
                 ['site_description', 'Live streaming for camp culture', 'Site description / tagline', 'string'],
                 ['motd', '', 'Message of the day shown on homepage', 'string'],
                 ['min_cashout_amount', '500', 'Minimum Hobo Bucks for cashout', 'number'],
-                ['coins_per_minute', '10', 'Hobo Coins earned per minute watching', 'number'],
+                ['coins_per_minute', '10', 'Hobo Nickels earned per minute watching', 'number'],
                 ['chat_slowmode_seconds', '0', 'Global chat slow mode (0=off)', 'number'],
                 ['max_emotes_per_user', '25', 'Max custom emotes per user', 'number'],
                 ['nsfw_enabled', 'true', 'Allow NSFW streams', 'boolean'],

@@ -862,8 +862,8 @@ function buyWithCoins(userId, itemId) {
     const item = ITEMS[itemId];
     if (!item || !item.coinPrice) return { error: 'Not for coin sale' };
     const user = db.getUserById(userId);
-    if (!user || user.hobo_coins_balance < item.coinPrice) return { error: 'Not enough Hobo Coins' };
-    if (!db.deductHoboCoins(userId, item.coinPrice)) return { error: 'Not enough Hobo Coins' };
+    if (!user || user.hobo_coins_balance < item.coinPrice) return { error: 'Not enough Hobo Nickels' };
+    if (!db.deductHoboCoins(userId, item.coinPrice)) return { error: 'Not enough Hobo Nickels' };
     addItem(userId, itemId, 1);
     return { success: true, item: { id: itemId, ...item }, cost: item.coinPrice };
 }
