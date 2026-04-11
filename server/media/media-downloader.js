@@ -86,7 +86,8 @@ function checkPotProvider() {
             const providers = [];
             const providerMatch = log.match(/\[pot\] PO Token Providers: (.+)/);
             if (providerMatch) {
-                providers.push(...providerMatch[1].split(',').map(s => s.trim()));
+                // Split on ", " only when followed by a provider name (not inside parentheses)
+                providers.push(...providerMatch[1].split(/,\s+(?=[a-z])/).map(s => s.trim()));
             }
             const hasExternal = providers.some(p => p.includes('external') && !p.includes('unavailable'));
             resolve({ providers, hasExternal });
