@@ -5551,6 +5551,8 @@ let _mediaPipState = null;     // { now_playing, queue, settings }
 let _mediaPipPollTimer = null;
 let _mediaPipSocket = null;
 let _mediaPipCurrentId = null;
+let _mediaPipHls = null;
+const _mediaPipScriptPromises = new Map();
 
 function toggleMediaPip() {
     const panel = document.getElementById('bc-media-pip');
@@ -5638,6 +5640,78 @@ function _escPip(s) {
     return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 
+function _loadMediaPipScriptOnce(src) {
+    if (!src) return Promise.reject(new Error('Missing script URL'));
+    if (_mediaPipScriptPromises.has(src)) return _mediaPipScriptPromises.get(src);
+
+    const promise = new Promise((resolve, reject) => {
+        const key = encodeURIComponent(src);
+        const existing = document.querySelector(`script[data-external-src="${key}"]`);
+        if (existing) {
+            if (existing.dataset.loaded === 'true') return resolve();
+            existing.addEventListener('load', () => resolve(), { once: true });
+            existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.dataset.externalSrc = key;
+        script.onload = () => {
+            script.dataset.loaded = 'true';
+            resolve();
+        };
+        script.onerror = () => reject(new Error(`Failed to load ${src}`));
+        document.head.appendChild(script);
+    });
+
+    _mediaPipScriptPromises.set(src, promise);
+    return promise;
+}
+
+function _isMediaPipHlsUrl(url) {
+    const value = String(url || '');
+    return /\.m3u8(?:$|[?#])/i.test(value) || /\/api\/manifest\/(?:hls|dash)_playlist\//i.test(value);
+}
+
+async function _attachMediaPipSource(media, url) {
+    if (!_isMediaPipHlsUrl(url)) {
+        media.src = url;
+        return;
+    }
+
+    if (media.canPlayType('application/vnd.apple.mpegurl')) {
+        media.src = url;
+        return;
+    }
+
+    await _loadMediaPipScriptOnce('https://cdn.jsdelivr.net/npm/hls.js@latest');
+    if (typeof Hls === 'undefined' || !Hls.isSupported()) {
+        throw new Error('HLS playback is not supported in this browser');
+    }
+
+    if (_mediaPipHls) {
+        try { _mediaPipHls.destroy(); } catch {}
+        _mediaPipHls = null;
+    }
+
+    _mediaPipHls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 30,
+    });
+    _mediaPipHls.loadSource(url);
+    _mediaPipHls.attachMedia(media);
+    _mediaPipHls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data?.fatal) {
+            try { _mediaPipHls.destroy(); } catch {}
+            _mediaPipHls = null;
+            media.dispatchEvent(new Event('error'));
+        }
+    });
+}
+
 async function _loadMediaPipPlayer(request) {
     const host = document.getElementById('bc-media-pip-host');
     const empty = document.getElementById('bc-media-pip-empty');
@@ -5645,36 +5719,20 @@ async function _loadMediaPipPlayer(request) {
     _destroyMediaPipPlayer();
 
     let url = request.stream_url;
-    let embedUrl = request.embed_url || null;
     if (!url || request.download_status !== 'ready') {
         try {
             const data = await api(`/media/queue/${request.id}/stream-url`);
             url = data?.stream_url || null;
-            embedUrl = data?.embed_url || embedUrl;
         } catch {
             url = null;
         }
     }
 
-    const playUrl = url || embedUrl;
-    const useEmbed = !!embedUrl && (!url || url === embedUrl || /youtube\.com\/embed|youtube-nocookie\.com\/embed|player\.vimeo\.com\/video/i.test(playUrl));
+    const playUrl = url;
 
     if (!playUrl) {
         empty.style.display = '';
         empty.querySelector('span').textContent = 'Server is still preparing this media';
-        loading.style.display = 'none';
-        return;
-    }
-
-    if (useEmbed) {
-        const iframe = document.createElement('iframe');
-        iframe.src = embedUrl;
-        iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-        iframe.allowFullscreen = true;
-        iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-        iframe.style.cssText = 'width:100%;height:100%;display:block;border:0;background:#000';
-        host.appendChild(iframe);
-        empty.style.display = 'none';
         loading.style.display = 'none';
         return;
     }
@@ -5692,13 +5750,25 @@ async function _loadMediaPipPlayer(request) {
 
     host.appendChild(media);
     empty.style.display = 'none';
+
+    try {
+        await _attachMediaPipSource(media, playUrl);
+    } catch (err) {
+        console.warn('[MediaPip] player attach error:', err.message);
+        empty.style.display = '';
+        empty.querySelector('span').textContent = err.message || 'Media failed to load';
+    }
     loading.style.display = 'none';
 }
 
 function _destroyMediaPipPlayer() {
+    if (_mediaPipHls) {
+        try { _mediaPipHls.destroy(); } catch {}
+        _mediaPipHls = null;
+    }
     const host = document.getElementById('bc-media-pip-host');
     if (!host) return;
-    const el = host.querySelector('video, audio, iframe');
+    const el = host.querySelector('video, audio');
     if (el) {
         try { el.pause?.(); } catch {}
         el.remove();

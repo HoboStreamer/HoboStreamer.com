@@ -23,8 +23,10 @@ let mpMedia = null;           // <video> or <audio> element
 let mpCurrentRequestId = null;
 let mpPositionSaveTimer = null;
 let mpRetryCount = 0;
+let mpHls = null;
 const MP_MAX_RETRIES = 2;
 const MP_POSITION_SAVE_INTERVAL = 5000;
+const mpExternalScriptPromises = new Map();
 
 // ── Helpers ─────────────────────────────────────────────────
 function mpUsername() {
@@ -64,6 +66,78 @@ function formatDuration(sec) {
     const m = Math.floor(sec / 60);
     const s = sec % 60;
     return s > 0 ? `${m}m${s}s` : `${m}m`;
+}
+
+function mpLoadExternalScriptOnce(src) {
+    if (!src) return Promise.reject(new Error('Missing script URL'));
+    if (mpExternalScriptPromises.has(src)) return mpExternalScriptPromises.get(src);
+
+    const promise = new Promise((resolve, reject) => {
+        const key = encodeURIComponent(src);
+        const existing = document.querySelector(`script[data-external-src="${key}"]`);
+        if (existing) {
+            if (existing.dataset.loaded === 'true') return resolve();
+            existing.addEventListener('load', () => resolve(), { once: true });
+            existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.dataset.externalSrc = key;
+        script.onload = () => {
+            script.dataset.loaded = 'true';
+            resolve();
+        };
+        script.onerror = () => reject(new Error(`Failed to load ${src}`));
+        document.head.appendChild(script);
+    });
+
+    mpExternalScriptPromises.set(src, promise);
+    return promise;
+}
+
+function mpIsHlsUrl(url) {
+    const value = String(url || '');
+    return /\.m3u8(?:$|[?#])/i.test(value) || /\/api\/manifest\/(?:hls|dash)_playlist\//i.test(value);
+}
+
+async function mpAttachSource(media, url) {
+    if (!mpIsHlsUrl(url)) {
+        media.src = url;
+        return;
+    }
+
+    if (media.canPlayType('application/vnd.apple.mpegurl')) {
+        media.src = url;
+        return;
+    }
+
+    await mpLoadExternalScriptOnce('https://cdn.jsdelivr.net/npm/hls.js@latest');
+    if (typeof Hls === 'undefined' || !Hls.isSupported()) {
+        throw new Error('HLS playback is not supported in this browser');
+    }
+
+    if (mpHls) {
+        try { mpHls.destroy(); } catch {}
+        mpHls = null;
+    }
+
+    mpHls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 30,
+    });
+    mpHls.loadSource(url);
+    mpHls.attachMedia(media);
+    mpHls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data?.fatal) {
+            try { mpHls.destroy(); } catch {}
+            mpHls = null;
+            media.dispatchEvent(new Event('error'));
+        }
+    });
 }
 
 // ── Init ────────────────────────────────────────────────────
@@ -182,14 +256,12 @@ async function loadPlayer(request) {
 
     // Try to get a stream URL from the server
     let streamUrl = request.stream_url;
-    let embedUrl = request.embed_url || null;
     let lastError = '';
     if (!streamUrl || request.download_status !== 'ready') {
         document.getElementById('mp-loading-text').textContent = 'Preparing server-side media…';
         try {
             const data = await mpApi(`/api/media/queue/${request.id}/stream-url`);
             streamUrl = data.stream_url;
-            embedUrl = data.embed_url || embedUrl;
             lastError = data.last_error || '';
             // If still extracting, poll until ready
             if (data.download_status !== 'ready' && data.download_status !== 'failed') {
@@ -201,29 +273,12 @@ async function loadPlayer(request) {
         }
     }
 
-    const playUrl = streamUrl || embedUrl;
-    const useEmbed = !!embedUrl && (!streamUrl || streamUrl === embedUrl || /youtube\.com\/embed|youtube-nocookie\.com\/embed|player\.vimeo\.com\/video/i.test(playUrl));
+    const playUrl = streamUrl;
 
     if (!playUrl) {
         const msg = lastError || 'Server could not prepare a playable media file for this request.';
         showError(msg);
         if (mpOwner) reportFailure(request.id, msg);
-        return;
-    }
-
-    if (useEmbed) {
-        const iframe = document.createElement('iframe');
-        iframe.src = embedUrl;
-        iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-        iframe.allowFullscreen = true;
-        iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-        iframe.style.cssText = 'width:100%;height:100%;display:block;border:0;background:#000;';
-        const existingMedia = host.querySelector('video, audio, iframe');
-        if (existingMedia) existingMedia.remove();
-        host.appendChild(iframe);
-        loading.hidden = true;
-        controls.hidden = true;
-        mpMedia = null;
         return;
     }
 
@@ -300,10 +355,19 @@ async function loadPlayer(request) {
     });
 
     // Clear old content and insert
-    const existingMedia = host.querySelector('video, audio, iframe');
+    const existingMedia = host.querySelector('video, audio');
     if (existingMedia) existingMedia.remove();
     host.appendChild(media);
     mpMedia = media;
+
+    try {
+        await mpAttachSource(media, playUrl);
+    } catch (attachErr) {
+        const msg = attachErr?.message || 'Media failed to load';
+        showError(msg);
+        if (mpOwner) reportFailure(request.id, msg);
+        return;
+    }
 
     // Start position save timer
     startPositionSave(request.id);
@@ -311,9 +375,13 @@ async function loadPlayer(request) {
 
 function destroyPlayer() {
     stopPositionSave();
+    if (mpHls) {
+        try { mpHls.destroy(); } catch {}
+        mpHls = null;
+    }
     const host = document.getElementById('mp-player-host');
     if (host) {
-        const el = host.querySelector('video, audio, iframe');
+        const el = host.querySelector('video, audio');
         if (el) {
             try { el.pause(); } catch {}
             el.remove();
