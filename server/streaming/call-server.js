@@ -19,7 +19,7 @@
 
 const WebSocket = require('ws');
 const db = require('../db/database');
-const { verifyToken } = require('../auth/auth');
+const { extractWsToken, authenticateWs } = require('../auth/auth');
 const permissions = require('../auth/permissions');
 const chatServer = require('../chat/chat-server');
 const cosmetics = require('../monetization/cosmetics');
@@ -164,7 +164,7 @@ class CallServer {
     _handleConnection(ws, req) {
         const url = new URL(req.url, 'http://localhost');
         const channelId = url.searchParams.get('channelId') || url.searchParams.get('streamId');
-        const token = url.searchParams.get('token') || null;
+        const token = extractWsToken(req);
         const ip = chatServer.normalizeIp(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress);
 
         ws.isAlive = true;
@@ -185,8 +185,7 @@ class CallServer {
             if (!stream || !stream.is_live) { ws.send(JSON.stringify({ type: 'error', message: 'Stream not live' })); ws.close(); return; }
         }
 
-        let user = null;
-        if (token) { try { const d = verifyToken(token); if (d?.id) user = db.getUserById(d.id); } catch {} }
+        const user = authenticateWs(token);
 
         const peerId = this._generatePeerId();
         const anonId = user ? null : chatServer.getAnonIdForConnection(ip, resolvedId);
@@ -271,8 +270,17 @@ class CallServer {
             }
             case 'auth-update': {
                 const c = room.get(peerId); if (!c) break;
-                let user = null;
-                if (typeof msg.token === 'string') { try { const d = verifyToken(msg.token); if (d?.id) user = db.getUserById(d.id); } catch (err) { console.warn('[Call] auth-update token verify failed for peer', peerId, ':', err.message); } }
+                let user = c.user || null;
+                if (typeof msg.token === 'string' && msg.token.trim()) {
+                    const nextUser = authenticateWs(msg.token);
+                    if (!nextUser) {
+                        console.warn('[Call] auth-update rejected for peer', peerId, '(invalid or expired token)');
+                    } else if (user && user.id !== nextUser.id) {
+                        console.warn(`[Call] auth-update identity mismatch for peer ${peerId}: keeping existing user ${user.username}, ignoring ${nextUser.username}`);
+                    } else {
+                        user = nextUser;
+                    }
+                }
                 if (user && this.callBans.has(channelId) && this.callBans.get(channelId).has(user.id)) {
                     if (c.ws.readyState === WebSocket.OPEN) { c.ws.send(JSON.stringify({ type: 'error', message: 'Banned' })); c.ws.close(); } break;
                 }

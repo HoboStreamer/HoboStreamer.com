@@ -14,7 +14,7 @@
  */
 const { EventEmitter } = require('events');
 const WebSocket = require('ws');
-const { authenticateWs } = require('../auth/auth');
+const { extractWsToken, authenticateWs } = require('../auth/auth');
 const db = require('../db/database');
 const webrtcSFU = require('./webrtc-sfu');
 const config = require('../config');
@@ -105,7 +105,7 @@ class BroadcastServer extends EventEmitter {
 
     handleConnection(ws, req) {
         const url = new URL(req.url, 'http://localhost');
-        const token = url.searchParams.get('token');
+        const token = extractWsToken(req);
         const streamId = parseInt(url.searchParams.get('streamId'));
         const role = url.searchParams.get('role') || 'viewer'; // 'broadcaster' or 'viewer'
 
