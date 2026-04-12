@@ -2095,29 +2095,51 @@ function activateChannelStream(stream) {
         document.getElementById('ch-stream-title').textContent = stream.title || 'Untitled Stream';
         const container = document.getElementById('video-container');
         if (container) {
-            container.innerHTML = `
-                <div class="stream-nsfw-gate" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:60px 20px;min-height:400px;background:var(--bg-secondary);border-radius:var(--radius);">
-                    <i class="fa-solid fa-triangle-exclamation" style="font-size:3rem;color:var(--warning, #f39c12);margin-bottom:16px;"></i>
-                    <h2 style="margin:0 0 8px">NSFW Content (18+)</h2>
-                    <p style="color:var(--text-secondary);max-width:400px;">This stream has been marked as containing content that may not be suitable for all audiences. You must be 18 or older to view.</p>
-                    <div style="display:flex;gap:12px;margin-top:20px;">
-                        <button class="btn btn-outline" onclick="navigate('/')">Go Back</button>
-                        <button class="btn btn-primary" id="nsfw-stream-continue-btn">I'm 18+ — Continue</button>
+            const existingGate = container.querySelector('#stream-nsfw-gate-overlay');
+            if (existingGate) existingGate.remove();
+
+            container.classList.add('nsfw-gated');
+
+            const gate = document.createElement('div');
+            gate.id = 'stream-nsfw-gate-overlay';
+            gate.className = 'stream-nsfw-gate-overlay';
+            gate.innerHTML = `
+                <div class="stream-nsfw-gate-card">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <h2>NSFW Content (18+)</h2>
+                    <p>This stream has been marked as containing content that may not be suitable for all audiences. You must be 18 or older to view.</p>
+                    <div class="stream-nsfw-gate-actions">
+                        <button class="btn btn-outline" id="nsfw-stream-back-btn">Go Back</button>
+                        <button class="btn btn-primary" id="nsfw-stream-continue-btn">I'm 18+ - Continue</button>
                     </div>
                 </div>`;
-            document.getElementById('nsfw-stream-continue-btn').addEventListener('click', () => {
-                sessionStorage.setItem('nsfw-ok-stream-' + stream.id, '1');
-                // Restore video container and activate stream
-                container.innerHTML = `
-                    <div class="video-placeholder"><i class="fa-solid fa-satellite-dish fa-3x"></i><p>Connecting to stream...</p></div>
-                    <div class="stream-switch-overlay" id="stream-switch-overlay"><div class="stream-switch-spinner"></div><p>Switching stream…</p></div>
-                    <canvas id="video-canvas"></canvas>
-                    <video id="video-element" autoplay playsinline></video>
-                    <div class="video-overlay" id="video-overlay"></div>`;
-                activateChannelStream(stream);
-            });
+            container.appendChild(gate);
+
+            const backBtn = gate.querySelector('#nsfw-stream-back-btn');
+            const continueBtn = gate.querySelector('#nsfw-stream-continue-btn');
+            if (backBtn) backBtn.addEventListener('click', () => navigate('/'));
+            if (continueBtn) {
+                continueBtn.addEventListener('click', () => {
+                    sessionStorage.setItem('nsfw-ok-stream-' + stream.id, '1');
+                    gate.remove();
+                    container.classList.remove('nsfw-gated');
+                    activateChannelStream(stream);
+                });
+            }
+
+            if (typeof destroyPlayer === 'function') {
+                try { destroyPlayer(); } catch { /* ignore */ }
+            }
+            startStreamStatusPoll(stream);
         }
         return;
+    }
+
+    const container = document.getElementById('video-container');
+    if (container) {
+        const existingGate = container.querySelector('#stream-nsfw-gate-overlay');
+        if (existingGate) existingGate.remove();
+        container.classList.remove('nsfw-gated');
     }
 
     // Avoid no-op reactivation of same stream (prevents double-init bugs)
@@ -2136,8 +2158,16 @@ function activateChannelStream(stream) {
         chDescEl.style.display = desc ? '' : 'none';
     }
     // Always destroy before init to prevent stale player state
-    if (typeof destroyPlayer === 'function') destroyPlayer();
-    if (typeof initPlayer === 'function') initPlayer(stream);
+    if (typeof destroyPlayer === 'function') {
+        try { destroyPlayer(); } catch (e) { console.warn('[Player] destroy failed', e); }
+    }
+    if (typeof initPlayer === 'function') {
+        try {
+            initPlayer(stream);
+        } catch (e) {
+            console.error('[Player] init failed', e);
+        }
+    }
     if (typeof initChat === 'function') initChat(stream.id);
     if (typeof loadStreamControls === 'function') loadStreamControls(stream.id);
     if (typeof startCoinHeartbeat === 'function') startCoinHeartbeat(stream.id);
