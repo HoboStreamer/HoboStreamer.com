@@ -256,7 +256,7 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 aggressive_filter: !!document.getElementById(`dash-mod-filter-${channelId}`)?.checked,
                 slur_filter_enabled: !!document.getElementById(`dash-mod-slur-enabled-${channelId}`)?.checked,
                 slur_filter_use_builtin: !!document.getElementById(`dash-mod-slur-builtin-${channelId}`)?.checked,
-                slur_filter_disabled_categories: JSON.stringify(
+                slur_filter_disabled_categories: (
                     ['n_word', 'antisemitic', 'homophobic', 'racial'].filter(
                         (k) => !document.getElementById(`dash-mod-slur-cat-${k}-${channelId}`)?.checked
                     )

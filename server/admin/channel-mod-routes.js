@@ -199,7 +199,10 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
             slur_filter_disabled_categories: req.body.slur_filter_disabled_categories !== undefined
                 ? (() => {
                     const VALID_CATS = new Set(['n_word', 'antisemitic', 'homophobic', 'racial']);
-                    const val = req.body.slur_filter_disabled_categories;
+                    let val = req.body.slur_filter_disabled_categories;
+                    if (typeof val === 'string') {
+                        try { val = JSON.parse(val); } catch { val = []; }
+                    }
                     if (!Array.isArray(val)) return '[]';
                     return JSON.stringify(val.filter((k) => typeof k === 'string' && VALID_CATS.has(k)));
                 })() : undefined,
