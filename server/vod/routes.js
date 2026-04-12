@@ -513,6 +513,19 @@ router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), a
             return res.status(403).json({ error: 'Not your stream' });
         }
 
+        const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id);
+        if (!vodPolicy.recordingEnabled) {
+            cleanupTempFile(req.file.path);
+            if (db.getActiveVodByStream(streamId)) {
+                finalizeVodRecording(streamId).catch(() => {});
+            }
+            return res.status(403).json({
+                error: vodPolicy.forcedDisabled
+                    ? 'VOD recording is disabled by admin for this channel'
+                    : 'VOD recording is disabled for this channel',
+            });
+        }
+
         let rec = activeRecordings.get(streamId);
 
         if (!rec) {
@@ -607,6 +620,16 @@ router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), a
 router.post('/stream/:streamId/finalize', requireAuth, async (req, res) => {
     try {
         const streamId = parseInt(req.params.streamId);
+        const stream = db.getStreamById(streamId);
+        if (!stream) return res.status(404).json({ error: 'Stream not found' });
+        if (stream.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Not your stream' });
+        }
+
+        const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id);
+        if (!vodPolicy.recordingEnabled && !db.getActiveVodByStream(streamId)) {
+            return res.status(404).json({ error: 'No active recording for this stream' });
+        }
 
         const result = await finalizeVodRecording(streamId);
         if (!result) return res.status(404).json({ error: 'No active recording for this stream' });

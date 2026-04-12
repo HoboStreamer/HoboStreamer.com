@@ -101,6 +101,14 @@ async function loadSettingsBroadcaster() {
         if (ch) {
             setVal('set-default-vod-visibility', ch.default_vod_visibility || 'public');
             setVal('set-default-clip-visibility', ch.default_clip_visibility || 'public');
+            setCheck('set-vod-recording-enabled', ch.vod_recording_enabled !== 0 && ch.force_vod_recording_disabled !== 1);
+            const vodToggle = document.getElementById('set-vod-recording-enabled');
+            if (vodToggle) {
+                vodToggle.disabled = ch.force_vod_recording_disabled === 1;
+                vodToggle.title = ch.force_vod_recording_disabled === 1
+                    ? 'VOD recording is force-disabled by admin for this channel'
+                    : '';
+            }
             setVal('set-weather-zip', ch.weather_zip || '');
             setVal('set-weather-detail', ch.weather_detail || 'basic');
             setCheck('set-weather-show-location', !!ch.weather_show_location);
@@ -124,12 +132,14 @@ function saveSettingsBroadcaster() {
     // Save VOD/clip visibility defaults + weather settings to channel
     const vodVis = document.getElementById('set-default-vod-visibility')?.value;
     const clipVis = document.getElementById('set-default-clip-visibility')?.value;
+    const vodRecordingEnabled = document.getElementById('set-vod-recording-enabled')?.checked;
     const weatherZip = document.getElementById('set-weather-zip')?.value;
     const weatherDetail = document.getElementById('set-weather-detail')?.value;
     {
         const body = {};
         if (vodVis) body.default_vod_visibility = vodVis;
         if (clipVis) body.default_clip_visibility = clipVis;
+        if (vodRecordingEnabled !== undefined) body.vod_recording_enabled = vodRecordingEnabled ? 1 : 0;
         body.weather_zip = weatherZip || '';
         if (weatherDetail) body.weather_detail = weatherDetail;
         body.weather_show_location = document.getElementById('set-weather-show-location')?.checked ? 1 : 0;

@@ -102,12 +102,15 @@ router.get('/users', (req, res) => {
         const offset = parseInt(req.query.offset || '0');
         const search = req.query.search || '';
 
-        let sql = `SELECT id, username, display_name, email, role, hobo_bucks_balance,
-                    is_banned, ban_reason, created_at, last_seen FROM users`;
+        let sql = `SELECT u.id, u.username, u.display_name, u.email, u.role, u.hobo_bucks_balance,
+                    u.is_banned, u.ban_reason, u.created_at, u.last_seen,
+                    COALESCE(c.force_vod_recording_disabled, 0) AS force_vod_recording_disabled
+                    FROM users u
+                    LEFT JOIN channels c ON c.user_id = u.id`;
         const params = [];
 
         if (search) {
-            sql += ' WHERE username LIKE ? OR display_name LIKE ? OR email LIKE ?';
+            sql += ' WHERE u.username LIKE ? OR u.display_name LIKE ? OR u.email LIKE ?';
             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
         }
 
@@ -116,7 +119,7 @@ router.get('/users', (req, res) => {
             : `SELECT COUNT(*) as c FROM users`;
         const countParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
 
-        sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+        sql += ' ORDER BY u.created_at DESC LIMIT ? OFFSET ?';
         params.push(limit, offset);
 
         const users = db.all(sql, params);
@@ -253,8 +256,12 @@ router.delete('/users/:id/ban', (req, res) => {
 router.get('/streams', (req, res) => {
     try {
         const streams = db.all(`
-            SELECT s.*, u.username, u.display_name
+            SELECT s.*, u.username, u.display_name,
+                   c.id AS channel_id,
+                   COALESCE(c.force_vod_recording_disabled, 0) AS force_vod_recording_disabled,
+                   COALESCE(c.vod_recording_enabled, 1) AS vod_recording_enabled
             FROM streams s JOIN users u ON s.user_id = u.id
+            LEFT JOIN channels c ON c.user_id = s.user_id
             WHERE s.is_live = 1
             ORDER BY s.viewer_count DESC
         `);
@@ -288,6 +295,37 @@ router.put('/channels/:id/force-nsfw', (req, res) => {
         res.json({ message: force ? 'Channel force-marked as NSFW' : 'Force-NSFW removed from channel' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update NSFW status' });
+    }
+});
+
+// ── Force Disable VOD Recording on a User Channel ───────────
+router.put('/users/:id/force-vod-recording', (req, res) => {
+    try {
+        const targetUserId = parseInt(req.params.id, 10);
+        if (!Number.isFinite(targetUserId) || targetUserId <= 0) {
+            return res.status(400).json({ error: 'Invalid user id' });
+        }
+
+        const user = db.getUserById(targetUserId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        const channel = db.ensureChannel(targetUserId);
+        const forceVal = req.body?.force ? 1 : 0;
+        db.run(
+            'UPDATE channels SET force_vod_recording_disabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [forceVal, channel.id],
+        );
+
+        res.json({
+            message: forceVal
+                ? 'Forced VOD recording disabled for user channel'
+                : 'Forced VOD recording disable removed for user channel',
+            user_id: targetUserId,
+            channel_id: channel.id,
+            force_vod_recording_disabled: !!forceVal,
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update forced VOD recording policy' });
     }
 });
 

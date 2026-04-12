@@ -248,6 +248,8 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         // Strip private fields from public channel response
         const publicChannel = { ...channel, follower_count: followerCount, is_following: isFollowing };
         delete publicChannel.weather_zip;
+        delete publicChannel.vod_recording_enabled;
+        delete publicChannel.force_vod_recording_disabled;
 
         res.json({
             channel: publicChannel,
@@ -321,7 +323,7 @@ router.get('/channel', requireAuth, (req, res) => {
 router.put('/channel', requireAuth, (req, res) => {
     try {
         db.ensureChannel(req.user.id);
-        const { is_nsfw, auto_record } = req.body;
+        const { is_nsfw, auto_record, vod_recording_enabled } = req.body;
         const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
         const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
         const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
@@ -360,6 +362,9 @@ router.put('/channel', requireAuth, (req, res) => {
         if (protocol !== undefined) fields.protocol = protocol;
         if (is_nsfw !== undefined) fields.is_nsfw = cleanBooleanFlag(is_nsfw) ? 1 : 0;
         if (auto_record !== undefined) fields.auto_record = cleanBooleanFlag(auto_record) ? 1 : 0;
+        if (vod_recording_enabled !== undefined) {
+            fields.vod_recording_enabled = cleanBooleanFlag(vod_recording_enabled) ? 1 : 0;
+        }
         if (panels !== undefined) fields.panels = panels;
         if (defaultVodVisibility !== undefined) {
             fields.default_vod_visibility = defaultVodVisibility;
@@ -876,7 +881,8 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             endpoint = jsmpegRelay.getChannelInfo(user.stream_key) || jsmpegRelay.createChannel(user.stream_key);
 
             // Start server-side VOD recording for JSMPEG (taps the relay WebSocket, zero delay to live)
-            if (stream.is_live && !recorder.isRecording(stream.id)) {
+            const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id);
+            if (stream.is_live && vodPolicy.recordingEnabled && !recorder.isRecording(stream.id)) {
                 recorder.startRecording(stream.id, 'jsmpeg', {
                     streamKey: user.stream_key,
                     videoPort: endpoint.videoPort,

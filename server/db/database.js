@@ -729,6 +729,19 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] channels force_nsfw migration:', e.message); }
 
+    // Migrate: add VOD recording policy columns to channels
+    try {
+        const cols = database.pragma('table_info(channels)').map(c => c.name);
+        if (!cols.includes('vod_recording_enabled')) {
+            database.exec('ALTER TABLE channels ADD COLUMN vod_recording_enabled INTEGER DEFAULT 1');
+            console.log('[DB] Added vod_recording_enabled column to channels');
+        }
+        if (!cols.includes('force_vod_recording_disabled')) {
+            database.exec('ALTER TABLE channels ADD COLUMN force_vod_recording_disabled INTEGER DEFAULT 0');
+            console.log('[DB] Added force_vod_recording_disabled column to channels');
+        }
+    } catch (e) { console.warn('[DB] channels VOD recording policy migration:', e.message); }
+
     // Migrate: add control settings to channels
     try {
         const cols = database.pragma('table_info(channels)').map(c => c.name);
@@ -939,7 +952,7 @@ function updateChannel(userId, fields) {
     const updates = [];
     const params = [];
     for (const [key, val] of Object.entries(fields)) {
-        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms'].includes(key)) {
+        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'vod_recording_enabled', 'force_vod_recording_disabled', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms'].includes(key)) {
             updates.push(`${key} = ?`);
             params.push(['tags', 'panels', 'emote_sources'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
         }
@@ -958,6 +971,18 @@ function ensureChannel(userId) {
         ch = getChannelByUserId(userId);
     }
     return ch;
+}
+
+function getChannelVodRecordingPolicyByUserId(userId) {
+    const channel = getChannelByUserId(userId);
+    const recordingEnabled = !channel
+        ? true
+        : !!channel.vod_recording_enabled && !channel.force_vod_recording_disabled;
+    return {
+        channel,
+        recordingEnabled,
+        forcedDisabled: !!channel?.force_vod_recording_disabled,
+    };
 }
 
 // ── RobotStreamer integration helpers ───────────────────────
@@ -3110,6 +3135,7 @@ module.exports = {
     createStream, endStream, updateViewerCount,
     // Channels
     getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
+    getChannelVodRecordingPolicyByUserId,
     // RobotStreamer integration
     getRobotStreamerIntegrationByUserId, upsertRobotStreamerIntegration,
     // Restream destinations

@@ -297,6 +297,14 @@ async function loadAdminUsers() {
                             <button class="btn btn-small btn-danger" onclick="banUser('${u.id}', '${esc(u.username)}')" title="Ban">
                                 <i class="fa-solid fa-ban"></i>
                             </button>
+                            <button
+                                class="btn btn-small ${u.force_vod_recording_disabled ? 'btn-success' : 'btn-warning'}"
+                                onclick="adminSetUserForcedVodRecording('${u.id}', ${u.force_vod_recording_disabled ? 'false' : 'true'})"
+                                title="${u.force_vod_recording_disabled ? 'Re-enable channel-controlled VOD recording' : 'Force-disable VOD recording for this user channel'}"
+                            >
+                                <i class="fa-solid ${u.force_vod_recording_disabled ? 'fa-power-off' : 'fa-hdd'}"></i>
+                                ${u.force_vod_recording_disabled ? 'Allow VOD' : 'Force Off VOD'}
+                            </button>
                         </td>
                     </tr>
                 `).join('')}</tbody>
@@ -326,6 +334,24 @@ async function banUser(userId, username) {
         loadAdminUsers();
         loadAdminStats();
     } catch (e) { toast(e.message, 'error'); }
+}
+
+async function adminSetUserForcedVodRecording(userId, forceDisable) {
+    const promptText = forceDisable
+        ? 'Force-disable VOD recording for this user channel? This overrides the user toggle.'
+        : 'Remove forced VOD disable and allow this user to control VOD recording again?';
+    if (!confirm(promptText)) return;
+    try {
+        await api(`/admin/users/${userId}/force-vod-recording`, {
+            method: 'PUT',
+            body: { force: !!forceDisable },
+        });
+        toast(forceDisable ? 'Forced VOD disable enabled' : 'Forced VOD disable removed', 'success');
+        loadAdminUsers();
+        if (currentAdminTab === 'streams') loadAdminStreams();
+    } catch (e) {
+        toast(e.message, 'error');
+    }
 }
 
 /* ── Moderators ───────────────────────────────────────────────── */
@@ -573,7 +599,7 @@ async function loadAdminStreams() {
         c.innerHTML = `
             <table class="admin-table">
                 <thead><tr>
-                    <th>Title</th><th>Streamer</th><th>Protocol</th><th>NSFW</th><th>Viewers</th><th>Started</th><th>Actions</th>
+                    <th>Title</th><th>Streamer</th><th>Protocol</th><th>NSFW</th><th>VOD</th><th>Viewers</th><th>Started</th><th>Actions</th>
                 </tr></thead>
                 <tbody>${streams.map(s => `
                     <tr>
@@ -581,11 +607,20 @@ async function loadAdminStreams() {
                         <td>${esc(s.username || '-')}</td>
                         <td>${esc(s.protocol)}</td>
                         <td>${s.is_nsfw ? '<span style="color:var(--danger);font-weight:700">18+</span>' : '-'}</td>
+                        <td>
+                            ${s.force_vod_recording_disabled
+                                ? '<span style="color:var(--danger);font-weight:700">Forced Off</span>'
+                                : (s.vod_recording_enabled ? '<span style="color:var(--success);font-weight:700">On</span>' : '<span class="muted">User Off</span>')}
+                        </td>
                         <td>${s.viewer_count || 0}</td>
                         <td>${new Date(s.started_at).toLocaleString()}</td>
                         <td style="display:flex;gap:4px;flex-wrap:wrap">
                             <button class="btn btn-small ${s.is_nsfw ? 'btn-outline' : 'btn-warning'}" onclick="adminToggleStreamNsfw('${s.id}', ${!s.is_nsfw})" title="${s.is_nsfw ? 'Remove NSFW' : 'Mark NSFW'}">
                                 <i class="fa-solid fa-triangle-exclamation"></i> ${s.is_nsfw ? 'Un-NSFW' : 'NSFW'}
+                            </button>
+                            <button class="btn btn-small ${s.force_vod_recording_disabled ? 'btn-success' : 'btn-warning'}" onclick="adminSetUserForcedVodRecording('${s.user_id}', ${s.force_vod_recording_disabled ? 'false' : 'true'})">
+                                <i class="fa-solid ${s.force_vod_recording_disabled ? 'fa-power-off' : 'fa-hdd'}"></i>
+                                ${s.force_vod_recording_disabled ? 'Allow VOD' : 'Force Off VOD'}
                             </button>
                             <button class="btn btn-small btn-danger" onclick="forceEndStream('${s.id}')">
                                 <i class="fa-solid fa-stop"></i> End
