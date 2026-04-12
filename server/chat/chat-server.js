@@ -34,14 +34,11 @@ const DEFAULT_SLUR_NUDGE = 'This streamer enabled Anti-Slur Nudge for this chat.
 const CORE_SLUR_PATTERN_STRINGS = [
     '\\bn+i+g+g+(?:a+|e+r+)\\b',
     '\\bk+\\s*y+\\s*k+\\s*e+\\b',
-    '\\bh+\\s*e+\\s*b+\\b',
     '\\bs+\\s*p+\\s*i+\\s*c+\\b',
     '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+\\b',
     '\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?\\b',
-    '\\br+\\s*e+\\s*t+\\s*a+\\s*r+\\s*d+\\b',
-    '\\bn+\\s*a+\\s*z+\\s*i+\\b',
-    '\\bh+\\s*i+\\s*t+\\s*l+\\s*e+\\s*r+\\b',
-    '\\bj+\\s*e+\\s*w+\\s*s?\\s*w*\\s*i*\\s*l*\\s*l*\\s*\\s*n*\\s*o*\\s*t*\\s*r*\\s*e*\\s*p*\\s*l*\\s*a*\\s*c*\\s*e*\\s*u*\\s*s*\\b',
+    // "jews will not replace us" — only match the explicit white-supremacist phrase, NOT the word "jew" alone
+    '\\bj+\\s*e+\\s*w+\\s*s?\\s+w+\\s*i+\\s*l+\\s*l+\\s+n+\\s*o+\\s*t+\\s+r+\\s*e+\\s*p+\\s*l+\\s*a+\\s*c+\\s*e+\\b',
 ];
 const CORE_SLUR_PATTERNS = CORE_SLUR_PATTERN_STRINGS.map((source) => {
     try { return new RegExp(source, 'i'); } catch { return null; }
