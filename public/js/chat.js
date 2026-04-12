@@ -98,6 +98,9 @@ let chatSlurPolicy = {
     message: '',
     announcedForKey: null,
 };
+const CHAT_CORE_SLUR_PATTERNS = [
+    /\bn+i+g+g+(?:a+|e+r+)\b/i,
+];
 const FULLSCREEN_CHAT_IDLE_MS = 2600;
 const FULLSCREEN_CHAT_FADE_MS = 9000;
 const FULLSCREEN_CHAT_MAX_MESSAGES = 7;
@@ -1498,14 +1501,32 @@ function normalizeSlurText(input) {
     return lettersOnly.replace(/(.)\1{1,}/g, '$1');
 }
 
+function normalizeSlurPatternText(input) {
+    const map = {
+        '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a',
+        '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
+        '@': 'a', '$': 's', '!': 'i', '|': 'i', '+': 't',
+    };
+    const lower = String(input || '').toLowerCase();
+    const mapped = lower.split('').map((ch) => map[ch] || ch).join('');
+    const ascii = mapped.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+    return ascii.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function messageHitsCoreSlurPolicy(text) {
+    const normalized = normalizeSlurPatternText(text);
+    if (!normalized) return false;
+    return CHAT_CORE_SLUR_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
 function messageHitsSlurPolicy(text) {
-    if (!chatSlurPolicy.enabled || !chatSlurPolicy.terms?.length) return false;
+    if (!chatSlurPolicy.enabled) return false;
     const normalizedText = normalizeSlurText(text);
-    if (!normalizedText) return false;
-    return chatSlurPolicy.terms.some((term) => {
+    const hitsConfigured = !!normalizedText && chatSlurPolicy.terms.some((term) => {
         const normalizedTerm = normalizeSlurText(term);
         return normalizedTerm.length >= 2 && normalizedText.includes(normalizedTerm);
     });
+    return hitsConfigured || messageHitsCoreSlurPolicy(text);
 }
 
 function showSlurNudgeModal(customMessage = null) {

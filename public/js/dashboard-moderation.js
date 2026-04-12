@@ -102,9 +102,9 @@ function renderDashModerationChannels(channels) {
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-anon-${channel.id}" ${Number(settings.allow_anonymous ?? 1) ? 'checked' : ''}> Allow Anonymous</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-links-${channel.id}" ${Number(settings.links_allowed ?? 1) ? 'checked' : ''}> Allow Links</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-filter-${channel.id}" ${Number(settings.aggressive_filter || 0) ? 'checked' : ''}> Aggressive Filter</label>
-                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-enabled-${channel.id}" ${Number(settings.slur_filter_enabled || 0) ? 'checked' : ''}> Streamer Anti-Slur Nudge (optional)</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-enabled-${channel.id}" ${Number(settings.slur_filter_enabled || 0) ? 'checked' : ''}> Streamer Anti-Slur Nudge (optional, includes core slur protection)</label>
                             <label>
-                                <span>Blocked Terms (comma or newline separated)</span>
+                                <span>Blocked Terms (comma or newline separated, added to core list)</span>
                                 <textarea id="dash-mod-slur-terms-${channel.id}" class="form-input" rows="3" placeholder="Put words/phrases you want blocked in this channel chat only">${esc(String(settings.slur_filter_terms || ''))}</textarea>
                             </label>
                             <label>

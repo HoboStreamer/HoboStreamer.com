@@ -29,6 +29,10 @@ const RATE_LIMIT_CACHE_TTL_MS = 10 * 60 * 1000;
 const GOTTI_GIF_URL = 'https://media1.tenor.com/m/Y-GsLUQT9LQAAAAd/deez-something-came-in-the-mail-today.gif';
 const GOTTI_CAPTION = 'Something came in the mail today... deez nuts. GOTTI!';
 const DEFAULT_SLUR_NUDGE = 'This streamer enabled Anti-Slur Nudge for this chat. Free speech is still alive, but this lane is closed today. Try a different word and keep it funny.';
+// Built-in baseline patterns that apply when Anti-Slur Nudge is enabled.
+const CORE_SLUR_PATTERNS = [
+    /\bn+i+g+g+(?:a+|e+r+)\b/i,
+];
 
 class ChatServer {
     constructor() {
@@ -511,6 +515,24 @@ class ChatServer {
         return lettersOnly.replace(/(.)\1{1,}/g, '$1');
     }
 
+    _normalizeSlurPatternText(input) {
+        const map = {
+            '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a',
+            '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
+            '@': 'a', '$': 's', '!': 'i', '|': 'i', '+': 't',
+        };
+        const lower = String(input || '').toLowerCase();
+        const mapped = lower.split('').map((ch) => map[ch] || ch).join('');
+        const ascii = mapped.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+        return ascii.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    _containsCoreSlur(text) {
+        const normalized = this._normalizeSlurPatternText(text);
+        if (!normalized) return false;
+        return CORE_SLUR_PATTERNS.some((pattern) => pattern.test(normalized));
+    }
+
     _containsConfiguredSlur(text, terms) {
         const normalizedText = this._normalizeSlurText(text);
         if (!normalizedText) return false;
@@ -648,7 +670,9 @@ class ChatServer {
             // Optional per-streamer anti-slur filter
             if (chatSettings.slur_filter_enabled && !isStaff && !canModerateThisStream) {
                 const blockedTerms = this._parseSlurFilterTerms(chatSettings.slur_filter_terms);
-                if (blockedTerms.length && this._containsConfiguredSlur(text, blockedTerms)) {
+                const hitConfigured = blockedTerms.length && this._containsConfiguredSlur(text, blockedTerms);
+                const hitCore = this._containsCoreSlur(text);
+                if (hitConfigured || hitCore) {
                     this.sendTo(ws, {
                         type: 'slur-blocked',
                         message: String(chatSettings.slur_filter_nudge_message || '').trim() || DEFAULT_SLUR_NUDGE,
