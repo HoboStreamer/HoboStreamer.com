@@ -468,7 +468,9 @@ function initDb() {
         if (!cols.includes('aggressive_filter')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN aggressive_filter INTEGER DEFAULT 0');
         if (!cols.includes('max_message_length')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN max_message_length INTEGER DEFAULT 500');
         if (!cols.includes('slur_filter_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_enabled INTEGER DEFAULT 0');
+        if (!cols.includes('slur_filter_use_builtin')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_use_builtin INTEGER DEFAULT 1');
         if (!cols.includes('slur_filter_terms')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_terms TEXT DEFAULT ''");
+        if (!cols.includes('slur_filter_regexes')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_regexes TEXT DEFAULT ''");
         if (!cols.includes('slur_filter_nudge_message')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_nudge_message TEXT DEFAULT ''");
         if (!cols.includes('viewer_auto_delete_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_auto_delete_enabled INTEGER DEFAULT 1');
         if (!cols.includes('viewer_delete_all_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_delete_all_enabled INTEGER DEFAULT 1');
@@ -2079,7 +2081,9 @@ function getChannelModerationSettings(channelId) {
             aggressive_filter: 0,
             max_message_length: 500,
             slur_filter_enabled: 0,
+            slur_filter_use_builtin: 1,
             slur_filter_terms: '',
+            slur_filter_regexes: '',
             slur_filter_nudge_message: '',
             ip_approval_mode: 0,
             viewer_auto_delete_enabled: 1,
@@ -2102,7 +2106,9 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.aggressive_filter !== undefined) { updates.push('aggressive_filter = ?'); params.push(fields.aggressive_filter ? 1 : 0); }
         if (fields.max_message_length !== undefined) { updates.push('max_message_length = ?'); params.push(Math.max(50, Number(fields.max_message_length) || 500)); }
         if (fields.slur_filter_enabled !== undefined) { updates.push('slur_filter_enabled = ?'); params.push(fields.slur_filter_enabled ? 1 : 0); }
+        if (fields.slur_filter_use_builtin !== undefined) { updates.push('slur_filter_use_builtin = ?'); params.push(fields.slur_filter_use_builtin ? 1 : 0); }
         if (fields.slur_filter_terms !== undefined) { updates.push('slur_filter_terms = ?'); params.push(String(fields.slur_filter_terms || '').slice(0, 4000)); }
+        if (fields.slur_filter_regexes !== undefined) { updates.push('slur_filter_regexes = ?'); params.push(String(fields.slur_filter_regexes || '').slice(0, 8000)); }
         if (fields.slur_filter_nudge_message !== undefined) { updates.push('slur_filter_nudge_message = ?'); params.push(String(fields.slur_filter_nudge_message || '').slice(0, 800)); }
         if (fields.ip_approval_mode !== undefined) { updates.push('ip_approval_mode = ?'); params.push(fields.ip_approval_mode ? 1 : 0); }
         if (fields.viewer_auto_delete_enabled !== undefined) { updates.push('viewer_auto_delete_enabled = ?'); params.push(fields.viewer_auto_delete_enabled ? 1 : 0); }
@@ -2118,9 +2124,9 @@ function upsertChannelModerationSettings(channelId, fields) {
                 channel_id, slow_mode_seconds, followers_only, emote_only,
                 allow_anonymous, links_allowed, account_age_gate_hours,
                 caps_percentage_limit, aggressive_filter, max_message_length,
-                slur_filter_enabled, slur_filter_terms, slur_filter_nudge_message,
+                slur_filter_enabled, slur_filter_use_builtin, slur_filter_terms, slur_filter_regexes, slur_filter_nudge_message,
                 ip_approval_mode, viewer_auto_delete_enabled, viewer_delete_all_enabled
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 channelId,
                 fields.slow_mode_seconds || 0,
@@ -2133,7 +2139,9 @@ function upsertChannelModerationSettings(channelId, fields) {
                 fields.aggressive_filter ? 1 : 0,
                 Math.max(50, Number(fields.max_message_length) || 500),
                 fields.slur_filter_enabled ? 1 : 0,
+                fields.slur_filter_use_builtin !== undefined ? (fields.slur_filter_use_builtin ? 1 : 0) : 1,
                 String(fields.slur_filter_terms || '').slice(0, 4000),
+                String(fields.slur_filter_regexes || '').slice(0, 8000),
                 String(fields.slur_filter_nudge_message || '').slice(0, 800),
                 fields.ip_approval_mode ? 1 : 0,
                 fields.viewer_auto_delete_enabled !== undefined ? (fields.viewer_auto_delete_enabled ? 1 : 0) : 1,

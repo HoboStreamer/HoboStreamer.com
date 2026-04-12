@@ -188,8 +188,12 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? Math.min(2000, Math.max(1, parseInt(req.body.max_message_length) || 500)) : undefined,
             slur_filter_enabled: req.body.slur_filter_enabled !== undefined
                 ? parseBoolean(req.body.slur_filter_enabled, false) : undefined,
+            slur_filter_use_builtin: req.body.slur_filter_use_builtin !== undefined
+                ? parseBoolean(req.body.slur_filter_use_builtin, true) : undefined,
             slur_filter_terms: req.body.slur_filter_terms !== undefined
                 ? String(req.body.slur_filter_terms || '').slice(0, 4000) : undefined,
+            slur_filter_regexes: req.body.slur_filter_regexes !== undefined
+                ? String(req.body.slur_filter_regexes || '').slice(0, 8000) : undefined,
             slur_filter_nudge_message: req.body.slur_filter_nudge_message !== undefined
                 ? String(req.body.slur_filter_nudge_message || '').slice(0, 800) : undefined,
             ip_approval_mode: req.body.ip_approval_mode !== undefined

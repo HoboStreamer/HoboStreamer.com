@@ -30,9 +30,22 @@ const GOTTI_GIF_URL = 'https://media1.tenor.com/m/Y-GsLUQT9LQAAAAd/deez-somethin
 const GOTTI_CAPTION = 'Something came in the mail today... deez nuts. GOTTI!';
 const DEFAULT_SLUR_NUDGE = 'This streamer enabled Anti-Slur Nudge for this chat. Free speech is still alive, but this lane is closed today. Try a different word and keep it funny.';
 // Built-in baseline patterns that apply when Anti-Slur Nudge is enabled.
-const CORE_SLUR_PATTERNS = [
-    /\bn+i+g+g+(?:a+|e+r+)\b/i,
+// Patterns run on normalized text (leet chars mapped, punctuation collapsed).
+const CORE_SLUR_PATTERN_STRINGS = [
+    '\\bn+i+g+g+(?:a+|e+r+)\\b',
+    '\\bk+\\s*y+\\s*k+\\s*e+\\b',
+    '\\bh+\\s*e+\\s*b+\\b',
+    '\\bs+\\s*p+\\s*i+\\s*c+\\b',
+    '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+\\b',
+    '\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?\\b',
+    '\\br+\\s*e+\\s*t+\\s*a+\\s*r+\\s*d+\\b',
+    '\\bn+\\s*a+\\s*z+\\s*i+\\b',
+    '\\bh+\\s*i+\\s*t+\\s*l+\\s*e+\\s*r+\\b',
+    '\\bj+\\s*e+\\s*w+\\s*s?\\s*w*\\s*i*\\s*l*\\s*l*\\s*\\s*n*\\s*o*\\s*t*\\s*r*\\s*e*\\s*p*\\s*l*\\s*a*\\s*c*\\s*e*\\s*u*\\s*s*\\b',
 ];
+const CORE_SLUR_PATTERNS = CORE_SLUR_PATTERN_STRINGS.map((source) => {
+    try { return new RegExp(source, 'i'); } catch { return null; }
+}).filter(Boolean);
 
 class ChatServer {
     constructor() {
@@ -502,6 +515,37 @@ class ChatServer {
             .slice(0, 200);
     }
 
+    _parseRegexLines(rawRegexes) {
+        return String(rawRegexes || '')
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .slice(0, 300);
+    }
+
+    _compileRegexList(patternStrings, { forceInsensitive = true } = {}) {
+        const compiled = [];
+        for (const raw of patternStrings || []) {
+            if (!raw || raw.length > 200) continue;
+            let source = raw;
+            let flags = forceInsensitive ? 'i' : '';
+
+            const slashWrapped = raw.match(/^\/(.+)\/([a-z]*)$/i);
+            if (slashWrapped) {
+                source = slashWrapped[1];
+                flags = slashWrapped[2] || '';
+                if (forceInsensitive && !flags.includes('i')) flags += 'i';
+            }
+
+            try {
+                compiled.push(new RegExp(source, flags));
+            } catch {
+                // Ignore invalid user-provided regex entries.
+            }
+        }
+        return compiled;
+    }
+
     _normalizeSlurText(input) {
         const map = {
             '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a',
@@ -531,6 +575,13 @@ class ChatServer {
         const normalized = this._normalizeSlurPatternText(text);
         if (!normalized) return false;
         return CORE_SLUR_PATTERNS.some((pattern) => pattern.test(normalized));
+    }
+
+    _containsRegexSlur(text, regexLines) {
+        const normalized = this._normalizeSlurPatternText(text);
+        if (!normalized) return false;
+        const compiled = this._compileRegexList(regexLines, { forceInsensitive: true });
+        return compiled.some((pattern) => pattern.test(normalized));
     }
 
     _containsConfiguredSlur(text, terms) {
@@ -620,7 +671,9 @@ class ChatServer {
                             }
                         }
                     }
+                                        slur_filter_use_builtin: streamSettings.slur_filter_use_builtin !== 0,
                 }
+                                        slur_filter_regexes: this._parseRegexLines(streamSettings.slur_filter_regexes),
             } catch { /* non-critical — don't block chat for IP approval errors */ }
         }
 
@@ -670,9 +723,11 @@ class ChatServer {
             // Optional per-streamer anti-slur filter
             if (chatSettings.slur_filter_enabled && !isStaff && !canModerateThisStream) {
                 const blockedTerms = this._parseSlurFilterTerms(chatSettings.slur_filter_terms);
+                const configuredRegexLines = this._parseRegexLines(chatSettings.slur_filter_regexes);
                 const hitConfigured = blockedTerms.length && this._containsConfiguredSlur(text, blockedTerms);
-                const hitCore = this._containsCoreSlur(text);
-                if (hitConfigured || hitCore) {
+                const hitCore = chatSettings.slur_filter_use_builtin !== 0 && this._containsCoreSlur(text);
+                const hitRegex = configuredRegexLines.length && this._containsRegexSlur(text, configuredRegexLines);
+                if (hitConfigured || hitCore || hitRegex) {
                     this.sendTo(ws, {
                         type: 'slur-blocked',
                         message: String(chatSettings.slur_filter_nudge_message || '').trim() || DEFAULT_SLUR_NUDGE,
@@ -1718,7 +1773,7 @@ class ChatServer {
             slow_mode_seconds: 0, followers_only: 0, emote_only: 0,
             allow_anonymous: 1, links_allowed: 1, account_age_gate_hours: 0,
             caps_percentage_limit: 0, aggressive_filter: 0, max_message_length: 500,
-            slur_filter_enabled: 0, slur_filter_terms: '', slur_filter_nudge_message: '',
+            slur_filter_enabled: 0, slur_filter_use_builtin: 1, slur_filter_terms: '', slur_filter_regexes: '', slur_filter_nudge_message: '',
             ip_approval_mode: 0,
             viewer_auto_delete_enabled: 1,
             viewer_delete_all_enabled: 1,

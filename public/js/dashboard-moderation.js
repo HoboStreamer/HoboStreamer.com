@@ -103,9 +103,14 @@ function renderDashModerationChannels(channels) {
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-links-${channel.id}" ${Number(settings.links_allowed ?? 1) ? 'checked' : ''}> Allow Links</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-filter-${channel.id}" ${Number(settings.aggressive_filter || 0) ? 'checked' : ''}> Aggressive Filter</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-enabled-${channel.id}" ${Number(settings.slur_filter_enabled || 0) ? 'checked' : ''}> Streamer Anti-Slur Nudge (optional, includes core slur protection)</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-builtin-${channel.id}" ${Number(settings.slur_filter_use_builtin ?? 1) ? 'checked' : ''}> Use built-in hate/slur regex pack</label>
                             <label>
                                 <span>Blocked Terms (comma or newline separated, added to core list)</span>
                                 <textarea id="dash-mod-slur-terms-${channel.id}" class="form-input" rows="3" placeholder="Put words/phrases you want blocked in this channel chat only">${esc(String(settings.slur_filter_terms || ''))}</textarea>
+                            </label>
+                            <label>
+                                <span>Custom Regex Rules (one per line, applied to normalized text)</span>
+                                <textarea id="dash-mod-slur-regex-${channel.id}" class="form-input" rows="4" placeholder="Example: \\bk+[*_ ]*y+[*_ ]*k+[*_ ]*e+\\b">${esc(String(settings.slur_filter_regexes || ''))}</textarea>
                             </label>
                             <label>
                                 <span>Nudge Message (optional custom response)</span>
@@ -243,7 +248,9 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 links_allowed: !!document.getElementById(`dash-mod-links-${channelId}`)?.checked,
                 aggressive_filter: !!document.getElementById(`dash-mod-filter-${channelId}`)?.checked,
                 slur_filter_enabled: !!document.getElementById(`dash-mod-slur-enabled-${channelId}`)?.checked,
+                slur_filter_use_builtin: !!document.getElementById(`dash-mod-slur-builtin-${channelId}`)?.checked,
                 slur_filter_terms: String(document.getElementById(`dash-mod-slur-terms-${channelId}`)?.value || ''),
+                slur_filter_regexes: String(document.getElementById(`dash-mod-slur-regex-${channelId}`)?.value || ''),
                 slur_filter_nudge_message: String(document.getElementById(`dash-mod-slur-msg-${channelId}`)?.value || ''),
                 followers_only: !!document.getElementById(`dash-mod-followers-${channelId}`)?.checked,
                 viewer_auto_delete_enabled: !!document.getElementById(`dash-mod-viewer-autodel-${channelId}`)?.checked,

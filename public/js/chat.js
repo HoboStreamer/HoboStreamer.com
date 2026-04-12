@@ -94,13 +94,26 @@ let chatSelfDeletePolicy = {
 };
 let chatSlurPolicy = {
     enabled: false,
+    useBuiltin: true,
     terms: [],
+    regexes: [],
     message: '',
     announcedForKey: null,
 };
-const CHAT_CORE_SLUR_PATTERNS = [
-    /\bn+i+g+g+(?:a+|e+r+)\b/i,
+const CHAT_CORE_SLUR_PATTERN_STRINGS = [
+    '\\bn+i+g+g+(?:a+|e+r+)\\b',
+    '\\bk+\\s*y+\\s*k+\\s*e+\\b',
+    '\\bh+\\s*e+\\s*b+\\b',
+    '\\bs+\\s*p+\\s*i+\\s*c+\\b',
+    '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+\\b',
+    '\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?\\b',
+    '\\br+\\s*e+\\s*t+\\s*a+\\s*r+\\s*d+\\b',
+    '\\bn+\\s*a+\\s*z+\\s*i+\\b',
+    '\\bh+\\s*i+\\s*t+\\s*l+\\s*e+\\s*r+\\b',
 ];
+const CHAT_CORE_SLUR_PATTERNS = CHAT_CORE_SLUR_PATTERN_STRINGS.map((source) => {
+    try { return new RegExp(source, 'i'); } catch { return null; }
+}).filter(Boolean);
 const FULLSCREEN_CHAT_IDLE_MS = 2600;
 const FULLSCREEN_CHAT_FADE_MS = 9000;
 const FULLSCREEN_CHAT_MAX_MESSAGES = 7;
@@ -908,7 +921,9 @@ function handleChatMessage(msg) {
             };
             chatSlurPolicy = {
                 enabled: !!msg.slur_filter_enabled,
+                useBuiltin: msg.slur_filter_use_builtin !== false,
                 terms: Array.isArray(msg.slur_filter_terms) ? msg.slur_filter_terms.map((t) => String(t || '').trim()).filter(Boolean) : [],
+                regexes: Array.isArray(msg.slur_filter_regexes) ? msg.slur_filter_regexes.map((t) => String(t || '').trim()).filter(Boolean) : [],
                 message: String(msg.slur_filter_nudge_message || ''),
                 announcedForKey: chatSlurPolicy.announcedForKey,
             };
@@ -1513,10 +1528,40 @@ function normalizeSlurPatternText(input) {
     return ascii.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function compileRegexRules(rules, { forceInsensitive = true } = {}) {
+    const compiled = [];
+    for (const raw of rules || []) {
+        if (!raw || raw.length > 200) continue;
+        let source = raw;
+        let flags = forceInsensitive ? 'i' : '';
+
+        const wrapped = raw.match(/^\/(.+)\/([a-z]*)$/i);
+        if (wrapped) {
+            source = wrapped[1];
+            flags = wrapped[2] || '';
+            if (forceInsensitive && !flags.includes('i')) flags += 'i';
+        }
+        try {
+            compiled.push(new RegExp(source, flags));
+        } catch {
+            // Ignore invalid user-provided regex entries.
+        }
+    }
+    return compiled;
+}
+
 function messageHitsCoreSlurPolicy(text) {
     const normalized = normalizeSlurPatternText(text);
     if (!normalized) return false;
     return CHAT_CORE_SLUR_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function messageHitsCustomRegexPolicy(text) {
+    if (!chatSlurPolicy.regexes?.length) return false;
+    const normalized = normalizeSlurPatternText(text);
+    if (!normalized) return false;
+    const patterns = compileRegexRules(chatSlurPolicy.regexes, { forceInsensitive: true });
+    return patterns.some((pattern) => pattern.test(normalized));
 }
 
 function messageHitsSlurPolicy(text) {
@@ -1526,7 +1571,9 @@ function messageHitsSlurPolicy(text) {
         const normalizedTerm = normalizeSlurText(term);
         return normalizedTerm.length >= 2 && normalizedText.includes(normalizedTerm);
     });
-    return hitsConfigured || messageHitsCoreSlurPolicy(text);
+    const hitsCore = chatSlurPolicy.useBuiltin && messageHitsCoreSlurPolicy(text);
+    const hitsRegex = messageHitsCustomRegexPolicy(text);
+    return hitsConfigured || hitsCore || hitsRegex;
 }
 
 function showSlurNudgeModal(customMessage = null) {
