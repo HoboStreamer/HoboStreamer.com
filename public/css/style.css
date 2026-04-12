@@ -7454,6 +7454,56 @@ body.theme-light .user-dropdown {
     padding: 6px 10px;
 }
 
+/* ── Chat Anti-Slur Nudge Modal ─────────────────────────────── */
+.chat-slur-nudge-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10020;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    background: rgba(3, 5, 10, 0.75);
+    backdrop-filter: blur(6px);
+}
+
+.chat-slur-nudge-card {
+    width: min(520px, 100%);
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: linear-gradient(170deg, rgba(20, 24, 36, 0.98), rgba(14, 17, 27, 0.96));
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    padding: 20px 20px 16px;
+}
+
+.chat-slur-nudge-card h3 {
+    margin: 0 0 10px;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+}
+
+.chat-slur-nudge-card h3 i {
+    color: var(--accent);
+}
+
+.chat-slur-nudge-card p {
+    margin: 0 0 10px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.chat-slur-nudge-sub {
+    font-size: 0.84rem;
+    opacity: 0.85;
+}
+
+.chat-slur-nudge-card .btn {
+    margin-top: 4px;
+}
+
 /* ── Mini Voice Channel Bar ───────────────────────────────────── */
 .vc-mini-bar {
     position: fixed;

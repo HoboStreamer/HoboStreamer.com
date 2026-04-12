@@ -92,6 +92,12 @@ let chatSelfDeletePolicy = {
     allowDeleteAll: true,
     minMinutes: CHAT_SELF_DELETE_MINUTES,
 };
+let chatSlurPolicy = {
+    enabled: false,
+    terms: [],
+    message: '',
+    announcedForKey: null,
+};
 const FULLSCREEN_CHAT_IDLE_MS = 2600;
 const FULLSCREEN_CHAT_FADE_MS = 9000;
 const FULLSCREEN_CHAT_MAX_MESSAGES = 7;
@@ -897,6 +903,19 @@ function handleChatMessage(msg) {
                 allowDeleteAll: msg.allow_self_delete_all !== false,
                 minMinutes: Math.max(CHAT_SELF_DELETE_MINUTES, parseInt(msg.min_auto_delete_minutes, 10) || CHAT_SELF_DELETE_MINUTES),
             };
+            chatSlurPolicy = {
+                enabled: !!msg.slur_filter_enabled,
+                terms: Array.isArray(msg.slur_filter_terms) ? msg.slur_filter_terms.map((t) => String(t || '').trim()).filter(Boolean) : [],
+                message: String(msg.slur_filter_nudge_message || ''),
+                announcedForKey: chatSlurPolicy.announcedForKey,
+            };
+            if (chatSlurPolicy.enabled && chatStreamId) {
+                const policyKey = `stream:${chatStreamId}`;
+                if (chatSlurPolicy.announcedForKey !== policyKey) {
+                    chatSlurPolicy.announcedForKey = policyKey;
+                    addSystemMessage('Heads up: this streamer enabled Anti-Slur Nudge for this chat. This is a channel choice, not a global platform block.');
+                }
+            }
             syncSettingsPanelUI();
             break;
         case 'slowmode':
@@ -976,6 +995,10 @@ function handleChatMessage(msg) {
             break;
         case 'error':
             addSystemMessage(msg.message, true);
+            break;
+        case 'slur-blocked':
+            showSlurNudgeModal(msg.message || null);
+            addSystemMessage('Message blocked by this streamer\'s Anti-Slur Nudge setting.');
             break;
         case 'server_restart':
             // Server is about to restart — show prominent notice
@@ -1462,11 +1485,66 @@ let _chatHistoryDraft = '';
 const CHAT_HISTORY_MAX = 50;
 const CHAT_TEXTAREA_MAX_LINES = 4;
 
+function normalizeSlurText(input) {
+    const map = {
+        '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a',
+        '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
+        '@': 'a', '$': 's', '!': 'i', '|': 'i', '+': 't',
+    };
+    const lower = String(input || '').toLowerCase();
+    const mapped = lower.split('').map((ch) => map[ch] || ch).join('');
+    const ascii = mapped.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+    const lettersOnly = ascii.replace(/[^a-z]/g, '');
+    return lettersOnly.replace(/(.)\1{1,}/g, '$1');
+}
+
+function messageHitsSlurPolicy(text) {
+    if (!chatSlurPolicy.enabled || !chatSlurPolicy.terms?.length) return false;
+    const normalizedText = normalizeSlurText(text);
+    if (!normalizedText) return false;
+    return chatSlurPolicy.terms.some((term) => {
+        const normalizedTerm = normalizeSlurText(term);
+        return normalizedTerm.length >= 2 && normalizedText.includes(normalizedTerm);
+    });
+}
+
+function showSlurNudgeModal(customMessage = null) {
+    const existing = document.getElementById('chat-slur-nudge-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'chat-slur-nudge-modal';
+    modal.className = 'chat-slur-nudge-modal';
+
+    const message = String(customMessage || chatSlurPolicy.message || '').trim()
+        || 'This streamer enabled Anti-Slur Nudge for this chat. Roast smarter, not lazier. Pick a different word and keep the banter fun.';
+
+    modal.innerHTML = `
+        <div class="chat-slur-nudge-card" role="dialog" aria-modal="true" aria-label="Chat message blocked">
+            <h3><i class="fa-solid fa-comments"></i> Message Not Sent</h3>
+            <p>${esc(message)}</p>
+            <p class="chat-slur-nudge-sub">Streamer setting: Anti-Slur Nudge is enabled in this channel.</p>
+            <button class="btn btn-primary" id="chat-slur-nudge-ok">Got it</button>
+        </div>`;
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) modal.remove();
+    });
+    document.body.appendChild(modal);
+    const okBtn = modal.querySelector('#chat-slur-nudge-ok');
+    if (okBtn) okBtn.addEventListener('click', () => modal.remove());
+}
+
 function sendChat(overrideInput = null) {
     const input = overrideInput || getChatEl().input;
     if (!input) return;
     const text = input.value.trim();
     if (!text) return;
+
+    if (messageHitsSlurPolicy(text)) {
+        showSlurNudgeModal();
+        return;
+    }
 
     // If WS is down (server restarting, etc.), send to global chat via REST API
     if (!chatWs || chatWs.readyState !== WebSocket.OPEN) {

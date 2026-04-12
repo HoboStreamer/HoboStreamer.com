@@ -28,6 +28,7 @@ const MAX_SEND_BACKPRESSURE = 256 * 1024;
 const RATE_LIMIT_CACHE_TTL_MS = 10 * 60 * 1000;
 const GOTTI_GIF_URL = 'https://media1.tenor.com/m/Y-GsLUQT9LQAAAAd/deez-something-came-in-the-mail-today.gif';
 const GOTTI_CAPTION = 'Something came in the mail today... deez nuts. GOTTI!';
+const DEFAULT_SLUR_NUDGE = 'This streamer enabled Anti-Slur Nudge for this chat. Free speech is still alive, but this lane is closed today. Try a different word and keep it funny.';
 
 class ChatServer {
     constructor() {
@@ -391,6 +392,9 @@ class ChatServer {
                     slowmode_seconds: streamSlowSec,
                     allow_auto_delete: !client.streamId || streamSettings.viewer_auto_delete_enabled !== 0,
                     allow_self_delete_all: !client.streamId || streamSettings.viewer_delete_all_enabled !== 0,
+                    slur_filter_enabled: !!(client.streamId && streamSettings.slur_filter_enabled),
+                    slur_filter_terms: this._parseSlurFilterTerms(streamSettings.slur_filter_terms),
+                    slur_filter_nudge_message: String(streamSettings.slur_filter_nudge_message || ''),
                     min_auto_delete_minutes: MIN_CHAT_AUTO_DELETE_MINUTES,
                 });
                 break;
@@ -486,6 +490,38 @@ class ChatServer {
         return { logged, anonCount };
     }
 
+    _parseSlurFilterTerms(rawTerms) {
+        return String(rawTerms || '')
+            .split(/[\n,]/)
+            .map((t) => t.trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 200);
+    }
+
+    _normalizeSlurText(input) {
+        const map = {
+            '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a',
+            '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
+            '@': 'a', '$': 's', '!': 'i', '|': 'i', '+': 't',
+        };
+        const lower = String(input || '').toLowerCase();
+        const mapped = lower.split('').map((ch) => map[ch] || ch).join('');
+        const ascii = mapped.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+        const lettersOnly = ascii.replace(/[^a-z]/g, '');
+        return lettersOnly.replace(/(.)\1{1,}/g, '$1');
+    }
+
+    _containsConfiguredSlur(text, terms) {
+        const normalizedText = this._normalizeSlurText(text);
+        if (!normalizedText) return false;
+        for (const term of terms) {
+            const normalizedTerm = this._normalizeSlurText(term);
+            if (!normalizedTerm || normalizedTerm.length < 2) continue;
+            if (normalizedText.includes(normalizedTerm)) return true;
+        }
+        return false;
+    }
+
     /**
      * Handle a chat message
      */
@@ -570,6 +606,7 @@ class ChatServer {
         if (client.streamId) {
             const chatSettings = this._getChannelChatSettings(client.streamId);
             const isStaff = client.user && permissions.isGlobalModOrAbove(client.user);
+            const canModerateThisStream = permissions.canModerateStream(client.user, client.streamId);
 
             // Max message length
             const maxLen = Math.max(50, Number(chatSettings.max_message_length || 500));
@@ -604,6 +641,19 @@ class ChatServer {
                 const ageMs = Date.now() - new Date(client.user.created_at).getTime();
                 if (ageMs < Number(chatSettings.account_age_gate_hours) * 3600000) {
                     this.sendTo(ws, { type: 'system', message: `This chat requires accounts older than ${chatSettings.account_age_gate_hours} hour(s).` });
+                    return;
+                }
+            }
+
+            // Optional per-streamer anti-slur filter
+            if (chatSettings.slur_filter_enabled && !isStaff && !canModerateThisStream) {
+                const blockedTerms = this._parseSlurFilterTerms(chatSettings.slur_filter_terms);
+                if (blockedTerms.length && this._containsConfiguredSlur(text, blockedTerms)) {
+                    this.sendTo(ws, {
+                        type: 'slur-blocked',
+                        message: String(chatSettings.slur_filter_nudge_message || '').trim() || DEFAULT_SLUR_NUDGE,
+                        streamer_enabled: true,
+                    });
                     return;
                 }
             }
@@ -1644,6 +1694,7 @@ class ChatServer {
             slow_mode_seconds: 0, followers_only: 0, emote_only: 0,
             allow_anonymous: 1, links_allowed: 1, account_age_gate_hours: 0,
             caps_percentage_limit: 0, aggressive_filter: 0, max_message_length: 500,
+            slur_filter_enabled: 0, slur_filter_terms: '', slur_filter_nudge_message: '',
             ip_approval_mode: 0,
             viewer_auto_delete_enabled: 1,
             viewer_delete_all_enabled: 1,
