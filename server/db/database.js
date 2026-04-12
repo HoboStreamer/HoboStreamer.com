@@ -472,6 +472,7 @@ function initDb() {
         if (!cols.includes('slur_filter_terms')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_terms TEXT DEFAULT ''");
         if (!cols.includes('slur_filter_regexes')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_regexes TEXT DEFAULT ''");
         if (!cols.includes('slur_filter_nudge_message')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_nudge_message TEXT DEFAULT ''");
+        if (!cols.includes('slur_filter_disabled_categories')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_disabled_categories TEXT DEFAULT '[]'");
         if (!cols.includes('viewer_auto_delete_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_auto_delete_enabled INTEGER DEFAULT 1');
         if (!cols.includes('viewer_delete_all_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_delete_all_enabled INTEGER DEFAULT 1');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
@@ -2110,6 +2111,7 @@ function getChannelModerationSettings(channelId) {
             slur_filter_terms: '',
             slur_filter_regexes: '',
             slur_filter_nudge_message: '',
+            slur_filter_disabled_categories: '[]',
             ip_approval_mode: 0,
             viewer_auto_delete_enabled: 1,
             viewer_delete_all_enabled: 1,
@@ -2135,6 +2137,7 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.slur_filter_terms !== undefined) { updates.push('slur_filter_terms = ?'); params.push(String(fields.slur_filter_terms || '').slice(0, 4000)); }
         if (fields.slur_filter_regexes !== undefined) { updates.push('slur_filter_regexes = ?'); params.push(String(fields.slur_filter_regexes || '').slice(0, 8000)); }
         if (fields.slur_filter_nudge_message !== undefined) { updates.push('slur_filter_nudge_message = ?'); params.push(String(fields.slur_filter_nudge_message || '').slice(0, 800)); }
+        if (fields.slur_filter_disabled_categories !== undefined) { updates.push('slur_filter_disabled_categories = ?'); params.push(String(fields.slur_filter_disabled_categories || '[]').slice(0, 200)); }
         if (fields.ip_approval_mode !== undefined) { updates.push('ip_approval_mode = ?'); params.push(fields.ip_approval_mode ? 1 : 0); }
         if (fields.viewer_auto_delete_enabled !== undefined) { updates.push('viewer_auto_delete_enabled = ?'); params.push(fields.viewer_auto_delete_enabled ? 1 : 0); }
         if (fields.viewer_delete_all_enabled !== undefined) { updates.push('viewer_delete_all_enabled = ?'); params.push(fields.viewer_delete_all_enabled ? 1 : 0); }
@@ -2149,9 +2152,9 @@ function upsertChannelModerationSettings(channelId, fields) {
                 channel_id, slow_mode_seconds, followers_only, emote_only,
                 allow_anonymous, links_allowed, account_age_gate_hours,
                 caps_percentage_limit, aggressive_filter, max_message_length,
-                slur_filter_enabled, slur_filter_use_builtin, slur_filter_terms, slur_filter_regexes, slur_filter_nudge_message,
+                slur_filter_enabled, slur_filter_use_builtin, slur_filter_terms, slur_filter_regexes, slur_filter_nudge_message, slur_filter_disabled_categories,
                 ip_approval_mode, viewer_auto_delete_enabled, viewer_delete_all_enabled
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 channelId,
                 fields.slow_mode_seconds || 0,
@@ -2168,6 +2171,7 @@ function upsertChannelModerationSettings(channelId, fields) {
                 String(fields.slur_filter_terms || '').slice(0, 4000),
                 String(fields.slur_filter_regexes || '').slice(0, 8000),
                 String(fields.slur_filter_nudge_message || '').slice(0, 800),
+                String(fields.slur_filter_disabled_categories || '[]').slice(0, 200),
                 fields.ip_approval_mode ? 1 : 0,
                 fields.viewer_auto_delete_enabled !== undefined ? (fields.viewer_auto_delete_enabled ? 1 : 0) : 1,
                 fields.viewer_delete_all_enabled !== undefined ? (fields.viewer_delete_all_enabled ? 1 : 0) : 1,

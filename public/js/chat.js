@@ -95,23 +95,21 @@ let chatSelfDeletePolicy = {
 let chatSlurPolicy = {
     enabled: false,
     useBuiltin: true,
+    disabledCategories: [],
     terms: [],
     regexes: [],
     message: '',
     announcedForKey: null,
 };
-const CHAT_CORE_SLUR_PATTERN_STRINGS = [
-    '\\bn+i+g+g+(?:a+|e+r+)\\b',
-    '\\bk+\\s*y+\\s*k+\\s*e+\\b',
-    '\\bs+\\s*p+\\s*i+\\s*c+\\b',
-    '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+\\b',
-    '\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?\\b',
-    // "jews will not replace us" — only match the explicit white-supremacist phrase, NOT the word "jew" alone
-    '\\bj+\\s*e+\\s*w+\\s*s?\\s+w+\\s*i+\\s*l+\\s*l+\\s+n+\\s*o+\\s*t+\\s+r+\\s*e+\\s*p+\\s*l+\\s*a+\\s*c+\\s*e+\\b',
+const CHAT_CORE_SLUR_CATEGORIES = [
+    { key: 'n_word',      label: 'N-word and variants',        patterns: ['\\bn+i+g+g+(?:a+|e+r+)\\b'] },
+    { key: 'antisemitic', label: 'Antisemitic slurs',          patterns: ['\\bk+\\s*y+\\s*k+\\s*e+\\b', '\\bj+\\s*e+\\s*w+\\s*s?\\s+w+\\s*i+\\s*l+\\s*l+\\s+n+\\s*o+\\s*t+\\s+r+\\s*e+\\s*p+\\s*l+\\s*a+\\s*c+\\s*e+\\b'] },
+    { key: 'homophobic',  label: 'Homophobic slurs',           patterns: ['\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?\\b'] },
+    { key: 'racial',      label: 'Racial slurs (spic, chink)', patterns: ['\\bs+\\s*p+\\s*i+\\s*c+\\b', '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+\\b'] },
 ];
-const CHAT_CORE_SLUR_PATTERNS = CHAT_CORE_SLUR_PATTERN_STRINGS.map((source) => {
-    try { return new RegExp(source, 'i'); } catch { return null; }
-}).filter(Boolean);
+for (const cat of CHAT_CORE_SLUR_CATEGORIES) {
+    cat.compiled = cat.patterns.map((src) => { try { return new RegExp(src, 'i'); } catch { return null; } }).filter(Boolean);
+}
 const FULLSCREEN_CHAT_IDLE_MS = 2600;
 const FULLSCREEN_CHAT_FADE_MS = 9000;
 const FULLSCREEN_CHAT_MAX_MESSAGES = 7;
@@ -920,6 +918,7 @@ function handleChatMessage(msg) {
             chatSlurPolicy = {
                 enabled: !!msg.slur_filter_enabled,
                 useBuiltin: msg.slur_filter_use_builtin !== false,
+                disabledCategories: Array.isArray(msg.slur_filter_disabled_categories) ? msg.slur_filter_disabled_categories : [],
                 terms: Array.isArray(msg.slur_filter_terms) ? msg.slur_filter_terms.map((t) => String(t || '').trim()).filter(Boolean) : [],
                 regexes: Array.isArray(msg.slur_filter_regexes) ? msg.slur_filter_regexes.map((t) => String(t || '').trim()).filter(Boolean) : [],
                 message: String(msg.slur_filter_nudge_message || ''),
@@ -1548,10 +1547,11 @@ function compileRegexRules(rules, { forceInsensitive = true } = {}) {
     return compiled;
 }
 
-function messageHitsCoreSlurPolicy(text) {
+function messageHitsCoreSlurPolicy(text, disabledCategories = []) {
     const normalized = normalizeSlurPatternText(text);
     if (!normalized) return false;
-    return CHAT_CORE_SLUR_PATTERNS.some((pattern) => pattern.test(normalized));
+    const disabled = new Set(disabledCategories);
+    return CHAT_CORE_SLUR_CATEGORIES.some((cat) => !disabled.has(cat.key) && cat.compiled.some((pat) => pat.test(normalized)));
 }
 
 function messageHitsCustomRegexPolicy(text) {
@@ -1569,7 +1569,7 @@ function messageHitsSlurPolicy(text) {
         const normalizedTerm = normalizeSlurText(term);
         return normalizedTerm.length >= 2 && normalizedText.includes(normalizedTerm);
     });
-    const hitsCore = chatSlurPolicy.useBuiltin && messageHitsCoreSlurPolicy(text);
+    const hitsCore = chatSlurPolicy.useBuiltin && messageHitsCoreSlurPolicy(text, chatSlurPolicy.disabledCategories);
     const hitsRegex = messageHitsCustomRegexPolicy(text);
     return hitsConfigured || hitsCore || hitsRegex;
 }

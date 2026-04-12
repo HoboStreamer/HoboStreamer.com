@@ -196,6 +196,13 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? String(req.body.slur_filter_regexes || '').slice(0, 8000) : undefined,
             slur_filter_nudge_message: req.body.slur_filter_nudge_message !== undefined
                 ? String(req.body.slur_filter_nudge_message || '').slice(0, 800) : undefined,
+            slur_filter_disabled_categories: req.body.slur_filter_disabled_categories !== undefined
+                ? (() => {
+                    const VALID_CATS = new Set(['n_word', 'antisemitic', 'homophobic', 'racial']);
+                    const val = req.body.slur_filter_disabled_categories;
+                    if (!Array.isArray(val)) return '[]';
+                    return JSON.stringify(val.filter((k) => typeof k === 'string' && VALID_CATS.has(k)));
+                })() : undefined,
             ip_approval_mode: req.body.ip_approval_mode !== undefined
                 ? parseBoolean(req.body.ip_approval_mode, false) : undefined,
             viewer_auto_delete_enabled: req.body.viewer_auto_delete_enabled !== undefined

@@ -61,6 +61,7 @@ function renderDashModerationChannels(channels) {
     body.innerHTML = channels.map((channel) => {
         const settings = channel.moderation_settings || {};
         const moderators = channel.moderators || [];
+        const disabledCats = (() => { try { return JSON.parse(settings.slur_filter_disabled_categories || '[]') || []; } catch { return []; } })();
         return `
             <section class="dash-mod-channel">
                 <div class="dash-mod-header">
@@ -104,6 +105,12 @@ function renderDashModerationChannels(channels) {
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-filter-${channel.id}" ${Number(settings.aggressive_filter || 0) ? 'checked' : ''}> Aggressive Filter</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-enabled-${channel.id}" ${Number(settings.slur_filter_enabled || 0) ? 'checked' : ''}> Streamer Anti-Slur Nudge (optional, includes core slur protection)</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-builtin-${channel.id}" ${Number(settings.slur_filter_use_builtin ?? 1) ? 'checked' : ''}> Use built-in hate/slur regex pack</label>
+                            <div style="margin-left:1.2rem;display:flex;flex-direction:column;gap:0.15rem">
+                                <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-cat-n_word-${channel.id}" ${!disabledCats.includes('n_word') ? 'checked' : ''}> Block N-word</label>
+                                <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-cat-antisemitic-${channel.id}" ${!disabledCats.includes('antisemitic') ? 'checked' : ''}> Block antisemitic slurs</label>
+                                <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-cat-homophobic-${channel.id}" ${!disabledCats.includes('homophobic') ? 'checked' : ''}> Block homophobic slurs</label>
+                                <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-cat-racial-${channel.id}" ${!disabledCats.includes('racial') ? 'checked' : ''}> Block racial slurs (spic, chink)</label>
+                            </div>
                             <label>
                                 <span>Blocked Terms (comma or newline separated, added to core list)</span>
                                 <textarea id="dash-mod-slur-terms-${channel.id}" class="form-input" rows="3" placeholder="Put words/phrases you want blocked in this channel chat only">${esc(String(settings.slur_filter_terms || ''))}</textarea>
@@ -249,6 +256,11 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 aggressive_filter: !!document.getElementById(`dash-mod-filter-${channelId}`)?.checked,
                 slur_filter_enabled: !!document.getElementById(`dash-mod-slur-enabled-${channelId}`)?.checked,
                 slur_filter_use_builtin: !!document.getElementById(`dash-mod-slur-builtin-${channelId}`)?.checked,
+                slur_filter_disabled_categories: JSON.stringify(
+                    ['n_word', 'antisemitic', 'homophobic', 'racial'].filter(
+                        (k) => !document.getElementById(`dash-mod-slur-cat-${k}-${channelId}`)?.checked
+                    )
+                ),
                 slur_filter_terms: String(document.getElementById(`dash-mod-slur-terms-${channelId}`)?.value || ''),
                 slur_filter_regexes: String(document.getElementById(`dash-mod-slur-regex-${channelId}`)?.value || ''),
                 slur_filter_nudge_message: String(document.getElementById(`dash-mod-slur-msg-${channelId}`)?.value || ''),
