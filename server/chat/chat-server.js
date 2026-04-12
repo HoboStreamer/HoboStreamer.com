@@ -410,7 +410,9 @@ class ChatServer {
                     allow_auto_delete: !client.streamId || streamSettings.viewer_auto_delete_enabled !== 0,
                     allow_self_delete_all: !client.streamId || streamSettings.viewer_delete_all_enabled !== 0,
                     slur_filter_enabled: !!(client.streamId && streamSettings.slur_filter_enabled),
+                    slur_filter_use_builtin: streamSettings.slur_filter_use_builtin !== 0,
                     slur_filter_terms: this._parseSlurFilterTerms(streamSettings.slur_filter_terms),
+                    slur_filter_regexes: this._parseRegexLines(streamSettings.slur_filter_regexes),
                     slur_filter_nudge_message: String(streamSettings.slur_filter_nudge_message || ''),
                     min_auto_delete_minutes: MIN_CHAT_AUTO_DELETE_MINUTES,
                 });
@@ -671,9 +673,7 @@ class ChatServer {
                             }
                         }
                     }
-                                        slur_filter_use_builtin: streamSettings.slur_filter_use_builtin !== 0,
                 }
-                                        slur_filter_regexes: this._parseRegexLines(streamSettings.slur_filter_regexes),
             } catch { /* non-critical — don't block chat for IP approval errors */ }
         }
 
