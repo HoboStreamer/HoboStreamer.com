@@ -47,7 +47,7 @@ function vcRenderChannelList() {
 
     for (const ch of vcState.channels) {
         const item = document.createElement('div');
-        item.className = 'vc-channel-item' + (ch.id === vcState.selectedChannelId ? ' selected' : '') + (ch.id === joinedId ? ' joined' : '');
+        item.className = 'vc-channel-item' + (ch.id === joinedId ? ' joined' : '');
         item.dataset.channelId = ch.id;
 
         // Icon
@@ -76,22 +76,23 @@ function vcRenderChannelList() {
         mode.textContent = ch.mode === 'mic' ? 'Voice' : ch.mode === 'cam+mic' ? 'Video' : 'Voice+Cam';
         nameRow.appendChild(mode);
 
-        // Participant count
+        // Participant count badge (top-right)
         const count = document.createElement('span');
         count.className = 'vc-channel-count';
         const pc = ch.participantCount || 0;
         count.innerHTML = `<i class="fa-solid fa-user"></i> ${pc}`;
         if (pc >= (ch.maxParticipants || 15)) count.classList.add('full');
 
-        // Participant avatar stack (show up to 4)
-        const avatarStack = document.createElement('div');
-        avatarStack.className = 'vc-avatar-stack';
+        // Participant names list (avatar + name per row)
+        const participantList = document.createElement('div');
+        participantList.className = 'vc-participant-list';
         if (ch.participants && ch.participants.length) {
-            const shown = ch.participants.slice(0, 4);
-            shown.forEach(p => {
+            ch.participants.slice(0, 6).forEach(p => {
+                const row = document.createElement('div');
+                row.className = 'vc-participant-row';
+
                 const av = document.createElement('div');
                 av.className = 'vc-avatar-mini';
-                av.title = p.displayName || p.username || p.anonId || 'Anonymous';
                 if (p.avatarUrl) {
                     av.style.backgroundImage = `url(${p.avatarUrl})`;
                 } else {
@@ -99,22 +100,38 @@ function vcRenderChannelList() {
                     if (p.profileColor) av.style.background = p.profileColor;
                     av.textContent = initial;
                 }
-                avatarStack.appendChild(av);
+
+                const pname = document.createElement('span');
+                pname.className = 'vc-participant-name';
+                pname.textContent = p.displayName || p.username || p.anonId || 'Anonymous';
+
+                row.appendChild(av);
+                row.appendChild(pname);
+
+                if (p.muted) {
+                    const mu = document.createElement('i');
+                    mu.className = 'fa-solid fa-microphone-slash vc-participant-muted';
+                    row.appendChild(mu);
+                } else if (p.speaking) {
+                    row.classList.add('speaking');
+                }
+
+                participantList.appendChild(row);
             });
-            if (ch.participants.length > 4) {
+            if (ch.participants.length > 6) {
                 const more = document.createElement('div');
-                more.className = 'vc-avatar-mini vc-avatar-more';
-                more.textContent = `+${ch.participants.length - 4}`;
-                avatarStack.appendChild(more);
+                more.className = 'vc-participant-more';
+                more.textContent = `+${ch.participants.length - 6} more`;
+                participantList.appendChild(more);
             }
         }
-
-        item.appendChild(icon);
 
         const body = document.createElement('div');
         body.className = 'vc-channel-body';
         body.appendChild(nameRow);
-        body.appendChild(avatarStack);
+        body.appendChild(participantList);
+
+        item.appendChild(icon);
         item.appendChild(body);
         item.appendChild(count);
 
@@ -124,24 +141,71 @@ function vcRenderChannelList() {
 }
 
 function vcSelectChannel(channelId) {
-    // If already connected to this channel, just toggle highlight
-    if (callState.joined && callState.channelId === channelId) {
-        return;
-    }
+    // If already connected to this channel, ignore
+    if (callState.joined && callState.channelId === channelId) return;
 
-    // Validate the target channel exists before disconnecting from current
     const ch = vcState.channels.find(c => c.id === channelId);
     if (!ch) { vcFetchChannels(); return; }
 
-    // If already connected to a different channel, leave first
+    // Leave current channel first if in a different one
     if (callState.joined && callState.channelId && callState.channelId !== channelId) {
         vcLeave();
     }
 
-    vcState.selectedChannelId = channelId;
-    vcRenderChannelList();
+    vcJoinChannel(ch);
+}
 
-    vcShowSetup(ch);
+/* ── Discord-style Direct Join ─────────────────────────────── */
+
+async function vcJoinChannel(ch) {
+    if (!ch) return;
+
+    // Configure callState for channel-based join
+    callState.channelId = ch.id;
+    callState.streamId = ch.id; // backward compat with call.js internals
+    callState.callMode = ch.mode;
+    callState.isStreamer = false;
+    callState.broadcastMode = false;
+    callState.vcMode = true;
+    callState.startCameraOff = true; // always start with camera off
+
+    vcState.lastJoinedChannelId = ch.id;
+
+    // Show connected panel immediately
+    const connPanel = document.getElementById('vc-connected-panel');
+    if (connPanel) connPanel.style.display = '';
+
+    const channelLabel = document.getElementById('vc-connected-channel');
+    if (channelLabel) channelLabel.textContent = ch.name;
+
+    // Show/hide camera button based on channel mode
+    const camBtn = document.getElementById('vc-btn-camera');
+    if (camBtn) camBtn.style.display = ch.mode === 'mic' ? 'none' : '';
+    const camSwitchGroup = document.getElementById('vc-cam-switch-group');
+    if (camSwitchGroup) camSwitchGroup.style.display = ch.mode === 'mic' ? 'none' : '';
+
+    // Populate in-call device switchers (non-blocking)
+    vcEnumerateDevices(ch.mode).catch(() => {});
+
+    // Sync in-call input mode settings
+    const inputModeSwitch = document.getElementById('vc-input-mode-switch');
+    if (inputModeSwitch) inputModeSwitch.value = callState.inputMode;
+    vcOnInputModeChange(callState.inputMode);
+
+    try {
+        await joinCall();
+    } catch (err) {
+        console.error('[VC] Join failed:', err);
+        toast(`Failed to join voice channel: ${err.message || 'Unknown error'}`, 'error');
+        callState.channelId = null;
+        callState.vcMode = false;
+        if (connPanel) connPanel.style.display = 'none';
+        return;
+    }
+
+    vcRenderChannelList();
+    if (typeof updateChatModeVoiceOption === 'function') updateChatModeVoiceOption(true);
+    vcUpdateMiniBar();
 }
 
 /* ── Device Setup Panel ────────────────────────────────────── */
@@ -497,98 +561,11 @@ function vcOnVadChange(value) {
 /* ── Join / Leave ──────────────────────────────────────────── */
 
 async function vcJoinFromSetup() {
+    // Legacy: called from setup panel (no longer shown). Delegate to vcJoinChannel.
     const channelId = vcState.selectedChannelId;
     if (!channelId) return;
-
     const ch = vcState.channels.find(c => c.id === channelId);
-    if (!ch) return;
-
-    // Save selected devices from setup panel
-    const micSelect = document.getElementById('vc-mic-select');
-    if (micSelect) callState.selectedMic = micSelect.value;
-    const camSelect = document.getElementById('vc-cam-select');
-    if (camSelect) callState.selectedCam = camSelect.value;
-
-    // Check if user wants to start with camera off
-    const startCamOff = document.getElementById('vc-start-cam-off');
-    const wantCameraOff = startCamOff ? startCamOff.checked : true;
-
-    // Harvest the preview stream for reuse in joinCall — avoids a second
-    // getUserMedia round-trip which is the main source of join lag.
-    let reusableStream = null;
-    if (vcState.previewStream) {
-        const audioTracks = vcState.previewStream.getAudioTracks();
-        if (audioTracks.length && audioTracks[0].readyState === 'live') {
-            reusableStream = vcState.previewStream;
-            vcState.previewStream = null; // detach so vcStopPreview doesn't kill it
-        }
-    }
-
-    // Stop preview audio analysis (but preserve the reusable stream)
-    vcStopPreview();
-
-    // Configure callState for channel-based join
-    callState.channelId = channelId;
-    callState.streamId = channelId; // Backward compat with call.js internals
-    callState.callMode = ch.mode;
-    callState.isStreamer = false;
-    callState.broadcastMode = false;
-    callState.vcMode = true;
-    callState.startCameraOff = wantCameraOff;
-
-    vcState.lastJoinedChannelId = channelId;
-
-    // Hide setup, show connected
-    const setupPanel = document.getElementById('vc-setup-panel');
-    if (setupPanel) setupPanel.style.display = 'none';
-
-    const connPanel = document.getElementById('vc-connected-panel');
-    if (connPanel) connPanel.style.display = '';
-
-    const channelLabel = document.getElementById('vc-connected-channel');
-    if (channelLabel) channelLabel.textContent = ch.name;
-
-    // Show/hide camera button based on mode
-    const camBtn = document.getElementById('vc-btn-camera');
-    if (camBtn) camBtn.style.display = ch.mode === 'mic' ? 'none' : '';
-    const camSwitchGroup = document.getElementById('vc-cam-switch-group');
-    if (camSwitchGroup) camSwitchGroup.style.display = ch.mode === 'mic' ? 'none' : '';
-
-    // Populate in-call device switchers
-    await vcEnumerateDevices(ch.mode);
-
-    // Sync in-call input mode settings
-    const inputModeSwitch = document.getElementById('vc-input-mode-switch');
-    if (inputModeSwitch) inputModeSwitch.value = callState.inputMode;
-    vcOnInputModeChange(callState.inputMode);
-
-    // Pass the reusable preview stream to avoid double getUserMedia
-    if (reusableStream) {
-        callState._reusableStream = reusableStream;
-    }
-
-    // Join the actual call via call.js — await to catch errors
-    try {
-        await joinCall();
-    } catch (err) {
-        console.error('[VC] Join failed:', err);
-        toast(`Failed to join voice channel: ${err.message || 'Unknown error'}`, 'error');
-        // Revert UI back to setup
-        callState.channelId = null;
-        callState.vcMode = false;
-        if (connPanel) connPanel.style.display = 'none';
-        vcState.selectedChannelId = channelId;
-        vcShowSetup(ch);
-        return;
-    }
-
-    vcRenderChannelList();
-
-    // Enable voice call chat mode option
-    if (typeof updateChatModeVoiceOption === 'function') updateChatModeVoiceOption(true);
-
-    // Update mini VC bar
-    vcUpdateMiniBar();
+    if (ch) await vcJoinChannel(ch);
 }
 
 function vcLeave() {
@@ -767,6 +744,14 @@ function vcRenderUI() {
 /* ── Create Channel Modal ──────────────────────────────────── */
 
 function vcShowCreateModal() {
+    // Check if user already has a channel
+    if (typeof currentUser !== 'undefined' && currentUser?.id) {
+        const existing = vcState.channels.find(c => !c.permanent && !c.streamId && c.createdBy === currentUser.id);
+        if (existing) {
+            toast('You already have a voice channel. Delete it before creating a new one.', 'error');
+            return;
+        }
+    }
     const modal = document.getElementById('vc-create-modal');
     if (modal) modal.style.display = '';
     const nameInput = document.getElementById('vc-create-name');
@@ -799,13 +784,16 @@ async function vcCreateChannel() {
             },
             body: JSON.stringify({ name, mode, maxParticipants: maxP }),
         });
+        const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            alert(err.error || 'Failed to create channel');
+            toast(data.error || 'Failed to create channel', 'error');
             return;
         }
         vcHideCreateModal();
         await vcFetchChannels();
+        // Auto-join the newly created channel
+        const newCh = vcState.channels.find(c => c.id === data.channel?.id);
+        if (newCh) vcJoinChannel(newCh);
     } catch (err) {
         console.error('[VC] Create channel failed:', err);
     }

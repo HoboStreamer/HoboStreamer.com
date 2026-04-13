@@ -6745,9 +6745,9 @@ body.theme-light .user-dropdown {
 
 .vc-channel-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 9px 12px;
     border-radius: var(--radius);
     cursor: pointer;
     transition: background 0.12s;
@@ -6756,21 +6756,18 @@ body.theme-light .user-dropdown {
 .vc-channel-item:hover {
     background: var(--bg-tertiary);
 }
-.vc-channel-item.selected {
-    background: var(--bg-tertiary);
-    box-shadow: inset 3px 0 0 var(--accent);
-}
 .vc-channel-item.joined {
     background: rgba(var(--accent-rgb, 99, 102, 241), 0.1);
     box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .vc-channel-icon {
-    font-size: 1.1rem;
+    font-size: 1rem;
     color: var(--text-muted);
-    width: 24px;
+    width: 20px;
     text-align: center;
     flex-shrink: 0;
+    margin-top: 2px;
 }
 .vc-channel-item.joined .vc-channel-icon {
     color: var(--accent);
@@ -6784,10 +6781,10 @@ body.theme-light .user-dropdown {
 .vc-channel-name-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
 }
 .vc-channel-name {
-    font-size: 0.88rem;
+    font-size: 0.875rem;
     font-weight: 600;
     color: var(--text-primary);
     white-space: nowrap;
@@ -6795,8 +6792,8 @@ body.theme-light .user-dropdown {
     text-overflow: ellipsis;
 }
 .vc-channel-mode {
-    font-size: 0.65rem;
-    padding: 1px 6px;
+    font-size: 0.63rem;
+    padding: 1px 5px;
     border-radius: 8px;
     background: var(--bg-tertiary);
     color: var(--text-muted);
@@ -6805,31 +6802,63 @@ body.theme-light .user-dropdown {
 }
 
 .vc-channel-count {
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     flex-shrink: 0;
+    margin-top: 2px;
 }
 .vc-channel-count.full {
     color: var(--danger);
 }
 
-/* Mini avatar stack */
-.vc-avatar-stack {
+/* Participant list — shown inside channel items */
+.vc-participant-list {
     display: flex;
-    margin-top: 4px;
-    padding-left: 2px;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 5px;
 }
+.vc-participant-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.vc-participant-row.speaking .vc-participant-name {
+    color: #4ade80;
+}
+.vc-participant-name {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 130px;
+}
+.vc-participant-muted {
+    font-size: 0.6rem;
+    color: var(--danger);
+    opacity: 0.75;
+    flex-shrink: 0;
+}
+.vc-participant-more {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    opacity: 0.65;
+    padding-left: 2px;
+    margin-top: 1px;
+}
+
+/* Small avatar used in participant rows */
 .vc-avatar-mini {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: var(--bg-tertiary);
-    border: 2px solid var(--bg-secondary);
-    margin-left: -6px;
-    font-size: 0.55rem;
+    border: 1px solid var(--border);
+    font-size: 0.52rem;
     font-weight: 700;
     display: flex;
     align-items: center;
@@ -6838,14 +6867,6 @@ body.theme-light .user-dropdown {
     background-size: cover;
     background-position: center;
     flex-shrink: 0;
-}
-.vc-avatar-mini:first-child {
-    margin-left: 0;
-}
-.vc-avatar-more {
-    background: var(--bg-tertiary);
-    color: var(--text-muted);
-    font-size: 0.55rem;
 }
 
 /* ── Setup Panel ───────────────────────────────────────────── */

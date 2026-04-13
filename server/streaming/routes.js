@@ -604,6 +604,7 @@ router.post('/voice-channels', requireAuth, (req, res) => {
         const ch = callServer.createChannel({ name, mode, createdBy: req.user.id, maxParticipants });
         res.status(201).json({ channel: ch });
     } catch (err) {
+        if (err.code === 'CHANNEL_LIMIT') return res.status(400).json({ error: err.message });
         console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to create voice channel' });
     }

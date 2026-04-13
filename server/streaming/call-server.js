@@ -41,6 +41,7 @@ class CallServer {
         this.channels = new Map();
         this._nextPeerId = 1;
         this._heartbeatInterval = null;
+        this._inactivityTimer = null;
 
         // Seed the permanent Public channel
         this.channels.set(PUBLIC_CHANNEL_ID, {
@@ -61,7 +62,27 @@ class CallServer {
             });
         }, WS_HEARTBEAT_MS);
         this.wss.on('connection', (ws, req) => this._handleConnection(ws, req));
+
+        // Cleanup user-created channels that have been empty for over an hour
+        if (this._inactivityTimer) clearInterval(this._inactivityTimer);
+        this._inactivityTimer = setInterval(() => this._cleanupInactiveChannels(), 5 * 60 * 1000);
+
         console.log('[CallServer] Voice channels initialized');
+    }
+
+    _cleanupInactiveChannels() {
+        const ONE_HOUR = 60 * 60 * 1000;
+        const now = Date.now();
+        for (const [channelId, ch] of this.channels) {
+            if (ch.permanent || ch.streamId) continue;
+            const room = this.rooms.get(channelId);
+            const isEmpty = !room || room.size === 0;
+            if (isEmpty && ch.lastEmptiedAt && (now - ch.lastEmptiedAt) >= ONE_HOUR) {
+                console.log(`[CallServer] Auto-deleting inactive channel "${ch.name}" (${channelId}) — empty for ${Math.round((now - ch.lastEmptiedAt) / 60000)}m`);
+                this.channels.delete(channelId);
+                this.callBans.delete(channelId);
+            }
+        }
     }
 
     handleUpgrade(req, socket, head) {
@@ -93,12 +114,19 @@ class CallServer {
     }
 
     createChannel({ name, mode, createdBy, maxParticipants }) {
+        // One user-created channel per user
+        for (const [, ch] of this.channels) {
+            if (!ch.permanent && !ch.streamId && ch.createdBy === createdBy) {
+                throw Object.assign(new Error('You already have a voice channel. Delete it first.'), { code: 'CHANNEL_LIMIT' });
+            }
+        }
         const id = `user-${createdBy}-${Date.now().toString(36)}`;
         const ch = {
             id, name: String(name || 'Voice Channel').slice(0, 40),
             mode: ['mic', 'mic+cam', 'cam+mic'].includes(mode) ? mode : 'mic+cam',
             createdBy, streamId: null, permanent: false, createdAt: Date.now(),
             maxParticipants: Math.min(Math.max(Number(maxParticipants) || MAX_PARTICIPANTS, 2), MAX_PARTICIPANTS),
+            lastEmptiedAt: Date.now(), // starts empty; inactivity timer tracks from creation
         };
         this.channels.set(id, ch);
         return ch;
@@ -204,6 +232,11 @@ class CallServer {
         const clientInfo = { ws, user, anonId, ip, peerId, muted: false, cameraOff: true, forceMuted: false, forceCameraOff: false, speaking: false, isChannelCreator, isStreamer, _msgCount: 0, _msgResetTime: Date.now() };
         this.clients.set(ws, { channelId: resolvedId, peerId });
         room.set(peerId, clientInfo);
+
+        // Mark channel as active (reset inactivity timer)
+        if (channel && !channel.permanent && !channel.streamId) {
+            channel.lastEmptiedAt = null;
+        }
 
         const participants = [];
         for (const [pid, info] of room) participants.push(this._buildParticipantInfo(pid, info));
@@ -362,9 +395,10 @@ class CallServer {
         if (room.size === 0) {
             this.rooms.delete(channelId);
             const ch = this.channels.get(channelId);
+            // For user-created channels: don't delete immediately; track when they
+            // became empty so the inactivity timer can clean up after 1 hour.
             if (ch && !ch.permanent && !ch.streamId) {
-                this.channels.delete(channelId);
-                this.callBans.delete(channelId);
+                ch.lastEmptiedAt = Date.now();
             }
         }
     }
@@ -404,6 +438,7 @@ class CallServer {
     close() {
         for (const [cid] of this.rooms) this.endCall(cid);
         if (this._heartbeatInterval) { clearInterval(this._heartbeatInterval); this._heartbeatInterval = null; }
+        if (this._inactivityTimer) { clearInterval(this._inactivityTimer); this._inactivityTimer = null; }
         if (this.wss) this.wss.close();
     }
 }
