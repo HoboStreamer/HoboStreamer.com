@@ -325,22 +325,19 @@ function stopKeyHold(controlId, command, btnEl) {
 function connectControlWs(streamId) {
     destroyControlWs();
 
-    const host = window.location.hostname;
-    const port = window.location.port || 3000;
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${protocol}://${host}:${port}/ws/control`;
+    const params = new URLSearchParams();
+    params.set('mode', 'viewer');
+    params.set('stream', String(streamId));
+
+    const token = localStorage.getItem('token');
+    if (token) params.set('token', token);
+
+    const wsUrl = `${protocol}://${window.location.host}/ws/control?${params.toString()}`;
 
     controlWs = new WebSocket(wsUrl);
 
-    controlWs.onopen = () => {
-        const token = localStorage.getItem('token');
-        controlWs.send(JSON.stringify({
-            type: 'join',
-            streamId: streamId,
-            role: 'viewer',
-            token: token || undefined
-        }));
-    };
+    controlWs.onopen = () => {};
 
     controlWs.onmessage = (e) => {
         try {
