@@ -5502,6 +5502,15 @@ body.theme-light .user-dropdown {
 .call-tile-menu-btn:hover {
     background: rgba(0,0,0,0.8);
 }
+
+/* Keep options button visible in compact VC tiles and touch layouts */
+.vc-participants-grid .call-tile-menu-btn {
+    opacity: 0.95;
+    width: 24px;
+    height: 24px;
+    top: 2px;
+    left: 2px;
+}
 .call-tile-popout-btn {
     position: absolute;
     top: 4px;
@@ -7498,6 +7507,10 @@ body.theme-light .user-dropdown {
 
 /* ── Responsive ────────────────────────────────────────────── */
 @media (max-width: 768px) {
+    .call-tile-menu-btn,
+    .call-tile-popout-btn {
+        opacity: 0.95;
+    }
     .vc-call-toast-overlay {
         right: 10px;
         left: 10px;
