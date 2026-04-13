@@ -1494,7 +1494,10 @@ class RestreamManager extends EventEmitter {
                 // If we think we're live, cross-check cached platform signal
                 if (effectiveStatus === 'live') {
                     const platformLive = this.isPlatformLive(session.destId);
-                    if (platformLive === false) {
+                    const platform = session.destination?.platform || null;
+                    // Kick live-state signals can lag or be unavailable even when ingest is healthy.
+                    // Do not force-downgrade Kick to error based solely on platform polling.
+                    if (platformLive === false && platform !== 'kick') {
                         // Platform API says not live — flag as stale
                         effectiveStatus = 'error';
                         effectiveError = 'FFmpeg running but platform reports offline';
