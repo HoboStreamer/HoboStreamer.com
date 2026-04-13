@@ -7321,6 +7321,170 @@ body.theme-light .user-dropdown {
     gap: 10px;
 }
 
+/* ── Voice Call Invite Overlay ─────────────────────────────── */
+.vc-call-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10040;
+    background: rgba(5, 6, 10, 0.62);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.vc-call-card {
+    width: min(460px, 96vw);
+    background: linear-gradient(180deg, rgba(32, 32, 40, 0.96), rgba(20, 20, 26, 0.98));
+    border: 1px solid rgba(192, 150, 92, 0.32);
+    border-radius: 20px;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+    padding: 28px 22px 24px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+.vc-call-ring {
+    position: absolute;
+    width: 160px;
+    height: 160px;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    border: 2px solid rgba(192, 150, 92, 0.35);
+    animation: vc-call-ring-pulse 1.7s ease-out infinite;
+}
+@keyframes vc-call-ring-pulse {
+    0% { opacity: 0.8; transform: translateX(-50%) scale(0.78); }
+    70% { opacity: 0.14; transform: translateX(-50%) scale(1.24); }
+    100% { opacity: 0; transform: translateX(-50%) scale(1.32); }
+}
+.vc-call-avatar-wrap {
+    position: relative;
+    z-index: 1;
+    margin-top: 4px;
+}
+.vc-call-avatar {
+    width: 76px;
+    height: 76px;
+    border-radius: 999px;
+    object-fit: cover;
+    border: 2px solid rgba(192, 150, 92, 0.45);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.vc-call-avatar-fallback {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.08);
+}
+.vc-call-heading {
+    margin-top: 16px;
+    font-size: 0.84rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+.vc-call-caller {
+    margin-top: 4px;
+    font-size: 1.26rem;
+    font-weight: 700;
+}
+.vc-call-channel {
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+.vc-call-actions {
+    margin-top: 22px;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+.vc-call-btn {
+    border: none;
+    border-radius: 12px;
+    min-width: 132px;
+    padding: 10px 14px;
+    font-weight: 700;
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: transform 0.16s ease, opacity 0.16s ease;
+}
+.vc-call-btn:hover { transform: translateY(-1px); }
+.vc-call-btn:active { transform: translateY(0) scale(0.98); }
+.vc-call-btn-decline { background: linear-gradient(135deg, #b93232, #e74c3c); }
+.vc-call-btn-accept { background: linear-gradient(135deg, #25995d, #2ecc71); }
+
+/* ── Voice Call Outgoing Toast ─────────────────────────────── */
+.vc-call-toast-overlay {
+    position: fixed;
+    right: 14px;
+    bottom: 84px;
+    z-index: 10035;
+    pointer-events: none;
+}
+.vc-call-toast-card {
+    pointer-events: auto;
+    width: min(360px, calc(100vw - 28px));
+    background: rgba(14, 15, 20, 0.95);
+    border: 1px solid rgba(192, 150, 92, 0.28);
+    border-radius: 14px;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 12px 12px 14px;
+    position: relative;
+    overflow: hidden;
+}
+.vc-call-toast-ring {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 0 rgba(192, 150, 92, 0.42);
+    animation: vc-call-toast-ping 1.35s ease-out infinite;
+    flex-shrink: 0;
+}
+@keyframes vc-call-toast-ping {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(192, 150, 92, 0.45); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 12px rgba(192, 150, 92, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(192, 150, 92, 0); }
+}
+.vc-call-toast-main { min-width: 0; flex: 1; }
+.vc-call-toast-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.vc-call-toast-subtitle {
+    margin-top: 2px;
+    font-size: 0.84rem;
+    color: var(--text-secondary);
+}
+.vc-call-toast-action {
+    border: none;
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.vc-call-toast-action:hover { background: rgba(255, 255, 255, 0.13); }
+.vc-call-toast-cancel { color: #ffb4b4; }
+
 /* Error shake for form inputs */
 .form-input.error {
     border-color: var(--danger) !important;
@@ -7334,6 +7498,20 @@ body.theme-light .user-dropdown {
 
 /* ── Responsive ────────────────────────────────────────────── */
 @media (max-width: 768px) {
+    .vc-call-toast-overlay {
+        right: 10px;
+        left: 10px;
+        bottom: 78px;
+    }
+    .vc-call-toast-card {
+        width: 100%;
+    }
+    .vc-call-actions {
+        flex-direction: column;
+    }
+    .vc-call-btn {
+        width: 100%;
+    }
     .chat-voice-layout {
         flex-direction: column;
         padding: 4px;

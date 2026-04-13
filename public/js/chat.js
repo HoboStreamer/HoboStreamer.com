@@ -30,6 +30,13 @@ let _chatIntentionalClose = false;
 let _chatActive = false; // true whenever we have an active/desired chat connection (including global)
 let _chatIsReconnecting = false; // true during auto-reconnect to prevent clearing messages
 
+// ── Voice-call invite overlays + sounds ─────────────────────
+let _incomingVcCall = null;
+let _incomingVcCallTimeout = null;
+let _outgoingVcCall = null;
+let _vcRingLoopTimer = null;
+let _vcAudioCtx = null;
+
 // ── Cross-feed: secondary global WS for piping messages into stream chat ──
 let _globalFeedWs = null;
 let _globalFeedReconnectTimer = null;
@@ -142,6 +149,304 @@ function saveChatSettings() {
     try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch {}
     applyChatSettings();
 }
+
+function _vcEnsureAudioContext() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    if (!_vcAudioCtx) {
+        try { _vcAudioCtx = new Ctx(); } catch { return null; }
+    }
+    if (_vcAudioCtx.state === 'suspended') {
+        _vcAudioCtx.resume().catch(() => {});
+    }
+    return _vcAudioCtx;
+}
+
+function _vcPlayTone(frequency, durationMs = 150, { type = 'sine', gain = 0.05, delayMs = 0 } = {}) {
+    const ctx = _vcEnsureAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime + (delayMs / 1000);
+    const osc = ctx.createOscillator();
+    const amp = ctx.createGain();
+
+    osc.type = type;
+    osc.frequency.setValueAtTime(frequency, now);
+    amp.gain.setValueAtTime(0.0001, now);
+    amp.gain.exponentialRampToValueAtTime(Math.max(gain, 0.0001), now + 0.02);
+    amp.gain.exponentialRampToValueAtTime(0.0001, now + (durationMs / 1000));
+
+    osc.connect(amp);
+    amp.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + (durationMs / 1000) + 0.03);
+}
+
+function _vcPlayPattern(steps) {
+    let offset = 0;
+    for (const step of steps) {
+        if (step.freq) {
+            _vcPlayTone(step.freq, step.ms || 140, {
+                type: step.type || 'sine',
+                gain: step.gain ?? 0.055,
+                delayMs: offset,
+            });
+        }
+        offset += step.ms || 0;
+        offset += step.pause || 0;
+    }
+    return offset;
+}
+
+function _vcStopRingLoop() {
+    if (_vcRingLoopTimer) {
+        clearInterval(_vcRingLoopTimer);
+        _vcRingLoopTimer = null;
+    }
+}
+
+function _vcStartIncomingRing() {
+    _vcStopRingLoop();
+    const pattern = [
+        { freq: 740, ms: 130, pause: 70, gain: 0.065 },
+        { freq: 988, ms: 170, pause: 820, gain: 0.075 },
+    ];
+    const loopMs = _vcPlayPattern(pattern) + 40;
+    _vcRingLoopTimer = setInterval(() => _vcPlayPattern(pattern), loopMs);
+}
+
+function _vcStartOutgoingRingback() {
+    _vcStopRingLoop();
+    const pattern = [
+        { freq: 440, ms: 150, pause: 90, gain: 0.05 },
+        { freq: 440, ms: 150, pause: 900, gain: 0.05 },
+    ];
+    const loopMs = _vcPlayPattern(pattern) + 40;
+    _vcRingLoopTimer = setInterval(() => _vcPlayPattern(pattern), loopMs);
+}
+
+function _vcPlayAcceptedTone() {
+    _vcPlayPattern([
+        { freq: 523, ms: 110, pause: 40, gain: 0.06 },
+        { freq: 659, ms: 130, pause: 30, gain: 0.06 },
+        { freq: 784, ms: 180, gain: 0.06 },
+    ]);
+}
+
+function _vcPlayDeclinedTone() {
+    _vcPlayPattern([
+        { freq: 370, ms: 150, pause: 60, gain: 0.06, type: 'triangle' },
+        { freq: 262, ms: 220, gain: 0.06, type: 'triangle' },
+    ]);
+}
+
+function _dismissIncomingVcCallOverlay() {
+    if (_incomingVcCall?.el?.parentNode) _incomingVcCall.el.parentNode.removeChild(_incomingVcCall.el);
+    _incomingVcCall = null;
+    if (_incomingVcCallTimeout) {
+        clearTimeout(_incomingVcCallTimeout);
+        _incomingVcCallTimeout = null;
+    }
+    _vcStopRingLoop();
+}
+
+function _dismissOutgoingVcCallOverlay() {
+    if (_outgoingVcCall?.el?.parentNode) _outgoingVcCall.el.parentNode.removeChild(_outgoingVcCall.el);
+    _outgoingVcCall = null;
+    _vcStopRingLoop();
+}
+
+function _showOutgoingVcCallOverlay(targetName, targetUserId, channelId, channelName) {
+    _dismissOutgoingVcCallOverlay();
+
+    const safeTargetName = esc(targetName || 'User');
+    const overlay = document.createElement('div');
+    overlay.className = 'vc-call-toast-overlay vc-call-toast-outgoing';
+    overlay.innerHTML = `
+        <div class="vc-call-toast-card">
+            <div class="vc-call-toast-ring"></div>
+            <div class="vc-call-toast-main">
+                <div class="vc-call-toast-title">Calling ${safeTargetName}</div>
+                <div class="vc-call-toast-subtitle" data-vc-call-status>Ringing...</div>
+            </div>
+            <button class="vc-call-toast-action vc-call-toast-cancel" type="button" data-vc-cancel-call>
+                <i class="fa-solid fa-xmark"></i>
+                Cancel
+            </button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('[data-vc-cancel-call]')?.addEventListener('click', () => {
+        _dismissOutgoingVcCallOverlay();
+        toast('Call canceled', 'info');
+    });
+
+    _outgoingVcCall = {
+        el: overlay,
+        statusEl: overlay.querySelector('[data-vc-call-status]'),
+        targetUserId: Number(targetUserId) || 0,
+        targetName,
+        channelId: String(channelId || ''),
+        channelName: channelName || 'Voice Channel',
+    };
+
+    _vcStartOutgoingRingback();
+}
+
+function _setOutgoingVcCallStatus(text, tone = null, autoDismissMs = 1800) {
+    if (!_outgoingVcCall) return;
+    if (_outgoingVcCall.statusEl) _outgoingVcCall.statusEl.textContent = text;
+    _vcStopRingLoop();
+    if (tone === 'accepted') _vcPlayAcceptedTone();
+    if (tone === 'declined') _vcPlayDeclinedTone();
+    if (autoDismissMs > 0) {
+        setTimeout(() => {
+            _dismissOutgoingVcCallOverlay();
+        }, autoDismissMs);
+    }
+}
+
+async function _sendVcCallResponse({ callerUserId, channelId, channelName, status }) {
+    if (!callerUserId || !channelId || !status) return;
+    try {
+        await api('/streams/voice-channels/call-user/respond', {
+            method: 'POST',
+            body: {
+                caller_user_id: Number(callerUserId),
+                channel_id: String(channelId),
+                channel_name: String(channelName || 'Voice Channel'),
+                status: String(status),
+            },
+        });
+    } catch {
+        // Non-fatal. Joining/declining should still continue client-side.
+    }
+}
+
+function _showIncomingVcCallOverlay(msg) {
+    const callerUserId = Number(msg.fromUserId || 0);
+    const channelId = String(msg.channelId || '');
+    if (!callerUserId || !channelId) return;
+
+    if (typeof callState !== 'undefined' && callState.joined && callState.channelId !== channelId) {
+        _sendVcCallResponse({
+            callerUserId,
+            channelId,
+            channelName: msg.channelName || 'Voice Channel',
+            status: 'busy',
+        });
+        if (typeof toast === 'function') toast(`${msg.fromDisplayName || msg.fromUsername || 'Someone'} tried to call you`, 'info');
+        return;
+    }
+
+    _dismissIncomingVcCallOverlay();
+
+    const callerName = esc(msg.fromDisplayName || msg.fromUsername || 'Someone');
+    const channelName = esc(String(msg.channelName || 'Voice Channel'));
+    const avatarUrl = msg.fromAvatarUrl ? esc(String(msg.fromAvatarUrl)) : '';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'vc-call-overlay';
+    overlay.innerHTML = `
+        <div class="vc-call-card">
+            <div class="vc-call-ring"></div>
+            <div class="vc-call-avatar-wrap">
+                ${avatarUrl ? `<img class="vc-call-avatar" src="${avatarUrl}" alt="${callerName}">` : '<div class="vc-call-avatar vc-call-avatar-fallback"><i class="fa-solid fa-user"></i></div>'}
+            </div>
+            <div class="vc-call-heading">Incoming Call</div>
+            <div class="vc-call-caller">${callerName}</div>
+            <div class="vc-call-channel">${channelName}</div>
+            <div class="vc-call-actions">
+                <button type="button" class="vc-call-btn vc-call-btn-decline" data-vc-decline>
+                    <i class="fa-solid fa-phone-slash"></i>
+                    Decline
+                </button>
+                <button type="button" class="vc-call-btn vc-call-btn-accept" data-vc-accept>
+                    <i class="fa-solid fa-phone"></i>
+                    Accept
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    _incomingVcCall = {
+        el: overlay,
+        callerUserId,
+        callerName: msg.fromDisplayName || msg.fromUsername || 'Someone',
+        channelId,
+        channelName: msg.channelName || 'Voice Channel',
+    };
+
+    overlay.querySelector('[data-vc-decline]')?.addEventListener('click', async () => {
+        const state = _incomingVcCall;
+        _dismissIncomingVcCallOverlay();
+        if (!state) return;
+        await _sendVcCallResponse({
+            callerUserId: state.callerUserId,
+            channelId: state.channelId,
+            channelName: state.channelName,
+            status: 'declined',
+        });
+        toast('Call declined', 'info');
+    });
+
+    overlay.querySelector('[data-vc-accept]')?.addEventListener('click', async () => {
+        const state = _incomingVcCall;
+        _dismissIncomingVcCallOverlay();
+        if (!state) return;
+        await _sendVcCallResponse({
+            callerUserId: state.callerUserId,
+            channelId: state.channelId,
+            channelName: state.channelName,
+            status: 'accepted',
+        });
+        await acceptVcInvite(state.channelId, state.channelName);
+    });
+
+    _incomingVcCallTimeout = setTimeout(async () => {
+        const state = _incomingVcCall;
+        _dismissIncomingVcCallOverlay();
+        if (!state) return;
+        await _sendVcCallResponse({
+            callerUserId: state.callerUserId,
+            channelId: state.channelId,
+            channelName: state.channelName,
+            status: 'no-answer',
+        });
+    }, 30000);
+
+    _vcStartIncomingRing();
+}
+
+function _handleVcCallResponse(msg) {
+    if (!_outgoingVcCall) return;
+    const expectedUser = Number(_outgoingVcCall.targetUserId || 0);
+    const fromUser = Number(msg.fromUserId || 0);
+    if (expectedUser && fromUser && expectedUser !== fromUser) return;
+    if (_outgoingVcCall.channelId && msg.channelId && _outgoingVcCall.channelId !== msg.channelId) return;
+
+    const who = msg.fromDisplayName || msg.fromUsername || _outgoingVcCall.targetName || 'User';
+    const status = String(msg.status || '').toLowerCase();
+    if (status === 'accepted') {
+        _setOutgoingVcCallStatus(`${who} accepted`, 'accepted', 1400);
+        if (typeof toast === 'function') toast(`${who} accepted your call`, 'success');
+        return;
+    }
+    if (status === 'busy') {
+        _setOutgoingVcCallStatus(`${who} is busy`, 'declined', 2000);
+        if (typeof toast === 'function') toast(`${who} is already in another call`, 'info');
+        return;
+    }
+    if (status === 'no-answer') {
+        _setOutgoingVcCallStatus(`No answer from ${who}`, 'declined', 2200);
+        if (typeof toast === 'function') toast(`${who} did not answer`, 'info');
+        return;
+    }
+    _setOutgoingVcCallStatus(`${who} declined`, 'declined', 1800);
+    if (typeof toast === 'function') toast(`${who} declined your call`, 'error');
+}
+
 function bindContainedChatScroll() {
     const selectors = [
         '.chat-sidebar',
@@ -1068,16 +1373,11 @@ function handleChatMessage(msg) {
             }
             break;
         case 'vc-call-invite': {
-            const caller = esc(msg.fromDisplayName || msg.fromUsername || 'Someone');
-            const channelId = esc(String(msg.channelId || ''));
-            const channelName = esc(String(msg.channelName || 'Voice Channel'));
-            if (channelId) {
-                addRichSystemMessage(
-                    `📞 <strong>${caller}</strong> is calling you · <a href="#" onclick="event.preventDefault();acceptVcInvite('${channelId}', '${channelName}')" style="color:var(--accent);text-decoration:underline">Join call</a>`,
-                    'info'
-                );
-                if (typeof toast === 'function') toast(`${msg.fromDisplayName || msg.fromUsername || 'Someone'} is calling you`, 'info');
-            }
+            _showIncomingVcCallOverlay(msg);
+            break;
+        }
+        case 'vc-call-response': {
+            _handleVcCallResponse(msg);
             break;
         }
     }
@@ -2252,8 +2552,10 @@ async function ctxCallUser(username, userId) {
         });
         if (!data?.channel?.id) throw new Error('Call channel not available');
         await _joinVoiceChannelFromInvite(data.channel.id, data.channel.name || 'Voice Channel', false);
+        _showOutgoingVcCallOverlay(username, userId, data.channel.id, data.channel.name || 'Voice Channel');
         toast(`Calling ${username}...`, 'success');
     } catch (err) {
+        _dismissOutgoingVcCallOverlay();
         toast(err.message || 'Failed to place call', 'error');
     }
 }
@@ -2285,6 +2587,7 @@ async function _joinVoiceChannelFromInvite(channelId, channelName, switchToChat 
 
 async function acceptVcInvite(channelId, channelName) {
     try {
+        _dismissIncomingVcCallOverlay();
         await _joinVoiceChannelFromInvite(channelId, channelName || 'Voice Channel', true);
     } catch (err) {
         toast(err.message || 'Failed to join call invite', 'error');

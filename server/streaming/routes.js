@@ -683,6 +683,39 @@ router.post('/voice-channels/call-user', requireAuth, (req, res) => {
     }
 });
 
+router.post('/voice-channels/call-user/respond', requireAuth, (req, res) => {
+    try {
+        const callerUserId = Number(req.body?.caller_user_id || 0);
+        const channelId = String(req.body?.channel_id || '').trim();
+        const channelName = String(req.body?.channel_name || 'Voice Channel').trim() || 'Voice Channel';
+        const status = String(req.body?.status || '').trim().toLowerCase();
+
+        const allowed = new Set(['accepted', 'declined', 'busy', 'no-answer', 'canceled']);
+        if (!callerUserId) return res.status(400).json({ error: 'caller_user_id is required' });
+        if (!channelId) return res.status(400).json({ error: 'channel_id is required' });
+        if (!allowed.has(status)) return res.status(400).json({ error: 'Invalid response status' });
+        if (callerUserId === req.user.id) return res.status(400).json({ error: 'Invalid caller target' });
+
+        const fromDisplayName = req.user.display_name || req.user.username || 'Someone';
+        chatServer.sendDm(callerUserId, {
+            type: 'vc-call-response',
+            status,
+            channelId,
+            channelName,
+            fromUserId: req.user.id,
+            fromUsername: req.user.username,
+            fromDisplayName,
+            fromAvatarUrl: req.user.avatar_url || null,
+            createdAt: Date.now(),
+        });
+
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('[Streaming]', err.message);
+        return res.status(500).json({ error: 'Failed to send call response' });
+    }
+});
+
 // ── Broadcast Settings ──────────────────────────────────────
 router.get('/broadcast-settings', requireAuth, (req, res) => {
     try {
