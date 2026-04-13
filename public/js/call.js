@@ -578,6 +578,7 @@ async function joinCall() {
 
     if (reuseStream) {
         callState.localStream = reuseStream;
+        callState.noMic = false;
     } else {
         // If we're broadcasting, clone the broadcast's audio track instead of
         // calling getUserMedia again — avoids device contention on Linux/PipeWire
@@ -597,6 +598,7 @@ async function joinCall() {
             callState.localStream = new MediaStream([broadcastAudioTrack]);
             callState.cameraOff = true;
             callState._sharedBroadcastAudio = true;
+            callState.noMic = false;
 
             // Camera: only add if user explicitly opted in and mode supports it
             if ((mode === 'cam+mic' || mode === 'mic+cam') && !wantCameraOff) {
@@ -629,14 +631,12 @@ async function joinCall() {
 
             try {
                 callState.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                callState.noMic = false;
             } catch (err) {
-                callState.connecting = false;
-                console.error('[Call] getUserMedia failed:', err);
-                const msg = err.name === 'NotFoundError' ? 'No microphone found'
-                    : err.name === 'NotAllowedError' ? 'Microphone access denied'
-                    : `Media error: ${err.message}`;
-                _callSystemMessage(msg);
-                return;
+                console.warn('[Call] getUserMedia failed — joining without mic:', err.message);
+                callState.noMic = true;
+                callState.mediaErrorType = err.name;
+                callState.localStream = new MediaStream(); // empty stream — still connect as listener
             }
         }
     }
@@ -841,6 +841,60 @@ async function toggleCallCamera() {
     _renderCallUI();
 }
 
+/** Enable microphone while in-call (e.g. after joining without mic or after permission recovery) */
+async function requestMicAccess() {
+    if (!callState.joined) return;
+    const btn = document.getElementById('vc-enable-mic-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Requesting…'; }
+
+    try {
+        const constraints = {
+            audio: { deviceId: callState.selectedMic !== 'default' ? { exact: callState.selectedMic } : undefined }
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const audioTrack = stream.getAudioTracks()[0];
+        if (!callState.localStream) callState.localStream = new MediaStream();
+        callState.localStream.addTrack(audioTrack);
+        callState.noMic = false;
+        callState.mediaErrorType = null;
+        callState.muted = false;
+
+        // Add audio track to all existing peer connections
+        for (const [peerId, peer] of callState.peers) {
+            try {
+                const existingSender = peer.pc.getSenders().find(s => s.track?.kind === 'audio');
+                if (existingSender) {
+                    await existingSender.replaceTrack(audioTrack);
+                    _optimizeCallSender(existingSender, audioTrack);
+                } else {
+                    const sender = peer.pc.addTrack(audioTrack, callState.localStream);
+                    _optimizeCallSender(sender, audioTrack);
+                }
+            } catch (peerErr) {
+                console.warn(`[Call] Failed to add mic track to peer ${peerId}:`, peerErr.message);
+            }
+        }
+
+        _setupLocalAudioProcessing();
+        _applyLocalAudioGate();
+        _updateLocalPreview();
+
+        if (callState.ws && callState.ws.readyState === WebSocket.OPEN) {
+            callState.ws.send(JSON.stringify({ type: 'mute', muted: false }));
+        }
+
+        _callSystemMessage('Microphone enabled', 'success');
+        _renderCallUI();
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Enable Mic'; }
+        const msg = err.name === 'NotAllowedError'
+            ? 'Mic permission denied — check your browser address bar to allow microphone access'
+            : `Mic error: ${err.message}`;
+        _callSystemMessage(msg, 'error');
+        _renderCallUI();
+    }
+}
+
 /** End the call (streamer only) */
 function endCall() {
     if (!callState.isStreamer) return;
@@ -972,7 +1026,11 @@ function _handleCallMessage(msg) {
                 }
             }
             _renderCallUI();
-            _callSystemMessage('You joined the call');
+            if (callState.noMic) {
+                _callSystemMessage('Joined! Click "Enable Mic" below to start speaking', 'info');
+            } else {
+                _callSystemMessage('You joined the call', 'success');
+            }
             break;
 
         case 'peer-joined': {
@@ -2188,11 +2246,11 @@ function _updateLocalPreview() {
     _renderCallUI();
 }
 
-function _callSystemMessage(text) {
+function _callSystemMessage(text, type = 'error') {
     // In VC mode, show a toast + log so the user actually sees errors
     if (callState.vcMode) {
         console.log('[VC]', text);
-        if (typeof toast === 'function') toast(text, 'error');
+        if (typeof toast === 'function') toast(text, type);
         // Also append to VC status area if visible
         const vcStatus = document.getElementById('vc-connected-status');
         if (vcStatus) {

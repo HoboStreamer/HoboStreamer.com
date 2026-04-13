@@ -181,11 +181,12 @@ async function vcShowSetup(channel) {
 
     panel.style.display = '';
 
-    // Enumerate devices
+    // Enumerate devices (may prompt for permission if not yet granted)
     await vcEnumerateDevices(channel.mode);
 
-    // Start mic preview
-    await vcStartPreview(channel.mode);
+    // Mic preview is optional — user can click "Test Mic" to start it
+    // vcStartPreview() is intentionally not called here so joining works
+    // even when mic permission hasn't been granted yet.
 }
 
 async function vcEnumerateDevices(mode) {
@@ -652,8 +653,14 @@ function vcSwitchCam(deviceId) {
 }
 
 function vcUpdateControlButtons() {
+    // Show/hide the no-mic banner (when joined without microphone permission)
+    const noMicBanner = document.getElementById('vc-no-mic-banner');
+    if (noMicBanner) noMicBanner.style.display = (callState.joined && callState.noMic) ? '' : 'none';
+
     const muteBtn = document.getElementById('vc-btn-mute');
     if (muteBtn) {
+        // Hide mute button when no mic is active — the enable-mic banner replaces it
+        muteBtn.style.display = callState.noMic ? 'none' : '';
         const muted = callState.muted || callState.forceMuted;
         muteBtn.innerHTML = muted
             ? '<i class="fa-solid fa-microphone-slash"></i>'

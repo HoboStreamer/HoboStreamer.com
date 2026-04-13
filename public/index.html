@@ -3813,6 +3813,14 @@ WantedBy=multi-user.target</code>
                         <div class="vc-connected-status" id="vc-connected-status" style="display:none; color:#f87171; font-size:0.8rem; padding:4px 8px;"></div>
                     </div>
                     <div class="vc-participants-grid" id="vc-participants-grid"></div>
+                    <!-- No-mic banner: shown when user joined without granting microphone access -->
+                    <div class="vc-no-mic-banner" id="vc-no-mic-banner" style="display:none">
+                        <i class="fa-solid fa-microphone-slash"></i>
+                        <span>No microphone — others can't hear you</span>
+                        <button id="vc-enable-mic-btn" class="vc-enable-mic-btn" onclick="requestMicAccess()">
+                            <i class="fa-solid fa-microphone"></i> Enable Mic
+                        </button>
+                    </div>
                     <div class="vc-controls">
                         <button class="vc-ctrl-btn" id="vc-btn-mute" onclick="vcToggleMute()" title="Mute">
                             <i class="fa-solid fa-microphone"></i>
