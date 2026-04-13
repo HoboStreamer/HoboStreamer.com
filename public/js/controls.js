@@ -9,6 +9,10 @@ let controlCooldowns = {};
 let onvifCooldowns = {};
 let heldKeys = new Set();       // Currently held keyboard commands
 let controlSettings = {};       // Channel control settings from server
+let _controlReconnectTimer = null;
+let _controlReconnectDelay = 1000;
+let _controlStreamId = null;    // Stream ID for reconnect
+let _hardwareConnected = false; // Whether hardware bridge is online
 // currentStreamId is declared in app.js (global scope)
 
 /**
@@ -282,11 +286,16 @@ function showClickRipple(event, x, y) {
    Keyboard Hold Detection (key_down / key_up)
    ═══════════════════════════════════════════════════════════════ */
 
-function startKeyHold(controlId, command, btnEl) {
+function _checkControlWs() {
     if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
-        toast('Controls not connected', 'error');
-        return;
+        toast('Controls reconnecting… please wait', 'error');
+        return false;
     }
+    return true;
+}
+
+function startKeyHold(controlId, command, btnEl) {
+    if (!_checkControlWs()) return;
 
     const holdKey = `hold-${controlId}`;
     if (heldKeys.has(holdKey)) return; // Already holding
@@ -320,10 +329,18 @@ function stopKeyHold(controlId, command, btnEl) {
 }
 
 /**
- * Connect to the control WebSocket.
+ * Connect to the control WebSocket with auto-reconnect.
  */
 function connectControlWs(streamId) {
     destroyControlWs();
+    _controlStreamId = streamId;
+    _controlReconnectDelay = 1000;
+
+    _connectControlWsInner(streamId);
+}
+
+function _connectControlWsInner(streamId) {
+    if (_controlReconnectTimer) { clearTimeout(_controlReconnectTimer); _controlReconnectTimer = null; }
 
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const params = new URLSearchParams();
@@ -337,7 +354,11 @@ function connectControlWs(streamId) {
 
     controlWs = new WebSocket(wsUrl);
 
-    controlWs.onopen = () => {};
+    controlWs.onopen = () => {
+        console.log('[Controls] WebSocket connected');
+        _controlReconnectDelay = 1000; // Reset backoff on successful connect
+        _updateControlConnectionUI(true);
+    };
 
     controlWs.onmessage = (e) => {
         try {
@@ -349,15 +370,33 @@ function connectControlWs(streamId) {
     };
 
     controlWs.onerror = (err) => {
-        console.warn('Control WS error:', err);
+        console.warn('[Controls] WS error:', err);
     };
 
-    controlWs.onclose = () => {
-        console.log('Control WS closed');
+    controlWs.onclose = (e) => {
+        console.log(`[Controls] WS closed (code=${e.code})`);
+        controlWs = null;
+        _updateControlConnectionUI(false);
+
+        // Auto-reconnect if we still have a target stream
+        if (_controlStreamId) {
+            _controlReconnectTimer = setTimeout(() => {
+                if (_controlStreamId) {
+                    console.log(`[Controls] Reconnecting (delay=${_controlReconnectDelay}ms)...`);
+                    _connectControlWsInner(_controlStreamId);
+                }
+            }, _controlReconnectDelay);
+            // Exponential backoff: 1s → 2s → 4s → 8s → max 15s
+            _controlReconnectDelay = Math.min(_controlReconnectDelay * 2, 15000);
+        }
     };
 }
 
 function destroyControlWs() {
+    // Stop reconnect
+    _controlStreamId = null;
+    if (_controlReconnectTimer) { clearTimeout(_controlReconnectTimer); _controlReconnectTimer = null; }
+
     // Release any held keys
     heldKeys.clear();
     document.querySelectorAll('.control-btn-keyboard.key-held').forEach(b => b.classList.remove('key-held'));
@@ -368,14 +407,29 @@ function destroyControlWs() {
     }
     controlCooldowns = {};
     onvifCooldowns = {};
+    _hardwareConnected = false;
+    _updateControlConnectionUI(false);
+}
+
+/**
+ * Update the controls panel header to show connection + hardware status.
+ */
+function _updateControlConnectionUI(wsConnected) {
+    const header = document.querySelector('.controls-header h3');
+    if (!header) return;
+
+    if (!wsConnected) {
+        header.innerHTML = '<i class="fa-solid fa-gamepad"></i> Controls <span class="control-dot control-dot-disconnected" title="Reconnecting…">⚫</span>';
+    } else if (_hardwareConnected) {
+        header.innerHTML = '<i class="fa-solid fa-gamepad"></i> Controls <span class="control-dot control-dot-online" title="Hardware connected">🟢</span>';
+    } else {
+        header.innerHTML = '<i class="fa-solid fa-gamepad"></i> Controls <span class="control-dot control-dot-waiting" title="Waiting for hardware bridge">🟡</span>';
+    }
 }
 
 /* ── Send regular command ─────────────────────────────────────── */
 function sendControl(controlId, command, btnEl, cooldownMs) {
-    if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
-        toast('Controls not connected', 'error');
-        return;
-    }
+    if (!_checkControlWs()) return;
 
     // Check cooldown
     const cooldownKey = `cmd-${controlId}`;
@@ -400,10 +454,7 @@ function sendControl(controlId, command, btnEl, cooldownMs) {
 
 /* ── Send ONVIF command ──────────────────────────────────────── */
 function sendOnvifCommand(cameraId, movement, btnEl, cooldownMs) {
-    if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
-        toast('Controls not connected', 'error');
-        return;
-    }
+    if (!_checkControlWs()) return;
 
     // Check cooldown
     const cooldownKey = `onvif-${cameraId}-${movement}`;
@@ -449,10 +500,7 @@ function setOnvifZoom(cameraId, value) {
  * Go to a saved preset position
  */
 function gotoOnvifPreset(cameraId, presetId, btnEl) {
-    if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
-        toast('Controls not connected', 'error');
-        return;
-    }
+    if (!_checkControlWs()) return;
 
     const cooldownKey = `preset-${cameraId}-${presetId}`;
     if (onvifCooldowns[cooldownKey]) return;
@@ -485,7 +533,8 @@ function handleControlMessage(msg) {
             showOnvifActivity(msg.camera_name, msg.movement, msg.by);
             break;
         case 'hardware_status':
-            updateHardwareStatus(msg.connected);
+            _hardwareConnected = !!msg.connected;
+            _updateControlConnectionUI(true);
             break;
         case 'key_held':
             highlightHeldButton(msg.command, true);
@@ -500,7 +549,6 @@ function handleControlMessage(msg) {
             toast(msg.message || 'Control error', 'error');
             break;
         case 'cooldown':
-            console.warn('Command on cooldown');
             break;
         case 'ok':
             break;
@@ -555,12 +603,7 @@ function showOnvifActivity(cameraName, movement, username) {
     }, 300);
 }
 
-function updateHardwareStatus(connected) {
-    const header = document.querySelector('.controls-header h3');
-    if (!header) return;
-    const dot = connected ? '🟢' : '🔴';
-    header.innerHTML = `<i class="fa-solid fa-gamepad"></i> Controls ${dot}`;
-}
+/* (hardware status handled by _updateControlConnectionUI) */
 
 /* ── Keyboard controls ────────────────────────────────────────── */
 document.addEventListener('keydown', (e) => {
