@@ -8,6 +8,7 @@
  * PUT    /api/vods/:id             - Update VOD (title, public/private)
  * DELETE /api/vods/:id             - Delete a VOD
  * POST   /api/vods/:id/publish     - Make VOD public
+ * POST   /api/vods/bulk-delete-old - Bulk delete own VODs/clips older than N days
  * 
  * Clips:
  * GET    /api/clips                - List public clips
@@ -828,6 +829,113 @@ router.get('/mine', requireAuth, (req, res) => {
         res.json({ vods });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list VODs' });
+    }
+});
+
+// ── Bulk Delete Old VODs/Clips ──────────────────────────────
+router.post('/bulk-delete-old', requireAuth, (req, res) => {
+    try {
+        const olderThanDays = parseInt(req.body?.olderThanDays, 10);
+        const deleteVods = req.body?.deleteVods !== false;
+        const deleteClips = req.body?.deleteClips !== false;
+
+        if (!Number.isFinite(olderThanDays) || olderThanDays < 1) {
+            return res.status(400).json({ error: 'olderThanDays must be a positive integer' });
+        }
+        if (!deleteVods && !deleteClips) {
+            return res.status(400).json({ error: 'Select at least one media type to delete' });
+        }
+
+        const daysModifier = `-${olderThanDays} days`;
+        const storageTier = require('./storage-tier');
+
+        const vodsToDelete = deleteVods
+            ? db.all(
+                `SELECT id, file_path
+                 FROM vods
+                 WHERE user_id = ?
+                   AND COALESCE(is_recording, 0) = 0
+                   AND datetime(created_at) <= datetime('now', ?)`,
+                [req.user.id, daysModifier]
+            )
+            : [];
+
+        const clipsToDelete = deleteClips
+            ? db.all(
+                `SELECT DISTINCT c.id, c.file_path
+                 FROM clips c
+                 LEFT JOIN streams s ON c.stream_id = s.id
+                 LEFT JOIN vods v ON c.vod_id = v.id
+                 WHERE datetime(c.created_at) <= datetime('now', ?)
+                   AND (
+                     c.user_id = ?
+                     OR s.user_id = ?
+                     OR v.user_id = ?
+                   )`,
+                [daysModifier, req.user.id, req.user.id, req.user.id]
+            )
+            : [];
+
+        let vodFilesDeleted = 0;
+        let clipFilesDeleted = 0;
+        let fileDeleteErrors = 0;
+
+        for (const vod of vodsToDelete) {
+            try {
+                if (!vod.file_path) continue;
+                const realPath = storageTier.resolveVodPath(vod.file_path);
+                if (fs.existsSync(realPath)) {
+                    fs.unlinkSync(realPath);
+                    vodFilesDeleted++;
+                }
+                cleanupSeekableFile(vod.file_path);
+            } catch {
+                fileDeleteErrors++;
+            }
+        }
+
+        for (const clip of clipsToDelete) {
+            try {
+                if (!clip.file_path) continue;
+                if (fs.existsSync(clip.file_path)) {
+                    fs.unlinkSync(clip.file_path);
+                    clipFilesDeleted++;
+                }
+            } catch {
+                fileDeleteErrors++;
+            }
+        }
+
+        if (vodsToDelete.length > 0) {
+            const vodIds = vodsToDelete.map((v) => v.id);
+            const vodMarks = vodIds.map(() => '?').join(',');
+            db.run(`DELETE FROM vods WHERE id IN (${vodMarks})`, vodIds);
+            db.run(`DELETE FROM content_views WHERE content_type = 'vod' AND content_id IN (${vodMarks})`, vodIds);
+            db.run(`DELETE FROM comments WHERE content_type = 'vod' AND content_id IN (${vodMarks})`, vodIds);
+        }
+
+        if (clipsToDelete.length > 0) {
+            const clipIds = clipsToDelete.map((c) => c.id);
+            const clipMarks = clipIds.map(() => '?').join(',');
+            db.run(`DELETE FROM clips WHERE id IN (${clipMarks})`, clipIds);
+            db.run(`DELETE FROM content_views WHERE content_type = 'clip' AND content_id IN (${clipMarks})`, clipIds);
+            db.run(`DELETE FROM comments WHERE content_type = 'clip' AND content_id IN (${clipMarks})`, clipIds);
+        }
+
+        res.json({
+            olderThanDays,
+            deleted: {
+                vods: vodsToDelete.length,
+                clips: clipsToDelete.length,
+            },
+            filesDeleted: {
+                vods: vodFilesDeleted,
+                clips: clipFilesDeleted,
+            },
+            fileDeleteErrors,
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to bulk delete old media' });
     }
 });
 
