@@ -738,6 +738,15 @@ async function finalizeVodRecording(streamId) {
         });
     } catch { /* keep estimate */ }
 
+    // Auto-delete VODs that are too short to be useful (accidental go-lives, test streams, etc.)
+    const MIN_VOD_SECONDS = 10;
+    if (durationSeconds < MIN_VOD_SECONDS) {
+        console.log(`[VOD] Auto-deleting vod ${vodId} (stream ${streamId}): duration ${durationSeconds}s is under ${MIN_VOD_SECONDS}s minimum`);
+        try { fs.unlinkSync(filePath); } catch { /* already gone */ }
+        db.run('DELETE FROM vods WHERE id = ?', [vodId]);
+        return null;
+    }
+
     const stat = fs.statSync(filePath);
     db.run('UPDATE vods SET is_recording = 0, duration_seconds = ?, file_size = ? WHERE id = ?',
         [durationSeconds, stat.size, vodId]);
