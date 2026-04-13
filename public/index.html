@@ -1387,6 +1387,24 @@
                 <div class="dash-card dash-card-wide">
                     <h3><i class="fa-solid fa-video"></i> My Videos</h3>
                     <p class="muted">Videos are <strong>public by default</strong>. You can set individual videos to private.</p>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 14px">
+                        <label style="display:flex;align-items:center;gap:6px">
+                            <span class="muted" style="font-size:0.85rem">Delete older than</span>
+                            <input type="number" id="dash-bulk-delete-age-days" class="form-input form-input-sm" min="1" step="1" value="30" style="width:96px">
+                            <span class="muted" style="font-size:0.85rem">days</span>
+                        </label>
+                        <label class="bc-toggle-label" style="font-size:0.85rem;gap:6px">
+                            <input type="checkbox" id="dash-bulk-delete-vods" checked>
+                            VODs
+                        </label>
+                        <label class="bc-toggle-label" style="font-size:0.85rem;gap:6px">
+                            <input type="checkbox" id="dash-bulk-delete-clips" checked>
+                            Clips
+                        </label>
+                        <button class="btn btn-small btn-danger" onclick="dashBulkDeleteByAge()">
+                            <i class="fa-solid fa-trash-can"></i> Delete Old Media
+                        </button>
+                    </div>
                     <div id="dash-vods-list" class="vod-grid"></div>
                 </div>
 
