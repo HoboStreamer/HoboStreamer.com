@@ -2081,6 +2081,57 @@ main#app { position: relative; z-index: 1; }
 .control-btn i { font-size: 1.2rem; }
 .control-btn.on-cooldown { opacity: 0.5; pointer-events: none; }
 
+/* Keyboard hold button */
+.control-btn-keyboard { position: relative; }
+.control-btn-keyboard.key-held {
+    background: var(--accent); color: #000;
+    box-shadow: 0 0 12px rgba(192,150,92,0.6);
+}
+.control-btn-keyboard.remote-held {
+    border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(192,150,92,0.4);
+    animation: control-pulse 0.8s infinite;
+}
+@keyframes control-pulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(192,150,92,0.4); }
+    50% { box-shadow: 0 0 16px rgba(192,150,92,0.7); }
+}
+
+/* Keybind badge on buttons */
+.control-keybind {
+    position: absolute; top: 2px; right: 4px;
+    font-size: 0.55rem; font-weight: 700;
+    background: rgba(255,255,255,0.12); color: var(--text-secondary);
+    padding: 1px 4px; border-radius: 3px;
+    line-height: 1.2; pointer-events: none;
+}
+
+/* Video Click Overlay */
+.video-click-overlay {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 5; cursor: crosshair;
+    /* Transparent but clickable — sits above video, below player controls */
+    pointer-events: auto;
+}
+/* Let the native video controls through */
+.video-overlay { z-index: 10; }
+
+.click-ripple {
+    position: absolute; width: 24px; height: 24px;
+    margin-left: -12px; margin-top: -12px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    animation: click-ripple-anim 0.6s ease-out forwards;
+    pointer-events: none;
+}
+.click-ripple-remote {
+    border-color: rgba(255,255,255,0.5);
+}
+@keyframes click-ripple-anim {
+    0% { transform: scale(0.5); opacity: 1; }
+    100% { transform: scale(3); opacity: 0; }
+}
+
 /* ONVIF Camera Controls */
 .onvif-widget {
     margin: 12px 0; padding: 12px;
@@ -6152,6 +6203,23 @@ body.theme-light .user-dropdown {
     color: var(--text-secondary);
     font-size: 0.85rem;
 }
+
+/* ── Documentation Page ──────────────────────────────────── */
+#page-documentation h2 { margin-top: 2.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+#page-documentation h3 { margin-top: 1.5rem; }
+#page-documentation pre { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; margin: 1rem 0; }
+#page-documentation code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.85em; }
+#page-documentation p code, #page-documentation li code, #page-documentation td code { background: var(--surface); padding: 0.15em 0.4em; border-radius: 3px; }
+#page-documentation ul, #page-documentation ol { margin: 0.5rem 0 1rem 1.5rem; line-height: 1.7; }
+.doc-table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+.doc-table th, .doc-table td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+.doc-table th { background: var(--surface); font-weight: 600; white-space: nowrap; }
+.doc-table td:first-child { white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
+.doc-table tr:hover td { background: rgba(var(--accent-rgb, 99,102,241), 0.04); }
+.doc-copy-btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 1rem; background: var(--accent); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: opacity 0.15s; }
+.doc-copy-btn:hover { opacity: 0.85; }
+.doc-vibe-hero { background: linear-gradient(135deg, var(--surface) 0%, rgba(var(--accent-rgb, 99,102,241), 0.08) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 2rem; }
+.doc-vibe-hero h2 { margin-top: 0 !important; border: none !important; padding: 0 !important; }
 
 /* ── Paste Viewer ─────────────────────────────────────────── */
 .paste-viewer-nav {

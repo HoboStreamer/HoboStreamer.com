@@ -982,6 +982,7 @@ async function loadBroadcastPage() {
     loadBroadcastSettings();
     loadRobotStreamerIntegration().catch(() => {});
     loadRestreamDestinations().catch(() => {});
+    loadBroadcastControlConfigs().catch(() => {});
 
     // If THIS tab has active browser WebRTC streams (localStream exists), restore UI
     if (broadcastState.streams.size > 0 && broadcastState.activeStreamId != null) {
@@ -1481,6 +1482,32 @@ function _syncBrowserSourceUI() {
     }
 }
 
+/* ── Load Control Config Selector ─────────────────────────────── */
+async function loadBroadcastControlConfigs() {
+    const selector = document.getElementById('bc-config-selector');
+    const select = document.getElementById('bc-control-config');
+    if (!selector || !select) return;
+
+    try {
+        const data = await api('/controls/configs');
+        const configs = data.configs || [];
+        if (!configs.length) {
+            selector.style.display = 'none';
+            return;
+        }
+        selector.style.display = '';
+
+        // Get active config
+        const settings = await api('/controls/settings/channel').catch(() => ({}));
+        const activeId = settings.active_control_config_id;
+
+        select.innerHTML = '<option value="">None (no controls)</option>' +
+            configs.map(c => `<option value="${c.id}" ${c.id === activeId ? 'selected' : ''}>${esc(c.name)} (${c.button_count} buttons)</option>`).join('');
+    } catch {
+        if (selector) selector.style.display = 'none';
+    }
+}
+
 /* ── Create New Stream ───────────────────────────────────────── */
 async function createNewStream() {
     const title = document.getElementById('bc-title')?.value.trim();
@@ -1540,6 +1567,14 @@ async function createNewStream() {
     try {
         const data = await api('/streams', { method: 'POST', body: { title, description, protocol: method, category, is_nsfw: document.getElementById('bc-nsfw')?.checked || false } });
         const streamData = data.stream || data;
+
+        // Apply control config if selected
+        const selectedConfig = document.getElementById('bc-control-config')?.value;
+        if (selectedConfig) {
+            try {
+                await api(`/controls/configs/${selectedConfig}/apply/${streamData.id}`, { method: 'POST' });
+            } catch (e) { console.warn('Failed to apply control config:', e); }
+        }
 
         // Create per-stream state
         const ss = createStreamState(streamData);

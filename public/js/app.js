@@ -316,6 +316,8 @@ function showModal(id) {
         'add-control': addControlModal(),
         'add-camera': addCameraModal(),
         'discover-cameras': discoverCamerasModal(),
+        'create-config': createConfigModal(),
+        'add-config-button': addConfigButtonModal(),
         'add-goal': addGoalModal(),
         'add-reward': addRewardModal(),
         'redeem-reward': (data) => redeemRewardModal(data),
@@ -584,6 +586,8 @@ function routeFromURL() {
     } else if (segments[0] === 'p' && segments[1]) {
         showPage('paste-viewer');
         loadPasteViewer(segments[1]);
+    } else if (segments[0] === 'documentation') {
+        showPage('documentation');
     } else if (segments[0] === 'stream' && segments[1]) {
         // Legacy stream URL: /stream/:id
         showPage('stream');
@@ -3769,6 +3773,78 @@ function addControlModal() {
         </button>`;
 }
 
+function createConfigModal() {
+    return `
+        <h3><i class="fa-solid fa-sliders"></i> New Control Profile</h3>
+        <p class="muted" style="font-size:0.85rem;margin-bottom:12px">Create a reusable set of control buttons. You can set up different profiles for different robots, games, or setups.</p>
+        <div class="form-group">
+            <label>Profile Name</label>
+            <input type="text" id="modal-config-name" class="form-input" placeholder="e.g. Cozmo Robot, RC Car, Camera Rig" maxlength="60">
+        </div>
+        <div class="form-group">
+            <label>Description (optional)</label>
+            <input type="text" id="modal-config-desc" class="form-input" placeholder="Brief description" maxlength="200">
+        </div>
+        <button class="btn btn-primary btn-lg" onclick="doCreateConfig()" style="width:100%;margin-top:8px">
+            <i class="fa-solid fa-plus"></i> Create Profile
+        </button>`;
+}
+
+function addConfigButtonModal() {
+    return `
+        <h3><i class="fa-solid fa-plus"></i> Add Control Button</h3>
+        <div class="form-group">
+            <label>Command</label>
+            <input type="text" id="modal-cfgbtn-cmd" class="form-input" placeholder="e.g. forward" maxlength="100">
+        </div>
+        <div class="form-group">
+            <label>Label</label>
+            <input type="text" id="modal-cfgbtn-label" class="form-input" placeholder="e.g. Forward" maxlength="50">
+        </div>
+        <div class="form-group">
+            <label>Icon (FontAwesome class)</label>
+            <input type="text" id="modal-cfgbtn-icon" class="form-input" placeholder="e.g. fa-arrow-up" value="fa-gamepad">
+        </div>
+        <div class="form-group">
+            <label>Type</label>
+            <select id="modal-cfgbtn-type" class="form-input">
+                <option value="button">Button (single click)</option>
+                <option value="keyboard">Keyboard (hold to activate)</option>
+                <option value="dpad">D-Pad</option>
+                <option value="toggle">Toggle</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Key Binding (optional)</label>
+            <input type="text" id="modal-cfgbtn-keybind" class="form-input" placeholder="e.g. w, a, s, d" maxlength="20">
+            <span class="bc-field-hint">Keyboard shortcut for this button</span>
+        </div>
+        <div class="form-group">
+            <label>Cooldown (seconds)</label>
+            <input type="number" id="modal-cfgbtn-cooldown" class="form-input" value="0.5" min="0" max="30" step="0.1">
+        </div>
+        <details style="margin-top:8px">
+            <summary style="cursor:pointer;font-weight:600;font-size:0.85rem;color:var(--text-secondary)"><i class="fa-solid fa-palette"></i> Custom Styling</summary>
+            <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;">
+                <div class="form-group" style="margin:0">
+                    <label style="font-size:0.85rem">Text Color</label>
+                    <input type="text" id="modal-cfgbtn-color" class="form-input form-input-sm" placeholder="#fff or red or var(--accent)">
+                </div>
+                <div class="form-group" style="margin:0">
+                    <label style="font-size:0.85rem">Background</label>
+                    <input type="text" id="modal-cfgbtn-bg" class="form-input form-input-sm" placeholder="#333 or darkblue">
+                </div>
+                <div class="form-group" style="margin:0">
+                    <label style="font-size:0.85rem">Border Color</label>
+                    <input type="text" id="modal-cfgbtn-border" class="form-input form-input-sm" placeholder="#c0965c or var(--accent)">
+                </div>
+            </div>
+        </details>
+        <button class="btn btn-primary btn-lg" onclick="doAddConfigButton()" style="width:100%;margin-top:12px">
+            <i class="fa-solid fa-plus"></i> Add Button
+        </button>`;
+}
+
 function addCameraModal() {
     return `
         <h3><i class="fa-solid fa-video"></i> Add ONVIF Camera</h3>
@@ -4231,3 +4307,25 @@ document.addEventListener('click', (e) => {
         closeMobileNav();
     }
 });
+
+function copyDocsForAI() {
+    const el = document.getElementById('docs-ai-content');
+    if (!el) return;
+    const text = el.innerText || el.textContent || '';
+    navigator.clipboard.writeText(text.trim()).then(() => {
+        const toast = document.getElementById('docs-copy-toast');
+        const btn = document.getElementById('docs-copy-btn');
+        if (toast) { toast.style.display = 'block'; setTimeout(() => { toast.style.display = 'none'; }, 4000); }
+        if (btn) { const orig = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!'; setTimeout(() => { btn.innerHTML = orig; }, 3000); }
+    }).catch(() => {
+        // Fallback for older browsers
+        const ta = document.createElement('textarea');
+        ta.value = text.trim();
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        const toast = document.getElementById('docs-copy-toast');
+        if (toast) { toast.style.display = 'block'; setTimeout(() => { toast.style.display = 'none'; }, 4000); }
+    });
+}

@@ -28,6 +28,8 @@ async function loadDashboard() {
     loadDashActiveStreams();
     // Load controls
     loadDashControls();
+    // Load control configs
+    loadDashConfigs();
     // Load custom emotes
     if (typeof loadDashEmotes === 'function') loadDashEmotes();
     // Load clips
@@ -198,10 +200,12 @@ async function loadControlSettings() {
         const modeEl = document.getElementById('dash-control-mode');
         const rateEl = document.getElementById('dash-control-rate-limit');
         const anonEl = document.getElementById('dash-anon-controls');
+        const videoClickEl = document.getElementById('dash-video-click');
         const whitelistSection = document.getElementById('dash-control-whitelist-section');
         if (modeEl) modeEl.value = data.control_mode || 'open';
         if (rateEl) rateEl.value = data.control_rate_limit_ms || 500;
         if (anonEl) anonEl.checked = data.anon_controls_enabled !== false;
+        if (videoClickEl) videoClickEl.checked = !!data.video_click_enabled;
         if (whitelistSection) whitelistSection.style.display = data.control_mode === 'whitelist' ? '' : 'none';
         if (data.control_mode === 'whitelist') loadControlWhitelist();
     } catch { /* silent — settings panel is optional */ }
@@ -212,9 +216,10 @@ async function updateControlSettings() {
         const mode = document.getElementById('dash-control-mode')?.value || 'open';
         const rate = parseInt(document.getElementById('dash-control-rate-limit')?.value) || 500;
         const anon = document.getElementById('dash-anon-controls')?.checked ?? true;
+        const videoClick = document.getElementById('dash-video-click')?.checked ?? false;
         await api('/controls/settings/channel', {
             method: 'PUT',
-            body: { control_mode: mode, anon_controls_enabled: anon, control_rate_limit_ms: rate }
+            body: { control_mode: mode, anon_controls_enabled: anon, control_rate_limit_ms: rate, video_click_enabled: videoClick }
         });
         const whitelistSection = document.getElementById('dash-control-whitelist-section');
         if (whitelistSection) whitelistSection.style.display = mode === 'whitelist' ? '' : 'none';
@@ -261,6 +266,173 @@ async function removeFromControlWhitelist(id) {
         loadControlWhitelist();
     } catch (e) { toast(e.message, 'error'); }
 }
+
+/* ── Control Config Management ────────────────────────────────── */
+let editingConfigId = null;
+
+async function loadDashConfigs() {
+    const list = document.getElementById('dash-config-list');
+    if (!list) return;
+    try {
+        const data = await api('/controls/configs');
+        const configs = data.configs || [];
+        const settingsData = await api('/controls/settings/channel').catch(() => ({}));
+        const activeConfigId = settingsData.active_control_config_id;
+
+        if (!configs.length) {
+            list.innerHTML = '<p class="muted" style="font-size:0.85rem">No control profiles yet. Create one to set up reusable control buttons.</p>';
+            return;
+        }
+        list.innerHTML = configs.map(c => {
+            const isActive = c.id === activeConfigId;
+            return `
+            <div style="display:flex;align-items:center;gap:8px;padding:8px;margin-bottom:6px;background:var(--bg-hover);border-radius:var(--radius);border:1px solid ${isActive ? 'var(--accent)' : 'var(--border)'}">
+                <div style="flex:1;min-width:0">
+                    <div style="font-weight:600;font-size:0.9rem">${esc(c.name)} <span class="muted" style="font-size:0.75rem">(${c.button_count} buttons)</span></div>
+                    ${c.description ? `<div class="muted" style="font-size:0.8rem">${esc(c.description)}</div>` : ''}
+                </div>
+                ${isActive ? '<span style="font-size:0.75rem;padding:2px 6px;background:var(--accent);color:#000;border-radius:4px;font-weight:700">ACTIVE</span>' : ''}
+                <button class="btn btn-small ${isActive ? 'btn-outline' : 'btn-primary'}" onclick="${isActive ? 'deactivateConfig()' : `activateConfig(${c.id})`}" title="${isActive ? 'Deactivate' : 'Set as active'}">
+                    <i class="fa-solid ${isActive ? 'fa-circle-xmark' : 'fa-circle-check'}"></i>
+                </button>
+                <button class="btn btn-small btn-outline" onclick="editConfig(${c.id})" title="Edit buttons">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="btn btn-small btn-danger" onclick="deleteConfig(${c.id})" title="Delete profile">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>`;
+        }).join('');
+    } catch { list.innerHTML = '<p class="muted">Failed to load configs</p>'; }
+}
+
+async function doCreateConfig() {
+    const name = document.getElementById('modal-config-name')?.value.trim();
+    const desc = document.getElementById('modal-config-desc')?.value.trim() || '';
+    if (!name) return toast('Profile name is required', 'error');
+    try {
+        await api('/controls/configs', { method: 'POST', body: { name, description: desc } });
+        toast('Profile created', 'success');
+        closeModal();
+        loadDashConfigs();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function activateConfig(configId) {
+    try {
+        await api(`/controls/configs/${configId}/activate`, { method: 'POST' });
+        toast('Profile activated', 'success');
+        loadDashConfigs();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deactivateConfig() {
+    try {
+        await api('/controls/configs/deactivate', { method: 'POST' });
+        toast('Profile deactivated', 'success');
+        loadDashConfigs();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteConfig(configId) {
+    if (!confirm('Delete this control profile and all its buttons?')) return;
+    try {
+        await api(`/controls/configs/${configId}`, { method: 'DELETE' });
+        toast('Profile deleted', 'success');
+        if (editingConfigId === configId) closeConfigEditor();
+        loadDashConfigs();
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function editConfig(configId) {
+    editingConfigId = configId;
+    const editor = document.getElementById('dash-config-editor');
+    if (!editor) return;
+    editor.style.display = '';
+
+    try {
+        const data = await api(`/controls/configs/${configId}`);
+        const config = data.config;
+        const buttons = data.buttons || [];
+
+        document.getElementById('dash-config-editor-title').textContent = `Editing: ${config.name}`;
+
+        const list = document.getElementById('dash-config-buttons-list');
+        if (!buttons.length) {
+            list.innerHTML = '<p class="muted" style="font-size:0.85rem">No buttons yet. Click "Add Button" to start building your control layout.</p>';
+            return;
+        }
+
+        list.innerHTML = buttons.map(b => {
+            const style = [];
+            if (b.btn_color) style.push(`color:${b.btn_color}`);
+            if (b.btn_bg) style.push(`background:${b.btn_bg}`);
+            if (b.btn_border_color) style.push(`border-color:${b.btn_border_color}`);
+            const styleAttr = style.length ? ` style="${style.join(';')}"` : '';
+            return `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+                <span class="control-btn" style="min-width:auto;padding:6px 10px;pointer-events:none;${style.join(';')}">
+                    <i class="fa-solid ${esc(b.icon || 'fa-gamepad')}"></i>
+                </span>
+                <div style="flex:1;min-width:0">
+                    <div style="font-weight:600;font-size:0.85rem">${esc(b.label)}</div>
+                    <div class="muted" style="font-size:0.75rem">${esc(b.command)} &middot; ${b.control_type} ${b.key_binding ? '&middot; [' + esc(b.key_binding.toUpperCase()) + ']' : ''} &middot; ${b.cooldown_ms}ms</div>
+                </div>
+                <button class="btn btn-small btn-danger" onclick="deleteConfigButton(${configId}, ${b.id})">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>`;
+        }).join('');
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+function closeConfigEditor() {
+    editingConfigId = null;
+    const editor = document.getElementById('dash-config-editor');
+    if (editor) editor.style.display = 'none';
+}
+
+async function doAddConfigButton() {
+    if (!editingConfigId) return toast('No profile selected', 'error');
+    const command = document.getElementById('modal-cfgbtn-cmd')?.value.trim();
+    const label = document.getElementById('modal-cfgbtn-label')?.value.trim();
+    const icon = document.getElementById('modal-cfgbtn-icon')?.value.trim() || 'fa-gamepad';
+    const type = document.getElementById('modal-cfgbtn-type')?.value || 'button';
+    const keybind = document.getElementById('modal-cfgbtn-keybind')?.value.trim() || '';
+    const cooldown = parseFloat(document.getElementById('modal-cfgbtn-cooldown')?.value) || 0.5;
+    const btnColor = document.getElementById('modal-cfgbtn-color')?.value.trim() || '';
+    const btnBg = document.getElementById('modal-cfgbtn-bg')?.value.trim() || '';
+    const btnBorder = document.getElementById('modal-cfgbtn-border')?.value.trim() || '';
+
+    if (!command) return toast('Command is required', 'error');
+
+    try {
+        await api(`/controls/configs/${editingConfigId}/buttons`, {
+            method: 'POST',
+            body: {
+                command,
+                label: label || command,
+                icon,
+                control_type: type,
+                key_binding: keybind,
+                cooldown_ms: Math.round(cooldown * 1000),
+                btn_color: btnColor,
+                btn_bg: btnBg,
+                btn_border_color: btnBorder,
+            }
+        });
+        toast('Button added', 'success');
+        closeModal();
+        editConfig(editingConfigId);
+    } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteConfigButton(configId, buttonId) {
+    try {
+        await api(`/controls/configs/${configId}/buttons/${buttonId}`, { method: 'DELETE' });
+        toast('Button removed', 'success');
+        editConfig(configId);
+    } catch (e) { toast(e.message, 'error'); }
 }
 
 async function doAddControl() {

@@ -1,11 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════
    HoboStreamer — Interactive Controls Client (WebSocket)
-   Supports: Traditional buttons, ONVIF PTZ cameras
+   Supports: Keyboard hold (key_down/key_up), Video click,
+             Traditional buttons, ONVIF PTZ cameras
    ═══════════════════════════════════════════════════════════════ */
 
 let controlWs = null;
 let controlCooldowns = {};
 let onvifCooldowns = {};
+let heldKeys = new Set();       // Currently held keyboard commands
+let controlSettings = {};       // Channel control settings from server
 // currentStreamId is declared in app.js (global scope)
 
 /**
@@ -19,31 +22,64 @@ async function loadStreamControls(streamId) {
     try {
         const data = await api(`/controls/${streamId}`);
         const controls = data.controls || [];
+        controlSettings = data.settings || {};
 
-        if (!controls.length) {
+        const hasControls = controls.length > 0;
+        const hasVideoClick = !!controlSettings.video_click_enabled;
+
+        if (!hasControls && !hasVideoClick) {
             panel.style.display = 'none';
+            destroyVideoClickOverlay();
             return;
         }
 
-        panel.style.display = '';
-        
+        // Show panel if there are button controls
+        panel.style.display = hasControls ? '' : 'none';
+
         // Separate ONVIF controls from regular controls
         const onvifControls = controls.filter(c => c.control_type === 'onvif' && c.camera_id);
         const regularControls = controls.filter(c => c.control_type !== 'onvif' || !c.camera_id);
 
         let html = '';
 
-        // Render regular controls
+        // Render regular controls (buttons + keyboard hold)
         if (regularControls.length > 0) {
             html += '<div class="controls-row regular-controls">';
-            html += regularControls.map(c => `
-                <button class="control-btn" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 500}"
-                        onclick="sendControl(${c.id}, '${esc(c.command)}', this, ${parseInt(c.cooldown_ms) || 500})"
-                        title="${esc(c.label || c.command)}" style="flex: 1;">
-                    <i class="fa-solid ${esc(c.icon || 'fa-circle')}"></i>
-                    <span>${esc(c.label || c.command)}</span>
-                </button>
-            `).join('');
+            html += regularControls.map(c => {
+                const isKeyboard = c.control_type === 'keyboard';
+                const btnStyle = buildBtnStyle(c);
+                const bindingBadge = c.key_binding ? `<span class="control-keybind">${esc(c.key_binding.toUpperCase())}</span>` : '';
+
+                if (isKeyboard) {
+                    // Keyboard control — uses hold detection (mousedown/mouseup + keydown/keyup)
+                    return `
+                        <button class="control-btn control-btn-keyboard" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 500}"
+                                data-keybind="${esc(c.key_binding || '')}"
+                                onmousedown="startKeyHold(${c.id}, '${esc(c.command)}', this)"
+                                onmouseup="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
+                                onmouseleave="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
+                                ontouchstart="startKeyHold(${c.id}, '${esc(c.command)}', this); event.preventDefault()"
+                                ontouchend="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
+                                title="${esc(c.label || c.command)} (hold)" ${btnStyle}>
+                            <i class="fa-solid ${esc(c.icon || 'fa-keyboard')}"></i>
+                            <span>${esc(c.label || c.command)}</span>
+                            ${bindingBadge}
+                        </button>
+                    `;
+                } else {
+                    // Regular button — single click
+                    return `
+                        <button class="control-btn" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 500}"
+                                data-keybind="${esc(c.key_binding || '')}"
+                                onclick="sendControl(${c.id}, '${esc(c.command)}', this, ${parseInt(c.cooldown_ms) || 500})"
+                                title="${esc(c.label || c.command)}" ${btnStyle}>
+                            <i class="fa-solid ${esc(c.icon || 'fa-circle')}"></i>
+                            <span>${esc(c.label || c.command)}</span>
+                            ${bindingBadge}
+                        </button>
+                    `;
+                }
+            }).join('');
             html += '</div>';
         }
 
@@ -63,12 +99,30 @@ async function loadStreamControls(streamId) {
 
         grid.innerHTML = html;
 
+        // Setup video click overlay if enabled
+        if (hasVideoClick) {
+            setupVideoClickOverlay();
+        } else {
+            destroyVideoClickOverlay();
+        }
+
         // Connect control WS
         connectControlWs(streamId);
     } catch (e) {
         console.error('Failed to load controls:', e);
         panel.style.display = 'none';
     }
+}
+
+/**
+ * Build inline style string for a button (sanitized server-side)
+ */
+function buildBtnStyle(control) {
+    const parts = [];
+    if (control.btn_color) parts.push(`color:${control.btn_color}`);
+    if (control.btn_bg) parts.push(`background:${control.btn_bg}`);
+    if (control.btn_border_color) parts.push(`border-color:${control.btn_border_color}`);
+    return parts.length ? `style="${parts.join(';')}"` : '';
 }
 
 /**
@@ -151,6 +205,120 @@ async function loadCameraPresets(cameraId) {
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Video Click Overlay
+   ═══════════════════════════════════════════════════════════════ */
+
+function setupVideoClickOverlay() {
+    let overlay = document.getElementById('video-click-overlay');
+    if (overlay) return; // Already exists
+
+    const container = document.getElementById('video-container');
+    if (!container) return;
+
+    overlay = document.createElement('div');
+    overlay.id = 'video-click-overlay';
+    overlay.className = 'video-click-overlay';
+    overlay.title = 'Click to send coordinates';
+
+    overlay.addEventListener('click', (e) => {
+        const rect = overlay.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
+        sendVideoClick(x, y, e);
+    });
+
+    overlay.addEventListener('touchend', (e) => {
+        if (e.changedTouches.length === 0) return;
+        const touch = e.changedTouches[0];
+        const rect = overlay.getBoundingClientRect();
+        const x = (touch.clientX - rect.left) / rect.width;
+        const y = (touch.clientY - rect.top) / rect.height;
+        sendVideoClick(x, y, e);
+    });
+
+    container.appendChild(overlay);
+}
+
+function destroyVideoClickOverlay() {
+    const overlay = document.getElementById('video-click-overlay');
+    if (overlay) overlay.remove();
+}
+
+function sendVideoClick(x, y, event) {
+    if (!controlWs || controlWs.readyState !== WebSocket.OPEN) return;
+
+    const key = 'video-click';
+    if (controlCooldowns[key]) return;
+
+    controlWs.send(JSON.stringify({
+        type: 'video_click',
+        x: Math.round(Math.max(0, Math.min(1, x)) * 10000) / 10000,
+        y: Math.round(Math.max(0, Math.min(1, y)) * 10000) / 10000,
+        streamId: currentStreamId,
+    }));
+
+    // Visual ripple at click position
+    showClickRipple(event, x, y);
+
+    // Cooldown
+    controlCooldowns[key] = true;
+    setTimeout(() => { delete controlCooldowns[key]; }, 500);
+}
+
+function showClickRipple(event, x, y) {
+    const overlay = document.getElementById('video-click-overlay');
+    if (!overlay) return;
+
+    const ripple = document.createElement('div');
+    ripple.className = 'click-ripple';
+    ripple.style.left = (x * 100) + '%';
+    ripple.style.top = (y * 100) + '%';
+    overlay.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 600);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Keyboard Hold Detection (key_down / key_up)
+   ═══════════════════════════════════════════════════════════════ */
+
+function startKeyHold(controlId, command, btnEl) {
+    if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
+        toast('Controls not connected', 'error');
+        return;
+    }
+
+    const holdKey = `hold-${controlId}`;
+    if (heldKeys.has(holdKey)) return; // Already holding
+    heldKeys.add(holdKey);
+
+    btnEl.classList.add('key-held');
+
+    controlWs.send(JSON.stringify({
+        type: 'key_down',
+        control_id: controlId,
+        command: command,
+        streamId: currentStreamId,
+    }));
+}
+
+function stopKeyHold(controlId, command, btnEl) {
+    const holdKey = `hold-${controlId}`;
+    if (!heldKeys.has(holdKey)) return;
+    heldKeys.delete(holdKey);
+
+    btnEl.classList.remove('key-held');
+
+    if (controlWs && controlWs.readyState === WebSocket.OPEN) {
+        controlWs.send(JSON.stringify({
+            type: 'key_up',
+            control_id: controlId,
+            command: command,
+            streamId: currentStreamId,
+        }));
+    }
+}
+
 /**
  * Connect to the control WebSocket.
  */
@@ -193,6 +361,10 @@ function connectControlWs(streamId) {
 }
 
 function destroyControlWs() {
+    // Release any held keys
+    heldKeys.clear();
+    document.querySelectorAll('.control-btn-keyboard.key-held').forEach(b => b.classList.remove('key-held'));
+
     if (controlWs) {
         controlWs.close();
         controlWs = null;
@@ -318,6 +490,15 @@ function handleControlMessage(msg) {
         case 'hardware_status':
             updateHardwareStatus(msg.connected);
             break;
+        case 'key_held':
+            highlightHeldButton(msg.command, true);
+            break;
+        case 'key_released':
+            highlightHeldButton(msg.command, false);
+            break;
+        case 'video_click_activity':
+            showRemoteClickRipple(msg.x, msg.y, msg.by);
+            break;
         case 'error':
             toast(msg.message || 'Control error', 'error');
             break;
@@ -325,7 +506,6 @@ function handleControlMessage(msg) {
             console.warn('Command on cooldown');
             break;
         case 'ok':
-            // Command executed successfully
             break;
     }
 }
@@ -341,6 +521,28 @@ function showControlActivity(command, username) {
         btn.style.borderColor = '';
         btn.style.boxShadow = '';
     }, 300);
+}
+
+function highlightHeldButton(command, held) {
+    const btn = document.querySelector(`.control-btn-keyboard[data-cmd="${command}"]`);
+    if (!btn) return;
+    if (held) {
+        btn.classList.add('remote-held');
+    } else {
+        btn.classList.remove('remote-held');
+    }
+}
+
+function showRemoteClickRipple(x, y, username) {
+    const overlay = document.getElementById('video-click-overlay');
+    if (!overlay) return;
+
+    const ripple = document.createElement('div');
+    ripple.className = 'click-ripple click-ripple-remote';
+    ripple.style.left = (x * 100) + '%';
+    ripple.style.top = (y * 100) + '%';
+    overlay.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 600);
 }
 
 function showOnvifActivity(cameraName, movement, username) {
@@ -360,33 +562,70 @@ function updateHardwareStatus(connected) {
     const header = document.querySelector('.controls-header h3');
     if (!header) return;
     const dot = connected ? '🟢' : '🔴';
-    header.textContent = `Controls ${dot}`;
+    header.innerHTML = `<i class="fa-solid fa-gamepad"></i> Controls ${dot}`;
 }
 
-/* ── Keyboard controls for ONVIF cameras ──────────────────────── */
+/* ── Keyboard controls ────────────────────────────────────────── */
 document.addEventListener('keydown', (e) => {
-    // Only when on stream page and not typing in input
     if (!currentStreamId) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (e.repeat) return; // Ignore OS key repeat for hold detection
 
-    const cameraId = getCurrentONVIFCamera(); // First visible ONVIF camera
+    // Check keyboard-bound controls first
+    const key = e.key.toLowerCase();
+    const btn = document.querySelector(`.control-btn-keyboard[data-keybind="${key}"]`);
+    if (btn) {
+        e.preventDefault();
+        const id = parseInt(btn.dataset.id);
+        const cmd = btn.dataset.cmd;
+        startKeyHold(id, cmd, btn);
+        return;
+    }
+
+    // Also support regular button keybinds (single press)
+    const regularBtn = document.querySelector(`.control-btn:not(.control-btn-keyboard)[data-keybind="${key}"]`);
+    if (regularBtn) {
+        e.preventDefault();
+        const id = parseInt(regularBtn.dataset.id);
+        const cmd = regularBtn.dataset.cmd;
+        const cd = parseInt(regularBtn.dataset.cooldown) || 500;
+        sendControl(id, cmd, regularBtn, cd);
+        return;
+    }
+
+    // ONVIF keyboard fallback
+    const cameraId = getCurrentONVIFCamera();
     if (!cameraId) return;
 
     const keyMap = {
-        'ArrowUp': 'tilt_up',
-        'ArrowDown': 'tilt_down',
-        'ArrowLeft': 'pan_left',
-        'ArrowRight': 'pan_right',
+        'arrowup': 'tilt_up',
+        'arrowdown': 'tilt_down',
+        'arrowleft': 'pan_left',
+        'arrowright': 'pan_right',
         '[': 'zoom_out',
         ']': 'zoom_in',
         ' ': 'stop',
     };
 
-    const movement = keyMap[e.key];
+    const movement = keyMap[key];
     if (!movement) return;
 
     e.preventDefault();
     sendOnvifCommand(cameraId, movement, null, 200);
+});
+
+document.addEventListener('keyup', (e) => {
+    if (!currentStreamId) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+    const key = e.key.toLowerCase();
+    const btn = document.querySelector(`.control-btn-keyboard[data-keybind="${key}"]`);
+    if (btn) {
+        e.preventDefault();
+        const id = parseInt(btn.dataset.id);
+        const cmd = btn.dataset.cmd;
+        stopKeyHold(id, cmd, btn);
+    }
 });
 
 function getCurrentONVIFCamera() {

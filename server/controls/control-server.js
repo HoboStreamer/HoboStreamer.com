@@ -125,6 +125,7 @@ class ControlServer {
                     controlSettings = {
                         control_mode: channel.control_mode || 'open',
                         anon_controls_enabled: !!channel.anon_controls_enabled,
+                        video_click_enabled: !!channel.video_click_enabled,
                     };
                 }
             }
@@ -136,6 +137,10 @@ class ControlServer {
                 const msg = JSON.parse(data.toString());
                 if (msg.type === 'command') {
                     this.handleCommand(ws, msg);
+                } else if (msg.type === 'key_down' || msg.type === 'key_up') {
+                    this.handleKeyEvent(ws, msg);
+                } else if (msg.type === 'video_click') {
+                    this.handleVideoClick(ws, msg);
                 }
             } catch { /* ignore */ }
         });
@@ -155,46 +160,9 @@ class ControlServer {
         const { command, control_id, isOnvif, cameraId, movement } = msg;
         if (!command && !isOnvif) return;
 
-        // Get the stream to find the stream key
-        const stream = db.getStreamById(client.streamId);
-        if (!stream) return;
-
-        const user = db.getUserById(stream.user_id);
-        if (!user) return;
-
-        // ── Control Mode & Permission Checks ──────────────────
-        const channel = db.getChannelByUserId(stream.user_id);
-        if (channel) {
-            const mode = channel.control_mode || 'open';
-
-            // Disabled mode — no controls
-            if (mode === 'disabled') {
-                ws.send(JSON.stringify({ type: 'error', message: 'Controls are disabled' }));
-                return;
-            }
-
-            // Anonymous check
-            if (!channel.anon_controls_enabled && !client.user) {
-                ws.send(JSON.stringify({ type: 'error', message: 'Login required to use controls' }));
-                return;
-            }
-
-            // Whitelist mode — only whitelisted users
-            if (mode === 'whitelist' && client.user) {
-                const isOwner = client.user.id === stream.user_id;
-                const isWhitelisted = db.get(
-                    'SELECT 1 FROM control_whitelist WHERE channel_id = ? AND user_id = ?',
-                    [channel.id, client.user.id]
-                );
-                if (!isOwner && !isWhitelisted) {
-                    ws.send(JSON.stringify({ type: 'error', message: 'You are not on the control whitelist' }));
-                    return;
-                }
-            } else if (mode === 'whitelist' && !client.user) {
-                ws.send(JSON.stringify({ type: 'error', message: 'Login required for whitelist mode' }));
-                return;
-            }
-        }
+        const ctx = this.validateControlPermission(ws, client);
+        if (!ctx) return;
+        const { stream, user, channel } = ctx;
 
         // ── Per-User Rate Limiting ────────────────────────────
         const rateLimitMs = (channel && channel.control_rate_limit_ms) || 500;
@@ -300,6 +268,140 @@ class ControlServer {
             command,
             by: client.user?.username || 'anonymous',
         });
+    }
+
+    /**
+     * Validate control permissions (shared by command, key event, and click handlers)
+     */
+    validateControlPermission(ws, client) {
+        const stream = db.getStreamById(client.streamId);
+        if (!stream) return null;
+
+        const user = db.getUserById(stream.user_id);
+        if (!user) return null;
+
+        const channel = db.getChannelByUserId(stream.user_id);
+        if (channel) {
+            const mode = channel.control_mode || 'open';
+            if (mode === 'disabled') {
+                ws.send(JSON.stringify({ type: 'error', message: 'Controls are disabled' }));
+                return null;
+            }
+            if (!channel.anon_controls_enabled && !client.user) {
+                ws.send(JSON.stringify({ type: 'error', message: 'Login required to use controls' }));
+                return null;
+            }
+            if (mode === 'whitelist' && client.user) {
+                const isOwner = client.user.id === stream.user_id;
+                const isWhitelisted = db.get(
+                    'SELECT 1 FROM control_whitelist WHERE channel_id = ? AND user_id = ?',
+                    [channel.id, client.user.id]
+                );
+                if (!isOwner && !isWhitelisted) {
+                    ws.send(JSON.stringify({ type: 'error', message: 'You are not on the control whitelist' }));
+                    return null;
+                }
+            } else if (mode === 'whitelist' && !client.user) {
+                ws.send(JSON.stringify({ type: 'error', message: 'Login required for whitelist mode' }));
+                return null;
+            }
+        }
+
+        return { stream, user, channel };
+    }
+
+    /**
+     * Handle key_down / key_up events (hold detection)
+     */
+    handleKeyEvent(ws, msg) {
+        const client = this.viewerClients.get(ws);
+        if (!client || !client.streamId) return;
+
+        const { command, control_id } = msg;
+        if (!command) return;
+
+        const ctx = this.validateControlPermission(ws, client);
+        if (!ctx) return;
+
+        // Rate limit key events (lighter — 100ms minimum)
+        const userId = client.user?.id || 'anon';
+        const key = `${client.streamId}-key-${command}-${userId}`;
+        const lastCmd = this.commandCounts.get(key) || 0;
+        if (Date.now() - lastCmd < 100) return;
+        this.commandCounts.set(key, Date.now());
+
+        // Forward to hardware
+        const hardwareWs = this.hardwareClients.get(ctx.user.stream_key);
+        if (hardwareWs && hardwareWs.readyState === WebSocket.OPEN) {
+            hardwareWs.send(JSON.stringify({
+                type: msg.type, // key_down or key_up
+                command,
+                control_id,
+                from_user: client.user?.username || 'anonymous',
+                timestamp: new Date().toISOString(),
+            }));
+        }
+
+        // Broadcast to viewers
+        this.broadcastToViewers(ctx.user.stream_key, {
+            type: msg.type === 'key_down' ? 'key_held' : 'key_released',
+            command,
+            by: client.user?.username || 'anonymous',
+        });
+    }
+
+    /**
+     * Handle video click (x, y normalized 0-1)
+     */
+    handleVideoClick(ws, msg) {
+        const client = this.viewerClients.get(ws);
+        if (!client || !client.streamId) return;
+
+        const x = parseFloat(msg.x);
+        const y = parseFloat(msg.y);
+        if (isNaN(x) || isNaN(y) || x < 0 || x > 1 || y < 0 || y > 1) return;
+
+        const ctx = this.validateControlPermission(ws, client);
+        if (!ctx) return;
+
+        // Check that video click is enabled
+        if (ctx.channel && !ctx.channel.video_click_enabled) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Video click not enabled' }));
+            return;
+        }
+
+        // Rate limit clicks (500ms)
+        const userId = client.user?.id || 'anon';
+        const key = `${client.streamId}-click-${userId}`;
+        const lastCmd = this.commandCounts.get(key) || 0;
+        const rateLimitMs = (ctx.channel && ctx.channel.control_rate_limit_ms) || 500;
+        if (Date.now() - lastCmd < rateLimitMs) {
+            ws.send(JSON.stringify({ type: 'cooldown', message: 'Click on cooldown' }));
+            return;
+        }
+        this.commandCounts.set(key, Date.now());
+
+        // Forward to hardware
+        const hardwareWs = this.hardwareClients.get(ctx.user.stream_key);
+        if (hardwareWs && hardwareWs.readyState === WebSocket.OPEN) {
+            hardwareWs.send(JSON.stringify({
+                type: 'video_click',
+                x: Math.round(x * 10000) / 10000,
+                y: Math.round(y * 10000) / 10000,
+                from_user: client.user?.username || 'anonymous',
+                timestamp: new Date().toISOString(),
+            }));
+        }
+
+        // Broadcast click activity
+        this.broadcastToViewers(ctx.user.stream_key, {
+            type: 'video_click_activity',
+            x: Math.round(x * 100) / 100,
+            y: Math.round(y * 100) / 100,
+            by: client.user?.username || 'anonymous',
+        });
+
+        ws.send(JSON.stringify({ type: 'ok', message: 'Click sent' }));
     }
 
     /**

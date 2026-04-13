@@ -775,6 +775,69 @@ function initDb() {
         database.exec('CREATE INDEX IF NOT EXISTS idx_control_whitelist_channel ON control_whitelist(channel_id)');
     } catch (e) { console.warn('[DB] control_whitelist migration:', e.message); }
 
+    // Migrate: create control_configs table (reusable per-channel control profiles)
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS control_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_control_configs_user ON control_configs(user_id)');
+    } catch (e) { console.warn('[DB] control_configs migration:', e.message); }
+
+    // Migrate: create control_config_buttons table
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS control_config_buttons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            config_id INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            command TEXT NOT NULL,
+            icon TEXT DEFAULT 'fa-gamepad',
+            control_type TEXT DEFAULT 'button' CHECK(control_type IN ('button','toggle','dpad','keyboard')),
+            key_binding TEXT,
+            cooldown_ms INTEGER DEFAULT 500,
+            sort_order INTEGER DEFAULT 0,
+            btn_color TEXT DEFAULT '',
+            btn_bg TEXT DEFAULT '',
+            btn_border_color TEXT DEFAULT '',
+            is_enabled INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (config_id) REFERENCES control_configs(id) ON DELETE CASCADE
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_config_buttons_config ON control_config_buttons(config_id)');
+    } catch (e) { console.warn('[DB] control_config_buttons migration:', e.message); }
+
+    // Migrate: add active_control_config_id and video_click_enabled to channels
+    try {
+        const cols = database.pragma('table_info(channels)').map(c => c.name);
+        if (!cols.includes('active_control_config_id')) {
+            database.exec('ALTER TABLE channels ADD COLUMN active_control_config_id INTEGER');
+            console.log('[DB] Added active_control_config_id column to channels');
+        }
+        if (!cols.includes('video_click_enabled')) {
+            database.exec('ALTER TABLE channels ADD COLUMN video_click_enabled INTEGER DEFAULT 0');
+            console.log('[DB] Added video_click_enabled column to channels');
+        }
+    } catch (e) { console.warn('[DB] channel control config migration:', e.message); }
+
+    // Migrate: add btn_color, btn_bg, btn_border_color to stream_controls for legacy compat
+    try {
+        const cols = database.pragma('table_info(stream_controls)').map(c => c.name);
+        if (!cols.includes('btn_color')) {
+            database.exec("ALTER TABLE stream_controls ADD COLUMN btn_color TEXT DEFAULT ''");
+        }
+        if (!cols.includes('btn_bg')) {
+            database.exec("ALTER TABLE stream_controls ADD COLUMN btn_bg TEXT DEFAULT ''");
+        }
+        if (!cols.includes('btn_border_color')) {
+            database.exec("ALTER TABLE stream_controls ADD COLUMN btn_border_color TEXT DEFAULT ''");
+        }
+    } catch (e) { console.warn('[DB] stream_controls style migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -953,7 +1016,7 @@ function updateChannel(userId, fields) {
     const updates = [];
     const params = [];
     for (const [key, val] of Object.entries(fields)) {
-        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'vod_recording_enabled', 'force_vod_recording_disabled', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms'].includes(key)) {
+        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'vod_recording_enabled', 'force_vod_recording_disabled', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms', 'active_control_config_id', 'video_click_enabled'].includes(key)) {
             updates.push(`${key} = ?`);
             params.push(['tags', 'panels', 'emote_sources'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
         }
@@ -1502,12 +1565,103 @@ function getStreamControls(streamId) {
     return all('SELECT * FROM stream_controls WHERE stream_id = ? ORDER BY sort_order', [streamId]);
 }
 
-function createControl({ stream_id, label, command, icon, control_type, key_binding, cooldown_ms }) {
+function createControl({ stream_id, label, command, icon, control_type, key_binding, cooldown_ms, btn_color, btn_bg, btn_border_color }) {
     return run(
-        `INSERT INTO stream_controls (stream_id, label, command, icon, control_type, key_binding, cooldown_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [stream_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 500]
+        `INSERT INTO stream_controls (stream_id, label, command, icon, control_type, key_binding, cooldown_ms, btn_color, btn_bg, btn_border_color)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 500, btn_color || '', btn_bg || '', btn_border_color || '']
     );
+}
+
+// ── Control Config helpers ──────────────────────────────────
+
+function getControlConfigs(userId) {
+    return all('SELECT * FROM control_configs WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+}
+
+function getControlConfig(configId) {
+    return get('SELECT * FROM control_configs WHERE id = ?', [configId]);
+}
+
+function createControlConfig({ user_id, name, description }) {
+    return run(
+        'INSERT INTO control_configs (user_id, name, description) VALUES (?, ?, ?)',
+        [user_id, name, description || '']
+    );
+}
+
+function updateControlConfig(configId, fields) {
+    const updates = [];
+    const params = [];
+    for (const [key, val] of Object.entries(fields)) {
+        if (val !== undefined && ['name', 'description'].includes(key)) {
+            updates.push(`${key} = ?`);
+            params.push(val);
+        }
+    }
+    if (updates.length === 0) return;
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(configId);
+    return run(`UPDATE control_configs SET ${updates.join(', ')} WHERE id = ?`, params);
+}
+
+function deleteControlConfig(configId) {
+    return run('DELETE FROM control_configs WHERE id = ?', [configId]);
+}
+
+function getConfigButtons(configId) {
+    return all('SELECT * FROM control_config_buttons WHERE config_id = ? ORDER BY sort_order', [configId]);
+}
+
+function createConfigButton({ config_id, label, command, icon, control_type, key_binding, cooldown_ms, sort_order, btn_color, btn_bg, btn_border_color }) {
+    return run(
+        `INSERT INTO control_config_buttons (config_id, label, command, icon, control_type, key_binding, cooldown_ms, sort_order, btn_color, btn_bg, btn_border_color)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [config_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 500, sort_order || 0, btn_color || '', btn_bg || '', btn_border_color || '']
+    );
+}
+
+function updateConfigButton(buttonId, fields) {
+    const allowed = ['label', 'command', 'icon', 'control_type', 'key_binding', 'cooldown_ms', 'sort_order', 'btn_color', 'btn_bg', 'btn_border_color', 'is_enabled'];
+    const updates = [];
+    const params = [];
+    for (const [key, val] of Object.entries(fields)) {
+        if (val !== undefined && allowed.includes(key)) {
+            updates.push(`${key} = ?`);
+            params.push(val);
+        }
+    }
+    if (updates.length === 0) return;
+    params.push(buttonId);
+    return run(`UPDATE control_config_buttons SET ${updates.join(', ')} WHERE id = ?`, params);
+}
+
+function deleteConfigButton(buttonId) {
+    return run('DELETE FROM control_config_buttons WHERE id = ?', [buttonId]);
+}
+
+function applyConfigToStream(configId, streamId) {
+    // Delete existing non-ONVIF controls from stream
+    run('DELETE FROM stream_controls WHERE stream_id = ? AND (control_type != ? OR control_type IS NULL)', [streamId, 'onvif']);
+    // Copy buttons from config into stream_controls
+    const buttons = getConfigButtons(configId);
+    for (let i = 0; i < buttons.length; i++) {
+        const b = buttons[i];
+        if (!b.is_enabled) continue;
+        createControl({
+            stream_id: streamId,
+            label: b.label,
+            command: b.command,
+            icon: b.icon,
+            control_type: b.control_type,
+            key_binding: b.key_binding,
+            cooldown_ms: b.cooldown_ms,
+            btn_color: b.btn_color,
+            btn_bg: b.btn_bg,
+            btn_border_color: b.btn_border_color,
+        });
+    }
+    return buttons.filter(b => b.is_enabled).length;
 }
 
 // ── API Key helpers ──────────────────────────────────────────
@@ -3181,6 +3335,9 @@ module.exports = {
     createCameraPreset, getCameraPreset, getCameraPresetsByCamera, deleteCameraPreset,
     // API Keys
     createApiKey, getApiKeyByHash,
+    // Control Configs
+    getControlConfigs, getControlConfig, createControlConfig, updateControlConfig, deleteControlConfig,
+    getConfigButtons, createConfigButton, updateConfigButton, deleteConfigButton, applyConfigToStream,
     // Bans
     isUserBanned, isIpBanned,
     // Emotes

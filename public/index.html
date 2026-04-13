@@ -163,6 +163,7 @@
                 <a href="https://my.hobo.tools" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
                 <hr>
                 <a href="#" onclick="event.preventDefault();captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
+                <a href="/documentation" onclick="return handleLinkClick(event, '/documentation')"><i class="fa-solid fa-book"></i> Documentation</a>
                 <hr>
                 <a href="#" onclick="event.preventDefault();logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
             </div>
@@ -184,7 +185,7 @@
             <div class="hero-content">
                 <h1><i class="fa-solid fa-campground"></i> HoboStreamer</h1>
                 <p class="hero-tagline">Live streaming for <span class="hero-rotate-wrap"><span class="hero-rotate" id="hero-rotate"></span></span></p>
-                <p class="hero-note"><i class="fa-solid fa-heart"></i>Free &amp; open source &mdash; community-first, no investors, and built to become a sustainable not-for-profit project over time.</p>
+                <p class="hero-note"><i class="fa-solid fa-heart"></i>Free &amp; open source &mdash; community-first, no investors, and built to become a sustainable not-for-profit project over time. <strong><i class="fa-solid fa-wand-magic-sparkles"></i> Full API docs for vibe coding chat bots, robot streams, and more.</strong></p>
                 <div class="hero-philosophy-links">
                     <a href="#founder-story" class="hero-philosophy-btn" onclick="event.preventDefault();document.getElementById('founder-story')?.scrollIntoView({behavior:'smooth', block:'start'})">
                         <i class="fa-solid fa-book-open"></i> Why this exists
@@ -208,6 +209,9 @@
                     </a>
                     <a href="https://discord.gg/M6MuRUaeJj" target="_blank" class="btn btn-outline btn-lg" rel="noopener noreferrer">
                         <i class="fa-brands fa-discord"></i> Discord
+                    </a>
+                    <a href="/documentation" onclick="return handleLinkClick(event, '/documentation')" class="btn btn-outline btn-lg">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Vibe Code With Our API
                     </a>
                 </div>
             </div>
@@ -1270,12 +1274,40 @@
                 <!-- Controls Manager -->
                 <div class="dash-card">
                     <h3><i class="fa-solid fa-gamepad"></i> Interactive Controls</h3>
-                    <div id="dash-controls-list"></div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-                        <button class="btn btn-outline" onclick="showModal('add-control')">
-                            <i class="fa-solid fa-plus"></i> Add Control Button
-                        </button>
+
+                    <!-- Control Config Profiles -->
+                    <div style="margin-bottom:12px">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                            <label style="font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-sliders"></i> Control Profiles</label>
+                            <button class="btn btn-small btn-outline" onclick="showModal('create-config')"><i class="fa-solid fa-plus"></i> New Profile</button>
+                        </div>
+                        <div id="dash-config-list"></div>
+                        <div id="dash-config-editor" style="display:none">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
+                                <h4 id="dash-config-editor-title" style="margin:0;font-size:0.95rem;color:var(--accent)">Editing: Config</h4>
+                                <div style="display:flex;gap:6px">
+                                    <button class="btn btn-small btn-outline" onclick="showModal('add-config-button')"><i class="fa-solid fa-plus"></i> Add Button</button>
+                                    <button class="btn btn-small btn-outline" onclick="closeConfigEditor()"><i class="fa-solid fa-times"></i> Close</button>
+                                </div>
+                            </div>
+                            <div id="dash-config-buttons-list"></div>
+                        </div>
                     </div>
+
+                    <hr style="border-color:var(--border);margin:12px 0">
+
+                    <!-- Legacy per-stream controls -->
+                    <details style="margin-bottom:8px">
+                        <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-list"></i> Per-Stream Controls (Live)</summary>
+                        <div style="margin-top:8px">
+                            <div id="dash-controls-list"></div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                                <button class="btn btn-outline btn-small" onclick="showModal('add-control')">
+                                    <i class="fa-solid fa-plus"></i> Add Control Button
+                                </button>
+                            </div>
+                        </div>
+                    </details>
 
                     <!-- Control Settings -->
                     <details class="dash-control-settings" style="margin-top:12px;">
@@ -1297,6 +1329,10 @@
                             <label class="bc-toggle-label" style="font-size:0.85rem;gap:8px">
                                 <input type="checkbox" id="dash-anon-controls" checked onchange="updateControlSettings()">
                                 Allow anonymous users to use controls
+                            </label>
+                            <label class="bc-toggle-label" style="font-size:0.85rem;gap:8px">
+                                <input type="checkbox" id="dash-video-click" onchange="updateControlSettings()">
+                                Enable video click (viewers click on stream to send coordinates)
                             </label>
                         </div>
                     </details>
@@ -1781,6 +1817,16 @@
                         <button class="btn btn-primary btn-lg" style="width:100%" id="bc-create-btn" onclick="createNewStream()">
                             <i class="fa-solid fa-tower-broadcast"></i> Create Stream
                         </button>
+
+                        <!-- Control Config Selection -->
+                        <div id="bc-config-selector" style="margin-top:10px;display:none">
+                            <label style="font-size:0.85rem;font-weight:600;color:var(--text-secondary)"><i class="fa-solid fa-gamepad"></i> Control Profile</label>
+                            <select id="bc-control-config" class="form-input form-input-sm" style="margin-top:4px">
+                                <option value="">None (no controls)</option>
+                            </select>
+                            <span class="bc-field-hint">Choose which control layout viewers will see</span>
+                        </div>
+
                         <p class="bc-create-reassurance"><i class="fa-solid fa-circle-info"></i> Your stream will appear at <strong>hobostreamer.com/<span id="bc-create-username">you</span></strong> — this link stays the same every time you go live.</p>
 
                         <!-- Which method should I use? -->
@@ -4013,6 +4059,632 @@ WantedBy=multi-user.target</code>
             <div id="paste-viewer-content">
                 <div class="loading-spinner"><i class="fa-solid fa-circle-notch fa-spin"></i></div>
             </div>
+        </div>
+    </section>
+
+    <!-- Documentation Page -->
+    <section id="page-documentation" class="page">
+        <div class="content-container" style="max-width:900px">
+
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0.5rem">
+                <div>
+                    <h1 style="margin-bottom:0.25rem"><i class="fa-solid fa-wand-magic-sparkles"></i> HoboStreamer API Docs</h1>
+                    <p class="text-muted" style="margin:0">Built for vibe coders. Copy everything below, paste into your LLM, and build whatever you want.</p>
+                </div>
+                <button class="btn btn-primary" onclick="copyDocsForAI()" id="docs-copy-btn" style="white-space:nowrap;flex-shrink:0">
+                    <i class="fa-solid fa-copy"></i> Copy All for AI
+                </button>
+            </div>
+
+            <div id="docs-copy-toast" style="display:none;background:var(--accent);color:#fff;padding:0.5rem 1rem;border-radius:var(--radius);margin-bottom:1rem;font-size:0.9rem">
+                <i class="fa-solid fa-check"></i> Copied! Paste into ChatGPT, Claude, Gemini — go wild.
+            </div>
+
+            <div id="docs-ai-content">
+
+<h2>HOBOSTREAMER PLATFORM — COMPLETE DEVELOPER REFERENCE</h2>
+<p>HoboStreamer is a self-hosted, open-source live streaming platform. Stack: Node.js + Express + SQLite (better-sqlite3) + Mediasoup WebRTC SFU. Frontend: vanilla JS SPA. All API endpoints return JSON. WebSocket endpoints on same host/port.</p>
+<p>Base URL: https://hobostreamer.com (replace with your instance). All authenticated endpoints require: <code>Authorization: Bearer &lt;JWT&gt;</code> header, or <code>?token=JWT</code> query param on WebSocket URLs.</p>
+
+<hr>
+
+<h2>1. AUTHENTICATION</h2>
+
+<h3>REST Endpoints</h3>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Body / Notes</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td>/api/auth/register</td><td>No</td><td>{ username, email, password }</td></tr>
+<tr><td>POST</td><td>/api/auth/login</td><td>No</td><td>{ username, password } → { token, user }</td></tr>
+<tr><td>GET</td><td>/api/auth/me</td><td>Yes</td><td>Returns current user profile</td></tr>
+<tr><td>PUT</td><td>/api/auth/profile</td><td>Yes</td><td>Update avatar, bio, profile_color, etc.</td></tr>
+</tbody>
+</table>
+
+<h3>Example: Login and get token</h3>
+<pre><code>const res = await fetch('https://hobostreamer.com/api/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username: 'yourname', password: 'yourpass' })
+});
+const { token, user } = await res.json();
+// Use token in all subsequent requests
+</code></pre>
+
+<hr>
+
+<h2>2. STREAMS &amp; CHANNELS</h2>
+
+<h3>Stream REST API</h3>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/streams</td><td>No</td><td>List all live streams</td></tr>
+<tr><td>POST</td><td>/api/streams</td><td>Yes</td><td>Go live. Body: { title, description, category, protocol, tags }</td></tr>
+<tr><td>GET</td><td>/api/streams/:id</td><td>No</td><td>Stream details (endpoint, controls, cameras)</td></tr>
+<tr><td>PUT</td><td>/api/streams/:id</td><td>Yes</td><td>Update title/description/category/tags/nsfw</td></tr>
+<tr><td>DELETE</td><td>/api/streams/:id</td><td>Yes</td><td>End stream</td></tr>
+<tr><td>GET</td><td>/api/streams/:id/endpoint</td><td>Yes</td><td>Get WHIP URL, RTMP key, ffmpeg commands</td></tr>
+<tr><td>POST</td><td>/api/streams/:id/heartbeat</td><td>Yes</td><td>Keep stream alive — call every 30s</td></tr>
+<tr><td>GET</td><td>/api/streams/channel/:username</td><td>No</td><td>Full channel page data (streams, VODs, clips, panels)</td></tr>
+<tr><td>GET</td><td>/api/streams/channel/:username/live</td><td>No</td><td>Lightweight live status for fast player init</td></tr>
+<tr><td>PUT</td><td>/api/streams/channel</td><td>Yes</td><td>Update own channel settings</td></tr>
+<tr><td>POST</td><td>/api/streams/channel/:username/follow</td><td>Yes</td><td>Follow / unfollow</td></tr>
+<tr><td>GET</td><td>/api/streams/mine</td><td>Yes</td><td>Your streams (active and recent)</td></tr>
+</tbody>
+</table>
+
+<h3>Supported Ingestion Protocols</h3>
+<ul>
+<li><strong>webrtc</strong> — Mediasoup SFU. Lowest latency (~200ms). Use browser or WHIP encoder (OBS 30+).</li>
+<li><strong>rtmp</strong> — Traditional RTMP ingest (OBS/ffmpeg). Plays back as HTTP-FLV.</li>
+<li><strong>jsmpeg</strong> — MPEG1 over WebSocket. Runs on Raspberry Pi and low-power hardware.</li>
+</ul>
+
+<h3>Example: Create a stream and get the WHIP URL</h3>
+<pre><code>const stream = await fetch('https://hobostreamer.com/api/streams', {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ title: 'Robot cam', protocol: 'webrtc', category: 'Technology' })
+}).then(r => r.json());
+
+const endpoint = await fetch(`https://hobostreamer.com/api/streams/${stream.id}/endpoint`, {
+  headers: { 'Authorization': `Bearer ${token}` }
+}).then(r => r.json());
+
+console.log(endpoint.whip_url);  // POST SDP offer here
+// Remember to call /heartbeat every 30s to keep stream alive
+</code></pre>
+
+<hr>
+
+<h2>3. WEBRTC BROADCAST PROTOCOL</h2>
+
+<h3>WHIP Ingestion (OBS / ffmpeg / custom encoder)</h3>
+<p>RFC 9725 compliant. POST a raw SDP offer, receive SDP answer.</p>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td>/whip/:streamId</td><td>Body: raw SDP (Content-Type: application/sdp). Auth: Bearer JWT. Returns SDP answer + Location header.</td></tr>
+<tr><td>PATCH</td><td>/whip/:streamId/:resourceId</td><td>Trickle ICE (Content-Type: application/trickle-ice-sdpfrag)</td></tr>
+<tr><td>DELETE</td><td>/whip/:streamId/:resourceId</td><td>Terminate WHIP session</td></tr>
+</tbody>
+</table>
+
+<h3>Broadcast WebSocket — /ws/broadcast</h3>
+<p>Connect: <code>wss://hobostreamer.com/ws/broadcast?streamId=ID&amp;role=broadcaster|viewer&amp;token=JWT</code></p>
+<p>All messages are JSON. Send: <code>ws.send(JSON.stringify({ type: 'watch' }))</code></p>
+<table class="doc-table">
+<thead><tr><th>Type</th><th>Dir</th><th>Key Fields</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>welcome</td><td>S→C</td><td>peerId, role, streamId, viewerCount, iceServers</td><td>Sent immediately on connect</td></tr>
+<tr><td>watch</td><td>C→S</td><td>—</td><td>Viewer requests to start watching (triggers SFU consumer)</td></tr>
+<tr><td>broadcaster-ready</td><td>S→Viewer</td><td>—</td><td>Broadcaster is live, safe to send watch</td></tr>
+<tr><td>sfu-get-capabilities</td><td>C→S</td><td>—</td><td>Get Mediasoup RTP capabilities</td></tr>
+<tr><td>sfu-create-transport</td><td>C→S</td><td>direction: send|recv</td><td>Create WebRTC transport</td></tr>
+<tr><td>sfu-connect-transport</td><td>C→S</td><td>transportId, dtlsParameters</td><td>Connect DTLS</td></tr>
+<tr><td>sfu-produce</td><td>C→S</td><td>transportId, kind, rtpParameters</td><td>Start producing audio/video</td></tr>
+<tr><td>sfu-stop-produce</td><td>C→S</td><td>producerId</td><td>Stop a producer</td></tr>
+<tr><td>offer / answer</td><td>Relay</td><td>sdp, targetPeerId</td><td>P2P SDP signaling fallback</td></tr>
+<tr><td>ice-candidate</td><td>Relay</td><td>candidate, targetPeerId</td><td>P2P ICE (SFU handles ICE internally)</td></tr>
+<tr><td>viewer-count</td><td>S→All</td><td>count</td><td>Updated viewer count broadcast</td></tr>
+<tr><td>stream-ended</td><td>S→Viewers</td><td>—</td><td>Stream has ended</td></tr>
+</tbody>
+</table>
+
+<h3>RTMP Ingest (OBS)</h3>
+<pre><code>Server: rtmp://hobostreamer.com/live
+Key:    YOUR_STREAM_KEY   (get from Dashboard → Stream Key)
+
+# Playback proxy for browser
+GET /api/streams/rtmp-proxy/:streamId.flv
+</code></pre>
+
+<hr>
+
+<h2>4. CHAT SYSTEM — CHATBOT GUIDE</h2>
+<p>Connect to the chat WebSocket to read and send messages. Perfect for building chat bots, overlays, alert systems, and integrations.</p>
+
+<h3>Chat WebSocket — /ws/chat</h3>
+<p>Connect: <code>wss://hobostreamer.com/ws/chat?stream=STREAM_ID&amp;token=JWT</code></p>
+<p>Both params are optional: omit <code>stream</code> for global chat; omit <code>token</code> to connect anonymously (assigned anonXXXXX identity).</p>
+
+<h3>Client → Server Messages</h3>
+<table class="doc-table">
+<thead><tr><th>Type</th><th>Payload</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>chat</td><td>{ message, reply_to_id?, auto_delete_minutes? }</td><td>Send a message (max 500 chars)</td></tr>
+<tr><td>join_stream</td><td>{ streamId }</td><td>Join a specific stream's chat room</td></tr>
+<tr><td>leave_stream</td><td>{}</td><td>Leave current stream chat</td></tr>
+<tr><td>get-users</td><td>{}</td><td>Request current user list</td></tr>
+</tbody>
+</table>
+
+<h3>Server → Client Messages</h3>
+<table class="doc-table">
+<thead><tr><th>Type</th><th>Key Fields</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>auth</td><td>authenticated, username, role, user_id, slowmode_seconds, slur_filter_enabled</td><td>Identity confirmation. First message after connect.</td></tr>
+<tr><td>chat</td><td>username, core_username, user_id, anon_id, role, message, stream_id, is_global, timestamp, id, reply_to?, avatar_url, profile_color, filtered</td><td>A chat message. is_global=true means not tied to a stream.</td></tr>
+<tr><td>system</td><td>message, timestamp</td><td>System notice (joins, events)</td></tr>
+<tr><td>user-count</td><td>count</td><td>Updated viewer/chatter count</td></tr>
+<tr><td>users-list</td><td>users: { logged: [{username, role, avatar_url}], anonCount }</td><td>Full user list (after get-users)</td></tr>
+<tr><td>error</td><td>message</td><td>Error (banned, rate limited, etc.)</td></tr>
+<tr><td>slur-blocked</td><td>message</td><td>Your message was blocked by the anti-slur filter</td></tr>
+<tr><td>coin_earned</td><td>coins, total, reason</td><td>Hobo Coins earned notification</td></tr>
+</tbody>
+</table>
+
+<h3>Chat Bot — Complete Example (Node.js)</h3>
+<pre><code>const WebSocket = require('ws');
+
+const WS_URL = 'wss://hobostreamer.com/ws/chat?stream=123&token=YOUR_JWT';
+const ws = new WebSocket(WS_URL);
+
+ws.on('open', () => console.log('Bot connected'));
+
+ws.on('message', (raw) => {
+  const msg = JSON.parse(raw);
+
+  if (msg.type === 'auth') {
+    console.log('Logged in as:', msg.username);
+  }
+
+  if (msg.type === 'chat') {
+    console.log(`[${msg.username}] ${msg.message}`);
+
+    // Respond to commands
+    if (msg.message.startsWith('!hello')) {
+      ws.send(JSON.stringify({
+        type: 'chat',
+        message: `Hey @${msg.username}! 👋`
+      }));
+    }
+
+    if (msg.message.startsWith('!time')) {
+      ws.send(JSON.stringify({
+        type: 'chat',
+        message: `The time is ${new Date().toLocaleTimeString()}`
+      }));
+    }
+  }
+});
+
+ws.on('close', () => setTimeout(() => reconnect(), 5000));
+</code></pre>
+
+<h3>Chat Bot — Complete Example (Python)</h3>
+<pre><code>import json, websocket, time
+
+TOKEN = 'YOUR_JWT_TOKEN'
+STREAM_ID = '123'
+WS_URL = f'wss://hobostreamer.com/ws/chat?stream={STREAM_ID}&token={TOKEN}'
+
+def send(ws, message):
+    ws.send(json.dumps({ 'type': 'chat', 'message': message }))
+
+def on_message(ws, raw):
+    msg = json.loads(raw)
+    if msg.get('type') == 'auth':
+        print(f"Connected as {msg.get('username')}")
+    if msg.get('type') == 'chat':
+        user = msg.get('username', '?')
+        text = msg.get('message', '')
+        print(f'[{user}] {text}')
+        if text.startswith('!hello'):
+            send(ws, f'Hey @{user}!')
+        if text.startswith('!uptime'):
+            send(ws, f'Bot uptime: {int(time.time() - start_time)}s')
+
+def on_open(ws): print('Connected')
+def on_close(ws, *a): print('Disconnected — reconnecting...')
+def on_error(ws, e): print(f'Error: {e}')
+
+start_time = time.time()
+while True:
+    ws = websocket.WebSocketApp(WS_URL, on_message=on_message,
+        on_open=on_open, on_close=on_close, on_error=on_error)
+    ws.run_forever()
+    time.sleep(5)
+</code></pre>
+
+<h3>Chat Commands (built-in)</h3>
+<table class="doc-table">
+<thead><tr><th>Command</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>/tts &lt;text&gt;</td><td>Text-to-speech via TTS system</td></tr>
+<tr><td>/color #hex</td><td>Set your chat name color</td></tr>
+<tr><td>!sr / !yt / !request &lt;url&gt;</td><td>Media / song request</td></tr>
+<tr><td>!queue</td><td>Show media queue</td></tr>
+<tr><td>!np / !nowplaying</td><td>Now playing</td></tr>
+</tbody>
+</table>
+
+<h3>User Roles</h3>
+<table class="doc-table">
+<thead><tr><th>Role</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>admin</td><td>Platform admin</td></tr>
+<tr><td>mod</td><td>Platform moderator</td></tr>
+<tr><td>streamer</td><td>Registered streamer</td></tr>
+<tr><td>user</td><td>Registered viewer</td></tr>
+<tr><td>anon</td><td>Anonymous visitor (anonXXXXX identity)</td></tr>
+</tbody>
+</table>
+
+<h3>Chat REST API</h3>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td>/api/chat/send</td><td>Yes</td><td>Send message via REST (fallback)</td></tr>
+<tr><td>GET</td><td>/api/chat/:streamId/history</td><td>No</td><td>Chat history for a stream</td></tr>
+<tr><td>GET</td><td>/api/chat/:streamId/users</td><td>No</td><td>Users in a stream's chat</td></tr>
+<tr><td>GET</td><td>/api/chat/user/:username/profile</td><td>No</td><td>User profile card data</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>5. INTERACTIVE CONTROL SYSTEM — ROBOT/HARDWARE GUIDE</h2>
+<p>The control system lets streamers expose interactive buttons that viewers press to control physical hardware (robots, cameras, servo rigs, etc.). Three interaction types: single-press buttons, keyboard hold (continuous drive), and video-click (x/y coordinates on the live video feed).</p>
+
+<h3>Control Config Profiles</h3>
+<p>Streamers create reusable control configs. Each config holds buttons. When going live, a config is applied to the stream — its buttons get copied to that stream session.</p>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/controls/configs</td><td>Yes</td><td>List your configs (with button count)</td></tr>
+<tr><td>POST</td><td>/api/controls/configs</td><td>Yes</td><td>Create config { name, description }</td></tr>
+<tr><td>GET</td><td>/api/controls/configs/:id</td><td>Yes</td><td>Config with full buttons array</td></tr>
+<tr><td>PUT</td><td>/api/controls/configs/:id</td><td>Yes</td><td>Update name / description</td></tr>
+<tr><td>DELETE</td><td>/api/controls/configs/:id</td><td>Yes</td><td>Delete config</td></tr>
+<tr><td>POST</td><td>/api/controls/configs/:id/buttons</td><td>Yes</td><td>Add button to config</td></tr>
+<tr><td>PUT</td><td>/api/controls/configs/:id/buttons/:btnId</td><td>Yes</td><td>Update button</td></tr>
+<tr><td>DELETE</td><td>/api/controls/configs/:id/buttons/:btnId</td><td>Yes</td><td>Delete button</td></tr>
+<tr><td>POST</td><td>/api/controls/configs/:id/activate</td><td>Yes</td><td>Set as channel default config</td></tr>
+<tr><td>POST</td><td>/api/controls/configs/deactivate</td><td>Yes</td><td>Clear channel default</td></tr>
+<tr><td>POST</td><td>/api/controls/configs/:id/apply/:streamId</td><td>Yes</td><td>Copy config buttons onto a live stream</td></tr>
+</tbody>
+</table>
+
+<h3>Button Schema</h3>
+<pre><code>{
+  "label":        "Forward",     // Display name shown to viewers (max 50)
+  "command":      "forward",     // String sent to your hardware bridge (max 100)
+  "icon":         "fa-arrow-up", // FontAwesome icon class (without fa-solid prefix)
+  "control_type": "keyboard",    // "button" | "keyboard" | "toggle" | "dpad"
+  "key_binding":  "w",           // Optional keyboard shortcut for viewers (max 20)
+  "cooldown_ms":  100,           // Per-press cooldown in ms (0-30000)
+  "sort_order":   0,             // Display order (ascending)
+  "btn_color":    "#ffffff",     // Button text color (CSS color — safe values only)
+  "btn_bg":       "#1a1a2e",     // Button background color
+  "btn_border_color": "#6366f1", // Button border color
+  "is_enabled":   1              // 1=shown, 0=hidden
+}
+</code></pre>
+
+<h3>Control Type Behaviour</h3>
+<table class="doc-table">
+<thead><tr><th>control_type</th><th>Viewer Interaction</th><th>Messages Sent</th></tr></thead>
+<tbody>
+<tr><td>button</td><td>Single click or key tap</td><td>command</td></tr>
+<tr><td>keyboard</td><td>Hold mouse/touch/key → continuous. Release → stop</td><td>key_down on press, key_up on release</td></tr>
+<tr><td>toggle</td><td>Click to toggle on/off</td><td>command (on) / command (off)</td></tr>
+<tr><td>dpad</td><td>D-pad style directional</td><td>command</td></tr>
+</tbody>
+</table>
+
+<h3>Channel Control Settings</h3>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/controls/settings/channel</td><td>Get settings</td></tr>
+<tr><td>PUT</td><td>/api/controls/settings/channel</td><td>Update settings</td></tr>
+</tbody>
+</table>
+<pre><code>{
+  "control_mode":          "open",   // "open" | "whitelist" | "disabled"
+  "anon_controls_enabled": true,     // Allow anonymous viewers to use controls
+  "control_rate_limit_ms": 500,      // Global rate limit per user (100-30000)
+  "video_click_enabled":   true      // Enable video click input
+}
+</code></pre>
+
+<h3>Per-Stream Controls (Legacy / Direct)</h3>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/controls/:streamId</td><td>Get all controls + settings for a stream</td></tr>
+<tr><td>POST</td><td>/api/controls/:streamId</td><td>Add a button directly to active stream</td></tr>
+<tr><td>PUT</td><td>/api/controls/:streamId/:id</td><td>Update control</td></tr>
+<tr><td>DELETE</td><td>/api/controls/:streamId/:id</td><td>Delete control</td></tr>
+<tr><td>POST</td><td>/api/controls/:streamId/presets/cozmo</td><td>Apply Cozmo robot preset buttons</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>6. CONTROL WEBSOCKET — HARDWARE BRIDGE</h2>
+<p>This is how your code receives viewer commands. Connect as <code>mode=hardware</code> and listen for messages. Your bridge translates them into robot/hardware actions.</p>
+
+<h3>Connection URLs</h3>
+<pre><code># Hardware bridge (your robot/device — receives commands)
+wss://hobostreamer.com/ws/control?mode=hardware&stream_key=YOUR_STREAM_KEY
+
+# Viewer (browser/bot — sends commands)
+wss://hobostreamer.com/ws/control?mode=viewer&token=JWT&stream=STREAM_ID
+</code></pre>
+
+<h3>Hardware Receives These Messages</h3>
+<table class="doc-table">
+<thead><tr><th>Type</th><th>Payload Fields</th><th>When</th></tr></thead>
+<tbody>
+<tr><td>connected</td><td>message</td><td>Immediately on connect — confirms auth</td></tr>
+<tr><td>command</td><td>command, control_id, from_user, timestamp</td><td>Viewer clicked a button (button/toggle/dpad type)</td></tr>
+<tr><td>key_down</td><td>command, control_id, from_user, timestamp</td><td>Viewer started holding a keyboard-type button</td></tr>
+<tr><td>key_up</td><td>command, control_id, from_user, timestamp</td><td>Viewer released the button</td></tr>
+<tr><td>video_click</td><td>x (0-1), y (0-1), from_user, timestamp</td><td>Viewer clicked on the video feed. 0,0 = top-left, 1,1 = bottom-right</td></tr>
+</tbody>
+</table>
+
+<h3>Hardware Can Send</h3>
+<table class="doc-table">
+<thead><tr><th>Type</th><th>Payload</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td>status</td><td>{ any fields }</td><td>Relayed to all viewers as hardware_status message</td></tr>
+</tbody>
+</table>
+
+<h3>Viewer Sends These Messages</h3>
+<table class="doc-table">
+<thead><tr><th>Type</th><th>Payload</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>command</td><td>{ command, control_id }</td><td>Single button press</td></tr>
+<tr><td>key_down</td><td>{ command, control_id }</td><td>Start holding (keyboard type)</td></tr>
+<tr><td>key_up</td><td>{ command, control_id }</td><td>Release hold</td></tr>
+<tr><td>video_click</td><td>{ x: 0-1, y: 0-1 }</td><td>Click on video feed</td></tr>
+</tbody>
+</table>
+
+<h3>Viewer Receives These Messages</h3>
+<table class="doc-table">
+<thead><tr><th>Type</th><th>Key Fields</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>controls</td><td>controls[], settings{}</td><td>Initial buttons + channel settings on connect</td></tr>
+<tr><td>command_executed</td><td>command, by</td><td>Someone pressed a button (activity feed)</td></tr>
+<tr><td>key_held</td><td>command, by</td><td>Someone started holding a key</td></tr>
+<tr><td>key_released</td><td>command, by</td><td>Someone released a key</td></tr>
+<tr><td>video_click_activity</td><td>x, y, by</td><td>Someone clicked the video</td></tr>
+<tr><td>hardware_status</td><td>any</td><td>Status update from hardware bridge</td></tr>
+<tr><td>error</td><td>message</td><td>Denied / not live / banned</td></tr>
+<tr><td>cooldown</td><td>message</td><td>Rate limited</td></tr>
+</tbody>
+</table>
+
+<h3>Permission Model</h3>
+<table class="doc-table">
+<thead><tr><th>control_mode</th><th>Who can send commands</th></tr></thead>
+<tbody>
+<tr><td>open</td><td>Any viewer (anon allowed if anon_controls_enabled=true)</td></tr>
+<tr><td>whitelist</td><td>Stream owner + explicitly whitelisted users only</td></tr>
+<tr><td>disabled</td><td>Nobody — controls are turned off</td></tr>
+</tbody>
+</table>
+
+<h3>Hardware Bridge — Python (Full Example)</h3>
+<pre><code>#!/usr/bin/env python3
+"""
+HoboStreamer Hardware Bridge — generic template.
+pip install websocket-client
+"""
+import json, time, threading, websocket
+
+STREAM_KEY = 'YOUR_STREAM_KEY'
+WS_URL = f'wss://hobostreamer.com/ws/control?mode=hardware&stream_key={STREAM_KEY}'
+
+held_keys = set()  # Track currently held keyboard commands
+
+def do_command(cmd):
+    """Map command strings to your hardware."""
+    print(f'Command: {cmd}')
+    # Example: call GPIO, serial, HTTP, etc.
+    # if cmd == 'forward': robot.drive(speed=100)
+
+def do_start_hold(cmd):
+    """Called when a keyboard-type button starts being held."""
+    held_keys.add(cmd)
+    print(f'Hold start: {cmd}')
+
+def do_stop_hold(cmd):
+    """Called when a keyboard-type button is released."""
+    held_keys.discard(cmd)
+    print(f'Hold stop: {cmd}')
+    if not held_keys:
+        print('All keys released — stop movement')
+        # robot.stop()
+
+def do_video_click(x, y):
+    """Called when a viewer clicks the video feed. x,y are 0-1 normalized."""
+    print(f'Video click at ({x:.2f}, {y:.2f})')
+    # Navigate toward click: x < 0.4 = turn left, x > 0.6 = turn right
+    # y close to 0 = far away (drive more), y close to 1 = near (drive less)
+
+def on_message(ws, raw):
+    try:
+        msg = json.loads(raw)
+        t = msg.get('type')
+        if t == 'connected':
+            print('Hardware bridge authenticated!')
+        elif t == 'command':
+            do_command(msg['command'])
+        elif t == 'key_down':
+            do_start_hold(msg['command'])
+        elif t == 'key_up':
+            do_stop_hold(msg['command'])
+        elif t == 'video_click':
+            do_video_click(msg['x'], msg['y'])
+    except Exception as e:
+        print(f'Error: {e}')
+
+def on_open(ws): print('Connected')
+def on_close(ws, *a): print('Disconnected')
+def on_error(ws, e): print(f'WS error: {e}')
+
+while True:
+    ws = websocket.WebSocketApp(WS_URL, on_message=on_message,
+        on_open=on_open, on_close=on_close, on_error=on_error)
+    ws.run_forever(ping_interval=30)
+    print('Reconnecting in 5s...')
+    time.sleep(5)
+</code></pre>
+
+<h3>Hardware Bridge — Node.js (Full Example)</h3>
+<pre><code>const WebSocket = require('ws');
+
+const STREAM_KEY = 'YOUR_STREAM_KEY';
+const WS_URL = `wss://hobostreamer.com/ws/control?mode=hardware&stream_key=${STREAM_KEY}`;
+const heldKeys = new Set();
+
+function connect() {
+  const ws = new WebSocket(WS_URL);
+
+  ws.on('message', (raw) => {
+    const msg = JSON.parse(raw);
+    switch (msg.type) {
+      case 'connected':
+        console.log('Hardware bridge authenticated!');
+        break;
+      case 'command':
+        console.log(`Button: ${msg.command} by ${msg.from_user}`);
+        doCommand(msg.command);
+        break;
+      case 'key_down':
+        heldKeys.add(msg.command);
+        console.log(`Hold start: ${msg.command}`);
+        startContinuous(msg.command);
+        break;
+      case 'key_up':
+        heldKeys.delete(msg.command);
+        console.log(`Hold stop: ${msg.command}`);
+        if (heldKeys.size === 0) stopAll();
+        break;
+      case 'video_click':
+        console.log(`Click at (${msg.x.toFixed(2)}, ${msg.y.toFixed(2)}) by ${msg.from_user}`);
+        navigateToClick(msg.x, msg.y);
+        break;
+    }
+  });
+
+  ws.on('close', () => setTimeout(connect, 5000));
+  ws.on('error', (e) => console.error(e));
+}
+
+function doCommand(cmd) { /* implement hardware control */ }
+function startContinuous(cmd) { /* start motors etc. */ }
+function stopAll() { /* stop all motors */ }
+function navigateToClick(x, y) { /* steer toward x,y */ }
+
+connect();
+</code></pre>
+
+<h3>API Keys (for hardware bridges without JWT)</h3>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td>/api/controls/api-key</td><td>Generate API key (shown once — save it)</td></tr>
+<tr><td>GET</td><td>/api/controls/api-keys</td><td>List keys (masked)</td></tr>
+<tr><td>GET</td><td>/api/controls/cozmo-script</td><td>Download pre-built Cozmo robot bridge Python script</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>7. ONVIF CAMERA CONTROL</h2>
+<p>Control PTZ cameras via ONVIF. Cameras appear as controls in the stream control panel.</p>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td>/api/onvif/discover</td><td>Auto-discover ONVIF cameras on local network</td></tr>
+<tr><td>POST</td><td>/api/onvif/cameras</td><td>Add camera { host, port, username, password, name }</td></tr>
+<tr><td>GET</td><td>/api/onvif/cameras</td><td>List cameras</td></tr>
+<tr><td>PUT</td><td>/api/onvif/cameras/:id</td><td>Update camera</td></tr>
+<tr><td>DELETE</td><td>/api/onvif/cameras/:id</td><td>Delete camera</td></tr>
+<tr><td>GET</td><td>/api/onvif/cameras/:id/presets</td><td>List presets</td></tr>
+<tr><td>POST</td><td>/api/onvif/cameras/:id/presets</td><td>Create preset</td></tr>
+</tbody>
+</table>
+<p>ONVIF movements (send via control WS with <code>isOnvif: true, cameraId: X, movement: Y</code>):</p>
+<p>pan_left, pan_right, tilt_up, tilt_down, zoom_in, zoom_out</p>
+
+<hr>
+
+<h2>8. VODS, CLIPS &amp; PASTES</h2>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/vods</td><td>List VODs (query: username, page, limit)</td></tr>
+<tr><td>GET</td><td>/api/vods/:id</td><td>VOD details + playback URL</td></tr>
+<tr><td>GET</td><td>/api/clips</td><td>List clips</td></tr>
+<tr><td>POST</td><td>/api/clips</td><td>Create clip { streamId, startTime, duration }</td></tr>
+<tr><td>GET</td><td>/api/clips/:id</td><td>Clip details</td></tr>
+<tr><td>GET</td><td>/api/pastes</td><td>List public pastes</td></tr>
+<tr><td>POST</td><td>/api/pastes</td><td>Create paste { title, content, syntax, visibility, expiry }</td></tr>
+<tr><td>GET</td><td>/api/pastes/:slug</td><td>Get paste by slug</td></tr>
+</tbody>
+</table>
+
+<hr>
+
+<h2>9. MISC API</h2>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/health</td><td>Server health: status, uptime, active connections</td></tr>
+<tr><td>GET</td><td>/api/updates</td><td>Recent changelog (git commits)</td></tr>
+<tr><td>GET</td><td>/api/emotes</td><td>All emotes (global + per-channel)</td></tr>
+<tr><td>POST</td><td>/api/emotes/upload</td><td>Upload custom emote (multipart)</td></tr>
+<tr><td>GET</td><td>/api/meta/link-preview?url=</td><td>Link preview / OEmbed data</td></tr>
+</tbody>
+</table>
+
+<h3>Rate Limits</h3>
+<table class="doc-table">
+<thead><tr><th>Scope</th><th>Window</th><th>Limit</th></tr></thead>
+<tbody>
+<tr><td>GET / HEAD requests</td><td>1 minute</td><td>900</td></tr>
+<tr><td>POST / PUT / DELETE</td><td>1 minute</td><td>180</td></tr>
+<tr><td>Auth (login/register)</td><td>15 minutes</td><td>20</td></tr>
+<tr><td>File uploads</td><td>15 minutes</td><td>40</td></tr>
+<tr><td>Chat messages</td><td>per message</td><td>1000ms default; slowmode configurable</td></tr>
+<tr><td>Control commands</td><td>per button</td><td>cooldown_ms set per button</td></tr>
+<tr><td>key_down / key_up events</td><td>per event</td><td>100ms minimum</td></tr>
+</tbody>
+</table>
+
+<hr>
+<p class="text-muted" style="font-size:0.85rem"><em>HoboStreamer is open source. Contribute at <a href="https://github.com/HoboStreamer/HoboStreamer.com" target="_blank">github.com/HoboStreamer/HoboStreamer.com</a>. Self-host it, fork it, vibe code on top of it.</em></p>
+
+            </div><!-- end docs-ai-content -->
         </div>
     </section>
 
