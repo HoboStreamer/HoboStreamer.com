@@ -838,6 +838,40 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] stream_controls style migration:', e.message); }
 
+    // Migrate: fix stream_controls CHECK constraint to include 'keyboard' type
+    try {
+        const tableInfo = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='stream_controls'").get();
+        if (tableInfo && tableInfo.sql && !tableInfo.sql.includes("'keyboard'")) {
+            console.log('[DB] Migrating stream_controls to support keyboard control_type...');
+            database.exec(`
+                CREATE TABLE IF NOT EXISTS stream_controls_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stream_id INTEGER NOT NULL,
+                    label TEXT NOT NULL,
+                    command TEXT NOT NULL,
+                    icon TEXT DEFAULT 'fa-gamepad',
+                    control_type TEXT DEFAULT 'button' CHECK(control_type IN ('button', 'toggle', 'slider', 'dpad', 'onvif', 'keyboard')),
+                    key_binding TEXT,
+                    cooldown_ms INTEGER DEFAULT 500,
+                    is_enabled INTEGER DEFAULT 1,
+                    sort_order INTEGER DEFAULT 0,
+                    camera_id INTEGER,
+                    onvif_movement TEXT,
+                    btn_color TEXT DEFAULT '',
+                    btn_bg TEXT DEFAULT '',
+                    btn_border_color TEXT DEFAULT '',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE,
+                    FOREIGN KEY (camera_id) REFERENCES camera_profiles(id) ON DELETE SET NULL
+                );
+                INSERT INTO stream_controls_new SELECT * FROM stream_controls;
+                DROP TABLE stream_controls;
+                ALTER TABLE stream_controls_new RENAME TO stream_controls;
+            `);
+            console.log('[DB] stream_controls migrated — keyboard type now supported');
+        }
+    } catch (e) { console.warn('[DB] stream_controls keyboard migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1565,11 +1599,11 @@ function getStreamControls(streamId) {
     return all('SELECT * FROM stream_controls WHERE stream_id = ? ORDER BY sort_order', [streamId]);
 }
 
-function createControl({ stream_id, label, command, icon, control_type, key_binding, cooldown_ms, btn_color, btn_bg, btn_border_color }) {
+function createControl({ stream_id, label, command, icon, control_type, key_binding, cooldown_ms, sort_order, btn_color, btn_bg, btn_border_color }) {
     return run(
-        `INSERT INTO stream_controls (stream_id, label, command, icon, control_type, key_binding, cooldown_ms, btn_color, btn_bg, btn_border_color)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [stream_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 500, btn_color || '', btn_bg || '', btn_border_color || '']
+        `INSERT INTO stream_controls (stream_id, label, command, icon, control_type, key_binding, cooldown_ms, sort_order, btn_color, btn_bg, btn_border_color)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 500, sort_order || 0, btn_color || '', btn_bg || '', btn_border_color || '']
     );
 }
 
@@ -1656,6 +1690,7 @@ function applyConfigToStream(configId, streamId) {
             control_type: b.control_type,
             key_binding: b.key_binding,
             cooldown_ms: b.cooldown_ms,
+            sort_order: b.sort_order || i,
             btn_color: b.btn_color,
             btn_bg: b.btn_bg,
             btn_border_color: b.btn_border_color,

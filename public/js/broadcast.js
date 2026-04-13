@@ -1486,6 +1486,7 @@ function _syncBrowserSourceUI() {
 async function loadBroadcastControlConfigs() {
     const selector = document.getElementById('bc-config-selector');
     const select = document.getElementById('bc-control-config');
+    const downloadBtn = document.getElementById('bc-download-bridge-btn');
     if (!selector || !select) return;
 
     try {
@@ -1503,6 +1504,13 @@ async function loadBroadcastControlConfigs() {
 
         select.innerHTML = '<option value="">None (no controls)</option>' +
             configs.map(c => `<option value="${c.id}" ${c.id === activeId ? 'selected' : ''}>${esc(c.name)} (${c.button_count} buttons)</option>`).join('');
+
+        // Show/hide script download button based on selection
+        const updateBtn = () => {
+            if (downloadBtn) downloadBtn.style.display = select.value ? '' : 'none';
+        };
+        select.addEventListener('change', updateBtn);
+        updateBtn();
     } catch {
         if (selector) selector.style.display = 'none';
     }

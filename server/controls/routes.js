@@ -12,6 +12,7 @@
  * DELETE /api/controls/configs/:id/buttons/:btnId - Delete button
  * POST   /api/controls/configs/:id/activate - Activate config on channel
  * POST   /api/controls/configs/:id/apply/:streamId - Copy config to live stream
+ * GET    /api/controls/configs/:id/bridge-script    - Generate per-profile Python bridge script
  * 
  * Per-Stream Controls (legacy):
  * GET    /api/controls/:streamId        - Get controls for a stream
@@ -251,6 +252,370 @@ class CozmoBridge:
                 time.sleep(RECONNECT_DELAY)
 
 if __name__ == '__main__':
+    bridge = CozmoBridge()
+    try:
+        bridge.run()
+    except KeyboardInterrupt:
+        bridge.running = False
+        if bridge.cozmo_cli:
+            bridge.cozmo_cli.stop()
+        print("Bye!")
+`;
+}
+
+function generateProfileBridgeScript({ user, config, buttons, protocol, host, type }) {
+    const enabledButtons = buttons.filter(b => b.is_enabled !== 0);
+    const commandList = enabledButtons.map(b => ({
+        command: b.command,
+        label: b.label,
+        type: b.control_type || 'button',
+        key_binding: b.key_binding || null,
+    }));
+
+    const commandsJson = JSON.stringify(commandList, null, 4).split('\n').map((l, i) => i === 0 ? l : '    ' + l).join('\n');
+
+    if (type === 'cozmo') {
+        return _generateCozmoProfileScript({ user, config, commandsJson, enabledButtons, protocol, host });
+    }
+
+    // Generic bridge script
+    return `#!/usr/bin/env python3
+"""
+HoboStreamer — Generic Hardware Bridge
+Auto-generated for: ${user.username}
+Control Profile: ${config.name}
+
+Connects to HoboStreamer and receives control commands from viewers.
+Edit the handle_command() function to control your hardware.
+
+Requirements:
+    pip install websocket-client
+
+Usage:
+    python3 generic-bridge-${config.name.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.py
+"""
+import json
+import time
+import threading
+
+try:
+    import websocket
+except ImportError:
+    print("Missing websocket-client: pip install websocket-client")
+    exit(1)
+
+# ── Connection Settings ──────────────────────────────────────
+WS_URL = "${protocol}://${host}/ws/control?mode=hardware&stream_key=${user.stream_key}"
+RECONNECT_DELAY = 5
+
+# ── Profile Buttons ──────────────────────────────────────────
+# These are the buttons configured in your "${config.name}" profile.
+# Each entry has: command, label, type, key_binding
+BUTTONS = ${commandsJson}
+
+# ══════════════════════════════════════════════════════════════
+#  COMMAND HANDLERS — Edit these to control your hardware!
+# ══════════════════════════════════════════════════════════════
+
+def handle_command(command, from_user):
+    """Called when a viewer presses a button (one-shot)."""
+    print(f"[Command] {from_user} -> {command}")
+    # ── Add your hardware logic here ──
+    # Examples:
+    #   if command == "forward":
+    #       my_robot.move_forward()
+    #   elif command == "fire":
+    #       GPIO.output(RELAY_PIN, GPIO.HIGH)
+${enabledButtons.map(b => `    # ${b.command}: ${b.label} (${b.control_type || 'button'})`).join('\n')}
+
+
+def handle_key_down(command, from_user):
+    """Called when a viewer holds a keyboard-type key down."""
+    print(f"[Key Down] {from_user} -> {command}")
+    # Add continuous action start here
+
+
+def handle_key_up(command, from_user):
+    """Called when a viewer releases a keyboard-type key."""
+    print(f"[Key Up] {from_user} -> {command}")
+    # Add continuous action stop here
+
+
+def handle_video_click(x, y, from_user):
+    """Called when a viewer clicks on the video (if enabled)."""
+    print(f"[Click] {from_user} -> ({x:.2f}, {y:.2f})")
+    # x and y are 0.0-1.0 coordinates on the video
+
+
+# ══════════════════════════════════════════════════════════════
+#  BRIDGE (no need to edit below unless customizing)
+# ══════════════════════════════════════════════════════════════
+
+class HardwareBridge:
+    def __init__(self):
+        self.running = True
+        self.held_keys = set()
+
+    def on_message(self, ws, message):
+        try:
+            msg = json.loads(message)
+            msg_type = msg.get("type", "")
+            cmd = msg.get("command", "")
+            user = msg.get("from_user", "?")
+
+            if msg_type == "command":
+                handle_command(cmd, user)
+            elif msg_type == "key_down":
+                self.held_keys.add(cmd)
+                handle_key_down(cmd, user)
+            elif msg_type == "key_up":
+                self.held_keys.discard(cmd)
+                handle_key_up(cmd, user)
+            elif msg_type == "video_click":
+                handle_video_click(msg.get("x", 0.5), msg.get("y", 0.5), user)
+        except Exception as e:
+            print(f"[Error] {e}")
+
+    def on_open(self, ws):
+        print("[Connected] Listening for commands...")
+        print(f"[Profile] {len(BUTTONS)} buttons loaded from '${config.name}'")
+        ws.send(json.dumps({"type": "status", "connected": True}))
+
+    def on_close(self, ws, code, reason):
+        print(f"[Disconnected] code={code}")
+        self.held_keys.clear()
+
+    def on_error(self, ws, error):
+        print(f"[WS Error] {error}")
+
+    def run(self):
+        print(f"Connecting to HoboStreamer as hardware bridge...")
+        print(f"Profile: ${config.name} ({enabledButtons.length} buttons)")
+        print(f"Commands: {', '.join(b['command'] for b in BUTTONS)}")
+        print()
+        while self.running:
+            try:
+                ws = websocket.WebSocketApp(WS_URL,
+                    on_message=self.on_message,
+                    on_open=self.on_open,
+                    on_close=self.on_close,
+                    on_error=self.on_error)
+                ws.run_forever(ping_interval=30)
+            except Exception as e:
+                print(f"[Error] {e}")
+            if self.running:
+                print(f"Reconnecting in {RECONNECT_DELAY}s...")
+                time.sleep(RECONNECT_DELAY)
+
+
+if __name__ == "__main__":
+    bridge = HardwareBridge()
+    try:
+        bridge.run()
+    except KeyboardInterrupt:
+        print("\\nBye!")
+`;
+}
+
+function _generateCozmoProfileScript({ user, config, commandsJson, enabledButtons, protocol, host }) {
+    const commandNames = enabledButtons.map(b => b.command);
+    return `#!/usr/bin/env python3
+"""
+HoboStreamer — Cozmo Hardware Bridge
+Auto-generated for: ${user.username}
+Control Profile: ${config.name}
+
+Connects your Cozmo robot to HoboStreamer with the buttons from
+your "${config.name}" profile pre-configured.
+
+Requirements:
+    pip install pycozmo websocket-client
+
+Usage:
+    python3 cozmo-bridge-${config.name.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.py
+"""
+import json
+import time
+import threading
+
+try:
+    import websocket
+except ImportError:
+    print("Missing websocket-client: pip install websocket-client")
+    exit(1)
+
+try:
+    import pycozmo
+except ImportError:
+    pycozmo = None
+    print("[Cozmo] pycozmo not installed — running in DRY RUN mode")
+
+# ── Connection Settings ──────────────────────────────────────
+WS_URL = "${protocol}://${host}/ws/control?mode=hardware&stream_key=${user.stream_key}"
+RECONNECT_DELAY = 5
+DRIVE_SPEED = 100
+TURN_SPEED = 80
+
+# ── Profile Buttons ──────────────────────────────────────────
+BUTTONS = ${commandsJson}
+
+# ── Command → Cozmo Action Mapping ───────────────────────────
+# Edit this dict to map your profile commands to Cozmo actions.
+# Any command not listed here will be printed as "[Unknown]".
+COMMAND_MAP = {
+${enabledButtons.map(b => `    "${b.command}": "${b.command}",  # ${b.label}`).join('\n')}
+}
+
+CONTINUOUS_COMMANDS = {
+    "forward":    (DRIVE_SPEED, DRIVE_SPEED),
+    "backward":   (-DRIVE_SPEED, -DRIVE_SPEED),
+    "turn_left":  (-TURN_SPEED, TURN_SPEED),
+    "turn_right": (TURN_SPEED, -TURN_SPEED),
+}
+
+
+def execute_command(cli, cmd):
+    """Execute a one-shot Cozmo command."""
+    mapped = COMMAND_MAP.get(cmd, cmd)
+    if cli is None:
+        print(f"[DRY RUN] {mapped}")
+        return
+    movements = {
+        "forward":    lambda: cli.drive_wheels(DRIVE_SPEED, DRIVE_SPEED, duration=0.5),
+        "backward":   lambda: cli.drive_wheels(-DRIVE_SPEED, -DRIVE_SPEED, duration=0.5),
+        "turn_left":  lambda: cli.drive_wheels(-TURN_SPEED, TURN_SPEED, duration=0.4),
+        "turn_right": lambda: cli.drive_wheels(TURN_SPEED, -TURN_SPEED, duration=0.4),
+        "lift_up":    lambda: cli.set_lift_height(1.0),
+        "lift_down":  lambda: cli.set_lift_height(0.0),
+        "head_up":    lambda: cli.set_head_angle(pycozmo.MAX_HEAD_ANGLE if pycozmo else 0.4),
+        "head_down":  lambda: cli.set_head_angle(pycozmo.MIN_HEAD_ANGLE if pycozmo else -0.2),
+        "stop":       lambda: cli.drive_wheels(0, 0),
+    }
+    if mapped in movements:
+        try:
+            movements[mapped]()
+            print(f"[Cozmo] {mapped}")
+        except Exception as e:
+            print(f"[Cozmo] Error: {e}")
+    elif mapped.startswith("anim_"):
+        try:
+            cli.play_anim_trigger(getattr(pycozmo.anim.Triggers, mapped[5:]))
+        except AttributeError:
+            print(f"[Cozmo] Unknown anim: {mapped}")
+    else:
+        print(f"[Unknown] {mapped} — add it to COMMAND_MAP or movements dict")
+
+
+class CozmoBridge:
+    def __init__(self):
+        self.cozmo_cli = None
+        self.running = True
+        self.held_keys = set()
+        self._drive_lock = threading.Lock()
+
+    def connect_cozmo(self):
+        if pycozmo is None:
+            return
+        try:
+            self.cozmo_cli = pycozmo.Client()
+            self.cozmo_cli.start()
+            self.cozmo_cli.wait_for_robot()
+            print("[Cozmo] Connected!")
+        except Exception as e:
+            print(f"[Cozmo] Failed: {e}")
+
+    def _continuous_drive_loop(self):
+        while self.running:
+            with self._drive_lock:
+                keys = set(self.held_keys)
+            if not keys:
+                time.sleep(0.05)
+                continue
+            for cmd in keys:
+                mapped = COMMAND_MAP.get(cmd, cmd)
+                if mapped in CONTINUOUS_COMMANDS:
+                    left, right = CONTINUOUS_COMMANDS[mapped]
+                    if self.cozmo_cli:
+                        try:
+                            self.cozmo_cli.drive_wheels(left, right, duration=0.2)
+                        except Exception:
+                            pass
+                    else:
+                        print(f"[DRY RUN] continuous {mapped}")
+                    break
+            time.sleep(0.15)
+
+    def on_message(self, ws, message):
+        try:
+            msg = json.loads(message)
+            msg_type = msg.get("type", "")
+            cmd = msg.get("command", "")
+            user = msg.get("from_user", "?")
+
+            if msg_type == "command":
+                execute_command(self.cozmo_cli, cmd)
+            elif msg_type == "key_down":
+                print(f"[Key Down] {user} -> {cmd}")
+                with self._drive_lock:
+                    self.held_keys.add(cmd)
+                mapped = COMMAND_MAP.get(cmd, cmd)
+                if mapped not in CONTINUOUS_COMMANDS:
+                    execute_command(self.cozmo_cli, cmd)
+            elif msg_type == "key_up":
+                print(f"[Key Up] {user} -> {cmd}")
+                with self._drive_lock:
+                    self.held_keys.discard(cmd)
+                with self._drive_lock:
+                    remaining = set(self.held_keys)
+                if not any(COMMAND_MAP.get(k, k) in CONTINUOUS_COMMANDS for k in remaining):
+                    if self.cozmo_cli:
+                        try:
+                            self.cozmo_cli.drive_wheels(0, 0)
+                        except Exception:
+                            pass
+            elif msg_type == "video_click":
+                x = msg.get("x", 0.5)
+                y = msg.get("y", 0.5)
+                print(f"[Click] {user} -> ({x:.2f}, {y:.2f})")
+        except Exception as e:
+            print(f"[Error] {e}")
+
+    def on_open(self, ws):
+        print("[Connected] Listening for commands...")
+        print(f"[Profile] {len(BUTTONS)} buttons from '${config.name}'")
+        ws.send(json.dumps({"type": "status", "connected": True}))
+
+    def on_close(self, ws, code, reason):
+        print(f"[Disconnected] code={code}")
+        with self._drive_lock:
+            self.held_keys.clear()
+
+    def on_error(self, ws, error):
+        print(f"[WS Error] {error}")
+
+    def run(self):
+        self.connect_cozmo()
+        drive_t = threading.Thread(target=self._continuous_drive_loop, daemon=True)
+        drive_t.start()
+        print(f"Profile: ${config.name} ({enabledButtons.length} buttons)")
+        print(f"Commands: {', '.join(b['command'] for b in BUTTONS)}")
+        print()
+        while self.running:
+            try:
+                ws = websocket.WebSocketApp(WS_URL,
+                    on_message=self.on_message,
+                    on_open=self.on_open,
+                    on_close=self.on_close,
+                    on_error=self.on_error)
+                ws.run_forever(ping_interval=30)
+            except Exception as e:
+                print(f"[Error] {e}")
+            if self.running:
+                print(f"Reconnecting in {RECONNECT_DELAY}s...")
+                time.sleep(RECONNECT_DELAY)
+
+
+if __name__ == "__main__":
     bridge = CozmoBridge()
     try:
         bridge.run()
@@ -669,6 +1034,33 @@ router.get('/cozmo-script', requireAuth, (req, res) => {
         res.send(script);
     } catch (err) {
         res.status(500).json({ error: 'Failed to generate script' });
+    }
+});
+
+// ── Per-Profile Bridge Script Generator ──────────────────────
+
+router.get('/configs/:id/bridge-script', requireAuth, (req, res) => {
+    try {
+        const config = db.getControlConfig(req.params.id);
+        if (!config) return res.status(404).json({ error: 'Config not found' });
+        if (config.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+
+        const buttons = db.getConfigButtons(config.id);
+        const user = req.user;
+        const host = req.get('host') || 'hobostreamer.com';
+        const protocol = req.secure || req.get('x-forwarded-proto') === 'https' ? 'wss' : 'ws';
+        const type = req.query.type === 'cozmo' ? 'cozmo' : 'generic';
+
+        const script = generateProfileBridgeScript({ user, config, buttons, protocol, host, type });
+
+        const slug = config.name.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase().slice(0, 30);
+        res.set('Content-Type', 'text/x-python');
+        res.set('Content-Disposition', `attachment; filename="${type}-bridge-${slug}.py"`);
+        res.send(script);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to generate bridge script' });
     }
 });
 
