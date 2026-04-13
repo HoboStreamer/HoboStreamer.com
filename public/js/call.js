@@ -1545,16 +1545,7 @@ function _attachPeerAudioTrack(peerId, peer, track) {
     if (playPromise && playPromise.catch) {
         playPromise.catch((err) => {
             console.warn(`[Call] Audio playback blocked for peer ${peerId}:`, err.message);
-            // Retry once on next user interaction — use peer ID to avoid holding stale references
-            const pid = peerId;
-            const retryPlay = () => {
-                const p = callState.peers.get(pid);
-                if (p?.audioEl) p.audioEl.play().catch(() => {});
-                document.removeEventListener('click', retryPlay);
-                document.removeEventListener('keydown', retryPlay);
-            };
-            document.addEventListener('click', retryPlay, { once: true });
-            document.addEventListener('keydown', retryPlay, { once: true });
+            _resumeAllPeerAudioPlayback();
         });
     }
 
@@ -1567,7 +1558,21 @@ function _attachPeerAudioTrack(peerId, peer, track) {
         if (peer.audioEl && peer.audioEl.paused) {
             peer.audioEl.play().catch(() => {});
         }
+        _resumeAllPeerAudioPlayback();
     };
+}
+
+function _resumeAllPeerAudioPlayback() {
+    if (!callState.joined) return;
+
+    // Resuming the shared context can unblock gain-node routed audio in some browsers.
+    const ctx = _getSharedPeerAudioCtx();
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+
+    for (const [, peer] of callState.peers) {
+        if (!peer?.audioEl || peer.localMuted) continue;
+        if (peer.audioEl.paused) peer.audioEl.play().catch(() => {});
+    }
 }
 
 function _attachPeerVideoTrack(peerId, peer, track) {
@@ -1965,6 +1970,15 @@ function _createParticipantTile(opts) {
         // the 3-dot hit area is hard to click on compact/anon tiles).
         tile.oncontextmenu = (e) => {
             e.preventDefault();
+            e.stopPropagation();
+            _togglePeerContextMenu(opts.peerId, menuBtn);
+        };
+
+        // Touch/mobile fallback: tapping the tile opens options when the target
+        // isn't already an interactive child control.
+        tile.onclick = (e) => {
+            const t = e.target;
+            if (t?.closest?.('.call-name-clickable, .call-tile-menu-btn, .call-tile-popout-btn, .call-peer-menu')) return;
             e.stopPropagation();
             _togglePeerContextMenu(opts.peerId, menuBtn);
         };
@@ -2629,6 +2643,13 @@ document.addEventListener('click', () => {
     if (callState.openContextMenu) {
         _closePeerContextMenu();
     }
+});
+
+// Autoplay recovery hooks for browsers that require fresh user gestures.
+['click', 'pointerdown', 'touchstart', 'keydown'].forEach((evt) => {
+    document.addEventListener(evt, () => {
+        _resumeAllPeerAudioPlayback();
+    }, { passive: true });
 });
 
 window.addEventListener('resize', () => {
