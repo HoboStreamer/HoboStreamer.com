@@ -109,7 +109,7 @@ let chatSlurPolicy = {
     announcedForKey: null,
 };
 const CHAT_CORE_SLUR_CATEGORIES = [
-    { key: 'n_word',      label: 'N-word and variants',        patterns: ['\\bn+i+g+g+(?:a+|e+r+)\\b'] },
+    { key: 'n_word',      label: 'N-word and variants',        patterns: ['\\bn+i+g+g+(?:a+|e+r+)\\b', '\\bk?n+i+c?k+e+r+\\b'] },
     { key: 'antisemitic', label: 'Antisemitic slurs',          patterns: ['\\bk+\\s*y+\\s*k+\\s*e+\\b', '\\bj+\\s*e+\\s*w+\\s*s?\\s+w+\\s*i+\\s*l+\\s*l+\\s+n+\\s*o+\\s*t+\\s+r+\\s*e+\\s*p+\\s*l+\\s*a+\\s*c+\\s*e+\\b'] },
     { key: 'homophobic',  label: 'Homophobic slurs',           patterns: ['\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?\\b'] },
     { key: 'racial',      label: 'Racial slurs (spic, chink)', patterns: ['\\bs+\\s*p+\\s*i+\\s*c+\\b', '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+\\b'] },
