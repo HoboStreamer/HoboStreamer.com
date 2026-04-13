@@ -1067,6 +1067,19 @@ function handleChatMessage(msg) {
                 window._messengerHandleDm(msg);
             }
             break;
+        case 'vc-call-invite': {
+            const caller = esc(msg.fromDisplayName || msg.fromUsername || 'Someone');
+            const channelId = esc(String(msg.channelId || ''));
+            const channelName = esc(String(msg.channelName || 'Voice Channel'));
+            if (channelId) {
+                addRichSystemMessage(
+                    `📞 <strong>${caller}</strong> is calling you · <a href="#" onclick="event.preventDefault();acceptVcInvite('${channelId}', '${channelName}')" style="color:var(--accent);text-decoration:underline">Join call</a>`,
+                    'info'
+                );
+                if (typeof toast === 'function') toast(`${msg.fromDisplayName || msg.fromUsername || 'Someone'} is calling you`, 'info');
+            }
+            break;
+        }
     }
 }
 
@@ -2184,6 +2197,7 @@ function renderContextMenu(menu, profile, username) {
         <div class="ctx-actions">
             ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
+            ${currentUser?.id && currentUser.id !== profile.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxCallUser(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-phone"></i> Call this user</button>` : ''}
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
             ${currentUser?.capabilities?.manage_users ? `<div class="ctx-rename-group">
@@ -2222,6 +2236,58 @@ function ctxWhisper(username) {
         window.openMessengerDm(username);
     } else {
         toast('Messenger not available', 'error');
+    }
+}
+
+async function ctxCallUser(username, userId) {
+    dismissContextMenu();
+    if (!currentUser) {
+        toast('Log in to call users', 'error');
+        return;
+    }
+    try {
+        const data = await api('/streams/voice-channels/call-user', {
+            method: 'POST',
+            body: { user_id: Number(userId) || null, username },
+        });
+        if (!data?.channel?.id) throw new Error('Call channel not available');
+        await _joinVoiceChannelFromInvite(data.channel.id, data.channel.name || 'Voice Channel', false);
+        toast(`Calling ${username}...`, 'success');
+    } catch (err) {
+        toast(err.message || 'Failed to place call', 'error');
+    }
+}
+
+async function _joinVoiceChannelFromInvite(channelId, channelName, switchToChat = false) {
+    if (!channelId) return;
+
+    if (switchToChat && typeof showPage === 'function') {
+        showPage('chat');
+    }
+
+    if (typeof vcFetchChannels !== 'function' || typeof vcJoinChannel !== 'function' || typeof vcState === 'undefined') {
+        window._pendingVcInvite = { channelId, channelName, at: Date.now() };
+        toast(`Invite received for ${channelName || 'Voice Channel'}. Open Chat to join.`, 'info');
+        return;
+    }
+
+    await vcFetchChannels();
+    const ch = (vcState.channels || []).find(c => c.id === channelId);
+    if (!ch) {
+        toast('That call channel is no longer available', 'error');
+        return;
+    }
+    if (typeof callState !== 'undefined' && callState.joined && callState.channelId === ch.id) {
+        return;
+    }
+    await vcJoinChannel(ch);
+}
+
+async function acceptVcInvite(channelId, channelName) {
+    try {
+        await _joinVoiceChannelFromInvite(channelId, channelName || 'Voice Channel', true);
+    } catch (err) {
+        toast(err.message || 'Failed to join call invite', 'error');
     }
 }
 
@@ -3906,6 +3972,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // Initial check
     setTimeout(_fcwUpdateVisibility, 100);
+
+    // Deep-link support from notifications: /?vcInvite=<channelId>
+    try {
+        const inviteChannel = new URLSearchParams(window.location.search).get('vcInvite');
+        if (inviteChannel) {
+            setTimeout(() => {
+                acceptVcInvite(inviteChannel, 'Voice Channel');
+            }, 450);
+        }
+        if (window._pendingVcInvite?.channelId && typeof vcFetchChannels === 'function' && typeof vcJoinChannel === 'function') {
+            const pending = window._pendingVcInvite;
+            window._pendingVcInvite = null;
+            setTimeout(() => {
+                acceptVcInvite(pending.channelId, pending.channelName || 'Voice Channel');
+            }, 450);
+        }
+    } catch {}
 });
 
 // ── Re-authenticate chat WebSocket on login/logout ───────────

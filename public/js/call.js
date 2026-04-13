@@ -162,6 +162,8 @@ function _loadCallUserSettings() {
         const raw = localStorage.getItem('hobo_call_settings');
         if (!raw) return;
         const saved = JSON.parse(raw);
+        if (typeof saved.selectedMic === 'string' && saved.selectedMic) callState.selectedMic = saved.selectedMic;
+        if (typeof saved.selectedCam === 'string' && saved.selectedCam) callState.selectedCam = saved.selectedCam;
         if (['open', 'ptt', 'vad'].includes(saved.inputMode)) callState.inputMode = saved.inputMode;
         if (typeof saved.pttKey === 'string' && saved.pttKey) callState.pttKey = saved.pttKey;
         const threshold = Number(saved.vadThreshold);
@@ -172,6 +174,8 @@ function _loadCallUserSettings() {
 function _saveCallUserSettings() {
     try {
         localStorage.setItem('hobo_call_settings', JSON.stringify({
+            selectedMic: callState.selectedMic,
+            selectedCam: callState.selectedCam,
             inputMode: callState.inputMode,
             pttKey: callState.pttKey,
             vadThreshold: callState.vadThreshold,
@@ -991,8 +995,8 @@ function _handleCallMessage(msg) {
             callState.joined = true;
             callState.connecting = false;
             callState.isStreamer = msg.isStreamer;
-            // Determine if we can moderate (streamer, channel creator, admin, or global mod)
-            callState.canModerate = !!msg.isStreamer || (typeof currentUser !== 'undefined' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'global_mod'));
+            // Server provides canonical moderation capability for this channel.
+            callState.canModerate = !!msg.canModerate;
 
             // Stop redundant HTTP polling while we have a live WS connection
             _stopViewerCallStatusSync();
@@ -1052,6 +1056,7 @@ function _handleCallMessage(msg) {
 
         case 'self-updated': {
             callState.isStreamer = !!msg.isStreamer;
+            if (typeof msg.canModerate === 'boolean') callState.canModerate = msg.canModerate;
             _applyLocalParticipantInfo(msg.participant);
             _scheduleRender();
             break;
@@ -1955,6 +1960,14 @@ function _createParticipantTile(opts) {
             _togglePeerContextMenu(opts.peerId, menuBtn);
         };
         tile.appendChild(menuBtn);
+
+        // Right-click anywhere on a remote tile to open options (helps when
+        // the 3-dot hit area is hard to click on compact/anon tiles).
+        tile.oncontextmenu = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            _togglePeerContextMenu(opts.peerId, menuBtn);
+        };
     }
 
     if (showVideo) {
@@ -2395,7 +2408,12 @@ function _processLocalSpeechFrame() {
     for (let i = startBin; i < endBin; i++) sum += bins[i];
     const avg = (endBin - startBin) > 0 ? sum / (endBin - startBin) : 0;
     const percent = Math.round((avg / 255) * 100);
-    const detected = percent >= callState.vadThreshold;
+    // Use a softer threshold for speaking indicators in open/PTT modes so
+    // indicators better match what others can hear.
+    const speakingThreshold = callState.inputMode === 'vad'
+        ? callState.vadThreshold
+        : Math.max(8, Math.min(30, Math.round(callState.vadThreshold * 0.5)));
+    const detected = percent >= speakingThreshold;
     if (detected) callState.speechHoldUntil = Date.now() + 250;
     callState.localSpeechDetected = detected || Date.now() < callState.speechHoldUntil;
 
@@ -2428,9 +2446,18 @@ function _shouldTransmitAudio() {
 
 function _shouldBeSpeaking() {
     if (callState.muted || callState.forceMuted) return false;
-    if (callState.inputMode === 'ptt') return !!callState.pttPressed && !!callState.localSpeechDetected;
+    if (callState.inputMode === 'ptt') return !!callState.pttPressed;
     if (callState.inputMode === 'vad') return !!callState.localSpeechDetected;
     return !!callState.localSpeechDetected;
+}
+
+function _forceStopLocalSpeaking() {
+    if (!callState.localSpeaking) return;
+    callState.localSpeaking = false;
+    _sendCallMsg({ type: 'speaking', speaking: false });
+    if (!callState.myPeerId || !_updateTileSpeaking(callState.myPeerId, false, callState.muted || callState.forceMuted, false)) {
+        _scheduleRender();
+    }
 }
 
 function _applyLocalAudioGate() {
@@ -2500,7 +2527,7 @@ async function _populateCallDevices() {
                 sel.appendChild(opt);
             });
             if ([...sel.options].some(opt => opt.value === callState.selectedMic)) sel.value = callState.selectedMic;
-            sel.onchange = () => { callState.selectedMic = sel.value; };
+            sel.onchange = () => { callState.selectedMic = sel.value; _saveCallUserSettings(); };
         });
 
         camSelects.forEach(sel => {
@@ -2512,7 +2539,7 @@ async function _populateCallDevices() {
                 sel.appendChild(opt);
             });
             if ([...sel.options].some(opt => opt.value === callState.selectedCam)) sel.value = callState.selectedCam;
-            sel.onchange = () => { callState.selectedCam = sel.value; };
+            sel.onchange = () => { callState.selectedCam = sel.value; _saveCallUserSettings(); };
         });
         _syncCallSettingsUI();
     } catch {}
@@ -2527,6 +2554,7 @@ async function switchCallMic(deviceId) {
         return;
     }
     callState.selectedMic = deviceId;
+    _saveCallUserSettings();
     try {
         const newStream = await navigator.mediaDevices.getUserMedia({
             audio: { deviceId: deviceId !== 'default' ? { exact: deviceId } : undefined }
@@ -2559,6 +2587,7 @@ async function switchCallMic(deviceId) {
 async function switchCallCam(deviceId) {
     if (!callState.joined || !callState.localStream || callState.callMode === 'mic') return;
     callState.selectedCam = deviceId;
+    _saveCallUserSettings();
     if (callState.cameraOff) return; // Just save preference, will use on next enable
     try {
         const newStream = await navigator.mediaDevices.getUserMedia({
@@ -2629,10 +2658,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => {
     if (callState.inputMode !== 'ptt' || !_isPttKeyEvent(e)) return;
     callState.pttPressed = false;
-    if (callState.localSpeaking) {
-        callState.localSpeaking = false;
-        _sendCallMsg({ type: 'speaking', speaking: false });
-    }
+    _forceStopLocalSpeaking();
     _applyLocalAudioGate();
     _updatePttIndicator();
 });
@@ -2653,12 +2679,26 @@ document.addEventListener('mouseup', (e) => {
     const mouseCode = `Mouse${e.button + 1}`;
     if (mouseCode !== callState.pttKey) return;
     callState.pttPressed = false;
-    if (callState.localSpeaking) {
-        callState.localSpeaking = false;
-        _sendCallMsg({ type: 'speaking', speaking: false });
-    }
+    _forceStopLocalSpeaking();
     _applyLocalAudioGate();
     _updatePttIndicator();
+});
+
+window.addEventListener('blur', () => {
+    if (callState.inputMode !== 'ptt') return;
+    callState.pttPressed = false;
+    _forceStopLocalSpeaking();
+    _applyLocalAudioGate();
+    _updatePttIndicator();
+});
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden && callState.inputMode === 'ptt') {
+        callState.pttPressed = false;
+        _forceStopLocalSpeaking();
+        _applyLocalAudioGate();
+        _updatePttIndicator();
+    }
 });
 
 // Prevent context menu from appearing when using right/middle mouse PTT

@@ -219,9 +219,16 @@ class CallServer {
         const anonId = user ? null : chatServer.getAnonIdForConnection(ip, resolvedId);
         const isChannelCreator = user && channel.createdBy === user.id;
         const isStreamer = channel.streamId ? (user && db.getStreamById(channel.streamId)?.user_id === user.id) : false;
+        const canModerate = this._canModerate(user, resolvedId);
 
-        if (user && this.callBans.has(resolvedId) && this.callBans.get(resolvedId).has(user.id)) {
-            ws.send(JSON.stringify({ type: 'error', message: 'You are banned from this voice channel' })); ws.close(); return;
+        const bans = this.callBans.get(resolvedId);
+        if (bans) {
+            const banned = user
+                ? bans.has(user.id) || bans.has(`u:${user.id}`)
+                : bans.has(`a:${anonId}`) || bans.has(`ip:${ip}`);
+            if (banned) {
+                ws.send(JSON.stringify({ type: 'error', message: 'You are banned from this voice channel' })); ws.close(); return;
+            }
         }
 
         if (!this.rooms.has(resolvedId)) this.rooms.set(resolvedId, new Map());
@@ -241,7 +248,16 @@ class CallServer {
         const participants = [];
         for (const [pid, info] of room) participants.push(this._buildParticipantInfo(pid, info));
 
-        ws.send(JSON.stringify({ type: 'welcome', peerId, channelId: resolvedId, channelName: channel.name, callMode: channel.mode, participants, isStreamer: isStreamer || isChannelCreator }));
+        ws.send(JSON.stringify({
+            type: 'welcome',
+            peerId,
+            channelId: resolvedId,
+            channelName: channel.name,
+            callMode: channel.mode,
+            participants,
+            isStreamer: isStreamer || isChannelCreator,
+            canModerate,
+        }));
 
         const joinMsg = JSON.stringify({ type: 'peer-joined', ...this._buildParticipantInfo(peerId, clientInfo) });
         for (const [pid, info] of room) { if (pid !== peerId && info.ws.readyState === WebSocket.OPEN) info.ws.send(joinMsg); }
@@ -322,7 +338,12 @@ class CallServer {
                 c.isChannelCreator = !!(user && ch?.createdBy === user.id);
                 c.isStreamer = ch?.streamId ? !!(user && db.getStreamById(ch.streamId)?.user_id === user.id) : false;
                 const pInfo = this._buildParticipantInfo(peerId, c);
-                if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify({ type: 'self-updated', isStreamer: c.isStreamer || c.isChannelCreator, participant: pInfo }));
+                if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify({
+                    type: 'self-updated',
+                    isStreamer: c.isStreamer || c.isChannelCreator,
+                    canModerate: this._canModerate(user, channelId),
+                    participant: pInfo,
+                }));
                 const u = JSON.stringify({ type: 'peer-updated', ...pInfo });
                 for (const [pid, info] of room) { if (pid !== peerId && info.ws.readyState === WebSocket.OPEN) info.ws.send(u); }
                 break;
@@ -358,7 +379,15 @@ class CallServer {
             case 'ban': {
                 const sender = room.get(peerId); if (!sender || !this._canModerate(sender.user, channelId)) break;
                 const target = room.get(msg.targetPeerId); if (!target || target.isChannelCreator || target.isStreamer) break;
-                if (target.user) { if (!this.callBans.has(channelId)) this.callBans.set(channelId, new Set()); this.callBans.get(channelId).add(target.user.id); }
+                if (!this.callBans.has(channelId)) this.callBans.set(channelId, new Set());
+                const banSet = this.callBans.get(channelId);
+                if (target.user?.id) {
+                    banSet.add(target.user.id);      // backward compatibility with existing entries
+                    banSet.add(`u:${target.user.id}`);
+                } else {
+                    if (target.anonId) banSet.add(`a:${target.anonId}`);
+                    if (target.ip) banSet.add(`ip:${target.ip}`);
+                }
                 if (target.ws.readyState === WebSocket.OPEN) { target.ws.send(JSON.stringify({ type: 'banned' })); target.ws.close(); }
                 room.delete(msg.targetPeerId); this.clients.delete(target.ws);
                 const m = JSON.stringify({ type: 'peer-left', peerId: msg.targetPeerId, reason: 'banned' });
@@ -368,7 +397,11 @@ class CallServer {
             }
             case 'unban': {
                 const sender = room.get(peerId); if (!sender || !this._canModerate(sender.user, channelId)) break;
-                const uid = parseInt(msg.userId); if (uid && this.callBans.has(channelId)) this.callBans.get(channelId).delete(uid);
+                const uid = parseInt(msg.userId);
+                if (uid && this.callBans.has(channelId)) {
+                    this.callBans.get(channelId).delete(uid);
+                    this.callBans.get(channelId).delete(`u:${uid}`);
+                }
                 break;
             }
             case 'end-call': case 'end-channel': {

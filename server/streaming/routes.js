@@ -23,6 +23,8 @@ const webrtcSFU = require('./webrtc-sfu');
 const recorder = require('../vod/recorder');
 const robotStreamerService = require('../integrations/robotstreamer-service');
 const chatRelayService = require('../integrations/chat-relay-service');
+const chatServer = require('../chat/chat-server');
+const { pushNotification, actorInfo } = require('../utils/notify');
 
 const router = express.Router();
 const ALLOWED_PROTOCOLS = new Set(['jsmpeg', 'webrtc', 'rtmp']);
@@ -618,6 +620,66 @@ router.delete('/voice-channels/:channelId', requireAuth, (req, res) => {
     } catch (err) {
         console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to delete voice channel' });
+    }
+});
+
+router.post('/voice-channels/call-user', requireAuth, (req, res) => {
+    try {
+        const targetUserId = Number(req.body?.user_id || 0);
+        const targetUsername = String(req.body?.username || '').trim();
+
+        let targetUser = null;
+        if (targetUserId > 0) targetUser = db.getUserById(targetUserId);
+        if (!targetUser && targetUsername) targetUser = db.getUserByUsername(targetUsername);
+        if (!targetUser) return res.status(404).json({ error: 'User not found' });
+        if (targetUser.id === req.user.id) return res.status(400).json({ error: 'You cannot call yourself' });
+
+        // Reuse caller's existing temp channel if present; otherwise create one.
+        const existing = (callServer.listChannels() || []).find(ch => !ch.permanent && !ch.streamId && ch.createdBy === req.user.id) || null;
+        const channel = existing || callServer.createChannel({
+            name: `${req.user.display_name || req.user.username}'s call`,
+            mode: 'mic+cam',
+            createdBy: req.user.id,
+            maxParticipants: 8,
+        });
+
+        const callerName = req.user.display_name || req.user.username || 'Someone';
+        const payload = {
+            type: 'vc-call-invite',
+            channelId: channel.id,
+            channelName: channel.name,
+            fromUserId: req.user.id,
+            fromUsername: req.user.username,
+            fromDisplayName: callerName,
+            fromAvatarUrl: req.user.avatar_url || null,
+            createdAt: Date.now(),
+        };
+
+        // Real-time invite for online users via existing chat WS connections.
+        chatServer.sendDm(targetUser.id, payload);
+
+        // Persistent cross-site notification for offline users / later join.
+        pushNotification({
+            user_id: targetUser.id,
+            type: 'VC_CALL_INVITE',
+            title: `${callerName} is calling you`,
+            message: `Join voice channel: ${channel.name}`,
+            url: `https://hobostreamer.com/?vcInvite=${encodeURIComponent(channel.id)}`,
+            rich_content: {
+                context: {
+                    channel_id: channel.id,
+                    channel_name: channel.name,
+                    caller_username: req.user.username,
+                },
+            },
+            ...actorInfo(req.user, callerName),
+        });
+
+        return res.json({ invited: true, reusedChannel: !!existing, channel });
+    } catch (err) {
+        if (err.code === 'CHANNEL_LIMIT') return res.status(400).json({ error: err.message });
+        console.error('[Streaming]', err.message);
+        return res.status(500).json({ error: 'Failed to call user' });
     }
 });
 

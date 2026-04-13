@@ -621,11 +621,13 @@ function vcToggleSettings() {
 
 function vcSwitchMic(deviceId) {
     callState.selectedMic = deviceId;
+    if (typeof _saveCallUserSettings === 'function') _saveCallUserSettings();
     switchCallMic(deviceId);
 }
 
 function vcSwitchCam(deviceId) {
     callState.selectedCam = deviceId;
+    if (typeof _saveCallUserSettings === 'function') _saveCallUserSettings();
     switchCallCam(deviceId);
 }
 
