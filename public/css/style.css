@@ -7095,6 +7095,42 @@ body.theme-light .user-dropdown {
     border-top: 1px solid var(--border);
 }
 
+.vc-no-mic-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: rgba(251, 191, 36, 0.12);
+    border-top: 1px solid rgba(251, 191, 36, 0.3);
+    color: #fbbf24;
+    font-size: 0.82rem;
+}
+.vc-no-mic-banner span {
+    flex: 1;
+}
+.vc-enable-mic-btn {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid #fbbf24;
+    background: transparent;
+    color: #fbbf24;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.vc-enable-mic-btn:hover {
+    background: #fbbf24;
+    color: #000;
+}
+.vc-enable-mic-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 .vc-ctrl-btn {
     width: 36px;
     height: 36px;
