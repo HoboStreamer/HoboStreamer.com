@@ -86,6 +86,12 @@ class ControlServer {
 
         ws.send(JSON.stringify({ type: 'connected', message: 'Hardware client registered' }));
 
+        // Notify all viewers watching this stream that hardware is now online
+        this.broadcastToViewers(streamKey, {
+            type: 'hardware_status',
+            connected: true,
+        });
+
         ws.on('message', (data) => {
             try {
                 const msg = JSON.parse(data.toString());
@@ -102,6 +108,12 @@ class ControlServer {
         ws.on('close', () => {
             this.hardwareClients.delete(streamKey);
             console.log(`[Control] Hardware client disconnected: ${streamKey.slice(0, 8)}...`);
+
+            // Notify all viewers that hardware went offline
+            this.broadcastToViewers(streamKey, {
+                type: 'hardware_status',
+                connected: false,
+            });
         });
     }
 
@@ -114,12 +126,14 @@ class ControlServer {
 
         this.viewerClients.set(ws, { user, streamId });
 
-        // Send available controls + channel control settings
+        // Send available controls + channel control settings + hardware connection status
         if (streamId) {
             const controls = db.getStreamControls(streamId);
             const stream = db.getStreamById(streamId);
             let controlSettings = {};
+            let hardwareConnected = false;
             if (stream) {
+                const streamUser = db.getUserById(stream.user_id);
                 const channel = db.getChannelByUserId(stream.user_id);
                 if (channel) {
                     controlSettings = {
@@ -128,8 +142,15 @@ class ControlServer {
                         video_click_enabled: !!channel.video_click_enabled,
                     };
                 }
+                // Check if hardware client is currently connected for this stream
+                if (streamUser) {
+                    const hwWs = this.hardwareClients.get(streamUser.stream_key);
+                    hardwareConnected = !!(hwWs && hwWs.readyState === WebSocket.OPEN);
+                }
             }
             ws.send(JSON.stringify({ type: 'controls', controls, settings: controlSettings }));
+            // Send initial hardware connection status so viewer knows immediately
+            ws.send(JSON.stringify({ type: 'hardware_status', connected: hardwareConnected }));
         }
 
         ws.on('message', (data) => {

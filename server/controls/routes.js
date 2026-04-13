@@ -221,6 +221,8 @@ class CozmoBridge:
 
     def on_open(self, ws):
         print("[WS] Connected to HoboStreamer!")
+        # Tell server we're online so viewers get instant green-dot
+        ws.send(json.dumps({"type": "status", "connected": True}))
 
     def on_close(self, ws, code, reason):
         print(f"[WS] Disconnected ({code})")
