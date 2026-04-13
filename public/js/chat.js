@@ -74,6 +74,7 @@ const CHAT_SETTINGS_DEFAULTS = {
     // Notifications
     flashOnMention: true,         // Flash browser tab on @mention
     soundOnMention: false,        // Play a sound on @mention
+    autoDeclineCalls: false,      // Auto-decline incoming voice calls
     // Widget
     showFloatingChat: true,       // Show floating global chat button on non-chat pages
     fullscreenOverlayChat: true,  // Show OBS-style chat overlay in fullscreen live player
@@ -336,6 +337,16 @@ function _showIncomingVcCallOverlay(msg) {
             status: 'busy',
         });
         if (typeof toast === 'function') toast(`${msg.fromDisplayName || msg.fromUsername || 'Someone'} tried to call you`, 'info');
+        return;
+    }
+
+    if (chatSettings.autoDeclineCalls) {
+        _sendVcCallResponse({
+            callerUserId,
+            channelId,
+            channelName: msg.channelName || 'Voice Channel',
+            status: 'declined',
+        });
         return;
     }
 
@@ -3740,6 +3751,10 @@ function buildSettingsPanelHTML() {
             <label class="csp-row">
                 <span>Sound on @Mention</span>
                 <input type="checkbox" data-setting="soundOnMention" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row">
+                <span>Auto-Decline Incoming Calls</span>
+                <input type="checkbox" data-setting="autoDeclineCalls" onchange="onChatSettingChange(this)">
             </label>
         </div>
         <div class="csp-section">
