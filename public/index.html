@@ -1349,13 +1349,19 @@
                         </div>
                     </details>
 
-                    <!-- Cozmo -->
+                    <!-- Hardware Bridge Scripts -->
                     <details style="margin-top:8px">
-                        <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-robot"></i> Cozmo Robot</summary>
-                        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-                            <a class="btn btn-small btn-outline" href="/api/controls/cozmo-script" download><i class="fa-solid fa-download"></i> Download Cozmo Script</a>
+                        <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-robot"></i> Hardware Bridge Scripts</summary>
+                        <div style="margin-top:8px">
+                            <p class="bc-field-hint" style="margin-bottom:8px">Download Python scripts to connect hardware (robots, GPIO, servos) to your control profiles. Each script is pre-configured with your stream key and the buttons from the selected profile.</p>
+                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <select id="dash-bridge-config-select" class="form-input form-input-sm" style="flex:1;min-width:140px">
+                                    <option value="">Select a control profile...</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" onclick="downloadDashBridgeScript('generic')" title="Generic hardware bridge — prints commands"><i class="fa-solid fa-download"></i> Generic Script</button>
+                                <button class="btn btn-small btn-outline" onclick="downloadDashBridgeScript('cozmo')" title="Cozmo robot bridge — requires pycozmo"><i class="fa-solid fa-robot"></i> Cozmo Script</button>
+                            </div>
                         </div>
-                        <p class="bc-field-hint" style="margin-top:6px">Download a pre-configured Python script to connect your Cozmo robot. Requires pycozmo and websocket-client.</p>
                     </details>
                 </div>
 
@@ -1832,18 +1838,23 @@
                             </button>
                         </div>
 
-                        <button class="btn btn-primary btn-lg" style="width:100%" id="bc-create-btn" onclick="createNewStream()">
-                            <i class="fa-solid fa-tower-broadcast"></i> Create Stream
-                        </button>
-
                         <!-- Control Config Selection -->
                         <div id="bc-config-selector" style="margin-top:10px;display:none">
                             <label style="font-size:0.85rem;font-weight:600;color:var(--text-secondary)"><i class="fa-solid fa-gamepad"></i> Control Profile</label>
-                            <select id="bc-control-config" class="form-input form-input-sm" style="margin-top:4px">
-                                <option value="">None (no controls)</option>
-                            </select>
-                            <span class="bc-field-hint">Choose which control layout viewers will see</span>
+                            <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+                                <select id="bc-control-config" class="form-input form-input-sm" style="flex:1">
+                                    <option value="">None (no controls)</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" type="button" id="bc-download-bridge-btn" onclick="downloadControlBridgeScript()" title="Download a Python test script for this profile" style="display:none;white-space:nowrap">
+                                    <i class="fa-solid fa-download"></i> Script
+                                </button>
+                            </div>
+                            <span class="bc-field-hint">Choose which control layout viewers will see. Use the Script button to download a hardware bridge template.</span>
                         </div>
+
+                        <button class="btn btn-primary btn-lg" style="width:100%;margin-top:14px" id="bc-create-btn" onclick="createNewStream()">
+                            <i class="fa-solid fa-tower-broadcast"></i> Create Stream
+                        </button>
 
                         <p class="bc-create-reassurance"><i class="fa-solid fa-circle-info"></i> Your stream will appear at <strong>hobostreamer.com/<span id="bc-create-username">you</span></strong> — this link stays the same every time you go live.</p>
 
@@ -4316,6 +4327,7 @@ while True:
 <tr><td>POST</td><td>/api/controls/configs/:id/activate</td><td>Yes</td><td>Set as channel default config</td></tr>
 <tr><td>POST</td><td>/api/controls/configs/deactivate</td><td>Yes</td><td>Clear channel default</td></tr>
 <tr><td>POST</td><td>/api/controls/configs/:id/apply/:streamId</td><td>Yes</td><td>Copy config buttons onto a live stream</td></tr>
+<tr><td>GET</td><td>/api/controls/configs/:id/bridge-script?type=generic|cozmo</td><td>Yes</td><td>Download a Python hardware bridge script pre-configured with the profile's buttons</td></tr>
 </tbody>
 </table>
 
@@ -4568,6 +4580,37 @@ connect();
 <tr><td>GET</td><td>/api/controls/cozmo-script</td><td>Download pre-built Cozmo robot bridge Python script</td></tr>
 </tbody>
 </table>
+
+<h3>Per-Profile Bridge Script Generator</h3>
+<p>Download Python bridge scripts that come pre-configured with your control profile's buttons and your stream key. Available from the Dashboard (Hardware Bridge Scripts section) or the Broadcast page (Script button next to profile selector).</p>
+<table class="doc-table">
+<thead><tr><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>generic</td><td>Prints all commands to console. Edit handle_command() / handle_key_down() / handle_key_up() to control your hardware. Works with any device — GPIO, serial, HTTP, etc.</td></tr>
+<tr><td>cozmo</td><td>Pre-mapped to pycozmo actions (drive, lift, head, animations). Includes COMMAND_MAP dict so you can remap your custom button commands to Cozmo movements.</td></tr>
+</tbody>
+</table>
+<pre><code># Download via API:
+GET /api/controls/configs/42/bridge-script?type=generic
+GET /api/controls/configs/42/bridge-script?type=cozmo
+
+# Both return a .py file download with:
+# - Your stream key (auto-connects as hardware bridge)
+# - All enabled buttons from the profile listed as BUTTONS
+# - Skeleton handler functions ready to fill in
+</code></pre>
+
+<h3>Hardware Status Indicator</h3>
+<p>When a hardware bridge connects, viewers see a live connection indicator:</p>
+<table class="doc-table">
+<thead><tr><th>Indicator</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>&#x26AB; (grey)</td><td>No controls configured for this stream</td></tr>
+<tr><td>&#x1F7E1; (yellow)</td><td>Controls present but no hardware bridge connected</td></tr>
+<tr><td>&#x1F7E2; (green)</td><td>Hardware bridge is online — commands will be received</td></tr>
+</tbody>
+</table>
+<p>Hardware bridges send <code>{ type: "status", connected: true }</code> on connect. The server broadcasts this to all viewers as a <code>hardware_status</code> message. Send a status with <code>connected: true</code> to turn the indicator green.</p>
 
 <hr>
 

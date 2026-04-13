@@ -303,6 +303,13 @@ async function loadDashConfigs() {
                 </button>
             </div>`;
         }).join('');
+
+        // Also populate the bridge script config selector
+        const bridgeSelect = document.getElementById('dash-bridge-config-select');
+        if (bridgeSelect) {
+            bridgeSelect.innerHTML = '<option value="">Select a control profile...</option>' +
+                configs.map(c => `<option value="${c.id}">${esc(c.name)} (${c.button_count} buttons)</option>`).join('');
+        }
     } catch { list.innerHTML = '<p class="muted">Failed to load configs</p>'; }
 }
 
@@ -464,6 +471,43 @@ async function deleteControl(controlId) {
         toast('Control removed', 'success');
         loadDashControls();
     } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ── Bridge Script Downloads ──────────────────────────────────── */
+async function downloadDashBridgeScript(type) {
+    const select = document.getElementById('dash-bridge-config-select');
+    const configId = select?.value;
+    if (!configId) return toast('Select a control profile first', 'error');
+    try {
+        const url = `/api/controls/configs/${configId}/bridge-script?type=${encodeURIComponent(type)}`;
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok) throw new Error('Download failed');
+        const blob = await resp.blob();
+        const filename = resp.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] || `${type}-bridge.py`;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    } catch (e) { toast(e.message || 'Download failed', 'error'); }
+}
+
+async function downloadControlBridgeScript() {
+    const select = document.getElementById('bc-control-config');
+    const configId = select?.value;
+    if (!configId) return toast('Select a control profile first', 'error');
+    try {
+        const url = `/api/controls/configs/${configId}/bridge-script?type=generic`;
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok) throw new Error('Download failed');
+        const blob = await resp.blob();
+        const filename = resp.headers.get('content-disposition')?.match(/filename="(.+)"/)?.[1] || 'generic-bridge.py';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    } catch (e) { toast(e.message || 'Download failed', 'error'); }
 }
 
 /* ── Goals ─────────────────────────────────────────────────────── */

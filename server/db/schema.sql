@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS stream_controls (
     label TEXT NOT NULL,
     command TEXT NOT NULL,                  -- command string sent to hardware
     icon TEXT DEFAULT 'fa-gamepad',         -- Font Awesome icon class
-    control_type TEXT DEFAULT 'button' CHECK(control_type IN ('button', 'toggle', 'slider', 'dpad', 'onvif')),
+    control_type TEXT DEFAULT 'button' CHECK(control_type IN ('button', 'toggle', 'slider', 'dpad', 'onvif', 'keyboard')),
     key_binding TEXT,                       -- keyboard shortcut
     cooldown_ms INTEGER DEFAULT 500,
     is_enabled INTEGER DEFAULT 1,
