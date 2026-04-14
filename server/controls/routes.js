@@ -437,200 +437,526 @@ if __name__ == "__main__":
 }
 
 function _generateCozmoProfileScript({ user, config, commandsJson, enabledButtons, protocol, host }) {
-    const commandNames = enabledButtons.map(b => b.command);
+    const keyboardButtons = enabledButtons.filter(b => b.control_type === 'keyboard');
+    const buttonButtons   = enabledButtons.filter(b => b.control_type !== 'keyboard' && b.control_type !== 'onvif');
+    const slugName = config.name.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+
     return `#!/usr/bin/env python3
 """
 HoboStreamer — Cozmo Hardware Bridge
-Auto-generated for: ${user.username}
-Control Profile: ${config.name}
+Auto-generated for:  ${user.username}
+Control Profile:     ${config.name}
+Generated:           ${new Date().toISOString().slice(0, 10)}
 
-Connects your Cozmo robot to HoboStreamer with the buttons from
-your "${config.name}" profile pre-configured.
+HOW IT WORKS
+============
+This script connects to HoboStreamer as a hardware bridge.
+Viewer button presses are relayed to your Cozmo robot.
 
-Requirements:
-    pip install pycozmo websocket-client
+There are TWO button types — you can see them in your profile editor:
 
-Usage:
-    python3 cozmo-bridge-${config.name.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.py
+  [HOLD]   keyboard type  — sends key_down when pressed, key_up on release.
+           Perfect for drive commands: hold the button → Cozmo keeps going.
+           Release → Cozmo stops.  (SMOOTH mode only needs this!)
+
+  [TAP]    button type    — sends a single "command" on each press.
+           Ideal for face animations, one-shot actions, etc.
+
+MODES
+=====
+  SMOOTH  (default) — drive commands use key_down/key_up for continuous drive.
+                       Holding a button drives continuously; releasing stops.
+
+  JUMPY   — every tap sends a short burst (JUMPY_BURST_DURATION seconds).
+             Useful if you want snap-stop control without holding.
+             Toggle with the "toggle_mode" command or 'X' button.
+
+BUTTONS IN THIS PROFILE (${enabledButtons.length} total)
+${keyboardButtons.length ? '  [HOLD]  ' + keyboardButtons.map(b => b.command + ' (' + b.label + ')').join(', ') : '  [HOLD]  (none)'}
+${buttonButtons.length   ? '  [TAP]   ' + buttonButtons.map(b => b.command + ' (' + b.label + ')').join(', ') : '  [TAP]   (none)'}
+
+REQUIREMENTS
+============
+  pip install pycozmo websocket-client Pillow
+
+USAGE
+=====
+  python3 cozmo-bridge-${slugName}.py
+
+  Set DRIVE_SPEED, TURN_SPEED, and JUMPY_BURST_DURATION to taste.
+  Add your face/animation assets to custom_faces/ and mechaMG/ directories.
 """
+
 import json
-import time
+import os
+import random
 import threading
+import time
 
 try:
     import websocket
 except ImportError:
-    print("Missing websocket-client: pip install websocket-client")
+    print("ERROR: Missing websocket-client. Run: pip install websocket-client")
     exit(1)
 
 try:
     import pycozmo
+    from pycozmo import MIN_LIFT_HEIGHT, MAX_LIFT_HEIGHT, MIN_HEAD_ANGLE, MAX_HEAD_ANGLE
+    PYCOZMO_AVAILABLE = True
 except ImportError:
-    pycozmo = None
+    PYCOZMO_AVAILABLE = False
     print("[Cozmo] pycozmo not installed — running in DRY RUN mode")
+    # Dummy constants for dry-run
+    class _MinMax:
+        def __init__(self, mm=0, radians=0): self.mm = mm; self.radians = radians
+    MIN_LIFT_HEIGHT = _MinMax(mm=32)
+    MAX_LIFT_HEIGHT = _MinMax(mm=92)
+    MIN_HEAD_ANGLE  = _MinMax(radians=-0.25)
+    MAX_HEAD_ANGLE  = _MinMax(radians=0.785)
 
-# ── Connection Settings ──────────────────────────────────────
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+# ════════════════════════════════════════════════════════════════
+#  TUNABLE SETTINGS — adjust these to match your robot
+# ════════════════════════════════════════════════════════════════
+DRIVE_SPEED          = 100    # mm/s  forward/backward
+TURN_SPEED           = 80     # mm/s  per-side for turns
+JUMPY_BURST_DURATION = 0.07   # sec   drive burst in jumpy mode
+JUMPY_PAUSE_TIME     = 0.03   # sec   pause after burst in jumpy mode
+MG_PULSES            = 12     # machine gun: number of lift vibrations
+MG_INTERVAL          = 0.06   # machine gun: time between pulses (sec)
+MG_VIBRATE           = 18     # machine gun: lift amplitude (mm)
+RECONNECT_DELAY      = 5      # sec   WebSocket reconnect delay
+
+# Asset directories (place your BMP/PNG face files here)
+CUSTOM_FACES_DIR = os.path.expanduser("~/Desktop/custom_faces")
+MECHA_MG_DIR     = os.path.expanduser("~/Desktop/mechaMG")
+OTTER_GIF_DIR    = os.path.expanduser("~/Desktop/otterGIF")
+
+# ════════════════════════════════════════════════════════════════
+#  CONNECTION
+# ════════════════════════════════════════════════════════════════
 WS_URL = "${protocol}://${host}/ws/control?mode=hardware&stream_key=${user.stream_key}"
-RECONNECT_DELAY = 5
-DRIVE_SPEED = 100
-TURN_SPEED = 80
 
-# ── Profile Buttons ──────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════
+#  PROFILE BUTTONS (from "${config.name}")
+# ════════════════════════════════════════════════════════════════
 BUTTONS = ${commandsJson}
 
-# ── Command → Cozmo Action Mapping ───────────────────────────
-# Edit this dict to map your profile commands to Cozmo actions.
-# Any command not listed here will be printed as "[Unknown]".
-COMMAND_MAP = {
-${enabledButtons.map(b => `    "${b.command}": "${b.command}",  # ${b.label}`).join('\n')}
-}
-
+# Commands that drive continuously when held (keyboard-type buttons)
+# key_down → start driving, key_up → stop
 CONTINUOUS_COMMANDS = {
-    "forward":    (DRIVE_SPEED, DRIVE_SPEED),
+    "forward":    ( DRIVE_SPEED,  DRIVE_SPEED),
     "backward":   (-DRIVE_SPEED, -DRIVE_SPEED),
-    "turn_left":  (-TURN_SPEED, TURN_SPEED),
-    "turn_right": (TURN_SPEED, -TURN_SPEED),
+    "turn_left":  (-TURN_SPEED,   TURN_SPEED),
+    "turn_right": ( TURN_SPEED,  -TURN_SPEED),
 }
 
+# ════════════════════════════════════════════════════════════════
+#  FACE / ANIMATION ASSETS
+# ════════════════════════════════════════════════════════════════
+def _load_bmp(path, size=(128, 32)):
+    if not PIL_AVAILABLE:
+        return None
+    try:
+        return Image.open(path).resize(size, Image.NEAREST).convert("1")
+    except Exception as e:
+        print(f"[Face] Could not load {path}: {e}")
+        return None
 
-def execute_command(cli, cmd):
-    """Execute a one-shot Cozmo command."""
-    mapped = COMMAND_MAP.get(cmd, cmd)
-    if cli is None:
-        print(f"[DRY RUN] {mapped}")
-        return
-    movements = {
-        "forward":    lambda: cli.drive_wheels(DRIVE_SPEED, DRIVE_SPEED, duration=0.5),
-        "backward":   lambda: cli.drive_wheels(-DRIVE_SPEED, -DRIVE_SPEED, duration=0.5),
-        "turn_left":  lambda: cli.drive_wheels(-TURN_SPEED, TURN_SPEED, duration=0.4),
-        "turn_right": lambda: cli.drive_wheels(TURN_SPEED, -TURN_SPEED, duration=0.4),
-        "lift_up":    lambda: cli.set_lift_height(1.0),
-        "lift_down":  lambda: cli.set_lift_height(0.0),
-        "head_up":    lambda: cli.set_head_angle(pycozmo.MAX_HEAD_ANGLE if pycozmo else 0.4),
-        "head_down":  lambda: cli.set_head_angle(pycozmo.MIN_HEAD_ANGLE if pycozmo else -0.2),
-        "stop":       lambda: cli.drive_wheels(0, 0),
-    }
-    if mapped in movements:
-        try:
-            movements[mapped]()
-            print(f"[Cozmo] {mapped}")
-        except Exception as e:
-            print(f"[Cozmo] Error: {e}")
-    elif mapped.startswith("anim_"):
-        try:
-            cli.play_anim_trigger(getattr(pycozmo.anim.Triggers, mapped[5:]))
-        except AttributeError:
-            print(f"[Cozmo] Unknown anim: {mapped}")
-    else:
-        print(f"[Unknown] {mapped} — add it to COMMAND_MAP or movements dict")
+def _load_face_assets():
+    assets = {"static": [], "mechaMG_frames": [], "mechaMG_delays": [], "otter": [],
+              "armcat_up": None, "armcat_down": None, "hit_left": None, "hit_right": None,
+              "jL": None, "jR": None, "nflag_frames": []}
+
+    if not PIL_AVAILABLE:
+        print("[Face] Pillow not installed — face animations disabled. Run: pip install Pillow")
+        return assets
+
+    # Custom BMP faces
+    if os.path.exists(CUSTOM_FACES_DIR):
+        for f in sorted(os.listdir(CUSTOM_FACES_DIR)):
+            if not f.lower().endswith(".bmp"):
+                continue
+            path = os.path.join(CUSTOM_FACES_DIR, f)
+            im = _load_bmp(path)
+            if im is None:
+                continue
+            fl = f.lower()
+            if fl == "armcatup.bmp":    assets["armcat_up"]   = im
+            elif fl == "armcatdown.bmp": assets["armcat_down"] = im
+            elif fl in ("hitl.bmp", "hit1.bmp", "left.bmp"): assets["hit_left"]  = im
+            elif fl in ("hitr.bmp", "hit2.bmp", "right.bmp"): assets["hit_right"] = im
+            elif fl == "jl.bmp": assets["jL"] = im
+            elif fl == "jr.bmp": assets["jR"] = im
+            elif fl == "nflag1.1.bmp":
+                for angle in range(0, 360, 45):
+                    rotated = im.rotate(angle, expand=False, fillcolor=0)
+                    assets["nflag_frames"].append(rotated)
+            else:
+                assets["static"].append((im, f))
+
+    # MechaMG GIF frames
+    if os.path.exists(MECHA_MG_DIR):
+        for fname in sorted(f for f in os.listdir(MECHA_MG_DIR)
+                            if f.lower().startswith("frame_") and f.lower().endswith(".png")):
+            path = os.path.join(MECHA_MG_DIR, fname)
+            try:
+                im = Image.open(path).convert("1")
+                mg = im.resize((64, 48), Image.NEAREST)
+                frame = Image.new("1", (128, 32), color=0)
+                frame.paste(mg, ((128-64)//2, (32-48)//2 + 4))
+                assets["mechaMG_frames"].append(frame)
+                delay = 0.2
+                if "_delay-" in fname.lower():
+                    try: delay = float(fname.lower().split("_delay-")[1].split("s.")[0])
+                    except: pass
+                assets["mechaMG_delays"].append(delay)
+            except Exception as e:
+                print(f"[Face] mechaMG {fname}: {e}")
+
+    # Otter GIF frames
+    if os.path.exists(OTTER_GIF_DIR):
+        for i in range(30):
+            path = os.path.join(OTTER_GIF_DIR, f"frame_{i:02d}_delay-0.04s.png")
+            if not os.path.exists(path):
+                break
+            try:
+                im = Image.open(path).convert("1")
+                frame = Image.new("1", (128, 32), color=0)
+                resized = im.resize((64, 64), Image.NEAREST)
+                frame.paste(resized, ((128-64)//2, max(0, (32-64)//2)))
+                assets["otter"].append(frame)
+            except Exception as e:
+                print(f"[Face] otter frame {i}: {e}")
+
+    print(f"[Face] Loaded: {len(assets['static'])} static, {len(assets['mechaMG_frames'])} mechaMG, {len(assets['otter'])} otter frames")
+    return assets
 
 
+# ════════════════════════════════════════════════════════════════
+#  MAIN BRIDGE CLASS
+# ════════════════════════════════════════════════════════════════
 class CozmoBridge:
     def __init__(self):
-        self.cozmo_cli = None
-        self.running = True
-        self.held_keys = set()
-        self._drive_lock = threading.Lock()
+        self.cli            = None
+        self.running        = True
+        self.driving_mode   = "smooth"   # "smooth" or "jumpy"
+        self.held_keys      = set()
+        self._drive_lock    = threading.Lock()
+        self.lift_height_mm = MIN_LIFT_HEIGHT.mm
+        self.head_angle     = 0.0
+        self.animation_mode = None
+        self._anim_frame    = 0
+        self._last_frame_t  = 0.0
+        self._last_anim_t   = 0.0
+        self.assets         = _load_face_assets()
 
+    # ── Cozmo Connection ───────────────────────────────────────
     def connect_cozmo(self):
-        if pycozmo is None:
+        if not PYCOZMO_AVAILABLE:
+            print("[Cozmo] Running in DRY RUN mode (pycozmo not installed)")
             return
         try:
-            self.cozmo_cli = pycozmo.Client()
-            self.cozmo_cli.start()
-            self.cozmo_cli.wait_for_robot()
-            print("[Cozmo] Connected!")
+            self.cli = pycozmo.Client()
+            self.cli.start()
+            self.cli.wait_for_robot()
+            self.cli.enable_procedural_face(False)
+            print("[Cozmo] Robot connected!")
         except Exception as e:
-            print(f"[Cozmo] Failed: {e}")
+            print(f"[Cozmo] Connection failed: {e}")
+            self.cli = None
 
+    # ── Drive helpers ──────────────────────────────────────────
+    def _drive(self, left, right):
+        if self.cli:
+            try:
+                if self.driving_mode == "smooth":
+                    self.cli.drive_wheels(left, right, duration=0.2)
+                else:
+                    self.cli.drive_wheels(left, right, duration=JUMPY_BURST_DURATION)
+                    time.sleep(JUMPY_PAUSE_TIME)
+            except Exception as e:
+                print(f"[Drive] {e}")
+        else:
+            print(f"[DRY RUN] drive L={left} R={right} mode={self.driving_mode}")
+
+    def _stop(self):
+        if self.cli:
+            try: self.cli.drive_wheels(0, 0)
+            except Exception: pass
+        else:
+            print("[DRY RUN] stop")
+
+    # ── Continuous drive loop (smooth mode) ───────────────────
     def _continuous_drive_loop(self):
         while self.running:
             with self._drive_lock:
                 keys = set(self.held_keys)
-            if not keys:
+            if not keys or self.driving_mode == "jumpy":
                 time.sleep(0.05)
                 continue
-            for cmd in keys:
-                mapped = COMMAND_MAP.get(cmd, cmd)
-                if mapped in CONTINUOUS_COMMANDS:
-                    left, right = CONTINUOUS_COMMANDS[mapped]
-                    if self.cozmo_cli:
-                        try:
-                            self.cozmo_cli.drive_wheels(left, right, duration=0.2)
-                        except Exception:
-                            pass
-                    else:
-                        print(f"[DRY RUN] continuous {mapped}")
+            drove = False
+            for cmd in ("forward", "backward", "turn_left", "turn_right"):
+                if cmd in keys and cmd in CONTINUOUS_COMMANDS:
+                    left, right = CONTINUOUS_COMMANDS[cmd]
+                    self._drive(left, right)
+                    drove = True
                     break
-            time.sleep(0.15)
+            if not drove:
+                time.sleep(0.05)
+            else:
+                time.sleep(0.12)
 
+    # ── Command dispatcher ─────────────────────────────────────
+    def execute_command(self, cmd, user="?"):
+        """Handle a one-shot TAP command."""
+        print(f"[CMD] {user} -> {cmd}")
+
+        if cmd in ("forward", "backward", "turn_left", "turn_right"):
+            # Burst drive (used in jumpy mode and for single-click configs)
+            if cmd in CONTINUOUS_COMMANDS:
+                left, right = CONTINUOUS_COMMANDS[cmd]
+                self._drive(left, right)
+
+        elif cmd in ("stop", "emergency_stop", "space"):
+            self._stop()
+
+        elif cmd in ("machine_gun", "mg"):
+            self._machine_gun()
+
+        elif cmd in ("toggle_mode", "x"):
+            self.driving_mode = "jumpy" if self.driving_mode == "smooth" else "smooth"
+            print(f"[Mode] -> {self.driving_mode.upper()}")
+
+        elif cmd in ("otter", "g"):
+            self.animation_mode = "otter" if self.animation_mode != "otter" else None
+            self._anim_frame = 0
+
+        elif cmd in ("dual_otter", "y"):
+            self.animation_mode = "dual_otter" if self.animation_mode != "dual_otter" else None
+            self._anim_frame = 0
+
+        elif cmd in ("mechaMG", "p", "mecha_mg"):
+            if self.animation_mode == "mechaMG":
+                self.animation_mode = None
+            elif self.assets["mechaMG_frames"]:
+                self.animation_mode = "mechaMG"
+                self._anim_frame = 0
+                self._last_frame_t = time.time()
+
+        elif cmd in ("armcat", "k"):
+            self.animation_mode = "armcat" if self.animation_mode != "armcat" else None
+            self._anim_frame = 0
+
+        elif cmd in ("j_animation", "j"):
+            self.animation_mode = "j" if self.animation_mode != "j" else None
+            self._anim_frame = 0
+
+        elif cmd in ("nflag", "n"):
+            self.animation_mode = "nflag" if self.animation_mode != "nflag" else None
+            self._anim_frame = 0
+
+        elif cmd in ("random_glance", "h"):
+            self.animation_mode = "hit" if self.animation_mode != "hit" else None
+            self._anim_frame = random.randint(0, 1)
+
+        elif cmd in ("toggle_eyes", "o"):
+            if self.cli:
+                try: self.cli.enable_procedural_face(True)
+                except Exception: pass
+            self.animation_mode = None
+
+        elif cmd in ("lift_up",):
+            self.lift_height_mm = min(MAX_LIFT_HEIGHT.mm, self.lift_height_mm + 20)
+            if self.cli:
+                try: self.cli.set_lift_height(self.lift_height_mm)
+                except Exception: pass
+
+        elif cmd in ("lift_down",):
+            self.lift_height_mm = max(MIN_LIFT_HEIGHT.mm, self.lift_height_mm - 20)
+            if self.cli:
+                try: self.cli.set_lift_height(self.lift_height_mm)
+                except Exception: pass
+
+        else:
+            print(f"[Unknown] {cmd} — add it to execute_command() to handle it")
+
+    def _machine_gun(self):
+        if not self.cli:
+            print("[DRY RUN] machine gun!")
+            return
+        cur = self.lift_height_mm
+        try:
+            for _ in range(MG_PULSES):
+                self.cli.set_lift_height(min(MAX_LIFT_HEIGHT.mm, cur + MG_VIBRATE), accel=3000, duration=0.04)
+                time.sleep(MG_INTERVAL)
+                self.cli.set_lift_height(max(MIN_LIFT_HEIGHT.mm, cur - MG_VIBRATE), accel=3000, duration=0.04)
+                time.sleep(MG_INTERVAL)
+            self.cli.set_lift_height(cur, accel=800, duration=0.12)
+        except Exception as e:
+            print(f"[MG] {e}")
+
+    def _display_face(self, im):
+        if self.cli and im is not None:
+            try: self.cli.display_image(im)
+            except Exception: pass
+
+    def _tick_animations(self):
+        """Advance face animations. Call this in the main loop."""
+        a = self.assets
+        now = time.time()
+        if self.animation_mode == "mechaMG" and a["mechaMG_frames"]:
+            delays = a["mechaMG_delays"]
+            delay = delays[self._anim_frame] if self._anim_frame < len(delays) else 0.2
+            if now - self._last_frame_t > delay:
+                self._anim_frame = (self._anim_frame + 1) % len(a["mechaMG_frames"])
+                self._display_face(a["mechaMG_frames"][self._anim_frame])
+                self._last_frame_t = now
+        elif self.animation_mode == "otter" and a["otter"]:
+            if now - self._last_frame_t > 0.04:
+                self._anim_frame = (self._anim_frame + 1) % len(a["otter"])
+                self._display_face(a["otter"][self._anim_frame])
+                self._last_frame_t = now
+        elif self.animation_mode == "dual_otter" and a["otter"]:
+            if now - self._last_frame_t > 0.04:
+                self._anim_frame = (self._anim_frame + 1) % len(a["otter"])
+                L = (self._anim_frame) % len(a["otter"])
+                R = (self._anim_frame + 3) % len(a["otter"])
+                combined = Image.new("1", (128, 32), color=0)
+                combined.paste(a["otter"][L].crop((32, 0, 96, 32)), (0,  0))
+                combined.paste(a["otter"][R].crop((32, 0, 96, 32)), (64, 0))
+                self._display_face(combined)
+                self._last_frame_t = now
+        elif self.animation_mode == "armcat" and a["armcat_up"] and a["armcat_down"]:
+            if now - self._last_frame_t > 0.2:
+                self._anim_frame = 1 - self._anim_frame
+                self._display_face(a["armcat_up"] if self._anim_frame == 0 else a["armcat_down"])
+                self._last_frame_t = now
+        elif self.animation_mode == "hit" and a["hit_left"] and a["hit_right"]:
+            delay = random.uniform(0.2, 0.5) if random.random() < 0.05 else random.uniform(2.0, 4.0)
+            if now - self._last_frame_t > delay:
+                self._anim_frame = 1 - self._anim_frame
+                self._display_face(a["hit_left"] if self._anim_frame == 0 else a["hit_right"])
+                self._last_frame_t = now
+        elif self.animation_mode == "j" and a["jL"] and a["jR"]:
+            if now - self._last_frame_t > 1.0:
+                self._anim_frame = 1 - self._anim_frame
+                self._display_face(a["jL"] if self._anim_frame == 0 else a["jR"])
+                self._last_frame_t = now
+        elif self.animation_mode == "nflag" and a["nflag_frames"]:
+            if now - self._last_frame_t > 0.08:
+                self._anim_frame = (self._anim_frame + 1) % len(a["nflag_frames"])
+                self._display_face(a["nflag_frames"][self._anim_frame])
+                self._last_frame_t = now
+
+    # ── WebSocket handlers ─────────────────────────────────────
     def on_message(self, ws, message):
         try:
             msg = json.loads(message)
             msg_type = msg.get("type", "")
-            cmd = msg.get("command", "")
-            user = msg.get("from_user", "?")
+            cmd      = msg.get("command", "")
+            user     = msg.get("from_user", "?")
 
             if msg_type == "command":
-                execute_command(self.cozmo_cli, cmd)
+                # Single TAP — one-shot action
+                self.execute_command(cmd, user)
+
             elif msg_type == "key_down":
-                print(f"[Key Down] {user} -> {cmd}")
+                # HOLD pressed — add to held set, start continuous drive if it's a drive cmd
+                print(f"[Hold] {user} holding {cmd}")
                 with self._drive_lock:
                     self.held_keys.add(cmd)
-                mapped = COMMAND_MAP.get(cmd, cmd)
-                if mapped not in CONTINUOUS_COMMANDS:
-                    execute_command(self.cozmo_cli, cmd)
+                # In jumpy mode, also send a burst immediately
+                if self.driving_mode == "jumpy" and cmd in CONTINUOUS_COMMANDS:
+                    left, right = CONTINUOUS_COMMANDS[cmd]
+                    self._drive(left, right)
+                # Non-drive keyboard commands are treated as one-shot on key_down
+                elif cmd not in CONTINUOUS_COMMANDS:
+                    self.execute_command(cmd, user)
+
             elif msg_type == "key_up":
-                print(f"[Key Up] {user} -> {cmd}")
+                # HOLD released — remove from held set, stop if no more drive keys
+                print(f"[Release] {user} released {cmd}")
                 with self._drive_lock:
                     self.held_keys.discard(cmd)
                 with self._drive_lock:
                     remaining = set(self.held_keys)
-                if not any(COMMAND_MAP.get(k, k) in CONTINUOUS_COMMANDS for k in remaining):
-                    if self.cozmo_cli:
-                        try:
-                            self.cozmo_cli.drive_wheels(0, 0)
-                        except Exception:
-                            pass
+                if not any(k in CONTINUOUS_COMMANDS for k in remaining):
+                    self._stop()
+
             elif msg_type == "video_click":
-                x = msg.get("x", 0.5)
-                y = msg.get("y", 0.5)
+                x = float(msg.get("x", 0.5))
+                y = float(msg.get("y", 0.5))
                 print(f"[Click] {user} -> ({x:.2f}, {y:.2f})")
+                # Click-to-steer: left/right based on x position
+                if x < 0.35:
+                    self._drive(-TURN_SPEED, TURN_SPEED)
+                elif x > 0.65:
+                    self._drive(TURN_SPEED, -TURN_SPEED)
+                else:
+                    drive_dur = max(0.2, (1.0 - y) * 0.6)
+                    if self.cli:
+                        try: self.cli.drive_wheels(DRIVE_SPEED, DRIVE_SPEED, duration=drive_dur)
+                        except Exception: pass
+
         except Exception as e:
-            print(f"[Error] {e}")
+            print(f"[WS Error] {e}")
 
     def on_open(self, ws):
-        print("[Connected] Listening for commands...")
-        print(f"[Profile] {len(BUTTONS)} buttons from '${config.name}'")
-        ws.send(json.dumps({"type": "status", "connected": True}))
+        print("[WS] Connected to HoboStreamer!")
+        print(f"[Profile] ${config.name} ({enabledButtons.length} buttons) | Mode: {self.driving_mode}")
+        ws.send(json.dumps({"type": "status", "connected": True, "profile": "${config.name}"}))
 
     def on_close(self, ws, code, reason):
-        print(f"[Disconnected] code={code}")
+        print(f"[WS] Disconnected (code={code}) — Cozmo will stop")
         with self._drive_lock:
             self.held_keys.clear()
+        self._stop()
 
     def on_error(self, ws, error):
         print(f"[WS Error] {error}")
 
+    # ── Main loop ──────────────────────────────────────────────
     def run(self):
         self.connect_cozmo()
+
+        # Start continuous-drive background thread (smooth mode)
         drive_t = threading.Thread(target=self._continuous_drive_loop, daemon=True)
         drive_t.start()
-        print(f"Profile: ${config.name} ({enabledButtons.length} buttons)")
-        print(f"Commands: {', '.join(b['command'] for b in BUTTONS)}")
-        print()
+
+        print(f"\\n{'='*60}")
+        print(f"  HoboStreamer Cozmo Bridge — ${config.name}")
+        print(f"  Drive speed: {DRIVE_SPEED} mm/s  |  Mode: SMOOTH (toggle with 'toggle_mode')")
+        print(f"  Commands: ${enabledButtons.map(b => b.command).join(', ')}")
+        print(f"{'='*60}\\n")
+
         while self.running:
             try:
-                ws = websocket.WebSocketApp(WS_URL,
+                ws_app = websocket.WebSocketApp(
+                    WS_URL,
                     on_message=self.on_message,
                     on_open=self.on_open,
                     on_close=self.on_close,
-                    on_error=self.on_error)
-                ws.run_forever(ping_interval=30)
+                    on_error=self.on_error,
+                )
+                # Run WS in a thread so we can tick animations in main thread
+                ws_thread = threading.Thread(target=lambda: ws_app.run_forever(ping_interval=30), daemon=True)
+                ws_thread.start()
+
+                while ws_thread.is_alive() and self.running:
+                    self._tick_animations()
+                    time.sleep(0.04)
+
             except Exception as e:
-                print(f"[Error] {e}")
+                print(f"[WS] {e}")
+
             if self.running:
-                print(f"Reconnecting in {RECONNECT_DELAY}s...")
+                print(f"[WS] Reconnecting in {RECONNECT_DELAY}s...")
                 time.sleep(RECONNECT_DELAY)
 
 
@@ -640,9 +966,11 @@ if __name__ == "__main__":
         bridge.run()
     except KeyboardInterrupt:
         bridge.running = False
-        if bridge.cozmo_cli:
-            bridge.cozmo_cli.stop()
-        print("Bye!")
+        bridge._stop()
+        if bridge.cli:
+            try: bridge.cli.stop()
+            except Exception: pass
+        print("\\n[Bridge] Bye!")
 `;
 }
 
