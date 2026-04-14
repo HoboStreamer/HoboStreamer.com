@@ -1,3 +1,56 @@
+// Preset control profiles for new users
+const CONTROL_PRESETS = [
+    {
+        name: 'Robot Car (WASD)',
+        description: 'Basic robot car: forward, back, left, right, stop. Keyboard hold supported.',
+        buttons: [
+            { label: 'Forward', command: 'forward', icon: 'fa-arrow-up', control_type: 'keyboard', key_binding: 'w', cooldown_ms: 100, sort_order: 0 },
+            { label: 'Left', command: 'turn_left', icon: 'fa-arrow-left', control_type: 'keyboard', key_binding: 'a', cooldown_ms: 100, sort_order: 1 },
+            { label: 'Stop', command: 'stop', icon: 'fa-stop', control_type: 'button', key_binding: '', cooldown_ms: 100, sort_order: 2 },
+            { label: 'Right', command: 'turn_right', icon: 'fa-arrow-right', control_type: 'keyboard', key_binding: 'd', cooldown_ms: 100, sort_order: 3 },
+            { label: 'Back', command: 'backward', icon: 'fa-arrow-down', control_type: 'keyboard', key_binding: 's', cooldown_ms: 100, sort_order: 4 },
+        ]
+    },
+    {
+        name: 'Camera PTZ',
+        description: 'Pan/tilt/zoom camera controls (ONVIF compatible).',
+        buttons: [
+            { label: 'Pan Left', command: 'pan_left', icon: 'fa-arrow-left', control_type: 'onvif', key_binding: 'a', cooldown_ms: 300, sort_order: 0 },
+            { label: 'Pan Right', command: 'pan_right', icon: 'fa-arrow-right', control_type: 'onvif', key_binding: 'd', cooldown_ms: 300, sort_order: 1 },
+            { label: 'Tilt Up', command: 'tilt_up', icon: 'fa-arrow-up', control_type: 'onvif', key_binding: 'w', cooldown_ms: 300, sort_order: 2 },
+            { label: 'Tilt Down', command: 'tilt_down', icon: 'fa-arrow-down', control_type: 'onvif', key_binding: 's', cooldown_ms: 300, sort_order: 3 },
+            { label: 'Zoom In', command: 'zoom_in', icon: 'fa-magnifying-glass-plus', control_type: 'onvif', key_binding: 'e', cooldown_ms: 300, sort_order: 4 },
+            { label: 'Zoom Out', command: 'zoom_out', icon: 'fa-magnifying-glass-minus', control_type: 'onvif', key_binding: 'q', cooldown_ms: 300, sort_order: 5 },
+        ]
+    },
+    {
+        name: 'Gamepad (ABXY)',
+        description: 'Gamepad-style controls: A, B, X, Y, Start, Select.',
+        buttons: [
+            { label: 'A', command: 'a', icon: 'fa-circle', control_type: 'button', key_binding: 'j', cooldown_ms: 200, sort_order: 0 },
+            { label: 'B', command: 'b', icon: 'fa-circle', control_type: 'button', key_binding: 'k', cooldown_ms: 200, sort_order: 1 },
+            { label: 'X', command: 'x', icon: 'fa-circle', control_type: 'button', key_binding: 'u', cooldown_ms: 200, sort_order: 2 },
+            { label: 'Y', command: 'y', icon: 'fa-circle', control_type: 'button', key_binding: 'i', cooldown_ms: 200, sort_order: 3 },
+            { label: 'Start', command: 'start', icon: 'fa-play', control_type: 'button', key_binding: 'enter', cooldown_ms: 500, sort_order: 4 },
+            { label: 'Select', command: 'select', icon: 'fa-stop', control_type: 'button', key_binding: 'shift', cooldown_ms: 500, sort_order: 5 },
+        ]
+    }
+];
+
+function seedControlPresetsForUser(userId) {
+    const existing = all('SELECT * FROM control_configs WHERE user_id = ?', [userId]);
+    if (existing.length > 0) return;
+    for (const preset of CONTROL_PRESETS) {
+        const { lastInsertRowid } = run('INSERT INTO control_configs (user_id, name, description) VALUES (?, ?, ?)', [userId, preset.name, preset.description]);
+        for (const btn of preset.buttons) {
+            run(
+                `INSERT INTO control_config_buttons (config_id, label, command, icon, control_type, key_binding, cooldown_ms, sort_order, btn_color, btn_bg, btn_border_color)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', '')`,
+                [lastInsertRowid, btn.label, btn.command, btn.icon, btn.control_type, btn.key_binding, btn.cooldown_ms, btn.sort_order]
+            );
+        }
+    }
+}
 /**
  * HoboStreamer — Database Connection & Helpers
  * SQLite3 via better-sqlite3

@@ -1576,12 +1576,17 @@ async function createNewStream() {
         const data = await api('/streams', { method: 'POST', body: { title, description, protocol: method, category, is_nsfw: document.getElementById('bc-nsfw')?.checked || false } });
         const streamData = data.stream || data;
 
-        // Apply control config if selected
+        // If a control config is selected, activate it on the channel (server auto-applies to the new stream).
+        // If "None" is selected, deactivate any active config.
         const selectedConfig = document.getElementById('bc-control-config')?.value;
         if (selectedConfig) {
             try {
-                await api(`/controls/configs/${selectedConfig}/apply/${streamData.id}`, { method: 'POST' });
-            } catch (e) { console.warn('Failed to apply control config:', e); }
+                await api(`/controls/configs/${selectedConfig}/activate`, { method: 'POST' });
+            } catch (e) { console.warn('Failed to activate control config:', e); }
+        } else {
+            try {
+                await api('/controls/configs/deactivate', { method: 'POST' });
+            } catch (e) { /* silent */ }
         }
 
         // Create per-stream state

@@ -117,6 +117,17 @@ class RTMPServer extends EventEmitter {
                     protocol: 'rtmp',
                 });
                 streamId = result.lastInsertRowid;
+
+                // Auto-apply active control config
+                const channel = db.getChannelByUserId(user.id);
+                if (channel && channel.active_control_config_id) {
+                    try {
+                        const applied = db.applyConfigToStream(channel.active_control_config_id, streamId);
+                        console.log(`[RTMP] Auto-applied control config ${channel.active_control_config_id} to stream ${streamId} (${applied} buttons)`);
+                    } catch (cfgErr) {
+                        console.warn(`[RTMP] Failed to auto-apply control config:`, cfgErr.message);
+                    }
+                }
             }
 
             // Ensure heartbeat is always set (for stale-stream cleanup)

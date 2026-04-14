@@ -1,3 +1,10 @@
+/* Ensure controls-row is a horizontal flex row for controls panel */
+.controls-row {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    flex-wrap: wrap;
+}
 /* ═══════════════════════════════════════════════════════════════
    HoboStreamer.com — Main Stylesheet
    Dark theme with campfire amber/brown accents
@@ -2058,13 +2065,24 @@ main#app { position: relative; z-index: 1; }
     text-align: right; margin-top: 4px;
 }
 
-/* Controls Panel */
+/* Controls Panel — flat action bar directly below the video */
 .controls-panel {
-    margin: 16px 0; padding: 12px;
-    background: var(--bg-secondary);
-    border-radius: var(--radius); border: 1px solid var(--border);
+    margin: 0; padding: 8px 14px;
+    background: var(--bg-card);
+    border-radius: 0;
+    border-top: none;
+    border-bottom: 1px solid var(--border);
 }
-.controls-header h3 { font-size: 1rem; color: var(--accent); margin-bottom: 8px; }
+.controls-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 6px;
+}
+.controls-header h3 {
+    font-size: 0.78rem; color: var(--text-muted);
+    margin-bottom: 0; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    display: flex; align-items: center; gap: 6px;
+}
 .controls-grid {
     display: flex; gap: 8px; flex-wrap: wrap;
 }

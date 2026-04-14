@@ -843,6 +843,16 @@ router.post('/', requireAuth, (req, res) => {
             [streamId, streamProtocol]
         );
 
+        // Auto-apply active control config to the new stream
+        if (channel.active_control_config_id) {
+            try {
+                const applied = db.applyConfigToStream(channel.active_control_config_id, streamId);
+                console.log(`[Streams] Auto-applied control config ${channel.active_control_config_id} to stream ${streamId} (${applied} buttons)`);
+            } catch (cfgErr) {
+                console.warn(`[Streams] Failed to auto-apply control config:`, cfgErr.message);
+            }
+        }
+
         const stream = db.getStreamById(streamId);
         robotStreamerService.startForStream(stream).catch((rsErr) => {
             console.warn(`[RS] Failed to start integration for stream ${streamId}:`, rsErr.message);

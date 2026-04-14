@@ -268,6 +268,92 @@ async function removeFromControlWhitelist(id) {
 }
 
 /* ── Control Config Management ────────────────────────────────── */
+
+// Show the Clone Preset modal and load available presets
+function showModal(id) {
+    if (id === 'clone-preset-config') {
+        openClonePresetModal();
+        return;
+    }
+    // Default modal logic (existing)
+    const overlay = document.getElementById('modal-overlay');
+    if (!overlay) return;
+    overlay.style.display = '';
+    const content = document.getElementById('modal-content');
+    if (content) {
+        // ...existing modal content logic...
+    }
+}
+
+function openClonePresetModal() {
+    const modal = document.getElementById('clone-preset-config-modal');
+    if (!modal) return;
+    modal.style.display = '';
+    // Fetch presets from backend or use static list if needed
+    fetch('/api/controls/presets', { credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(data => {
+            const presets = data.presets || [];
+            const select = document.getElementById('clone-preset-select');
+            select.innerHTML = presets.map(p => `<option value="${p.id}" data-name="${esc(p.name)}" data-desc="${esc(p.description||'')}">${esc(p.name)}</option>`).join('');
+            if (presets.length) {
+                select.value = presets[0].id;
+                document.getElementById('clone-preset-name').value = presets[0].name;
+                document.getElementById('clone-preset-desc').value = presets[0].description || '';
+            }
+        });
+    // Update name/desc fields on preset change
+    document.getElementById('clone-preset-select').onchange = function() {
+        const opt = this.options[this.selectedIndex];
+        document.getElementById('clone-preset-name').value = opt.getAttribute('data-name') || '';
+        document.getElementById('clone-preset-desc').value = opt.getAttribute('data-desc') || '';
+    };
+}
+
+function closeModal() {
+    // Hide both modals
+    const overlay = document.getElementById('modal-overlay');
+    if (overlay) overlay.style.display = 'none';
+    const cloneModal = document.getElementById('clone-preset-config-modal');
+    if (cloneModal) cloneModal.style.display = 'none';
+}
+
+async function doClonePresetConfig() {
+    const select = document.getElementById('clone-preset-select');
+    const presetId = select?.value;
+    const name = document.getElementById('clone-preset-name')?.value.trim();
+    const desc = document.getElementById('clone-preset-desc')?.value.trim() || '';
+    if (!presetId || !name) return toast('Select a preset and enter a name', 'error');
+    try {
+        // Get preset buttons
+        const preset = await fetch(`/api/controls/presets/${presetId}`).then(r => r.json());
+        const buttons = preset.buttons || [];
+        // Create new config
+        const res = await api('/controls/configs', { method: 'POST', body: { name, description: desc } });
+        const newConfigId = res.id || res.config_id || res.config?.id;
+        if (!newConfigId) throw new Error('Failed to create config');
+        // Add all buttons
+        for (const btn of buttons) {
+            await api(`/controls/configs/${newConfigId}/buttons`, {
+                method: 'POST',
+                body: {
+                    command: btn.command,
+                    label: btn.label,
+                    icon: btn.icon,
+                    control_type: btn.control_type,
+                    key_binding: btn.key_binding,
+                    cooldown_ms: btn.cooldown_ms,
+                    btn_color: btn.btn_color,
+                    btn_bg: btn.btn_bg,
+                    btn_border_color: btn.btn_border_color,
+                }
+            });
+        }
+        toast('Preset cloned!', 'success');
+        closeModal();
+        loadDashConfigs();
+    } catch (e) { toast(e.message || 'Failed to clone preset', 'error'); }
+}
 let editingConfigId = null;
 
 async function loadDashConfigs() {
@@ -327,17 +413,20 @@ async function doCreateConfig() {
 
 async function activateConfig(configId) {
     try {
-        await api(`/controls/configs/${configId}/activate`, { method: 'POST' });
-        toast('Profile activated', 'success');
+        const res = await api(`/controls/configs/${configId}/activate`, { method: 'POST' });
+        const n = res.applied_to_streams || 0;
+        toast(n > 0 ? `Profile activated & applied to ${n} live stream${n > 1 ? 's' : ''}` : 'Profile activated — will apply to your next stream', 'success');
         loadDashConfigs();
+        loadDashControls();
     } catch (e) { toast(e.message, 'error'); }
 }
 
 async function deactivateConfig() {
     try {
         await api('/controls/configs/deactivate', { method: 'POST' });
-        toast('Profile deactivated', 'success');
+        toast('Profile deactivated — controls cleared from live streams', 'success');
         loadDashConfigs();
+        loadDashControls();
     } catch (e) { toast(e.message, 'error'); }
 }
 

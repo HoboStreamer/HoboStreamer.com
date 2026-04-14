@@ -30,6 +30,25 @@ const { requireAuth } = require('../auth/auth');
 
 const router = express.Router();
 
+// Helper: if this config is the active config for the user's channel,
+// re-apply it to all live streams so edits take effect immediately.
+function syncConfigToLiveStreams(configId, userId) {
+    try {
+        const channel = db.getChannelByUserId(userId);
+        if (!channel || channel.active_control_config_id !== configId) return;
+        const liveStreams = db.getLiveStreamsByUserId(userId);
+        for (const stream of liveStreams) {
+            try {
+                db.applyConfigToStream(configId, stream.id);
+            } catch (e) {
+                console.warn(`[Controls] Failed to sync config ${configId} to stream ${stream.id}:`, e.message);
+            }
+        }
+    } catch (e) {
+        console.warn(`[Controls] syncConfigToLiveStreams error:`, e.message);
+    }
+}
+
 // ── CSS Value Sanitization (prevent injection) ───────────────
 const CSS_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*[\d.]+\s*)?\)|[a-zA-Z]{1,30}|var\(--[a-zA-Z0-9-]+\)|)$/;
 function sanitizeCssColor(val) {
@@ -767,6 +786,7 @@ router.post('/configs/:id/buttons', requireAuth, (req, res) => {
             btn_border_color: sanitizeCssColor(btn_border_color),
         });
 
+        syncConfigToLiveStreams(config.id, req.user.id);
         const buttons = db.getConfigButtons(config.id);
         res.status(201).json({ buttons });
     } catch (err) {
@@ -805,6 +825,7 @@ router.put('/configs/:id/buttons/:btnId', requireAuth, (req, res) => {
         if (is_enabled !== undefined) updates.is_enabled = is_enabled ? 1 : 0;
 
         db.updateConfigButton(parseInt(req.params.btnId), updates);
+        syncConfigToLiveStreams(config.id, req.user.id);
         const buttons = db.getConfigButtons(config.id);
         res.json({ buttons });
     } catch (err) {
@@ -821,6 +842,7 @@ router.delete('/configs/:id/buttons/:btnId', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not authorized' });
         }
         db.deleteConfigButton(parseInt(req.params.btnId));
+        syncConfigToLiveStreams(config.id, req.user.id);
         const buttons = db.getConfigButtons(config.id);
         res.json({ buttons });
     } catch (err) {
@@ -837,7 +859,20 @@ router.post('/configs/:id/activate', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not authorized' });
         }
         db.updateChannel(req.user.id, { active_control_config_id: config.id });
-        res.json({ message: 'Config activated', config_id: config.id });
+
+        // Auto-apply to all currently live streams
+        const liveStreams = db.getLiveStreamsByUserId(req.user.id);
+        let appliedCount = 0;
+        for (const stream of liveStreams) {
+            try {
+                db.applyConfigToStream(config.id, stream.id);
+                appliedCount++;
+            } catch (e) {
+                console.warn(`[Controls] Failed to auto-apply config ${config.id} to live stream ${stream.id}:`, e.message);
+            }
+        }
+
+        res.json({ message: 'Config activated', config_id: config.id, applied_to_streams: appliedCount });
     } catch (err) {
         res.status(500).json({ error: 'Failed to activate config' });
     }
@@ -847,6 +882,17 @@ router.post('/configs/:id/activate', requireAuth, (req, res) => {
 router.post('/configs/deactivate', requireAuth, (req, res) => {
     try {
         db.updateChannel(req.user.id, { active_control_config_id: null });
+
+        // Clear controls from all currently live streams
+        const liveStreams = db.getLiveStreamsByUserId(req.user.id);
+        for (const stream of liveStreams) {
+            try {
+                db.run('DELETE FROM stream_controls WHERE stream_id = ? AND (control_type != ? OR control_type IS NULL)', [stream.id, 'onvif']);
+            } catch (e) {
+                console.warn(`[Controls] Failed to clear controls from live stream ${stream.id}:`, e.message);
+            }
+        }
+
         res.json({ message: 'Config deactivated' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to deactivate config' });
