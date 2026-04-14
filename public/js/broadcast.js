@@ -1680,6 +1680,38 @@ function showBrowserBroadcast() {
 
 let _rtmpStatusPollTimer = null;
 
+/* ── Controls Status for non-browser streaming methods ─────── */
+async function loadLiveControlsStatus() {
+    const statusEls = ['bc-rtmp-controls-status', 'bc-jsmpeg-controls-status', 'bc-whip-controls-status']
+        .map(id => document.getElementById(id)).filter(Boolean);
+    if (!statusEls.length) return;
+
+    try {
+        const [settings, cdata] = await Promise.all([
+            api('/controls/settings/channel').catch(() => ({})),
+            api('/controls/configs').catch(() => ({})),
+        ]);
+        const configId = settings.active_control_config_id;
+        if (!configId) {
+            const html = '<p class="muted" style="font-size:0.85rem">No control profile active. Select one from the Dashboard before going live.</p>';
+            statusEls.forEach(el => el.innerHTML = html);
+            return;
+        }
+        const config = (cdata.configs || []).find(c => c.id === configId);
+        const name = config ? esc(config.name) : `Profile #${configId}`;
+        const count = config ? config.button_count : '?';
+        const plural = count === 1 ? 'button' : 'buttons';
+        const html = `<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+            <i class="fa-solid fa-circle" style="color:#4caf50;font-size:10px;flex-shrink:0"></i>
+            <span><strong>${name}</strong> — ${count} ${plural} active for viewers</span>
+        </div>`;
+        statusEls.forEach(el => el.innerHTML = html);
+    } catch {
+        const html = '<p class="muted" style="font-size:0.85rem">Could not load control profile status.</p>';
+        statusEls.forEach(el => el.innerHTML = html);
+    }
+}
+
 async function showRTMPInstructions(stream) {
     document.getElementById('bc-stream-manager').style.display = 'none';
     document.getElementById('bc-browser-broadcast').style.display = 'none';
@@ -1690,6 +1722,7 @@ async function showRTMPInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
+    loadLiveControlsStatus().catch(() => {});
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
@@ -1810,6 +1843,7 @@ async function showJSMPEGInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
+    loadLiveControlsStatus().catch(() => {});
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
@@ -1854,6 +1888,7 @@ async function showWHIPInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
+    loadLiveControlsStatus().catch(() => {});
     document.getElementById('bc-whip-url').textContent = `${location.origin}/whip/${stream.id}`;
     document.getElementById('bc-whip-token').textContent = localStorage.getItem('token') || 'N/A';
 }

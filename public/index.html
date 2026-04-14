@@ -1281,7 +1281,7 @@
                             <label style="font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-sliders"></i> Control Profiles</label>
                             <div style="display:flex;gap:6px">
                                 <button class="btn btn-small btn-outline" onclick="showModal('create-config')"><i class="fa-solid fa-plus"></i> New Profile</button>
-                                <button class="btn btn-small btn-outline" onclick="showModal('clone-preset-config')"><i class="fa-solid fa-clone"></i> Clone Preset</button>
+                                <button class="btn btn-small btn-outline" onclick="openClonePresetModal()"><i class="fa-solid fa-clone"></i> Clone Preset</button>
                             </div>
                         <!-- Clone Preset Config Modal -->
                         <div id="clone-preset-config-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeModal()">
@@ -2556,6 +2556,13 @@
                                 <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
                             </p>
                         </div>
+
+                        <!-- Interactive Controls Status -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
+                            <div id="bc-rtmp-controls-status"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                            <p class="bc-call-explainer"><i class="fa-solid fa-circle-info"></i> Manage profiles in <a href="javascript:void(0)" onclick="navigate('/dashboard')" style="color:var(--accent)">Dashboard → Controls</a>.</p>
+                        </div>
                     </div>
 
                     <!-- FFmpeg RTMP (for headless / CLI users) -->
@@ -2874,6 +2881,13 @@ WantedBy=multi-user.target</code>
                                 <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
                             </p>
                         </div>
+
+                        <!-- Interactive Controls Status -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
+                            <div id="bc-jsmpeg-controls-status"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                            <p class="bc-call-explainer"><i class="fa-solid fa-circle-info"></i> Manage profiles in <a href="javascript:void(0)" onclick="navigate('/dashboard')" style="color:var(--accent)">Dashboard → Controls</a>.</p>
+                        </div>
                     </div>
 
                     <button class="btn btn-outline" style="margin-top:16px" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
@@ -2935,6 +2949,13 @@ WantedBy=multi-user.target</code>
                                 <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
                                 <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
                             </p>
+                        </div>
+
+                        <!-- Interactive Controls Status -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
+                            <div id="bc-whip-controls-status"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                            <p class="bc-call-explainer"><i class="fa-solid fa-circle-info"></i> Manage profiles in <a href="javascript:void(0)" onclick="navigate('/dashboard')" style="color:var(--accent)">Dashboard → Controls</a>.</p>
                         </div>
                     </div>
 

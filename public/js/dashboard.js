@@ -269,22 +269,6 @@ async function removeFromControlWhitelist(id) {
 
 /* ── Control Config Management ────────────────────────────────── */
 
-// Show the Clone Preset modal and load available presets
-function showModal(id) {
-    if (id === 'clone-preset-config') {
-        openClonePresetModal();
-        return;
-    }
-    // Default modal logic (existing)
-    const overlay = document.getElementById('modal-overlay');
-    if (!overlay) return;
-    overlay.style.display = '';
-    const content = document.getElementById('modal-content');
-    if (content) {
-        // ...existing modal content logic...
-    }
-}
-
 function openClonePresetModal() {
     const modal = document.getElementById('clone-preset-config-modal');
     if (!modal) return;
@@ -311,9 +295,10 @@ function openClonePresetModal() {
 }
 
 function closeModal() {
-    // Hide both modals
+    // Hide main modal (app.js uses classList 'show')
     const overlay = document.getElementById('modal-overlay');
-    if (overlay) overlay.style.display = 'none';
+    if (overlay) overlay.classList.remove('show');
+    // Also hide clone preset modal (uses style.display)
     const cloneModal = document.getElementById('clone-preset-config-modal');
     if (cloneModal) cloneModal.style.display = 'none';
 }
