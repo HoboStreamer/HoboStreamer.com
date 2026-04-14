@@ -2,13 +2,34 @@
 const CONTROL_PRESETS = [
     {
         name: 'Robot Car (WASD)',
-        description: 'Basic robot car: forward, back, left, right, stop. Keyboard hold supported.',
+        description: 'Basic robot car: forward, back, left, right, stop. Hold-to-drive (key_down/key_up) for smooth continuous movement.',
         buttons: [
             { label: 'Forward', command: 'forward', icon: 'fa-arrow-up', control_type: 'keyboard', key_binding: 'w', cooldown_ms: 100, sort_order: 0 },
             { label: 'Left', command: 'turn_left', icon: 'fa-arrow-left', control_type: 'keyboard', key_binding: 'a', cooldown_ms: 100, sort_order: 1 },
             { label: 'Stop', command: 'stop', icon: 'fa-stop', control_type: 'button', key_binding: '', cooldown_ms: 100, sort_order: 2 },
             { label: 'Right', command: 'turn_right', icon: 'fa-arrow-right', control_type: 'keyboard', key_binding: 'd', cooldown_ms: 100, sort_order: 3 },
             { label: 'Back', command: 'backward', icon: 'fa-arrow-down', control_type: 'keyboard', key_binding: 's', cooldown_ms: 100, sort_order: 4 },
+        ]
+    },
+    {
+        name: 'Cozmo Robot',
+        description: 'Full Cozmo robot controls: hold-to-drive (WASD), face animations, machine gun lift, mode toggle, emergency stop.',
+        buttons: [
+            // Drive — keyboard type = sends key_down/key_up for smooth continuous drive
+            { label: 'Forward',      command: 'forward',         icon: 'fa-arrow-up',         control_type: 'keyboard', key_binding: 'w',     cooldown_ms: 100, sort_order: 0 },
+            { label: 'Left',         command: 'turn_left',       icon: 'fa-arrow-left',       control_type: 'keyboard', key_binding: 'a',     cooldown_ms: 100, sort_order: 1 },
+            { label: 'Stop',         command: 'stop',            icon: 'fa-stop',             control_type: 'button',   key_binding: 'space', cooldown_ms: 100, sort_order: 2 },
+            { label: 'Right',        command: 'turn_right',      icon: 'fa-arrow-right',      control_type: 'keyboard', key_binding: 'd',     cooldown_ms: 100, sort_order: 3 },
+            { label: 'Back',         command: 'backward',        icon: 'fa-arrow-down',       control_type: 'keyboard', key_binding: 's',     cooldown_ms: 100, sort_order: 4 },
+            // Face animations — button type = single tap
+            { label: 'Machine Gun',  command: 'machine_gun',     icon: 'fa-burst',            control_type: 'button',   key_binding: 'p',     cooldown_ms: 1000, sort_order: 5 },
+            { label: 'Otter',        command: 'otter',           icon: 'fa-otter',            control_type: 'button',   key_binding: 'g',     cooldown_ms: 300, sort_order: 6 },
+            { label: 'Dual Otter',   command: 'dual_otter',      icon: 'fa-otter',            control_type: 'button',   key_binding: 'y',     cooldown_ms: 300, sort_order: 7 },
+            { label: 'Mecha MG',     command: 'mechaMG',         icon: 'fa-robot',            control_type: 'button',   key_binding: 'm',     cooldown_ms: 300, sort_order: 8 },
+            { label: 'ArmCat',       command: 'armcat',          icon: 'fa-cat',              control_type: 'button',   key_binding: 'k',     cooldown_ms: 300, sort_order: 9 },
+            { label: 'NFlag',        command: 'nflag',           icon: 'fa-flag',             control_type: 'button',   key_binding: 'n',     cooldown_ms: 300, sort_order: 10 },
+            { label: 'Glance',       command: 'random_glance',   icon: 'fa-eye',              control_type: 'button',   key_binding: 'h',     cooldown_ms: 300, sort_order: 11 },
+            { label: 'Toggle Mode',  command: 'toggle_mode',     icon: 'fa-shuffle',          control_type: 'button',   key_binding: 'x',     cooldown_ms: 500, sort_order: 12 },
         ]
     },
     {
