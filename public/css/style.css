@@ -2783,8 +2783,9 @@ main#app { position: relative; z-index: 1; }
     transition: border-color 0.2s;
     resize: none; overflow-y: hidden;
     line-height: 1.4;
-    min-height: 48px; max-height: 120px; /* ~2-5 lines */
-    field-sizing: content; /* modern browsers auto-size */
+    box-sizing: border-box;
+    height: 48px;
+    min-height: 48px; max-height: 120px; /* JS auto-resizes after first input */
 }
 .chat-textarea::placeholder {
     color: var(--text-muted);
@@ -4446,7 +4447,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .offline-global-chat .chat-input-area { border-top: 1px solid var(--border); }
 .offline-global-chat .chat-input-row { display: flex; gap: 6px; padding: 8px; }
 .offline-global-chat .chat-input-row input,
-.offline-global-chat .chat-input-row .chat-textarea { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; font-size: 0.9rem; }
+.offline-global-chat .chat-input-row .chat-textarea { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 38px 8px 12px; font-size: 0.9rem; }
 
 /* ── Global Chat Page (Voice Channels + Chat Layout) ───── */
 .chat-voice-layout {
@@ -4473,7 +4474,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .global-chat-main .chat-input-area { border-top: 1px solid var(--border); }
 .global-chat-main .chat-input-row { display: flex; gap: 6px; padding: 10px 12px; }
 .global-chat-main .chat-input-row input,
-.global-chat-main .chat-input-row .chat-textarea { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; font-size: 0.9rem; }
+.global-chat-main .chat-input-row .chat-textarea { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 40px 10px 14px; font-size: 0.9rem; }
 
 /* Stream source badge in global chat */
 .chat-stream-badge {
