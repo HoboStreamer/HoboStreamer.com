@@ -81,24 +81,29 @@ function parseEmotes(text) {
     // First pass: expand Kick inline [emote:name:id] tags regardless of loaded state
     const segments = _substituteKickEmotes(text);
 
+    let result;
     if (!emotesLoaded || emoteMap.size === 0) {
-        return segments.map(seg => seg.type === 'html' ? seg.value : _linkifyPlain(seg.value)).join('');
+        result = segments.map(seg => seg.type === 'html' ? seg.value : _linkifyPlain(seg.value)).join('');
+    } else {
+        result = segments.map(seg => {
+            if (seg.type === 'html') return seg.value;
+            const tokens = seg.value.split(/(\s+)/);
+            return tokens.map(token => {
+                if (/^\s+$/.test(token)) return token;
+                const emote = emoteMap.get(token);
+                if (emote) {
+                    const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
+                    return `<img class="${cls}" src="${_escEmote(emote.url)}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
+                }
+                if (_URL_RE.test(token)) return _makeChatLink(token);
+                return _escEmote(token);
+            }).join('');
+        }).join('');
     }
 
-    return segments.map(seg => {
-        if (seg.type === 'html') return seg.value;
-        const tokens = seg.value.split(/(\s+)/);
-        return tokens.map(token => {
-            if (/^\s+$/.test(token)) return token;
-            const emote = emoteMap.get(token);
-            if (emote) {
-                const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
-                return `<img class="${cls}" src="${_escEmote(emote.url)}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
-            }
-            if (_URL_RE.test(token)) return _makeChatLink(token);
-            return _escEmote(token);
-        }).join('');
-    }).join('');
+    // Render [gif:url] tags as inline images
+    if (typeof renderGifTags === 'function') result = renderGifTags(result);
+    return result;
 }
 
 /** Linkify plain text (fallback when emotes not loaded) */

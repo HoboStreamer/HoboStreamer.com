@@ -402,8 +402,9 @@
                     if (rich.url) window.open(rich.url, '_blank');
                 });
             });
-        } catch {
-            list.innerHTML = '<div class="hobo-notif-panel-empty"><span class="icon">⚠️</span>Failed to load</div>';
+        } catch (err) {
+            const hint = !_config.token ? 'Please log in to view notifications.' : 'Try refreshing the page.';
+            list.innerHTML = `<div class="hobo-notif-panel-empty"><span class="icon">⚠️</span>${hint}</div>`;
         }
     }
 
@@ -421,6 +422,13 @@
             headers,
             // Only send credentials for same-origin requests; cross-origin uses Authorization header
             credentials: crossOrigin ? 'omit' : 'include',
+        }).then(res => {
+            if (res.status === 401 || res.status === 403) {
+                console.warn('[Notifications] Auth failed — token may be expired');
+                _config.token = null;
+                return Promise.reject(new Error('auth'));
+            }
+            return res;
         });
     }
 
@@ -441,7 +449,8 @@
     async function pollUnread() {
         try {
             const res = await apiFetch('/api/notifications/unread-count');
-            const data = await res.json();
+            let data;
+            try { data = await res.json(); } catch { return; }
             const prev = _unreadCount;
             updateBadge(data.count || 0);
 
@@ -531,7 +540,68 @@
 
         /** Get current unread count. */
         get unreadCount() { return _unreadCount; },
+
+        /** Register service worker and subscribe to browser push notifications. */
+        async subscribePush() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return { error: 'Push not supported' };
+            try {
+                const reg = await navigator.serviceWorker.register('/service-worker.js');
+                // Fetch VAPID public key from hobo.tools
+                const keyRes = await apiFetch('/api/push/vapid-key');
+                if (!keyRes?.publicKey) return { error: 'Push not configured on server' };
+
+                const applicationServerKey = urlBase64ToUint8Array(keyRes.publicKey);
+                const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+
+                // Send subscription to server
+                await apiFetch('/api/push/subscribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ subscription: sub.toJSON() }),
+                });
+                return { success: true };
+            } catch (err) {
+                return { error: err.message };
+            }
+        },
+
+        /** Unsubscribe from browser push. */
+        async unsubscribePush() {
+            if (!('serviceWorker' in navigator)) return;
+            try {
+                const reg = await navigator.serviceWorker.ready;
+                const sub = await reg.pushManager.getSubscription();
+                if (sub) {
+                    await apiFetch('/api/push/unsubscribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ endpoint: sub.endpoint }),
+                    });
+                    await sub.unsubscribe();
+                }
+            } catch (_) {}
+        },
+
+        /** Check if push is currently subscribed. */
+        async isPushSubscribed() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+            try {
+                const reg = await navigator.serviceWorker.ready;
+                const sub = await reg.pushManager.getSubscription();
+                return !!sub;
+            } catch (_) { return false; }
+        },
     };
+
+    /** Convert base64url-encoded VAPID key to Uint8Array */
+    function urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const raw = atob(base64);
+        const arr = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        return arr;
+    }
 
     // Export
     if (typeof module !== 'undefined' && module.exports) module.exports = HoboNotifications;

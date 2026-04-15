@@ -1146,6 +1146,11 @@ function _handleBgBroadcastMessage(msg) {
                 playBroadcastTTSAudio(msg);
             }
             break;
+        case 'soundboard-audio':
+            if (typeof playBroadcastTTSAudio === 'function' && typeof broadcastState !== 'undefined') {
+                playBroadcastTTSAudio(msg);
+            }
+            break;
     }
 }
 
@@ -1317,6 +1322,14 @@ function handleChatMessage(msg) {
                 if (isChatTTSEnabled({ streaming: true }) && _isTTSEnabledForSource(msg.source_platform)) playBroadcastTTSAudio(msg);
             } else if (isChatTTSEnabled() && _isTTSEnabledForSource(msg.source_platform)) {
                 // Regular chat viewer — play through chat TTS queue
+                playTTSAudio(msg);
+            }
+            break;
+        case 'soundboard-audio':
+            // 101soundboards audio — play through TTS audio queue with pitch/speed modifiers
+            if (typeof isStreaming === 'function' && isStreaming() && typeof playBroadcastTTSAudio === 'function') {
+                if (isChatTTSEnabled({ streaming: true })) playBroadcastTTSAudio(msg);
+            } else if (isChatTTSEnabled()) {
                 playTTSAudio(msg);
             }
             break;
@@ -2091,10 +2104,10 @@ function scrollToReplyTarget(headerEl) {
 function _autoResizeTextarea(el) {
     if (!el || el.tagName !== 'TEXTAREA') return;
     el.style.height = 'auto';
-    // Clamp to max-height set in CSS (~108px = 4 lines)
-    el.style.height = Math.min(el.scrollHeight, 108) + 'px';
+    // Clamp to max-height set in CSS (~120px = 5 lines)
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
     // Toggle overflow once content exceeds max
-    el.style.overflowY = el.scrollHeight > 108 ? 'auto' : 'hidden';
+    el.style.overflowY = el.scrollHeight > 120 ? 'auto' : 'hidden';
 }
 
 /**
@@ -3535,6 +3548,11 @@ function _processTTSAudioQueue() {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         const volume = (chatSettings.ttsVolume || 80) / 100;
+        // Soundboard pitch/speed modifiers (default 1.0 = normal)
+        const pitchMod = msg.pitch || 1.0;
+        const speedMod = msg.speed || 1.0;
+        // playbackRate handles speed; combined with pitch for a "chipmunk/slow" effect
+        audio.playbackRate = speedMod * pitchMod;
         console.log('[TTS] Chat audio volume:', volume, '(raw setting:', chatSettings.ttsVolume, ')');
         // Use Web Audio API GainNode for volume — Audio.volume is unreliable on PipeWire/Steam Deck
         try {
@@ -4879,3 +4897,56 @@ function _linkPreviewOpen(url) {
         _showTrustDomainDialog(url, domain);
     }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   CHAT RESIZE HANDLE — drag to change chat sidebar width
+   ══════════════════════════════════════════════════════════════ */
+(function initChatResize() {
+    const handle = document.getElementById('chat-resize-handle');
+    const sidebar = document.getElementById('chat-sidebar');
+    if (!handle || !sidebar) return;
+
+    const MIN_W = 250;
+    const MAX_RATIO = 0.5; // max 50% of viewport
+
+    // Restore saved width
+    const saved = localStorage.getItem('hobo_chat_width');
+    if (saved) {
+        const w = parseInt(saved, 10);
+        if (w >= MIN_W && w <= window.innerWidth * MAX_RATIO) {
+            sidebar.style.width = w + 'px';
+        }
+    }
+
+    let dragging = false;
+    let startX = 0;
+    let startW = 0;
+
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        dragging = true;
+        startX = e.clientX;
+        startW = sidebar.offsetWidth;
+        handle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        // Chat is on the right, so dragging left increases width
+        const diff = startX - e.clientX;
+        const maxW = window.innerWidth * MAX_RATIO;
+        const newW = Math.max(MIN_W, Math.min(maxW, startW + diff));
+        sidebar.style.width = newW + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem('hobo_chat_width', sidebar.offsetWidth);
+    });
+})();

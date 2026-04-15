@@ -352,6 +352,10 @@ let ghostTileX = 0, ghostTileY = 0;
 // Panels
 let activePanel = null; // 'inventory','bank','shop','crafting','skills','map','leaderboard','build','quests'
 let panelData = {};
+let panelAnimProgress = 0;   // 0→1 slide-in animation progress
+let panelAnimDir = 0;        // 1 = opening, -1 = closing, 0 = idle
+let panelClosingTo = null;   // panel name queued after close animation
+let panelAnimSpeed = 0.08;   // ~12 frames ≈ 200ms at 60fps
 
 // Chat
 let chatMessages = [];
@@ -1191,6 +1195,9 @@ function update() {
     for (const [key, t] of depletedNodes) {
         if (now >= t) depletedNodes.delete(key);
     }
+
+    // Panel slide animation
+    updatePanelAnimation();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1587,8 +1594,8 @@ function render() {
     // Chat overlay
     drawChat(ctx);
 
-    // Active panel
-    if (activePanel) drawPanel(ctx);
+    // Active panel (draw during close animation too)
+    if (activePanel || panelAnimDir !== 0) drawPanel(ctx);
 
     // Fishing mini-game overlay
     if (FISHING.active) renderFishingOverlay(ctx);
@@ -3065,10 +3072,48 @@ function drawDeathScreen(ctx) {
 // ══════════════════════════════════════════════════════════════
 
 function togglePanel(name) {
-    if (activePanel === name) { activePanel = null; activeNPC = null; npcShopData = null; invGridHeldItem = null; return; }
+    if (activePanel === name) {
+        // Close current panel with animation
+        panelAnimDir = -1;
+        panelClosingTo = null;
+        activeNPC = null; npcShopData = null; invGridHeldItem = null;
+        return;
+    }
+    if (activePanel && activePanel !== name) {
+        // Switch panel: close current, then open new
+        panelAnimDir = -1;
+        panelClosingTo = name;
+        invGridHeldItem = null;
+        return;
+    }
+    // Open new panel
     activePanel = name;
-    invGridHeldItem = null; // Clear held item when switching panels
+    invGridHeldItem = null;
+    panelAnimProgress = 0;
+    panelAnimDir = 1;
     loadPanelData(name);
+}
+
+function updatePanelAnimation() {
+    if (panelAnimDir === 0) return;
+    panelAnimProgress += panelAnimDir * panelAnimSpeed;
+    if (panelAnimProgress >= 1) {
+        panelAnimProgress = 1;
+        panelAnimDir = 0;
+    } else if (panelAnimProgress <= 0) {
+        panelAnimProgress = 0;
+        panelAnimDir = 0;
+        activePanel = null;
+        if (panelClosingTo) {
+            // Open the queued panel
+            activePanel = panelClosingTo;
+            panelClosingTo = null;
+            panelAnimProgress = 0;
+            panelAnimDir = 1;
+            invGridHeldItem = null;
+            loadPanelData(activePanel);
+        }
+    }
 }
 
 function interactWithNPC(npc) {
@@ -3081,6 +3126,9 @@ function interactWithNPC(npc) {
         activePanel = 'bank';
     } else {
         activePanel = 'npc_shop';
+    }
+    panelAnimProgress = 0;
+    panelAnimDir = 1;
     }
     loadNPCData(npc.id);
 }
@@ -3200,13 +3248,47 @@ async function claimDailyQuest(questId) {
 
 function drawPanel(ctx) {
     const pw = 340, ph = 420;
-    const px = CAM_W - pw - 15, py = 130;
+    // Eased slide-in from right
+    const eased = 1 - Math.pow(1 - panelAnimProgress, 3); // easeOutCubic
+    const slideOffset = (1 - eased) * (pw + 20);
+    const px = CAM_W - pw - 15 + slideOffset, py = 130;
+
+    ctx.save();
+    ctx.globalAlpha = eased;
+
+    // Rounded rectangle helper
+    const r = 6;
+    ctx.beginPath();
+    ctx.moveTo(px + r, py);
+    ctx.lineTo(px + pw - r, py);
+    ctx.arcTo(px + pw, py, px + pw, py + r, r);
+    ctx.lineTo(px + pw, py + ph - r);
+    ctx.arcTo(px + pw, py + ph, px + pw - r, py + ph, r);
+    ctx.lineTo(px + r, py + ph);
+    ctx.arcTo(px, py + ph, px, py + ph - r, r);
+    ctx.lineTo(px, py + r);
+    ctx.arcTo(px, py, px + r, py, r);
+    ctx.closePath();
+
+    // Drop shadow
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetX = -4;
+    ctx.shadowOffsetY = 4;
+
     // Background with theme
-    ctx.fillStyle = theme.bgPanel ? theme.bgPanel + 'ee' : 'rgba(15,15,25,0.93)';
-    ctx.fillRect(px, py, pw, ph);
+    ctx.fillStyle = theme.bgPanel ? theme.bgPanel + 'ee' : 'rgba(15,15,25,0.95)';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
     ctx.strokeStyle = theme.border || '#555';
     ctx.lineWidth = 1;
-    ctx.strokeRect(px, py, pw, ph);
+    ctx.stroke();
+
+    // Clip to rounded rect for content
+    ctx.clip();
+
     // Accent top bar
     ctx.fillStyle = theme.accent || '#c0965c';
     ctx.fillRect(px, py, pw, 3);
@@ -3241,6 +3323,14 @@ function drawPanel(ctx) {
     ctx.font = '11px sans-serif';
     ctx.fillText('[ESC to close]', px + pw - 90, py + 22);
 
+    // Separator line below title
+    ctx.strokeStyle = (theme.border || '#555') + '80';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(px + 8, py + 32);
+    ctx.lineTo(px + pw - 8, py + 32);
+    ctx.stroke();
+
     const contentY = py + 35;
     ctx.save();
     ctx.beginPath();
@@ -3259,7 +3349,8 @@ function drawPanel(ctx) {
     else if (activePanel === 'fish_album') drawFishAlbumPanel(ctx, px, contentY, pw);
     else if (activePanel === 'achievements') drawAchievementsPanel(ctx, px, contentY, pw);
 
-    ctx.restore();
+    ctx.restore(); // content clip
+    ctx.restore(); // panel alpha + rounded clip
 }
 
 function drawItemList(ctx, items, px, py, pw) {
@@ -3282,13 +3373,124 @@ function drawItemList(ctx, items, px, py, pw) {
     });
 }
 
+// ── Enhanced Tooltip Helpers ──
+function drawTooltip(ctx, mx, my, panelX, panelW, panelY, item, fallbackName, actionText) {
+    if (!item && !fallbackName) return;
+    const name = item?.name || fallbackName || '???';
+    const emoji = item?.emoji || '';
+    const rarity = item?.rarity || 'Common';
+    const category = item?.category || '';
+    const quantity = item?.quantity || 1;
+    const rarCol = RARITY_COLORS[rarity] || '#aaa';
+
+    const lines = [`${emoji} ${name}`];
+    if (item) lines.push(`${rarity}  ×${quantity}  [${category || '?'}]`);
+    if (actionText) lines.push(actionText);
+
+    const ttW = 170, lineH = 15;
+    const ttH = 10 + lines.length * lineH;
+    let ttX = mx + 14, ttY = my - 8;
+    if (ttX + ttW > panelX + panelW + 20) ttX = mx - ttW - 8;
+    if (ttY + ttH > panelY + 380) ttY = my - ttH;
+
+    // Rounded tooltip background
+    const r = 4;
+    ctx.beginPath();
+    ctx.moveTo(ttX + r, ttY);
+    ctx.lineTo(ttX + ttW - r, ttY);
+    ctx.arcTo(ttX + ttW, ttY, ttX + ttW, ttY + r, r);
+    ctx.lineTo(ttX + ttW, ttY + ttH - r);
+    ctx.arcTo(ttX + ttW, ttY + ttH, ttX + ttW - r, ttY + ttH, r);
+    ctx.lineTo(ttX + r, ttY + ttH);
+    ctx.arcTo(ttX, ttY + ttH, ttX, ttY + ttH - r, r);
+    ctx.lineTo(ttX, ttY + r);
+    ctx.arcTo(ttX, ttY, ttX + r, ttY, r);
+    ctx.closePath();
+
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = 'rgba(10,10,18,0.96)';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Rarity accent bar (left edge)
+    ctx.fillStyle = rarCol;
+    ctx.fillRect(ttX, ttY + 4, 3, ttH - 8);
+
+    // Border
+    ctx.strokeStyle = rarCol + '80';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Text
+    ctx.textAlign = 'left';
+    ctx.fillStyle = rarCol;
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(lines[0], ttX + 8, ttY + 14);
+
+    if (lines[1] && item) {
+        ctx.fillStyle = theme.textDim || '#aaa';
+        ctx.font = '9px sans-serif';
+        ctx.fillText(lines[1], ttX + 8, ttY + 14 + lineH);
+    }
+    if (actionText) {
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = '9px sans-serif';
+        ctx.fillText(actionText, ttX + 8, ttY + 14 + (lines.length - 1) * lineH);
+    }
+}
+
+function drawTooltipSimple(ctx, mx, my, panelX, panelW, text) {
+    const ttW = 120, ttH = 22;
+    let ttX = mx + 14, ttY = my - 8;
+    if (ttX + ttW > panelX + panelW + 20) ttX = mx - ttW - 8;
+
+    const r = 4;
+    ctx.beginPath();
+    ctx.moveTo(ttX + r, ttY);
+    ctx.lineTo(ttX + ttW - r, ttY);
+    ctx.arcTo(ttX + ttW, ttY, ttX + ttW, ttY + r, r);
+    ctx.lineTo(ttX + ttW, ttY + ttH - r);
+    ctx.arcTo(ttX + ttW, ttY + ttH, ttX + ttW - r, ttY + ttH, r);
+    ctx.lineTo(ttX + r, ttY + ttH);
+    ctx.arcTo(ttX, ttY + ttH, ttX, ttY + ttH - r, r);
+    ctx.lineTo(ttX, ttY + r);
+    ctx.arcTo(ttX, ttY, ttX + r, ttY, r);
+    ctx.closePath();
+
+    ctx.fillStyle = 'rgba(10,10,18,0.96)';
+    ctx.fill();
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#888';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(text, ttX + 8, ttY + 14);
+}
+
 function drawInventoryPanel(ctx, px, py, pw) {
     const items = panelData.inventory;
     if (!items) { ctx.fillStyle = theme.textMuted || '#888'; ctx.font = '13px sans-serif'; ctx.fillText('Loading...', px + 10, py + 20); return; }
 
-    const SLOT = 38, GAP = 3, COLS = 7, EQUIP_SLOT = 42;
+    const SLOT = 40, GAP = 3, COLS = 7, EQUIP_SLOT = 44;
 
-    // ── Equipment Slots (left column, 6 slots vertical) ──
+    // Helper: draw a rounded rect slot
+    function drawSlotBg(sx, sy, sw, sh, rad) {
+        ctx.beginPath();
+        ctx.moveTo(sx + rad, sy);
+        ctx.lineTo(sx + sw - rad, sy);
+        ctx.arcTo(sx + sw, sy, sx + sw, sy + rad, rad);
+        ctx.lineTo(sx + sw, sy + sh - rad);
+        ctx.arcTo(sx + sw, sy + sh, sx + sw - rad, sy + sh, rad);
+        ctx.lineTo(sx + rad, sy + sh);
+        ctx.arcTo(sx, sy + sh, sx, sy + sh - rad, rad);
+        ctx.lineTo(sx, sy + rad);
+        ctx.arcTo(sx, sy, sx + rad, sy, rad);
+        ctx.closePath();
+    }
+
+    // ── Equipment Slots (left column, 6 slots in 2 cols × 3 rows) ──
     ctx.fillStyle = theme.accent || '#c0965c';
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'left';
@@ -3309,9 +3511,10 @@ function drawInventoryPanel(ctx, px, py, pw) {
         const row = i % 3, col = Math.floor(i / 3);
         const sx = eqX + col * (EQUIP_SLOT + GAP);
         const sy = eqStartY + row * (EQUIP_SLOT + GAP);
-        // Slot background
+        // Rounded slot background
+        drawSlotBg(sx, sy, EQUIP_SLOT, EQUIP_SLOT, 4);
         ctx.fillStyle = theme.bgCard || '#1a1a20';
-        ctx.fillRect(sx, sy, EQUIP_SLOT, EQUIP_SLOT);
+        ctx.fill();
         const equipped = myPlayer?.[slot.key];
 
         // Highlight matching slot when dragging an equippable item
@@ -3320,31 +3523,44 @@ function drawInventoryPanel(ctx, px, py, pw) {
             ctx.strokeStyle = '#4ade80';
             ctx.lineWidth = 2.5;
             ctx.shadowColor = '#4ade80';
-            ctx.shadowBlur = 6;
-            ctx.strokeRect(sx, sy, EQUIP_SLOT, EQUIP_SLOT);
+            ctx.shadowBlur = 8;
+            drawSlotBg(sx, sy, EQUIP_SLOT, EQUIP_SLOT, 4);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        } else if (equipped) {
+            const invItem = items.find(it => it.item_id === equipped);
+            const rarCol = RARITY_COLORS[invItem?.rarity];
+            if (rarCol && invItem?.rarity !== 'Common' && invItem?.rarity !== 'Junk') {
+                ctx.shadowColor = rarCol;
+                ctx.shadowBlur = 6;
+            }
+            ctx.strokeStyle = rarCol || (theme.accent || '#c0965c');
+            ctx.lineWidth = 2;
+            drawSlotBg(sx, sy, EQUIP_SLOT, EQUIP_SLOT, 4);
+            ctx.stroke();
             ctx.shadowBlur = 0;
         } else {
-            ctx.strokeStyle = equipped ? (theme.accent || '#c0965c') : (theme.border || '#333');
-            ctx.lineWidth = equipped ? 2 : 1;
-            ctx.strokeRect(sx, sy, EQUIP_SLOT, EQUIP_SLOT);
+            ctx.strokeStyle = theme.border || '#333';
+            ctx.lineWidth = 1;
+            drawSlotBg(sx, sy, EQUIP_SLOT, EQUIP_SLOT, 4);
+            ctx.stroke();
         }
         ctx.textAlign = 'center';
         if (equipped) {
-            // Find item emoji from inventory or use default
             const invItem = items.find(it => it.item_id === equipped);
-            ctx.font = '18px serif';
+            ctx.font = '20px serif';
             ctx.fillStyle = '#fff';
-            ctx.fillText(invItem?.emoji || slot.label, sx + EQUIP_SLOT / 2, sy + 24);
+            ctx.fillText(invItem?.emoji || slot.label, sx + EQUIP_SLOT / 2, sy + 26);
             ctx.font = '7px sans-serif';
             ctx.fillStyle = RARITY_COLORS[invItem?.rarity] || theme.textDim || '#aaa';
             const shortName = (invItem?.name || equipped).replace(/^(Bamboo |Fiberglass |Carbon |Titanium |Mythril |Stone |Iron |Steel |Diamond |Wooden |Bronze )/, '').slice(0, 8);
-            ctx.fillText(shortName, sx + EQUIP_SLOT / 2, sy + 37);
+            ctx.fillText(shortName, sx + EQUIP_SLOT / 2, sy + 39);
         } else {
             ctx.fillStyle = theme.textMuted || '#444';
-            ctx.font = '14px serif';
-            ctx.fillText(slot.label, sx + EQUIP_SLOT / 2, sy + 22);
+            ctx.font = '15px serif';
+            ctx.fillText(slot.label, sx + EQUIP_SLOT / 2, sy + 24);
             ctx.font = '7px sans-serif';
-            ctx.fillText(slot.name, sx + EQUIP_SLOT / 2, sy + 35);
+            ctx.fillText(slot.name, sx + EQUIP_SLOT / 2, sy + 37);
         }
     });
 
@@ -3352,11 +3568,12 @@ function drawInventoryPanel(ctx, px, py, pw) {
     const hasSonar = items.some(it => it.item_id === 'fish_sonar');
     if (hasSonar) {
         const btnX = px + 6 + 2 * (EQUIP_SLOT + GAP), btnY = eqStartY + 2 * (EQUIP_SLOT + GAP);
+        drawSlotBg(btnX, btnY, EQUIP_SLOT, EQUIP_SLOT, 4);
         ctx.fillStyle = '#1a3a4a';
-        ctx.fillRect(btnX, btnY, EQUIP_SLOT, EQUIP_SLOT);
+        ctx.fill();
         ctx.strokeStyle = '#3b82f6';
         ctx.lineWidth = 1;
-        ctx.strokeRect(btnX, btnY, EQUIP_SLOT, EQUIP_SLOT);
+        ctx.stroke();
         ctx.font = '16px serif';
         ctx.textAlign = 'center';
         ctx.fillStyle = '#fff';
@@ -3369,11 +3586,12 @@ function drawInventoryPanel(ctx, px, py, pw) {
     // ── Inventory Grid (Minecraft-style) ──
     const gridStartY = eqStartY + 3 * (EQUIP_SLOT + GAP) + 8;
 
-    // ── Coin Display (dedicated bar above backpack, full width to avoid overlap) ──
+    // ── Coin Display (dedicated bar above backpack, full width) ──
     const coinAmount = myPlayer?.hobo_coins || 0;
     const coinBarY = gridStartY - 16;
+    drawSlotBg(px + 4, coinBarY, pw - 8, 14, 3);
     ctx.fillStyle = 'rgba(255,191,36,0.12)';
-    ctx.fillRect(px + 4, coinBarY, pw - 8, 14);
+    ctx.fill();
     ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fbbf24';
@@ -3396,66 +3614,86 @@ function drawInventoryPanel(ctx, px, py, pw) {
         for (let col = 0; col < COLS; col++) {
             const slotIdx = (row + invGridScroll) * COLS + col;
             const sx = gridX + col * (SLOT + GAP);
-            const sy = gridStartY + row * (SLOT + GAP);
+            const sy = gridStartY + 8 + row * (SLOT + GAP);
 
-            // Slot background
+            // Rounded slot background
+            drawSlotBg(sx, sy, SLOT, SLOT, 3);
             ctx.fillStyle = theme.bgCard || '#1a1a20';
-            ctx.fillRect(sx, sy, SLOT, SLOT);
+            ctx.fill();
             ctx.strokeStyle = theme.border || '#333';
             ctx.lineWidth = 1;
-            ctx.strokeRect(sx, sy, SLOT, SLOT);
+            ctx.stroke();
 
             if (slotIdx < items.length) {
                 const item = items[slotIdx];
-                // Skip if this item is currently held
                 if (invGridHeldItem && invGridHeldItem.fromSlot === slotIdx) continue;
 
-                // Rarity border highlight
+                // Rarity glow effect for rare+ items
                 const rarCol = RARITY_COLORS[item.rarity];
                 if (rarCol && item.rarity !== 'Common' && item.rarity !== 'Junk') {
+                    ctx.shadowColor = rarCol;
+                    ctx.shadowBlur = item.rarity === 'Legendary' || item.rarity === 'Mythic' ? 8 : 4;
+                    drawSlotBg(sx, sy, SLOT, SLOT, 3);
                     ctx.strokeStyle = rarCol;
                     ctx.lineWidth = 1.5;
-                    ctx.strokeRect(sx + 1, sy + 1, SLOT - 2, SLOT - 2);
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
                 }
 
                 // Item emoji
-                ctx.font = '18px serif';
+                ctx.font = '20px serif';
                 ctx.textAlign = 'center';
                 ctx.fillStyle = '#fff';
-                ctx.fillText(item.emoji || '❓', sx + SLOT / 2, sy + 22);
+                ctx.fillText(item.emoji || '❓', sx + SLOT / 2, sy + 24);
 
-                // Quantity badge (bottom-right)
+                // Quantity badge (bottom-right, pill-shaped)
                 if (item.quantity > 1) {
+                    const qText = `${item.quantity}`;
                     ctx.font = 'bold 9px sans-serif';
-                    ctx.textAlign = 'right';
+                    const qW = Math.max(14, ctx.measureText(qText).width + 6);
+                    const qX = sx + SLOT - qW - 1, qY = sy + SLOT - 12;
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    drawSlotBg(qX, qY, qW, 11, 3);
+                    ctx.fill();
+                    ctx.textAlign = 'center';
                     ctx.fillStyle = '#fff';
-                    ctx.fillText(`${item.quantity}`, sx + SLOT - 3, sy + SLOT - 4);
+                    ctx.fillText(qText, qX + qW / 2, qY + 9);
                 }
             }
         }
     }
 
-    // Scroll indicator
+    // Scroll indicator (rounded track)
     const totalRows = Math.ceil(items.length / COLS);
     if (totalRows > ROWS) {
-        const scrollBarH = Math.max(10, (ROWS / totalRows) * (ROWS * (SLOT + GAP)));
-        const scrollBarY = gridStartY + (invGridScroll / maxScroll) * (ROWS * (SLOT + GAP) - scrollBarH);
-        ctx.fillStyle = theme.textMuted || '#555';
-        ctx.fillRect(gridX + gridW + 2, scrollBarY, 3, scrollBarH);
+        const trackH = ROWS * (SLOT + GAP);
+        const scrollBarH = Math.max(14, (ROWS / totalRows) * trackH);
+        const scrollBarY = gridStartY + 8 + (invGridScroll / maxScroll) * (trackH - scrollBarH);
+        // Track
+        ctx.fillStyle = (theme.border || '#333') + '40';
+        drawSlotBg(gridX + gridW + 3, gridStartY + 8, 4, trackH, 2);
+        ctx.fill();
+        // Thumb
+        ctx.fillStyle = theme.accent || '#c0965c';
+        drawSlotBg(gridX + gridW + 3, scrollBarY, 4, scrollBarH, 2);
+        ctx.fill();
     }
 
     // ── Held item follows cursor ──
     if (invGridHeldItem) {
         ctx.globalAlpha = 0.85;
-        ctx.font = '22px serif';
+        ctx.font = '24px serif';
         ctx.textAlign = 'center';
         ctx.fillStyle = '#fff';
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 6;
         ctx.fillText(invGridHeldItem.emoji || '❓', mouseX, mouseY - 4);
+        ctx.shadowBlur = 0;
         if (invGridHeldItem.quantity > 1) {
             ctx.font = 'bold 10px sans-serif';
             ctx.textAlign = 'right';
             ctx.fillStyle = '#fff';
-            ctx.fillText(`${invGridHeldItem.quantity}`, mouseX + 12, mouseY + 10);
+            ctx.fillText(`${invGridHeldItem.quantity}`, mouseX + 14, mouseY + 10);
         }
         ctx.globalAlpha = 1;
     }
@@ -3469,69 +3707,27 @@ function drawInventoryPanel(ctx, px, py, pw) {
             const equipped = myPlayer?.[equipSlots[ei].key];
             if (equipped) {
                 const invItem = items.find(it => it.item_id === equipped);
-                const ttW = 150, ttH = 42;
-                let ttX = mouseX + 14, ttY = mouseY - 8;
-                if (ttX + ttW > px + pw) ttX = mouseX - ttW - 8;
-                ctx.fillStyle = 'rgba(10,10,15,0.95)';
-                ctx.fillRect(ttX, ttY, ttW, ttH);
-                ctx.strokeStyle = RARITY_COLORS[invItem?.rarity] || '#555';
-                ctx.lineWidth = 1;
-                ctx.strokeRect(ttX, ttY, ttW, ttH);
-                ctx.fillStyle = RARITY_COLORS[invItem?.rarity] || '#ddd';
-                ctx.font = 'bold 11px sans-serif';
-                ctx.textAlign = 'left';
-                ctx.fillText(`${invItem?.emoji || ''} ${invItem?.name || equipped}`, ttX + 6, ttY + 14);
-                ctx.fillStyle = '#fbbf24';
-                ctx.font = '9px sans-serif';
-                ctx.fillText('Click to unequip', ttX + 6, ttY + 30);
+                drawTooltip(ctx, mouseX, mouseY, px, pw, py, invItem, equipped, 'Click to unequip');
             } else {
-                const ttW = 110, ttH = 18;
-                let ttX = mouseX + 14, ttY = mouseY - 8;
-                if (ttX + ttW > px + pw) ttX = mouseX - ttW - 8;
-                ctx.fillStyle = 'rgba(10,10,15,0.95)';
-                ctx.fillRect(ttX, ttY, ttW, ttH);
-                ctx.strokeStyle = '#444';
-                ctx.lineWidth = 1;
-                ctx.strokeRect(ttX, ttY, ttW, ttH);
-                ctx.fillStyle = '#888';
-                ctx.font = '9px sans-serif';
-                ctx.textAlign = 'left';
-                ctx.fillText(`${equipSlots[ei].name} — empty`, ttX + 6, ttY + 12);
+                drawTooltipSimple(ctx, mouseX, mouseY, px, pw, `${equipSlots[ei].name} — empty`);
             }
             break;
         }
     }
 
-    // ── Tooltip on hover ──
-    if (mouseX >= gridX && mouseX <= gridX + gridW && mouseY >= gridStartY && mouseY <= gridStartY + ROWS * (SLOT + GAP)) {
+    // ── Tooltip on hover (backpack grid) ──
+    const gridTop = gridStartY + 8;
+    if (mouseX >= gridX && mouseX <= gridX + gridW && mouseY >= gridTop && mouseY <= gridTop + ROWS * (SLOT + GAP)) {
         const hCol = Math.floor((mouseX - gridX) / (SLOT + GAP));
-        const hRow = Math.floor((mouseY - gridStartY) / (SLOT + GAP));
+        const hRow = Math.floor((mouseY - gridTop) / (SLOT + GAP));
         const hIdx = (hRow + invGridScroll) * COLS + hCol;
         if (hCol >= 0 && hCol < COLS && hIdx >= 0 && hIdx < items.length) {
             const item = items[hIdx];
-            const ttW = 150, ttH = 52;
-            let ttX = mouseX + 14, ttY = mouseY - 8;
-            if (ttX + ttW > px + pw) ttX = mouseX - ttW - 8;
-            if (ttY + ttH > py + 380) ttY = mouseY - ttH;
-            ctx.fillStyle = 'rgba(10,10,15,0.95)';
-            ctx.fillRect(ttX, ttY, ttW, ttH);
-            ctx.strokeStyle = RARITY_COLORS[item.rarity] || '#555';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(ttX, ttY, ttW, ttH);
-            ctx.fillStyle = RARITY_COLORS[item.rarity] || '#ddd';
-            ctx.font = 'bold 11px sans-serif';
-            ctx.textAlign = 'left';
-            ctx.fillText(`${item.emoji || ''} ${item.name || item.item_id}`, ttX + 6, ttY + 14);
-            ctx.fillStyle = theme.textDim || '#aaa';
-            ctx.font = '9px sans-serif';
-            ctx.fillText(`${item.rarity || 'Common'}  ×${item.quantity}  [${item.category || '?'}]`, ttX + 6, ttY + 28);
-            ctx.fillStyle = '#888';
-            ctx.font = '9px sans-serif';
             const action = (['weapons', 'armor', 'hats', 'pickaxes', 'axes', 'rods'].includes(item.category)) ? 'Drag to equip slot' :
                 (item.category === 'consumable' || item.category === 'potion') ? 'Click to use' :
                 (item.category === 'name_effects' || item.category === 'particles' || item.category === 'voices') ? 'Click to unlock as global cosmetic' :
                 (item.item_id === 'fish_sonar') ? 'Click to ping' : '';
-            if (action) ctx.fillText(action, ttX + 6, ttY + 42);
+            drawTooltip(ctx, mouseX, mouseY, px, pw, py, item, null, action);
         }
     }
 
@@ -3728,13 +3924,29 @@ function drawCraftingPanel(ctx, px, py, pw) {
     const recipes = panelData.recipes;
     if (!recipes) { ctx.fillStyle = theme.textMuted || '#888'; ctx.font = '13px sans-serif'; ctx.fillText('Loading...', px + 10, py + 20); return; }
 
-    // Category tabs
-    const tabW = Math.floor((pw - 20) / CRAFT_CATS.length);
+    // Rounded rect helper
+    function rr(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+        ctx.arcTo(x + w, y, x + w, y + r, r); ctx.lineTo(x + w, y + h - r);
+        ctx.arcTo(x + w, y + h, x + w - r, y + h, r); ctx.lineTo(x + r, y + h);
+        ctx.arcTo(x, y + h, x, y + h - r, r); ctx.lineTo(x, y + r);
+        ctx.arcTo(x, y, x + r, y, r); ctx.closePath();
+    }
+
+    // Category tabs (pill-shaped)
+    const tabW = Math.floor((pw - 16) / CRAFT_CATS.length);
     CRAFT_CATS.forEach((cat, i) => {
-        const tx = px + 10 + i * tabW;
+        const tx = px + 8 + i * tabW;
         const active = craftCategory === cat.id;
+        rr(tx, py + 1, tabW - 2, 18, 4);
         ctx.fillStyle = active ? (theme.accent || '#c0965c') : (theme.bgCard || '#1a1a20');
-        ctx.fillRect(tx, py, tabW - 2, 18);
+        ctx.fill();
+        if (active) {
+            ctx.strokeStyle = theme.accent || '#c0965c';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
         ctx.fillStyle = active ? '#000' : (theme.textDim || '#aaa');
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
@@ -3753,28 +3965,48 @@ function drawCraftingPanel(ctx, px, py, pw) {
         return;
     }
 
-    // Recipe list
-    const cardH = 50, startY = py + 24;
-    const maxVisible = Math.floor(320 / cardH);
+    // Recipe list with modernized cards
+    const cardH = 54, startY = py + 26;
+    const maxVisible = Math.floor(340 / cardH);
     const scrolled = filtered.slice(craftScroll, craftScroll + maxVisible);
     scrolled.forEach((r, i) => {
         const y = startY + i * cardH;
-        // Card background
-        ctx.fillStyle = (theme.bgCard || '#1a1a20') + 'cc';
-        ctx.fillRect(px + 6, y, pw - 12, cardH - 4);
-        ctx.strokeStyle = theme.border || '#333';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(px + 6, y, pw - 12, cardH - 4);
-
-        // Output item: emoji + name + rarity color
         const rarCol = RARITY_COLORS[r.rarity] || '#aaa';
+        const inputs = r.inputDetails || {};
+        const canCraft = Object.entries(inputs).every(([id, d]) => (craftInventory[id] || 0) >= d.qty);
+
+        // Card background (rounded)
+        rr(px + 6, y, pw - 12, cardH - 4, 4);
+        ctx.fillStyle = (theme.bgCard || '#1a1a20') + 'dd';
+        ctx.fill();
+        ctx.strokeStyle = canCraft ? (rarCol + '60') : (theme.border || '#333');
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Rarity accent bar (left)
         ctx.fillStyle = rarCol;
-        ctx.font = 'bold 12px sans-serif';
+        ctx.fillRect(px + 6, y + 4, 3, cardH - 12);
+
+        // Output item icon background circle
+        const iconX = px + 22, iconY = y + (cardH - 4) / 2;
+        ctx.beginPath();
+        ctx.arc(iconX, iconY, 13, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fill();
+        // Output emoji
+        ctx.font = '16px serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(r.outputEmoji || '❓', iconX, iconY + 5);
+
+        // Item name + rarity
         ctx.textAlign = 'left';
-        ctx.fillText(`${r.outputEmoji || '❓'} ${r.name}`, px + 12, y + 15);
+        ctx.fillStyle = rarCol;
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText(r.name, px + 40, y + 15);
 
         // Station/level requirement badges
-        let badgeX = px + 12 + ctx.measureText(`${r.outputEmoji || '❓'} ${r.name}`).width + 6;
+        let badgeX = px + 40 + ctx.measureText(r.name).width + 6;
         if (r.station) {
             const stIcons = { furnace: '🔥', workbench: '🔨', campfire: '🏕️' };
             ctx.font = '9px sans-serif';
@@ -3789,33 +4021,32 @@ function drawCraftingPanel(ctx, px, py, pw) {
             ctx.fillText(`Sm${r.smithingLevel}`, badgeX, y + 14);
         }
 
-        // Materials row — green if have enough, red if not
-        const inputs = r.inputDetails || {};
-        let matX = px + 12;
+        // Materials row with icons
+        let matX = px + 40;
         ctx.font = '10px sans-serif';
         for (const [itemId, detail] of Object.entries(inputs)) {
             const have = craftInventory[itemId] || 0;
             const need = detail.qty;
             ctx.fillStyle = have >= need ? '#4fc94f' : '#ef4444';
             const matStr = `${detail.emoji || '?'}${have}/${need}`;
-            ctx.fillText(matStr, matX, y + 30);
+            ctx.fillText(matStr, matX, y + 32);
             matX += ctx.measureText(matStr).width + 8;
             if (matX > px + pw - 60) break;
         }
 
-        // CRAFT button
-        const canCraft = Object.entries(inputs).every(([id, d]) => (craftInventory[id] || 0) >= d.qty);
-        const btnX = px + pw - 54, btnY = y + 6, btnW = 44, btnH = 16;
+        // CRAFT button (rounded pill)
+        const btnX = px + pw - 56, btnY2 = y + 10, btnW = 44, btnH = 20;
+        rr(btnX, btnY2, btnW, btnH, 4);
         ctx.fillStyle = canCraft ? (theme.accent || '#c0965c') : (theme.textMuted || '#444');
-        ctx.fillRect(btnX, btnY, btnW, btnH);
+        ctx.fill();
         ctx.fillStyle = canCraft ? '#000' : '#888';
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('CRAFT', btnX + btnW / 2, btnY + 12);
+        ctx.fillText('CRAFT', btnX + btnW / 2, btnY2 + 14);
         ctx.textAlign = 'left';
     });
 
-    // Scroll indicator
+    // Scroll indicator (count)
     if (filtered.length > maxVisible) {
         ctx.fillStyle = theme.textMuted || '#888';
         ctx.font = '10px sans-serif';
@@ -4582,7 +4813,7 @@ function setupGameInput() {
             case 'Enter': chatOpen = true; e.preventDefault(); break;
             case 'Escape':
                 if (FISHING.active) { exitFishingMode(); }
-                else if (activePanel) activePanel = null;
+                else if (activePanel) { panelAnimDir = -1; panelClosingTo = null; activeNPC = null; npcShopData = null; invGridHeldItem = null; }
                 else if (buildMode) { buildMode = false; selectedStructure = null; }
                 break;
             case 'KeyE': {
@@ -5278,49 +5509,88 @@ function removeFromHotbar(itemId) {
 }
 
 function drawHotbar(ctx) {
-    const SLOT_SIZE = 40;
+    const SLOT_SIZE = 42;
     const GAP = 4;
     const SLOTS = 9;
     const totalW = SLOTS * SLOT_SIZE + (SLOTS - 1) * GAP;
     const startX = (CAM_W - totalW) / 2;
-    const startY = CAM_H - SLOT_SIZE - 30; // above the hint bar
+    const startY = CAM_H - SLOT_SIZE - 30;
+    const R = 5; // corner radius
+
+    // Backdrop behind all slots
+    const bdPad = 4;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    const bx = startX - bdPad, by = startY - bdPad, bw = totalW + bdPad * 2, bh = SLOT_SIZE + bdPad * 2;
+    ctx.moveTo(bx + R, by); ctx.lineTo(bx + bw - R, by);
+    ctx.arcTo(bx + bw, by, bx + bw, by + R, R); ctx.lineTo(bx + bw, by + bh - R);
+    ctx.arcTo(bx + bw, by + bh, bx + bw - R, by + bh, R); ctx.lineTo(bx + R, by + bh);
+    ctx.arcTo(bx, by + bh, bx, by + bh - R, R); ctx.lineTo(bx, by + R);
+    ctx.arcTo(bx, by, bx + R, by, R); ctx.closePath();
+    ctx.fill();
 
     for (let i = 0; i < SLOTS; i++) {
         const sx = startX + i * (SLOT_SIZE + GAP);
         const slot = hotbarSlots[i];
         const isActive = (i === activeHotbarSlot);
 
-        // Slot background
-        ctx.fillStyle = isActive ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.55)';
-        ctx.fillRect(sx, startY, SLOT_SIZE, SLOT_SIZE);
+        // Rounded slot
+        ctx.beginPath();
+        ctx.moveTo(sx + R, startY); ctx.lineTo(sx + SLOT_SIZE - R, startY);
+        ctx.arcTo(sx + SLOT_SIZE, startY, sx + SLOT_SIZE, startY + R, R);
+        ctx.lineTo(sx + SLOT_SIZE, startY + SLOT_SIZE - R);
+        ctx.arcTo(sx + SLOT_SIZE, startY + SLOT_SIZE, sx + SLOT_SIZE - R, startY + SLOT_SIZE, R);
+        ctx.lineTo(sx + R, startY + SLOT_SIZE);
+        ctx.arcTo(sx, startY + SLOT_SIZE, sx, startY + SLOT_SIZE - R, R);
+        ctx.lineTo(sx, startY + R);
+        ctx.arcTo(sx, startY, sx + R, startY, R);
+        ctx.closePath();
 
-        // Border
-        ctx.strokeStyle = isActive ? '#fbbf24' : 'rgba(255,255,255,0.2)';
-        ctx.lineWidth = isActive ? 2.5 : 1;
-        ctx.strokeRect(sx, startY, SLOT_SIZE, SLOT_SIZE);
+        ctx.fillStyle = isActive ? 'rgba(255,255,255,0.18)' : 'rgba(15,15,25,0.7)';
+        ctx.fill();
+
+        if (isActive) {
+            ctx.shadowColor = '#fbbf24';
+            ctx.shadowBlur = 6;
+        }
+        ctx.strokeStyle = isActive ? '#fbbf24' : 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = isActive ? 2 : 1;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
 
         // Item emoji
         if (slot) {
             ctx.font = '20px serif';
             ctx.textAlign = 'center';
             ctx.fillStyle = '#fff';
-            ctx.fillText(slot.emoji, sx + SLOT_SIZE / 2, startY + 26);
+            ctx.fillText(slot.emoji, sx + SLOT_SIZE / 2, startY + 27);
         }
 
         // Slot number (top-left)
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillStyle = isActive ? '#fbbf24' : 'rgba(255,255,255,0.45)';
-        ctx.fillText(`${i + 1}`, sx + 2, startY + 10);
+        ctx.fillStyle = isActive ? '#fbbf24' : 'rgba(255,255,255,0.4)';
+        ctx.fillText(`${i + 1}`, sx + 3, startY + 10);
     }
 
-    // Active slot name label
+    // Active slot name label (pill badge above)
     const activeItem = hotbarSlots[activeHotbarSlot];
     if (activeItem) {
         ctx.font = 'bold 10px sans-serif';
         ctx.textAlign = 'center';
+        const nameW = ctx.measureText(activeItem.name).width + 12;
+        const nameX = CAM_W / 2 - nameW / 2, nameY = startY - 10;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.beginPath();
+        ctx.moveTo(nameX + 4, nameY); ctx.lineTo(nameX + nameW - 4, nameY);
+        ctx.arcTo(nameX + nameW, nameY, nameX + nameW, nameY + 4, 4);
+        ctx.lineTo(nameX + nameW, nameY + 14); ctx.arcTo(nameX + nameW, nameY + 18, nameX + nameW - 4, nameY + 18, 4);
+        ctx.lineTo(nameX + 4, nameY + 18); ctx.arcTo(nameX, nameY + 18, nameX, nameY + 14, 4);
+        ctx.lineTo(nameX, nameY + 4); ctx.arcTo(nameX, nameY, nameX + 4, nameY, 4);
+        ctx.closePath();
+        ctx.fill();
         ctx.fillStyle = '#fbbf24';
-        ctx.fillText(activeItem.name, CAM_W / 2, startY - 4);
+        ctx.fillText(activeItem.name, CAM_W / 2, nameY + 13);
     }
 }
 

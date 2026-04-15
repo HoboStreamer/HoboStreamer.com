@@ -233,7 +233,7 @@
         $toggle = document.createElement('button');
         $toggle.className = 'messenger-toggle';
         $toggle.id = 'messenger-toggle';
-        $toggle.innerHTML = '<i class="fa-solid fa-comment-dots"></i><span class="msg-badge" id="msg-badge"></span>';
+        $toggle.innerHTML = '<i class="fa-solid fa-comment-dots"></i><span class="msg-badge" id="msg-badge"></span><span class="fab-label">DM</span>';
         $toggle.addEventListener('click', togglePanel);
         document.body.appendChild($toggle);
 

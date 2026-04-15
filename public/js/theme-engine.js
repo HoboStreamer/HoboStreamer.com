@@ -172,6 +172,8 @@ async function loadThemeFromServer() {
     try {
         const data = await api('/themes/me');
         if (data.theme) {
+            // Skip re-apply if the server theme matches what's already active
+            if (activeTheme?.id === data.theme.id && !data.is_custom) return;
             activeTheme = data.theme;
             isCustomMode = data.is_custom;
             customOverrides = data.custom_variables || {};

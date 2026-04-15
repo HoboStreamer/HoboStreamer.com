@@ -211,7 +211,8 @@ router.post('/conversations/:id/messages', (req, res) => {
             const otherIds = participants.filter(p => p.id !== req.user.id).map(p => p.id);
             if (otherIds.length) {
                 const senderName = sender?.display_name || sender?.username || 'Someone';
-                const preview = message.trim().length > 100 ? message.trim().slice(0, 99) + '…' : message.trim();
+                // Use generic preview — actual message content is only in real-time delivery
+                const preview = 'Sent you a message';
                 pushBulkNotification(otherIds, {
                     type: 'DIRECT_MESSAGE',
                     title: `Message from ${senderName}`,
@@ -237,6 +238,13 @@ router.post('/conversations/:id/read', (req, res) => {
             return res.status(403).json({ error: 'Not a participant' });
         }
         dm.markRead(convId, req.user.id);
+
+        // Clear matching DM notifications in hobo-tools
+        try {
+            const { markNotificationsRead } = require('../utils/notify');
+            markNotificationsRead(req.user.id, 'DIRECT_MESSAGE', `%/dm/${convId}`);
+        } catch { /* non-critical */ }
+
         res.json({ ok: true });
     } catch (err) {
         console.error('[DM] Mark read error:', err.message);

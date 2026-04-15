@@ -21,8 +21,12 @@ const router = express.Router();
 // ── My Clips (clips I created) ───────────────────────────────
 router.get('/mine', requireAuth, (req, res) => {
     try {
-        const clips = db.getClipsByUser(req.user.id, true);
-        res.json({ clips });
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '0', 10), 0), 200);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const allClips = db.getClipsByUser(req.user.id, true);
+        const total = allClips.length;
+        const clips = limit > 0 ? allClips.slice(offset, offset + limit) : allClips;
+        res.json({ clips, total, limit: limit || total, offset });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list your clips' });
     }
@@ -31,8 +35,12 @@ router.get('/mine', requireAuth, (req, res) => {
 // ── Clips of My Streams (clips others took of my streams) ────
 router.get('/my-stream', requireAuth, (req, res) => {
     try {
-        const clips = db.getClipsOfUserStreams(req.user.id);
-        res.json({ clips });
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '0', 10), 0), 200);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const allClips = db.getClipsOfUserStreams(req.user.id);
+        const total = allClips.length;
+        const clips = limit > 0 ? allClips.slice(offset, offset + limit) : allClips;
+        res.json({ clips, total, limit: limit || total, offset });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list stream clips' });
     }

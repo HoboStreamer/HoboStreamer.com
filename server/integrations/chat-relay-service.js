@@ -283,6 +283,29 @@ class ChatRelayService {
         }
         return null;
     }
+
+    /**
+     * Get aggregated platform viewer counts for a specific stream.
+     * Returns { total, breakdown: [{ platform, channelName, destId, viewerCount, platformLive }] }
+     */
+    getStreamViewerCounts(streamId) {
+        const breakdown = [];
+        let total = 0;
+        for (const bridge of this.bridges.values()) {
+            if (bridge.streamId === streamId && bridge.viewerCount != null) {
+                breakdown.push({
+                    platform: bridge.platform,
+                    channelName: bridge.channelName,
+                    destId: bridge.destId,
+                    viewerCount: bridge.viewerCount,
+                    platformLive: bridge.platformLive,
+                });
+                total += bridge.viewerCount;
+            }
+        }
+        return { total, breakdown };
+    }
+
     // ── Internal: teardown ────────────────────────────────────
 
     _teardown(bridge) {
@@ -306,6 +329,21 @@ class ChatRelayService {
         bridge.reconnectTimer = setTimeout(() => {
             if (!bridge.stopped) connectFn(bridge);
         }, delay);
+    }
+
+    /**
+     * Immediately push a bridge's viewer count into the restream manager cache.
+     * This avoids the 60s polling delay for Kick Pusher real-time events.
+     */
+    _pushViewerCountToCache(bridge) {
+        try {
+            const restreamManager = require('../streaming/restream-manager');
+            restreamManager.setViewerCount(
+                bridge.destId,
+                bridge.viewerCount,
+                bridge.platformLive
+            );
+        } catch { /* restream manager not available — non-critical */ }
     }
 
     _broadcastMessage(bridge, username, message, extras = {}) {
@@ -442,12 +480,18 @@ class ChatRelayService {
     async _connectKick(bridge) {
         if (bridge.stopped) return;
 
-        // Step 1: Resolve chatroom ID — use pre-parsed from URL, or try API, or give up
+        // Step 1: Resolve chatroom ID (and channel ID for viewer-count) — use pre-parsed from URL, or try API
         let chatroomId = bridge.chatroomId;
         if (!chatroomId) {
             try {
-                chatroomId = await this._getKickChatroomId(bridge.channelName);
+                const info = await this._getKickChannelInfo(bridge.channelName);
+                chatroomId = info.chatroomId;
                 bridge.chatroomId = chatroomId; // cache for reconnects
+                // Auto-resolve kickChannelId if not provided in URL
+                if (!bridge.kickChannelId && info.kickChannelId) {
+                    bridge.kickChannelId = info.kickChannelId;
+                    console.log(`[ChatRelay] Kick: Auto-resolved channel ID ${info.kickChannelId} for ${bridge.channelName}`);
+                }
             } catch (err) {
                 // Kick API is Cloudflare-blocked from servers — slug subscriptions won't receive messages.
                 // The broadcast UI auto-detects the chatroom ID from the user's browser and appends ?chatroom=ID.
@@ -532,12 +576,14 @@ class ChatRelayService {
                         bridge.viewerCount = payload.viewer_count ?? payload.livestream?.viewer_count;
                     }
                     bridge.platformLive = true;
+                    this._pushViewerCountToCache(bridge);
                     break;
                 }
 
                 case 'App\\Events\\StopStreamBroadcast': {
                     bridge.platformLive = false;
                     bridge.viewerCount = 0;
+                    this._pushViewerCountToCache(bridge);
                     break;
                 }
 
@@ -548,6 +594,7 @@ class ChatRelayService {
                         const count = payload?.viewer_count ?? payload?.viewers ?? payload?.livestream?.viewer_count;
                         if (count != null) {
                             bridge.viewerCount = count;
+                            this._pushViewerCountToCache(bridge);
                         }
                         console.log(`[ChatRelay] Kick channel event: ${msg.event} (viewers: ${count ?? 'N/A'}) for ${bridge.channelName}`);
                     }
@@ -558,6 +605,8 @@ class ChatRelayService {
 
         ws.on('close', () => {
             clearInterval(pingInterval);
+            // Clear stale viewer count on disconnect so polling doesn't serve outdated data
+            bridge.viewerCount = null;
             if (bridge.stopped) return;
             console.log(`[ChatRelay] Kick: Disconnected from ${bridge.channelName} — reconnecting`);
             this._scheduleReconnect(bridge, (b) => this._connectKick(b));
@@ -579,11 +628,11 @@ class ChatRelayService {
     }
 
     /**
-     * Fetch the chatroom ID for a Kick channel.
+     * Fetch the chatroom ID (and channel ID) for a Kick channel.
      * @param {string} channelName - Kick channel slug
-     * @returns {Promise<number>} chatroom ID
+     * @returns {Promise<{chatroomId: number, kickChannelId: number|null}>}
      */
-    _getKickChatroomId(channelName) {
+    _getKickChannelInfo(channelName) {
         return new Promise((resolve, reject) => {
             const req = https.get(`https://kick.com/api/v2/channels/${channelName}`, {
                 headers: {
@@ -602,7 +651,10 @@ class ChatRelayService {
                     if (!parsed?.chatroom?.id) {
                         return reject(new Error('No chatroom ID found in Kick API response'));
                     }
-                    resolve(parsed.chatroom.id);
+                    resolve({
+                        chatroomId: parsed.chatroom.id,
+                        kickChannelId: (typeof parsed.id === 'number') ? parsed.id : null,
+                    });
                 });
             });
             req.on('error', reject);

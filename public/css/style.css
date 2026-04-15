@@ -2284,6 +2284,17 @@ main#app { position: relative; z-index: 1; }
 /* ═══════════════════════════════════════════════════════════════
    CHAT SIDEBAR
    ═══════════════════════════════════════════════════════════════ */
+/* ── Chat Resize Handle ─────────────────────────────────── */
+.chat-resize-handle {
+    width: 5px; cursor: col-resize;
+    background: transparent; flex-shrink: 0;
+    transition: background 0.15s;
+    position: relative; z-index: 10;
+}
+.chat-resize-handle:hover,
+.chat-resize-handle.dragging {
+    background: var(--accent-dark);
+}
 .chat-sidebar {
     width: var(--chat-w); background: var(--bg-secondary);
     border-left: 1px solid var(--border);
@@ -2761,17 +2772,18 @@ main#app { position: relative; z-index: 1; }
 }
 .donation-quick { margin-bottom: 6px; }
 .chat-input-row {
-    display: flex; gap: 4px; align-items: flex-end;
+    display: flex; gap: 0; align-items: flex-end;
+    position: relative;
 }
 .chat-textarea {
-    flex: 1; min-width: 0; padding: 8px 10px;
+    flex: 1; min-width: 0; padding: 8px 38px 8px 10px;
     background: var(--bg-input); color: var(--text-primary);
     border: 1px solid var(--border); border-radius: var(--radius);
     font-family: var(--font); font-size: 0.85rem; outline: none;
     transition: border-color 0.2s;
     resize: none; overflow-y: hidden;
     line-height: 1.4;
-    min-height: 36px; max-height: 108px; /* ~4 lines */
+    min-height: 48px; max-height: 120px; /* ~2-5 lines */
     field-sizing: content; /* modern browsers auto-size */
 }
 .chat-textarea::placeholder {
@@ -2780,28 +2792,20 @@ main#app { position: relative; z-index: 1; }
 .chat-textarea:focus {
     border-color: var(--accent-dark);
 }
-/* Legacy fallback selector for any remaining input[type=text] */
-.chat-input-row input[type="text"] {
-    flex: 1; min-width: 0; padding: 8px 10px;
-    background: var(--bg-input); color: var(--text-primary);
-    border: 1px solid var(--border); border-radius: var(--radius);
-    font-family: var(--font); font-size: 0.85rem; outline: none;
-    transition: border-color 0.2s;
-}
-.chat-input-row input[type="text"]::placeholder {
-    color: var(--text-muted);
-}
-.chat-input-row input[type="text"]:focus {
-    border-color: var(--accent-dark);
-}
 .chat-send-btn {
-    flex-shrink: 0;
-    padding: 8px 10px; background: var(--accent-dark);
+    position: absolute; right: 4px; bottom: 4px;
+    padding: 6px 8px; background: var(--accent-dark);
     border: none; border-radius: var(--radius);
-    color: var(--text-primary); font-size: 0.9rem;
+    color: var(--text-primary); font-size: 0.85rem;
     cursor: pointer; transition: background 0.15s;
+    z-index: 1;
 }
 .chat-send-btn:hover { background: var(--accent); color: #000; }
+.chat-tools-row {
+    display: flex; gap: 4px; align-items: center;
+    padding: 4px 0 0;
+    flex-wrap: wrap;
+}
 
 /* ── Chat Autocomplete Popup ──────────────────────────────── */
 .chat-autocomplete-popup {
@@ -3199,6 +3203,46 @@ main#app { position: relative; z-index: 1; }
 
 /* Chat input area needs relative position for picker */
 .chat-input-area { position: relative; }
+
+/* ── GIF Picker ────────────────────────────────────────────── */
+.gif-picker {
+    position: absolute; bottom: 100%; left: 0; right: 0;
+    max-height: 360px; margin-bottom: 4px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow-lg);
+    z-index: 101; flex-direction: column; overflow: hidden;
+    display: flex;
+}
+.gif-picker-header { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.gif-search {
+    width: 100%; padding: 6px 10px;
+    background: var(--bg-input); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-size: 0.8rem; outline: none;
+}
+.gif-search:focus { border-color: var(--accent-dark); }
+.gif-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 4px; padding: 6px; overflow-y: auto;
+    max-height: 280px; flex: 1;
+}
+.gif-picker-item {
+    width: 100%; height: auto; max-height: 120px;
+    object-fit: cover; border-radius: var(--radius-sm);
+    cursor: pointer; transition: transform 0.12s, box-shadow 0.12s;
+}
+.gif-picker-item:hover { transform: scale(1.05); box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+.gif-picker-footer {
+    padding: 4px 8px; border-top: 1px solid var(--border);
+    text-align: right;
+}
+/* In-line chat GIFs */
+.chat-gif {
+    display: block; max-width: 200px; max-height: 160px;
+    border-radius: var(--radius-sm); margin: 4px 0;
+    cursor: pointer; object-fit: contain;
+}
 
 /* ── Dashboard Emotes ──────────────────────────────────────── */
 .dash-emote-upload {
@@ -7696,6 +7740,18 @@ body.theme-light .user-dropdown {
     align-items: center;
     justify-content: center;
     font-weight: 700;
+}
+.fab-label {
+    position: absolute;
+    bottom: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-muted, #888);
+    white-space: nowrap;
+    pointer-events: none;
 }
 .floating-chat-widget {
     position: fixed;

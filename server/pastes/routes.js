@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const sharp = require('sharp');
 const db = require('../db/database');
 const { requireAuth, optionalAuth } = require('../auth/auth');
 const { pushNotification, actorInfo: notificationActor } = require('../utils/notify');
@@ -444,9 +445,26 @@ router.post('/screenshot', optionalAuth, (req, res, next) => {
     });
 });
 
-function _handleScreenshotUpload(req, res) {
+async function _handleScreenshotUpload(req, res) {
     try {
         if (!req.file) return res.status(400).json({ error: 'Screenshot image is required' });
+
+        // Strip EXIF/GPS metadata by re-encoding with sharp
+        const mime = req.file.mimetype;
+        if (mime === 'image/png' || mime === 'image/jpeg' || mime === 'image/webp') {
+            try {
+                const img = sharp(req.file.path);
+                let buf;
+                if (mime === 'image/png')       buf = await img.png().toBuffer();
+                else if (mime === 'image/jpeg') buf = await img.jpeg({ quality: 90 }).toBuffer();
+                else                            buf = await img.webp({ quality: 90 }).toBuffer();
+                fs.writeFileSync(req.file.path, buf);
+                req.file.size = buf.length;
+            } catch (stripErr) {
+                console.warn('[Pastes] Metadata strip warning:', stripErr.message);
+                // Continue with original file if re-encoding fails
+            }
+        }
 
         const { title, description, visibility, stream_id, page_url, user_agent } = req.body;
         const slug = generateSlug();

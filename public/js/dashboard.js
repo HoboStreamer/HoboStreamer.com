@@ -630,12 +630,28 @@ async function doAddGoal() {
 }
 
 /* ── VODs ──────────────────────────────────────────────────────── */
+const DASH_PAGE_SIZE = 12;
+let dashVodPage = 0, dashVodTotal = 0;
+let dashMyClipsPage = 0, dashMyClipsTotal = 0;
+let dashStreamClipsPage = 0, dashStreamClipsTotal = 0;
+
+function dashPaginationHtml(prefix, page, total) {
+    const totalPages = Math.ceil(total / DASH_PAGE_SIZE);
+    if (totalPages <= 1) return '';
+    return `<div class="dash-pagination" style="margin-top:12px;display:flex;gap:8px;align-items:center;justify-content:center">
+        <button class="btn btn-small btn-outline" ${page <= 0 ? 'disabled' : ''} onclick="${prefix}GoPage(${page - 1})"><i class="fa-solid fa-chevron-left"></i> Prev</button>
+        <span class="muted" style="font-size:0.85rem">Page ${page + 1} of ${totalPages}</span>
+        <button class="btn btn-small btn-outline" ${page >= totalPages - 1 ? 'disabled' : ''} onclick="${prefix}GoPage(${page + 1})">Next <i class="fa-solid fa-chevron-right"></i></button>
+    </div>`;
+}
+
 async function loadDashVods() {
     const list = document.getElementById('dash-vods-list');
     try {
-        const data = await api('/vods/mine');
+        const data = await api(`/vods/mine?limit=${DASH_PAGE_SIZE}&offset=${dashVodPage * DASH_PAGE_SIZE}`);
         const vods = data.vods || [];
-        if (!vods.length) {
+        dashVodTotal = data.total ?? vods.length;
+        if (!vods.length && dashVodPage === 0) {
             list.innerHTML = '<p class="muted">No recordings yet. Videos are created automatically when you stream.</p>';
             return;
         }
@@ -657,9 +673,11 @@ async function loadDashVods() {
                     </div>
                 </div>
             </div>
-        `).join('');
+        `).join('') + dashPaginationHtml('dashVod', dashVodPage, dashVodTotal);
     } catch { list.innerHTML = '<p class="muted">Failed to load videos</p>'; }
 }
+
+function dashVodGoPage(page) { dashVodPage = page; loadDashVods(); }
 
 async function publishVod(vodId) {
     try {
@@ -733,9 +751,10 @@ async function loadDashMyClips() {
     const list = document.getElementById('dash-my-clips');
     if (!list) return;
     try {
-        const data = await api('/clips/mine');
+        const data = await api(`/clips/mine?limit=${DASH_PAGE_SIZE}&offset=${dashMyClipsPage * DASH_PAGE_SIZE}`);
         const clips = data.clips || [];
-        if (!clips.length) {
+        dashMyClipsTotal = data.total ?? clips.length;
+        if (!clips.length && dashMyClipsPage === 0) {
             list.innerHTML = '<p class="muted">You haven\'t clipped anything yet. Use the clip button while watching a stream!</p>';
             return;
         }
@@ -758,18 +777,21 @@ async function loadDashMyClips() {
                     </div>
                 </div>
             </div>
-        `).join('');
+        `).join('') + dashPaginationHtml('dashMyClips', dashMyClipsPage, dashMyClipsTotal);
     } catch { list.innerHTML = '<p class="muted">Failed to load clips</p>'; }
 }
+
+function dashMyClipsGoPage(page) { dashMyClipsPage = page; loadDashMyClips(); }
 
 /* ── Clips of My Stream ───────────────────────────────────────── */
 async function loadDashStreamClips() {
     const list = document.getElementById('dash-stream-clips');
     if (!list) return;
     try {
-        const data = await api('/clips/my-stream');
+        const data = await api(`/clips/my-stream?limit=${DASH_PAGE_SIZE}&offset=${dashStreamClipsPage * DASH_PAGE_SIZE}`);
         const clips = data.clips || [];
-        if (!clips.length) {
+        dashStreamClipsTotal = data.total ?? clips.length;
+        if (!clips.length && dashStreamClipsPage === 0) {
             list.innerHTML = '<p class="muted">No one has clipped your streams yet.</p>';
             return;
         }
@@ -794,9 +816,11 @@ async function loadDashStreamClips() {
                     </div>
                 </div>
             </div>
-        `).join('');
+        `).join('') + dashPaginationHtml('dashStreamClips', dashStreamClipsPage, dashStreamClipsTotal);
     } catch { list.innerHTML = '<p class="muted">Failed to load clips</p>'; }
 }
+
+function dashStreamClipsGoPage(page) { dashStreamClipsPage = page; loadDashStreamClips(); }
 
 async function dashToggleClipVisibility(clipId, makePublic, source) {
     try {

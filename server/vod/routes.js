@@ -825,8 +825,12 @@ router.get('/', optionalAuth, (req, res) => {
 // ── List My VODs ─────────────────────────────────────────────
 router.get('/mine', requireAuth, (req, res) => {
     try {
-        const vods = db.getVodsByUser(req.user.id, true);
-        res.json({ vods });
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '0', 10), 0), 200);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const allVods = db.getVodsByUser(req.user.id, true);
+        const total = allVods.length;
+        const vods = limit > 0 ? allVods.slice(offset, offset + limit) : allVods;
+        res.json({ vods, total, limit: limit || total, offset });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list VODs' });
     }

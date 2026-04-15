@@ -39,9 +39,13 @@ const MAX_PANELS_LENGTH = 20000;
 
 // ── Go-Live Notification Push ────────────────────────────────
 const { pushBulkNotification } = require('../utils/notify');
+const { notifyDiscordGoLive } = require('../integrations/discord-webhook');
 
 /** Push "X went live" notification to all followers via hobo.tools internal API (fire-and-forget) */
 function notifyFollowersGoLive(streamer, stream) {
+    // Discord webhook (fire-and-forget)
+    notifyDiscordGoLive(streamer, stream);
+
     const followerIds = db.getFollowerIds(streamer.id);
     if (!followerIds.length) return;
 

@@ -8,6 +8,7 @@ const EventEmitter = require('events');
 const config = require('../config');
 const db = require('../db/database');
 const recorder = require('../vod/recorder');
+const { notifyDiscordGoLive } = require('../integrations/discord-webhook');
 
 let NodeMediaServer;
 try {
@@ -138,6 +139,10 @@ class RTMPServer extends EventEmitter {
 
             // Emit event for restream auto-start
             this.emit('publish', { streamId, userId: user.id, streamKey });
+
+            // Discord webhook notification (fire-and-forget)
+            const stream = db.getStreamById ? db.getStreamById(streamId) : { id: streamId, title: `${user.display_name}'s Stream` };
+            notifyDiscordGoLive(user, stream || { id: streamId });
 
             // Start server-side VOD recording via FFmpeg
             // Small delay to let NMS fully register the RTMP stream before FFmpeg pulls it

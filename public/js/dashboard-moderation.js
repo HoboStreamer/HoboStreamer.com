@@ -15,7 +15,10 @@ function ensureDashModerationCard() {
             <p class="muted">Owner and channel-mod tools for managing chat, moderators, and logs.</p>
             <div id="dash-moderation-body"><p class="muted">Loading moderation tools...</p></div>
         `;
-        grid.appendChild(card);
+        // Insert before My Videos section so moderation appears first
+        const myVideosCard = document.getElementById('dash-my-videos-card');
+        if (myVideosCard) grid.insertBefore(card, myVideosCard);
+        else grid.appendChild(card);
     }
 
     return document.getElementById('dash-moderation-body');

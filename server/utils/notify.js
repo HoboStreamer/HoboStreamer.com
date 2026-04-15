@@ -64,4 +64,26 @@ function actorInfo(user, fallback = 'Someone') {
     };
 }
 
-module.exports = { pushNotification, pushBulkNotification, actorInfo };
+/**
+ * Mark notifications as read on hobo-tools by type and optional URL pattern.
+ * Fire-and-forget.
+ * @param {number} userId
+ * @param {string} type - e.g. 'DIRECT_MESSAGE'
+ * @param {string} [urlPattern] - SQL LIKE pattern, e.g. '%/dm/42'
+ */
+function markNotificationsRead(userId, type, urlPattern) {
+    if (!userId || !type) return;
+
+    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/notifications/mark-read`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Internal-Key': INTERNAL_API_KEY,
+        },
+        body: JSON.stringify({ user_id: userId, type, url_pattern: urlPattern || null }),
+    }).catch(err => {
+        console.warn('[Notify] Mark-read error:', err.message);
+    });
+}
+
+module.exports = { pushNotification, pushBulkNotification, actorInfo, markNotificationsRead };

@@ -233,7 +233,13 @@ function serveThumbnail(req, res) {
         const filePath = path.join(THUMB_DIR, filename);
 
         if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ error: 'Thumbnail not found' });
+            // Return a 1x1 transparent pixel as fallback instead of an error
+            const pixel = Buffer.from(
+                '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AKwA=',
+                'base64'
+            );
+            res.writeHead(204);
+            return res.end();
         }
 
         const stat = fs.statSync(filePath);

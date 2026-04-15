@@ -18,6 +18,7 @@ const permissions = require('../auth/permissions');
 const wordFilter = require('./word-filter');
 const cosmetics = require('../monetization/cosmetics');
 const ttsEngine = require('./tts-engine');
+const soundboard = require('./soundboard-service');
 const ipUtils = require('../admin/ip-utils');
 
 const WS_HEARTBEAT_MS = 30000;
@@ -692,10 +693,29 @@ class ChatServer {
                 return;
             }
 
-            // Links disabled
-            if (chatSettings.links_allowed === 0 && /(https?:\/\/|www\.)/i.test(text) && !isStaff) {
-                this.sendTo(ws, { type: 'system', message: 'Links are disabled in this channel chat.' });
-                return;
+            // Links disabled — exempt [gif:url] tags (validated separately)
+            if (chatSettings.links_allowed === 0 && !isStaff) {
+                const textWithoutGifs = text.replace(/\[gif:https?:\/\/[^\]]+\]/gi, '');
+                if (/(https?:\/\/|www\.)/i.test(textWithoutGifs)) {
+                    this.sendTo(ws, { type: 'system', message: 'Links are disabled in this channel chat.' });
+                    return;
+                }
+            }
+
+            // Validate [gif:url] — only allow trusted domains
+            const gifTagMatch = text.match(/\[gif:(https?:\/\/[^\]]+)\]/i);
+            if (gifTagMatch) {
+                const ALLOWED_GIF_DOMAINS = ['tenor.com', 'media.tenor.com', 'media1.tenor.com', 'c.tenor.com', 'giphy.com', 'media.giphy.com', 'media0.giphy.com', 'media1.giphy.com', 'media2.giphy.com', 'media3.giphy.com', 'media4.giphy.com', 'i.giphy.com'];
+                try {
+                    const gifUrl = new URL(gifTagMatch[1]);
+                    if (!ALLOWED_GIF_DOMAINS.includes(gifUrl.hostname)) {
+                        this.sendTo(ws, { type: 'system', message: 'Only Tenor and Giphy GIFs are allowed.' });
+                        return;
+                    }
+                } catch {
+                    this.sendTo(ws, { type: 'system', message: 'Invalid GIF URL.' });
+                    return;
+                }
             }
 
             // Followers only
@@ -877,6 +897,9 @@ class ChatServer {
                 text,
                 chatMsg.voiceFX
             );
+
+            // Check for 101soundboards links in the message (async, non-blocking)
+            this.processSoundboard(client.streamId, username, text);
         } else {
             // Global chat
             this.broadcastGlobal(chatMsg);
@@ -929,6 +952,21 @@ class ChatServer {
             } else {
                 this.broadcastGlobal(gottiMsg);
             }
+            return;
+        }
+
+        if (cmd === '!sb') {
+            if (!client.streamId) {
+                this.sendTo(ws, { type: 'system', message: 'Soundboard commands only work in a stream chat.' });
+                return;
+            }
+            const sbArgs = text.slice(parts[0].length).trim();
+            const parsed = soundboard.parseSoundboardMessage(`!sb ${sbArgs}`);
+            if (!parsed) {
+                this.sendTo(ws, { type: 'system', message: 'Usage: !sb <sound-id> [<pitch>p] [<speed>s] — e.g. !sb 58675 1.5p 0.8s' });
+                return;
+            }
+            this.processSoundboard(client.streamId, client.user?.display_name || client.anonId, text);
             return;
         }
 
@@ -1448,6 +1486,37 @@ class ChatServer {
             console.error('[TTS] Synthesis broadcast error:', err.message);
         }
     }
+
+    /**
+     * Process a chat message for 101soundboards links or !sb commands.
+     * Fetches the audio, caches it, and broadcasts to stream clients.
+     */
+    async processSoundboard(streamId, username, text) {
+        try {
+            if (!soundboard.isEnabled()) return;
+
+            const parsed = soundboard.parseSoundboardMessage(text);
+            if (!parsed) return;
+
+            const result = await soundboard.getSoundboardAudio(parsed.soundId);
+            if (!result) return;
+
+            this.broadcastToStream(streamId, {
+                type: 'soundboard-audio',
+                username,
+                audio: result.audio,
+                mimeType: result.mimeType,
+                soundId: result.soundId,
+                title: result.title,
+                pitch: parsed.pitch,
+                speed: parsed.speed,
+                timestamp: new Date().toISOString(),
+            });
+        } catch (err) {
+            console.error('[Soundboard] Process error:', err.message);
+        }
+    }
+
     /**
      * Can this client moderate their current stream's chat?
      * Uses the permission layer: admin, global_mod, stream owner, or channel mod.
