@@ -390,8 +390,9 @@ class WebRTCSFU extends EventEmitter {
                 // Check if the producer's backing transport is actually connected
                 const tKey = `${peerId}-${transportId}`;
                 const transport = room.transports.get(tKey);
-                const transportState = transport?.connectionState || 'unknown';
-                return { id, peerId, kind: producer.kind, paused: producer.paused, transportState };
+                const dtlsState = transport ? transport.dtlsState : 'no-transport';
+                const iceState = transport ? transport.iceState : 'no-transport';
+                return { id, peerId, kind: producer.kind, paused: producer.paused, dtlsState, iceState };
             });
     }
 

@@ -628,8 +628,8 @@ class BroadcastServer extends EventEmitter {
                 console.log(`[Broadcast] Skipping paused producer ${p.id} (${p.kind}) for viewer ${client.peerId}`);
                 return false;
             }
-            if (p.transportState !== 'connected') {
-                console.log(`[Broadcast] Skipping producer ${p.id} (${p.kind}) — transport state: ${p.transportState} (not connected)`);
+            if (p.dtlsState !== 'connected') {
+                console.log(`[Broadcast] Skipping producer ${p.id} (${p.kind}) — DTLS: ${p.dtlsState}, ICE: ${p.iceState} (not connected)`);
                 return false;
             }
             return true;
