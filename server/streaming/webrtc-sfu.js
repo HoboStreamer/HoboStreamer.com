@@ -126,6 +126,9 @@ class WebRTCSFU extends EventEmitter {
 
         room.transports.set(`${peerId}-${transport.id}`, transport);
 
+        const candidates = transport.iceCandidates;
+        console.log(`[WebRTC] Transport ${transport.id} (${peerId}) created — ICE candidates:`, candidates.map(c => `${c.protocol}://${c.ip}:${c.port}`).join(', '));
+
         return {
             id: transport.id,
             iceParameters: transport.iceParameters,

@@ -1006,6 +1006,7 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
             iceParameters: transportParams.iceParameters,
             iceCandidates: transportParams.iceCandidates,
             dtlsParameters: transportParams.dtlsParameters,
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
         });
         player._sfuRecvTransport = recvTransport;
 

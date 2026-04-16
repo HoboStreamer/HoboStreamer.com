@@ -4348,8 +4348,11 @@ async function _handleSfuProduceRequest(streamId) {
             iceParameters: transportMsg.iceParameters,
             iceCandidates: transportMsg.iceCandidates,
             dtlsParameters: transportMsg.dtlsParameters,
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
         });
         state.transport = transport;
+
+        console.log('[SFU Produce] Transport created — ICE candidates from server:', JSON.stringify(transportMsg.iceCandidates));
 
         transport.on('connect', ({ dtlsParameters }, callback, errback) => {
             sendBroadcastSignal(ss, {
