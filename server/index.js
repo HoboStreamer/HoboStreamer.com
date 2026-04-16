@@ -148,7 +148,7 @@ app.use(helmet({
             styleSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
             fontSrc: ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
             imgSrc: ["'self'", "data:", "blob:", "image.tmdb.org", "https://hobo.tools", "cdn.frankerfacez.com", "cdn.betterttv.net", "cdn.7tv.app"],
-            connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest", "https://cdn.jsdelivr.net", "https://esm.sh"],
+            connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest", "https://cdn.jsdelivr.net", "https://esm.sh", "https://static.cloudflareinsights.com"],
             mediaSrc: ["'self'", "blob:"],
             frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://player.vimeo.com"],
             workerSrc: ["'self'", "blob:"],

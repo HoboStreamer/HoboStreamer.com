@@ -5,6 +5,11 @@
 let player = null;
 let playerType = null;
 
+// Module-level ICE failure counters — shared between initWebRTC's closure and handleViewerOffer.
+// Must NOT be declared inside either function; triggerRewatch inside handleViewerOffer references them.
+let _totalIceFailures = 0;
+const MAX_ICE_FAILURES = 25; // hard cap on total ICE failures across all offers
+
 // Clip recording state (rolling buffer for live clips)
 let clipRecorder = null;
 let clipHeaderChunk = null;  // First chunk contains the WebM EBML header — must be preserved
@@ -439,9 +444,7 @@ async function initWebRTC(stream) {
         let _viewerRewatchTimer = null;
         let _watchOfferTimer = null; // timeout: sent 'watch' but never got 'offer'
         let _rewatchCount = 0;
-        let _totalIceFailures = 0; // never resets — prevents infinite ICE failure loop
         const MAX_REWATCH_ATTEMPTS = 12;
-        const MAX_ICE_FAILURES = 25; // hard cap on total ICE failures across all offers
 
         // Start a timer when 'watch' is sent — if no 'offer' arrives within 6s, re-watch
         const startWatchOfferTimeout = () => {
@@ -837,6 +840,20 @@ async function handleViewerOffer(msg, ws, video) {
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
             _iceConnected = true;
             if (player._iceTimeout) { clearTimeout(player._iceTimeout); player._iceTimeout = null; }
+            // If the stall timer is already running and no frames yet, restart it from ICE-connected
+            // time — ICE negotiation itself can take several seconds, so the 8s clock should start
+            // from when media can actually flow, not from when ontrack fired.
+            if (player._stallTimer && !_hasVideoFrames) {
+                clearTimeout(player._stallTimer);
+                player._stallTimer = setTimeout(() => {
+                    player._stallTimer = null;
+                    if (player?.pc !== pc || _hasVideoFrames) return;
+                    if (video.videoWidth === 0 || video.paused || video.readyState < 2) {
+                        console.warn('[Player] Video stall detected — no frames after ICE connected + 8s');
+                        triggerRewatch('video stall — no frames after ICE connect');
+                    }
+                }, 8000);
+            }
             return;
         }
         if (pc.iceConnectionState === 'failed') {
@@ -1941,7 +1958,7 @@ function destroyPlayer() {
     const canvas = document.getElementById('video-canvas');
     const video = document.getElementById('video-element');
     if (canvas) canvas.style.display = 'none';
-    if (video) { video.style.display = 'none'; video.muted = false; video.srcObject = null; video.src = ''; }
+    if (video) { video.style.display = 'none'; video.muted = false; video.srcObject = null; video.removeAttribute('src'); }
     document.getElementById('unmute-overlay')?.remove();
 
     // Clean up VOD & Clip video elements so they stop playing on navigation
