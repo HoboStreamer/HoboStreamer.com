@@ -402,8 +402,8 @@ function buildViewerSdpOffer(transport, consumers) {
         // msid associates the RTP track with a MediaStream in the browser.
         // Without this, ontrack fires with e.streams=[] and browsers may
         // fail to decode/render frames even though ICE connects successfully.
-        mediaSection.msid = `${streamLabel} ${trackLabel}`;
-
+        // NOTE: sdp-transform does not support a top-level 'msid' property on
+        // media sections — it must be set via SSRC attributes only.
         if (encoding?.ssrc) {
             mediaSection.ssrcs = [
                 { id: encoding.ssrc, attribute: 'cname', value: `hobostreamer-${consumer.kind}` },
