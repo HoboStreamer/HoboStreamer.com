@@ -452,6 +452,9 @@ function initDb() {
                 ['tts_max_queue_per_user', '3', 'Maximum queued TTS messages per user', 'number'],
                 ['tts_max_queue_global', '20', 'Maximum global TTS queue size', 'number'],
                 ['tts_default_voice', 'gary', 'Default TTS voice ID', 'string'],
+                ['gif_tenor_api_key', '', 'Tenor API key for chat GIF picker', 'string'],
+                ['gif_giphy_api_key', '', 'Giphy API key for chat GIF picker', 'string'],
+                ['soundboard_101_api_key', '', '101soundboards API key for chat soundboard fetches', 'string'],
             ];
             const insert = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
             for (const [k, v, d, t] of defaults) insert.run(k, v, d, t);
@@ -470,6 +473,9 @@ function initDb() {
             ['tts_max_queue_per_user', '3', 'Maximum queued TTS messages per user', 'number'],
             ['tts_max_queue_global', '20', 'Maximum global TTS queue size', 'number'],
             ['tts_default_voice', 'gary', 'Default TTS voice ID', 'string'],
+            ['gif_tenor_api_key', '', 'Tenor API key for chat GIF picker', 'string'],
+            ['gif_giphy_api_key', '', 'Giphy API key for chat GIF picker', 'string'],
+            ['soundboard_101_api_key', '', '101soundboards API key for chat soundboard fetches', 'string'],
         ];
         const seedInsert = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
         for (const [k, v, d, t] of ttsSeeds) seedInsert.run(k, v, d, t);
@@ -537,6 +543,7 @@ function initDb() {
         const cols = database.pragma('table_info(channel_moderation_settings)').map(c => c.name);
         if (!cols.includes('allow_anonymous')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN allow_anonymous INTEGER DEFAULT 1');
         if (!cols.includes('links_allowed')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN links_allowed INTEGER DEFAULT 1');
+        if (!cols.includes('gifs_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN gifs_enabled INTEGER DEFAULT 1');
         if (!cols.includes('account_age_gate_hours')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN account_age_gate_hours INTEGER DEFAULT 0');
         if (!cols.includes('caps_percentage_limit')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN caps_percentage_limit INTEGER DEFAULT 0');
         if (!cols.includes('aggressive_filter')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN aggressive_filter INTEGER DEFAULT 0');
@@ -547,6 +554,10 @@ function initDb() {
         if (!cols.includes('slur_filter_regexes')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_regexes TEXT DEFAULT ''");
         if (!cols.includes('slur_filter_nudge_message')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_nudge_message TEXT DEFAULT ''");
         if (!cols.includes('slur_filter_disabled_categories')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_disabled_categories TEXT DEFAULT '[]'");
+        if (!cols.includes('soundboard_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN soundboard_enabled INTEGER DEFAULT 1');
+        if (!cols.includes('soundboard_allow_pitch')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN soundboard_allow_pitch INTEGER DEFAULT 1');
+        if (!cols.includes('soundboard_allow_speed')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN soundboard_allow_speed INTEGER DEFAULT 1');
+        if (!cols.includes('soundboard_banned_ids')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN soundboard_banned_ids TEXT DEFAULT ''");
         if (!cols.includes('viewer_auto_delete_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_auto_delete_enabled INTEGER DEFAULT 1');
         if (!cols.includes('viewer_delete_all_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_delete_all_enabled INTEGER DEFAULT 1');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
@@ -1028,6 +1039,12 @@ function getRecentStreams(limit = 20) {
                v.id AS vod_id, v.is_public AS vod_is_public, v.thumbnail_url AS vod_thumbnail_url,
                v.duration_seconds AS vod_duration
         FROM streams s
+        JOIN (
+            SELECT user_id, MAX(ended_at) AS latest_ended_at
+            FROM streams
+            WHERE is_live = 0 AND ended_at IS NOT NULL
+            GROUP BY user_id
+        ) latest ON latest.user_id = s.user_id AND latest.latest_ended_at = s.ended_at
         JOIN users u ON s.user_id = u.id
         LEFT JOIN vods v ON v.stream_id = s.id AND COALESCE(v.is_recording, 0) = 0
         WHERE s.is_live = 0 AND s.ended_at IS NOT NULL
@@ -2365,6 +2382,7 @@ function getChannelModerationSettings(channelId) {
             emote_only: 0,
             allow_anonymous: 1,
             links_allowed: 1,
+            gifs_enabled: 1,
             account_age_gate_hours: 0,
             caps_percentage_limit: 0,
             aggressive_filter: 0,
@@ -2376,6 +2394,10 @@ function getChannelModerationSettings(channelId) {
             slur_filter_nudge_message: '',
             slur_filter_disabled_categories: '[]',
             ip_approval_mode: 0,
+            soundboard_enabled: 1,
+            soundboard_allow_pitch: 1,
+            soundboard_allow_speed: 1,
+            soundboard_banned_ids: '',
             viewer_auto_delete_enabled: 1,
             viewer_delete_all_enabled: 1,
         };
@@ -2391,6 +2413,7 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.emote_only !== undefined) { updates.push('emote_only = ?'); params.push(fields.emote_only ? 1 : 0); }
         if (fields.allow_anonymous !== undefined) { updates.push('allow_anonymous = ?'); params.push(fields.allow_anonymous ? 1 : 0); }
         if (fields.links_allowed !== undefined) { updates.push('links_allowed = ?'); params.push(fields.links_allowed ? 1 : 0); }
+        if (fields.gifs_enabled !== undefined) { updates.push('gifs_enabled = ?'); params.push(fields.gifs_enabled ? 1 : 0); }
         if (fields.account_age_gate_hours !== undefined) { updates.push('account_age_gate_hours = ?'); params.push(Number(fields.account_age_gate_hours) || 0); }
         if (fields.caps_percentage_limit !== undefined) { updates.push('caps_percentage_limit = ?'); params.push(Number(fields.caps_percentage_limit) || 0); }
         if (fields.aggressive_filter !== undefined) { updates.push('aggressive_filter = ?'); params.push(fields.aggressive_filter ? 1 : 0); }
@@ -2402,6 +2425,10 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.slur_filter_nudge_message !== undefined) { updates.push('slur_filter_nudge_message = ?'); params.push(String(fields.slur_filter_nudge_message || '').slice(0, 800)); }
         if (fields.slur_filter_disabled_categories !== undefined) { updates.push('slur_filter_disabled_categories = ?'); params.push(String(fields.slur_filter_disabled_categories || '[]').slice(0, 200)); }
         if (fields.ip_approval_mode !== undefined) { updates.push('ip_approval_mode = ?'); params.push(fields.ip_approval_mode ? 1 : 0); }
+        if (fields.soundboard_enabled !== undefined) { updates.push('soundboard_enabled = ?'); params.push(fields.soundboard_enabled ? 1 : 0); }
+        if (fields.soundboard_allow_pitch !== undefined) { updates.push('soundboard_allow_pitch = ?'); params.push(fields.soundboard_allow_pitch ? 1 : 0); }
+        if (fields.soundboard_allow_speed !== undefined) { updates.push('soundboard_allow_speed = ?'); params.push(fields.soundboard_allow_speed ? 1 : 0); }
+        if (fields.soundboard_banned_ids !== undefined) { updates.push('soundboard_banned_ids = ?'); params.push(String(fields.soundboard_banned_ids || '').slice(0, 4000)); }
         if (fields.viewer_auto_delete_enabled !== undefined) { updates.push('viewer_auto_delete_enabled = ?'); params.push(fields.viewer_auto_delete_enabled ? 1 : 0); }
         if (fields.viewer_delete_all_enabled !== undefined) { updates.push('viewer_delete_all_enabled = ?'); params.push(fields.viewer_delete_all_enabled ? 1 : 0); }
         if (updates.length > 0) {
@@ -2413,11 +2440,12 @@ function upsertChannelModerationSettings(channelId, fields) {
         run(
             `INSERT INTO channel_moderation_settings (
                 channel_id, slow_mode_seconds, followers_only, emote_only,
-                allow_anonymous, links_allowed, account_age_gate_hours,
+                allow_anonymous, links_allowed, gifs_enabled, account_age_gate_hours,
                 caps_percentage_limit, aggressive_filter, max_message_length,
                 slur_filter_enabled, slur_filter_use_builtin, slur_filter_terms, slur_filter_regexes, slur_filter_nudge_message, slur_filter_disabled_categories,
-                ip_approval_mode, viewer_auto_delete_enabled, viewer_delete_all_enabled
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                ip_approval_mode, soundboard_enabled, soundboard_allow_pitch, soundboard_allow_speed, soundboard_banned_ids,
+                viewer_auto_delete_enabled, viewer_delete_all_enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
             [
                 channelId,
                 fields.slow_mode_seconds || 0,
@@ -2425,6 +2453,7 @@ function upsertChannelModerationSettings(channelId, fields) {
                 fields.emote_only ? 1 : 0,
                 fields.allow_anonymous !== undefined ? (fields.allow_anonymous ? 1 : 0) : 1,
                 fields.links_allowed !== undefined ? (fields.links_allowed ? 1 : 0) : 1,
+                fields.gifs_enabled !== undefined ? (fields.gifs_enabled ? 1 : 0) : 1,
                 Number(fields.account_age_gate_hours) || 0,
                 Number(fields.caps_percentage_limit) || 0,
                 fields.aggressive_filter ? 1 : 0,
@@ -2436,6 +2465,10 @@ function upsertChannelModerationSettings(channelId, fields) {
                 String(fields.slur_filter_nudge_message || '').slice(0, 800),
                 String(fields.slur_filter_disabled_categories || '[]').slice(0, 200),
                 fields.ip_approval_mode ? 1 : 0,
+                fields.soundboard_enabled !== undefined ? (fields.soundboard_enabled ? 1 : 0) : 1,
+                fields.soundboard_allow_pitch !== undefined ? (fields.soundboard_allow_pitch ? 1 : 0) : 1,
+                fields.soundboard_allow_speed !== undefined ? (fields.soundboard_allow_speed ? 1 : 0) : 1,
+                String(fields.soundboard_banned_ids || '').slice(0, 4000),
                 fields.viewer_auto_delete_enabled !== undefined ? (fields.viewer_auto_delete_enabled ? 1 : 0) : 1,
                 fields.viewer_delete_all_enabled !== undefined ? (fields.viewer_delete_all_enabled ? 1 : 0) : 1,
             ]

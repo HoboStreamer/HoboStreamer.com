@@ -991,7 +991,7 @@ function initChat(streamId) {
                 _hideChatNewMessagesIndicator();
             } else {
                 _chatUserScrolledUp = true;
-            }
+    }
         }, { passive: true });
     }
 }
@@ -1231,6 +1231,9 @@ function handleChatMessage(msg) {
                 chatSlowModeSeconds = msg.slowmode_seconds;
                 updateSlowModeIndicator();
             }
+            if (typeof setGifsEnabled === 'function') {
+                setGifsEnabled(msg.gifs_enabled !== false);
+            }
             chatSelfDeletePolicy = {
                 allowAutoDelete: msg.allow_auto_delete !== false,
                 allowDeleteAll: msg.allow_self_delete_all !== false,
@@ -1442,6 +1445,7 @@ function addChatMessage(msg) {
     if (msg.source_platform) el.dataset.sourcePlatform = msg.source_platform;
     if (msg.role === 'external') el.dataset.isRelay = '1';
     if (msg.message_type === 'news') el.classList.add('news');
+    if (msg.message_type === 'soundboard') el.classList.add('soundboard');
 
     const isGlobal = chatEl.isGlobal;
 
@@ -1496,6 +1500,23 @@ function addChatMessage(msg) {
     if (msg.message_type === 'news' && msg.url) {
         text += ` <a href="${esc(msg.url)}" target="_blank" rel="noopener" class="news-link"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>`;
     }
+    if (msg.message_type === 'soundboard' && msg.soundboard) {
+        const title = esc(msg.soundboard.title || `Sound ${msg.soundboard.soundId || ''}`);
+        const sourceUrl = esc(msg.soundboard.sourceUrl || '#');
+        const soundId = esc(String(msg.soundboard.soundId || ''));
+        const pitch = Number(msg.soundboard.pitch || 1);
+        const speed = Number(msg.soundboard.speed || 1);
+        const mods = [];
+        if (Math.abs(pitch - 1) > 0.001) mods.push(`Pitch ${pitch.toFixed(2)}x`);
+        if (Math.abs(speed - 1) > 0.001) mods.push(`Speed ${speed.toFixed(2)}x`);
+        text = `
+            <div class="soundboard-card">
+                <div class="soundboard-card-label"><i class="fa-solid fa-volume-high"></i> 101soundboards</div>
+                <a class="soundboard-card-title" href="${sourceUrl}" target="_blank" rel="noopener">${title}</a>
+                <div class="soundboard-card-meta">ID ${soundId}${mods.length ? ` · ${esc(mods.join(' · '))}` : ''}</div>
+            </div>
+        `;
+    }
     const isAnon = displayName.startsWith('anon');
 
     // Mention highlighting
@@ -1540,7 +1561,8 @@ function addChatMessage(msg) {
         replyHtml = `<div class="chat-reply-header" ${replyMsgId} onclick="scrollToReplyTarget(this)"><i class="fa-solid fa-reply fa-flip-horizontal"></i> <span class="chat-reply-user">@${replyUser}</span> <span class="chat-reply-snippet">${replySnippet}</span></div>`;
     }
 
-    el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}: ${text}`;
+    const separator = msg.message_type === 'soundboard' ? ' ' : ': ';
+    el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}${separator}${text}`;
 
     // Reply action button (hover)
     if (msg.id) {
@@ -4301,6 +4323,7 @@ function _fcwStopResize() {
 
 // Hook into page navigation to show/hide FAB
 document.addEventListener('DOMContentLoaded', () => {
+    if (typeof initGifPickers === 'function') initGifPickers();
     // Watch all page sections for class changes
     document.querySelectorAll('.page').forEach(page => {
         const obs = new MutationObserver(_fcwUpdateVisibility);

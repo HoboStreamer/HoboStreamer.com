@@ -14,6 +14,8 @@ async function loadDashboard() {
         return navigate('/');
     }
 
+    updateDashObsOverlayUrl();
+
     // Load channel info
     loadDashChannel();
     // Load stream key
@@ -66,6 +68,29 @@ function copyStreamKey() {
     const key = document.getElementById('dash-stream-key').value;
     if (!key) return toast('No stream key', 'error');
     navigator.clipboard.writeText(key).then(() => toast('Stream key copied!', 'success'));
+}
+
+function getDashObsOverlayUrl() {
+    if (!currentUser?.username) return '';
+    return `${window.location.origin}/obs/chat/${encodeURIComponent(currentUser.username)}`;
+}
+
+function updateDashObsOverlayUrl() {
+    const input = document.getElementById('dash-obs-chat-overlay-url');
+    if (!input) return;
+    input.value = getDashObsOverlayUrl();
+}
+
+function copyDashObsOverlayUrl() {
+    const url = getDashObsOverlayUrl();
+    if (!url) return toast('Overlay URL unavailable', 'error');
+    navigator.clipboard.writeText(url).then(() => toast('Overlay URL copied!', 'success'));
+}
+
+function openDashObsOverlay() {
+    const url = getDashObsOverlayUrl();
+    if (!url) return toast('Overlay URL unavailable', 'error');
+    window.open(url, '_blank', 'noopener');
 }
 
 async function regenerateStreamKey() {

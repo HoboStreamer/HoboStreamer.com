@@ -2591,6 +2591,38 @@ main#app { position: relative; z-index: 1; }
     text-decoration: none; transition: color 0.15s;
 }
 .chat-msg.news .news-link:hover { color: #93bbfc; }
+.chat-msg.soundboard {
+    background: linear-gradient(90deg, rgba(42,157,143,0.15), transparent);
+    padding: 6px 8px; border-radius: var(--radius-sm);
+    border-left: 3px solid rgba(42,157,143,0.7);
+}
+.soundboard-card {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    margin-top: 4px;
+    background: rgba(0,0,0,0.18);
+    border: 1px solid rgba(42,157,143,0.28);
+    border-radius: 10px;
+    min-width: 200px;
+}
+.soundboard-card-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+.soundboard-card-title {
+    color: var(--text-primary);
+    text-decoration: none;
+    font-weight: 700;
+}
+.soundboard-card-title:hover { text-decoration: underline; }
+.soundboard-card-meta {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
 .chat-msg.gotti {
     display: flex;
     flex-wrap: wrap;
@@ -3221,6 +3253,21 @@ main#app { position: relative; z-index: 1; }
     display: flex;
 }
 .gif-picker-header { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.gif-picker-provider-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.gif-provider-btn {
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+.gif-provider-btn.is-active {
+    background: var(--accent-dark);
+    color: #fff;
+    border-color: var(--accent-dark);
+}
 .gif-search {
     width: 100%; padding: 6px 10px;
     background: var(--bg-input); color: var(--text-primary);

@@ -16,12 +16,132 @@ const permissions = require('../auth/permissions');
 const router = express.Router();
 const MIN_SELF_DELETE_MINUTES = 3;
 const MAX_SELF_DELETE_MINUTES = 10080;
+const GIF_ALLOWED_PROVIDERS = new Set(['tenor', 'giphy']);
+
+function getGifProviderConfig(provider) {
+    if (provider === 'giphy') {
+        return {
+            key: db.getSetting('gif_giphy_api_key') || '',
+            trendingUrl: 'https://api.giphy.com/v1/gifs/trending',
+            searchUrl: 'https://api.giphy.com/v1/gifs/search',
+        };
+    }
+    return {
+        key: db.getSetting('gif_tenor_api_key') || '',
+        trendingUrl: 'https://tenor.googleapis.com/v2/featured',
+        searchUrl: 'https://tenor.googleapis.com/v2/search',
+    };
+}
+
+function normalizeGifProvider(provider) {
+    const normalized = String(provider || 'tenor').trim().toLowerCase();
+    return GIF_ALLOWED_PROVIDERS.has(normalized) ? normalized : 'tenor';
+}
+
+function mapGifResults(provider, payload) {
+    if (provider === 'giphy') {
+        const items = Array.isArray(payload?.data) ? payload.data : [];
+        return items.map((item) => {
+            const tiny = item?.images?.fixed_width_small?.url || item?.images?.preview_gif?.url || item?.images?.fixed_width?.url || '';
+            const full = item?.images?.original?.url || item?.images?.fixed_width?.url || tiny;
+            return {
+                id: item?.id || null,
+                preview_url: tiny,
+                full_url: full,
+                title: item?.title || item?.slug || 'GIF',
+                provider: 'giphy',
+                source_url: item?.url || full,
+            };
+        }).filter((item) => item.preview_url && item.full_url);
+    }
+
+    const items = Array.isArray(payload?.results) ? payload.results : [];
+    return items.map((item) => {
+        const tiny = item?.media_formats?.tinygif?.url || item?.media_formats?.gif?.url || '';
+        const full = item?.media_formats?.gif?.url || tiny;
+        return {
+            id: item?.id || null,
+            preview_url: tiny,
+            full_url: full,
+            title: item?.content_description || item?.title || 'GIF',
+            provider: 'tenor',
+            source_url: item?.itemurl || full,
+        };
+    }).filter((item) => item.preview_url && item.full_url);
+}
 
 function normalizeAutoDeleteMinutes(value) {
     const mins = parseInt(value, 10);
     if (!Number.isFinite(mins) || mins < MIN_SELF_DELETE_MINUTES) return 0;
     return Math.min(MAX_SELF_DELETE_MINUTES, mins);
 }
+
+router.get('/gif/providers', optionalAuth, (req, res) => {
+    res.json({
+        providers: {
+            tenor: !!db.getSetting('gif_tenor_api_key'),
+            giphy: !!db.getSetting('gif_giphy_api_key'),
+        },
+        defaultProvider: db.getSetting('gif_tenor_api_key') ? 'tenor' : (db.getSetting('gif_giphy_api_key') ? 'giphy' : null),
+    });
+});
+
+router.get('/gif/trending', optionalAuth, async (req, res) => {
+    try {
+        const provider = normalizeGifProvider(req.query.provider);
+        const config = getGifProviderConfig(provider);
+        if (!config.key) return res.status(503).json({ error: `${provider} API key not configured` });
+
+        const url = new URL(config.trendingUrl);
+        if (provider === 'giphy') {
+            url.searchParams.set('api_key', config.key);
+            url.searchParams.set('limit', '30');
+            url.searchParams.set('rating', 'pg-13');
+        } else {
+            url.searchParams.set('key', config.key);
+            url.searchParams.set('limit', '30');
+            url.searchParams.set('media_filter', 'tinygif,gif');
+        }
+
+        const upstream = await fetch(url, { headers: { 'User-Agent': 'HoboStreamer/1.0' } });
+        if (!upstream.ok) return res.status(502).json({ error: `GIF provider request failed (${upstream.status})` });
+        const payload = await upstream.json();
+        res.json({ provider, results: mapGifResults(provider, payload) });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to load GIFs' });
+    }
+});
+
+router.get('/gif/search', optionalAuth, async (req, res) => {
+    try {
+        const provider = normalizeGifProvider(req.query.provider);
+        const query = String(req.query.q || '').trim();
+        if (query.length < 2) return res.status(400).json({ error: 'Query must be at least 2 characters' });
+
+        const config = getGifProviderConfig(provider);
+        if (!config.key) return res.status(503).json({ error: `${provider} API key not configured` });
+
+        const url = new URL(config.searchUrl);
+        if (provider === 'giphy') {
+            url.searchParams.set('api_key', config.key);
+            url.searchParams.set('q', query);
+            url.searchParams.set('limit', '30');
+            url.searchParams.set('rating', 'pg-13');
+        } else {
+            url.searchParams.set('key', config.key);
+            url.searchParams.set('q', query);
+            url.searchParams.set('limit', '30');
+            url.searchParams.set('media_filter', 'tinygif,gif');
+        }
+
+        const upstream = await fetch(url, { headers: { 'User-Agent': 'HoboStreamer/1.0' } });
+        if (!upstream.ok) return res.status(502).json({ error: `GIF provider request failed (${upstream.status})` });
+        const payload = await upstream.json();
+        res.json({ provider, results: mapGifResults(provider, payload) });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to search GIFs' });
+    }
+});
 
 /**
  * Hydrate reply_to context onto an array of message rows.

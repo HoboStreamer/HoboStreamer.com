@@ -1285,6 +1285,24 @@
                     </button>
                 </div>
 
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-layer-group"></i> OBS Chat Overlay</h3>
+                    <p class="muted" style="margin-bottom:12px">Use this as a Browser Source in OBS, Streamlabs, or IRL Pro to show your live chat on stream.</p>
+                    <div class="form-group">
+                        <label>Overlay URL</label>
+                        <div class="key-display">
+                            <input type="text" id="dash-obs-chat-overlay-url" readonly class="form-input">
+                            <button class="btn btn-small" onclick="copyDashObsOverlayUrl()" title="Copy overlay URL">
+                                <i class="fa-solid fa-copy"></i>
+                            </button>
+                            <button class="btn btn-small" onclick="openDashObsOverlay()" title="Open overlay">
+                                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <p class="muted" style="font-size:0.82rem;margin-bottom:0">Browser Source size: 800x600 is a good starting point. Background stays transparent.</p>
+                </div>
+
                 <!-- Controls Manager -->
                 <div class="dash-card">
                     <h3><i class="fa-solid fa-gamepad"></i> Interactive Controls</h3>
@@ -1436,31 +1454,6 @@
                     </button>
                 </div>
 
-                <!-- My Videos -->
-                <div id="dash-my-videos-card" class="dash-card dash-card-wide">
-                    <h3><i class="fa-solid fa-video"></i> My Videos</h3>
-                    <p class="muted">Videos are <strong>public by default</strong>. You can set individual videos to private.</p>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 14px">
-                        <label style="display:flex;align-items:center;gap:6px">
-                            <span class="muted" style="font-size:0.85rem">Delete older than</span>
-                            <input type="number" id="dash-bulk-delete-age-days" class="form-input form-input-sm" min="1" step="1" value="30" style="width:96px">
-                            <span class="muted" style="font-size:0.85rem">days</span>
-                        </label>
-                        <label class="bc-toggle-label" style="font-size:0.85rem;gap:6px">
-                            <input type="checkbox" id="dash-bulk-delete-vods" checked>
-                            VODs
-                        </label>
-                        <label class="bc-toggle-label" style="font-size:0.85rem;gap:6px">
-                            <input type="checkbox" id="dash-bulk-delete-clips" checked>
-                            Clips
-                        </label>
-                        <button class="btn btn-small btn-danger" onclick="dashBulkDeleteByAge()">
-                            <i class="fa-solid fa-trash-can"></i> Delete Old Media
-                        </button>
-                    </div>
-                    <div id="dash-vods-list" class="vod-grid"></div>
-                </div>
-
                 <!-- Emotes -->
                 <div class="dash-card dash-card-wide">
                     <h3><i class="fa-solid fa-face-smile"></i> My Emotes <span class="muted" id="dash-emote-count"></span></h3>
@@ -1498,6 +1491,31 @@
                         </button>
                     </div>
                     <div id="dash-emotes-list" class="dash-emotes-grid"></div>
+                </div>
+
+                <!-- My Videos -->
+                <div id="dash-my-videos-card" class="dash-card dash-card-wide">
+                    <h3><i class="fa-solid fa-video"></i> My Videos</h3>
+                    <p class="muted">Videos are <strong>public by default</strong>. You can set individual videos to private.</p>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 14px">
+                        <label style="display:flex;align-items:center;gap:6px">
+                            <span class="muted" style="font-size:0.85rem">Delete older than</span>
+                            <input type="number" id="dash-bulk-delete-age-days" class="form-input form-input-sm" min="1" step="1" value="30" style="width:96px">
+                            <span class="muted" style="font-size:0.85rem">days</span>
+                        </label>
+                        <label class="bc-toggle-label" style="font-size:0.85rem;gap:6px">
+                            <input type="checkbox" id="dash-bulk-delete-vods" checked>
+                            VODs
+                        </label>
+                        <label class="bc-toggle-label" style="font-size:0.85rem;gap:6px">
+                            <input type="checkbox" id="dash-bulk-delete-clips" checked>
+                            Clips
+                        </label>
+                        <button class="btn btn-small btn-danger" onclick="dashBulkDeleteByAge()">
+                            <i class="fa-solid fa-trash-can"></i> Delete Old Media
+                        </button>
+                    </div>
+                    <div id="dash-vods-list" class="vod-grid"></div>
                 </div>
 
                 <!-- My Clips (clips I created) -->
@@ -1672,15 +1690,14 @@
                         <div class="form-group">
                             <label>Category</label>
                             <select id="bc-category" class="form-input">
-                                <option value="camping">Camping</option>
                                 <option value="outdoors">Outdoors</option>
                                 <option value="travel">Travel</option>
-                                <option value="cooking">Camp Cooking</option>
                                 <option value="building">Building/Craft</option>
                                 <option value="music">Music</option>
                                 <option value="gaming">Gaming</option>
-                                <option value="desktop">Desktop Stream</option>
-                                <option value="irl" selected>IRL</option>
+                                <option value="robot">Robot</option>
+                                <option value="desktop">Desktop</option>
+                                <option value="irl">IRL</option>
                                 <option value="other">Other</option>
                             </select>
                         </div>

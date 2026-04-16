@@ -105,6 +105,7 @@ function renderDashModerationChannels(channels) {
                             <label><span>Caps Limit (%)</span><input type="number" id="dash-mod-caps-${channel.id}" class="form-input" value="${Number(settings.caps_percentage_limit || 70)}"></label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-anon-${channel.id}" ${Number(settings.allow_anonymous ?? 1) ? 'checked' : ''}> Allow Anonymous</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-links-${channel.id}" ${Number(settings.links_allowed ?? 1) ? 'checked' : ''}> Allow Links</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-gifs-${channel.id}" ${Number(settings.gifs_enabled ?? 1) ? 'checked' : ''}> Allow GIFs (Tenor / Giphy)</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-filter-${channel.id}" ${Number(settings.aggressive_filter || 0) ? 'checked' : ''}> Aggressive Filter</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-enabled-${channel.id}" ${Number(settings.slur_filter_enabled || 0) ? 'checked' : ''}> Streamer Anti-Slur Nudge (optional, includes core slur protection)</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-slur-builtin-${channel.id}" ${Number(settings.slur_filter_use_builtin ?? 1) ? 'checked' : ''}> Use built-in hate/slur regex pack</label>
@@ -127,6 +128,13 @@ function renderDashModerationChannels(channels) {
                                 <textarea id="dash-mod-slur-msg-${channel.id}" class="form-input" rows="2" placeholder="Friendly/funny message shown when blocked">${esc(String(settings.slur_filter_nudge_message || ''))}</textarea>
                             </label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-followers-${channel.id}" ${Number(settings.followers_only || 0) ? 'checked' : ''}> Followers Only</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-soundboard-${channel.id}" ${Number(settings.soundboard_enabled ?? 1) ? 'checked' : ''}> Allow 101soundboards</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-soundboard-pitch-${channel.id}" ${Number(settings.soundboard_allow_pitch ?? 1) ? 'checked' : ''}> Allow soundboard pitch changes</label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-soundboard-speed-${channel.id}" ${Number(settings.soundboard_allow_speed ?? 1) ? 'checked' : ''}> Allow soundboard speed changes</label>
+                            <label>
+                                <span>Banned 101soundboards IDs (comma or newline separated)</span>
+                                <textarea id="dash-mod-soundboard-banned-${channel.id}" class="form-input" rows="2" placeholder="42695124, 35460558">${esc(String(settings.soundboard_banned_ids || ''))}</textarea>
+                            </label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-viewer-autodel-${channel.id}" ${Number(settings.viewer_auto_delete_enabled ?? 1) ? 'checked' : ''}> Allow viewers to auto-delete their own messages</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-viewer-deleteall-${channel.id}" ${Number(settings.viewer_delete_all_enabled ?? 1) ? 'checked' : ''}> Allow viewers to delete all their own messages</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-ipapproval-${channel.id}" ${Number(settings.ip_approval_mode || 0) ? 'checked' : ''}> <span>IP Approval Mode <i class="fa-solid fa-shield-halved" title="New IPs must be approved before messages are visible"></i></span></label>
@@ -256,6 +264,7 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 caps_percentage_limit: Number(document.getElementById(`dash-mod-caps-${channelId}`)?.value || 70),
                 allow_anonymous: !!document.getElementById(`dash-mod-anon-${channelId}`)?.checked,
                 links_allowed: !!document.getElementById(`dash-mod-links-${channelId}`)?.checked,
+                gifs_enabled: !!document.getElementById(`dash-mod-gifs-${channelId}`)?.checked,
                 aggressive_filter: !!document.getElementById(`dash-mod-filter-${channelId}`)?.checked,
                 slur_filter_enabled: !!document.getElementById(`dash-mod-slur-enabled-${channelId}`)?.checked,
                 slur_filter_use_builtin: !!document.getElementById(`dash-mod-slur-builtin-${channelId}`)?.checked,
@@ -268,6 +277,10 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 slur_filter_regexes: String(document.getElementById(`dash-mod-slur-regex-${channelId}`)?.value || ''),
                 slur_filter_nudge_message: String(document.getElementById(`dash-mod-slur-msg-${channelId}`)?.value || ''),
                 followers_only: !!document.getElementById(`dash-mod-followers-${channelId}`)?.checked,
+                soundboard_enabled: !!document.getElementById(`dash-mod-soundboard-${channelId}`)?.checked,
+                soundboard_allow_pitch: !!document.getElementById(`dash-mod-soundboard-pitch-${channelId}`)?.checked,
+                soundboard_allow_speed: !!document.getElementById(`dash-mod-soundboard-speed-${channelId}`)?.checked,
+                soundboard_banned_ids: String(document.getElementById(`dash-mod-soundboard-banned-${channelId}`)?.value || ''),
                 viewer_auto_delete_enabled: !!document.getElementById(`dash-mod-viewer-autodel-${channelId}`)?.checked,
                 viewer_delete_all_enabled: !!document.getElementById(`dash-mod-viewer-deleteall-${channelId}`)?.checked,
                 ip_approval_mode: !!document.getElementById(`dash-mod-ipapproval-${channelId}`)?.checked,

@@ -27,6 +27,9 @@ const MIN_CHAT_AUTO_DELETE_MINUTES = 3;
 const MAX_CHAT_AUTO_DELETE_MINUTES = 10080;
 const MAX_SEND_BACKPRESSURE = 256 * 1024;
 const RATE_LIMIT_CACHE_TTL_MS = 10 * 60 * 1000;
+const SOUNDBOARD_RATE_LIMIT_MS = 8000;
+const SOUNDBOARD_STREAM_MAX_PER_WINDOW = 15;
+const SOUNDBOARD_STREAM_WINDOW_MS = 60 * 1000;
 const GOTTI_GIF_URL = 'https://media1.tenor.com/m/Y-GsLUQT9LQAAAAd/deez-something-came-in-the-mail-today.gif';
 const GOTTI_CAPTION = 'Something came in the mail today... deez nuts. GOTTI!';
 const DEFAULT_SLUR_NUDGE = 'This streamer enabled Anti-Slur Nudge for this chat. Free speech is still alive, but this lane is closed today. Try a different word and keep it funny.';
@@ -61,6 +64,10 @@ class ChatServer {
         this.ttsQueueSize = new Map();
         /** @type {Map<string, number>} `${streamId}:${userId}` → user's TTS queue count */
         this.ttsUserCounts = new Map();
+        /** @type {Map<string, number>} `${streamId}:${userKey}` → last soundboard trigger */
+        this.soundboardRateLimits = new Map();
+        /** @type {Map<number, {count: number, windowStart: number}>} streamId → stream-level soundboard rate window */
+        this.soundboardStreamLimits = new Map();
         this._autoDeleteSweepInterval = null;
 
         // ── Unified anon resolution via hobo.tools internal API ──
@@ -404,6 +411,10 @@ class ChatServer {
                     slowmode_seconds: streamSlowSec,
                     allow_auto_delete: !client.streamId || streamSettings.viewer_auto_delete_enabled !== 0,
                     allow_self_delete_all: !client.streamId || streamSettings.viewer_delete_all_enabled !== 0,
+                    gifs_enabled: !client.streamId || streamSettings.gifs_enabled !== 0,
+                    soundboard_enabled: !client.streamId || streamSettings.soundboard_enabled !== 0,
+                    soundboard_allow_pitch: !client.streamId || streamSettings.soundboard_allow_pitch !== 0,
+                    soundboard_allow_speed: !client.streamId || streamSettings.soundboard_allow_speed !== 0,
                     slur_filter_enabled: !!(client.streamId && streamSettings.slur_filter_enabled),
                     slur_filter_use_builtin: streamSettings.slur_filter_use_builtin !== 0,
                     slur_filter_disabled_categories: (() => { try { return JSON.parse(streamSettings.slur_filter_disabled_categories || '[]') || []; } catch { return []; } })(),
@@ -899,7 +910,7 @@ class ChatServer {
             );
 
             // Check for 101soundboards links in the message (async, non-blocking)
-            this.processSoundboard(client.streamId, username, text);
+            this.processSoundboard(ws, client, text);
         } else {
             // Global chat
             this.broadcastGlobal(chatMsg);
@@ -960,13 +971,21 @@ class ChatServer {
                 this.sendTo(ws, { type: 'system', message: 'Soundboard commands only work in a stream chat.' });
                 return;
             }
-            const sbArgs = text.slice(parts[0].length).trim();
-            const parsed = soundboard.parseSoundboardMessage(`!sb ${sbArgs}`);
-            if (!parsed) {
-                this.sendTo(ws, { type: 'system', message: 'Usage: !sb <sound-id> [<pitch>p] [<speed>s] — e.g. !sb 58675 1.5p 0.8s' });
+            const chatSettings = this._getChannelChatSettings(client.streamId);
+            if (chatSettings.soundboard_enabled === 0) {
+                this.sendTo(ws, { type: 'system', message: 'This streamer has disabled 101soundboards in chat.' });
                 return;
             }
-            this.processSoundboard(client.streamId, client.user?.display_name || client.anonId, text);
+            const sbArgs = text.slice(parts[0].length).trim();
+            const parsed = soundboard.parseSoundboardMessage(`!sb ${sbArgs}`, {
+                allowPitch: chatSettings.soundboard_allow_pitch !== 0,
+                allowSpeed: chatSettings.soundboard_allow_speed !== 0,
+            });
+            if (!parsed) {
+                this.sendTo(ws, { type: 'system', message: 'Usage: !sb <sound-id or 101soundboards URL> [100p|-100p] [0.5-3 speed]' });
+                return;
+            }
+            this.processSoundboard(ws, client, text);
             return;
         }
 
@@ -1491,15 +1510,102 @@ class ChatServer {
      * Process a chat message for 101soundboards links or !sb commands.
      * Fetches the audio, caches it, and broadcasts to stream clients.
      */
-    async processSoundboard(streamId, username, text) {
+    async processSoundboard(ws, client, text) {
         try {
-            if (!soundboard.isEnabled()) return;
+            if (!soundboard.isConfigured()) {
+                if (String(text || '').trim().startsWith('!sb')) {
+                    this.sendTo(ws, { type: 'system', message: 'Soundboard is not configured on this server.' });
+                }
+                return;
+            }
 
-            const parsed = soundboard.parseSoundboardMessage(text);
+            const streamId = client?.streamId || null;
+            if (!streamId) return;
+
+            const chatSettings = this._getChannelChatSettings(streamId);
+            if (chatSettings.soundboard_enabled === 0) {
+                if (String(text || '').trim().startsWith('!sb')) {
+                    this.sendTo(ws, { type: 'system', message: 'This streamer has disabled 101soundboards in chat.' });
+                }
+                return;
+            }
+
+            const parsed = soundboard.parseSoundboardMessage(text, {
+                allowPitch: chatSettings.soundboard_allow_pitch !== 0,
+                allowSpeed: chatSettings.soundboard_allow_speed !== 0,
+            });
             if (!parsed) return;
 
+            const bannedIds = new Set(soundboard.normalizeBannedIds(chatSettings.soundboard_banned_ids));
+            if (bannedIds.has(String(parsed.soundId))) {
+                if (String(text || '').trim().startsWith('!sb')) {
+                    this.sendTo(ws, { type: 'system', message: 'That 101soundboards sound is blocked by this streamer.' });
+                }
+                return;
+            }
+
+            const userKey = client.user?.id ? `user:${client.user.id}` : `anon:${client.anonId || client.ip}`;
+            const rateKey = `${streamId}:${userKey}`;
+            const lastUsedAt = this.soundboardRateLimits.get(rateKey) || 0;
+            const now = Date.now();
+            if ((now - lastUsedAt) < SOUNDBOARD_RATE_LIMIT_MS) {
+                if (String(text || '').trim().startsWith('!sb')) {
+                    const remaining = Math.ceil((SOUNDBOARD_RATE_LIMIT_MS - (now - lastUsedAt)) / 1000);
+                    this.sendTo(ws, { type: 'system', message: `Wait ${remaining}s before using another soundboard clip.` });
+                }
+                return;
+            }
+
+            // Per-stream global rate limit (15 sounds/min across all users)
+            const streamWindow = this.soundboardStreamLimits.get(streamId) || { count: 0, windowStart: now };
+            if ((now - streamWindow.windowStart) >= SOUNDBOARD_STREAM_WINDOW_MS) {
+                streamWindow.count = 0;
+                streamWindow.windowStart = now;
+            }
+            if (streamWindow.count >= SOUNDBOARD_STREAM_MAX_PER_WINDOW) {
+                if (String(text || '').trim().startsWith('!sb')) {
+                    this.sendTo(ws, { type: 'system', message: 'Too many soundboard clips are playing in this stream right now. Try again soon.' });
+                }
+                return;
+            }
+            streamWindow.count++;
+            this.soundboardStreamLimits.set(streamId, streamWindow);
+
             const result = await soundboard.getSoundboardAudio(parsed.soundId);
-            if (!result) return;
+            if (!result) {
+                if (String(text || '').trim().startsWith('!sb')) {
+                    this.sendTo(ws, { type: 'system', message: 'Could not load that 101soundboards clip.' });
+                }
+                return;
+            }
+
+            this.soundboardRateLimits.set(rateKey, now);
+
+            const username = client.user?.display_name || client.user?.username || client.anonId || 'anon';
+            const coreUsername = client.user?.username || null;
+            const role = client.user ? client.user.role : 'anon';
+
+            this.broadcastToStream(streamId, {
+                type: 'chat',
+                username,
+                core_username: coreUsername,
+                user_id: client.user?.id || null,
+                anon_id: client.anonId,
+                role,
+                stream_id: streamId,
+                avatar_url: client.user?.avatar_url || null,
+                profile_color: client.user?.profile_color || '#999',
+                message_type: 'soundboard',
+                message: `played ${result.title}`,
+                soundboard: {
+                    soundId: result.soundId,
+                    title: result.title,
+                    sourceUrl: result.sourceUrl,
+                    pitch: parsed.pitch,
+                    speed: parsed.speed,
+                },
+                timestamp: new Date().toISOString(),
+            });
 
             this.broadcastToStream(streamId, {
                 type: 'soundboard-audio',
@@ -1508,11 +1614,15 @@ class ChatServer {
                 mimeType: result.mimeType,
                 soundId: result.soundId,
                 title: result.title,
+                sourceUrl: result.sourceUrl,
                 pitch: parsed.pitch,
                 speed: parsed.speed,
                 timestamp: new Date().toISOString(),
             });
         } catch (err) {
+            if (String(text || '').trim().startsWith('!sb')) {
+                this.sendTo(ws, { type: 'system', message: err.message || 'Could not load that 101soundboards clip.' });
+            }
             console.error('[Soundboard] Process error:', err.message);
         }
     }
@@ -1840,6 +1950,11 @@ class ChatServer {
             caps_percentage_limit: 0, aggressive_filter: 0, max_message_length: 500,
             slur_filter_enabled: 0, slur_filter_use_builtin: 1, slur_filter_terms: '', slur_filter_regexes: '', slur_filter_nudge_message: '', slur_filter_disabled_categories: '[]',
             ip_approval_mode: 0,
+            gifs_enabled: 1,
+            soundboard_enabled: 1,
+            soundboard_allow_pitch: 1,
+            soundboard_allow_speed: 1,
+            soundboard_banned_ids: '',
             viewer_auto_delete_enabled: 1,
             viewer_delete_all_enabled: 1,
         };

@@ -794,7 +794,7 @@ async function loadHomeClips() {
 
 async function loadHomePastes() {
     try {
-        const data = await api('/pastes?limit=6');
+        const data = await api('/pastes?limit=10');
         const pastes = data.pastes || [];
         const header = document.getElementById('home-pastes-header');
         const list = document.getElementById('home-pastes-list');

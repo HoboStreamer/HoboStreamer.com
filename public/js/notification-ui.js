@@ -431,6 +431,16 @@
             return res;
         });
     }
+    function safeParseRichContent(value) {
+        if (!value) return {};
+        if (typeof value === 'object') return value;
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch {
+            return {};
+        }
+    }
 
     async function markRead(id) {
         try { await apiFetch(`/api/notifications/${id}/read`, { method: 'POST' }); } catch {}
@@ -460,7 +470,7 @@
                 const nd = await newest.json();
                 if (nd.notifications) {
                     for (const n of nd.notifications.slice(0, 3)) {
-                        const rich = n.rich_content ? JSON.parse(n.rich_content) : {};
+                        const rich = safeParseRichContent(n.rich_content);
                         showToast({ ...n, richContent: rich });
                         playSound(n.priority);
                     }
@@ -512,7 +522,7 @@
         /** Programmatically push a toast (for real-time WebSocket events). */
         push(notification) {
             showToast(notification);
-            playSound(notification.priority);
+                    const rich = safeParseRichContent(notif?.rich_content);
             _unreadCount++;
             updateBadge(_unreadCount);
         },

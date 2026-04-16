@@ -178,6 +178,8 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? parseBoolean(req.body.allow_anonymous, true) : undefined,
             links_allowed: req.body.links_allowed !== undefined
                 ? parseBoolean(req.body.links_allowed, true) : undefined,
+            gifs_enabled: req.body.gifs_enabled !== undefined
+                ? parseBoolean(req.body.gifs_enabled, true) : undefined,
             aggressive_filter: req.body.aggressive_filter !== undefined
                 ? parseBoolean(req.body.aggressive_filter, false) : undefined,
             account_age_gate_hours: req.body.account_age_gate_hours !== undefined
@@ -208,6 +210,25 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 })() : undefined,
             ip_approval_mode: req.body.ip_approval_mode !== undefined
                 ? parseBoolean(req.body.ip_approval_mode, false) : undefined,
+            soundboard_enabled: req.body.soundboard_enabled !== undefined
+                ? parseBoolean(req.body.soundboard_enabled, true) : undefined,
+            soundboard_allow_pitch: req.body.soundboard_allow_pitch !== undefined
+                ? parseBoolean(req.body.soundboard_allow_pitch, true) : undefined,
+            soundboard_allow_speed: req.body.soundboard_allow_speed !== undefined
+                ? parseBoolean(req.body.soundboard_allow_speed, true) : undefined,
+            soundboard_banned_ids: req.body.soundboard_banned_ids !== undefined
+                ? (() => {
+                    const raw = String(req.body.soundboard_banned_ids || '');
+                    const ids = raw.split(/[\s,\n\r]+/)
+                        .map((s) => {
+                            const m = s.trim().match(/101soundboards\.com\/sounds\/(\d+)/i);
+                            if (m) return m[1];
+                            if (/^\d{2,}$/.test(s.trim())) return s.trim();
+                            return null;
+                        })
+                        .filter(Boolean);
+                    return [...new Set(ids)].slice(0, 200).join(',');
+                })() : undefined,
             viewer_auto_delete_enabled: req.body.viewer_auto_delete_enabled !== undefined
                 ? parseBoolean(req.body.viewer_auto_delete_enabled, true) : undefined,
             viewer_delete_all_enabled: req.body.viewer_delete_all_enabled !== undefined

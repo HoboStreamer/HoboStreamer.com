@@ -18,6 +18,8 @@ let _jsmpegClipSetupTimer = null;
 const CLIP_BUFFER_SECONDS = 30;
 const externalScriptPromises = new Map();
 const PLAYER_SIGNALING_MAX_BUFFERED_AMOUNT = 256 * 1024;
+const PLAYER_VOLUME_KEY = 'hobo_player_volume';
+const PLAYER_MUTED_KEY = 'hobo_player_muted';
 
 // DVR state (live stream seeking via server-side VOD recording)
 let dvrState = {
@@ -306,14 +308,13 @@ function startJSMPEG(wsUrl, canvas, placeholder, bufferProfile = getJsmpegBuffer
             preserveDrawingBuffer: true,
             onSourceEstablished: () => {
                 console.log('[JSMPEG] Source established — applying saved volume and checking audio context');
-                // Apply saved volume
-                const savedVol = getSavedVolume();
+                const audioPrefs = getSavedPlayerAudioState();
                 if (player && player.audioOut && player.audioOut.gain) {
-                    player.audioOut.gain.value = savedVol / 100;
+                    player.audioOut.gain.value = audioPrefs.muted ? 0 : audioPrefs.volume;
                 }
                 // Check if AudioContext is suspended (autoplay policy)
                 const audioCtx = player?.audioOut?.context || player?.audioOut?.destination?.context;
-                if (audioCtx && audioCtx.state === 'suspended') {
+                if (audioCtx && audioCtx.state === 'suspended' && !audioPrefs.muted) {
                     console.warn('[JSMPEG] AudioContext suspended — showing unmute overlay');
                     // Show unmute overlay on the canvas container
                     const container = document.getElementById('video-container');
@@ -704,9 +705,9 @@ async function handleViewerOffer(msg, ws, video) {
         if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
 
         // Attempt to play with audio — set saved volume before playing
-        const savedVol = getSavedVolume();
-        video.muted = false;
-        video.volume = Math.max(0.01, savedVol / 100); // nonzero so browser treats as unmuted
+        const audioPrefs = getSavedPlayerAudioState();
+        video.muted = audioPrefs.muted;
+        video.volume = audioPrefs.muted ? 0 : Math.max(0.01, audioPrefs.volume);
 
         video.play().then(() => {
             _playPending = false;
@@ -715,7 +716,7 @@ async function handleViewerOffer(msg, ws, video) {
             document.getElementById('unmute-overlay')?.remove();
         }).catch((err) => {
             _playPending = false;
-            if (err.name === 'NotAllowedError') {
+            if (err.name === 'NotAllowedError' && !audioPrefs.muted) {
                 // Browser blocked unmuted autoplay — mute and retry, show overlay
                 console.warn('[Player] Autoplay blocked, muting and retrying');
                 video.muted = true;
@@ -1412,15 +1413,16 @@ function setupVideoControls() {
     const btnFull = document.getElementById('btn-fullscreen');
 
     // Restore persisted volume (or default 75)
-    const savedVol = getSavedVolume();
+    const audioPrefs = getSavedPlayerAudioState();
+    const savedVol = Math.round(audioPrefs.volume * 100);
     volSlider.value = savedVol;
     // For WebRTC, tryPlay() in handleViewerOffer sets volume + handles autoplay policy.
     // For JSMPEG, onSourceEstablished handles it. For HLS, set it here.
     if (playerType === 'hls') {
-        setVolume(savedVol / 100);
+        setVolume(savedVol / 100, { muted: audioPrefs.muted });
     }
 
-    let muted = savedVol === 0;
+    let muted = audioPrefs.muted;
     let playing = true;
 
     // Sync mute button icon to initial state
@@ -1477,7 +1479,7 @@ function setupVideoControls() {
         btnVol.innerHTML = muted
             ? '<i class="fa-solid fa-volume-xmark"></i>'
             : '<i class="fa-solid fa-volume-high"></i>';
-        setVolume(muted ? 0 : volSlider.value / 100);
+        setVolume(muted ? 0 : volSlider.value / 100, { muted, persistLevel: !muted });
         // User interacted — remove unmute overlay if unmuting
         if (!muted) {
             const vid = document.getElementById('video-element');
@@ -1488,7 +1490,7 @@ function setupVideoControls() {
 
     volSlider.oninput = () => {
         const v = volSlider.value / 100;
-        setVolume(v);
+        setVolume(v, { muted: v === 0 });
         muted = v === 0;
         btnVol.innerHTML = muted
             ? '<i class="fa-solid fa-volume-xmark"></i>'
@@ -1862,22 +1864,44 @@ function _buildClipTitleModal(overlay, clipId) {
 }
 
 function setVolume(v) {
+    const options = arguments[1] || {};
+    const volume = Math.max(0, Math.min(1, Number(v) || 0));
+    const muted = options.muted ?? (volume === 0);
     if (playerType === 'jsmpeg' && player && player.audioOut && dvrState.isLive) {
-        player.audioOut.gain.value = v;
+        player.audioOut.gain.value = muted ? 0 : volume;
     } else {
         const vid = document.getElementById('video-element');
-        vid.volume = v;
-        vid.muted = v === 0;
+        if (vid) {
+            vid.volume = muted ? 0 : volume;
+            vid.muted = muted;
+        }
     }
-    // Persist volume so it survives page navigation / refresh
-    try { localStorage.setItem('hobo_player_volume', String(Math.round(v * 100))); } catch {}
+    try {
+        if (options.persistLevel !== false) localStorage.setItem(PLAYER_VOLUME_KEY, String(Math.round(volume * 100)));
+        localStorage.setItem(PLAYER_MUTED_KEY, muted ? '1' : '0');
+    } catch {}
 }
 
 function getSavedVolume() {
     try {
-        const v = parseInt(localStorage.getItem('hobo_player_volume'), 10);
+        const v = parseInt(localStorage.getItem(PLAYER_VOLUME_KEY), 10);
         return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 75;
     } catch { return 75; }
+}
+
+function getSavedMuted() {
+    try {
+        return localStorage.getItem(PLAYER_MUTED_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function getSavedPlayerAudioState() {
+    return {
+        volume: getSavedVolume() / 100,
+        muted: getSavedMuted(),
+    };
 }
 
 /* ── Cleanup ──────────────────────────────────────────────────── */
@@ -2009,6 +2033,7 @@ function showUnmuteOverlay(video) {
         const vol = savedVol > 0 ? savedVol / 100 : (slider ? slider.value / 100 : 0.75);
         video.volume = vol;
         if (slider) slider.value = Math.round(vol * 100);
+        try { localStorage.setItem(PLAYER_MUTED_KEY, '0'); } catch {}
         overlay.remove();
         // Sync the volume button icon
         const volBtn = document.getElementById('btn-volume');
