@@ -113,9 +113,15 @@ class WebRTCSFU extends EventEmitter {
         });
 
         transport.on('dtlsstatechange', (dtlsState) => {
-            if (dtlsState === 'closed') {
+            console.log(`[WebRTC] Transport ${transport.id} (${peerId}) DTLS: ${dtlsState}`);
+            if (dtlsState === 'closed' || dtlsState === 'failed') {
+                console.log(`[WebRTC] Closing transport ${transport.id} (${peerId}) due to DTLS ${dtlsState}`);
                 transport.close();
             }
+        });
+
+        transport.on('icestatechange', (iceState) => {
+            console.log(`[WebRTC] Transport ${transport.id} (${peerId}) ICE: ${iceState}`);
         });
 
         room.transports.set(`${peerId}-${transport.id}`, transport);
@@ -153,10 +159,11 @@ class WebRTCSFU extends EventEmitter {
 
         const producer = await transport.produce({ kind, rtpParameters });
 
-        room.producers.set(producer.id, { producer, peerId });
-        console.log(`[WebRTC] Producer created: ${producer.id} (${kind}) in room ${roomId}`);
+        room.producers.set(producer.id, { producer, peerId, transportId });
+        console.log(`[WebRTC] Producer created: ${producer.id} (${kind}) in room ${roomId} on transport ${transportId}`);
 
         producer.on('transportclose', () => {
+            console.log(`[WebRTC] Producer ${producer.id} (${kind}) transport closed in room ${roomId}`);
             room.producers.delete(producer.id);
             this.emit('producer-removed', { roomId, producerId: producer.id, kind });
         });
@@ -189,8 +196,21 @@ class WebRTCSFU extends EventEmitter {
         room.consumers.set(consumer.id, { consumer, peerId });
 
         consumer.on('transportclose', () => {
+            console.log(`[WebRTC] Consumer ${consumer.id} (${consumer.kind}) transport closed`);
             room.consumers.delete(consumer.id);
         });
+
+        consumer.on('producerclose', () => {
+            console.log(`[WebRTC] Consumer ${consumer.id} (${consumer.kind}) producer closed — closing consumer`);
+            try { consumer.close(); } catch {}
+            room.consumers.delete(consumer.id);
+        });
+
+        // Log the producer state for debugging
+        const producerEntry = room.producers.get(producerId);
+        const producerTransportKey = producerEntry ? `${producerEntry.peerId}-${producerEntry.transportId}` : null;
+        const producerTransport = producerTransportKey ? room.transports.get(producerTransportKey) : null;
+        console.log(`[WebRTC] Consumer ${consumer.id} consuming producer ${producerId} (${consumer.kind}), producer transport state: ${producerTransport?.connectionState || 'unknown'}`);
 
         return {
             id: consumer.id,
@@ -364,7 +384,15 @@ class WebRTCSFU extends EventEmitter {
     getProducers(roomId) {
         const room = this.rooms.get(roomId);
         if (!room) return [];
-        return Array.from(room.producers.entries()).map(([id, { producer, peerId }]) => ({ id, peerId, kind: producer.kind }));
+        return Array.from(room.producers.entries())
+            .filter(([, { producer }]) => !producer.closed)
+            .map(([id, { producer, peerId, transportId }]) => {
+                // Check if the producer's backing transport is actually connected
+                const tKey = `${peerId}-${transportId}`;
+                const transport = room.transports.get(tKey);
+                const transportState = transport?.connectionState || 'unknown';
+                return { id, peerId, kind: producer.kind, paused: producer.paused, transportState };
+            });
     }
 
     /**

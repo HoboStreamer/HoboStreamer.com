@@ -618,17 +618,36 @@ class BroadcastServer extends EventEmitter {
 
         // Get router capabilities and producer list
         const caps = await webrtcSFU.getRouterCapabilities(roomId);
-        const producers = webrtcSFU.getProducers(roomId);
-        if (!caps || !producers || producers.length === 0) return false;
+        const allProducers = webrtcSFU.getProducers(roomId);
+        if (!caps || !allProducers || allProducers.length === 0) return false;
+
+        // Filter to only producers whose backing transport is connected
+        // (producers on a transport that never completed ICE/DTLS have no RTP data)
+        const liveProducers = allProducers.filter(p => {
+            if (p.paused) {
+                console.log(`[Broadcast] Skipping paused producer ${p.id} (${p.kind}) for viewer ${client.peerId}`);
+                return false;
+            }
+            if (p.transportState !== 'connected') {
+                console.log(`[Broadcast] Skipping producer ${p.id} (${p.kind}) — transport state: ${p.transportState} (not connected)`);
+                return false;
+            }
+            return true;
+        });
+
+        if (liveProducers.length === 0) {
+            console.log(`[Broadcast] No live producers for stream ${client.streamId} (${allProducers.length} total, all dead/disconnected) — falling back to P2P`);
+            return false;
+        }
 
         // Send capabilities + producer list — viewer will use mediasoup-client Device
         this.safeSend(ws, {
             type: 'sfu-viewer-ready',
             rtpCapabilities: caps,
-            producers: producers.map(p => ({ id: p.id, kind: p.kind })),
+            producers: liveProducers.map(p => ({ id: p.id, kind: p.kind })),
         });
 
-        console.log(`[Broadcast] SFU viewer ready sent to ${client.peerId} for stream ${client.streamId} (${producers.length} producer(s))`);
+        console.log(`[Broadcast] SFU viewer ready sent to ${client.peerId} for stream ${client.streamId} (${liveProducers.length}/${allProducers.length} live producer(s))`);
         return true;
     }
 

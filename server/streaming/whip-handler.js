@@ -388,7 +388,7 @@ async function handleWhipPost(req, res) {
                 rtpParameters: rtpParams,
             });
 
-            room.producers.set(producer.id, { producer, peerId });
+            room.producers.set(producer.id, { producer, peerId, transportId: transport.id });
             producersByKind[media.type] = producer;
             producerIds.push(producer.id);
 

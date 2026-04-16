@@ -1050,9 +1050,12 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
             if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
             video.muted = true;
             video.volume = 1;
+
+            console.log(`[Player] tryPlay() — video state: readyState=${video.readyState} videoWidth=${video.videoWidth} paused=${video.paused} srcObject tracks=${video.srcObject?.getTracks().length || 0}`);
+
             video.play().then(() => {
                 _playPending = false;
-                console.log('[Player] SFU playback started (muted autoplay)');
+                console.log(`[Player] SFU playback started (muted) — readyState=${video.readyState} videoWidth=${video.videoWidth}`);
                 const audioPrefs = getSavedPlayerAudioState();
                 if (!audioPrefs.muted) {
                     video.volume = Math.max(0.01, audioPrefs.volume);
@@ -1069,6 +1072,7 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                 }
             }).catch((err) => {
                 _playPending = false;
+                console.warn(`[Player] play() failed: ${err.name}: ${err.message} — readyState=${video.readyState} videoWidth=${video.videoWidth} networkState=${video.networkState}`);
                 if (err.name === 'AbortError') {
                     player._playRetryTimer = setTimeout(() => {
                         player._playRetryTimer = null;
@@ -1101,7 +1105,7 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
             });
 
             mediaStream.addTrack(consumer.track);
-            console.log(`[Player] SFU consumed ${consumer.kind} track`);
+            console.log(`[Player] SFU consumed ${consumer.kind} track — enabled=${consumer.track.enabled} muted=${consumer.track.muted} readyState=${consumer.track.readyState} paused=${consumer.paused} id=${consumer.id}`);
 
             // Monitor track health
             consumer.track.addEventListener('ended', () => {
@@ -1114,6 +1118,13 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                 }
             }, { once: true });
 
+            consumer.track.addEventListener('mute', () => {
+                console.warn(`[Player] SFU ${consumer.kind} track muted`);
+            });
+            consumer.track.addEventListener('unmute', () => {
+                console.log(`[Player] SFU ${consumer.kind} track unmuted — data flowing`);
+            });
+
             consumedCount++;
         }
 
@@ -1122,11 +1133,16 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
         video.style.display = 'block';
         startClipRecordingIfNeeded(mediaStream, streamRef?.id);
 
+        // Log MediaStream state
+        const tracks = mediaStream.getTracks();
+        console.log(`[Player] MediaStream set — active=${mediaStream.active} tracks=${tracks.length} (${tracks.map(t => `${t.kind}:${t.readyState}:enabled=${t.enabled}:muted=${t.muted}`).join(', ')})`);
+
         // Playing event — hide placeholder
         const onPlaying = () => {
             video.removeEventListener('playing', onPlaying);
             _hasVideoFrames = true;
             if (player?._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
+            console.log(`[Player] SFU video playing! videoWidth=${video.videoWidth} videoHeight=${video.videoHeight}`);
             const ph = document.querySelector('.video-placeholder');
             if (ph) {
                 ph.style.display = 'none';
@@ -1141,8 +1157,11 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
             player._stallTimer = setTimeout(() => {
                 player._stallTimer = null;
                 if (!player || player._sfuRecvTransport !== recvTransport || _hasVideoFrames) return;
+                // Log comprehensive video element state for debugging
+                const streamTracks = video.srcObject?.getTracks() || [];
+                const trackInfo = streamTracks.map(t => `${t.kind}:${t.readyState}:enabled=${t.enabled}:muted=${t.muted}`).join(', ');
+                console.warn(`[Player] SFU video stall — no frames after 8s | readyState=${video.readyState} videoWidth=${video.videoWidth} paused=${video.paused} currentTime=${video.currentTime.toFixed(2)} networkState=${video.networkState} error=${video.error?.message || 'none'} srcObjectActive=${video.srcObject?.active} tracks=[${trackInfo}] transportState=${recvTransport.connectionState}`);
                 if (video.videoWidth === 0 || video.paused || video.readyState < 2) {
-                    console.warn('[Player] SFU video stall — no frames after 8s');
                     player.watchSent = false;
                     sendPlayerSignal({ type: 'watch' });
                     player.watchSent = true;

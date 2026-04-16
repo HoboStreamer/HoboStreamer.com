@@ -4376,7 +4376,20 @@ async function _handleSfuProduceRequest(streamId) {
 
         transport.on('connectionstatechange', (connState) => {
             console.log('[SFU Produce] Transport state:', connState);
+            if (connState === 'connected') {
+                console.log('[SFU Produce] Transport connected — RTP data flowing to SFU');
+            }
             if (connState === 'failed' || connState === 'closed') {
+                // Log ICE/DTLS stats before cleanup for debugging
+                try {
+                    transport.getStats().then(stats => {
+                        stats.forEach(s => {
+                            if (s.type === 'transport' || s.type === 'candidate-pair' || s.type === 'local-candidate' || s.type === 'remote-candidate') {
+                                console.log(`[SFU Produce] Transport stats (${s.type}):`, JSON.stringify(s));
+                            }
+                        });
+                    }).catch(() => {});
+                } catch {}
                 _cleanupSfuProduce(streamId);
             }
         });
