@@ -4353,6 +4353,32 @@ async function _handleSfuProduceRequest(streamId) {
         state.transport = transport;
 
         console.log('[SFU Produce] Transport created — ICE candidates from server:', JSON.stringify(transportMsg.iceCandidates));
+        console.log('[SFU Produce] ICE parameters:', JSON.stringify(transportMsg.iceParameters));
+        console.log('[SFU Produce] DTLS parameters:', JSON.stringify(transportMsg.dtlsParameters));
+
+        // Hook into the internal RTCPeerConnection for ICE diagnostics
+        try {
+            const pc = transport._handler?._pc;
+            if (pc) {
+                pc.addEventListener('iceconnectionstatechange', () => {
+                    console.log('[SFU Produce] PC iceConnectionState:', pc.iceConnectionState);
+                });
+                pc.addEventListener('icegatheringstatechange', () => {
+                    console.log('[SFU Produce] PC iceGatheringState:', pc.iceGatheringState);
+                });
+                pc.addEventListener('icecandidate', (e) => {
+                    console.log('[SFU Produce] PC icecandidate:', e.candidate ? e.candidate.candidate : 'null (gathering done)');
+                });
+                pc.addEventListener('signalingstatechange', () => {
+                    console.log('[SFU Produce] PC signalingState:', pc.signalingState);
+                });
+                console.log('[SFU Produce] PC initial state — signaling:', pc.signalingState, 'ice:', pc.iceConnectionState, 'gathering:', pc.iceGatheringState);
+            } else {
+                console.log('[SFU Produce] Cannot access internal PC (handler not ready yet)');
+            }
+        } catch (e) {
+            console.log('[SFU Produce] Could not hook PC events:', e.message);
+        }
 
         transport.on('connect', ({ dtlsParameters }, callback, errback) => {
             sendBroadcastSignal(ss, {
@@ -4411,6 +4437,25 @@ async function _handleSfuProduceRequest(streamId) {
         }
 
         console.log('[SFU Produce] Producing into local SFU for stream', streamId);
+
+        // Log internal PC state after producing (PC is now fully set up)
+        try {
+            const pc = transport._handler?._pc;
+            if (pc) {
+                console.log('[SFU Produce] Post-produce PC state — signaling:', pc.signalingState, 'ice:', pc.iceConnectionState, 'gathering:', pc.iceGatheringState, 'connection:', pc.connectionState);
+                const localDesc = pc.localDescription;
+                const remoteDesc = pc.remoteDescription;
+                console.log('[SFU Produce] Local SDP type:', localDesc?.type, 'Remote SDP type:', remoteDesc?.type);
+                if (remoteDesc?.sdp) {
+                    // Log ICE-related lines from remote SDP
+                    const iceLines = remoteDesc.sdp.split('\n').filter(l => l.startsWith('a=candidate') || l.startsWith('a=ice-'));
+                    console.log('[SFU Produce] Remote SDP ICE lines:', iceLines.join(' | '));
+                }
+            }
+        } catch (e) {
+            console.log('[SFU Produce] Could not log post-produce PC state:', e.message);
+        }
+
         sendBroadcastSignal(ss, { type: 'sfu-produce-status', status: 'ok', detail: `video=${!!state.videoProducer} audio=${!!state.audioProducer}` });
     } catch (err) {
         console.error('[SFU Produce] Failed:', err.message);
