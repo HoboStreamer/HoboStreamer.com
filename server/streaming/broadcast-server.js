@@ -47,14 +47,10 @@ class BroadcastServer extends EventEmitter {
                 username: config.turn.username || '',
                 credential: config.turn.credential || '',
             };
-            // Add configured TURN URL
+            // UDP TURN (primary)
             servers.push({ urls: turnUrl, ...cred });
-            // Also add TURNS (TLS on 443) variant — works through strict firewalls/VPNs
-            // that block non-443 UDP. Only add if not already a turns: URL.
-            if (turnUrl.startsWith('turn:')) {
-                const host = turnUrl.replace(/^turn:/, '').replace(/:\d+$/, '');
-                servers.push({ urls: `turns:${host}:443?transport=tcp`, ...cred });
-            }
+            // TCP TURN fallback (works when UDP is blocked by firewalls)
+            servers.push({ urls: `${turnUrl}?transport=tcp`, ...cred });
         }
         return servers;
     }
