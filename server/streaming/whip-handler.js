@@ -395,14 +395,24 @@ function buildViewerSdpOffer(transport, consumers) {
         }
 
         // SSRC info for the consumer's outgoing stream
+        const streamLabel = 'hobostreamer-stream';
+        const trackLabel = consumer.id;
         const encoding = consumer.rtpParameters.encodings?.[0];
+
+        // msid associates the RTP track with a MediaStream in the browser.
+        // Without this, ontrack fires with e.streams=[] and browsers may
+        // fail to decode/render frames even though ICE connects successfully.
+        mediaSection.msid = `${streamLabel} ${trackLabel}`;
+
         if (encoding?.ssrc) {
             mediaSection.ssrcs = [
                 { id: encoding.ssrc, attribute: 'cname', value: `hobostreamer-${consumer.kind}` },
+                { id: encoding.ssrc, attribute: 'msid', value: `${streamLabel} ${trackLabel}` },
             ];
             if (encoding.rtx?.ssrc) {
                 mediaSection.ssrcs.push(
-                    { id: encoding.rtx.ssrc, attribute: 'cname', value: `hobostreamer-${consumer.kind}` }
+                    { id: encoding.rtx.ssrc, attribute: 'cname', value: `hobostreamer-${consumer.kind}` },
+                    { id: encoding.rtx.ssrc, attribute: 'msid', value: `${streamLabel} ${trackLabel}` }
                 );
             }
         }

@@ -701,57 +701,71 @@ async function handleViewerOffer(msg, ws, video) {
         if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
     };
 
-    // Debounced play() — attempts unmuted playback first, falls back to muted + overlay
+    // Debounced play() — always starts muted (guaranteed autoplay), then unmutes if allowed.
+    // Previous approach tried unmuted first, hit NotAllowedError, then retried muted — but the
+    // muted retry could also fail with AbortError if the first play() was still settling,
+    // leading to "Playback failed even muted" and no frames ever rendering.
     const tryPlay = () => {
         if (_playPending || !player || player.pc !== pc) return;
         _playPending = true;
         if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
 
-        // Attempt to play with audio — set saved volume before playing
-        const audioPrefs = getSavedPlayerAudioState();
-        video.muted = audioPrefs.muted;
-        video.volume = audioPrefs.muted ? 0 : Math.max(0.01, audioPrefs.volume);
+        // Always start muted — this is the only way to guarantee autoplay across all browsers.
+        // We unmute after playback starts if the user hasn't muted.
+        video.muted = true;
+        video.volume = 1;
 
         video.play().then(() => {
             _playPending = false;
-            console.log('[Player] Playback started with audio');
-            // Remove any stale unmute overlay
-            document.getElementById('unmute-overlay')?.remove();
+            console.log('[Player] Playback started (muted autoplay)');
+
+            // Now try to unmute based on user prefs
+            const audioPrefs = getSavedPlayerAudioState();
+            if (!audioPrefs.muted) {
+                video.volume = Math.max(0.01, audioPrefs.volume);
+                video.muted = false;
+                // If unmuting fails (autoplay policy), show overlay
+                // Some browsers will pause on unmute — re-play muted if needed
+                const playPromise = video.play();
+                if (playPromise) {
+                    playPromise.catch(() => {
+                        video.muted = true;
+                        video.play().catch(() => {});
+                        showUnmuteOverlay(video);
+                    });
+                }
+            } else {
+                video.volume = 0;
+                // Already muted — remove stale overlay if present
+                document.getElementById('unmute-overlay')?.remove();
+            }
         }).catch((err) => {
             _playPending = false;
-            if (err.name === 'NotAllowedError' && !audioPrefs.muted) {
-                // Browser blocked unmuted autoplay — mute and retry, show overlay
-                console.warn('[Player] Autoplay blocked, muting and retrying');
-                video.muted = true;
-                video.play().then(() => {
-                    showUnmuteOverlay(video);
-                }).catch(() => {
-                    console.error('[Player] Playback failed even muted');
-                });
-            } else if (err.name === 'AbortError') {
-                // play() was interrupted by another call — retry after a tick
-                console.log('[Player] play() interrupted, retrying in 200ms');
+            if (err.name === 'AbortError') {
+                // play() interrupted — retry after a tick (second ontrack can cause this)
+                console.log('[Player] play() interrupted, retrying in 300ms');
                 player._playRetryTimer = setTimeout(() => {
                     player._playRetryTimer = null;
                     _playPending = false;
                     tryPlay();
-                }, 200);
+                }, 300);
             } else {
-                console.error('[Player] Play failed:', err);
-                // Retry once after a short delay for transient errors
+                console.warn('[Player] Muted play() failed:', err.name, err.message);
+                // Retry once after short delay — video element may not have enough data yet
                 player._playRetryTimer = setTimeout(() => {
                     player._playRetryTimer = null;
                     _playPending = false;
-                    video.play().catch(() => {});
+                    tryPlay();
                 }, 1000);
             }
         });
     };
 
-    let _hasPlayingFired = false; // track if onPlaying already ran
+    let _trackCount = 0; // count received tracks — only tryPlay after both video+audio arrive
 
     pc.ontrack = (e) => {
-        console.log('[Player] Got remote track:', e.track.kind);
+        _trackCount++;
+        console.log('[Player] Got remote track:', e.track.kind, `(${_trackCount} total)`);
         if (e.streams && e.streams[0]) {
             video.srcObject = e.streams[0];
             startClipRecordingIfNeeded(e.streams[0], streamRef?.id);
@@ -785,11 +799,10 @@ async function handleViewerOffer(msg, ws, video) {
         // Show the video element now that we have tracks
         video.style.display = 'block';
 
-        // Hide the placeholder once video actually renders frames (only register once)
-        if (!_hasPlayingFired) {
+        // Register the playing event listener for EACH new PC (fresh _hasVideoFrames each time)
+        if (_trackCount === 1) {
             const onPlaying = () => {
                 video.removeEventListener('playing', onPlaying);
-                _hasPlayingFired = true;
                 _hasVideoFrames = true;
                 if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
                 const ph = document.querySelector('.video-placeholder');
@@ -820,7 +833,19 @@ async function handleViewerOffer(msg, ws, video) {
             }, 8000);
         }
 
-        tryPlay();
+        // Delay tryPlay until we have at least 2 tracks (video + audio) or 500ms
+        // after first track (handles audio-only/video-only streams).
+        // This prevents the first tryPlay() from racing with the second ontrack
+        // which causes AbortError on the first play() call.
+        if (_trackCount >= 2) {
+            tryPlay();
+        } else if (_trackCount === 1) {
+            player._playRetryTimer = setTimeout(() => {
+                player._playRetryTimer = null;
+                _playPending = false;
+                tryPlay();
+            }, 500);
+        }
     };
 
     pc.onicecandidate = (e) => {
