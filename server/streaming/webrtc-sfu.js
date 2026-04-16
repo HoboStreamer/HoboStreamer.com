@@ -364,7 +364,7 @@ class WebRTCSFU extends EventEmitter {
     getProducers(roomId) {
         const room = this.rooms.get(roomId);
         if (!room) return [];
-        return Array.from(room.producers.entries()).map(([id, { peerId }]) => ({ id, peerId }));
+        return Array.from(room.producers.entries()).map(([id, { producer, peerId }]) => ({ id, peerId, kind: producer.kind }));
     }
 
     /**

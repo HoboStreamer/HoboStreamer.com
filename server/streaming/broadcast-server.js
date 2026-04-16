@@ -237,16 +237,9 @@ class BroadcastServer extends EventEmitter {
             case 'offer':
             case 'answer':
             case 'ice-candidate':
-                // Check if this is an SFU viewer answer (WHIP stream)
-                if (msg.type === 'answer' && client.role === 'viewer' && client._sfuViewerState) {
-                    this._handleSfuViewerAnswer(ws, client, msg).catch(err => {
-                        console.error(`[Broadcast] SFU viewer answer error:`, err.message);
-                    });
-                    break;
-                }
-                // For SFU viewers, ignore ice-candidate — mediasoup handles ICE internally
-                if (msg.type === 'ice-candidate' && client._sfuViewerState) break;
-                // Relay signaling messages between broadcaster and viewers
+                // For SFU viewers, ignore P2P signaling — mediasoup handles everything
+                if (client._sfuViewerTransportId) break;
+                // Relay signaling messages between broadcaster and viewers (P2P path)
                 this.relaySignaling(ws, client, room, msg);
                 break;
 
@@ -257,7 +250,7 @@ class BroadcastServer extends EventEmitter {
                     // upstream with N separate P2P connections. SFU distributes to viewers
                     // from the server, freeing broadcaster bandwidth.
                     this._tryCreateSfuViewer(ws, client).then(handled => {
-                        if (handled) return; // SFU viewer created successfully
+                        if (handled) return; // SFU viewer signaling started
 
                         // No SFU producers — fall back to P2P with broadcaster
                         if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
@@ -346,6 +339,32 @@ class BroadcastServer extends EventEmitter {
                 }
                 break;
 
+            // ── SFU Viewer Signaling (mediasoup-client on viewer side) ──
+            case 'sfu-viewer-create-transport':
+                if (client.role === 'viewer') {
+                    this._handleSfuViewerCreateTransport(ws, client).catch(err => {
+                        console.error(`[Broadcast] SFU viewer create-transport error for ${client.peerId}:`, err.message);
+                        this.safeSend(ws, { type: 'sfu-viewer-error', error: err.message });
+                    });
+                }
+                break;
+            case 'sfu-viewer-connect-transport':
+                if (client.role === 'viewer') {
+                    this._handleSfuViewerConnectTransport(ws, client, msg).catch(err => {
+                        console.error(`[Broadcast] SFU viewer connect-transport error for ${client.peerId}:`, err.message);
+                        this.safeSend(ws, { type: 'sfu-viewer-error', error: err.message });
+                    });
+                }
+                break;
+            case 'sfu-viewer-consume':
+                if (client.role === 'viewer') {
+                    this._handleSfuViewerConsume(ws, client, msg).catch(err => {
+                        console.error(`[Broadcast] SFU viewer consume error for ${client.peerId}:`, err.message);
+                        this.safeSend(ws, { type: 'sfu-viewer-error', error: err.message });
+                    });
+                }
+                break;
+
             default:
                 break;
         }
@@ -427,11 +446,8 @@ class BroadcastServer extends EventEmitter {
                 room.viewers.delete(client.peerId);
                 if (room._pendingWatchers) room._pendingWatchers.delete(client.peerId);
 
-                // Clean up SFU viewer state if this was an SFU consumer
-                if (client._sfuViewerState) {
-                    const { roomId, transportId, consumerIds } = client._sfuViewerState;
-                    whipHandler.cleanupSfuViewer(roomId, client.peerId, transportId, consumerIds);
-                }
+                // Clean up SFU viewer transport if this was an SFU consumer
+                this._cleanupSfuViewerTransport(client);
 
                 console.log(`[Broadcast] Viewer disconnected: stream ${client.streamId} (${client.peerId})`);
 
@@ -587,63 +603,105 @@ class BroadcastServer extends EventEmitter {
         if (toRemove.length) console.log(`[Broadcast] SFU: Closed ${toRemove.length} producer(s) for ${peerId}`);
     }
 
-    // ── SFU Viewer Path ─────────────────────────────────────
+    // ── SFU Viewer Path (mediasoup-client signaling) ──────────
 
     /**
-     * Try to create an SFU consumer for a viewer.
-     * Works when the SFU has producers (from WHIP or SFU-produce signaling).
-     * Returns true if an offer was sent to the viewer.
+     * Check if SFU producers exist and notify viewer to start mediasoup-client flow.
+     * Returns true if an sfu-viewer-ready was sent.
      */
     async _tryCreateSfuViewer(ws, client) {
         const roomId = `stream-${client.streamId}`;
         if (!whipHandler.hasSfuProducers(client.streamId)) return false;
 
-        // Clean up previous SFU viewer state (e.g. on re-watch after ICE failure)
-        if (client._sfuViewerState) {
-            const prev = client._sfuViewerState;
-            whipHandler.cleanupSfuViewer(prev.roomId, client.peerId, prev.transportId, prev.consumerIds);
-            client._sfuViewerState = null;
-        }
+        // Clean up previous SFU viewer transport (e.g. on re-watch)
+        this._cleanupSfuViewerTransport(client);
 
-        const result = await whipHandler.createSfuViewerOffer(roomId, client.peerId);
-        if (!result) return false;
+        // Get router capabilities and producer list
+        const caps = await webrtcSFU.getRouterCapabilities(roomId);
+        const producers = webrtcSFU.getProducers(roomId);
+        if (!caps || !producers || producers.length === 0) return false;
 
-        // Store SFU viewer state on the client for answer handling and cleanup
-        client._sfuViewerState = {
-            roomId,
-            transportId: result.transportId,
-            consumerIds: result.consumerIds,
-        };
-
-        // Send the SDP offer to the viewer in the same format as a P2P offer
+        // Send capabilities + producer list — viewer will use mediasoup-client Device
         this.safeSend(ws, {
-            type: 'offer',
-            sdp: { type: 'offer', sdp: result.sdpOffer },
-            fromPeerId: 'broadcaster',
+            type: 'sfu-viewer-ready',
+            rtpCapabilities: caps,
+            producers: producers.map(p => ({ id: p.id, kind: p.kind })),
         });
 
-        console.log(`[Broadcast] SFU viewer offer sent to ${client.peerId} for stream ${client.streamId} (${result.consumerIds.length} consumer(s))`);
+        console.log(`[Broadcast] SFU viewer ready sent to ${client.peerId} for stream ${client.streamId} (${producers.length} producer(s))`);
         return true;
     }
 
-    /**
-     * Handle an SFU viewer's SDP answer.
-     */
-    async _handleSfuViewerAnswer(ws, client, msg) {
-        const state = client._sfuViewerState;
-        if (!state) return;
+    async _handleSfuViewerCreateTransport(ws, client) {
+        const roomId = `stream-${client.streamId}`;
+        // Clean up previous transport on re-negotiate
+        this._cleanupSfuViewerTransport(client);
 
-        // Extract raw SDP string from the answer message
-        const rawSdp = typeof msg.sdp === 'string' ? msg.sdp : msg.sdp?.sdp;
-        if (!rawSdp) {
-            console.warn(`[Broadcast] SFU viewer ${client.peerId} sent answer without SDP`);
-            return;
-        }
+        const transport = await webrtcSFU.createTransport(roomId, client.peerId);
+        client._sfuViewerTransportId = transport.id;
+        client._sfuViewerRoomId = roomId;
+        client._sfuViewerConsumerIds = [];
 
-        await whipHandler.handleSfuViewerAnswer(
-            state.roomId, client.peerId, state.transportId, rawSdp
+        this.safeSend(ws, {
+            type: 'sfu-viewer-transport-created',
+            id: transport.id,
+            iceParameters: transport.iceParameters,
+            iceCandidates: transport.iceCandidates,
+            dtlsParameters: transport.dtlsParameters,
+        });
+    }
+
+    async _handleSfuViewerConnectTransport(ws, client, msg) {
+        const roomId = client._sfuViewerRoomId || `stream-${client.streamId}`;
+        await webrtcSFU.connectTransport(
+            roomId, client.peerId, msg.transportId, msg.dtlsParameters
         );
-        console.log(`[Broadcast] SFU viewer ${client.peerId} connected for stream ${client.streamId}`);
+        this.safeSend(ws, { type: 'sfu-viewer-transport-connected', transportId: msg.transportId });
+        console.log(`[Broadcast] SFU viewer ${client.peerId} transport connected for stream ${client.streamId}`);
+    }
+
+    async _handleSfuViewerConsume(ws, client, msg) {
+        const roomId = client._sfuViewerRoomId || `stream-${client.streamId}`;
+        const result = await webrtcSFU.consume(
+            roomId, client.peerId, msg.transportId, msg.producerId, msg.rtpCapabilities
+        );
+        if (!client._sfuViewerConsumerIds) client._sfuViewerConsumerIds = [];
+        client._sfuViewerConsumerIds.push(result.id);
+
+        this.safeSend(ws, {
+            type: 'sfu-viewer-consumed',
+            id: result.id,
+            producerId: result.producerId,
+            kind: result.kind,
+            rtpParameters: result.rtpParameters,
+        });
+        console.log(`[Broadcast] SFU viewer ${client.peerId} consuming ${result.kind} for stream ${client.streamId}`);
+    }
+
+    _cleanupSfuViewerTransport(client) {
+        if (!client._sfuViewerTransportId) return;
+        const roomId = client._sfuViewerRoomId || `stream-${client.streamId}`;
+        // Close consumers
+        const room = webrtcSFU.rooms?.get(roomId);
+        if (room) {
+            for (const cid of (client._sfuViewerConsumerIds || [])) {
+                const entry = room.consumers.get(cid);
+                if (entry) {
+                    try { entry.consumer.close(); } catch {}
+                    room.consumers.delete(cid);
+                }
+            }
+            // Close transport
+            const tKey = `${client.peerId}-${client._sfuViewerTransportId}`;
+            const transport = room.transports.get(tKey);
+            if (transport) {
+                try { transport.close(); } catch {}
+                room.transports.delete(tKey);
+            }
+        }
+        client._sfuViewerTransportId = null;
+        client._sfuViewerRoomId = null;
+        client._sfuViewerConsumerIds = null;
     }
 
     /**

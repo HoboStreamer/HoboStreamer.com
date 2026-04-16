@@ -5,10 +5,21 @@
 let player = null;
 let playerType = null;
 
-// Module-level ICE failure counters — shared between initWebRTC's closure and handleViewerOffer.
-// Must NOT be declared inside either function; triggerRewatch inside handleViewerOffer references them.
+// mediasoup-client for SFU viewer consumption
+let _mediasoupModulePromise = null;
+let _mediasoupDevice = null;
+
+async function loadMediasoupClient() {
+    if (!_mediasoupModulePromise) {
+        _mediasoupModulePromise = import('https://esm.sh/mediasoup-client@3.18.7');
+        _mediasoupModulePromise.catch(() => { _mediasoupModulePromise = null; });
+    }
+    return _mediasoupModulePromise;
+}
+
+// Module-level failure counter — prevents infinite reconnect loops
 let _totalIceFailures = 0;
-const MAX_ICE_FAILURES = 25; // hard cap on total ICE failures across all offers
+const MAX_ICE_FAILURES = 25;
 
 // Clip recording state (rolling buffer for live clips)
 let clipRecorder = null;
@@ -546,7 +557,7 @@ async function initWebRTC(stream) {
                         startWatchOfferTimeout();
                         break;
                     case 'offer':
-                        // Broadcaster sent us an offer — create answer
+                        // Broadcaster sent us an offer (P2P path) — create answer
                         console.log('[Player] Received offer from broadcaster');
                         _updateStatus('Connecting media...');
                         // Clear the watch-to-offer timeout — offer received successfully
@@ -556,6 +567,16 @@ async function initWebRTC(stream) {
                         // Clear any stale error overlay — we got a valid offer
                         _clearStreamError();
                         await handleViewerOffer(msg, player.ws, video);
+                        break;
+                    case 'sfu-viewer-ready':
+                        // Server has SFU producers — use mediasoup-client RecvTransport
+                        console.log('[Player] SFU viewer ready — starting mediasoup-client flow');
+                        _updateStatus('Connecting media...');
+                        if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
+                        _rewatchCount = 0;
+                        _hideReconnectingIndicator();
+                        _clearStreamError();
+                        await handleSfuViewerReady(msg, player.ws, video, _updateStatus, scheduleViewerRewatch);
                         break;
                     case 'ice-candidate':
                         // ICE candidate from broadcaster
@@ -932,6 +953,293 @@ async function handleViewerOffer(msg, ws, video) {
             triggerRewatch('ICE connection timeout');
         }
     }, 10000);
+}
+
+/* ── SFU Viewer via mediasoup-client (replaces hand-built SDP) ── */
+async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatch) {
+    if (!player) return;
+
+    // Clean up old PC if any (from P2P fallback or previous SFU attempt)
+    if (player.pc) {
+        const oldPc = player.pc;
+        oldPc.oniceconnectionstatechange = null;
+        oldPc.ontrack = null;
+        oldPc.onicecandidate = null;
+        try { oldPc.close(); } catch {}
+        player.pc = null;
+    }
+    if (player._iceTimeout) { clearTimeout(player._iceTimeout); player._iceTimeout = null; }
+    if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
+    if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
+    // Close previous SFU recv transport
+    if (player._sfuRecvTransport) {
+        try { player._sfuRecvTransport.close(); } catch {}
+        player._sfuRecvTransport = null;
+    }
+
+    const { rtpCapabilities, producers } = msg;
+    if (!rtpCapabilities || !producers?.length) {
+        console.warn('[Player] sfu-viewer-ready missing capabilities or producers');
+        scheduleRewatch(2000);
+        return;
+    }
+
+    try {
+        // Step 1: Load mediasoup-client
+        updateStatus('Loading media engine...');
+        const mod = await loadMediasoupClient();
+        const { Device } = mod;
+        if (!Device) throw new Error('mediasoup-client Device not available');
+
+        // Step 2: Create and load Device with router capabilities
+        const device = new Device();
+        await device.load({ routerRtpCapabilities: rtpCapabilities });
+        _mediasoupDevice = device;
+
+        // Step 3: Request a recv transport from the server
+        updateStatus('Creating media transport...');
+        const transportParams = await _sfuViewerRequest(ws, 'sfu-viewer-create-transport', 'sfu-viewer-transport-created');
+
+        // Step 4: Create the local RecvTransport
+        const recvTransport = device.createRecvTransport({
+            id: transportParams.id,
+            iceParameters: transportParams.iceParameters,
+            iceCandidates: transportParams.iceCandidates,
+            dtlsParameters: transportParams.dtlsParameters,
+        });
+        player._sfuRecvTransport = recvTransport;
+
+        // Wire transport 'connect' event — mediasoup-client fires this when DTLS needs to start
+        recvTransport.on('connect', ({ dtlsParameters }, callback, errback) => {
+            sendPlayerSignal({
+                type: 'sfu-viewer-connect-transport',
+                transportId: recvTransport.id,
+                dtlsParameters,
+            });
+            // Wait for server confirmation
+            _sfuViewerWaitFor(ws, 'sfu-viewer-transport-connected')
+                .then(() => callback())
+                .catch(errback);
+        });
+
+        recvTransport.on('connectionstatechange', (state) => {
+            console.log(`[Player] SFU recv transport state: ${state}`);
+            if (state === 'failed' || state === 'closed') {
+                _totalIceFailures++;
+                if (_totalIceFailures < MAX_ICE_FAILURES) {
+                    console.warn(`[Player] SFU transport ${state}, re-watching`);
+                    player.watchSent = false;
+                    sendPlayerSignal({ type: 'watch' });
+                    player.watchSent = true;
+                    if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+                } else {
+                    showStreamError('Could not establish media connection. Try refreshing.');
+                }
+            }
+        });
+
+        // Step 5: Consume each producer
+        updateStatus('Receiving media...');
+        const mediaStream = new MediaStream();
+        let _hasVideoFrames = false;
+        let _playPending = false;
+
+        const tryPlay = () => {
+            if (_playPending || !player) return;
+            _playPending = true;
+            if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
+            video.muted = true;
+            video.volume = 1;
+            video.play().then(() => {
+                _playPending = false;
+                console.log('[Player] SFU playback started (muted autoplay)');
+                const audioPrefs = getSavedPlayerAudioState();
+                if (!audioPrefs.muted) {
+                    video.volume = Math.max(0.01, audioPrefs.volume);
+                    video.muted = false;
+                    const p = video.play();
+                    if (p) p.catch(() => {
+                        video.muted = true;
+                        video.play().catch(() => {});
+                        showUnmuteOverlay(video);
+                    });
+                } else {
+                    video.volume = 0;
+                    document.getElementById('unmute-overlay')?.remove();
+                }
+            }).catch((err) => {
+                _playPending = false;
+                if (err.name === 'AbortError') {
+                    player._playRetryTimer = setTimeout(() => {
+                        player._playRetryTimer = null;
+                        _playPending = false;
+                        tryPlay();
+                    }, 300);
+                } else {
+                    player._playRetryTimer = setTimeout(() => {
+                        player._playRetryTimer = null;
+                        _playPending = false;
+                        tryPlay();
+                    }, 1000);
+                }
+            });
+        };
+
+        let consumedCount = 0;
+        for (const prod of producers) {
+            const consumerParams = await _sfuViewerRequest(ws, 'sfu-viewer-consume', 'sfu-viewer-consumed', {
+                transportId: recvTransport.id,
+                producerId: prod.id,
+                rtpCapabilities: device.rtpCapabilities,
+            });
+
+            const consumer = await recvTransport.consume({
+                id: consumerParams.id,
+                producerId: consumerParams.producerId,
+                kind: consumerParams.kind,
+                rtpParameters: consumerParams.rtpParameters,
+            });
+
+            mediaStream.addTrack(consumer.track);
+            console.log(`[Player] SFU consumed ${consumer.kind} track`);
+
+            // Monitor track health
+            consumer.track.addEventListener('ended', () => {
+                console.warn(`[Player] SFU ${consumer.kind} track ended`);
+                if (player?._sfuRecvTransport === recvTransport) {
+                    player.watchSent = false;
+                    sendPlayerSignal({ type: 'watch' });
+                    player.watchSent = true;
+                    if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+                }
+            }, { once: true });
+
+            consumedCount++;
+        }
+
+        // Set video source
+        video.srcObject = mediaStream;
+        video.style.display = 'block';
+        startClipRecordingIfNeeded(mediaStream, streamRef?.id);
+
+        // Playing event — hide placeholder
+        const onPlaying = () => {
+            video.removeEventListener('playing', onPlaying);
+            _hasVideoFrames = true;
+            if (player?._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
+            const ph = document.querySelector('.video-placeholder');
+            if (ph) {
+                ph.style.display = 'none';
+                ph.innerHTML = `<i class="fa-solid fa-satellite-dish fa-3x"></i><p>Connecting to stream...</p>`;
+            }
+            if (!video.muted) document.getElementById('unmute-overlay')?.remove();
+        };
+        video.addEventListener('playing', onPlaying);
+
+        // Stall detection
+        if (!_hasVideoFrames) {
+            player._stallTimer = setTimeout(() => {
+                player._stallTimer = null;
+                if (!player || player._sfuRecvTransport !== recvTransport || _hasVideoFrames) return;
+                if (video.videoWidth === 0 || video.paused || video.readyState < 2) {
+                    console.warn('[Player] SFU video stall — no frames after 8s');
+                    player.watchSent = false;
+                    sendPlayerSignal({ type: 'watch' });
+                    player.watchSent = true;
+                    if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+                }
+            }, 8000);
+        }
+
+        // Start playback after all tracks consumed
+        if (consumedCount >= 2) {
+            tryPlay();
+        } else {
+            player._playRetryTimer = setTimeout(() => {
+                player._playRetryTimer = null;
+                _playPending = false;
+                tryPlay();
+            }, 500);
+        }
+
+        console.log(`[Player] SFU viewer consuming ${consumedCount} track(s)`);
+
+    } catch (err) {
+        console.error('[Player] SFU viewer setup failed:', err);
+        // Fall back to re-watch (will try SFU again or P2P)
+        _totalIceFailures++;
+        if (_totalIceFailures < MAX_ICE_FAILURES) {
+            scheduleRewatch(2000);
+        } else {
+            showStreamError('Could not establish media connection. Try refreshing.');
+        }
+    }
+}
+
+/**
+ * Send a signaling message and wait for a specific response type.
+ * Returns the response message payload.
+ */
+function _sfuViewerRequest(ws, sendType, expectType, extra = {}) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Timeout waiting for ${expectType}`));
+        }, 10000);
+
+        const handler = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === expectType) {
+                    cleanup();
+                    resolve(msg);
+                } else if (msg.type === 'sfu-viewer-error') {
+                    cleanup();
+                    reject(new Error(msg.error || 'SFU viewer error'));
+                }
+            } catch {}
+        };
+
+        const cleanup = () => {
+            clearTimeout(timeout);
+            ws.removeEventListener('message', handler);
+        };
+
+        ws.addEventListener('message', handler);
+        sendPlayerSignal({ type: sendType, ...extra });
+    });
+}
+
+/**
+ * Wait for a specific message type on the WS (no sending).
+ */
+function _sfuViewerWaitFor(ws, expectType) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Timeout waiting for ${expectType}`));
+        }, 10000);
+
+        const handler = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === expectType) {
+                    cleanup();
+                    resolve(msg);
+                } else if (msg.type === 'sfu-viewer-error') {
+                    cleanup();
+                    reject(new Error(msg.error || 'SFU viewer error'));
+                }
+            } catch {}
+        };
+
+        const cleanup = () => {
+            clearTimeout(timeout);
+            ws.removeEventListener('message', handler);
+        };
+
+        ws.addEventListener('message', handler);
+    });
 }
 
 /* ── HLS / HTTP-FLV (RTMP transcoded) ──────────────────────────── */
