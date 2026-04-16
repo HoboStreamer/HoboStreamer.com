@@ -551,7 +551,7 @@ class BroadcastServer extends EventEmitter {
         try {
             const roomId = `stream-${client.streamId}`;
             const transport = await webrtcSFU.createTransport(roomId, `sfu-${client.peerId}`);
-            this.safeSend(ws, { type: 'sfu-transport-created', ...transport });
+            this.safeSend(ws, { type: 'sfu-transport-created', ...transport, iceServers: this._getIceServers() });
         } catch (err) {
             console.error('[Broadcast] SFU create-transport error:', err.message);
             this.safeSend(ws, { type: 'sfu-error', error: err.message });
@@ -667,6 +667,7 @@ class BroadcastServer extends EventEmitter {
             iceParameters: transport.iceParameters,
             iceCandidates: transport.iceCandidates,
             dtlsParameters: transport.dtlsParameters,
+            iceServers: this._getIceServers(),
         });
     }
 
