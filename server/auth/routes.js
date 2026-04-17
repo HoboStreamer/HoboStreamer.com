@@ -213,7 +213,7 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) =>
 // Hobo.Tools OAuth2 SSO Integration
 // ═══════════════════════════════════════════════════════════════
 
-const config = require('../config');
+
 const HOBO_CLIENT_ID = process.env.HOBO_OAUTH_CLIENT_ID || 'hobostreamer';
 const HOBO_CLIENT_SECRET = process.env.HOBO_OAUTH_CLIENT_SECRET || '';
 
