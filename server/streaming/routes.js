@@ -41,8 +41,8 @@ const MAX_PANELS_LENGTH = 20000;
 const { pushBulkNotification } = require('../utils/notify');
 const { notifyDiscordGoLive } = require('../integrations/discord-webhook');
 
-const HOBO_TOOLS_INTERNAL_URL = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
+const config = require('../config');
+const INTERNAL_API_KEY = config.internalApiKey || process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
 
 /**
  * Push "X went live" notification via hobo.tools unified event endpoint.
@@ -51,7 +51,7 @@ const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERN
  */
 function notifyFollowersGoLive(streamer, stream) {
     // Try unified event endpoint first (handles Discord bot + push)
-    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/events/stream-live`, {
+    fetch(`${config.hoboToolsInternalUrl}/internal/events/stream-live`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -1082,21 +1082,27 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
                 });
             }
 
-            const url = `http://${hostname}:${endpoint.videoPort}/${user.stream_key}/640/480/`;
-            const urlHD = `http://${hostname}:${endpoint.videoPort}/${user.stream_key}/1280/720/`;
-            const audioUrl = `http://${hostname}:${endpoint.audioPort}/${user.stream_key}/`;
+            const jsmpegOrigin = new URL(config.jsmpeg.publicUrl || `http://${hostname}`);
+            const videoUrl = new URL(`${user.stream_key}/640/480/`, jsmpegOrigin);
+            videoUrl.port = endpoint.videoPort;
+            const urlHD = new URL(`${user.stream_key}/1280/720/`, jsmpegOrigin);
+            urlHD.port = endpoint.videoPort;
+            const audioUrl = new URL(`${user.stream_key}/`, jsmpegOrigin);
+            audioUrl.port = endpoint.audioPort;
             const lowLatencyFlags = '-fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 -muxdelay 0.001 -flush_packets 1';
-            endpoint.ffmpegCommand = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
-            endpoint.ffmpegVideoOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 ${url}`;
-            endpoint.ffmpegScreen = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f x11grab -s 1920x1080 -r 20 -i :0.0 -thread_queue_size 512 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 450k -maxrate 450k -bufsize 900k -g 10 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
-            endpoint.ffmpegOBS = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video2 -thread_queue_size 512 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 450k -maxrate 450k -bufsize 900k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${url}`;
+            endpoint.ffmpegCommand = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${videoUrl}`;
+            endpoint.ffmpegVideoOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 ${videoUrl}`;
+            endpoint.ffmpegScreen = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f x11grab -s 1920x1080 -r 20 -i :0.0 -thread_queue_size 512 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 450k -maxrate 450k -bufsize 900k -g 10 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${videoUrl}`;
+            endpoint.ffmpegOBS = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video2 -thread_queue_size 512 -f pulse -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 450k -maxrate 450k -bufsize 900k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${videoUrl}`;
             endpoint.ffmpegAudioOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f alsa -i default -f mpegts -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${audioUrl}`;
             endpoint.ffmpegHD = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 1280x720 -b:v 1200k -maxrate 1200k -bufsize 2400k -r 30 -g 15 -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 2 ${urlHD}`;
         } else if (stream.protocol === 'webrtc') {
+            const whipUrlBase = config.whip?.publicUrl || config.webrtc?.publicUrl || `${req.protocol}://${req.get('host')}`;
             endpoint = {
                 roomId: `stream-${stream.id}`,
                 signalingUrl: `/ws/broadcast?streamId=${stream.id}`,
-                whipUrlBase: config.webrtc?.publicUrl || `${req.protocol}://${req.get('host')}`,
+                whipUrlBase,
+                whipUrlSource: config.whip?.publicUrl ? 'whip_public_url' : (config.webrtc?.publicUrl ? 'webrtc_public_url' : 'request_host'),
             };
         } else if (stream.protocol === 'rtmp') {
             const rtmpHost = config.rtmp.host || hostname;
