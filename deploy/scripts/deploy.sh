@@ -11,6 +11,24 @@
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
+FORCE_DEPLOY=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --force|-f|--ignore-local-changes)
+            FORCE_DEPLOY=true
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "Usage: $0 [--force]"
+            exit 1
+            ;;
+    esac
+done
+
 REPO_DIR="${REPO_DIR:-/opt/hobostreamer}"
 SERVICE="${SERVICE:-hobostreamer}"
 SITE_URL="${SITE_URL:-https://hobostreamer.com}"
