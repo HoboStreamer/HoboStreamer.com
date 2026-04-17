@@ -169,6 +169,46 @@ class ControlServer {
         });
 
         ws.on('close', () => {
+            // Force-release any keys this viewer was holding
+            const closingClient = this.viewerClients.get(ws);
+            if (closingClient && closingClient.heldKeys.size > 0 && closingClient.streamId) {
+                const stream = db.getStreamById(closingClient.streamId);
+                if (stream) {
+                    const user = db.getUserById(stream.user_id);
+                    if (user) {
+                        const hardwareWs = this.hardwareClients.get(user.stream_key);
+                        if (hardwareWs && hardwareWs.readyState === WebSocket.OPEN) {
+                            for (const holdKey of closingClient.heldKeys) {
+                                // holdKey format: `${streamId}-key-${command}-${userId}`
+                                const parts = holdKey.split('-key-');
+                                if (parts.length >= 2) {
+                                    const command = parts[1].substring(0, parts[1].lastIndexOf('-'));
+                                    hardwareWs.send(JSON.stringify({
+                                        type: 'key_up',
+                                        command,
+                                        from_user: closingClient.user?.username || 'anonymous',
+                                        reason: 'viewer_disconnected',
+                                        timestamp: new Date().toISOString(),
+                                    }));
+                                }
+                            }
+                        }
+                        // Broadcast key releases to other viewers
+                        for (const holdKey of closingClient.heldKeys) {
+                            const parts = holdKey.split('-key-');
+                            if (parts.length >= 2) {
+                                const command = parts[1].substring(0, parts[1].lastIndexOf('-'));
+                                this.broadcastToViewers(user.stream_key, {
+                                    type: 'key_released',
+                                    command,
+                                    by: closingClient.user?.username || 'anonymous',
+                                });
+                            }
+                        }
+                    }
+                }
+                closingClient.heldKeys.clear();
+            }
             this.viewerClients.delete(ws);
         });
     }
@@ -355,20 +395,52 @@ class ControlServer {
         const ctx = this.validateControlPermission(ws, client);
         if (!ctx) return;
 
+        // Validate control exists, is keyboard type, and is enabled
+        if (control_id) {
+            const control = db.get('SELECT * FROM stream_controls WHERE id = ? AND stream_id = ?', [control_id, client.streamId]);
+            if (!control) {
+                ws.send(JSON.stringify({ type: 'error', message: 'Control not found' }));
+                return;
+            }
+            if (control.control_type !== 'keyboard') {
+                ws.send(JSON.stringify({ type: 'error', message: 'Control is not a keyboard type' }));
+                return;
+            }
+            if (control.is_enabled === 0) {
+                ws.send(JSON.stringify({ type: 'error', message: 'Control is disabled' }));
+                return;
+            }
+        }
+
+        // Check stream is live
+        if (!ctx.stream.is_live) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Stream not live' }));
+            return;
+        }
+
+        // Check hardware connection
+        const hardwareWs = this.hardwareClients.get(ctx.user.stream_key);
+        const hwConnected = hardwareWs && hardwareWs.readyState === WebSocket.OPEN;
+
         const holdKey = `${client.streamId}-key-${command}-${client.user?.id || 'anon'}`;
         const heldKeys = client.heldKeys;
 
         if (msg.type === 'key_down') {
             if (heldKeys.has(holdKey)) return;
+            // Reject key_down if hardware is not connected
+            if (!hwConnected) {
+                ws.send(JSON.stringify({ type: 'error', message: 'Hardware not connected' }));
+                return;
+            }
             heldKeys.add(holdKey);
         } else {
+            // key_up: always allow through to clean up state, even if hardware disconnected
             if (!heldKeys.has(holdKey)) return;
             heldKeys.delete(holdKey);
         }
 
-        // Forward to hardware
-        const hardwareWs = this.hardwareClients.get(ctx.user.stream_key);
-        if (hardwareWs && hardwareWs.readyState === WebSocket.OPEN) {
+        // Forward to hardware (if connected)
+        if (hwConnected) {
             hardwareWs.send(JSON.stringify({
                 type: msg.type, // key_down or key_up
                 command,

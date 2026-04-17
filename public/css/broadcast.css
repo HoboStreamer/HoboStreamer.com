@@ -3095,3 +3095,61 @@
     object-fit: contain;
     display: block;
 }
+
+/* ── External Method Live Action Bar ───────────────────── */
+.bc-ext-live-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    background: var(--surface-raised);
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    border-radius: var(--radius);
+    flex-wrap: wrap;
+}
+.bc-ext-live-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.bc-ext-live-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.bc-ext-live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #dc2626;
+    color: #fff;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.bc-ext-live-badge i {
+    font-size: 8px;
+    animation: bc-live-pulse 1.5s ease-in-out infinite;
+}
+.bc-ext-live-info {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.bc-ext-live-info strong {
+    color: var(--text-primary);
+}
+
+/* ── Shared Live Settings Panel ────────────────────────── */
+.bc-live-settings-anchor {
+    /* placeholder container for the shared live settings panel */
+}

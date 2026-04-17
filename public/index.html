@@ -2483,6 +2483,21 @@
 
                 <!-- RTMP Instructions Panel -->
                 <div id="bc-rtmp-instructions" style="display:none" class="bc-instructions-panel">
+                    <!-- Live Action Bar (shown when streaming, replaces buried End Stream) -->
+                    <div class="bc-ext-live-bar" id="bc-rtmp-live-bar" style="display:none">
+                        <div class="bc-ext-live-bar-left">
+                            <span class="bc-ext-live-badge"><i class="fa-solid fa-circle"></i> LIVE</span>
+                            <span class="bc-ext-live-info">
+                                <i class="fa-solid fa-eye"></i> <strong id="bc-rtmp-viewer-count">0</strong>
+                                <i class="fa-solid fa-clock" style="margin-left:8px"></i> <strong id="bc-rtmp-uptime">0:00:00</strong>
+                            </span>
+                        </div>
+                        <div class="bc-ext-live-bar-right">
+                            <button class="btn btn-small" onclick="openViewerPreview()" title="Open viewer preview"><i class="fa-solid fa-eye"></i> Preview</button>
+                            <button class="btn btn-small btn-danger" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                        </div>
+                    </div>
+
                     <h2><i class="fa-solid fa-server"></i> RTMP Stream Setup</h2>
                     <p class="bc-instructions-intro">Your stream is created! Paste the info below into your streaming software and hit "Start Streaming".</p>
                     <div class="bc-code-block">
@@ -2598,50 +2613,8 @@
                         </div>
                     </details>
 
-                    <!-- Live Settings (TTS, Restreams, etc.) — shared with all methods -->
-                    <div id="bc-rtmp-live-settings" class="bc-live-settings-panel">
-                        <!-- TTS Settings -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">TTS Mode</span>
-                                <div class="bc-setting-control">
-                                    <select id="bc-rtmp-ttsMode" onchange="syncExternalTTSSetting('ttsMode', this.value)">
-                                        <option value="site-wide">Site-Wide TTS (Server Voices)</option>
-                                        <option value="self">Self TTS (Browser Voices)</option>
-                                        <option value="off">Off</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">TTS Volume</span>
-                                <div class="bc-setting-control"><input type="range" id="bc-rtmp-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
-                            </div>
-                        </div>
-
-                        <!-- Restreams -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
-                            <div class="bc-restream-control" id="bc-rtmp-restream-control"></div>
-                            <p class="bc-call-explainer" id="bc-rtmp-restream-hint">
-                                <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
-                                <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
-                            </p>
-                        </div>
-
-                        <!-- Interactive Controls Status -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
-                            <div id="bc-rtmp-controls-status" style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
-                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                                <select id="bc-rtmp-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
-                                    <option value="">None (no controls)</option>
-                                </select>
-                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
-                            </div>
-                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
-                        </div>
-                    </div>
+                    <!-- Live Settings — rendered via shared panel (bc-shared-live-settings) -->
+                    <div class="bc-live-settings-anchor" id="bc-rtmp-live-settings-anchor"></div>
 
                     <!-- FFmpeg RTMP (for headless / CLI users) -->
                     <details class="bc-app-guide">
@@ -2692,6 +2665,21 @@
 
                 <!-- JSMPEG Instructions Panel -->
                 <div id="bc-jsmpeg-instructions" style="display:none" class="bc-instructions-panel">
+                    <!-- Live Action Bar -->
+                    <div class="bc-ext-live-bar" id="bc-jsmpeg-live-bar" style="display:none">
+                        <div class="bc-ext-live-bar-left">
+                            <span class="bc-ext-live-badge"><i class="fa-solid fa-circle"></i> LIVE</span>
+                            <span class="bc-ext-live-info">
+                                <i class="fa-solid fa-eye"></i> <strong id="bc-jsmpeg-viewer-count">0</strong>
+                                <i class="fa-solid fa-clock" style="margin-left:8px"></i> <strong id="bc-jsmpeg-uptime">0:00:00</strong>
+                            </span>
+                        </div>
+                        <div class="bc-ext-live-bar-right">
+                            <button class="btn btn-small" onclick="openViewerPreview()" title="Open viewer preview"><i class="fa-solid fa-eye"></i> Preview</button>
+                            <button class="btn btn-small btn-danger" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                        </div>
+                    </div>
+
                     <h2><i class="fa-solid fa-terminal"></i> JSMPEG Stream Setup</h2>
                     <p class="bc-instructions-intro">Your stream is created! Copy one of the FFmpeg commands below and run it in your terminal. Ideal for Raspberry Pi, embedded devices, Linux desktops, and headless servers.</p>
 
@@ -2929,56 +2917,29 @@ WantedBy=multi-user.target</code>
                         </div>
                     </div>
 
-                    <!-- Live Settings (TTS, Restreams) — same as RTMP and WebRTC -->
-                    <div id="bc-jsmpeg-live-settings" class="bc-live-settings-panel">
-                        <!-- TTS Settings -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">TTS Mode</span>
-                                <div class="bc-setting-control">
-                                    <select id="bc-jsmpeg-ttsMode" onchange="syncExternalTTSSetting('ttsMode', this.value)">
-                                        <option value="site-wide">Site-Wide TTS (Server Voices)</option>
-                                        <option value="self">Self TTS (Browser Voices)</option>
-                                        <option value="off">Off</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">TTS Volume</span>
-                                <div class="bc-setting-control"><input type="range" id="bc-jsmpeg-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
-                            </div>
-                        </div>
-
-                        <!-- Restreams -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
-                            <div class="bc-restream-control" id="bc-jsmpeg-restream-control"></div>
-                            <p class="bc-call-explainer" id="bc-jsmpeg-restream-hint">
-                                <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
-                                <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
-                            </p>
-                        </div>
-
-                        <!-- Interactive Controls Status -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
-                            <div id="bc-jsmpeg-controls-status" style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
-                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                                <select id="bc-jsmpeg-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
-                                    <option value="">None (no controls)</option>
-                                </select>
-                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
-                            </div>
-                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
-                        </div>
-                    </div>
+                    <!-- Live Settings — rendered via shared panel (bc-shared-live-settings) -->
+                    <div class="bc-live-settings-anchor" id="bc-jsmpeg-live-settings-anchor"></div>
 
                     <button class="btn btn-outline" style="margin-top:16px" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
                 </div>
 
                 <!-- WHIP Instructions Panel -->
                 <div id="bc-webrtc-obs-instructions" style="display:none" class="bc-instructions-panel">
+                    <!-- Live Action Bar -->
+                    <div class="bc-ext-live-bar" id="bc-whip-live-bar" style="display:none">
+                        <div class="bc-ext-live-bar-left">
+                            <span class="bc-ext-live-badge"><i class="fa-solid fa-circle"></i> LIVE</span>
+                            <span class="bc-ext-live-info">
+                                <i class="fa-solid fa-eye"></i> <strong id="bc-whip-viewer-count">0</strong>
+                                <i class="fa-solid fa-clock" style="margin-left:8px"></i> <strong id="bc-whip-uptime">0:00:00</strong>
+                            </span>
+                        </div>
+                        <div class="bc-ext-live-bar-right">
+                            <button class="btn btn-small" onclick="openViewerPreview()" title="Open viewer preview"><i class="fa-solid fa-eye"></i> Preview</button>
+                            <button class="btn btn-small btn-danger" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                        </div>
+                    </div>
+
                     <h2><i class="fa-solid fa-desktop"></i> WebRTC via OBS (WHIP)</h2>
                     <p class="bc-instructions-intro">Your stream is created! Paste the info below into OBS Studio 30+ to start streaming with ultra-low latency via WebRTC. This is newer and faster than RTMP.</p>
                     <div class="bc-code-block">
@@ -3007,50 +2968,69 @@ WantedBy=multi-user.target</code>
                         <p class="muted"><i class="fa-solid fa-info-circle"></i> Requires OBS Studio 30.0 or newer. Older versions do not support WHIP.</p>
                     </div>
 
-                    <!-- Live Settings (TTS, Restreams) — unified across all methods -->
-                    <div id="bc-whip-live-settings" class="bc-live-settings-panel">
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">TTS Mode</span>
-                                <div class="bc-setting-control">
-                                    <select id="bc-whip-ttsMode" onchange="syncExternalTTSSetting('ttsMode', this.value)">
-                                        <option value="site-wide">Site-Wide TTS (Server Voices)</option>
-                                        <option value="self">Self TTS (Browser Voices)</option>
-                                        <option value="off">Off</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="bc-setting-row">
-                                <span class="bc-setting-label">TTS Volume</span>
-                                <div class="bc-setting-control"><input type="range" id="bc-whip-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
-                            </div>
-                        </div>
-                        <!-- Restreams -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
-                            <div class="bc-restream-control" id="bc-whip-restream-control"></div>
-                            <p class="bc-call-explainer" id="bc-whip-restream-hint">
-                                <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
-                                <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
-                            </p>
-                        </div>
+                    <!-- Live Settings — rendered via shared panel (bc-shared-live-settings) -->
+                    <div class="bc-live-settings-anchor" id="bc-whip-live-settings-anchor"></div>
 
-                        <!-- Interactive Controls Status -->
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
-                            <div id="bc-whip-controls-status" style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
-                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                                <select id="bc-whip-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
-                                    <option value="">None (no controls)</option>
+                    <button class="btn btn-outline" style="margin-top:16px" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                </div>
+
+                <!-- ═══ Shared Live Settings Panel (moved to active panel via JS) ═══ -->
+                <div id="bc-shared-live-settings" class="bc-live-settings-panel" style="display:none">
+                    <!-- TTS Settings -->
+                    <div class="bc-settings-group">
+                        <div class="bc-settings-title"><i class="fa-solid fa-comment-dots"></i> Text To Speech</div>
+                        <div class="bc-setting-row">
+                            <span class="bc-setting-label">TTS Mode</span>
+                            <div class="bc-setting-control">
+                                <select id="bc-ext-ttsMode" onchange="syncExternalTTSSetting('ttsMode', this.value)">
+                                    <option value="site-wide">Site-Wide TTS (Server Voices)</option>
+                                    <option value="self">Self TTS (Browser Voices)</option>
+                                    <option value="off">Off</option>
                                 </select>
-                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
                             </div>
-                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
+                        </div>
+                        <div class="bc-setting-row">
+                            <span class="bc-setting-label">TTS Volume</span>
+                            <div class="bc-setting-control"><input type="range" id="bc-ext-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
                         </div>
                     </div>
 
-                    <button class="btn btn-outline" style="margin-top:16px" onclick="endSetupStream()"><i class="fa-solid fa-stop"></i> End Stream</button>
+                    <!-- Disconnect Audio Alert -->
+                    <div class="bc-settings-group">
+                        <div class="bc-settings-title"><i class="fa-solid fa-bell"></i> Alerts</div>
+                        <div class="bc-setting-row">
+                            <span class="bc-setting-label">Disconnect Audio</span>
+                            <div class="bc-setting-control">
+                                <label class="toggle-switch" style="margin:0">
+                                    <input type="checkbox" id="bc-ext-disconnectAudio" onchange="_disconnectAudioEnabled = this.checked; localStorage.setItem('bc-disconnect-audio', this.checked ? '1' : '0')">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Restreams -->
+                    <div class="bc-settings-group">
+                        <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
+                        <div class="bc-restream-control" id="bc-ext-restream-control"></div>
+                        <p class="bc-call-explainer" id="bc-ext-restream-hint">
+                            <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
+                            <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
+                        </p>
+                    </div>
+
+                    <!-- Interactive Controls Status -->
+                    <div class="bc-settings-group">
+                        <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
+                        <div id="bc-ext-controls-status" style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                            <select id="bc-ext-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
+                                <option value="">None (no controls)</option>
+                            </select>
+                            <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
+                        </div>
+                        <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
+                    </div>
                 </div>
 
                 <!-- ═══ WebRTC Browser Broadcast (live controls) ═══ -->
@@ -4208,30 +4188,162 @@ WantedBy=multi-user.target</code>
 
     <!-- Documentation Page -->
     <section id="page-documentation" class="page">
-        <div class="content-container" style="max-width:900px">
+        <div class="content-container" style="max-width:960px">
 
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0.5rem">
                 <div>
                     <h1 style="margin-bottom:0.25rem"><i class="fa-solid fa-wand-magic-sparkles"></i> HoboStreamer API Docs</h1>
-                    <p class="text-muted" style="margin:0">Built for vibe coders. Copy everything below, paste into your LLM, and build whatever you want.</p>
+                    <p class="text-muted" style="margin:0">Modular docs for vibe coders. Copy just the section you need, or grab everything.</p>
                 </div>
-                <button class="btn btn-primary" onclick="copyDocsForAI()" id="docs-copy-btn" style="white-space:nowrap;flex-shrink:0">
-                    <i class="fa-solid fa-copy"></i> Copy All for AI
-                </button>
+                <div style="display:flex;gap:0.5rem;flex-shrink:0">
+                    <button class="btn btn-outline" onclick="copyDocSection()" id="docs-copy-section-btn" style="white-space:nowrap">
+                        <i class="fa-solid fa-copy"></i> Copy Section
+                    </button>
+                    <button class="btn btn-primary" onclick="copyDocsForAI()" id="docs-copy-btn" style="white-space:nowrap">
+                        <i class="fa-solid fa-copy"></i> Copy All
+                    </button>
+                </div>
             </div>
 
             <div id="docs-copy-toast" style="display:none;background:var(--accent);color:#fff;padding:0.5rem 1rem;border-radius:var(--radius);margin-bottom:1rem;font-size:0.9rem">
                 <i class="fa-solid fa-check"></i> Copied! Paste into ChatGPT, Claude, Gemini — go wild.
             </div>
 
+            <!-- Docs tab navigation -->
+            <div class="docs-tab-bar" style="display:flex;gap:0;overflow-x:auto;border-bottom:2px solid var(--border);margin-bottom:1.5rem;padding-bottom:0">
+                <button class="docs-tab active" onclick="showDocTab('start',this)">Getting Started</button>
+                <button class="docs-tab" onclick="showDocTab('arch',this)">Architecture</button>
+                <button class="docs-tab" onclick="showDocTab('auth',this)">Auth</button>
+                <button class="docs-tab" onclick="showDocTab('streams',this)">Streams</button>
+                <button class="docs-tab" onclick="showDocTab('webrtc',this)">WebRTC</button>
+                <button class="docs-tab" onclick="showDocTab('chat',this)">Chat</button>
+                <button class="docs-tab" onclick="showDocTab('controls',this)">Controls</button>
+                <button class="docs-tab" onclick="showDocTab('controlws',this)">Control WS</button>
+                <button class="docs-tab" onclick="showDocTab('audio',this)">TTS &amp; Audio</button>
+                <button class="docs-tab" onclick="showDocTab('integrations',this)">Integrations</button>
+                <button class="docs-tab" onclick="showDocTab('vods',this)">VODs</button>
+                <button class="docs-tab" onclick="showDocTab('misc',this)">API Ref</button>
+            </div>
+
             <div id="docs-ai-content">
 
-<h2>HOBOSTREAMER PLATFORM — COMPLETE DEVELOPER REFERENCE</h2>
-<p>HoboStreamer is a self-hosted, open-source live streaming platform. Stack: Node.js + Express + SQLite (better-sqlite3) + Mediasoup WebRTC SFU. Frontend: vanilla JS SPA. All API endpoints return JSON. WebSocket endpoints on same host/port.</p>
-<p>Base URL: https://hobostreamer.com (replace with your instance). All authenticated endpoints require: <code>Authorization: Bearer &lt;JWT&gt;</code> header, or <code>?token=JWT</code> query param on WebSocket URLs.</p>
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Getting Started                                       -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content active" data-doc-tab="start">
+<h2><i class="fa-solid fa-rocket"></i> Getting Started — Vibe Coding Guide</h2>
 
-<hr>
+<h3>What is this?</h3>
+<p>HoboStreamer is a self-hosted, open-source live streaming platform with interactive controls, chat bots, TTS, soundboards, and hardware bridges. This documentation is designed for <strong>vibe coding</strong> — copy the section you need into your LLM and start building.</p>
 
+<h3>Quick Architecture Overview</h3>
+<table class="doc-table">
+<thead><tr><th>Layer</th><th>Tech</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Backend</td><td>Node.js + Express</td><td>All routes return JSON</td></tr>
+<tr><td>Database</td><td>SQLite (better-sqlite3)</td><td>WAL mode, foreign keys</td></tr>
+<tr><td>WebRTC SFU</td><td>Mediasoup</td><td>Video/audio routing</td></tr>
+<tr><td>RTMP</td><td>Node-Media-Server</td><td>OBS classic ingest</td></tr>
+<tr><td>Chat/Control</td><td>WebSocket (ws)</td><td>Real-time messaging</td></tr>
+<tr><td>Frontend</td><td>Vanilla JS SPA</td><td>No framework</td></tr>
+<tr><td>Auth</td><td>RS256 JWT via hobo.tools SSO</td><td>Shared across Hobo Network</td></tr>
+</tbody>
+</table>
+
+<h3>Which doc to copy for which task?</h3>
+<table class="doc-table">
+<thead><tr><th>Building a...</th><th>Copy this tab</th></tr></thead>
+<tbody>
+<tr><td>Chat bot / overlay</td><td><strong>Chat</strong> — WS protocol, bot examples, commands</td></tr>
+<tr><td>Robot/hardware bridge</td><td><strong>Control WS</strong> — full Python + Node.js bridge examples</td></tr>
+<tr><td>Custom stream player</td><td><strong>WebRTC</strong> — WHIP, SFU, SDP protocol</td></tr>
+<tr><td>Stream management tool</td><td><strong>Streams</strong> — CRUD, go-live, channels</td></tr>
+<tr><td>TTS / soundboard bot</td><td><strong>TTS &amp; Audio</strong> — voice catalog, audio queue, 101soundboards</td></tr>
+<tr><td>Discord/push integration</td><td><strong>Integrations</strong> — events, webhooks, push API</td></tr>
+<tr><td>Control panel / buttons</td><td><strong>Controls</strong> — profiles, button schema, settings</td></tr>
+<tr><td>Admin tooling</td><td><strong>API Ref</strong> — full endpoint list, rate limits</td></tr>
+</tbody>
+</table>
+
+<h3>How the Hobo Network is split</h3>
+<table class="doc-table">
+<thead><tr><th>Service</th><th>URL</th><th>Owns</th></tr></thead>
+<tbody>
+<tr><td>HoboStreamer.com</td><td>hobostreamer.com</td><td>Streaming, chat, TTS, controls, VODs, soundboard</td></tr>
+<tr><td>hobo.tools</td><td>hobo.tools / my.hobo.tools</td><td>SSO, accounts, notifications, push, Discord bot, admin</td></tr>
+<tr><td>hobo.quest</td><td>hobo.quest</td><td>Games (RPG, canvas)</td></tr>
+</tbody>
+</table>
+
+<h3>Base URL &amp; Auth</h3>
+<p>Base URL: <code>https://hobostreamer.com</code> (replace with your instance).</p>
+<p>Auth: <code>Authorization: Bearer &lt;JWT&gt;</code> header, or <code>?token=JWT</code> query param on WebSocket URLs.</p>
+<p>API tokens: <code>hbt_</code> prefix, scoped permissions, created from Dashboard → API Tokens.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Architecture                                          -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="arch" style="display:none">
+<h2><i class="fa-solid fa-sitemap"></i> Network Architecture</h2>
+
+<h3>Service Map</h3>
+<pre><code>┌──────────────────────────────────────────────────────┐
+│  hobo.tools (port 3100) — Central Hub                │
+│  ├─ /api/auth      — SSO (RS256 JWT)                 │
+│  ├─ /api/notifications — Notification CRUD           │
+│  ├─ /api/push      — Web Push (VAPID)                │
+│  ├─ /api/admin     — Unified admin panel             │
+│  ├─ /api/admin/discord — Discord bot config          │
+│  ├─ /internal      — Server-to-server API            │
+│  └─ Discord bot    — Live alerts, system alerts      │
+├──────────────────────────────────────────────────────┤
+│  HoboStreamer.com (port 3000) — Streaming Platform   │
+│  ├─ /api/streams   — Stream CRUD + go-live           │
+│  ├─ /api/chat      — Chat REST API                   │
+│  ├─ /api/tts       — TTS voice config                │
+│  ├─ /api/controls  — Interactive control profiles    │
+│  ├─ /ws/chat       — Real-time chat                  │
+│  ├─ /ws/broadcast  — WebRTC signaling                │
+│  ├─ /ws/control    — Hardware command relay           │
+│  ├─ /whip/:id      — WHIP WebRTC ingestion           │
+│  └─ RTMP server    — rtmp://host/live                │
+└──────────────────────────────────────────────────────┘</code></pre>
+
+<h3>Event Flow: Stream Goes Live</h3>
+<pre><code>1. Streamer calls POST /api/streams (HoboStreamer)
+2. HoboStreamer creates stream record, starts media endpoint
+3. HoboStreamer calls POST /internal/events/stream-live (hobo.tools)
+4. hobo.tools Discord bot sends embed to #alerts channel (with dedupe)
+5. hobo.tools creates STREAM_LIVE notifications for:
+   - All followers of the streamer
+   - Users opted into "all live" alerts
+6. Push notifications fire via Web Push (VAPID)
+7. Fallback: HoboStreamer sends direct webhook if hobo.tools unreachable</code></pre>
+
+<h3>WebSocket Services</h3>
+<table class="doc-table">
+<thead><tr><th>Path</th><th>Purpose</th><th>Auth</th></tr></thead>
+<tbody>
+<tr><td>/ws/chat</td><td>Chat rooms (per-stream or global)</td><td>Optional (anon allowed)</td></tr>
+<tr><td>/ws/broadcast</td><td>WebRTC SFU signaling</td><td>JWT required</td></tr>
+<tr><td>/ws/control</td><td>Interactive controls relay (viewer ↔ hardware)</td><td>JWT or API key</td></tr>
+<tr><td>/ws/call</td><td>Group voice/video calls</td><td>JWT required</td></tr>
+</tbody>
+</table>
+
+<h3>Admin Proxy Architecture</h3>
+<p>hobo.tools admin panel proxies requests to HoboStreamer:</p>
+<pre><code>hobo.tools /api/admin/streamer/*  →  HoboStreamer /api/admin/*
+hobo.tools /api/admin/streamer-tts/*  →  HoboStreamer /api/tts/*
+hobo.tools /api/admin/streamer-mod/*  →  HoboStreamer /api/mod/*</code></pre>
+<p>Protected by X-Internal-Key header for server-to-server calls.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Auth                                                  -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="auth" style="display:none">
 <h2>1. AUTHENTICATION</h2>
 
 <h3>REST Endpoints</h3>
@@ -4245,6 +4357,18 @@ WantedBy=multi-user.target</code>
 </tbody>
 </table>
 
+<h3>API Tokens (hbt_ prefix)</h3>
+<p>For bots and integrations that need long-lived auth without JWTs:</p>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td>/api/auth/tokens</td><td>Create token { name, scopes[], expires_in_days? }</td></tr>
+<tr><td>GET</td><td>/api/auth/tokens</td><td>List your tokens (masked)</td></tr>
+<tr><td>DELETE</td><td>/api/auth/tokens/:id</td><td>Revoke token</td></tr>
+</tbody>
+</table>
+<p>Use in headers: <code>Authorization: Bearer hbt_xxxxxxxxxxxx</code></p>
+
 <h3>Example: Login and get token</h3>
 <pre><code>const res = await fetch('https://hobostreamer.com/api/auth/login', {
   method: 'POST',
@@ -4255,8 +4379,12 @@ const { token, user } = await res.json();
 // Use token in all subsequent requests
 </code></pre>
 
-<hr>
+</div>
 
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Streams & Channels                                    -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="streams" style="display:none">
 <h2>2. STREAMS &amp; CHANNELS</h2>
 
 <h3>Stream REST API</h3>
@@ -4300,8 +4428,12 @@ console.log(endpoint.whip_url);  // POST SDP offer here
 // Remember to call /heartbeat every 30s to keep stream alive
 </code></pre>
 
-<hr>
+</div>
 
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: WebRTC                                                -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="webrtc" style="display:none">
 <h2>3. WEBRTC BROADCAST PROTOCOL</h2>
 
 <h3>WHIP Ingestion (OBS / ffmpeg / custom encoder)</h3>
@@ -4343,9 +4475,12 @@ Key:    YOUR_STREAM_KEY   (get from Dashboard → Stream Key)
 # Playback proxy for browser
 GET /api/streams/rtmp-proxy/:streamId.flv
 </code></pre>
+</div>
 
-<hr>
-
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Chat                                                  -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="chat" style="display:none">
 <h2>4. CHAT SYSTEM — CHATBOT GUIDE</h2>
 <p>Connect to the chat WebSocket to read and send messages. Perfect for building chat bots, overlays, alert systems, and integrations.</p>
 
@@ -4486,9 +4621,12 @@ while True:
 <tr><td>GET</td><td>/api/chat/user/:username/profile</td><td>No</td><td>User profile card data</td></tr>
 </tbody>
 </table>
+</div>
 
-<hr>
-
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Controls                                              -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="controls" style="display:none">
 <h2>5. INTERACTIVE CONTROL SYSTEM — ROBOT/HARDWARE GUIDE</h2>
 <p>The control system lets streamers expose interactive buttons that viewers press to control physical hardware (robots, cameras, servo rigs, etc.). Three interaction types: single-press buttons, keyboard hold (continuous drive), and video-click (x/y coordinates on the live video feed).</p>
 
@@ -4567,9 +4705,12 @@ while True:
 <tr><td>POST</td><td>/api/controls/:streamId/presets/cozmo</td><td>Apply Cozmo robot preset buttons</td></tr>
 </tbody>
 </table>
+</div>
 
-<hr>
-
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Control WS                                            -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="controlws" style="display:none">
 <h2>6. CONTROL WEBSOCKET — HARDWARE BRIDGE</h2>
 <p>This is how your code receives viewer commands. Connect as <code>mode=hardware</code> and listen for messages. Your bridge translates them into robot/hardware actions.</p>
 
@@ -4794,9 +4935,7 @@ GET /api/controls/configs/42/bridge-script?type=cozmo
 </table>
 <p>Hardware bridges send <code>{ type: "status", connected: true }</code> on connect. The server broadcasts this to all viewers as a <code>hardware_status</code> message. Send a status with <code>connected: true</code> to turn the indicator green.</p>
 
-<hr>
-
-<h2>7. ONVIF CAMERA CONTROL</h2>
+<h3>ONVIF Camera Control</h3>
 <p>Control PTZ cameras via ONVIF. Cameras appear as controls in the stream control panel.</p>
 <table class="doc-table">
 <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
@@ -4812,9 +4951,166 @@ GET /api/controls/configs/42/bridge-script?type=cozmo
 </table>
 <p>ONVIF movements (send via control WS with <code>isOnvif: true, cameraId: X, movement: Y</code>):</p>
 <p>pan_left, pan_right, tilt_up, tilt_down, zoom_in, zoom_out</p>
+</div>
 
-<hr>
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: TTS & Audio                                           -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="audio" style="display:none">
+<h2>TTS &amp; AUDIO SYSTEM</h2>
 
+<h3>Text-to-Speech</h3>
+<p>TTS reads chat messages, donation alerts, and custom text aloud on stream. Viewers hear it in the broadcast audio mix. Streamers configure which voice, volume, rate, and message types trigger TTS.</p>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/tts/settings</td><td>Current TTS config (voice, volume, rate, filters)</td></tr>
+<tr><td>PUT</td><td>/api/tts/settings</td><td>Update TTS config</td></tr>
+<tr><td>GET</td><td>/api/tts/voices</td><td>List available TTS voices</td></tr>
+<tr><td>POST</td><td>/api/tts/speak</td><td>Queue a message for TTS { text, voice?, rate? }</td></tr>
+<tr><td>POST</td><td>/api/tts/skip</td><td>Skip current TTS message</td></tr>
+</tbody>
+</table>
+
+<h3>TTS Settings Schema</h3>
+<pre><code>{
+  "tts_enabled": true,
+  "tts_voice": "en-US-Standard-D",
+  "tts_volume": 0.8,
+  "tts_rate": 1.0,
+  "tts_read_chat": true,
+  "tts_read_username": true,
+  "tts_min_bits": 0,
+  "tts_max_length": 200,
+  "tts_filter_links": true,
+  "tts_filter_emotes": false
+}</code></pre>
+
+<h3>101Soundboards Integration</h3>
+<p>Viewers paste 101soundboards.com URLs in chat to play sound effects. The server fetches, caches, and routes audio through the TTS queue with optional pitch/speed modifiers.</p>
+
+<h4>Chat Syntax</h4>
+<pre><code># Basic — just paste the URL
+https://www.101soundboards.com/sounds/12345
+
+# With pitch modifier (cents — 100 = one semitone up)
+https://www.101soundboards.com/sounds/12345 100p
+
+# Negative pitch (down)
+https://www.101soundboards.com/sounds/12345 -200p
+
+# With speed modifier (1.0 = normal, 0.5-3.0 range)
+https://www.101soundboards.com/sounds/12345 2.5
+
+# Both pitch and speed
+https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
+
+<h4>Channel Soundboard Settings</h4>
+<table class="doc-table">
+<thead><tr><th>Setting</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>soundboard_enabled</td><td>boolean</td><td>true</td><td>Enable/disable soundboard in this channel</td></tr>
+<tr><td>soundboard_allow_pitch</td><td>boolean</td><td>true</td><td>Allow pitch modifiers</td></tr>
+<tr><td>soundboard_allow_speed</td><td>boolean</td><td>true</td><td>Allow speed modifiers</td></tr>
+<tr><td>soundboard_banned_ids</td><td>string</td><td>""</td><td>Comma-separated list of banned sound IDs</td></tr>
+</tbody>
+</table>
+
+<h4>Rate Limits</h4>
+<table class="doc-table">
+<thead><tr><th>Scope</th><th>Limit</th></tr></thead>
+<tbody>
+<tr><td>Per user</td><td>One sound every 8 seconds</td></tr>
+<tr><td>Per stream</td><td>15 sounds per minute</td></tr>
+</tbody>
+</table>
+
+<h3>Audio Queue</h3>
+<p>TTS and soundboard audio share a single playback queue. Messages play in FIFO order. The audio element routes through a GainNode for volume control. Soundboard clips support <code>playbackRate</code> for pitch/speed modification.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: Integrations                                          -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="integrations" style="display:none">
+<h2>INTEGRATIONS — DISCORD, PUSH, WEBHOOKS</h2>
+
+<h3>Discord Bot (via hobo.tools)</h3>
+<p>The Discord bot runs on hobo.tools (not HoboStreamer). When a stream goes live, HoboStreamer fires an internal event, and the bot posts an embed in the configured alerts channel.</p>
+<table class="doc-table">
+<thead><tr><th>Feature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Live alerts</td><td>Rich embed with stream title, thumbnail, streamer, and link</td></tr>
+<tr><td>Dedupe</td><td>Per-streamer cooldown (configurable, default 15 min) prevents spam</td></tr>
+<tr><td>System alerts</td><td>Admin-triggered system notifications to a separate channel</td></tr>
+<tr><td>Account linking</td><td>Users can link their Discord account via OAuth2 on my.hobo.tools</td></tr>
+</tbody>
+</table>
+
+<h3>Discord Admin API (hobo.tools)</h3>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/admin/discord</td><td>Bot status + config (tokens masked)</td></tr>
+<tr><td>PUT</td><td>/api/admin/discord</td><td>Update bot/OAuth settings</td></tr>
+<tr><td>POST</td><td>/api/admin/discord/test</td><td>Send test system alert</td></tr>
+<tr><td>POST</td><td>/api/admin/discord/test-live</td><td>Send test live alert</td></tr>
+<tr><td>POST</td><td>/api/admin/discord/reinit</td><td>Reconnect Discord bot</td></tr>
+</tbody>
+</table>
+
+<h3>Discord Account Linking</h3>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/auth/discord/link</td><td>Initiate Discord OAuth2 (redirects to Discord)</td></tr>
+<tr><td>GET</td><td>/api/auth/discord/callback</td><td>OAuth callback (exchanges code, links account)</td></tr>
+<tr><td>DELETE</td><td>/api/auth/discord/link</td><td>Unlink Discord account</td></tr>
+<tr><td>GET</td><td>/api/auth/discord/status</td><td>Check if Discord is linked</td></tr>
+</tbody>
+</table>
+
+<h3>Web Push Notifications</h3>
+<p>Push notifications use VAPID (Web Push API). Users subscribe via their browser, and receive alerts for stream go-live events.</p>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>GET</td><td>/api/push/vapid-key</td><td>Get VAPID public key for subscription</td></tr>
+<tr><td>POST</td><td>/api/push/subscribe</td><td>Register push subscription { endpoint, keys }</td></tr>
+<tr><td>DELETE</td><td>/api/push/unsubscribe</td><td>Remove subscription</td></tr>
+<tr><td>GET</td><td>/api/push/status</td><td>Subscription count + notification preferences</td></tr>
+<tr><td>PUT</td><td>/api/push/live-preferences</td><td>Toggle "all live" vs "followed only" notifications</td></tr>
+</tbody>
+</table>
+
+<h3>Notification Preferences</h3>
+<table class="doc-table">
+<thead><tr><th>Preference</th><th>Values</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>stream (per-follow)</td><td>enabled/disabled</td><td>Get notified when a followed streamer goes live</td></tr>
+<tr><td>stream_live_all</td><td>enabled/disabled</td><td>Get notified when ANY streamer goes live</td></tr>
+</tbody>
+</table>
+
+<h3>Internal Events API (server-to-server)</h3>
+<p>HoboStreamer emits events to hobo.tools via internal API. Protected by X-Internal-Key header.</p>
+<table class="doc-table">
+<thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td>/internal/events/stream-live</td><td>Notify: stream went live { streamer, stream }</td></tr>
+<tr><td>POST</td><td>/internal/push-single</td><td>Send push to one user { userId, title, body, url }</td></tr>
+<tr><td>POST</td><td>/internal/push-bulk</td><td>Send push to multiple users { userIds[], title, body, url }</td></tr>
+</tbody>
+</table>
+
+<h3>Fallback Webhook (HoboStreamer direct)</h3>
+<p>If hobo.tools is unreachable, HoboStreamer falls back to its built-in Discord webhook sender. Configure the webhook URL in HoboStreamer site settings (<code>discord_webhook_url</code>).</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: VODs                                                  -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="vods" style="display:none">
 <h2>8. VODS, CLIPS &amp; PASTES</h2>
 <table class="doc-table">
 <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
@@ -4829,9 +5125,12 @@ GET /api/controls/configs/42/bridge-script?type=cozmo
 <tr><td>GET</td><td>/api/pastes/:slug</td><td>Get paste by slug</td></tr>
 </tbody>
 </table>
+</div>
 
-<hr>
-
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TAB: API Ref / Misc                                        -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="doc-tab-content" data-doc-tab="misc" style="display:none">
 <h2>9. MISC API</h2>
 <table class="doc-table">
 <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
@@ -4860,6 +5159,7 @@ GET /api/controls/configs/42/bridge-script?type=cozmo
 
 <hr>
 <p class="text-muted" style="font-size:0.85rem"><em>HoboStreamer is open source. Contribute at <a href="https://github.com/HoboStreamer/HoboStreamer.com" target="_blank">github.com/HoboStreamer/HoboStreamer.com</a>. Self-host it, fork it, vibe code on top of it.</em></p>
+</div><!-- end misc tab -->
 
             </div><!-- end docs-ai-content -->
         </div>

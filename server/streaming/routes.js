@@ -41,9 +41,50 @@ const MAX_PANELS_LENGTH = 20000;
 const { pushBulkNotification } = require('../utils/notify');
 const { notifyDiscordGoLive } = require('../integrations/discord-webhook');
 
-/** Push "X went live" notification to all followers via hobo.tools internal API (fire-and-forget) */
+const HOBO_TOOLS_INTERNAL_URL = process.env.HOBO_TOOLS_INTERNAL_URL || 'http://127.0.0.1:3100';
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
+
+/**
+ * Push "X went live" notification via hobo.tools unified event endpoint.
+ * This lets hobo.tools handle Discord bot alerts + push notifications centrally.
+ * Falls back to direct webhook + bulk push if hobo.tools is unreachable.
+ */
 function notifyFollowersGoLive(streamer, stream) {
-    // Discord webhook (fire-and-forget)
+    // Try unified event endpoint first (handles Discord bot + push)
+    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/events/stream-live`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Internal-Key': INTERNAL_API_KEY,
+        },
+        body: JSON.stringify({
+            streamer: {
+                id: streamer.id,
+                username: streamer.username,
+                display_name: streamer.display_name || null,
+                avatar_url: streamer.avatar_url || null,
+            },
+            stream: {
+                id: stream.id,
+                title: stream.title || null,
+                protocol: stream.protocol || null,
+            },
+        }),
+    }).then(r => {
+        if (r.ok) {
+            console.log(`[GoLive] Unified event sent for ${streamer.username}`);
+        } else {
+            console.warn(`[GoLive] Unified event failed (${r.status}), using fallback`);
+            _fallbackNotify(streamer, stream);
+        }
+    }).catch(err => {
+        console.warn('[GoLive] Unified event error, using fallback:', err.message);
+        _fallbackNotify(streamer, stream);
+    });
+}
+
+/** Fallback: direct Discord webhook + bulk push (if hobo.tools is down) */
+function _fallbackNotify(streamer, stream) {
     notifyDiscordGoLive(streamer, stream);
 
     const followerIds = db.getFollowerIds(streamer.id);

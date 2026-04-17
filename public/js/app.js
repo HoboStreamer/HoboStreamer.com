@@ -4383,3 +4383,23 @@ function copyDocsForAI() {
         if (toast) { toast.style.display = 'block'; setTimeout(() => { toast.style.display = 'none'; }, 4000); }
     });
 }
+
+function showDocTab(tabName, btn) {
+    document.querySelectorAll('.doc-tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.docs-tab').forEach(el => el.classList.remove('active'));
+    const target = document.querySelector(`.doc-tab-content[data-doc-tab="${tabName}"]`);
+    if (target) target.style.display = '';
+    if (btn) btn.classList.add('active');
+}
+
+function copyDocSection() {
+    const active = document.querySelector('.doc-tab-content[style=""], .doc-tab-content:not([style*="display: none"]):not([style*="display:none"])');
+    if (!active) return;
+    const text = active.innerText || active.textContent || '';
+    navigator.clipboard.writeText(text.trim()).then(() => {
+        const btn = document.getElementById('docs-copy-section-btn');
+        if (btn) { const orig = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!'; setTimeout(() => { btn.innerHTML = orig; }, 3000); }
+        const toast = document.getElementById('docs-copy-toast');
+        if (toast) { toast.style.display = 'block'; setTimeout(() => { toast.style.display = 'none'; }, 4000); }
+    }).catch(() => {});
+}

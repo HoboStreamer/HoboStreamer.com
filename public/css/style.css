@@ -6377,6 +6377,13 @@ body.theme-light .user-dropdown {
 .doc-vibe-hero { background: linear-gradient(135deg, var(--surface) 0%, rgba(var(--accent-rgb, 99,102,241), 0.08) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 2rem; }
 .doc-vibe-hero h2 { margin-top: 0 !important; border: none !important; padding: 0 !important; }
 
+/* Doc tab navigation */
+.docs-tab-bar { -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.docs-tab-bar::-webkit-scrollbar { display: none; }
+.docs-tab { background: none; border: none; color: var(--text-muted); padding: 0.6rem 1rem; font-size: 0.85rem; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
+.docs-tab:hover { color: var(--text); }
+.docs-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
 /* ── Paste Viewer ─────────────────────────────────────────── */
 .paste-viewer-nav {
     margin-bottom: 16px;

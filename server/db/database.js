@@ -1299,8 +1299,8 @@ function saveChatMessage({ stream_id, user_id, anon_id, username, message, messa
     );
 }
 
-function searchChatMessages({ query, userId, anonId, streamId, limit = 50, offset = 0 }) {
-    let sql = `SELECT cm.*, u.display_name, u.role, u.avatar_url, u.profile_color
+function searchChatMessages({ query, userId, anonId, username, streamId, limit = 50, offset = 0 }) {
+    let sql = `SELECT cm.*, u.display_name, u.username as u_username, u.role, u.avatar_url, u.profile_color
                FROM chat_messages cm
                LEFT JOIN users u ON cm.user_id = u.id
                WHERE cm.is_deleted = 0
@@ -1318,6 +1318,10 @@ function searchChatMessages({ query, userId, anonId, streamId, limit = 50, offse
     if (anonId) {
         sql += ` AND cm.anon_id = ?`;
         params.push(anonId);
+    }
+    if (username) {
+        sql += ` AND LOWER(u.username) LIKE ?`;
+        params.push(`%${username.toLowerCase()}%`);
     }
     if (streamId) {
         sql += ` AND cm.stream_id = ?`;

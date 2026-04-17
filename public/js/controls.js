@@ -7,7 +7,7 @@
 let controlWs = null;
 let controlCooldowns = {};
 let onvifCooldowns = {};
-let heldKeys = new Set();       // Currently held keyboard commands
+let heldKeys = new Map();       // holdKey → { controlId, command, btnEl } — structured hold state
 let controlSettings = {};       // Channel control settings from server
 let _controlReconnectTimer = null;
 let _controlReconnectDelay = 1000;
@@ -56,14 +56,17 @@ async function loadStreamControls(streamId) {
 
                 if (isKeyboard) {
                     // Keyboard control — uses hold detection (mousedown/mouseup + keydown/keyup)
+                    const cd = (c.cooldown_ms != null && Number.isFinite(Number(c.cooldown_ms))) ? Number(c.cooldown_ms) : 100;
                     return `
-                        <button class="control-btn control-btn-keyboard" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 100}"
+                        <button class="control-btn control-btn-keyboard" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${cd}"
                                 data-keybind="${esc(c.key_binding || '')}"
                                 onmousedown="startKeyHold(${c.id}, '${esc(c.command)}', this)"
                                 onmouseup="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
                                 onmouseleave="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
                                 ontouchstart="startKeyHold(${c.id}, '${esc(c.command)}', this); event.preventDefault()"
                                 ontouchend="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
+                                ontouchcancel="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
+                                onpointercancel="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
                                 title="${esc(c.label || c.command)} (hold)" ${btnStyle}>
                             <i class="fa-solid ${esc(c.icon || 'fa-keyboard')}"></i>
                             <span>${esc(c.label || c.command)}</span>
@@ -72,10 +75,11 @@ async function loadStreamControls(streamId) {
                     `;
                 } else {
                     // Regular button — single click
+                    const cd = (c.cooldown_ms != null && Number.isFinite(Number(c.cooldown_ms))) ? Number(c.cooldown_ms) : 100;
                     return `
-                        <button class="control-btn" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 100}"
+                        <button class="control-btn" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${cd}"
                                 data-keybind="${esc(c.key_binding || '')}"
-                                onclick="sendControl(${c.id}, '${esc(c.command)}', this, ${parseInt(c.cooldown_ms) || 100})"
+                                onclick="sendControl(${c.id}, '${esc(c.command)}', this, ${cd})"
                                 title="${esc(c.label || c.command)}" ${btnStyle}>
                             <i class="fa-solid ${esc(c.icon || 'fa-circle')}"></i>
                             <span>${esc(c.label || c.command)}</span>
@@ -302,7 +306,7 @@ function startKeyHold(controlId, command, btnEl) {
 
     const holdKey = `hold-${controlId}`;
     if (heldKeys.has(holdKey)) return; // Already holding
-    heldKeys.add(holdKey);
+    heldKeys.set(holdKey, { controlId, command, btnEl });
 
     btnEl.classList.add('key-held');
 
@@ -329,6 +333,30 @@ function stopKeyHold(controlId, command, btnEl) {
             streamId: currentStreamId,
         }));
     }
+}
+
+/**
+ * Force-release ALL currently held keys.
+ * Called on: WS disconnect, tab blur, visibility hidden, page unload, stream switch.
+ */
+function _forceReleaseAllHeldKeys() {
+    if (heldKeys.size === 0) return;
+    for (const [holdKey, state] of heldKeys) {
+        if (state.btnEl) state.btnEl.classList.remove('key-held');
+        // Best-effort send key_up — WS may already be closed
+        if (controlWs && controlWs.readyState === WebSocket.OPEN) {
+            try {
+                controlWs.send(JSON.stringify({
+                    type: 'key_up',
+                    control_id: state.controlId,
+                    command: state.command,
+                    streamId: currentStreamId,
+                }));
+            } catch { /* WS send failed — hardware cleanup is server-side */ }
+        }
+    }
+    heldKeys.clear();
+    document.querySelectorAll('.control-btn-keyboard.key-held').forEach(b => b.classList.remove('key-held'));
 }
 
 /**
@@ -378,6 +406,8 @@ function _connectControlWsInner(streamId) {
 
     controlWs.onclose = (e) => {
         console.log(`[Controls] WS closed (code=${e.code})`);
+        // Force-release held keys — hardware bridge needs key_up cleanup
+        _forceReleaseAllHeldKeys();
         controlWs = null;
         _updateControlConnectionUI(false);
 
@@ -400,9 +430,8 @@ function destroyControlWs() {
     _controlStreamId = null;
     if (_controlReconnectTimer) { clearTimeout(_controlReconnectTimer); _controlReconnectTimer = null; }
 
-    // Release any held keys
-    heldKeys.clear();
-    document.querySelectorAll('.control-btn-keyboard.key-held').forEach(b => b.classList.remove('key-held'));
+    // Force-release any held keys before closing WS
+    _forceReleaseAllHeldKeys();
 
     if (controlWs) {
         controlWs.close();
@@ -435,7 +464,9 @@ function sendControl(controlId, command, btnEl, cooldownMs) {
     if (!_checkControlWs()) return;
 
     const globalRateLimitMs = parseInt(controlSettings.control_rate_limit_ms || 0) || 0;
-    const effectiveCooldownMs = Math.max(cooldownMs || 100, globalRateLimitMs);
+    // Support 0ms cooldown: only default to 100 if explicitly null/undefined/NaN
+    const rawCooldown = (cooldownMs != null && Number.isFinite(Number(cooldownMs))) ? Number(cooldownMs) : 100;
+    const effectiveCooldownMs = Math.max(rawCooldown, globalRateLimitMs);
     const cooldownKey = `cmd-${controlId}`;
     const globalCooldownKey = 'cmd-global';
     if (controlCooldowns[cooldownKey] || controlCooldowns[globalCooldownKey]) return;
@@ -635,7 +666,7 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         const id = parseInt(regularBtn.dataset.id);
         const cmd = regularBtn.dataset.cmd;
-        const cd = parseInt(regularBtn.dataset.cooldown) || 500;
+        const cd = (regularBtn.dataset.cooldown != null && Number.isFinite(Number(regularBtn.dataset.cooldown))) ? Number(regularBtn.dataset.cooldown) : 500;
         sendControl(id, cmd, regularBtn, cd);
         return;
     }
@@ -681,3 +712,12 @@ function getCurrentONVIFCamera() {
     const id = widget.id; // "onvif-{cameraId}"
     return parseInt(id.split('-')[1]);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Hold-key lifecycle: force-release on blur / visibility / unload
+   ═══════════════════════════════════════════════════════════════ */
+window.addEventListener('blur', () => _forceReleaseAllHeldKeys());
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') _forceReleaseAllHeldKeys();
+});
+window.addEventListener('beforeunload', () => _forceReleaseAllHeldKeys());

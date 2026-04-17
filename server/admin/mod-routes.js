@@ -349,19 +349,22 @@ router.get('/chat/search', (req, res) => {
         const rawUid = (req.query.user_id || '').trim();
         const streamId = req.query.stream_id ? parseInt(req.query.stream_id) : null;
 
-        // Support "anon123" in the user_id field — route to anonId filter
+        // Support "anon123", numeric user ID, or username string
         let userId = null;
         let anonId = null;
+        let username = null;
         if (rawUid) {
             const anonMatch = rawUid.match(/^anon(\d+)$/i);
             if (anonMatch) {
                 anonId = rawUid.toLowerCase();
+            } else if (/^\d+$/.test(rawUid)) {
+                userId = parseInt(rawUid);
             } else {
-                userId = parseInt(rawUid) || null;
+                username = rawUid;
             }
         }
 
-        const result = db.searchChatMessages({ query, userId, anonId, streamId, limit, offset });
+        const result = db.searchChatMessages({ query, userId, anonId, username, streamId, limit, offset });
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: 'Search failed' });
