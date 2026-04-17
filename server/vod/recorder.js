@@ -145,13 +145,13 @@ class StreamRecorder {
                 this.activeRecordings.delete(streamId);
 
                 // Let finalizeVodRecording handle remux, probe, thumbnail
-                // Short delay to ensure file is fully flushed
+                // Short delay to ensure file is fully flushed to disk
                 setTimeout(() => {
                     const vodRoutes = require('./routes');
                     vodRoutes.finalizeVodRecording(streamId).catch(err => {
                         console.error(`[VOD] Finalization failed for stream ${streamId}:`, err.message);
                     });
-                }, 1000);
+                }, 2000);
             });
 
             proc.on('error', (err) => {
@@ -162,7 +162,12 @@ class StreamRecorder {
                     if (rec.ws) try { rec.ws.close(); } catch {}
                 }
                 this.activeRecordings.delete(streamId);
-                db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
+                // Try to finalize whatever was written; if file is empty/missing, finalize will clean up
+                const vodRoutes = require('./routes');
+                vodRoutes.finalizeVodRecording(streamId).catch(() => {
+                    // If finalize also fails, at least mark not recording
+                    db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
+                });
             });
 
             const recording = {

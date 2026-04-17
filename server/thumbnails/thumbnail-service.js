@@ -73,9 +73,18 @@ function getCurrentLiveThumbnailUrl(streamId) {
  * @param {number} [opts.seekSeconds]    – Or seek to exact seconds (overrides %)
  * @returns {Promise<string|null>} The API-relative thumbnail URL, or null on failure
  */
+const _activeThumbJobs = new Set(); // Dedup concurrent VOD/clip thumbnail generation
+
 function generateFromVideo(videoPath, prefix, entityId, opts = {}) {
+    const jobKey = `${prefix}-${entityId}`;
+    if (_activeThumbJobs.has(jobKey)) {
+        return Promise.resolve(null); // Already generating for this entity
+    }
+    _activeThumbJobs.add(jobKey);
+
     return new Promise((resolve) => {
         if (!videoPath || !fs.existsSync(videoPath)) {
+            _activeThumbJobs.delete(jobKey);
             return resolve(null);
         }
 
@@ -129,7 +138,7 @@ function generateFromVideo(videoPath, prefix, entityId, opts = {}) {
         });
 
         probe.on('error', () => resolve(null));
-    });
+    }).finally(() => _activeThumbJobs.delete(jobKey));
 }
 
 // ── Generate VOD Thumbnail ───────────────────────────────────

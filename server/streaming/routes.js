@@ -829,10 +829,22 @@ router.post('/', requireAuth, (req, res) => {
 
         const streamProtocol = protocol || cleanProtocol(channel.protocol) || 'webrtc';
         const streamCategory = category || cleanText(channel.category, { maxLength: MAX_CATEGORY_LENGTH }) || 'irl';
+        const requestedControlConfigId = req.body.control_config_id !== undefined ? (req.body.control_config_id === null ? null : parseInt(req.body.control_config_id)) : undefined;
+
+        if (requestedControlConfigId !== undefined && requestedControlConfigId !== null) {
+            const config = db.getControlConfig(requestedControlConfigId);
+            if (!config) {
+                return res.status(404).json({ error: 'Control config not found' });
+            }
+            if (config.user_id !== req.user.id && req.user.role !== 'admin') {
+                return res.status(403).json({ error: 'Not authorized for this control profile' });
+            }
+        }
 
         const result = db.createStream({
             user_id: req.user.id,
             channel_id: channel.id,
+            control_config_id: requestedControlConfigId !== undefined ? requestedControlConfigId : null,
             title: title || cleanText(channel.title, { maxLength: MAX_TITLE_LENGTH }) || `${req.user.display_name}'s Stream`,
             description: description ?? cleanText(channel.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true }) ?? '',
             category: streamCategory,
@@ -867,13 +879,23 @@ router.post('/', requireAuth, (req, res) => {
             [streamId, streamProtocol]
         );
 
-        // Auto-apply active control config to the new stream
-        if (channel.active_control_config_id) {
+        // Apply the selected per-stream control config if provided.
+        if (requestedControlConfigId !== undefined) {
+            if (requestedControlConfigId !== null) {
+                try {
+                    const applied = db.applyConfigToStream(requestedControlConfigId, streamId);
+                    console.log(`[Streams] Applied explicit control config ${requestedControlConfigId} to stream ${streamId} (${applied} buttons)`);
+                } catch (cfgErr) {
+                    console.warn(`[Streams] Failed to apply explicit control config:`, cfgErr.message);
+                }
+            }
+        } else if (channel.active_control_config_id) {
+            // No explicit per-stream selection: use the channel default for this new stream
             try {
                 const applied = db.applyConfigToStream(channel.active_control_config_id, streamId);
-                console.log(`[Streams] Auto-applied control config ${channel.active_control_config_id} to stream ${streamId} (${applied} buttons)`);
+                console.log(`[Streams] Auto-applied channel default control config ${channel.active_control_config_id} to stream ${streamId} (${applied} buttons)`);
             } catch (cfgErr) {
-                console.warn(`[Streams] Failed to auto-apply control config:`, cfgErr.message);
+                console.warn(`[Streams] Failed to auto-apply channel default control config:`, cfgErr.message);
             }
         }
 

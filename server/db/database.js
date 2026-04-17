@@ -840,8 +840,12 @@ function initDb() {
             console.log('[DB] Added anon_controls_enabled column to channels');
         }
         if (!cols.includes('control_rate_limit_ms')) {
-            database.exec('ALTER TABLE channels ADD COLUMN control_rate_limit_ms INTEGER DEFAULT 500');
+            database.exec('ALTER TABLE channels ADD COLUMN control_rate_limit_ms INTEGER DEFAULT 100');
             console.log('[DB] Added control_rate_limit_ms column to channels');
+        }
+        if (!cols.includes('video_click_rate_limit_ms')) {
+            database.exec('ALTER TABLE channels ADD COLUMN video_click_rate_limit_ms INTEGER DEFAULT 0');
+            console.log('[DB] Added video_click_rate_limit_ms column to channels');
         }
     } catch (e) { console.warn('[DB] channel control settings migration:', e.message); }
 
@@ -908,6 +912,15 @@ function initDb() {
             console.log('[DB] Added video_click_enabled column to channels');
         }
     } catch (e) { console.warn('[DB] channel control config migration:', e.message); }
+
+    // Migrate: add control_config_id to streams for stream-scoped control profiles
+    try {
+        const cols = database.pragma('table_info(streams)').map(c => c.name);
+        if (!cols.includes('control_config_id')) {
+            database.exec('ALTER TABLE streams ADD COLUMN control_config_id INTEGER');
+            console.log('[DB] Added control_config_id column to streams');
+        }
+    } catch (e) { console.warn('[DB] stream control_config_id migration:', e.message); }
 
     // Migrate: add btn_color, btn_bg, btn_border_color to stream_controls for legacy compat
     try {
@@ -1079,6 +1092,16 @@ function getLiveStreamsByUserId(userId) {
     `, [userId]);
 }
 
+function getLiveStreamsByControlConfigId(controlConfigId) {
+    return all(`
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.stream_key
+        FROM streams s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.control_config_id = ? AND s.is_live = 1
+        ORDER BY s.started_at DESC
+    `, [controlConfigId]);
+}
+
 function getStreamsByUserId(userId, limit = 50) {
     return all(`
         SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color
@@ -1090,11 +1113,11 @@ function getStreamsByUserId(userId, limit = 50) {
     `, [userId, limit]);
 }
 
-function createStream({ user_id, channel_id, title, description, category, protocol, is_nsfw, thumbnail_url }) {
+function createStream({ user_id, channel_id, control_config_id, title, description, category, protocol, is_nsfw, thumbnail_url }) {
     return run(
-        `INSERT INTO streams (user_id, channel_id, title, description, category, protocol, is_nsfw, thumbnail_url, is_live, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
-        [user_id, channel_id || null, title || 'Untitled Stream', description || '', category || 'irl', protocol || 'webrtc', is_nsfw ? 1 : 0, thumbnail_url || null]
+        `INSERT INTO streams (user_id, channel_id, control_config_id, title, description, category, protocol, is_nsfw, thumbnail_url, is_live, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+        [user_id, channel_id || null, control_config_id || null, title || 'Untitled Stream', description || '', category || 'irl', protocol || 'webrtc', is_nsfw ? 1 : 0, thumbnail_url || null]
     );
 }
 
@@ -1694,7 +1717,7 @@ function createControl({ stream_id, label, command, icon, control_type, key_bind
     return run(
         `INSERT INTO stream_controls (stream_id, label, command, icon, control_type, key_binding, cooldown_ms, sort_order, btn_color, btn_bg, btn_border_color)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [stream_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 500, sort_order || 0, btn_color || '', btn_bg || '', btn_border_color || '']
+        [stream_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 100, sort_order || 0, btn_color || '', btn_bg || '', btn_border_color || '']
     );
 }
 
@@ -1742,7 +1765,7 @@ function createConfigButton({ config_id, label, command, icon, control_type, key
     return run(
         `INSERT INTO control_config_buttons (config_id, label, command, icon, control_type, key_binding, cooldown_ms, sort_order, btn_color, btn_bg, btn_border_color)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [config_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 500, sort_order || 0, btn_color || '', btn_bg || '', btn_border_color || '']
+        [config_id, label, command, icon || 'fa-gamepad', control_type || 'button', key_binding || null, cooldown_ms || 100, sort_order || 0, btn_color || '', btn_bg || '', btn_border_color || '']
     );
 }
 
@@ -1763,6 +1786,13 @@ function updateConfigButton(buttonId, fields) {
 
 function deleteConfigButton(buttonId) {
     return run('DELETE FROM control_config_buttons WHERE id = ?', [buttonId]);
+}
+
+function bindStreamToControlConfig(streamId, controlConfigId) {
+    if (controlConfigId === null) {
+        return run('UPDATE streams SET control_config_id = NULL WHERE id = ?', [streamId]);
+    }
+    return run('UPDATE streams SET control_config_id = ? WHERE id = ?', [controlConfigId, streamId]);
 }
 
 function applyConfigToStream(configId, streamId) {
@@ -1787,6 +1817,7 @@ function applyConfigToStream(configId, streamId) {
             btn_border_color: b.btn_border_color,
         });
     }
+    bindStreamToControlConfig(streamId, configId);
     return buttons.filter(b => b.is_enabled).length;
 }
 
@@ -3561,7 +3592,7 @@ module.exports = {
     // Users
     getUserById, getUserByUsername, getUserByStreamKey, createUser, getOrCreateAnonGameUser,
     // Streams
-    getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getStreamsByUserId,
+    getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId,
     createStream, endStream, updateViewerCount,
     // Channels
     getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
@@ -3600,7 +3631,7 @@ module.exports = {
     // Clips
     createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, listClipStreamers, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
     // Controls
-    getStreamControls, createControl,
+    getStreamControls, createControl, bindStreamToControlConfig,
     // ONVIF Cameras
     createCameraProfile, getCameraProfile, getCameraProfilesByUser, getCameraProfilesByStream,
     updateCameraProfile, deleteCameraProfile,

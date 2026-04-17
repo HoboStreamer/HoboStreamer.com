@@ -230,9 +230,11 @@ async function loadControlSettings() {
         const videoClickEl = document.getElementById('dash-video-click');
         const whitelistSection = document.getElementById('dash-control-whitelist-section');
         if (modeEl) modeEl.value = data.control_mode || 'open';
-        if (rateEl) rateEl.value = data.control_rate_limit_ms || 500;
+        if (rateEl) rateEl.value = data.control_rate_limit_ms || 100;
         if (anonEl) anonEl.checked = data.anon_controls_enabled !== false;
         if (videoClickEl) videoClickEl.checked = !!data.video_click_enabled;
+        const videoClickRateEl = document.getElementById('dash-video-click-rate-limit');
+        if (videoClickRateEl) videoClickRateEl.value = data.video_click_rate_limit_ms || 0;
         if (whitelistSection) whitelistSection.style.display = data.control_mode === 'whitelist' ? '' : 'none';
         if (data.control_mode === 'whitelist') loadControlWhitelist();
     } catch { /* silent — settings panel is optional */ }
@@ -241,12 +243,19 @@ async function loadControlSettings() {
 async function updateControlSettings() {
     try {
         const mode = document.getElementById('dash-control-mode')?.value || 'open';
-        const rate = parseInt(document.getElementById('dash-control-rate-limit')?.value) || 500;
+        const rate = parseInt(document.getElementById('dash-control-rate-limit')?.value) || 100;
         const anon = document.getElementById('dash-anon-controls')?.checked ?? true;
         const videoClick = document.getElementById('dash-video-click')?.checked ?? false;
+        const videoClickRate = parseInt(document.getElementById('dash-video-click-rate-limit')?.value) || 0;
         await api('/controls/settings/channel', {
             method: 'PUT',
-            body: { control_mode: mode, anon_controls_enabled: anon, control_rate_limit_ms: rate, video_click_enabled: videoClick }
+            body: {
+                control_mode: mode,
+                anon_controls_enabled: anon,
+                control_rate_limit_ms: rate,
+                video_click_enabled: videoClick,
+                video_click_rate_limit_ms: videoClickRate,
+            }
         });
         const whitelistSection = document.getElementById('dash-control-whitelist-section');
         if (whitelistSection) whitelistSection.style.display = mode === 'whitelist' ? '' : 'none';
@@ -1016,5 +1025,107 @@ async function revokeDashToken(id) {
         loadDashTokens();
     } catch (e) {
         toast(`Failed: ${e.message}`, 'error');
+    }
+}
+
+/* ── Chat Logs (Streamer Self-Service) ─────────────────────── */
+let _chatLogPage = 1;
+
+async function loadDashChatLogs(page) {
+    _chatLogPage = page || 1;
+    const results = document.getElementById('dash-chatlog-results');
+    const pagination = document.getElementById('dash-chatlog-pagination');
+    if (!results) return;
+
+    const search = document.getElementById('dash-chatlog-search')?.value?.trim() || '';
+    const username = document.getElementById('dash-chatlog-username')?.value?.trim() || '';
+    const from = document.getElementById('dash-chatlog-from')?.value || '';
+    const to = document.getElementById('dash-chatlog-to')?.value || '';
+
+    // Find the user's most recent stream for scoping
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (username) params.set('username', username);
+    if (from) params.set('from', new Date(from).toISOString());
+    if (to) params.set('to', new Date(to).toISOString());
+    params.set('page', String(_chatLogPage));
+    params.set('limit', '50');
+
+    results.innerHTML = '<p class="muted">Loading...</p>';
+
+    try {
+        // Use the owner-accessible admin logs endpoint (stream owner auth checks server-side)
+        // The endpoint accepts streamId filter — query without it first (endpoint checks ownership server-side)
+        const data = await api(`/chat/admin/logs?${params.toString()}`);
+        const rows = data.rows || [];
+        if (!rows.length) {
+            results.innerHTML = '<p class="muted">No messages found for the selected filters.</p>';
+            if (pagination) pagination.innerHTML = '';
+            return;
+        }
+
+        results.innerHTML = `<table style="width:100%;border-collapse:collapse">
+            <thead><tr style="text-align:left;border-bottom:1px solid var(--border)">
+                <th style="padding:4px 8px">Time</th>
+                <th style="padding:4px 8px">User</th>
+                <th style="padding:4px 8px">Message</th>
+            </tr></thead>
+            <tbody>${rows.map(m => {
+                const time = new Date(m.timestamp).toLocaleString();
+                const user = esc(m.username || m.anon_id || '?');
+                const msg = esc(m.message || '');
+                return `<tr style="border-bottom:1px solid var(--border-light)">
+                    <td style="padding:3px 8px;white-space:nowrap;font-size:0.78rem;color:var(--text-muted)">${time}</td>
+                    <td style="padding:3px 8px;font-weight:600;font-size:0.82rem">${user}</td>
+                    <td style="padding:3px 8px;font-size:0.82rem;word-break:break-word">${msg}</td>
+                </tr>`;
+            }).join('')}</tbody></table>`;
+
+        // Pagination
+        if (pagination && data.totalPages > 1) {
+            let pHtml = '';
+            if (_chatLogPage > 1) pHtml += `<button class="btn btn-small btn-outline" onclick="loadDashChatLogs(${_chatLogPage - 1})"><i class="fa-solid fa-chevron-left"></i></button>`;
+            pHtml += `<span class="muted" style="font-size:0.82rem">Page ${_chatLogPage} of ${data.totalPages}</span>`;
+            if (_chatLogPage < data.totalPages) pHtml += `<button class="btn btn-small btn-outline" onclick="loadDashChatLogs(${_chatLogPage + 1})"><i class="fa-solid fa-chevron-right"></i></button>`;
+            pagination.innerHTML = pHtml;
+        } else if (pagination) {
+            pagination.innerHTML = '';
+        }
+    } catch (e) {
+        results.innerHTML = `<p class="muted" style="color:var(--danger)">Failed to load chat logs: ${esc(e.message)}</p>`;
+    }
+}
+
+async function dashPurgeChatRange() {
+    const from = document.getElementById('dash-chatlog-from')?.value;
+    const to = document.getElementById('dash-chatlog-to')?.value;
+    if (!from || !to) {
+        toast('Set both From and To dates to purge a range', 'error');
+        return;
+    }
+
+    const fromISO = new Date(from).toISOString();
+    const toISO = new Date(to).toISOString();
+
+    try {
+        // Preview count first (endpoint auto-scopes to user's stream when streamId absent for owner)
+        const preview = await api('/chat/admin/purge/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: fromISO, to: toISO })
+        });
+        const count = preview.count || 0;
+        if (count === 0) { toast('No messages in that range', 'info'); return; }
+        if (!confirm(`Delete ${count} message(s) from ${new Date(from).toLocaleString()} to ${new Date(to).toLocaleString()}?`)) return;
+
+        const result = await api('/chat/admin/purge', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: fromISO, to: toISO })
+        });
+        toast(`Purged ${result.deleted || 0} messages`, 'success');
+        loadDashChatLogs(_chatLogPage);
+    } catch (e) {
+        toast(`Purge failed: ${e.message}`, 'error');
     }
 }
