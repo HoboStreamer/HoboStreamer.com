@@ -2639,12 +2639,6 @@
                                 </select>
                                 <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
                             </div>
-                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately
-                                <select id="bc-rtmp-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
-                                    <option value="">None (no controls)</option>
-                                </select>
-                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
-                            </div>
                             <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
                         </div>
                     </div>
@@ -2963,14 +2957,8 @@ WantedBy=multi-user.target</code>
                             <p class="bc-call-explainer" id="bc-jsmpeg-restream-hint">
                                 <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
                                 <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
-                            </p> style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
-                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                                <select id="bc-jsmpeg-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
-                                    <option value="">None (no controls)</option>
-                                </select>
-                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
-                            </div>
-                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately
+                            </p>
+                        </div>
 
                         <!-- Interactive Controls Status -->
                         <div class="bc-settings-group">
@@ -3038,14 +3026,9 @@ WantedBy=multi-user.target</code>
                                 <div class="bc-setting-control"><input type="range" id="bc-whip-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
                             </div>
                         </div>
-                        <div class="bc-settings-group"> style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
-                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                                <select id="bc-whip-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
-                                    <option value="">None (no controls)</option>
-                                </select>
-                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
-                            </div>
-                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately
+                        <!-- Restreams -->
+                        <div class="bc-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
                             <div class="bc-restream-control" id="bc-whip-restream-control"></div>
                             <p class="bc-call-explainer" id="bc-whip-restream-hint">
                                 <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
