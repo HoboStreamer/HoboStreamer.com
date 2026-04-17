@@ -84,4 +84,4 @@ VOD/Clip: ffmpeg -vframes 1 (deduped per entity)
 
 ## Hobo Network Integration
 
-HoboStreamer is part of the Hobo Network, with hobo.tools acting as the SSO hub. The hobo-tools server proxies admin API calls to HoboStreamer for unified management. No streaming features are duplicated — hobo-tools is a gateway only.
+HoboStreamer is part of the Hobo Network, with hobo.tools acting as the SSO hub. This service now uses hobo.tools OAuth2 SSO in production; legacy migration scripts remain for historical reference only. The hobo-tools server proxies admin API calls to HoboStreamer for unified management. No streaming features are duplicated — hobo-tools is a gateway only.

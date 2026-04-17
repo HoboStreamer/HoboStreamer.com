@@ -3,11 +3,27 @@
  */
 require('dotenv').config();
 
+function normalizeOrigin(value) {
+    if (!value || typeof value !== 'string') return null;
+    try {
+        return new URL(value).origin;
+    } catch {
+        return null;
+    }
+}
+
+const baseUrl = normalizeOrigin(process.env.BASE_URL || 'http://localhost:3000') || 'http://localhost:3000';
+const webRtcPublicUrl = normalizeOrigin(process.env.WEBRTC_PUBLIC_URL || process.env.BASE_URL || baseUrl) || baseUrl;
+const defaultMediasoupAnnouncedIp = process.env.MEDIASOUP_ANNOUNCED_IP || new URL(webRtcPublicUrl).hostname;
+
 module.exports = {
     port: parseInt(process.env.PORT || '3000', 10),
     host: process.env.HOST || '0.0.0.0',
-    baseUrl: process.env.BASE_URL || 'http://localhost:3000',
+    baseUrl,
     nodeEnv: process.env.NODE_ENV || 'development',
+    webrtc: {
+        publicUrl: webRtcPublicUrl,
+    },
 
     // Platform admin (applied on first setup only)
     adminUsername: process.env.ADMIN_USERNAME || 'admin',
@@ -44,7 +60,7 @@ module.exports = {
 
     mediasoup: {
         listenIp: process.env.MEDIASOUP_LISTEN_IP || '0.0.0.0',
-        announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1',
+        announcedIp: defaultMediasoupAnnouncedIp,
         minPort: parseInt(process.env.MEDIASOUP_MIN_PORT || '10000', 10),
         maxPort: parseInt(process.env.MEDIASOUP_MAX_PORT || '10100', 10),
         webrtcPort: parseInt(process.env.WEBRTC_PORT || '4443', 10),

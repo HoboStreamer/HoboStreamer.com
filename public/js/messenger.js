@@ -1191,6 +1191,36 @@
         window._messengerHandleDm = handleIncomingDm;
     }
 
+    function resetMessengerStateForAuthChange(newUser) {
+        const userChanged = (!currentUser && !!newUser) || (currentUser && newUser && currentUser.id !== newUser.id) || (!!currentUser && !newUser);
+        if (!userChanged) return;
+
+        conversations = [];
+        activeConvId = null;
+        activeConv = null;
+        threadMessages = [];
+        hasMoreMessages = true;
+        searchResults = [];
+        selectedUsers = [];
+        unreadTotal = 0;
+        view = 'inbox';
+        if ($badge) {
+            $badge.textContent = '';
+            $badge.style.display = 'none';
+        }
+        if ($panel) {
+            renderInbox();
+        }
+        if (panelOpen) {
+            loadConversations();
+        }
+        loadUnread();
+    }
+
+    window.addEventListener('hobo-auth-changed', (e) => {
+        resetMessengerStateForAuthChange(e.detail?.user || null);
+    });
+
     // Wait for DOM
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

@@ -19,7 +19,10 @@ const wordFilter = require('./word-filter');
 const cosmetics = require('../monetization/cosmetics');
 const ttsEngine = require('./tts-engine');
 const soundboard = require('./soundboard-service');
+const dm = require('./dm');
 const ipUtils = require('../admin/ip-utils');
+
+const DEBUG_DM_DELIVERY = process.env.DEBUG_DM_DELIVERY === '1';
 
 const WS_HEARTBEAT_MS = 30000;
 const CHAT_AUTO_DELETE_SWEEP_MS = 30000;
@@ -1783,9 +1786,19 @@ class ChatServer {
      * Used by the DM REST API for real-time delivery.
      */
     sendDm(userId, data) {
+        const convId = data?.conversation_id;
+        if (convId && !dm.isParticipant(convId, userId)) {
+            if (DEBUG_DM_DELIVERY) {
+                console.warn(`[DM] blocked delivery to user ${userId} for conversation ${convId} (not a participant)`, data.type, data);
+            }
+            return;
+        }
         const payload = JSON.stringify(data);
         for (const [ws, client] of this.clients) {
             if (client.user?.id === userId && ws.readyState === WebSocket.OPEN) {
+                if (DEBUG_DM_DELIVERY) {
+                    console.debug(`[DM] delivering ${data.type} conversation ${convId} to ws user ${client.user.id} (${client.user.username})`);
+                }
                 try {
                     if (ws.bufferedAmount < MAX_SEND_BACKPRESSURE) {
                         ws.send(payload);

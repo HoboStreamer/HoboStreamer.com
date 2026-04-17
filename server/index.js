@@ -674,11 +674,18 @@ async function start() {
         console.log(`[Server] Game/Canvas:  migrated to hobo.quest`);
         console.log(`[Server] Environment:  ${config.nodeEnv}`);
         console.log(`[Server] BASE_URL:     ${config.baseUrl}`);
+        console.log(`[Server] WEBRTC_PUBLIC_URL: ${config.webrtc?.publicUrl || config.baseUrl}`);
         console.log(`[Server] CORS origins: ${[...allowedOrigins].join(', ')}`);
         if (config.turn?.url) {
             console.log(`[Server] TURN server:  ${config.turn.url}`);
         } else {
             console.log(`[Server] TURN server:  not configured (STUN-only — some viewers may fail to connect)`);
+        }
+        if (config.rtmp?.host && config.mediasoup?.announcedIp && config.rtmp.host === config.mediasoup.announcedIp) {
+            console.warn('[Server] WARNING: RTMP_HOST and MEDIASOUP_ANNOUNCED_IP are identical. This may route WebRTC/WHIP traffic through the RTMP hostname and cause TLS/certificate mismatch errors. Use a dedicated WebRTC host or set WEBRTC_PUBLIC_URL and MEDIASOUP_ANNOUNCED_IP explicitly.');
+        }
+        if (config.nodeEnv === 'production' && config.mediasoup?.announcedIp && ['127.0.0.1', 'localhost'].includes(config.mediasoup.announcedIp)) {
+            console.warn('[Server] WARNING: Mediasoup announcedIp is configured as a local address. External WebRTC clients may be unable to connect. Set MEDIASOUP_ANNOUNCED_IP to your public WebRTC hostname.');
         }
         console.log('');
         console.log('[Server] Ready. Happy camping! 🏕️');

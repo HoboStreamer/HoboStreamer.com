@@ -1093,7 +1093,11 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             endpoint.ffmpegAudioOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f alsa -i default -f mpegts -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${audioUrl}`;
             endpoint.ffmpegHD = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 1280x720 -b:v 1200k -maxrate 1200k -bufsize 2400k -r 30 -g 15 -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 2 ${urlHD}`;
         } else if (stream.protocol === 'webrtc') {
-            endpoint = { roomId: `stream-${stream.id}`, signalingUrl: `/ws/broadcast?streamId=${stream.id}` };
+            endpoint = {
+                roomId: `stream-${stream.id}`,
+                signalingUrl: `/ws/broadcast?streamId=${stream.id}`,
+                whipUrlBase: config.webrtc?.publicUrl || `${req.protocol}://${req.get('host')}`,
+            };
         } else if (stream.protocol === 'rtmp') {
             const rtmpHost = config.rtmp.host || hostname;
             endpoint = {

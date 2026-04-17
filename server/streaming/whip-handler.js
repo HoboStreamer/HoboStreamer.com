@@ -28,6 +28,39 @@ function generateResourceId() {
     return crypto.randomBytes(16).toString('hex');
 }
 
+function normalizeOrigin(value) {
+    if (!value || typeof value !== 'string') return null;
+    try {
+        return new URL(value).origin;
+    } catch {
+        return null;
+    }
+}
+
+function buildWhipResourceUrl(req, streamId, resourceId) {
+    const baseUrl = normalizeOrigin(config.webrtc?.publicUrl || config.baseUrl) || `${req.protocol}://${req.get('host')}`;
+    try {
+        return new URL(`/whip/${streamId}/${resourceId}`, baseUrl).toString();
+    } catch {
+        return `/whip/${streamId}/${resourceId}`;
+    }
+}
+
+function findSessionsByStreamId(streamId) {
+    const matches = [];
+    for (const [resourceId, session] of sessions.entries()) {
+        if (session.streamId === streamId) matches.push({ resourceId, session });
+    }
+    return matches;
+}
+
+function cleanupExistingSessionsForStream(streamId) {
+    for (const { resourceId } of findSessionsByStreamId(streamId)) {
+        console.log(`[WHIP] Cleaning existing WHIP session ${resourceId} for stream ${streamId}`);
+        cleanupSession(resourceId);
+    }
+}
+
 // ── SDP Parsing Utilities ────────────────────────────────────
 
 /**
@@ -331,7 +364,7 @@ async function handleWhipPost(req, res) {
         if (!user) return res.status(401).json({ error: 'User not found' });
 
         // Stream validation
-        const streamId = parseInt(req.params.streamId);
+        const streamId = parseInt(req.params.streamId, 10);
         if (!streamId || isNaN(streamId)) return res.status(400).json({ error: 'Invalid stream ID' });
 
         const stream = db.getStreamById(streamId);
@@ -341,19 +374,38 @@ async function handleWhipPost(req, res) {
         }
         if (!stream.is_live) return res.status(409).json({ error: 'Stream is not live — go live first' });
         if (stream.protocol !== 'webrtc') return res.status(409).json({ error: 'Stream protocol must be webrtc for WHIP' });
+        if (!webrtcSFU.ready) return res.status(503).json({ error: 'WebRTC SFU unavailable' });
+
+        cleanupExistingSessionsForStream(streamId);
 
         // Parse SDP offer
         const offerSdpStr = req.body;
         if (!offerSdpStr || typeof offerSdpStr !== 'string') {
             return res.status(400).json({ error: 'Missing SDP offer in request body' });
         }
-        const offerSdp = sdpTransform.parse(offerSdpStr);
 
-        // Create Mediasoup room and transport
+        let offerSdp;
+        try {
+            offerSdp = sdpTransform.parse(offerSdpStr);
+        } catch (err) {
+            console.warn('[WHIP] Invalid SDP offer:', err.message);
+            return res.status(400).json({ error: 'Invalid SDP offer' });
+        }
+
         const roomId = `stream-${streamId}`;
         const room = await webrtcSFU.getOrCreateRoom(roomId);
         const resourceId = generateResourceId();
         const peerId = `whip-${resourceId}`;
+
+        const session = {
+            streamId,
+            roomId,
+            peerId,
+            transportId: null,
+            producerIds: [],
+            userId: user.id,
+        };
+        sessions.set(resourceId, session);
 
         const transport = await room.router.createWebRtcTransport({
             listenIps: [{ ip: config.mediasoup.listenIp, announcedIp: config.mediasoup.announcedIp }],
@@ -363,16 +415,20 @@ async function handleWhipPost(req, res) {
             initialAvailableOutgoingBitrate: 10000000,
         });
 
+        session.transportId = transport.id;
         room.transports.set(`${peerId}-${transport.id}`, transport);
 
-        // Connect transport with offer's DTLS parameters
-        const dtlsParams = extractDtlsParameters(offerSdp);
-        await transport.connect({ dtlsParameters: dtlsParams });
+        try {
+            const dtlsParams = extractDtlsParameters(offerSdp);
+            await transport.connect({ dtlsParameters: dtlsParams });
+        } catch (err) {
+            console.warn('[WHIP] DTLS negotiation failed for stream', streamId, err.message);
+            cleanupSession(resourceId);
+            return res.status(502).json({ error: 'DTLS negotiation failed' });
+        }
 
-        // Create producers for each media section
         const routerCaps = room.router.rtpCapabilities;
         const producersByKind = {};
-        const producerIds = [];
 
         for (const media of offerSdp.media || []) {
             if (media.port === 0) continue;
@@ -383,14 +439,18 @@ async function handleWhipPost(req, res) {
                 continue;
             }
 
-            const producer = await transport.produce({
-                kind: media.type,
-                rtpParameters: rtpParams,
-            });
+            let producer;
+            try {
+                producer = await transport.produce({ kind: media.type, rtpParameters: rtpParams });
+            } catch (err) {
+                console.warn(`[WHIP] Producer creation failed for ${media.type} in stream ${streamId}:`, err.message);
+                cleanupSession(resourceId);
+                return res.status(502).json({ error: 'Failed to create media producer' });
+            }
 
             room.producers.set(producer.id, { producer, peerId, transportId: transport.id });
             producersByKind[media.type] = producer;
-            producerIds.push(producer.id);
+            session.producerIds.push(producer.id);
 
             producer.on('transportclose', () => {
                 room.producers.delete(producer.id);
@@ -401,26 +461,13 @@ async function handleWhipPost(req, res) {
             console.log(`[WHIP] Producer created: ${producer.id} (${media.type}) for stream ${streamId}`);
         }
 
-        if (producerIds.length === 0) {
-            transport.close();
-            room.transports.delete(`${peerId}-${transport.id}`);
+        if (session.producerIds.length === 0) {
+            cleanupSession(resourceId);
             return res.status(406).json({ error: 'No compatible codecs — router supports VP8, H264, Opus' });
         }
 
-        // Build SDP answer
         const answerSdp = buildSdpAnswer(transport, offerSdp, producersByKind);
 
-        // Store session
-        sessions.set(resourceId, {
-            streamId,
-            roomId,
-            peerId,
-            transportId: transport.id,
-            producerIds,
-            userId: user.id,
-        });
-
-        // Auto-cleanup on transport close
         transport.on('dtlsstatechange', (state) => {
             if (state === 'closed' || state === 'failed') {
                 console.log(`[WHIP] Transport DTLS ${state} for stream ${streamId}`);
@@ -428,16 +475,17 @@ async function handleWhipPost(req, res) {
             }
         });
 
-        console.log(`[WHIP] Session ${resourceId} created for stream ${streamId} (${producerIds.length} producer(s))`);
+        console.log(`[WHIP] Session ${resourceId} created for stream ${streamId} (${session.producerIds.length} producer(s))`);
 
         res.status(201)
             .set('Content-Type', 'application/sdp')
-            .set('Location', `/whip/${streamId}/${resourceId}`)
+            .set('Location', buildWhipResourceUrl(req, streamId, resourceId))
+            .set('Link', `<${buildWhipResourceUrl(req, streamId, resourceId)}>; rel=resource`)
             .set('Access-Control-Expose-Headers', 'Location, Link')
             .send(answerSdp);
 
     } catch (err) {
-        console.error('[WHIP] POST error:', err);
+        console.error('[WHIP] POST error:', err.message || err);
         res.status(500).json({ error: 'WHIP negotiation failed' });
     }
 }

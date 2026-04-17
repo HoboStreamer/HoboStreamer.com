@@ -2422,6 +2422,34 @@
     color: var(--accent);
 }
 
+.bc-secret-token-block {
+    padding-bottom: 14px;
+}
+
+.bc-secret-token-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    border: 1px solid transparent;
+    padding-top: 4px;
+}
+
+.bc-secret-token-row code {
+    flex: 1 1 100%;
+    min-width: 0;
+    display: block;
+    overflow-x: auto;
+    word-break: break-all;
+    white-space: pre-wrap;
+    padding-right: 0;
+}
+
+.bc-secret-token-row button {
+    flex: 0 0 auto;
+}
+
 /* ── App Setup Guides (collapsible) ──────────────────────────── */
 .bc-app-guide {
     margin-top: 20px;

@@ -1950,6 +1950,13 @@ async function showJSMPEGInstructions(stream) {
     } catch { document.getElementById('bc-jsmpeg-cmd').textContent = 'Error loading command'; }
 }
 
+function getStoredAuthToken() {
+    return localStorage.getItem('token') || localStorage.getItem('hobo_token') ||
+        (document.cookie.match(/(?:^|; )hobo_token=([^;]+)/) || [])[1] ||
+        (document.cookie.match(/(?:^|; )token=([^;]+)/) || [])[1] ||
+        null;
+}
+
 async function showWHIPInstructions(stream) {
     document.getElementById('bc-stream-manager').style.display = 'none';
     document.getElementById('bc-browser-broadcast').style.display = 'none';
@@ -1961,8 +1968,48 @@ async function showWHIPInstructions(stream) {
     _startRsViewerPoll();
     _startRestreamViewerPoll();
     loadLiveControlsStatus(stream.id).catch(() => {});
-    document.getElementById('bc-whip-url').textContent = `${location.origin}/whip/${stream.id}`;
-    document.getElementById('bc-whip-token').textContent = localStorage.getItem('token') || 'N/A';
+    let whipBaseUrl = location.origin;
+    try {
+        const data = await api(`/streams/${stream.id}/endpoint`);
+        whipBaseUrl = data.endpoint?.whipUrlBase || whipBaseUrl;
+    } catch {
+        // Fall back to the current page origin if the server-side canonical host is unavailable.
+    }
+    document.getElementById('bc-whip-url').textContent = `${whipBaseUrl}/whip/${stream.id}`;
+    const token = getStoredAuthToken() || 'N/A';
+    const tokenEl = document.getElementById('bc-whip-token');
+    if (tokenEl) {
+        tokenEl.dataset.value = token;
+        tokenEl.textContent = token === 'N/A' ? token : 'hidden';
+    }
+    const toggleBtn = document.getElementById('bc-whip-token-toggle');
+    if (toggleBtn) {
+        toggleBtn.textContent = token === 'N/A' ? 'Show' : 'Show';
+        toggleBtn.dataset.showing = 'false';
+    }
+}
+
+function toggleWhipToken() {
+    const tokenEl = document.getElementById('bc-whip-token');
+    const toggleBtn = document.getElementById('bc-whip-token-toggle');
+    if (!tokenEl || !toggleBtn) return;
+    const actualToken = tokenEl.dataset.value || 'N/A';
+    const showing = toggleBtn.dataset.showing === 'true';
+    if (showing) {
+        tokenEl.textContent = actualToken === 'N/A' ? actualToken : 'hidden';
+        toggleBtn.textContent = 'Show';
+        toggleBtn.dataset.showing = 'false';
+    } else {
+        tokenEl.textContent = actualToken;
+        toggleBtn.textContent = 'Hide';
+        toggleBtn.dataset.showing = 'true';
+    }
+}
+
+function copyWhipToken() {
+    const tokenEl = document.getElementById('bc-whip-token');
+    if (!tokenEl) return;
+    copyToClipboard(tokenEl.dataset.value || tokenEl.textContent || '');
 }
 
 /* ── End Setup Stream (for non-browser methods) ──────────────── */

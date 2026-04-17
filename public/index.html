@@ -2013,11 +2013,22 @@
                                 </div>
                                 <div class="bc-faq-item">
                                     <strong>How do I use OBS?</strong>
-                                    <p>Select <strong>RTMP</strong> as your method and click Create Stream. You'll get a <strong>Server URL</strong> and <strong>Stream Key</strong> — paste those into OBS under Settings → Stream → Custom. Then click "Start Streaming" in OBS. Alternatively, select <strong>WebRTC → OBS (WHIP)</strong> if you have OBS 30+ for ultra-low latency.</p>
+                                    <p>Select <strong>RTMP</strong> as your method and click Create Stream. You'll get a <strong>Server URL</strong> and <strong>Stream Key</strong> — paste those into OBS under Settings → Stream → Custom. Then click "Start Streaming" in OBS. If you want WHIP and OBS 30+ does not show it, try the Flatpak or AppImage version of OBS, or use RTMP instead.</p>
                                 </div>
                                 <div class="bc-faq-item">
                                     <strong>What's WHIP?</strong>
-                                    <p>WHIP (WebRTC HTTP Ingest Protocol) is a new standard that lets OBS send video via WebRTC instead of RTMP. It gives you sub-second latency. Requires <strong>OBS Studio 30.0 or newer</strong>.</p>
+                                    <p>WHIP (WebRTC HTTP Ingest Protocol) is a newer way for OBS to send video via WebRTC instead of RTMP. It gives you sub-second latency and is supported in OBS Studio 30+ on builds that include WebRTC support.</p>
+                                    <p>Some Linux distro packages disable WHIP even when OBS is version 30 or newer. If you do not see the WHIP service or option in OBS Settings → Stream, install OBS from Flatpak or AppImage instead of the system package:</p>
+                                    <pre style="margin:10px 0;padding:10px;background:var(--surface);border-radius:6px;font-size:0.85rem;white-space:pre-wrap;">flatpak install flathub com.obsproject.Studio
+flatpak run com.obsproject.Studio</pre>
+                                    <p>If you cannot use Flatpak, download the OBS AppImage from <strong>https://obsproject.com/download</strong>. Otherwise, use <strong>RTMP</strong> on system OBS builds.</p>
+                                    <p><strong>Export your OBS profile and scenes:</strong> In your existing OBS, go to <strong>Profile → Export</strong> and save your profile. Then go to <strong>Scene Collection → Export</strong> and save each scene collection you want to keep.</p>
+                                    <p><strong>Import into Flatpak OBS:</strong> Open Flatpak OBS, then use <strong>Profile → Import</strong> and <strong>Scene Collection → Import</strong>. If the file chooser remains greyed out, copy the exported files directly into the Flatpak OBS config folder.</p>
+                                    <pre style="margin:10px 0;padding:10px;background:var(--surface);border-radius:6px;font-size:0.85rem;white-space:pre-wrap;">~/.var/app/com.obsproject.Studio/config/obs-studio/basic/scenes</pre>
+                                    <p>For profiles, use:</p>
+                                    <pre style="margin:10px 0;padding:10px;background:var(--surface);border-radius:6px;font-size:0.85rem;white-space:pre-wrap;">~/.var/app/com.obsproject.Studio/config/obs-studio/basic/profiles</pre>
+                                    <p>Then restart Flatpak OBS and your exported scenes and profiles should be available. This is the most reliable method when Flatpak's file dialog cannot access your exported JSON files.</p>
+                                    <p><strong>Permissions note:</strong> Flatpak is sandboxed, so it may not see files outside your home directory by default. Make sure you copy exports into your home folder before restarting OBS. AppImage builds are not sandboxed, so they can read your normal OBS paths without extra flags.</p>
                                 </div>
                                 <div class="bc-faq-item">
                                     <strong>Can I share my screen and my face at the same time?</strong>
@@ -2942,6 +2953,7 @@ WantedBy=multi-user.target</code>
 
                     <h2><i class="fa-solid fa-desktop"></i> WebRTC via OBS (WHIP)</h2>
                     <p class="bc-instructions-intro">Your stream is created! Paste the info below into OBS Studio 30+ to start streaming with ultra-low latency via WebRTC. This is newer and faster than RTMP.</p>
+                    <p class="muted" style="margin-top:8px"><i class="fa-solid fa-info-circle"></i> Note: on some Linux distributions, the system OBS package may disable WHIP even in OBS 30+. If you do not see the WHIP service in Settings → Stream, install OBS from Flatpak or AppImage instead of the distro package.</p>
                     <div class="bc-code-block">
                         <label>WHIP Endpoint</label>
                         <div class="bc-code-copy">
@@ -2949,12 +2961,14 @@ WantedBy=multi-user.target</code>
                             <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-whip-url').textContent)"><i class="fa-solid fa-copy"></i></button>
                         </div>
                     </div>
-                    <div class="bc-code-block">
+                    <div class="bc-code-block bc-secret-token-block">
                         <label>Bearer Token</label>
-                        <div class="bc-code-copy">
-                            <code id="bc-whip-token">loading...</code>
-                            <button class="btn btn-small" onclick="copyToClipboard(document.getElementById('bc-whip-token').textContent)"><i class="fa-solid fa-copy"></i></button>
+                        <div class="bc-secret-token-row">
+                            <code id="bc-whip-token" data-value="loading...">hidden</code>
+                            <button id="bc-whip-token-toggle" class="btn btn-small" onclick="toggleWhipToken()">Show</button>
+                            <button class="btn btn-small" onclick="copyWhipToken()" title="Copy bearer token"><i class="fa-solid fa-copy"></i></button>
                         </div>
+                        <p class="muted" style="margin-top:8px;font-size:0.85rem">The bearer token is hidden by default to prevent accidental disclosure. Tap Show only when you need it, and paste only the raw JWT string into OBS — do not include the word <code>Bearer</code>.</p>
                     </div>
                     <div class="bc-instructions-steps">
                         <h3>OBS 30+ Setup</h3>
@@ -2965,7 +2979,7 @@ WantedBy=multi-user.target</code>
                             <li>Paste the <strong>Bearer Token</strong> as the auth key</li>
                             <li>Click "Start Streaming" in OBS</li>
                         </ol>
-                        <p class="muted"><i class="fa-solid fa-info-circle"></i> Requires OBS Studio 30.0 or newer. Older versions do not support WHIP.</p>
+                        <p class="muted"><i class="fa-solid fa-info-circle"></i> Requires OBS Studio 30.0 or newer. Older versions do not support WHIP. If the WHIP option is missing in OBS, use the Flatpak or AppImage build, or switch to RTMP.</p>
                     </div>
 
                     <!-- Live Settings — rendered via shared panel (bc-shared-live-settings) -->

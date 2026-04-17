@@ -992,6 +992,7 @@ function initChat(streamId) {
     const wsUrl = `${protocol}://${host}:${port}/ws/chat?${params.toString()}`;
 
     const ws = new WebSocket(wsUrl);
+    ws._authToken = token || null;
     chatWs = ws;
 
     _chatIntentionalClose = false;
@@ -1008,6 +1009,7 @@ function initChat(streamId) {
             streamId: streamId,
             token: token || undefined
         }));
+        ws._authToken = token || null;
         _chatReconnectDelay = CHAT_RECONNECT_BASE; // reset backoff on success
         addSystemMessage('Connected to chat');
     };
@@ -1019,6 +1021,10 @@ function initChat(streamId) {
         if (chatWs !== ws) return;
         try {
             const msg = JSON.parse(e.data);
+            if (msg.type === 'auth') {
+                ws._hobotoolsUserId = msg.user_id || null;
+                ws._hobotoolsAuthenticated = !!msg.authenticated;
+            }
             handleChatMessage(msg);
         } catch { /* ignore */ }
     };
@@ -1108,6 +1114,7 @@ function _reconnectChatWs(streamId) {
     const wsUrl = `${protocol}://${host}:${port}/ws/chat?${params.toString()}`;
 
     const ws = new WebSocket(wsUrl);
+    ws._authToken = token || null;
     chatWs = ws;
     _chatIntentionalClose = false;
     _chatActive = true;
@@ -1122,7 +1129,14 @@ function _reconnectChatWs(streamId) {
 
     ws.onmessage = (e) => {
         if (chatWs !== ws) return;
-        try { handleChatMessage(JSON.parse(e.data)); } catch {}
+        try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'auth') {
+                ws._hobotoolsUserId = msg.user_id || null;
+                ws._hobotoolsAuthenticated = !!msg.authenticated;
+            }
+            handleChatMessage(msg);
+        } catch {}
     };
 
     ws.onerror = () => {
@@ -1144,7 +1158,7 @@ function _reconnectChatWs(streamId) {
     _syncGlobalFeed();
 }
 
-function destroyChat() {
+function destroyChat(forceClose = false) {
     _chatIntentionalClose = true;
     _chatActive = false;
     _closeGlobalFeed();
@@ -1152,7 +1166,7 @@ function destroyChat() {
     // When broadcasting, keep the chat WS alive in the background so TTS
     // messages continue to play while the user browses other pages.
     const isBroadcasting = typeof isStreaming === 'function' && isStreaming();
-    if (isBroadcasting && chatWs && chatWs.readyState === WebSocket.OPEN && chatStreamId) {
+    if (!forceClose && isBroadcasting && chatWs && chatWs.readyState === WebSocket.OPEN && chatStreamId) {
         // Transfer to background — only process TTS/audio, skip rendering
         _bgBroadcastWs = chatWs;
         _bgBroadcastStreamId = chatStreamId;
@@ -4456,18 +4470,26 @@ window.addEventListener('hobo-auth-changed', (e) => {
     const wasAuthed = chatWs?._hoboAuthed;
 
     if (token && chatWs && chatWs.readyState === WebSocket.OPEN) {
-        // Logged in — re-authenticate the existing connection
-        chatWs.send(JSON.stringify({
-            type: 'join',
-            streamId: chatStreamId,
-            token,
-        }));
-        chatWs._hoboAuthed = true;
+        // Logged in — if the token changed from the existing authenticated session,
+        // rebuild the chat WebSocket so we don't keep an old user identity alive.
+        if (chatWs._authToken && chatWs._authToken !== token && chatWs._hoboAuthed) {
+            const sid = chatStreamId;
+            destroyChat(true);
+            initChat(sid);
+        } else {
+            chatWs.send(JSON.stringify({
+                type: 'join',
+                streamId: chatStreamId,
+                token,
+            }));
+            chatWs._hoboAuthed = true;
+            chatWs._authToken = token;
+        }
     } else if (!token && wasAuthed) {
         // Logged out — reconnect to get a fresh anon identity
         chatWs._hoboAuthed = false;
         const sid = chatStreamId;
-        destroyChat();
+        destroyChat(true);
         if (sid) initChat(sid); else initChat(null);
     }
 
