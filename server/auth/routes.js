@@ -213,10 +213,17 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) =>
 // Hobo.Tools OAuth2 SSO Integration
 // ═══════════════════════════════════════════════════════════════
 
-const HOBO_TOOLS_BASE = process.env.HOBO_TOOLS_URL || 'https://hobo.tools';
+const config = require('../config');
 const HOBO_CLIENT_ID = process.env.HOBO_OAUTH_CLIENT_ID || 'hobostreamer';
 const HOBO_CLIENT_SECRET = process.env.HOBO_OAUTH_CLIENT_SECRET || '';
-const HOBO_REDIRECT_URI = `${(process.env.BASE_URL || 'https://hobostreamer.com').toLowerCase()}/api/auth/callback`;
+
+function getHoboToolsBase() {
+    return config.hoboToolsUrl || config.baseUrl || 'https://hobo.tools';
+}
+
+function getHoboRedirectUri() {
+    return `${config.baseUrl.toLowerCase()}/api/auth/callback`;
+}
 
 // ── Initiate OAuth Login (redirect to hobo.tools) ───────────
 router.get('/sso/login', (req, res) => {
@@ -226,12 +233,12 @@ router.get('/sso/login', (req, res) => {
 
     const params = new URLSearchParams({
         client_id: HOBO_CLIENT_ID,
-        redirect_uri: HOBO_REDIRECT_URI,
+        redirect_uri: getHoboRedirectUri(),
         response_type: 'code',
         scope: 'profile theme',
         state,
     });
-    res.redirect(`${HOBO_TOOLS_BASE}/oauth/authorize?${params.toString()}`);
+    res.redirect(`${getHoboToolsBase()}/oauth/authorize?${params.toString()}`);
 });
 
 // ── OAuth Callback (exchange code for token) ─────────────────
@@ -255,10 +262,10 @@ router.get('/callback', async (req, res) => {
                 client_id: HOBO_CLIENT_ID,
                 client_secret: HOBO_CLIENT_SECRET,
                 code,
-                redirect_uri: HOBO_REDIRECT_URI,
+                redirect_uri: getHoboRedirectUri(),
             });
 
-            const url = new URL(`${HOBO_TOOLS_BASE}/oauth/token`);
+            const url = new URL(`${getHoboToolsBase()}/oauth/token`);
             const reqOpts = {
                 hostname: url.hostname,
                 port: url.port || 443,
@@ -406,7 +413,7 @@ router.post('/refresh', async (req, res) => {
                 client_secret: HOBO_CLIENT_SECRET,
                 refresh_token: refreshToken,
             });
-            const url = new URL(`${HOBO_TOOLS_BASE}/oauth/token`);
+            const url = new URL(`${getHoboToolsBase()}/oauth/token`);
             const httpReq = https.request({
                 hostname: url.hostname, port: url.port || 443, path: url.pathname,
                 method: 'POST',
@@ -457,7 +464,7 @@ router.get('/sso/status', (req, res) => {
     res.json({
         enabled: !!HOBO_CLIENT_SECRET,
         provider: 'hobo.tools',
-        loginUrl: `${HOBO_TOOLS_BASE}/oauth/authorize`,
+        loginUrl: `${getHoboToolsBase()}/oauth/authorize`,
     });
 });
 

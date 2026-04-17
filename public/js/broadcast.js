@@ -1972,8 +1972,11 @@ async function showWHIPInstructions(stream) {
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         whipBaseUrl = data.endpoint?.whipUrlBase || whipBaseUrl;
+        if (data.endpoint?.whipUrlSource === 'request_host') {
+            console.warn('[WHIP] Using request host fallback for WHIP URL. Configure WHIP_PUBLIC_URL or WEBRTC_PUBLIC_URL if this host is incorrect.');
+        }
     } catch {
-        // Fall back to the current page origin if the server-side canonical host is unavailable.
+        console.warn('[WHIP] Failed to load canonical WHIP endpoint from server; using current page origin as fallback.');
     }
     document.getElementById('bc-whip-url').textContent = `${whipBaseUrl}/whip/${stream.id}`;
     const token = getStoredAuthToken() || 'N/A';

@@ -112,6 +112,8 @@ class WebRTCSFU extends EventEmitter {
             initialAvailableOutgoingBitrate: 1000000,
         });
 
+        console.log(`[WebRTC] Transport ${transport.id} (${peerId}) listenIp=${config.mediasoup.listenIp}, announcedIp=${config.mediasoup.announcedIp}`);
+
         transport.on('dtlsstatechange', (dtlsState) => {
             console.log(`[WebRTC] Transport ${transport.id} (${peerId}) DTLS: ${dtlsState}`);
             if (dtlsState === 'closed' || dtlsState === 'failed') {
