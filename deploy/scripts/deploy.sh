@@ -11,10 +11,16 @@
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-REPO_DIR="/opt/hobostreamer"
-SERVICE="hobostreamer"
+REPO_DIR="${REPO_DIR:-/opt/hobostreamer}"
+SERVICE="${SERVICE:-hobostreamer}"
 SITE_URL="${SITE_URL:-https://hobostreamer.com}"
-API_URL="http://127.0.0.1:3000"
+API_URL="${API_URL:-http://127.0.0.1:3000}"
+GIT_REMOTE="${GIT_REMOTE:-origin}"
+GIT_BRANCH="${GIT_BRANCH:-main}"
+HEALTH_PATH="${HEALTH_PATH:-/api/health}"
+UPDATES_PATH="${UPDATES_PATH:-/updates}"
+BROADCAST_ENDPOINT="${BROADCAST_ENDPOINT:-/api/admin/broadcast}"
+DEPLOY_TIMEOUT="${DEPLOY_TIMEOUT:-15}"
 
 cd "$REPO_DIR"
 
@@ -28,8 +34,8 @@ OLD_HASH=$(git rev-parse HEAD 2>/dev/null || echo "none")
 echo "[Deploy] Current commit: ${OLD_HASH:0:8}"
 
 # 2. Pull latest from GitHub
-echo "[Deploy] Pulling from origin main..."
-git pull origin main --ff-only
+echo "[Deploy] Pulling from ${GIT_REMOTE} ${GIT_BRANCH}..."
+git pull "$GIT_REMOTE" "$GIT_BRANCH" --ff-only
 NEW_HASH=$(git rev-parse HEAD)
 echo "[Deploy] New commit: ${NEW_HASH:0:8}"
 
@@ -68,10 +74,11 @@ fi
 
 # 6. Send update notification to chat (before restart)
 echo "[Deploy] Notifying chat..."
-UPDATES_URL="${SITE_URL}/updates"
+UPDATES_URL="${SITE_URL}${UPDATES_PATH}"
+NOTIFY_URL="${API_URL}${BROADCAST_ENDPOINT}"
 # Use the admin broadcast endpoint if we have an admin token, otherwise skip
 # The server will also send a restart message automatically on SIGTERM
-curl -sf -X POST "${API_URL}/api/admin/broadcast" \
+curl -sf -X POST "${NOTIFY_URL}" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${ADMIN_TOKEN:-}" \
     -d "{
@@ -86,9 +93,9 @@ sudo systemctl restart "$SERVICE"
 
 # 8. Wait for service to come back up
 echo -n "[Deploy] Waiting for server..."
-for i in $(seq 1 15); do
+for i in $(seq 1 "${DEPLOY_TIMEOUT}"); do
     sleep 1
-    if curl -sf "${API_URL}/api/health" > /dev/null 2>&1; then
+    if curl -sf "${API_URL}${HEALTH_PATH}" > /dev/null 2>&1; then
         echo " up! ✅"
         break
     fi
