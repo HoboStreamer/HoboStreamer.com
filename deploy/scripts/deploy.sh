@@ -52,6 +52,12 @@ OLD_HASH=$(git rev-parse HEAD 2>/dev/null || echo "none")
 echo "[Deploy] Current commit: ${OLD_HASH:0:8}"
 
 # 2. Pull latest from GitHub
+if [ "$FORCE_DEPLOY" = true ]; then
+    echo "[Deploy] Force deploy enabled: discarding local changes before pulling."
+    git reset --hard HEAD
+    git clean -fd
+fi
+
 echo "[Deploy] Pulling from ${GIT_REMOTE} ${GIT_BRANCH}..."
 git pull "$GIT_REMOTE" "$GIT_BRANCH" --ff-only
 NEW_HASH=$(git rev-parse HEAD)
