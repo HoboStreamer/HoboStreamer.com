@@ -109,11 +109,17 @@ let chatSlurPolicy = {
     message: '',
     announcedForKey: null,
 };
+// Built-in slur category definitions — MUST stay in sync with server/chat/moderation-utils.js
+// (The server module is the authoritative source; update both when changing patterns.)
+//
+// N-word pattern note: (?:a+[sz]?|e+r+[sz]?) catches base + plural forms:
+//   nigga, niggas, niggaz, nigger, niggers, niggaz
+// The second pattern catches the "nicker/knicker" alternate-root family.
 const CHAT_CORE_SLUR_CATEGORIES = [
-    { key: 'n_word',      label: 'N-word and variants',        patterns: ['\\bn+i+g+g+(?:a+|e+r+)\\b', '\\b[kn]*n+h?i+c?k+e+r+s?\\b'] },
+    { key: 'n_word',      label: 'N-word and variants',        patterns: ['\\bn+i+g+g+(?:a+[sz]?|e+r+[sz]?)\\b', '\\b[kn]*n+h?i+c?k+e+r+s?\\b'] },
     { key: 'antisemitic', label: 'Antisemitic slurs',          patterns: ['\\bk+\\s*y+\\s*k+\\s*e+\\b', '\\bj+\\s*e+\\s*w+\\s*s?\\s+w+\\s*i+\\s*l+\\s*l+\\s+n+\\s*o+\\s*t+\\s+r+\\s*e+\\s*p+\\s*l+\\s*a+\\s*c+\\s*e+\\b'] },
-    { key: 'homophobic',  label: 'Homophobic slurs',           patterns: ['\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?\\b'] },
-    { key: 'racial',      label: 'Racial slurs (spic, chink)', patterns: ['\\bs+\\s*p+\\s*i+\\s*c+\\b', '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+\\b'] },
+    { key: 'homophobic',  label: 'Homophobic slurs',           patterns: ['\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?[sz]?\\b'] },
+    { key: 'racial',      label: 'Racial slurs (spic, chink)', patterns: ['\\bs+\\s*p+\\s*i+\\s*c+[sz]?\\b', '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+[sz]?\\b'] },
 ];
 for (const cat of CHAT_CORE_SLUR_CATEGORIES) {
     cat.compiled = cat.patterns.map((src) => { try { return new RegExp(src, 'i'); } catch { return null; } }).filter(Boolean);

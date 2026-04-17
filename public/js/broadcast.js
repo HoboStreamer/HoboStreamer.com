@@ -2073,15 +2073,23 @@ function _syncAudioSelectionUI(audioId, { persist = true } = {}) {
     if (persist) {
         saveBroadcastSettings();
         try { localStorage.setItem('bc-last-audio', normalized); } catch {}
-        // If currently streaming, switch the live audio track
         const ss = getActiveStreamState();
         const streamId = broadcastState.activeStreamId;
-        if (ss && ss.localStream && streamId && !broadcastState.settings.screenShare && !_switchingAudio) {
+        if (ss && ss.localStream && streamId && !_switchingAudio) {
             _switchingAudio = true;
-            _switchActiveAudio(normalized).catch(err => {
-                console.warn('[Broadcast] Live audio switch failed:', err.message);
-                toast('Could not switch mic: ' + err.message, 'error');
-            }).finally(() => { _switchingAudio = false; });
+            if (broadcastState.settings.screenShare) {
+                // During screen share: rebuild the audio mix with the new mic instead of blocking
+                _rebuildScreenShareAudio(normalized, streamId).catch(err => {
+                    console.warn('[Broadcast] Screen share audio rebuild failed:', err.message);
+                    toast('Could not switch mic during screen share: ' + err.message, 'error');
+                }).finally(() => { _switchingAudio = false; });
+            } else {
+                // Normal camera mode: replace the live audio track
+                _switchActiveAudio(normalized).catch(err => {
+                    console.warn('[Broadcast] Live audio switch failed:', err.message);
+                    toast('Could not switch mic: ' + err.message, 'error');
+                }).finally(() => { _switchingAudio = false; });
+            }
         }
     }
 }
@@ -3088,8 +3096,29 @@ async function startMediaCapture(streamId, opts = {}) {
         // Get mic audio separately (unless skipped). Desktop audio comes from getDisplayMedia.
         let micStream = null;
         if (forceAudio !== null) {
-            audioConstraints = buildAudioConstraints(s, forceAudio);
-            try { micStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false }); } catch { micStream = null; }
+            audioConstraints = buildAudioConstraints(s, forceAudio); // uses exact for explicit devices
+            try {
+                micStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false });
+                // Verify the browser attached the requested mic
+                if (forceAudio && forceAudio !== 'default') {
+                    const appliedMic = micStream.getAudioTracks()[0]?.getSettings?.().deviceId;
+                    if (appliedMic && appliedMic !== forceAudio) {
+                        console.warn('[Broadcast] Screen share mic mismatch: requested', forceAudio, 'got', appliedMic);
+                        _warnDeviceMismatch('mic');
+                    }
+                }
+            } catch (micErr) {
+                // Exact constraint rejected — retry soft
+                if ((micErr.name === 'OverconstrainedError' || micErr.name === 'NotFoundError') && forceAudio && forceAudio !== 'default') {
+                    try {
+                        const softAudio = buildAudioConstraints(s, forceAudio, { soft: true });
+                        micStream = await _getUserMediaWithTimeout({ audio: softAudio, video: false });
+                        _warnDeviceMismatch('mic');
+                    } catch { micStream = null; }
+                } else {
+                    micStream = null;
+                }
+            }
         }
         ss._micEnabled = forceAudio !== null;
 
@@ -3123,11 +3152,20 @@ async function startMediaCapture(streamId, opts = {}) {
             let camStream;
             try {
                 const camConstraints = { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: getBroadcastFrameRate() } };
-                if (forceCamera && forceCamera !== 'default') camConstraints.deviceId = forceCamera;
+                if (forceCamera && forceCamera !== 'default') camConstraints.deviceId = { exact: forceCamera };
                 camStream = await _getUserMediaWithTimeout({ video: camConstraints, audio: false });
             } catch (err) {
-                console.warn('[Broadcast] Camera overlay failed, proceeding without:', err.message);
-                camStream = null;
+                // Exact overlay camera constraint rejected — retry soft
+                if ((err.name === 'OverconstrainedError' || err.name === 'NotFoundError') && forceCamera && forceCamera !== 'default') {
+                    try {
+                        const softCam = { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: getBroadcastFrameRate() }, deviceId: forceCamera };
+                        camStream = await _getUserMediaWithTimeout({ video: softCam, audio: false });
+                        _warnDeviceMismatch('camera');
+                    } catch { camStream = null; }
+                } else {
+                    console.warn('[Broadcast] Camera overlay failed, proceeding without:', err.message);
+                    camStream = null;
+                }
             }
             ss._cameraOverlayStream = camStream;
 
@@ -3153,17 +3191,35 @@ async function startMediaCapture(streamId, opts = {}) {
             height: { ideal: res.h },
             frameRate: { ideal: getBroadcastFrameRate() },
         };
-        // Use soft deviceId (not exact) — Android often invalidates device IDs between sessions
-        if (forceCamera && forceCamera !== 'default') videoConstraints.deviceId = forceCamera;
-        audioConstraints = buildAudioConstraints(s, forceAudio);
+        // Use exact deviceId for explicit selections so Chrome must use the chosen camera.
+        // On exact failure (OverconstrainedError / NotFoundError) we fall back and warn.
+        const hasExplicitCamera = forceCamera && forceCamera !== 'default';
+        if (hasExplicitCamera) videoConstraints.deviceId = { exact: forceCamera };
+        const hasExplicitAudio = forceAudio && forceAudio !== 'default' && forceAudio !== null;
+        audioConstraints = buildAudioConstraints(s, forceAudio); // uses exact internally
+        let _captureFellBack = false;
         try {
             ss.localStream = await _getUserMediaWithTimeout({ video: videoConstraints, audio: audioConstraints });
         } catch (firstErr) {
+            // If exact constraint was the cause (OverconstrainedError / NotFoundError), relax and warn
+            const isExactFail = firstErr.name === 'OverconstrainedError' || firstErr.name === 'NotFoundError';
+            if (isExactFail && (hasExplicitCamera || hasExplicitAudio)) {
+                console.warn('[Broadcast] Exact device constraint rejected, relaxing:', firstErr.message);
+                _captureFellBack = true;
+                // Retry with soft (ideal) constraints for the selected devices
+                const softVideo = { ...videoConstraints };
+                if (hasExplicitCamera) softVideo.deviceId = forceCamera; // soft
+                const softAudio = buildAudioConstraints(s, forceAudio, { soft: true });
+                try {
+                    ss.localStream = await _getUserMediaWithTimeout({ video: softVideo, audio: softAudio });
+                } catch { /* fall through to facingMode fallback below */ }
+            }
+            if (!ss.localStream) {
             // Fallback 1: drop deviceId, use facingMode (common mobile fix)
             console.warn('[Broadcast] getUserMedia failed, trying facingMode fallback:', firstErr.message);
             try {
                 const fallbackVideo = { facingMode: 'user', width: { ideal: res.w }, height: { ideal: res.h } };
-                const fallbackAudio = buildAudioConstraints(s, 'default');
+                const fallbackAudio = buildAudioConstraints(s, 'default', { soft: true });
                 ss.localStream = await _getUserMediaWithTimeout({ video: fallbackVideo, audio: fallbackAudio });
             } catch (secondErr) {
                 // Fallback 2: bare minimum — just {video: true, audio: true}
@@ -3180,6 +3236,33 @@ async function startMediaCapture(streamId, opts = {}) {
                     ss.localStream = new MediaStream();
                     if (vStream) vStream.getTracks().forEach(t => ss.localStream.addTrack(t));
                     if (aStream) aStream.getTracks().forEach(t => ss.localStream.addTrack(t));
+                }
+            }
+            } // end if (!ss.localStream)
+        }
+
+        // Post-capture device verification — detect if browser silently used a different device
+        if (ss.localStream) {
+            const vt = ss.localStream.getVideoTracks()[0];
+            const at = ss.localStream.getAudioTracks()[0];
+            if (vt && hasExplicitCamera) {
+                const appliedCam = vt.getSettings?.().deviceId;
+                if (appliedCam && appliedCam !== forceCamera) {
+                    console.warn('[Broadcast] Camera mismatch: requested', forceCamera, 'got', appliedCam);
+                    _warnDeviceMismatch('camera');
+                } else if (_captureFellBack) {
+                    console.warn('[Broadcast] Camera constraint was relaxed — browser may not have used the selected camera.');
+                    _warnDeviceMismatch('camera');
+                }
+            }
+            if (at && hasExplicitAudio) {
+                const appliedMic = at.getSettings?.().deviceId;
+                if (appliedMic && appliedMic !== forceAudio) {
+                    console.warn('[Broadcast] Mic mismatch: requested', forceAudio, 'got', appliedMic);
+                    _warnDeviceMismatch('mic');
+                } else if (_captureFellBack) {
+                    console.warn('[Broadcast] Audio constraint was relaxed — browser may not have used the selected mic.');
+                    _warnDeviceMismatch('mic');
                 }
             }
         }
@@ -3207,11 +3290,14 @@ async function startMediaCapture(streamId, opts = {}) {
     updateBroadcastMobileChatFab();
 }
 
-function buildAudioConstraints(s, forceAudio) {
+function buildAudioConstraints(s, forceAudio, { soft = false } = {}) {
     const audio = {};
     const audioDevice = forceAudio || s.forceAudio;
-    // Use soft deviceId (not exact) — Android often invalidates device IDs between sessions
-    if (audioDevice && audioDevice !== 'default') audio.deviceId = audioDevice;
+    // Use exact deviceId for explicit selections so the browser must use the chosen mic.
+    // Pass soft:true only for fallback paths where we intentionally relax the constraint.
+    if (audioDevice && audioDevice !== 'default') {
+        audio.deviceId = soft ? audioDevice : { exact: audioDevice };
+    }
     audio.autoGainControl = !!s.autoGain; audio.echoCancellation = !!s.echoCancellation; audio.noiseSuppression = !!s.noiseSuppression;
     if (s.force48kSampleRate) audio.sampleRate = 48000;
     return audio;
@@ -4554,6 +4640,158 @@ function _cleanupSfuProduce(streamId) {
     console.log('[SFU Produce] Cleaned up for stream', streamId);
 }
 
+/**
+ * Replace video/audio tracks in the local SFU mediasoup producers after a live track switch.
+ * This ensures server-side SFU consumers (VOD restream, etc.) receive the updated tracks.
+ * Called after any track switch — camera, mic, screen share toggle, etc.
+ */
+async function _syncSfuProducerTracks(streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss?.localStream) return;
+    const state = _sfuProduceStates.get(streamId);
+    if (!state?.active) return;
+    const videoTrack = ss.localStream.getVideoTracks()[0] || null;
+    const audioTrack = ss.localStream.getAudioTracks()[0] || null;
+    if (state.videoProducer && videoTrack) {
+        try {
+            await state.videoProducer.replaceTrack({ track: videoTrack });
+            console.log('[SFU] Video producer track replaced');
+        } catch (e) {
+            console.warn('[SFU] Video replaceTrack failed:', e.message);
+        }
+    }
+    if (state.audioProducer && audioTrack) {
+        try {
+            await state.audioProducer.replaceTrack({ track: audioTrack });
+            console.log('[SFU] Audio producer track replaced');
+        } catch (e) {
+            console.warn('[SFU] Audio replaceTrack failed:', e.message);
+        }
+    }
+}
+
+/**
+ * Show a non-blocking UI warning when the browser attaches a different device
+ * than was explicitly requested. Does not block the stream — just informs the user.
+ */
+function _warnDeviceMismatch(kind) {
+    const label = kind === 'camera' ? 'camera' : 'microphone';
+    console.warn(`[Broadcast] Device mismatch: browser may have attached a different ${label} than selected.`);
+    // Show a non-intrusive info toast (not an error — stream is still live)
+    toast(
+        `Note: Chrome may not have used your selected ${label}. If the wrong device is active, try selecting it again or change Chrome’s site settings for this page.`,
+        'info'
+    );
+}
+
+/**
+ * Re-enumerate devices and warn if the currently active device has been unplugged.
+ * Called automatically on 'devicechange' events.
+ */
+async function _checkActiveDevicePresence() {
+    const ss = getActiveStreamState();
+    if (!ss?.localStream) return;
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoIds = new Set(devices.filter(d => d.kind === 'videoinput').map(d => d.deviceId));
+        const audioIds = new Set(devices.filter(d => d.kind === 'audioinput').map(d => d.deviceId));
+        const vt = ss.localStream.getVideoTracks()[0];
+        const at = ss.localStream.getAudioTracks()[0];
+        if (vt && vt.readyState !== 'ended') {
+            const activeCam = vt.getSettings().deviceId;
+            if (activeCam && activeCam !== 'default' && !videoIds.has(activeCam)) {
+                console.warn('[Broadcast] Active camera device removed from system:', activeCam);
+                toast('Camera device unplugged. Select a replacement camera to continue broadcasting.', 'error');
+            }
+        }
+        if (at && at.readyState !== 'ended') {
+            const activeMic = at.getSettings().deviceId;
+            if (activeMic && activeMic !== 'default' && !audioIds.has(activeMic)) {
+                console.warn('[Broadcast] Active microphone device removed from system:', activeMic);
+                toast('Microphone device unplugged. Select a replacement mic to continue broadcasting.', 'error');
+            }
+        }
+    } catch { /* non-critical */ }
+}
+
+/**
+ * Rebuild the screen-share audio mix when the user changes mic during screen share.
+ * Stops the old mic stream, acquires the new one, and re-mixes with desktop audio.
+ * Propagates the new audio track to all viewer connections and SFU producers.
+ */
+async function _rebuildScreenShareAudio(audioId, streamId) {
+    const ss = getStreamState(streamId);
+    if (!ss || !ss._screenStream) return;
+    const screenAudioTracks = ss._screenStream.getAudioTracks();
+
+    // Stop existing mic stream
+    if (ss._micStream) {
+        ss._micStream.getTracks().forEach(t => t.stop());
+        ss._micStream = null;
+    }
+    // Close existing AudioContext mix
+    if (ss._mixAudioContext) {
+        try { ss._mixAudioContext.close(); } catch {}
+        ss._mixAudioContext = null;
+    }
+
+    // Acquire the new mic (if audioId is not null and mic is enabled)
+    let newMicStream = null;
+    if (audioId && ss._micEnabled) {
+        const audioConstraints = buildAudioConstraints(broadcastState.settings, audioId);
+        try {
+            newMicStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false });
+            // Verify the device was attached correctly
+            const appliedMic = newMicStream.getAudioTracks()[0]?.getSettings?.().deviceId;
+            if (audioId !== 'default' && appliedMic && appliedMic !== audioId) {
+                console.warn('[Broadcast] Screen share mic mismatch: requested', audioId, 'got', appliedMic);
+                _warnDeviceMismatch('mic');
+            }
+        } catch (err) {
+            // Exact constraint rejected — retry soft
+            if ((err.name === 'OverconstrainedError' || err.name === 'NotFoundError') && audioId !== 'default') {
+                const softAudio = buildAudioConstraints(broadcastState.settings, audioId, { soft: true });
+                try { newMicStream = await _getUserMediaWithTimeout({ audio: softAudio, video: false }); _warnDeviceMismatch('mic'); } catch {}
+            }
+        }
+    }
+
+    // Rebuild mix
+    let finalAudioTrack = null;
+    if (newMicStream && screenAudioTracks.length > 0) {
+        try {
+            const mixCtx = new AudioContext();
+            const dest = mixCtx.createMediaStreamDestination();
+            mixCtx.createMediaStreamSource(new MediaStream(screenAudioTracks)).connect(dest);
+            mixCtx.createMediaStreamSource(newMicStream).connect(dest);
+            finalAudioTrack = dest.stream.getAudioTracks()[0];
+            ss._mixAudioContext = mixCtx;
+            ss._micStream = newMicStream;
+        } catch {
+            finalAudioTrack = newMicStream.getAudioTracks()[0] || screenAudioTracks[0];
+        }
+    } else if (newMicStream) {
+        finalAudioTrack = newMicStream.getAudioTracks()[0];
+        ss._micStream = newMicStream;
+    } else if (screenAudioTracks.length > 0) {
+        finalAudioTrack = screenAudioTracks[0];
+    }
+
+    if (!finalAudioTrack) {
+        if (!newMicStream) toast('Could not acquire microphone for screen share', 'error');
+        return;
+    }
+
+    // Swap audio track in localStream
+    const oldAudio = ss.localStream.getAudioTracks()[0];
+    if (oldAudio) { oldAudio.stop(); ss.localStream.removeTrack(oldAudio); }
+    ss.localStream.addTrack(finalAudioTrack);
+
+    // Propagate to all outputs: viewer PCs, RobotStreamer, SFU
+    _replaceAllViewerTracks(streamId);
+    toast('Microphone updated (screen share mode)', 'success');
+}
+
 async function handleSignalingMessage(streamId, msg) {
     const ss = getStreamState(streamId);
     if (!ss) return;
@@ -4801,6 +5039,16 @@ function _refreshVerticalPreview() {
 
 /* ── Orientation & Resize Listeners for Camera Rotation ──── */
 (function _initOrientationHandlers() {
+    // Re-enumerate devices when hardware is connected/disconnected.
+    // Preserves the desired selection and warns if the active device disappears.
+    if (navigator.mediaDevices && !navigator.mediaDevices._hoboDevicechangeListening) {
+        navigator.mediaDevices._hoboDevicechangeListening = true;
+        navigator.mediaDevices.addEventListener('devicechange', async () => {
+            console.log('[Broadcast] Device change detected — re-enumerating devices');
+            await populateDeviceLists().catch(() => {});
+            await _checkActiveDevicePresence();
+        });
+    }
     // Listen for device orientation changes (mobile rotation)
     if ('orientation' in screen) {
         try {
@@ -4899,22 +5147,45 @@ async function _switchActiveAudio(audioId) {
     if (!ss || !ss.localStream || !streamId) return;
 
     const s = broadcastState.settings;
+    const isExplicit = audioId && audioId !== 'default';
+    // Use exact constraint for explicit device selections so Chrome must use the chosen mic.
     const audioConstraints = buildAudioConstraints(s, audioId);
     let newStream;
     try {
         newStream = await _getUserMediaWithTimeout({ audio: audioConstraints, video: false });
     } catch (err) {
-        throw new Error('Could not access microphone: ' + err.message);
+        // Exact constraint rejected — retry with soft and warn
+        if ((err.name === 'OverconstrainedError' || err.name === 'NotFoundError') && isExplicit) {
+            console.warn('[Broadcast] Exact mic constraint rejected, relaxing:', err.message);
+            const softConstraints = buildAudioConstraints(s, audioId, { soft: true });
+            try {
+                newStream = await _getUserMediaWithTimeout({ audio: softConstraints, video: false });
+                _warnDeviceMismatch('mic');
+            } catch (softErr) {
+                throw new Error('Could not access microphone: ' + softErr.message);
+            }
+        } else {
+            throw new Error('Could not access microphone: ' + err.message);
+        }
     }
     const newTrack = newStream.getAudioTracks()[0];
     if (!newTrack) { newStream.getTracks().forEach(t => t.stop()); throw new Error('No audio track returned'); }
+
+    // Post-switch device verification
+    if (isExplicit) {
+        const appliedMic = newTrack.getSettings?.().deviceId;
+        if (appliedMic && appliedMic !== audioId) {
+            console.warn('[Broadcast] Mic mismatch after switch: requested', audioId, 'got', appliedMic);
+            _warnDeviceMismatch('mic');
+        }
+    }
 
     // Stop old audio track
     const oldTrack = ss.localStream.getAudioTracks()[0];
     if (oldTrack) { oldTrack.stop(); ss.localStream.removeTrack(oldTrack); }
     ss.localStream.addTrack(newTrack);
 
-    // Replace on all viewer connections
+    // Replace on all viewer connections, RobotStreamer, and SFU producers
     _replaceAllViewerTracks(streamId);
 
     // Apply manual gain if enabled
@@ -4981,12 +5252,18 @@ async function _switchActiveCamera(cameraId) {
             if (sender) sender.replaceTrack(newTrack);
         }
         syncRobotStreamerTracks(broadcastState.activeStreamId).catch(() => {});
+        _syncSfuProducerTracks(broadcastState.activeStreamId).catch(() => {});
         const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
         _detectBroadcastVerticalPreview(ss.localStream);
         clearTimeout(suppressTimeout);
         ss._suppressRecovery = false;
         attachLocalStreamRecoveryHandlers(broadcastState.activeStreamId);
         const appliedDeviceId = newTrack.getSettings?.().deviceId || cameraId || 'default';
+        // Warn if browser gave us a different camera than requested
+        if (cameraId && cameraId !== 'default' && appliedDeviceId && appliedDeviceId !== cameraId) {
+            console.warn('[Broadcast] Camera mismatch after switch: requested', cameraId, 'got', appliedDeviceId);
+            _warnDeviceMismatch('camera');
+        }
         _syncCameraSelectionUI(appliedDeviceId);
         toast('Camera switched', 'success');
     } catch (err) {
@@ -5000,6 +5277,7 @@ async function _switchActiveCamera(cameraId) {
                 if (sender) sender.replaceTrack(recoveryTrack);
             }
             syncRobotStreamerTracks(broadcastState.activeStreamId).catch(() => {});
+            _syncSfuProducerTracks(broadcastState.activeStreamId).catch(() => {});
             const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = ss.localStream;
             _detectBroadcastVerticalPreview(ss.localStream);
             _syncCameraSelectionUI(oldDeviceId || 'default');
@@ -5091,7 +5369,7 @@ async function toggleCameraOverlay() {
     }
 }
 
-/** Replace video+audio tracks on all viewer PeerConnections and SFU */
+/** Replace video+audio tracks on all viewer PeerConnections, RobotStreamer, and SFU producers. */
 function _replaceAllViewerTracks(streamId) {
     const ss = getStreamState(streamId);
     if (!ss || !ss.localStream) return;
@@ -5104,6 +5382,8 @@ function _replaceAllViewerTracks(streamId) {
         if (as && nat) as.replaceTrack(nat);
     }
     syncRobotStreamerTracks(streamId).catch(() => {});
+    // Also update the local SFU mediasoup producers so server-side consumers get the new tracks
+    _syncSfuProducerTracks(streamId).catch(() => {});
 }
 
 /**

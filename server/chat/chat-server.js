@@ -33,17 +33,17 @@ const SOUNDBOARD_STREAM_WINDOW_MS = 60 * 1000;
 const GOTTI_GIF_URL = 'https://media1.tenor.com/m/Y-GsLUQT9LQAAAAd/deez-something-came-in-the-mail-today.gif';
 const GOTTI_CAPTION = 'Something came in the mail today... deez nuts. GOTTI!';
 const DEFAULT_SLUR_NUDGE = 'This streamer enabled Anti-Slur Nudge for this chat. Free speech is still alive, but this lane is closed today. Try a different word and keep it funny.';
-// Built-in baseline patterns that apply when Anti-Slur Nudge is enabled.
-// Patterns run on normalized text (leet chars mapped, punctuation collapsed).
-const CORE_SLUR_CATEGORIES = [
-    { key: 'n_word',      label: 'N-word and variants',        patterns: ['\\bn+i+g+g+(?:a+|e+r+)\\b'] },
-    { key: 'antisemitic', label: 'Antisemitic slurs',          patterns: ['\\bk+\\s*y+\\s*k+\\s*e+\\b', '\\bj+\\s*e+\\s*w+\\s*s?\\s+w+\\s*i+\\s*l+\\s*l+\\s+n+\\s*o+\\s*t+\\s+r+\\s*e+\\s*p+\\s*l+\\s*a+\\s*c+\\s*e+\\b'] },
-    { key: 'homophobic',  label: 'Homophobic slurs',           patterns: ['\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?\\b'] },
-    { key: 'racial',      label: 'Racial slurs (spic, chink)', patterns: ['\\bs+\\s*p+\\s*i+\\s*c+\\b', '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+\\b'] },
-];
-for (const cat of CORE_SLUR_CATEGORIES) {
-    cat.compiled = cat.patterns.map((src) => { try { return new RegExp(src, 'i'); } catch { return null; } }).filter(Boolean);
-}
+// Built-in slur categories and normalization are defined in moderation-utils.js
+// (single source of truth — browser-side chat.js mirrors the same patterns).
+const {
+    CORE_SLUR_CATEGORIES,
+    normalizeSlurText: _modNormalizeSlurText,
+    normalizeSlurPatternText: _modNormalizeSlurPatternText,
+    containsCoreSlur: _modContainsCoreSlur,
+    containsRegexSlur: _modContainsRegexSlur,
+    containsConfiguredSlur: _modContainsConfiguredSlur,
+    compileRegexList: _modCompileRegexList,
+} = require('./moderation-utils');
 
 class ChatServer {
     constructor() {
@@ -532,78 +532,14 @@ class ChatServer {
             .slice(0, 300);
     }
 
-    _compileRegexList(patternStrings, { forceInsensitive = true } = {}) {
-        const compiled = [];
-        for (const raw of patternStrings || []) {
-            if (!raw || raw.length > 200) continue;
-            let source = raw;
-            let flags = forceInsensitive ? 'i' : '';
-
-            const slashWrapped = raw.match(/^\/(.+)\/([a-z]*)$/i);
-            if (slashWrapped) {
-                source = slashWrapped[1];
-                flags = slashWrapped[2] || '';
-                if (forceInsensitive && !flags.includes('i')) flags += 'i';
-            }
-
-            try {
-                compiled.push(new RegExp(source, flags));
-            } catch {
-                // Ignore invalid user-provided regex entries.
-            }
-        }
-        return compiled;
-    }
-
-    _normalizeSlurText(input) {
-        const map = {
-            '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a',
-            '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
-            '@': 'a', '$': 's', '!': 'i', '|': 'i', '+': 't',
-        };
-        const lower = String(input || '').toLowerCase();
-        const mapped = lower.split('').map((ch) => map[ch] || ch).join('');
-        const ascii = mapped.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
-        const lettersOnly = ascii.replace(/[^a-z]/g, '');
-        return lettersOnly.replace(/(.)\1{1,}/g, '$1');
-    }
-
-    _normalizeSlurPatternText(input) {
-        const map = {
-            '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a',
-            '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
-            '@': 'a', '$': 's', '!': 'i', '|': 'i', '+': 't',
-        };
-        const lower = String(input || '').toLowerCase();
-        const mapped = lower.split('').map((ch) => map[ch] || ch).join('');
-        const ascii = mapped.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
-        return ascii.replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-    }
-
-    _containsCoreSlur(text, disabledCategories = []) {
-        const normalized = this._normalizeSlurPatternText(text);
-        if (!normalized) return false;
-        const disabled = new Set(disabledCategories);
-        return CORE_SLUR_CATEGORIES.some((cat) => !disabled.has(cat.key) && cat.compiled.some((pat) => pat.test(normalized)));
-    }
-
-    _containsRegexSlur(text, regexLines) {
-        const normalized = this._normalizeSlurPatternText(text);
-        if (!normalized) return false;
-        const compiled = this._compileRegexList(regexLines, { forceInsensitive: true });
-        return compiled.some((pattern) => pattern.test(normalized));
-    }
-
-    _containsConfiguredSlur(text, terms) {
-        const normalizedText = this._normalizeSlurText(text);
-        if (!normalizedText) return false;
-        for (const term of terms) {
-            const normalizedTerm = this._normalizeSlurText(term);
-            if (!normalizedTerm || normalizedTerm.length < 2) continue;
-            if (normalizedText.includes(normalizedTerm)) return true;
-        }
-        return false;
-    }
+    // Normalization and matching are delegated to moderation-utils.js (shared module).
+    // These thin wrappers preserve the existing call sites inside this class.
+    _normalizeSlurText(input) { return _modNormalizeSlurText(input); }
+    _normalizeSlurPatternText(input) { return _modNormalizeSlurPatternText(input); }
+    _containsCoreSlur(text, disabledCategories = []) { return _modContainsCoreSlur(text, disabledCategories); }
+    _containsRegexSlur(text, regexLines) { return _modContainsRegexSlur(text, regexLines); }
+    _containsConfiguredSlur(text, terms) { return _modContainsConfiguredSlur(text, terms); }
+    _compileRegexList(patternStrings, opts) { return _modCompileRegexList(patternStrings, opts); }
 
     /**
      * Handle a chat message
