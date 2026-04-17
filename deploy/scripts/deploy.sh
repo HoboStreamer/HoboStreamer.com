@@ -53,9 +53,9 @@ echo "[Deploy] Current commit: ${OLD_HASH:0:8}"
 
 # 2. Pull latest from GitHub
 if [ "$FORCE_DEPLOY" = true ]; then
-    echo "[Deploy] Force deploy enabled: discarding local changes before pulling."
+    echo "[Deploy] Force deploy enabled: discarding local tracked changes before pulling."
+    echo "[Deploy] Untracked files will be preserved to avoid removing runtime downloads or temp artifacts."
     git reset --hard HEAD
-    git clean -fd
 fi
 
 echo "[Deploy] Pulling from ${GIT_REMOTE} ${GIT_BRANCH}..."

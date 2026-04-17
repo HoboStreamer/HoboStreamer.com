@@ -7,7 +7,8 @@ Type=simple
 User=deck
 WorkingDirectory=/opt/hobostreamer
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node /opt/hobostreamer/server/index.js
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env npm start
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
