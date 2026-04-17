@@ -1476,6 +1476,9 @@ router.get('/:streamId', (req, res) => {
                 settings = {
                     video_click_enabled: !!channel.video_click_enabled,
                     control_mode: channel.control_mode || 'open',
+                    anon_controls_enabled: !!channel.anon_controls_enabled,
+                    control_rate_limit_ms: channel.control_rate_limit_ms || 100,
+                    video_click_rate_limit_ms: channel.video_click_rate_limit_ms || 0,
                 };
             }
         }

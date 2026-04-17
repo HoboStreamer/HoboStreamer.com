@@ -1111,6 +1111,7 @@ async function switchToStreamTab(streamId) {
         ensureBroadcastChat(streamId);
         if (!ss.robotStreamer?.active) maybeStartRsRestream(streamId);
         updateRsRestreamSlotUI();
+        loadLiveControlsStatus(streamId).catch(() => {});
         return;
     }
 
@@ -1159,6 +1160,9 @@ async function showCreateStreamPanel() {
     // Restore last-used form fields from localStorage
     _restoreLastBroadcastFields();
 
+    // Refresh control config selector so keyboard/HOLD profiles are always current
+    loadBroadcastControlConfigs().catch(() => {});
+
     // Populate device selectors for the create form
     await populateCreateFormDevices();
 }
@@ -1183,10 +1187,10 @@ async function endBroadcastTab(streamId) {
         const data = await api('/streams/mine');
         const remaining = (data.streams || []).filter(s => s.is_live && s.id !== streamId);
         if (remaining.length > 0) {
-            const withState = remaining.find(s => broadcastState.streams.has(s.id));
-            const nextStream = withState || remaining[0];
-            await buildBroadcastTabs(nextStream.id, streamId);
-            await switchOrResumeStream(nextStream);
+            // Keep tabs visible but return user to the create panel.
+            // Do NOT auto-switch into another live stream — let the user click its tab explicitly.
+            await buildBroadcastTabs(null, streamId);
+            await showCreateStreamPanel();
         } else {
             hideBroadcastTabs();
             clearGlobalDisplayTimers();
@@ -1257,6 +1261,7 @@ async function resumeStreamView(stream) {
             if (!existing.robotStreamer?.active) maybeStartRsRestream(stream.id);
             showBroadcastCallControls(); updateBroadcastCallUI();
             updateRsRestreamSlotUI();
+            loadLiveControlsStatus(stream.id).catch(() => {});
             return;
         }
         // Not yet broadcasting — create per-stream state and start capture
@@ -1275,6 +1280,7 @@ async function resumeStreamView(stream) {
         acquireWakeLock();
         showBroadcastCallControls(); updateBroadcastCallUI();
         updateRsRestreamSlotUI();
+        loadLiveControlsStatus(stream.id).catch(() => {});
         startRestreamStatusPolling();
     } else if (stream.protocol === 'rtmp') {
         const ss = createStreamState(stream);
@@ -1539,18 +1545,6 @@ async function createNewStream() {
         }
     }
 
-    // Stop any existing browser WebRTC streams to prevent camera contention.
-    // Without this, old streams fight with the new one over the camera device,
-    // causing infinite media recovery loops and orphaned VOD uploads.
-    for (const [existingId, ss] of broadcastState.streams) {
-        if (ss.localStream) {
-            console.log(`[Broadcast] Cleaning up existing stream ${existingId} before creating new one`);
-            const bgCtx = _detachVodForBackground(existingId);
-            cleanupStream(existingId);
-            _backgroundStreamEnd(existingId, bgCtx);
-        }
-    }
-
     // Persist last-used values so they pre-fill next time
     localStorage.setItem('bc-last-title', title);
     localStorage.setItem('bc-last-description', description);
@@ -1615,6 +1609,7 @@ async function createNewStream() {
             showBrowserBroadcast(); populateDeviceLists(); populateTTSVoices(); syncSettingsUI();
             _syncScreenShareUI();
             ensureBroadcastChat(streamData.id);
+            loadLiveControlsStatus(streamData.id).catch(() => {});
 
             if (isScreenMode) {
                 // Screen share capture options
@@ -1679,11 +1674,19 @@ function showBrowserBroadcast() {
 
 let _rtmpStatusPollTimer = null;
 
-/* ── Controls Status for non-browser streaming methods ─────── */
+/* ── Controls Status + Live Profile Switcher ────────────────── */
+/**
+ * Load control profile status and populate the live profile selector
+ * for all visible streaming method panels (RTMP, JSMPEG, WHIP, browser).
+ * Determines the bound profile from stream-level first, channel default second.
+ */
 async function loadLiveControlsStatus(streamId) {
-    const statusEls = ['bc-rtmp-controls-status', 'bc-jsmpeg-controls-status', 'bc-whip-controls-status']
+    // Status label elements (non-browser streaming panels)
+    const statusEls = ['bc-rtmp-controls-status', 'bc-jsmpeg-controls-status', 'bc-whip-controls-status', 'bc-browser-controls-status']
         .map(id => document.getElementById(id)).filter(Boolean);
-    if (!statusEls.length) return;
+
+    // Profile selector elements (non-browser + browser panels)
+    const selectorIds = ['bc-rtmp-live-config-select', 'bc-jsmpeg-live-config-select', 'bc-whip-live-config-select', 'bc-live-config-select'];
 
     try {
         const [settings, cdata, streamConfig] = await Promise.all([
@@ -1692,20 +1695,35 @@ async function loadLiveControlsStatus(streamId) {
             streamId ? api(`/controls/${streamId}/config`).catch(() => ({ control_config_id: null })) : Promise.resolve({ control_config_id: null }),
         ]);
 
+        const configs = cdata.configs || [];
+
+        // Stream-level config takes precedence; fall back to channel default
         let configId = streamConfig?.control_config_id || null;
         if (!configId) {
-            configId = settings.active_control_config_id;
+            configId = settings.active_control_config_id || null;
         }
 
+        // Populate all profile selectors with available configs
+        const optionsHtml = '<option value="">None (no controls)</option>' +
+            configs.map(c => `<option value="${c.id}">${esc(c.name)} (${c.button_count} btn)</option>`).join('');
+        for (const selId of selectorIds) {
+            const sel = document.getElementById(selId);
+            if (!sel) continue;
+            sel.innerHTML = optionsHtml;
+            sel.value = configId ? String(configId) : '';
+        }
+
+        // Render status label
         if (!configId) {
-            const html = '<p class="muted" style="font-size:0.85rem">No control profile active. Select one from the Dashboard before going live.</p>';
+            const html = '<p class="muted" style="font-size:0.85rem">No control profile active. Select one above and click Apply.</p>';
             statusEls.forEach(el => el.innerHTML = html);
             return;
         }
-        const config = (cdata.configs || []).find(c => c.id === configId);
+        const config = configs.find(c => c.id === configId);
         const name = config ? esc(config.name) : `Profile #${configId}`;
         const count = config ? config.button_count : '?';
         const plural = count === 1 ? 'button' : 'buttons';
+        const keyboardCount = config ? (config.keyboard_count ?? '?') : '?';
         const html = `<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
             <i class="fa-solid fa-circle" style="color:#4caf50;font-size:10px;flex-shrink:0"></i>
             <span><strong>${name}</strong> — ${count} ${plural} active for viewers</span>
@@ -1716,6 +1734,51 @@ async function loadLiveControlsStatus(streamId) {
         statusEls.forEach(el => el.innerHTML = html);
     }
 }
+
+/**
+ * Apply the selected live control profile to the currently active stream.
+ * Called from "Apply" buttons in all streaming method panels.
+ * Uses whichever profile selector is currently visible/filled.
+ */
+async function applyLiveControlProfile() {
+    const streamId = broadcastState.activeStreamId;
+    if (!streamId) {
+        toast('No active stream to apply profile to', 'error');
+        return;
+    }
+
+    // Find the first populated selector that has a value
+    const selectorIds = ['bc-live-config-select', 'bc-rtmp-live-config-select', 'bc-jsmpeg-live-config-select', 'bc-whip-live-config-select'];
+    let selectedConfigId = null;
+    for (const id of selectorIds) {
+        const el = document.getElementById(id);
+        if (el && el.value !== undefined && el.offsetParent !== null) {
+            // Use the first visible selector's value
+            selectedConfigId = el.value ? parseInt(el.value) : null;
+            break;
+        }
+    }
+    // Fallback: check all selectors for any non-empty value
+    if (selectedConfigId === undefined) {
+        for (const id of selectorIds) {
+            const el = document.getElementById(id);
+            if (el && el.value) { selectedConfigId = parseInt(el.value); break; }
+        }
+    }
+
+    try {
+        await api(`/controls/${streamId}/config`, {
+            method: 'PUT',
+            body: { control_config_id: selectedConfigId !== undefined ? selectedConfigId : null },
+        });
+        toast('Control profile applied — viewers will see the new buttons immediately', 'success');
+        // Refresh status display
+        await loadLiveControlsStatus(streamId);
+    } catch (err) {
+        toast(err.message || 'Failed to apply control profile', 'error');
+    }
+}
+
 
 async function showRTMPInstructions(stream) {
     document.getElementById('bc-stream-manager').style.display = 'none';
@@ -1915,10 +1978,10 @@ async function endSetupStream() {
         const data = await api('/streams/mine');
         const remaining = (data.streams || []).filter(s => s.is_live && s.id !== endingStreamId);
         if (remaining.length > 0) {
-            const withState = remaining.find(s => broadcastState.streams.has(s.id));
-            const nextStream = withState || remaining[0];
-            await buildBroadcastTabs(nextStream.id, endingStreamId);
-            await switchOrResumeStream(nextStream);
+            // Keep tabs visible but return user to the create panel.
+            // Do NOT auto-switch into another live stream — let the user click its tab explicitly.
+            await buildBroadcastTabs(null, endingStreamId);
+            await showCreateStreamPanel();
             toast('Stream ended', 'info');
             return;
         }
@@ -2419,10 +2482,10 @@ async function stopBroadcast() {
         const data = await api('/streams/mine');
         const remaining = (data.streams || []).filter(s => s.is_live && s.id !== activeId);
         if (remaining.length > 0) {
-            const withState = remaining.find(s => broadcastState.streams.has(s.id));
-            const nextStream = withState || remaining[0];
-            await buildBroadcastTabs(nextStream.id, activeId);
-            await switchOrResumeStream(nextStream);
+            // Keep tabs visible but return user to the create panel.
+            // Do NOT auto-switch into another live stream — let the user click its tab explicitly.
+            await buildBroadcastTabs(null, activeId);
+            await showCreateStreamPanel();
             toast('Stream ended', 'info');
             return;
         }
@@ -2495,19 +2558,12 @@ function cleanupStream(streamId) {
     // Stop RS viewer polling if no streams left
     if (broadcastState.streams.size === 0) { _stopRsViewerPoll(); _stopRestreamViewerPoll(); }
 
-    // If this was the active stream, clear the preview and switch to another if possible
+    // If this was the active stream, clear the preview.
+    // Do NOT auto-switch to a sibling stream — the caller (endBroadcastTab, stopBroadcast, etc.)
+    // is responsible for deciding what to show next.
     if (broadcastState.activeStreamId === streamId) {
         broadcastState.activeStreamId = null;
         const preview = document.getElementById('bc-video-preview'); if (preview) preview.srcObject = null;
-
-        if (broadcastState.streams.size > 0) {
-            const [nextId, nextSs] = [...broadcastState.streams.entries()][0];
-            broadcastState.activeStreamId = nextId;
-            if (nextSs.localStream) {
-                const p = document.getElementById('bc-video-preview');
-                if (p) { p.srcObject = nextSs.localStream; p.muted = true; p.play().catch(() => {}); }
-            }
-        }
     }
 
     if (!isStreaming()) {

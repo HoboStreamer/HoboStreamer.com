@@ -512,6 +512,18 @@ function bindContainedChatScroll() {
         if (!el || el.dataset.scrollContainBound === '1') return;
         el.dataset.scrollContainBound = '1';
 
+        const findNestedScrollable = (node) => {
+            while (node && node !== el) {
+                if (node instanceof HTMLElement) {
+                    const style = window.getComputedStyle(node);
+                    const isScrollable = /(auto|scroll)/.test(style.overflowY || '') && node.scrollHeight > node.clientHeight;
+                    if (isScrollable) return node;
+                }
+                node = node.parentElement;
+            }
+            return null;
+        };
+
         const containScroll = (deltaY, event) => {
             const canScroll = el.scrollHeight > (el.clientHeight + 1);
             if (!canScroll) {
@@ -530,6 +542,10 @@ function bindContainedChatScroll() {
 
         el.addEventListener('wheel', (event) => {
             if (Math.abs(event.deltaY) >= Math.abs(event.deltaX || 0)) {
+                const nestedScrollable = findNestedScrollable(event.target);
+                if (nestedScrollable && nestedScrollable !== el) {
+                    return;
+                }
                 containScroll(event.deltaY, event);
             }
         }, { passive: false });
@@ -3479,12 +3495,18 @@ function _handleGlobalFeedMessage(msg) {
     }
 
     // Don't duplicate messages from our own stream
-    // stream_channel matches a username; we need to skip if it's our current stream
-    // The msg.stream_channel is set by the server for messages originating from streams
-    // Our own stream's messages are already in the stream chat — skip them
+    // stream_channel matches a username; skip it when we are already viewing that stream chat
     if (hasStreamChannel && chatStreamId) {
-        // Try to detect if this is from our own stream (avoid duplicating)
-        // tag messages with cross-feed source so they're visually distinct
+        const currentStreamChannel = (currentStreamData && currentStreamData.username)
+            || (typeof currentChannelUsername !== 'undefined' && currentChannelUsername)
+            || null;
+        if (currentStreamChannel) {
+            const currentChannelNorm = String(currentStreamChannel).trim().toLowerCase();
+            const sourceChannelNorm = String(msg.stream_channel).trim().toLowerCase();
+            if (currentChannelNorm && currentChannelNorm === sourceChannelNorm) {
+                return;
+            }
+        }
     }
 
     // Render into the stream chat container with a source badge

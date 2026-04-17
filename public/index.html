@@ -2632,8 +2632,20 @@
                         <!-- Interactive Controls Status -->
                         <div class="bc-settings-group">
                             <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
-                            <div id="bc-rtmp-controls-status"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
-                            <p class="bc-call-explainer"><i class="fa-solid fa-circle-info"></i> Manage profiles in <a href="javascript:void(0)" onclick="navigate('/dashboard')" style="color:var(--accent)">Dashboard → Controls</a>.</p>
+                            <div id="bc-rtmp-controls-status" style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <select id="bc-rtmp-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
+                                    <option value="">None (no controls)</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
+                            </div>
+                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately
+                                <select id="bc-rtmp-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
+                                    <option value="">None (no controls)</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
+                            </div>
+                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
                         </div>
                     </div>
 
@@ -2951,14 +2963,26 @@ WantedBy=multi-user.target</code>
                             <p class="bc-call-explainer" id="bc-jsmpeg-restream-hint">
                                 <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
                                 <a href="javascript:void(0)" onclick="switchBroadcastTab('broadcast-settings')" style="color:var(--accent)">Broadcast Settings</a> tab.
-                            </p>
-                        </div>
+                            </p> style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <select id="bc-jsmpeg-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
+                                    <option value="">None (no controls)</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
+                            </div>
+                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately
 
                         <!-- Interactive Controls Status -->
                         <div class="bc-settings-group">
                             <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
-                            <div id="bc-jsmpeg-controls-status"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
-                            <p class="bc-call-explainer"><i class="fa-solid fa-circle-info"></i> Manage profiles in <a href="javascript:void(0)" onclick="navigate('/dashboard')" style="color:var(--accent)">Dashboard → Controls</a>.</p>
+                            <div id="bc-jsmpeg-controls-status" style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <select id="bc-jsmpeg-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
+                                    <option value="">None (no controls)</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
+                            </div>
+                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
                         </div>
                     </div>
 
@@ -3014,8 +3038,14 @@ WantedBy=multi-user.target</code>
                                 <div class="bc-setting-control"><input type="range" id="bc-whip-ttsVolume" min="0" max="1000" step="50" onchange="syncExternalTTSSetting('ttsVolume', this.value)"></div>
                             </div>
                         </div>
-                        <div class="bc-settings-group">
-                            <div class="bc-settings-title"><i class="fa-solid fa-tower-broadcast"></i> Restreams</div>
+                        <div class="bc-settings-group"> style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <select id="bc-whip-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
+                                    <option value="">None (no controls)</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
+                            </div>
+                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately
                             <div class="bc-restream-control" id="bc-whip-restream-control"></div>
                             <p class="bc-call-explainer" id="bc-whip-restream-hint">
                                 <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the
@@ -3026,8 +3056,14 @@ WantedBy=multi-user.target</code>
                         <!-- Interactive Controls Status -->
                         <div class="bc-settings-group">
                             <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
-                            <div id="bc-whip-controls-status"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
-                            <p class="bc-call-explainer"><i class="fa-solid fa-circle-info"></i> Manage profiles in <a href="javascript:void(0)" onclick="navigate('/dashboard')" style="color:var(--accent)">Dashboard → Controls</a>.</p>
+                            <div id="bc-whip-controls-status" style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading...</p></div>
+                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <select id="bc-whip-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
+                                    <option value="">None (no controls)</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
+                            </div>
+                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
                         </div>
                     </div>
 
@@ -3292,6 +3328,19 @@ WantedBy=multi-user.target</code>
                                 <span class="bc-setting-label">Disconnect Sound Alert</span>
                                 <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-disconnectAudio" onchange="_disconnectAudioEnabled = this.checked; try { localStorage.setItem('bc-disconnect-audio', this.checked ? '1' : '0'); } catch{}"><span class="bc-toggle-slider"></span></label></div>
                             </div>
+                        </div>
+
+                        <!-- Interactive Controls Profile (live) -->
+                        <div class="bc-settings-group" id="bc-browser-controls-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-gamepad"></i> Interactive Controls</div>
+                            <div id="bc-browser-controls-status" style="margin-bottom:8px"><p class="muted" style="font-size:0.85rem">Loading…</p></div>
+                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <select id="bc-live-config-select" class="form-input form-input-sm" style="flex:1;min-width:120px">
+                                    <option value="">None (no controls)</option>
+                                </select>
+                                <button class="btn btn-small btn-outline" onclick="applyLiveControlProfile()"><i class="fa-solid fa-check"></i> Apply</button>
+                            </div>
+                            <p class="bc-call-explainer" style="margin-top:6px"><i class="fa-solid fa-circle-info"></i> Change profile without ending the stream. Viewers see the new buttons immediately.</p>
                         </div>
 
                         <!-- Restreams — configured in Broadcast Settings tab -->
