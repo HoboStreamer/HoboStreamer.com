@@ -310,13 +310,13 @@ ssh-keygen -lf ~/.ssh/ovh_hobostreamer_rsa.pub</code></pre>
 <pre><code class="language-bash">ssh -i ~/.ssh/ovh_hobostreamer_rsa ubuntu@YOUR_SERVER_IP</code></pre>
 
 <h3>Optional: SSH config alias</h3>
-<pre><code class="language-properties">Host hobostreamer-ovh
+<pre><code class="language-properties">Host hobo.tools
     HostName YOUR_SERVER_IP
     User ubuntu
     IdentityFile ~/.ssh/ovh_hobostreamer_ecdsa
     IdentitiesOnly yes</code></pre>
 <p>Then connect with:</p>
-<pre><code class="language-bash">ssh hobostreamer-ovh</code></pre>
+<pre><code class="language-bash">ssh hobo.tools</code></pre>
 </section>
 
 <!-- S7: Hardening -->

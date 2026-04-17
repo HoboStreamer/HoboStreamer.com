@@ -188,7 +188,7 @@ ssh -i ~/.ssh/ovh_hobostreamer_rsa ubuntu@YOUR_SERVER_IP
 Optional: add a host alias to your local SSH config:
 
 ```sshconfig
-Host hobostreamer-ovh
+Host hobo.tools
     HostName YOUR_SERVER_IP
     User ubuntu
     IdentityFile ~/.ssh/ovh_hobostreamer_ecdsa
@@ -198,7 +198,7 @@ Host hobostreamer-ovh
 Then connect with:
 
 ```bash
-ssh hobostreamer-ovh
+ssh hobo.tools
 ```
 
 ---

@@ -7,7 +7,7 @@
 #   sudo /opt/hobostreamer/deploy/scripts/deploy.sh
 #
 # Or remotely:
-#   ssh hobostreamer-ovh "sudo /opt/hobostreamer/deploy/scripts/deploy.sh"
+#   ssh hobo.tools "sudo /opt/hobostreamer/deploy/scripts/deploy.sh"
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
