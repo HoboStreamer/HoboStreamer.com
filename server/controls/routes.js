@@ -30,13 +30,10 @@ const { requireAuth } = require('../auth/auth');
 
 const router = express.Router();
 
-// Helper: if this config is the active config for the user's channel,
-// re-apply it to all live streams so edits take effect immediately.
-function syncConfigToLiveStreams(configId, userId) {
+// Helper: re-apply this config to live streams that are explicitly bound to it
+function syncConfigToBoundLiveStreams(configId) {
     try {
-        const channel = db.getChannelByUserId(userId);
-        if (!channel || channel.active_control_config_id !== configId) return;
-        const liveStreams = db.getLiveStreamsByUserId(userId);
+        const liveStreams = db.getLiveStreamsByControlConfigId(configId);
         for (const stream of liveStreams) {
             try {
                 db.applyConfigToStream(configId, stream.id);
@@ -45,7 +42,7 @@ function syncConfigToLiveStreams(configId, userId) {
             }
         }
     } catch (e) {
-        console.warn(`[Controls] syncConfigToLiveStreams error:`, e.message);
+        console.warn(`[Controls] syncConfigToBoundLiveStreams error:`, e.message);
     }
 }
 
@@ -1107,14 +1104,14 @@ router.post('/configs/:id/buttons', requireAuth, (req, res) => {
             icon: cleanIcon,
             control_type: cleanType,
             key_binding: key_binding ? String(key_binding).slice(0, 20) : null,
-            cooldown_ms: Math.max(0, Math.min(30000, parseInt(cooldown_ms) || 500)),
+            cooldown_ms: Math.max(0, Math.min(30000, parseInt(cooldown_ms) || 100)),
             sort_order: existing.length,
             btn_color: sanitizeCssColor(btn_color),
             btn_bg: sanitizeCssColor(btn_bg),
             btn_border_color: sanitizeCssColor(btn_border_color),
         });
 
-        syncConfigToLiveStreams(config.id, req.user.id);
+        syncConfigToBoundLiveStreams(config.id);
         const buttons = db.getConfigButtons(config.id);
         res.status(201).json({ buttons });
     } catch (err) {
@@ -1145,7 +1142,7 @@ router.put('/configs/:id/buttons/:btnId', requireAuth, (req, res) => {
             updates.control_type = validTypes.includes(control_type) ? control_type : 'button';
         }
         if (key_binding !== undefined) updates.key_binding = key_binding ? String(key_binding).slice(0, 20) : null;
-        if (cooldown_ms !== undefined) updates.cooldown_ms = Math.max(0, Math.min(30000, parseInt(cooldown_ms) || 500));
+        if (cooldown_ms !== undefined) updates.cooldown_ms = Math.max(0, Math.min(30000, parseInt(cooldown_ms) || 100));
         if (sort_order !== undefined) updates.sort_order = parseInt(sort_order) || 0;
         if (btn_color !== undefined) updates.btn_color = sanitizeCssColor(btn_color);
         if (btn_bg !== undefined) updates.btn_bg = sanitizeCssColor(btn_bg);
@@ -1153,7 +1150,7 @@ router.put('/configs/:id/buttons/:btnId', requireAuth, (req, res) => {
         if (is_enabled !== undefined) updates.is_enabled = is_enabled ? 1 : 0;
 
         db.updateConfigButton(parseInt(req.params.btnId), updates);
-        syncConfigToLiveStreams(config.id, req.user.id);
+        syncConfigToBoundLiveStreams(config.id);
         const buttons = db.getConfigButtons(config.id);
         res.json({ buttons });
     } catch (err) {
@@ -1170,7 +1167,7 @@ router.delete('/configs/:id/buttons/:btnId', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not authorized' });
         }
         db.deleteConfigButton(parseInt(req.params.btnId));
-        syncConfigToLiveStreams(config.id, req.user.id);
+        syncConfigToBoundLiveStreams(config.id);
         const buttons = db.getConfigButtons(config.id);
         res.json({ buttons });
     } catch (err) {
@@ -1187,20 +1184,7 @@ router.post('/configs/:id/activate', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not authorized' });
         }
         db.updateChannel(req.user.id, { active_control_config_id: config.id });
-
-        // Auto-apply to all currently live streams
-        const liveStreams = db.getLiveStreamsByUserId(req.user.id);
-        let appliedCount = 0;
-        for (const stream of liveStreams) {
-            try {
-                db.applyConfigToStream(config.id, stream.id);
-                appliedCount++;
-            } catch (e) {
-                console.warn(`[Controls] Failed to auto-apply config ${config.id} to live stream ${stream.id}:`, e.message);
-            }
-        }
-
-        res.json({ message: 'Config activated', config_id: config.id, applied_to_streams: appliedCount });
+        res.json({ message: 'Config activated', config_id: config.id });
     } catch (err) {
         res.status(500).json({ error: 'Failed to activate config' });
     }
@@ -1210,17 +1194,6 @@ router.post('/configs/:id/activate', requireAuth, (req, res) => {
 router.post('/configs/deactivate', requireAuth, (req, res) => {
     try {
         db.updateChannel(req.user.id, { active_control_config_id: null });
-
-        // Clear controls from all currently live streams
-        const liveStreams = db.getLiveStreamsByUserId(req.user.id);
-        for (const stream of liveStreams) {
-            try {
-                db.run('DELETE FROM stream_controls WHERE stream_id = ? AND (control_type != ? OR control_type IS NULL)', [stream.id, 'onvif']);
-            } catch (e) {
-                console.warn(`[Controls] Failed to clear controls from live stream ${stream.id}:`, e.message);
-            }
-        }
-
         res.json({ message: 'Config deactivated' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to deactivate config' });
@@ -1297,9 +1270,10 @@ router.get('/settings/channel', requireAuth, (req, res) => {
         res.json({
             control_mode: channel.control_mode || 'open',
             anon_controls_enabled: !!channel.anon_controls_enabled,
-            control_rate_limit_ms: channel.control_rate_limit_ms || 500,
-            active_control_config_id: channel.active_control_config_id || null,
+            control_rate_limit_ms: channel.control_rate_limit_ms || 100,
             video_click_enabled: !!channel.video_click_enabled,
+            video_click_rate_limit_ms: channel.video_click_rate_limit_ms || 0,
+            active_control_config_id: channel.active_control_config_id || null,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get control settings' });
@@ -1308,7 +1282,7 @@ router.get('/settings/channel', requireAuth, (req, res) => {
 
 router.put('/settings/channel', requireAuth, (req, res) => {
     try {
-        const { control_mode, anon_controls_enabled, control_rate_limit_ms, video_click_enabled } = req.body;
+        const { control_mode, anon_controls_enabled, control_rate_limit_ms, video_click_enabled, video_click_rate_limit_ms } = req.body;
         const updates = {};
         if (control_mode !== undefined) {
             if (!['open', 'whitelist', 'disabled'].includes(control_mode)) {
@@ -1329,6 +1303,13 @@ router.put('/settings/channel', requireAuth, (req, res) => {
         if (video_click_enabled !== undefined) {
             updates.video_click_enabled = video_click_enabled ? 1 : 0;
         }
+        if (video_click_rate_limit_ms !== undefined) {
+            const ms = parseInt(video_click_rate_limit_ms);
+            if (isNaN(ms) || ms < 0 || ms > 30000) {
+                return res.status(400).json({ error: 'Video click rate limit must be 0-30000ms' });
+            }
+            updates.video_click_rate_limit_ms = ms;
+        }
         if (Object.keys(updates).length > 0) {
             db.updateChannel(req.user.id, updates);
         }
@@ -1336,9 +1317,10 @@ router.put('/settings/channel', requireAuth, (req, res) => {
         res.json({
             control_mode: channel.control_mode || 'open',
             anon_controls_enabled: !!channel.anon_controls_enabled,
-            control_rate_limit_ms: channel.control_rate_limit_ms || 500,
-            active_control_config_id: channel.active_control_config_id || null,
+            control_rate_limit_ms: channel.control_rate_limit_ms || 100,
             video_click_enabled: !!channel.video_click_enabled,
+            video_click_rate_limit_ms: channel.video_click_rate_limit_ms || 0,
+            active_control_config_id: channel.active_control_config_id || null,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update control settings' });
@@ -1438,6 +1420,49 @@ router.get('/configs/:id/bridge-script', requireAuth, (req, res) => {
     }
 });
 
+// ── Get bound control profile for a stream ───────────────────
+router.get('/:streamId/config', requireAuth, (req, res) => {
+    try {
+        const stream = db.getStreamById(req.params.streamId);
+        if (!stream) return res.status(404).json({ error: 'Stream not found' });
+        if (stream.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+        res.json({ control_config_id: stream.control_config_id || null });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get stream config' });
+    }
+});
+
+// ── Bind or rebind a stream to a control profile ──────────────
+router.put('/:streamId/config', requireAuth, (req, res) => {
+    try {
+        const stream = db.getStreamById(req.params.streamId);
+        if (!stream) return res.status(404).json({ error: 'Stream not found' });
+        if (stream.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+
+        const configId = req.body.control_config_id === null ? null : parseInt(req.body.control_config_id);
+        if (configId) {
+            const config = db.getControlConfig(configId);
+            if (!config) return res.status(404).json({ error: 'Config not found' });
+            if (config.user_id !== req.user.id && req.user.role !== 'admin') {
+                return res.status(403).json({ error: 'Not authorized' });
+            }
+            const applied = db.applyConfigToStream(config.id, stream.id);
+            const controls = db.getStreamControls(stream.id);
+            return res.json({ message: 'Config applied to stream', control_config_id: config.id, applied, controls });
+        }
+
+        db.bindStreamToControlConfig(stream.id, null);
+        const controls = db.getStreamControls(stream.id);
+        res.json({ message: 'Stream unbound from control profile', control_config_id: null, controls });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update stream config' });
+    }
+});
+
 // ── Get Controls for a Stream ────────────────────────────────
 router.get('/:streamId', (req, res) => {
     try {
@@ -1487,7 +1512,7 @@ router.post('/:streamId', requireAuth, (req, res) => {
             icon: cleanIcon,
             control_type: control_type || 'button',
             key_binding,
-            cooldown_ms: cooldown_ms || 500,
+            cooldown_ms: Math.max(0, Math.min(30000, parseInt(cooldown_ms) || 100)),
             btn_color: sanitizeCssColor(btn_color),
             btn_bg: sanitizeCssColor(btn_bg),
             btn_border_color: sanitizeCssColor(btn_border_color),

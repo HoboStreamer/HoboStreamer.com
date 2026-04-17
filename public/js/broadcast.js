@@ -1573,21 +1573,20 @@ async function createNewStream() {
     const screenCamera = document.getElementById('bc-screen-camera')?.value || 'default';
 
     try {
-        const data = await api('/streams', { method: 'POST', body: { title, description, protocol: method, category, is_nsfw: document.getElementById('bc-nsfw')?.checked || false } });
-        const streamData = data.stream || data;
-
-        // If a control config is selected, activate it on the channel (server auto-applies to the new stream).
-        // If "None" is selected, deactivate any active config.
         const selectedConfig = document.getElementById('bc-control-config')?.value;
-        if (selectedConfig) {
-            try {
-                await api(`/controls/configs/${selectedConfig}/activate`, { method: 'POST' });
-            } catch (e) { console.warn('Failed to activate control config:', e); }
-        } else {
-            try {
-                await api('/controls/configs/deactivate', { method: 'POST' });
-            } catch (e) { /* silent */ }
-        }
+        const controlConfigId = selectedConfig ? parseInt(selectedConfig) : null;
+        const data = await api('/streams', {
+            method: 'POST',
+            body: {
+                title,
+                description,
+                protocol: method,
+                category,
+                is_nsfw: document.getElementById('bc-nsfw')?.checked || false,
+                control_config_id: controlConfigId,
+            }
+        });
+        const streamData = data.stream || data;
 
         // Create per-stream state
         const ss = createStreamState(streamData);
@@ -1681,17 +1680,23 @@ function showBrowserBroadcast() {
 let _rtmpStatusPollTimer = null;
 
 /* ── Controls Status for non-browser streaming methods ─────── */
-async function loadLiveControlsStatus() {
+async function loadLiveControlsStatus(streamId) {
     const statusEls = ['bc-rtmp-controls-status', 'bc-jsmpeg-controls-status', 'bc-whip-controls-status']
         .map(id => document.getElementById(id)).filter(Boolean);
     if (!statusEls.length) return;
 
     try {
-        const [settings, cdata] = await Promise.all([
+        const [settings, cdata, streamConfig] = await Promise.all([
             api('/controls/settings/channel').catch(() => ({})),
             api('/controls/configs').catch(() => ({})),
+            streamId ? api(`/controls/${streamId}/config`).catch(() => ({ control_config_id: null })) : Promise.resolve({ control_config_id: null }),
         ]);
-        const configId = settings.active_control_config_id;
+
+        let configId = streamConfig?.control_config_id || null;
+        if (!configId) {
+            configId = settings.active_control_config_id;
+        }
+
         if (!configId) {
             const html = '<p class="muted" style="font-size:0.85rem">No control profile active. Select one from the Dashboard before going live.</p>';
             statusEls.forEach(el => el.innerHTML = html);
@@ -1722,7 +1727,7 @@ async function showRTMPInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
-    loadLiveControlsStatus().catch(() => {});
+    loadLiveControlsStatus(stream.id).catch(() => {});
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
@@ -1847,7 +1852,7 @@ async function showJSMPEGInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
-    loadLiveControlsStatus().catch(() => {});
+    loadLiveControlsStatus(stream.id).catch(() => {});
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
         const ep = data.endpoint || {};
@@ -1892,7 +1897,7 @@ async function showWHIPInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
-    loadLiveControlsStatus().catch(() => {});
+    loadLiveControlsStatus(stream.id).catch(() => {});
     document.getElementById('bc-whip-url').textContent = `${location.origin}/whip/${stream.id}`;
     document.getElementById('bc-whip-token').textContent = localStorage.getItem('token') || 'N/A';
 }
@@ -2289,6 +2294,12 @@ function syncSettingsUI() {
     setCheck('bc-autoGain', s.autoGain); setCheck('bc-echoCancellation', s.echoCancellation);
     setCheck('bc-noiseSuppression', s.noiseSuppression); setCheck('bc-manualGainEnabled', s.manualGainEnabled);
     setCheck('bc-force48kSampleRate', s.force48kSampleRate);
+    // Restore disconnect audio alert from localStorage (not synced to server — local preference)
+    try {
+        const discAudio = localStorage.getItem('bc-disconnect-audio') === '1';
+        _disconnectAudioEnabled = discAudio;
+        setCheck('bc-disconnectAudio', discAudio);
+    } catch {}
     setVal('bc-broadcastRes', s.broadcastRes); setVal('bc-broadcastFps', s.broadcastFps);
     setVal('bc-broadcastCodec', s.broadcastCodec); setVal('bc-broadcastBps', s.broadcastBps);
     setVal('bc-broadcastBpsMin', s.broadcastBpsMin); setVal('bc-broadcastLimit', s.broadcastLimit);
@@ -4707,9 +4718,9 @@ function updateBroadcastMobileChatFab() {
     if (!fab) return;
     const isLive = broadcastState.streams.size > 0;
     const isMobile = window.innerWidth <= 768;
-    const isStacked = window.innerWidth <= 1100;
-    // In stacked layout (<=1100px) chat is visible inline, no FAB needed
-    fab.style.display = (isLive && isMobile && !isStacked) ? 'flex' : 'none';
+    // On mobile, chat sidebar stacks below main content and may be scrolled off screen.
+    // Show the FAB so users can toggle it as an overlay.
+    fab.style.display = (isLive && isMobile) ? 'flex' : 'none';
 }
 
 /** Detect if the broadcast preview video is vertical and toggle a class on the container */
@@ -6543,6 +6554,8 @@ async function updateNewsPreference(enabled) {
 }
 
 /* ── Preview Toggle ──────────────────────────────────────────── */
+let _viewerPreviewWindow = null;
+
 function toggleBroadcastPreview() {
     const video = document.getElementById('bc-video-preview');
     const btn = document.getElementById('bc-btn-toggle-preview');
@@ -6556,10 +6569,33 @@ function toggleBroadcastPreview() {
     }
 }
 
+/**
+ * Open a viewer-style preview — shows what viewers actually see by
+ * opening your own channel page in a popup window (real mediasoup consumer path).
+ */
+function openViewerPreview() {
+    if (!currentUser?.username) {
+        toast('Log in to use viewer preview', 'error');
+        return;
+    }
+    if (_viewerPreviewWindow && !_viewerPreviewWindow.closed) {
+        _viewerPreviewWindow.focus();
+        return;
+    }
+    _viewerPreviewWindow = window.open(
+        `/${currentUser.username}`,
+        'viewer-preview',
+        'width=900,height=600,menubar=no,toolbar=no,location=no'
+    );
+}
+
 /* ── Popout Chat ─────────────────────────────────────────────── */
 function popoutBroadcastChat() {
-    if (currentUser?.username) {
-        window.open(`/popout/chat/${currentUser.username}`, '_blank', 'width=400,height=700');
+    // Use the same lightweight popout as stream/global chat (consistent behavior)
+    if (typeof popoutStreamChat === 'function') {
+        popoutStreamChat();
+    } else if (currentUser?.username) {
+        window.open(`/${currentUser.username}`, '_blank', 'width=400,height=700');
     }
 }
 
@@ -6586,8 +6622,32 @@ function stopRtmpPreview() {
     if (el) el.style.display = 'none';
 }
 
-/* ── Disconnect Alert Banner ─────────────────────────────────── */
+/* ── Disconnect Alert Banner + Audible Alert ─────────────────── */
 let _disconnectAlertShown = false;
+let _disconnectAudioEnabled = false; // Default off — user must opt in
+
+/** Play an audible alert beep using Web Audio API */
+function _playDisconnectBeep() {
+    if (!_disconnectAudioEnabled) return;
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 800;
+        osc.type = 'square';
+        gain.gain.value = 0.3;
+        osc.start();
+        // Two beeps: 150ms on, 100ms off, 150ms on
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.setValueAtTime(0, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + 0.25);
+        gain.gain.setValueAtTime(0, ctx.currentTime + 0.4);
+        osc.stop(ctx.currentTime + 0.45);
+        osc.onended = () => ctx.close();
+    } catch { /* Web Audio not available */ }
+}
 
 function showDisconnectAlert(reason) {
     if (_disconnectAlertShown) return;
@@ -6602,6 +6662,7 @@ function showDisconnectAlert(reason) {
     }
     banner.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> <span>Connection lost — ${reason || 'reconnecting...'}</span><button class="btn btn-small btn-outline" onclick="dismissDisconnectAlert()"><i class="fa-solid fa-xmark"></i></button>`;
     banner.style.display = '';
+    _playDisconnectBeep();
 }
 
 function dismissDisconnectAlert() {

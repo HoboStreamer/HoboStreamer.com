@@ -461,6 +461,7 @@ router.post('/admin/purge/preview', requireAuth, (req, res) => {
         if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
 
         // Must be admin or stream owner
+        let effectiveStreamId = streamId || null;
         if (!permissions.isAdmin(req.user)) {
             if (streamId) {
                 const stream = db.getStreamById(streamId);
@@ -468,11 +469,16 @@ router.post('/admin/purge/preview', requireAuth, (req, res) => {
                     return res.status(403).json({ error: 'Not authorized' });
                 }
             } else {
-                return res.status(403).json({ error: 'Only admins can purge global chat' });
+                // Non-admin without streamId: scope to their most recent stream
+                const userStreams = db.getStreamsByUserId(req.user.id, 1);
+                if (!userStreams?.length) {
+                    return res.json({ count: 0 });
+                }
+                effectiveStreamId = userStreams[0].id;
             }
         }
 
-        const count = db.countChatMessagesByTimeRange(streamId || null, from, to);
+        const count = db.countChatMessagesByTimeRange(effectiveStreamId, from, to);
         res.json({ count });
     } catch (e) {
         console.error('[Chat] Purge preview error:', e.message);
@@ -486,6 +492,7 @@ router.delete('/admin/purge', requireAuth, (req, res) => {
         const { streamId, from, to } = req.body;
         if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
 
+        let effectiveStreamId = streamId || null;
         if (!permissions.isAdmin(req.user)) {
             if (streamId) {
                 const stream = db.getStreamById(streamId);
@@ -493,24 +500,29 @@ router.delete('/admin/purge', requireAuth, (req, res) => {
                     return res.status(403).json({ error: 'Not authorized' });
                 }
             } else {
-                return res.status(403).json({ error: 'Only admins can purge global chat' });
+                // Non-admin without streamId: scope to their most recent stream
+                const userStreams = db.getStreamsByUserId(req.user.id, 1);
+                if (!userStreams?.length) {
+                    return res.json({ deleted: 0 });
+                }
+                effectiveStreamId = userStreams[0].id;
             }
         }
 
-        const result = db.deleteChatMessagesByTimeRange(streamId || null, from, to, req.user.display_name || req.user.username);
+        const result = db.deleteChatMessagesByTimeRange(effectiveStreamId, from, to, req.user.display_name || req.user.username);
 
         // Broadcast delete event to live chat
         try {
             const chatServer = require('./chat-server');
-            const payload = { type: 'purge', streamId: streamId || null, from, to, by: req.user.display_name };
-            if (streamId) {
-                chatServer.broadcastToStream(streamId, payload);
+            const payload = { type: 'purge', streamId: effectiveStreamId, from, to, by: req.user.display_name };
+            if (effectiveStreamId) {
+                chatServer.broadcastToStream(effectiveStreamId, payload);
             } else {
                 chatServer.broadcastGlobal(payload);
             }
         } catch { /* chat server may not be initialized */ }
 
-        console.log(`[Chat] Purged messages: stream=${streamId || 'global'} from=${from} to=${to} by=${req.user.username} changes=${result?.changes || 0}`);
+        console.log(`[Chat] Purged messages: stream=${effectiveStreamId || 'global'} from=${from} to=${to} by=${req.user.username} changes=${result?.changes || 0}`);
         res.json({ deleted: result?.changes || 0 });
     } catch (e) {
         console.error('[Chat] Purge error:', e.message);
@@ -524,6 +536,7 @@ router.get('/admin/logs', requireAuth, (req, res) => {
         const { streamId, username, search, from, to, messageType, page, limit, includeDeleted } = req.query;
 
         // Must be admin or stream owner
+        let effectiveStreamId = streamId ? parseInt(streamId) : undefined;
         if (!permissions.isAdmin(req.user)) {
             if (streamId) {
                 const stream = db.getStreamById(parseInt(streamId));
@@ -531,12 +544,17 @@ router.get('/admin/logs', requireAuth, (req, res) => {
                     return res.status(403).json({ error: 'Not authorized' });
                 }
             } else {
-                return res.status(403).json({ error: 'Only admins can view all chat logs' });
+                // Non-admin without streamId: scope to their most recent stream
+                const userStreams = db.getStreamsByUserId(req.user.id, 1);
+                if (!userStreams?.length) {
+                    return res.json({ rows: [], total: 0, page: 1, limit: 50, totalPages: 0 });
+                }
+                effectiveStreamId = userStreams[0].id;
             }
         }
 
         const result = db.getChatLogs({
-            streamId: streamId ? parseInt(streamId) : undefined,
+            streamId: effectiveStreamId,
             username, search, from, to, messageType,
             page: parseInt(page) || 1,
             limit: Math.min(parseInt(limit) || 50, 200),

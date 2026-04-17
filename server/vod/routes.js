@@ -683,8 +683,26 @@ router.get('/:id/live-info', optionalAuth, (req, res) => {
 /**
  * Finalize a VOD recording: remux for proper seeking, probe duration, update DB.
  * Called automatically on stream end or by the client.
+ * Guarded against double-invocation via _finalizingStreams Set.
  */
+const _finalizingStreams = new Set();
+
 async function finalizeVodRecording(streamId) {
+    // Prevent double finalization (exit handler + POST /finalize race)
+    if (_finalizingStreams.has(streamId)) {
+        console.log(`[VOD] Finalization already in progress for stream ${streamId}, skipping`);
+        return null;
+    }
+    _finalizingStreams.add(streamId);
+
+    try {
+        return await _doFinalize(streamId);
+    } finally {
+        _finalizingStreams.delete(streamId);
+    }
+}
+
+async function _doFinalize(streamId) {
     let rec = activeRecordings.get(streamId);
     let vodId, filePath, startTime;
 

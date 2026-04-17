@@ -57,7 +57,7 @@ async function loadStreamControls(streamId) {
                 if (isKeyboard) {
                     // Keyboard control — uses hold detection (mousedown/mouseup + keydown/keyup)
                     return `
-                        <button class="control-btn control-btn-keyboard" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 500}"
+                        <button class="control-btn control-btn-keyboard" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 100}"
                                 data-keybind="${esc(c.key_binding || '')}"
                                 onmousedown="startKeyHold(${c.id}, '${esc(c.command)}', this)"
                                 onmouseup="stopKeyHold(${c.id}, '${esc(c.command)}', this)"
@@ -73,9 +73,9 @@ async function loadStreamControls(streamId) {
                 } else {
                     // Regular button — single click
                     return `
-                        <button class="control-btn" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 500}"
+                        <button class="control-btn" data-id="${c.id}" data-cmd="${esc(c.command)}" data-cooldown="${parseInt(c.cooldown_ms) || 100}"
                                 data-keybind="${esc(c.key_binding || '')}"
-                                onclick="sendControl(${c.id}, '${esc(c.command)}', this, ${parseInt(c.cooldown_ms) || 500})"
+                                onclick="sendControl(${c.id}, '${esc(c.command)}', this, ${parseInt(c.cooldown_ms) || 100})"
                                 title="${esc(c.label || c.command)}" ${btnStyle}>
                             <i class="fa-solid ${esc(c.icon || 'fa-circle')}"></i>
                             <span>${esc(c.label || c.command)}</span>
@@ -252,6 +252,7 @@ function destroyVideoClickOverlay() {
 function sendVideoClick(x, y, event) {
     if (!controlWs || controlWs.readyState !== WebSocket.OPEN) return;
 
+    const rateLimitMs = parseInt(controlSettings.video_click_rate_limit_ms || controlSettings.control_rate_limit_ms || 100);
     const key = 'video-click';
     if (controlCooldowns[key]) return;
 
@@ -266,8 +267,10 @@ function sendVideoClick(x, y, event) {
     showClickRipple(event, x, y);
 
     // Cooldown
-    controlCooldowns[key] = true;
-    setTimeout(() => { delete controlCooldowns[key]; }, 500);
+    if (rateLimitMs > 0) {
+        controlCooldowns[key] = true;
+        setTimeout(() => { delete controlCooldowns[key]; }, rateLimitMs);
+    }
 }
 
 function showClickRipple(event, x, y) {
@@ -431,9 +434,11 @@ function _updateControlConnectionUI(wsConnected) {
 function sendControl(controlId, command, btnEl, cooldownMs) {
     if (!_checkControlWs()) return;
 
-    // Check cooldown
+    const globalRateLimitMs = parseInt(controlSettings.control_rate_limit_ms || 0) || 0;
+    const effectiveCooldownMs = Math.max(cooldownMs || 100, globalRateLimitMs);
     const cooldownKey = `cmd-${controlId}`;
-    if (controlCooldowns[cooldownKey]) return;
+    const globalCooldownKey = 'cmd-global';
+    if (controlCooldowns[cooldownKey] || controlCooldowns[globalCooldownKey]) return;
 
     controlWs.send(JSON.stringify({
         type: 'command',
@@ -445,11 +450,13 @@ function sendControl(controlId, command, btnEl, cooldownMs) {
     // Apply cooldown
     btnEl.classList.add('on-cooldown');
     controlCooldowns[cooldownKey] = true;
+    controlCooldowns[globalCooldownKey] = true;
 
     setTimeout(() => {
         btnEl.classList.remove('on-cooldown');
         delete controlCooldowns[cooldownKey];
-    }, cooldownMs || 500);
+        delete controlCooldowns[globalCooldownKey];
+    }, effectiveCooldownMs);
 }
 
 /* ── Send ONVIF command ──────────────────────────────────────── */

@@ -17,7 +17,7 @@ class ControlServer {
         this.wss = null;
         /** @type {Map<string, WebSocket>} streamKey → hardware client WebSocket */
         this.hardwareClients = new Map();
-        /** @type {Map<WebSocket, { user: object, streamId: number }>} */
+        /** @type {Map<WebSocket, { user: object, streamId: number, heldKeys: Set<string> }>} */
         this.viewerClients = new Map();
         /** @type {Map<string, number>} `${streamId}-${controlId}-${userId}` → last command timestamp */
         this.commandCounts = new Map();
@@ -124,7 +124,7 @@ class ControlServer {
         const streamId = parseInt(params.get('stream')) || null;
         const user = authenticateWs(token);
 
-        this.viewerClients.set(ws, { user, streamId });
+        this.viewerClients.set(ws, { user, streamId, heldKeys: new Set() });
 
         // Send available controls + channel control settings + hardware connection status
         if (streamId) {
@@ -139,7 +139,9 @@ class ControlServer {
                     controlSettings = {
                         control_mode: channel.control_mode || 'open',
                         anon_controls_enabled: !!channel.anon_controls_enabled,
+                        control_rate_limit_ms: channel.control_rate_limit_ms || 100,
                         video_click_enabled: !!channel.video_click_enabled,
+                        video_click_rate_limit_ms: channel.video_click_rate_limit_ms || 0,
                     };
                 }
                 // Check if hardware client is currently connected for this stream
@@ -186,21 +188,30 @@ class ControlServer {
         const { stream, user, channel } = ctx;
 
         // ── Per-User Rate Limiting ────────────────────────────
-        const rateLimitMs = (channel && channel.control_rate_limit_ms) || 500;
+        const now = Date.now();
+        const userId = client.user?.id || 'anon';
+        const globalRateLimitMs = (channel && channel.control_rate_limit_ms) || 100;
+        const globalKey = `${client.streamId}-command-global-${userId}`;
+        const lastGlobal = this.commandCounts.get(globalKey) || 0;
+        if (now - lastGlobal < globalRateLimitMs) {
+            ws.send(JSON.stringify({ type: 'cooldown', message: 'Command rate limited' }));
+            return;
+        }
+
         if (control_id) {
             const control = db.get('SELECT * FROM stream_controls WHERE id = ?', [control_id]);
             if (control) {
-                const cooldown = Math.max(control.cooldown_ms || 500, rateLimitMs);
-                const userId = client.user?.id || 'anon';
-                const key = `${client.streamId}-${control_id}-${userId}`;
+                const buttonCooldownMs = Number.isFinite(control.cooldown_ms) ? parseInt(control.cooldown_ms, 10) : 100;
+                const key = `${client.streamId}-command-${control_id}-${userId}`;
                 const lastCmd = this.commandCounts.get(key) || 0;
-                if (Date.now() - lastCmd < cooldown) {
+                if (now - lastCmd < buttonCooldownMs) {
                     ws.send(JSON.stringify({ type: 'cooldown', message: 'Command on cooldown' }));
                     return;
                 }
-                this.commandCounts.set(key, Date.now());
+                this.commandCounts.set(key, now);
             }
         }
+        this.commandCounts.set(globalKey, now);
 
         // Handle ONVIF camera movement
         if (isOnvif && cameraId && movement) {
@@ -344,12 +355,16 @@ class ControlServer {
         const ctx = this.validateControlPermission(ws, client);
         if (!ctx) return;
 
-        // Rate limit key events (lighter — 100ms minimum)
-        const userId = client.user?.id || 'anon';
-        const key = `${client.streamId}-key-${command}-${userId}`;
-        const lastCmd = this.commandCounts.get(key) || 0;
-        if (Date.now() - lastCmd < 100) return;
-        this.commandCounts.set(key, Date.now());
+        const holdKey = `${client.streamId}-key-${command}-${client.user?.id || 'anon'}`;
+        const heldKeys = client.heldKeys;
+
+        if (msg.type === 'key_down') {
+            if (heldKeys.has(holdKey)) return;
+            heldKeys.add(holdKey);
+        } else {
+            if (!heldKeys.has(holdKey)) return;
+            heldKeys.delete(holdKey);
+        }
 
         // Forward to hardware
         const hardwareWs = this.hardwareClients.get(ctx.user.stream_key);
@@ -391,11 +406,10 @@ class ControlServer {
             return;
         }
 
-        // Rate limit clicks (500ms)
         const userId = client.user?.id || 'anon';
         const key = `${client.streamId}-click-${userId}`;
         const lastCmd = this.commandCounts.get(key) || 0;
-        const rateLimitMs = (ctx.channel && ctx.channel.control_rate_limit_ms) || 500;
+        const rateLimitMs = (ctx.channel && ctx.channel.video_click_rate_limit_ms) || (ctx.channel && ctx.channel.control_rate_limit_ms) || 100;
         if (Date.now() - lastCmd < rateLimitMs) {
             ws.send(JSON.stringify({ type: 'cooldown', message: 'Click on cooldown' }));
             return;

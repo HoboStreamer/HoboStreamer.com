@@ -33,17 +33,20 @@ When streaming via WebRTC browser, you have access to:
 - **Mic** — Toggle microphone
 - **Stats** — Show bitrate, FPS, resolution, codec overlay
 - **Preview** — Toggle self-preview on/off (saves CPU)
+- **Viewer** — Open a popup showing exactly what viewers see (real mediasoup consumer path)
 - **Clip** — Create a clip from the live stream
 - **Media** — Media request PiP player
 
 ### Stream Chat
 The broadcast page includes an embedded chat sidebar with:
 - Full chat functionality (emotes, GIFs, TTS)
-- **Pop Out Chat** button — opens chat in a separate window
+- **Pop Out Chat** button — opens chat in a separate window (lightweight WebSocket popup)
 - User list and chat settings
+- Mobile: floating action button to toggle chat overlay
 
 ### Disconnect Handling
 - Visual disconnect alert banner when connection drops
+- **Audible alert** — opt-in audio beep on disconnect (enable in Audio settings → "Disconnect Sound Alert")
 - Automatic reconnection with exponential backoff (3s → 30s max)
 - Connection status indicator (protocol name when connected, status when not)
 

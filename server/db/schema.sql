@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS channels (
     weather_zip TEXT DEFAULT NULL,
     weather_detail TEXT DEFAULT 'basic' CHECK(weather_detail IN ('off', 'basic', 'hourly', 'detailed')),
     weather_show_location INTEGER DEFAULT 0,
+    control_mode TEXT DEFAULT 'open' CHECK(control_mode IN ('open','whitelist','disabled')),
+    anon_controls_enabled INTEGER DEFAULT 1,
+    control_rate_limit_ms INTEGER DEFAULT 100,
+    video_click_enabled INTEGER DEFAULT 0,
+    video_click_rate_limit_ms INTEGER DEFAULT 0,
+    active_control_config_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -73,6 +79,7 @@ CREATE TABLE IF NOT EXISTS streams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     channel_id INTEGER,
+    control_config_id INTEGER,
     title TEXT DEFAULT 'Untitled Stream',
     description TEXT DEFAULT '',
     category TEXT DEFAULT 'irl',
@@ -91,7 +98,8 @@ CREATE TABLE IF NOT EXISTS streams (
     duration_seconds INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE SET NULL
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE SET NULL,
+    FOREIGN KEY (control_config_id) REFERENCES control_configs(id) ON DELETE SET NULL
 );
 
 -- Cameras (multi-cam support)
@@ -278,7 +286,7 @@ CREATE TABLE IF NOT EXISTS stream_controls (
     icon TEXT DEFAULT 'fa-gamepad',         -- Font Awesome icon class
     control_type TEXT DEFAULT 'button' CHECK(control_type IN ('button', 'toggle', 'slider', 'dpad', 'onvif', 'keyboard')),
     key_binding TEXT,                       -- keyboard shortcut
-    cooldown_ms INTEGER DEFAULT 500,
+    cooldown_ms INTEGER DEFAULT 100,
     is_enabled INTEGER DEFAULT 1,
     sort_order INTEGER DEFAULT 0,
     camera_id INTEGER,                      -- NULL for non-ONVIF controls; references camera_profiles(id)

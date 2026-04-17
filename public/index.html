@@ -1399,6 +1399,11 @@
                                 <input type="checkbox" id="dash-video-click" onchange="updateControlSettings()">
                                 Enable video click (viewers click on stream to send coordinates)
                             </label>
+                            <div class="form-group" style="margin:0">
+                                <label style="font-size:0.85rem">Video Click Rate Limit (ms)</label>
+                                <input type="number" id="dash-video-click-rate-limit" class="form-input form-input-sm" min="0" max="30000" step="50" value="0" onchange="updateControlSettings()">
+                                <span class="bc-field-hint">Per-user minimum time between video clicks. 0 = follow global command rate limit.</span>
+                            </div>
                         </div>
                     </details>
 
@@ -1438,6 +1443,26 @@
                     <button class="btn btn-outline btn-small" onclick="showCreateTokenModal()">
                         <i class="fa-solid fa-plus"></i> Create Token
                     </button>
+                </div>
+
+                <!-- Chat Logs (Streamer Self-Service) -->
+                <div class="dash-card dash-card-wide">
+                    <h3><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</h3>
+                    <p class="muted" style="font-size:0.85rem;margin-bottom:12px">View and manage chat messages from your streams. Search, filter, and purge messages by time range.</p>
+                    <div class="dash-chat-log-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+                        <input type="text" id="dash-chatlog-search" class="form-input form-input-sm" placeholder="Search messages..." style="flex:1;min-width:150px">
+                        <input type="text" id="dash-chatlog-username" class="form-input form-input-sm" placeholder="Username" style="width:130px">
+                        <input type="datetime-local" id="dash-chatlog-from" class="form-input form-input-sm" style="width:180px">
+                        <input type="datetime-local" id="dash-chatlog-to" class="form-input form-input-sm" style="width:180px">
+                        <button class="btn btn-small btn-primary" onclick="loadDashChatLogs()">
+                            <i class="fa-solid fa-search"></i> Search
+                        </button>
+                        <button class="btn btn-small btn-danger" onclick="dashPurgeChatRange()">
+                            <i class="fa-solid fa-trash-can"></i> Purge Range
+                        </button>
+                    </div>
+                    <div id="dash-chatlog-results" style="max-height:400px;overflow-y:auto;font-size:0.85rem"></div>
+                    <div id="dash-chatlog-pagination" style="display:flex;gap:8px;justify-content:center;margin-top:8px"></div>
                 </div>
 
                 <!-- ONVIF Camera Controls -->
@@ -3086,6 +3111,9 @@ WantedBy=multi-user.target</code>
                             <button class="bc-ctrl-btn" id="bc-btn-toggle-preview" onclick="toggleBroadcastPreview()">
                                 <i class="fa-solid fa-eye"></i> Preview
                             </button>
+                            <button class="bc-ctrl-btn" onclick="openViewerPreview()" title="Open a popup showing exactly what viewers see">
+                                <i class="fa-solid fa-tv"></i> Viewer
+                            </button>
                         </div>
 
                         <!-- Live Clip Panel -->
@@ -3259,6 +3287,10 @@ WantedBy=multi-user.target</code>
                             <div class="bc-setting-row">
                                 <span class="bc-setting-label">Notification Volume</span>
                                 <div class="bc-setting-control"><input type="range" id="bc-notificationVolume" min="0" max="1000" step="50"></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Disconnect Sound Alert</span>
+                                <div class="bc-setting-control"><label class="bc-toggle"><input type="checkbox" id="bc-disconnectAudio" onchange="_disconnectAudioEnabled = this.checked; try { localStorage.setItem('bc-disconnect-audio', this.checked ? '1' : '0'); } catch{}"><span class="bc-toggle-slider"></span></label></div>
                             </div>
                         </div>
 
@@ -4486,8 +4518,9 @@ while True:
 <pre><code>{
   "control_mode":          "open",   // "open" | "whitelist" | "disabled"
   "anon_controls_enabled": true,     // Allow anonymous viewers to use controls
-  "control_rate_limit_ms": 500,      // Global rate limit per user (100-30000)
-  "video_click_enabled":   true      // Enable video click input
+  "control_rate_limit_ms": 100,      // Global rate limit per user (100-30000)
+  "video_click_enabled":   true,     // Enable video click input
+  "video_click_rate_limit_ms": 0      // Per-user minimum time between video clicks; 0 = use global rate limit
 }
 </code></pre>
 
