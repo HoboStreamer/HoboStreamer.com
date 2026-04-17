@@ -233,13 +233,17 @@ function serveThumbnail(req, res) {
         const filePath = path.join(THUMB_DIR, filename);
 
         if (!fs.existsSync(filePath)) {
-            // Return a 1x1 transparent pixel as fallback instead of an error
+            // Return a 1x1 transparent pixel JPEG as fallback
             const pixel = Buffer.from(
                 '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AKwA=',
                 'base64'
             );
-            res.writeHead(204);
-            return res.end();
+            res.writeHead(200, {
+                'Content-Type': 'image/jpeg',
+                'Content-Length': pixel.length,
+                'Cache-Control': 'no-cache',
+            });
+            return res.end(pixel);
         }
 
         const stat = fs.statSync(filePath);

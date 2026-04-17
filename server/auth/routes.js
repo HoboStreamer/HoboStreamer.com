@@ -490,6 +490,97 @@ function sanitizeUser(user, publicOnly = false) {
     return safe;
 }
 
+// ── User Preferences (server-side chat settings sync) ────────────────────────
+router.get('/preferences', requireAuth, (req, res) => {
+    try {
+        const prefs = db.getUserPreferences(req.user.id);
+        res.json({ chatSettings: prefs });
+    } catch (e) {
+        console.error('[Auth] Error loading preferences:', e.message);
+        res.status(500).json({ error: 'Failed to load preferences' });
+    }
+});
+
+router.put('/preferences', requireAuth, (req, res) => {
+    try {
+        const { chatSettings } = req.body;
+        if (!chatSettings || typeof chatSettings !== 'object') {
+            return res.status(400).json({ error: 'chatSettings must be an object' });
+        }
+        // Sanity check: limit size to prevent abuse
+        const json = JSON.stringify(chatSettings);
+        if (json.length > 16384) {
+            return res.status(400).json({ error: 'Settings too large' });
+        }
+        db.saveUserPreferences(req.user.id, chatSettings);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('[Auth] Error saving preferences:', e.message);
+        res.status(500).json({ error: 'Failed to save preferences' });
+    }
+});
+
+// ── API Tokens (Bot / Integration) ───────────────────────────────────────────
+const VALID_TOKEN_SCOPES = ['chat', 'read', 'stream', 'control'];
+
+router.post('/tokens', requireAuth, (req, res) => {
+    try {
+        // API tokens can't create other API tokens
+        if (req.authSource === 'api_token') {
+            return res.status(403).json({ error: 'Cannot create tokens using an API token' });
+        }
+        const { label, scopes, expiresAt } = req.body;
+        const validScopes = (scopes || ['chat', 'read']).filter(s => VALID_TOKEN_SCOPES.includes(s));
+        if (!validScopes.length) {
+            return res.status(400).json({ error: 'At least one valid scope is required' });
+        }
+        // Limit to 10 active tokens per user
+        const existing = db.listApiTokens(req.user.id).filter(t => t.is_active);
+        if (existing.length >= 10) {
+            return res.status(400).json({ error: 'Maximum 10 active tokens per account' });
+        }
+        const result = db.createApiToken(req.user.id, label, validScopes, expiresAt || null);
+        console.log(`[Auth] API token created: user=${req.user.username} label=${label} scopes=${validScopes.join(',')}`);
+        res.json({ id: result.id, token: result.token, created_at: result.created_at, scopes: validScopes });
+    } catch (e) {
+        console.error('[Auth] Token creation error:', e.message);
+        res.status(500).json({ error: 'Failed to create token' });
+    }
+});
+
+router.get('/tokens', requireAuth, (req, res) => {
+    try {
+        const tokens = db.listApiTokens(req.user.id);
+        // Never return the token hash
+        res.json({ tokens: tokens.map(t => ({
+            id: t.id, label: t.label,
+            scopes: (() => { try { return JSON.parse(t.scopes); } catch { return []; } })(),
+            created_at: t.created_at, last_used_at: t.last_used_at,
+            expires_at: t.expires_at, is_active: !!t.is_active,
+        })) });
+    } catch (e) {
+        console.error('[Auth] Token list error:', e.message);
+        res.status(500).json({ error: 'Failed to list tokens' });
+    }
+});
+
+router.delete('/tokens/:id', requireAuth, (req, res) => {
+    try {
+        if (req.authSource === 'api_token') {
+            return res.status(403).json({ error: 'Cannot revoke tokens using an API token' });
+        }
+        const result = db.revokeApiToken(parseInt(req.params.id), req.user.id);
+        if (!result?.changes) {
+            return res.status(404).json({ error: 'Token not found or not yours' });
+        }
+        console.log(`[Auth] API token revoked: id=${req.params.id} user=${req.user.username}`);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('[Auth] Token revoke error:', e.message);
+        res.status(500).json({ error: 'Failed to revoke token' });
+    }
+});
+
 // ── ICE / TURN server config (public — needed by unauthenticated voice chat) ─
 router.get('/ice-servers', (req, res) => {
     const servers = [

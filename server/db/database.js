@@ -3426,6 +3426,136 @@ function getRecentChatActivity(streamId, minutes) {
     return row?.cnt || 0;
 }
 
+/* ── User Preferences (server-side settings sync) ─────────── */
+
+function getUserPreferences(userId) {
+    const row = get('SELECT chat_settings FROM user_preferences WHERE user_id = ?', [userId]);
+    if (!row) return {};
+    try { return JSON.parse(row.chat_settings); } catch { return {}; }
+}
+
+function saveUserPreferences(userId, chatSettings) {
+    const json = JSON.stringify(chatSettings);
+    run(
+        `INSERT INTO user_preferences (user_id, chat_settings, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(user_id) DO UPDATE SET chat_settings = excluded.chat_settings, updated_at = CURRENT_TIMESTAMP`,
+        [userId, json]
+    );
+}
+
+/* ── Chat Log Management ──────────────────────────────────── */
+
+function deleteChatMessagesByTimeRange(streamId, fromTime, toTime, deletedBy) {
+    if (streamId) {
+        return run(
+            `UPDATE chat_messages SET is_deleted = 1, deleted_by = ?, deleted_at = CURRENT_TIMESTAMP
+             WHERE stream_id = ? AND timestamp >= ? AND timestamp <= ? AND is_deleted = 0`,
+            [deletedBy, streamId, fromTime, toTime]
+        );
+    }
+    // Global chat (is_global = 1)
+    return run(
+        `UPDATE chat_messages SET is_deleted = 1, deleted_by = ?, deleted_at = CURRENT_TIMESTAMP
+         WHERE is_global = 1 AND timestamp >= ? AND timestamp <= ? AND is_deleted = 0`,
+        [deletedBy, fromTime, toTime]
+    );
+}
+
+function countChatMessagesByTimeRange(streamId, fromTime, toTime) {
+    let row;
+    if (streamId) {
+        row = get(
+            `SELECT COUNT(*) as cnt FROM chat_messages
+             WHERE stream_id = ? AND timestamp >= ? AND timestamp <= ? AND is_deleted = 0`,
+            [streamId, fromTime, toTime]
+        );
+    } else {
+        row = get(
+            `SELECT COUNT(*) as cnt FROM chat_messages
+             WHERE is_global = 1 AND timestamp >= ? AND timestamp <= ? AND is_deleted = 0`,
+            [fromTime, toTime]
+        );
+    }
+    return row?.cnt || 0;
+}
+
+function getChatLogs({ streamId, username, search, from, to, messageType, page = 1, limit = 50, includeDeleted = false } = {}) {
+    const conditions = [];
+    const params = [];
+
+    if (streamId) { conditions.push('stream_id = ?'); params.push(streamId); }
+    if (username) { conditions.push('username LIKE ?'); params.push(`%${username}%`); }
+    if (search) { conditions.push('message LIKE ?'); params.push(`%${search}%`); }
+    if (from) { conditions.push('timestamp >= ?'); params.push(from); }
+    if (to) { conditions.push('timestamp <= ?'); params.push(to); }
+    if (messageType) { conditions.push('message_type = ?'); params.push(messageType); }
+    if (!includeDeleted) { conditions.push('is_deleted = 0'); }
+
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    const offset = (page - 1) * limit;
+
+    const countRow = get(`SELECT COUNT(*) as total FROM chat_messages ${where}`, params);
+    const total = countRow?.total || 0;
+    const rows = all(
+        `SELECT * FROM chat_messages ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+    );
+
+    return { rows, total, page, limit, totalPages: Math.ceil(total / limit) };
+}
+
+/* ── API Tokens (Bot / Integration auth) ──────────────────── */
+
+function _hashToken(rawToken) {
+    return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+function createApiToken(userId, label, scopes, expiresAt) {
+    const rawToken = 'hbt_' + crypto.randomBytes(32).toString('hex');
+    const hash = _hashToken(rawToken);
+    run(
+        `INSERT INTO api_tokens (user_id, token_hash, label, scopes, expires_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [userId, hash, label || 'Bot Token', JSON.stringify(scopes || ['chat', 'read']), expiresAt || null]
+    );
+    const row = get('SELECT id, created_at FROM api_tokens WHERE token_hash = ?', [hash]);
+    return { id: row.id, token: rawToken, created_at: row.created_at };
+}
+
+function listApiTokens(userId) {
+    return all(
+        `SELECT id, label, scopes, created_at, last_used_at, expires_at, is_active
+         FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC`,
+        [userId]
+    );
+}
+
+function revokeApiToken(tokenId, userId) {
+    return run('UPDATE api_tokens SET is_active = 0 WHERE id = ? AND user_id = ?', [tokenId, userId]);
+}
+
+function validateApiToken(rawToken) {
+    const hash = _hashToken(rawToken);
+    const row = get(
+        `SELECT t.*, u.id as uid, u.username, u.display_name, u.role, u.profile_color, u.avatar_url
+         FROM api_tokens t JOIN users u ON t.user_id = u.id
+         WHERE t.token_hash = ? AND t.is_active = 1`,
+        [hash]
+    );
+    if (!row) return null;
+    // Check expiry
+    if (row.expires_at && new Date(row.expires_at) < new Date()) return null;
+    // Update last used
+    run('UPDATE api_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?', [row.id]);
+    const scopes = (() => { try { return JSON.parse(row.scopes); } catch { return []; } })();
+    return {
+        id: row.uid, username: row.username, display_name: row.display_name,
+        role: row.role, profile_color: row.profile_color, avatar_url: row.avatar_url,
+        tokenId: row.id, scopes,
+    };
+}
+
 module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
@@ -3531,4 +3661,10 @@ module.exports = {
     // Stream Analytics
     insertViewerSnapshot, getViewerSnapshots, computeAndCacheStreamAnalytics,
     getStreamAnalytics, getChannelAnalyticsSummary, getRecentChatActivity,
+    // User Preferences
+    getUserPreferences, saveUserPreferences,
+    // Chat Log Management
+    deleteChatMessagesByTimeRange, countChatMessagesByTimeRange, getChatLogs,
+    // API Tokens
+    createApiToken, listApiTokens, revokeApiToken, validateApiToken,
 };

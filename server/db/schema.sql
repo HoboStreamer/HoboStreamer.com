@@ -301,6 +301,20 @@ CREATE TABLE IF NOT EXISTS api_keys (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- Bot / Integration API Tokens (general-purpose, long-lived)
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
+    label TEXT DEFAULT 'Bot Token',
+    scopes TEXT DEFAULT '["chat","read"]',  -- JSON array: chat, stream, control, read, admin
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_used_at DATETIME,
+    expires_at DATETIME,                     -- NULL = never expires
+    is_active INTEGER DEFAULT 1,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Bans / Moderation
 CREATE TABLE IF NOT EXISTS bans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -673,4 +687,12 @@ CREATE TABLE IF NOT EXISTS stream_analytics (
     coins_earned INTEGER DEFAULT 0,
     computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
+);
+
+-- User preferences (server-side sync for chat settings, etc.)
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id INTEGER PRIMARY KEY,
+    chat_settings TEXT DEFAULT '{}',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

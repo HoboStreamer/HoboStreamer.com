@@ -120,7 +120,18 @@ function resolveHoboToolsUser(decoded) {
 }
 
 /**
- * Express middleware — requires valid hobo.tools JWT
+ * Try to authenticate via API token (hbt_xxx format)
+ * Returns { user, scopes } or null
+ */
+function authenticateApiToken(rawToken) {
+    if (!rawToken || !rawToken.startsWith('hbt_')) return null;
+    const user = db.validateApiToken(rawToken);
+    if (!user) return null;
+    return user;
+}
+
+/**
+ * Express middleware — requires valid hobo.tools JWT or API token
  * Resolves to local user via linked_accounts (auto-creates if needed).
  */
 function requireAuth(req, res, next) {
@@ -129,6 +140,19 @@ function requireAuth(req, res, next) {
         return res.status(401).json({ error: 'Authentication required' });
     }
 
+    // Try API token first (hbt_ prefix)
+    const apiUser = authenticateApiToken(token);
+    if (apiUser) {
+        if (apiUser.is_banned) {
+            return res.status(403).json({ error: 'Account is banned' });
+        }
+        req.user = apiUser;
+        req.authSource = 'api_token';
+        req.tokenScopes = apiUser.scopes || [];
+        return next();
+    }
+
+    // Fall back to hobo.tools JWT
     const decoded = verifyToken(token);
     if (!decoded) {
         return res.status(401).json({ error: 'Invalid or expired token' });
@@ -153,12 +177,20 @@ function requireAuth(req, res, next) {
 function optionalAuth(req, res, next) {
     const token = extractToken(req);
     if (token) {
-        const decoded = verifyToken(token);
-        if (decoded) {
-            const user = resolveHoboToolsUser(decoded);
-            if (user && !user.is_banned) {
-                req.user = user;
-                req.authSource = 'hobotools';
+        // Try API token first
+        const apiUser = authenticateApiToken(token);
+        if (apiUser && !apiUser.is_banned) {
+            req.user = apiUser;
+            req.authSource = 'api_token';
+            req.tokenScopes = apiUser.scopes || [];
+        } else {
+            const decoded = verifyToken(token);
+            if (decoded) {
+                const user = resolveHoboToolsUser(decoded);
+                if (user && !user.is_banned) {
+                    req.user = user;
+                    req.authSource = 'hobotools';
+                }
             }
         }
     }
@@ -253,9 +285,17 @@ function extractWsToken(req) {
 
 /**
  * Authenticate a WebSocket connection (returns user or null)
+ * Supports both hobo.tools JWT and API tokens (hbt_xxx)
  */
 function authenticateWs(token) {
     if (!token) return null;
+    // Try API token first
+    const apiUser = authenticateApiToken(token);
+    if (apiUser) {
+        // Attach scopes for chat server to check
+        apiUser._authSource = 'api_token';
+        return apiUser;
+    }
     const decoded = verifyToken(token);
     if (!decoded) return null;
     return resolveHoboToolsUser(decoded);
@@ -278,6 +318,7 @@ module.exports = {
     extractToken,
     extractWsToken,
     authenticateWs,
+    authenticateApiToken,
     reloadHoboToolsKey,
     resolveHoboToolsUser,
 };

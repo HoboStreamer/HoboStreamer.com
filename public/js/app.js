@@ -1923,10 +1923,21 @@ function renderWeatherWidget(data) {
     html += `<span class="weather-meta">Feels ${weatherTemp(c.feels_like)} · ${c.humidity}% humidity · Wind ${Math.round(c.wind_speed)} mph ${windDir(c.wind_direction)}</span>`;
     html += `</div></div>`;
 
+    const hasHourly = data.hourly && data.hourly.length > 0;
+    const hasDaily = data.daily && data.daily.length > 0;
+
+    // Tabs for hourly / 7-day
+    if (hasHourly || hasDaily) {
+        html += `<div class="weather-tabs">`;
+        if (hasHourly) html += `<button type="button" class="weather-tab active" onclick="switchWeatherTab(this,'hourly')">Hourly</button>`;
+        if (hasDaily) html += `<button type="button" class="weather-tab${hasHourly ? '' : ' active'}" onclick="switchWeatherTab(this,'daily')">7-Day</button>`;
+        html += `</div>`;
+    }
+
     // Hourly forecast
-    if (data.hourly && data.hourly.length > 0) {
+    if (hasHourly) {
         const utcOff = data.utc_offset_seconds;
-        html += `<div class="weather-hourly">`;
+        html += `<div class="weather-hourly weather-tab-panel" data-panel="hourly">`;
         html += `<div class="weather-hourly-scroll">`;
         for (const h of data.hourly) {
             const hw = getWeatherInfo(h.weather_code, true);
@@ -1939,7 +1950,6 @@ function renderWeatherWidget(data) {
             if (h.precipitation_probability > 0) {
                 html += `<span class="wh-precip"><i class="fa-solid fa-droplet"></i> ${h.precipitation_probability}%</span>`;
             }
-            // Extra details for 'detailed' mode
             if (data.detail === 'detailed' && h.uv_index !== undefined) {
                 html += `<span class="wh-extra">${Math.round(h.wind_speed)} mph`;
                 if (h.wind_gusts > h.wind_speed + 5) html += ` (${Math.round(h.wind_gusts)})`;
@@ -1950,7 +1960,37 @@ function renderWeatherWidget(data) {
         html += `</div></div>`;
     }
 
+    // 7-day daily forecast
+    if (hasDaily) {
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        html += `<div class="weather-daily weather-tab-panel" data-panel="daily"${hasHourly ? ' style="display:none"' : ''}>`;
+        for (const d of data.daily) {
+            const dw = getWeatherInfo(d.weather_code, true);
+            const date = new Date(d.date + 'T12:00:00');
+            const isToday = new Date().toDateString() === date.toDateString();
+            const dayLabel = isToday ? 'Today' : dayNames[date.getDay()];
+            html += `<div class="weather-day" title="${dw.label}, High ${weatherTemp(d.temp_max)}, Low ${weatherTemp(d.temp_min)}">`;
+            html += `<span class="wd-day">${dayLabel}</span>`;
+            html += `<i class="fa-solid ${dw.icon} wd-icon"></i>`;
+            html += `<span class="wd-temps"><span class="wd-hi">${weatherTemp(d.temp_max).replace(/°[CF]$/, '°')}</span><span class="wd-lo">${weatherTemp(d.temp_min).replace(/°[CF]$/, '°')}</span></span>`;
+            if (d.precipitation_probability > 0) {
+                html += `<span class="wd-precip"><i class="fa-solid fa-droplet"></i> ${d.precipitation_probability}%</span>`;
+            }
+            html += `</div>`;
+        }
+        html += `</div>`;
+    }
+
     return html;
+}
+
+function switchWeatherTab(btn, panel) {
+    const widget = btn.closest('.weather-widget, [id^="ch-weather-widget"]') || btn.parentElement.parentElement;
+    widget.querySelectorAll('.weather-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    widget.querySelectorAll('.weather-tab-panel').forEach(p => {
+        p.style.display = p.dataset.panel === panel ? '' : 'none';
+    });
 }
 
 function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = null, externalViewers = null) {

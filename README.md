@@ -53,6 +53,8 @@ The chat server in [server/chat/chat-server.js](server/chat/chat-server.js) supp
 - word filtering / opsec-focused filtering
 - WebSocket chat history and presence updates
 - chat-linked cosmetics and username metadata
+- server-synced chat settings (persist across devices)
+- chat log viewer with search, export (CSV/JSON), and bulk purge
 
 ### HoboGame and realtime extras
 
@@ -69,6 +71,7 @@ The codebase also includes:
 HoboStreamer includes:
 
 - JWT auth
+- API token auth for bots and integrations (`hbt_` prefix tokens with scoped permissions)
 - profile and stream-key management
 - Hobo Bucks / coin systems
 - donations, goals, and cashout flows
@@ -281,6 +284,15 @@ Useful starting points:
 - [server/game/routes.js](server/game/routes.js)
 - [public/js/stream-player.js](public/js/stream-player.js)
 - [public/js/chat.js](public/js/chat.js)
+
+## Documentation
+
+Detailed guides for specific subsystems:
+
+- [Broadcasting Guide](docs/broadcasting.md) — broadcast methods, controls, multi-stream
+- [Chat System](docs/chat-system.md) — WebSocket protocol, moderation, admin tools
+- [API Tokens](docs/api-tokens.md) — bot/integration auth, scopes, examples
+- [Restream Branding](docs/restream-branding.md) — multi-platform overlay setup
 
 ---
 

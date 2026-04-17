@@ -178,34 +178,71 @@ function switchAdminTab(tab) {
 let adminLogsOffset = 0;
 let adminLogsQuery = '';
 let adminLogsUserId = '';
+let adminLogsPage = 1;
 
 async function loadAdminChatLogs() {
     const c = document.getElementById('admin-content');
     c.innerHTML = `
-        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
             <input type="text" id="admin-log-search" placeholder="Search messages..."
                 value="${esc(adminLogsQuery)}"
                 onkeydown="if(event.key==='Enter')adminSearchLogs()"
                 style="flex:1;min-width:200px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:8px 12px;border-radius:6px;font-size:14px">
-            <input type="text" id="admin-log-userid" placeholder="User ID (optional)"
+            <input type="text" id="admin-log-userid" placeholder="Username (optional)"
                 value="${esc(adminLogsUserId)}"
                 onkeydown="if(event.key==='Enter')adminSearchLogs()"
-                style="width:140px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:8px 12px;border-radius:6px;font-size:14px">
+                style="width:160px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:8px 12px;border-radius:6px;font-size:14px">
+            <input type="number" id="admin-log-streamid" placeholder="Stream ID"
+                style="width:120px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:8px 12px;border-radius:6px;font-size:14px">
             <button class="btn btn-primary" onclick="adminSearchLogs()">
                 <i class="fa-solid fa-search"></i> Search
             </button>
         </div>
-        <div id="admin-logs-results"><p class="muted">Enter a search query or user ID</p></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <label style="font-size:0.85rem;color:var(--text-muted)">From:</label>
+            <input type="datetime-local" id="admin-log-from" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:13px">
+            <label style="font-size:0.85rem;color:var(--text-muted)">To:</label>
+            <input type="datetime-local" id="admin-log-to" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:13px">
+            <button class="btn btn-sm" onclick="adminExportLogs('csv')" title="Export as CSV"><i class="fa-solid fa-file-csv"></i> CSV</button>
+            <button class="btn btn-sm" onclick="adminExportLogs('json')" title="Export as JSON"><i class="fa-solid fa-file-code"></i> JSON</button>
+        </div>
+        <details style="margin-bottom:12px;background:var(--bg-secondary);padding:10px 14px;border-radius:8px;border:1px solid var(--border)">
+            <summary style="cursor:pointer;font-size:0.85rem;color:var(--accent);font-weight:600"><i class="fa-solid fa-trash-can"></i> Purge Messages by Time Range</summary>
+            <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label style="font-size:0.85rem;color:var(--text-muted)">From:</label>
+                <input type="datetime-local" id="admin-purge-from" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:13px">
+                <label style="font-size:0.85rem;color:var(--text-muted)">To:</label>
+                <input type="datetime-local" id="admin-purge-to" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:13px">
+                <input type="number" id="admin-purge-streamid" placeholder="Stream ID (blank = global)" style="width:180px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-size:13px">
+                <button class="btn btn-sm" onclick="adminPurgePreview()"><i class="fa-solid fa-eye"></i> Preview</button>
+                <span id="admin-purge-count" style="font-size:0.85rem;color:var(--text-muted)"></span>
+                <button class="btn btn-sm btn-danger" id="admin-purge-btn" onclick="adminPurgeExecute()" style="display:none"><i class="fa-solid fa-trash"></i> Delete</button>
+            </div>
+        </details>
+        <div id="admin-logs-results"><p class="muted">Enter a search query, username, or stream ID to search chat logs</p></div>
         <div id="admin-logs-pager" style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:12px"></div>
     `;
 }
 
+function _adminLogFilterParams() {
+    const params = new URLSearchParams();
+    const q = document.getElementById('admin-log-search')?.value?.trim();
+    const user = document.getElementById('admin-log-userid')?.value?.trim();
+    const streamId = document.getElementById('admin-log-streamid')?.value?.trim();
+    const from = document.getElementById('admin-log-from')?.value;
+    const to = document.getElementById('admin-log-to')?.value;
+    if (q) params.set('search', q);
+    if (user) params.set('username', user);
+    if (streamId) params.set('streamId', streamId);
+    if (from) params.set('from', new Date(from).toISOString());
+    if (to) params.set('to', new Date(to).toISOString());
+    return params;
+}
+
 async function adminSearchLogs() {
-    const q = document.getElementById('admin-log-search')?.value?.trim() || '';
-    const uid = document.getElementById('admin-log-userid')?.value?.trim() || '';
-    adminLogsQuery = q;
-    adminLogsUserId = uid;
-    adminLogsOffset = 0;
+    adminLogsQuery = document.getElementById('admin-log-search')?.value?.trim() || '';
+    adminLogsUserId = document.getElementById('admin-log-userid')?.value?.trim() || '';
+    adminLogsPage = 1;
     await fetchAdminLogs();
 }
 
@@ -216,13 +253,14 @@ async function fetchAdminLogs() {
     results.innerHTML = '<p class="muted">Loading...</p>';
 
     try {
-        const params = new URLSearchParams({ limit: '50', offset: String(adminLogsOffset) });
-        if (adminLogsQuery) params.set('q', adminLogsQuery);
-        if (adminLogsUserId) params.set('user_id', adminLogsUserId);
+        const params = _adminLogFilterParams();
+        params.set('page', String(adminLogsPage));
+        params.set('limit', '50');
 
-        const data = await api(`/chat/search?${params}`);
-        const msgs = data.messages || [];
+        const data = await api(`/chat/admin/logs?${params}`);
+        const msgs = data.rows || [];
         const total = data.total || 0;
+        const totalPages = data.totalPages || 1;
 
         if (!msgs.length) {
             results.innerHTML = '<p class="muted">No messages found</p>';
@@ -233,34 +271,100 @@ async function fetchAdminLogs() {
         results.innerHTML = `
             <table class="admin-table">
                 <thead><tr>
-                    <th>Time</th><th>User</th><th>Message</th><th>Stream</th>
+                    <th>Time</th><th>User</th><th>Message</th><th>Stream</th><th>Type</th>
                 </tr></thead>
                 <tbody>${msgs.map(m => {
                     const ts = m.timestamp ? new Date(m.timestamp.replace(' ', 'T') + (m.timestamp.includes('Z') ? '' : 'Z')).toLocaleString() : '';
-                    return `<tr>
+                    return `<tr${m.is_deleted ? ' style="opacity:0.4"' : ''}>
                         <td style="white-space:nowrap;font-size:0.8rem">${ts}</td>
                         <td style="white-space:nowrap">
                             <span style="color:${esc(m.profile_color || '#999')};cursor:pointer" onclick="showChatContextMenu(event)" data-username="${esc(m.display_name || m.username || 'anon')}" data-user-id="${esc(String(m.user_id || ''))}">${esc(m.display_name || m.username || 'anon')}</span>
                         </td>
-                        <td style="word-break:break-word">${esc(m.message)}</td>
-                        <td style="font-size:0.8rem">${m.stream_id || '-'}</td>
+                        <td style="word-break:break-word">${esc(m.message || '')}</td>
+                        <td style="font-size:0.8rem">${m.stream_id || (m.is_global ? 'global' : '-')}</td>
+                        <td style="font-size:0.75rem;color:var(--text-muted)">${m.message_type || 'chat'}${m.is_deleted ? ' <i class="fa-solid fa-trash" style="color:var(--danger)"></i>' : ''}</td>
                     </tr>`;
                 }).join('')}</tbody>
             </table>`;
 
-        // Pagination
-        const pages = Math.ceil(total / 50);
-        const curPage = Math.floor(adminLogsOffset / 50) + 1;
         if (pager) {
-            pager.innerHTML = pages > 1 ? `
-                <button class="btn btn-sm" ${adminLogsOffset <= 0 ? 'disabled' : ''} onclick="adminLogsOffset=Math.max(0,adminLogsOffset-50);fetchAdminLogs()"><i class="fa-solid fa-chevron-left"></i></button>
-                <span class="muted" style="font-size:0.85rem">Page ${curPage} / ${pages} (${total} results)</span>
-                <button class="btn btn-sm" ${curPage >= pages ? 'disabled' : ''} onclick="adminLogsOffset+=50;fetchAdminLogs()"><i class="fa-solid fa-chevron-right"></i></button>
+            pager.innerHTML = totalPages > 1 ? `
+                <button class="btn btn-sm" ${adminLogsPage <= 1 ? 'disabled' : ''} onclick="adminLogsPage--;fetchAdminLogs()"><i class="fa-solid fa-chevron-left"></i></button>
+                <span class="muted" style="font-size:0.85rem">Page ${adminLogsPage} / ${totalPages} (${total} results)</span>
+                <button class="btn btn-sm" ${adminLogsPage >= totalPages ? 'disabled' : ''} onclick="adminLogsPage++;fetchAdminLogs()"><i class="fa-solid fa-chevron-right"></i></button>
             ` : `<span class="muted" style="font-size:0.85rem">${total} results</span>`;
         }
     } catch (e) {
         results.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
         if (pager) pager.innerHTML = '';
+    }
+}
+
+async function adminPurgePreview() {
+    const from = document.getElementById('admin-purge-from')?.value;
+    const to = document.getElementById('admin-purge-to')?.value;
+    const streamId = document.getElementById('admin-purge-streamid')?.value?.trim() || null;
+    const countEl = document.getElementById('admin-purge-count');
+    const btn = document.getElementById('admin-purge-btn');
+    if (!from || !to) { toast('Select both from and to dates', 'error'); return; }
+
+    try {
+        const data = await api('/chat/admin/purge/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ streamId: streamId ? parseInt(streamId) : null, from: new Date(from).toISOString(), to: new Date(to).toISOString() })
+        });
+        const count = data.count || 0;
+        countEl.textContent = `${count} message${count !== 1 ? 's' : ''} will be deleted`;
+        btn.style.display = count > 0 ? '' : 'none';
+    } catch (e) {
+        countEl.textContent = `Error: ${e.message}`;
+        btn.style.display = 'none';
+    }
+}
+
+async function adminPurgeExecute() {
+    const from = document.getElementById('admin-purge-from')?.value;
+    const to = document.getElementById('admin-purge-to')?.value;
+    const streamId = document.getElementById('admin-purge-streamid')?.value?.trim() || null;
+    if (!from || !to) return;
+    if (!confirm('Are you sure you want to delete these messages? This action cannot be undone.')) return;
+
+    try {
+        const data = await api('/chat/admin/purge', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ streamId: streamId ? parseInt(streamId) : null, from: new Date(from).toISOString(), to: new Date(to).toISOString() })
+        });
+        toast(`Deleted ${data.deleted || 0} messages`, 'success');
+        document.getElementById('admin-purge-count').textContent = '';
+        document.getElementById('admin-purge-btn').style.display = 'none';
+        // Refresh the search results if any
+        if (document.getElementById('admin-logs-results')?.querySelector('table')) fetchAdminLogs();
+    } catch (e) {
+        toast(`Purge failed: ${e.message}`, 'error');
+    }
+}
+
+async function adminExportLogs(format) {
+    const params = _adminLogFilterParams();
+    params.set('format', format);
+    const token = localStorage.getItem('token');
+    try {
+        const res = await fetch(`/api/chat/admin/logs/export?${params}`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `chat-logs-${Date.now()}.${format === 'csv' ? 'csv' : 'json'}`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast(`Exported as ${format.toUpperCase()}`, 'success');
+    } catch (e) {
+        toast(`Export failed: ${e.message}`, 'error');
     }
 }
 

@@ -138,17 +138,55 @@ function canUseViewerDeleteAllHere() {
     return !chatStreamId || !!chatSelfDeletePolicy.allowDeleteAll;
 }
 
+let _settingsSyncTimer = null;
+
 function loadChatSettings() {
     try {
         const saved = JSON.parse(localStorage.getItem(CHAT_SETTINGS_KEY));
         if (saved) chatSettings = { ...CHAT_SETTINGS_DEFAULTS, ...saved };
     } catch { /* use defaults */ }
     chatSettings.autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
+    // Async server sync — merge server settings on top of local
+    _syncSettingsFromServer();
 }
 function saveChatSettings() {
     chatSettings.autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
     try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch {}
     applyChatSettings();
+    // Debounced push to server
+    _debounceSyncSettingsToServer();
+}
+
+function _syncSettingsFromServer() {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch('/api/auth/preferences', { headers: { 'Authorization': `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            if (data?.chatSettings && typeof data.chatSettings === 'object' && Object.keys(data.chatSettings).length > 0) {
+                // Server wins on conflicts
+                chatSettings = { ...CHAT_SETTINGS_DEFAULTS, ...chatSettings, ...data.chatSettings };
+                chatSettings.autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
+                try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch {}
+                applyChatSettings();
+                syncSettingsPanelUI();
+                syncTTSToggleButtons();
+            }
+        })
+        .catch(() => { /* offline — use local */ });
+}
+
+function _debounceSyncSettingsToServer() {
+    if (_settingsSyncTimer) clearTimeout(_settingsSyncTimer);
+    _settingsSyncTimer = setTimeout(() => {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        fetch('/api/auth/preferences', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ chatSettings })
+        }).catch(() => { /* silent fail */ });
+    }, 500);
 }
 
 function _vcEnsureAudioContext() {
@@ -583,6 +621,14 @@ function syncSettingsPanelUI() {
 
 function isBroadcastingLiveForTTS() {
     return typeof isStreaming === 'function' && isStreaming();
+}
+
+/** True when the main chat WS is connected to the user's own broadcast stream */
+function _isViewingOwnBroadcastChat() {
+    if (!isBroadcastingLiveForTTS()) return false;
+    // If background WS exists, we navigated away from our own broadcast page
+    if (_bgBroadcastStreamId) return false;
+    return true;
 }
 
 function getChatTTSSettingKey(options = {}) {
@@ -1171,7 +1217,8 @@ function handleChatMessage(msg) {
         case 'chat':
             addChatMessage(msg);
             // Self-mode TTS: speak every incoming chat message via browser synthesis
-            if (typeof isStreaming === 'function' && isStreaming() && broadcastState?.settings?.ttsMode === 'self') {
+            // Only use broadcast TTS when viewing own channel chat
+            if (_isViewingOwnBroadcastChat() && broadcastState?.settings?.ttsMode === 'self') {
                 if (typeof speakBroadcastTTS === 'function' && _isTTSEnabledForSource(msg.source_platform)) {
                     speakBroadcastTTS(msg.message || msg.text, msg.username);
                 }
@@ -1302,6 +1349,20 @@ function handleChatMessage(msg) {
             }
             break;
         }
+        case 'purge': {
+            // Time-range purge — remove messages within the range from DOM
+            const from = msg.from ? new Date(msg.from).getTime() : 0;
+            const to = msg.to ? new Date(msg.to).getTime() : Infinity;
+            document.querySelectorAll('.chat-msg[data-timestamp]').forEach(el => {
+                const ts = new Date(el.dataset.timestamp).getTime();
+                if (ts >= from && ts <= to) {
+                    el.classList.add('chat-msg-deleted');
+                    setTimeout(() => el.remove(), 300);
+                }
+            });
+            addSystemMessage(`Messages purged by ${msg.by || 'a moderator'}`);
+            break;
+        }
         case 'self-delete-result': {
             const scopeLabel = msg.scope === 'stream' ? 'this chat' : 'your chat history';
             toast(`Deleted ${msg.count || 0} of your message(s) from ${scopeLabel}`, 'success');
@@ -1309,8 +1370,8 @@ function handleChatMessage(msg) {
         }
         case 'tts':
             // Legacy browser-side TTS (Self TTS mode)
-            if (typeof isStreaming === 'function' && isStreaming() && broadcastState?.settings?.ttsMode === 'self') {
-                // Broadcaster is live — use broadcast TTS with its volume/pitch/rate settings
+            // Only use broadcast TTS path when viewing own channel chat
+            if (_isViewingOwnBroadcastChat() && broadcastState?.settings?.ttsMode === 'self') {
                 if (isChatTTSEnabled({ streaming: true }) && typeof speakBroadcastTTS === 'function' && _isTTSEnabledForSource(msg.source_platform)) {
                     speakBroadcastTTS(msg.message || msg.text, msg.username);
                 }
@@ -1320,17 +1381,17 @@ function handleChatMessage(msg) {
             break;
         case 'tts-audio':
             // Server-synthesized TTS audio (Site-Wide TTS mode)
-            if (typeof isStreaming === 'function' && isStreaming() && typeof playBroadcastTTSAudio === 'function') {
-                // Broadcaster is live — route to broadcast audio queue
+            // Only route through broadcast audio when on own channel
+            if (_isViewingOwnBroadcastChat() && typeof playBroadcastTTSAudio === 'function') {
                 if (isChatTTSEnabled({ streaming: true }) && _isTTSEnabledForSource(msg.source_platform)) playBroadcastTTSAudio(msg);
             } else if (isChatTTSEnabled() && _isTTSEnabledForSource(msg.source_platform)) {
-                // Regular chat viewer — play through chat TTS queue
                 playTTSAudio(msg);
             }
             break;
         case 'soundboard-audio':
             // 101soundboards audio — play through TTS audio queue with pitch/speed modifiers
-            if (typeof isStreaming === 'function' && isStreaming() && typeof playBroadcastTTSAudio === 'function') {
+            // Only route through broadcast audio when on own channel
+            if (_isViewingOwnBroadcastChat() && typeof playBroadcastTTSAudio === 'function') {
                 if (isChatTTSEnabled({ streaming: true })) playBroadcastTTSAudio(msg);
             } else if (isChatTTSEnabled()) {
                 playTTSAudio(msg);
@@ -1348,8 +1409,12 @@ function handleChatMessage(msg) {
             addSystemMessage('Message blocked by this streamer\'s Anti-Slur Nudge setting.');
             break;
         case 'server_restart':
-            // Server is about to restart — show prominent notice
-            addRichSystemMessage(msg.message || 'Server restarting — chat will reconnect automatically.', 'warning');
+            // Server is about to restart — show prominent notice with refresh button
+            addRichSystemMessage(
+                (msg.message || 'Server restarting — chat will reconnect automatically.') +
+                ' <button onclick="location.href=location.pathname+\'?_=\'+Date.now()" style="margin-left:8px;padding:2px 10px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:var(--radius-sm);cursor:pointer;font-size:0.8rem;font-family:var(--font)">Refresh Page</button>',
+                'warning'
+            );
             break;
         case 'update': {
             // Platform update notification with commit logs + expandable changelog
@@ -1381,6 +1446,7 @@ function handleChatMessage(msg) {
             } else if (linkUrl) {
                 html += ` <a href="${linkUrl}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">View full patch notes →</a>`;
             }
+            html += ' <button onclick="location.href=location.pathname+\'?_=\'+Date.now()" style="margin-left:8px;padding:2px 10px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:var(--radius-sm);cursor:pointer;font-size:0.8rem;font-family:var(--font)">Refresh Page</button>';
             addRichSystemMessage(html, 'update');
             break;
         }
@@ -1441,6 +1507,8 @@ function addChatMessage(msg) {
 
     // Attach message ID for reply targeting
     if (msg.id) el.dataset.msgId = msg.id;
+    // Attach timestamp for time-range purge
+    if (msg.timestamp) el.dataset.timestamp = msg.timestamp;
     // Attach source platform for relay user identification
     if (msg.source_platform) el.dataset.sourcePlatform = msg.source_platform;
     if (msg.role === 'external') el.dataset.isRelay = '1';
@@ -3826,8 +3894,8 @@ function buildSettingsPanelHTML() {
                 <span>Enable TTS</span>
                 <input type="checkbox" data-setting="ttsEnabled" onchange="onChatSettingChange(this)">
             </label>
-            <label class="csp-row">
-                <span>Enable TTS While Streaming</span>
+            <label class="csp-row" title="Controls TTS in your own channel chat while you are live. TTS on other channels always uses the regular Enable TTS toggle.">
+                <span>TTS On My Channel When Live</span>
                 <input type="checkbox" data-setting="streamingTtsEnabled" onchange="onChatSettingChange(this)">
             </label>
             <label class="csp-row">

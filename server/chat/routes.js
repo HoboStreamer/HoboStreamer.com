@@ -452,4 +452,144 @@ router.get('/:streamId/users', (req, res) => {
     res.json({ count });
 });
 
+// ── Chat Log Management ─────────────────────────────────────
+
+// Preview count of messages in a time range
+router.post('/admin/purge/preview', requireAuth, (req, res) => {
+    try {
+        const { streamId, from, to } = req.body;
+        if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+
+        // Must be admin or stream owner
+        if (!permissions.isAdmin(req.user)) {
+            if (streamId) {
+                const stream = db.getStreamById(streamId);
+                if (!stream || stream.user_id !== req.user.id) {
+                    return res.status(403).json({ error: 'Not authorized' });
+                }
+            } else {
+                return res.status(403).json({ error: 'Only admins can purge global chat' });
+            }
+        }
+
+        const count = db.countChatMessagesByTimeRange(streamId || null, from, to);
+        res.json({ count });
+    } catch (e) {
+        console.error('[Chat] Purge preview error:', e.message);
+        res.status(500).json({ error: 'Failed to count messages' });
+    }
+});
+
+// Delete messages in a time range (soft delete)
+router.delete('/admin/purge', requireAuth, (req, res) => {
+    try {
+        const { streamId, from, to } = req.body;
+        if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+
+        if (!permissions.isAdmin(req.user)) {
+            if (streamId) {
+                const stream = db.getStreamById(streamId);
+                if (!stream || stream.user_id !== req.user.id) {
+                    return res.status(403).json({ error: 'Not authorized' });
+                }
+            } else {
+                return res.status(403).json({ error: 'Only admins can purge global chat' });
+            }
+        }
+
+        const result = db.deleteChatMessagesByTimeRange(streamId || null, from, to, req.user.display_name || req.user.username);
+
+        // Broadcast delete event to live chat
+        try {
+            const chatServer = require('./chat-server');
+            const payload = { type: 'purge', streamId: streamId || null, from, to, by: req.user.display_name };
+            if (streamId) {
+                chatServer.broadcastToStream(streamId, payload);
+            } else {
+                chatServer.broadcastGlobal(payload);
+            }
+        } catch { /* chat server may not be initialized */ }
+
+        console.log(`[Chat] Purged messages: stream=${streamId || 'global'} from=${from} to=${to} by=${req.user.username} changes=${result?.changes || 0}`);
+        res.json({ deleted: result?.changes || 0 });
+    } catch (e) {
+        console.error('[Chat] Purge error:', e.message);
+        res.status(500).json({ error: 'Failed to purge messages' });
+    }
+});
+
+// Get paginated chat logs with filters
+router.get('/admin/logs', requireAuth, (req, res) => {
+    try {
+        const { streamId, username, search, from, to, messageType, page, limit, includeDeleted } = req.query;
+
+        // Must be admin or stream owner
+        if (!permissions.isAdmin(req.user)) {
+            if (streamId) {
+                const stream = db.getStreamById(parseInt(streamId));
+                if (!stream || stream.user_id !== req.user.id) {
+                    return res.status(403).json({ error: 'Not authorized' });
+                }
+            } else {
+                return res.status(403).json({ error: 'Only admins can view all chat logs' });
+            }
+        }
+
+        const result = db.getChatLogs({
+            streamId: streamId ? parseInt(streamId) : undefined,
+            username, search, from, to, messageType,
+            page: parseInt(page) || 1,
+            limit: Math.min(parseInt(limit) || 50, 200),
+            includeDeleted: includeDeleted === 'true' && permissions.isAdmin(req.user),
+        });
+        res.json(result);
+    } catch (e) {
+        console.error('[Chat] Logs error:', e.message);
+        res.status(500).json({ error: 'Failed to get chat logs' });
+    }
+});
+
+// Export chat logs as CSV or JSON
+router.get('/admin/logs/export', requireAuth, (req, res) => {
+    try {
+        const { streamId, username, search, from, to, messageType, format } = req.query;
+
+        if (!permissions.isAdmin(req.user)) {
+            if (streamId) {
+                const stream = db.getStreamById(parseInt(streamId));
+                if (!stream || stream.user_id !== req.user.id) {
+                    return res.status(403).json({ error: 'Not authorized' });
+                }
+            } else {
+                return res.status(403).json({ error: 'Only admins can export all chat logs' });
+            }
+        }
+
+        // Get all matching rows (up to 50k)
+        const result = db.getChatLogs({
+            streamId: streamId ? parseInt(streamId) : undefined,
+            username, search, from, to, messageType,
+            page: 1, limit: 50000,
+        });
+
+        if (format === 'csv') {
+            const header = 'id,timestamp,username,message,message_type,stream_id,is_global,source_platform\n';
+            const csvRows = result.rows.map(r => {
+                const msg = (r.message || '').replace(/"/g, '""');
+                return `${r.id},"${r.timestamp}","${(r.username || '').replace(/"/g, '""')}","${msg}","${r.message_type || ''}",${r.stream_id || ''},"${r.is_global || 0}","${r.source_platform || ''}"`;
+            });
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="chat-logs-${Date.now()}.csv"`);
+            res.send(header + csvRows.join('\n'));
+        } else {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Content-Disposition', `attachment; filename="chat-logs-${Date.now()}.json"`);
+            res.json(result.rows);
+        }
+    } catch (e) {
+        console.error('[Chat] Export error:', e.message);
+        res.status(500).json({ error: 'Failed to export chat logs' });
+    }
+});
+
 module.exports = router;

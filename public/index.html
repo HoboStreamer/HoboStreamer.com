@@ -1430,6 +1430,16 @@
                     </details>
                 </div>
 
+                <!-- API Tokens (Bot / Integration) -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-key"></i> API Tokens</h3>
+                    <p class="muted" style="font-size:0.85rem;margin-bottom:12px">Create long-lived API tokens for bots and integrations. Tokens can authenticate via REST API and chat WebSocket without OAuth login.</p>
+                    <div id="dash-token-list" style="margin-bottom:10px"></div>
+                    <button class="btn btn-outline btn-small" onclick="showCreateTokenModal()">
+                        <i class="fa-solid fa-plus"></i> Create Token
+                    </button>
+                </div>
+
                 <!-- ONVIF Camera Controls -->
                 <div class="dash-card">
                     <h3><i class="fa-solid fa-video"></i> Camera Controls (ONVIF PTZ)</h3>
@@ -2478,6 +2488,12 @@
                         </div>
                     </div>
 
+                    <!-- Live Thumbnail Preview (RTMP/JSMPEG) -->
+                    <div id="bc-rtmp-preview" class="bc-rtmp-preview" style="display:none">
+                        <img id="bc-rtmp-preview-img" alt="Stream preview" loading="lazy">
+                        <div class="bc-live-badge" style="position:absolute;top:8px;left:8px;display:flex"><i class="fa-solid fa-circle"></i> LIVE</div>
+                    </div>
+
                     <!-- Quick Setup Guides (collapsed by default) -->
                     <details class="bc-app-guide">
                         <summary>
@@ -3067,6 +3083,9 @@ WantedBy=multi-user.target</code>
                             <button class="bc-ctrl-btn" id="bc-btn-media-pip" onclick="toggleMediaPip()">
                                 <i class="fa-solid fa-film"></i> Media
                             </button>
+                            <button class="bc-ctrl-btn" id="bc-btn-toggle-preview" onclick="toggleBroadcastPreview()">
+                                <i class="fa-solid fa-eye"></i> Preview
+                            </button>
                         </div>
 
                         <!-- Live Clip Panel -->
@@ -3409,6 +3428,9 @@ WantedBy=multi-user.target</code>
                 <div class="chat-header">
                     <span>STREAM CHAT</span>
                     <div class="chat-header-actions">
+                        <button class="chat-settings-btn" onclick="popoutBroadcastChat()" title="Pop Out Chat">
+                            <i class="fa-solid fa-up-right-from-square"></i>
+                        </button>
                         <button class="chat-settings-btn" onclick="toggleChatUsers(this)" title="Users">
                             <i class="fa-solid fa-users"></i>
                         </button>

@@ -3056,3 +3056,42 @@
 .bc-live-settings-panel .bc-settings-group {
     margin-bottom: 16px;
 }
+
+/* ── Disconnect Alert Banner ────────────────────────────── */
+.bc-disconnect-alert {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: color-mix(in srgb, var(--danger) 15%, var(--bg-secondary));
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    color: var(--danger);
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin: 8px 16px;
+    animation: bc-alert-pulse 2s ease-in-out infinite;
+}
+.bc-disconnect-alert span { flex: 1; }
+.bc-disconnect-alert .btn { flex-shrink: 0; }
+@keyframes bc-alert-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* ── RTMP/JSMPEG Live Thumbnail Preview ─────────────────── */
+.bc-rtmp-preview {
+    position: relative;
+    margin: 12px 0;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: #000;
+    aspect-ratio: 16/9;
+    max-height: 300px;
+}
+.bc-rtmp-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}

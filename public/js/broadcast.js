@@ -1790,12 +1790,16 @@ function setRtmpStatusUI(receiving, connectedAt) {
         } else {
             detail.textContent = 'Your stream is live and connected';
         }
+        // Start live thumbnail preview for RTMP
+        const ss = getActiveStreamState();
+        if (ss?.streamData?.id) startRtmpPreview(ss.streamData.id);
     } else {
         wrap.className = 'bc-rtmp-status waiting';
         spinner.style.display = '';
         ok.style.display = 'none';
         label.textContent = 'Waiting for stream...';
         detail.textContent = 'Start streaming in OBS or your app to connect';
+        stopRtmpPreview();
     }
 }
 
@@ -4563,6 +4567,13 @@ function updateBroadcastStatus(state) {
     };
     const s = map[state] || { text: state, cls: '' };
     el.textContent = s.text; el.className = 'bc-connection-status ' + s.cls;
+
+    // Disconnect alert banner
+    if (state === 'disconnected' || state === 'failed') {
+        showDisconnectAlert(state === 'failed' ? 'connection failed' : 'reconnecting...');
+    } else if (state === 'connected' || state === 'completed') {
+        dismissDisconnectAlert();
+    }
 }
 
 function _updateTabViewerCount(streamId, count) {
@@ -6529,4 +6540,72 @@ async function updateNewsPreference(enabled) {
     } catch (err) {
         toast(err.message || 'Failed to update news setting', 'error');
     }
+}
+
+/* ── Preview Toggle ──────────────────────────────────────────── */
+function toggleBroadcastPreview() {
+    const video = document.getElementById('bc-video-preview');
+    const btn = document.getElementById('bc-btn-toggle-preview');
+    if (!video || !btn) return;
+    if (video.style.display === 'none') {
+        video.style.display = '';
+        btn.innerHTML = '<i class="fa-solid fa-eye"></i> Preview';
+    } else {
+        video.style.display = 'none';
+        btn.innerHTML = '<i class="fa-solid fa-eye-slash"></i> Preview';
+    }
+}
+
+/* ── Popout Chat ─────────────────────────────────────────────── */
+function popoutBroadcastChat() {
+    if (currentUser?.username) {
+        window.open(`/popout/chat/${currentUser.username}`, '_blank', 'width=400,height=700');
+    }
+}
+
+/* ── RTMP/JSMPEG Live Thumbnail Preview ──────────────────────── */
+let _rtmpPreviewTimer = null;
+
+function startRtmpPreview(streamId) {
+    stopRtmpPreview();
+    const el = document.getElementById('bc-rtmp-preview');
+    const img = document.getElementById('bc-rtmp-preview-img');
+    if (!el || !img) return;
+    const update = () => {
+        img.src = `/thumbnails/stream-${streamId}-live.jpg?t=${Date.now()}`;
+        img.onerror = () => { el.style.display = 'none'; };
+        img.onload = () => { el.style.display = ''; };
+    };
+    update();
+    _rtmpPreviewTimer = setInterval(update, 10000);
+}
+
+function stopRtmpPreview() {
+    if (_rtmpPreviewTimer) { clearInterval(_rtmpPreviewTimer); _rtmpPreviewTimer = null; }
+    const el = document.getElementById('bc-rtmp-preview');
+    if (el) el.style.display = 'none';
+}
+
+/* ── Disconnect Alert Banner ─────────────────────────────────── */
+let _disconnectAlertShown = false;
+
+function showDisconnectAlert(reason) {
+    if (_disconnectAlertShown) return;
+    _disconnectAlertShown = true;
+    let banner = document.getElementById('bc-disconnect-alert');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'bc-disconnect-alert';
+        banner.className = 'bc-disconnect-alert';
+        const container = document.querySelector('.bc-video-container') || document.getElementById('bc-live-section');
+        if (container) container.parentElement.insertBefore(banner, container);
+    }
+    banner.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> <span>Connection lost — ${reason || 'reconnecting...'}</span><button class="btn btn-small btn-outline" onclick="dismissDisconnectAlert()"><i class="fa-solid fa-xmark"></i></button>`;
+    banner.style.display = '';
+}
+
+function dismissDisconnectAlert() {
+    _disconnectAlertShown = false;
+    const banner = document.getElementById('bc-disconnect-alert');
+    if (banner) banner.style.display = 'none';
 }

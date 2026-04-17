@@ -43,6 +43,8 @@ async function loadDashboard() {
     if (typeof loadDashRewards === 'function') loadDashRewards();
     // Load redemption queue
     if (typeof loadDashRedemptions === 'function') loadDashRedemptions();
+    // Load API tokens
+    loadDashTokens();
 }
 
 /* ── Channel Info ──────────────────────────────────────────────── */
@@ -888,4 +890,131 @@ async function loadDashCoins() {
         const bal = data.balance || 0;
         document.getElementById('dash-coins-amount').textContent = bal.toLocaleString();
     } catch { /* silent */ }
+}
+
+/* ── API Tokens (Bot / Integration) ─────────────────────────── */
+async function loadDashTokens() {
+    const list = document.getElementById('dash-token-list');
+    if (!list) return;
+    try {
+        const data = await api('/auth/tokens');
+        const tokens = data.tokens || [];
+        if (!tokens.length) {
+            list.innerHTML = '<p class="muted" style="font-size:0.82rem">No API tokens yet. Create one to connect bots or integrations.</p>';
+            return;
+        }
+        list.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px">${tokens.map(t => {
+            const scopes = (t.scopes || []).join(', ');
+            const lastUsed = t.last_used_at ? new Date(t.last_used_at).toLocaleDateString() : 'Never';
+            const expires = t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never';
+            const statusClass = t.is_active ? 'color:var(--success)' : 'color:var(--danger)';
+            const statusLabel = t.is_active ? 'Active' : 'Revoked';
+            return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border)">
+                <div style="flex:1;min-width:0">
+                    <div style="font-weight:600;font-size:0.85rem">${esc(t.label)}</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted)">Scopes: ${esc(scopes)} · Last used: ${lastUsed} · Expires: ${expires} · <span style="${statusClass}">${statusLabel}</span></div>
+                </div>
+                ${t.is_active ? `<button class="btn btn-small btn-danger" onclick="revokeDashToken(${t.id})" title="Revoke"><i class="fa-solid fa-ban"></i></button>` : ''}
+            </div>`;
+        }).join('')}</div>`;
+    } catch (e) {
+        list.innerHTML = `<p class="muted" style="font-size:0.82rem">Failed to load tokens</p>`;
+    }
+}
+
+function showCreateTokenModal() {
+    const content = document.getElementById('modal-content');
+    if (!content) return;
+    content.innerHTML = `
+        <div class="modal-header"><h3><i class="fa-solid fa-key"></i> Create API Token</h3></div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Label</label>
+                <input type="text" id="token-label" class="form-input" placeholder="My Chat Bot" maxlength="50">
+            </div>
+            <div class="form-group">
+                <label>Scopes</label>
+                <div style="display:flex;flex-direction:column;gap:6px">
+                    <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="token-scope-chat" checked> <strong>chat</strong> — Send/receive chat messages via WebSocket
+                    </label>
+                    <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="token-scope-read" checked> <strong>read</strong> — Read streams, VODs, user info
+                    </label>
+                    <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="token-scope-stream"> <strong>stream</strong> — Start/stop streams, update stream info
+                    </label>
+                    <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="token-scope-control"> <strong>control</strong> — Hardware control bridge
+                    </label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Expires</label>
+                <select id="token-expires" class="form-input">
+                    <option value="">Never</option>
+                    <option value="30">30 days</option>
+                    <option value="90">90 days</option>
+                    <option value="365">1 year</option>
+                </select>
+            </div>
+            <div id="token-result" style="display:none;margin-top:12px;padding:12px;background:var(--bg-secondary);border:2px solid var(--accent);border-radius:8px">
+                <p style="font-weight:700;color:var(--accent);margin-bottom:6px"><i class="fa-solid fa-triangle-exclamation"></i> Copy this token now — it will not be shown again!</p>
+                <div style="display:flex;gap:6px">
+                    <input type="text" id="token-raw-value" class="form-input" readonly style="font-family:monospace;font-size:0.82rem">
+                    <button class="btn btn-small btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('token-raw-value').value);toast('Token copied!','success')"><i class="fa-solid fa-copy"></i></button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer" id="token-create-footer">
+            <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" id="token-create-btn" onclick="createDashToken()"><i class="fa-solid fa-plus"></i> Create Token</button>
+        </div>
+    `;
+    showModal('modal-overlay');
+}
+
+async function createDashToken() {
+    const label = document.getElementById('token-label')?.value?.trim() || 'Bot Token';
+    const scopes = [];
+    if (document.getElementById('token-scope-chat')?.checked) scopes.push('chat');
+    if (document.getElementById('token-scope-read')?.checked) scopes.push('read');
+    if (document.getElementById('token-scope-stream')?.checked) scopes.push('stream');
+    if (document.getElementById('token-scope-control')?.checked) scopes.push('control');
+    if (!scopes.length) { toast('Select at least one scope', 'error'); return; }
+
+    const expDays = document.getElementById('token-expires')?.value;
+    const expiresAt = expDays ? new Date(Date.now() + parseInt(expDays) * 86400000).toISOString() : null;
+
+    const btn = document.getElementById('token-create-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating...';
+
+    try {
+        const data = await api('/auth/tokens', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label, scopes, expiresAt })
+        });
+        document.getElementById('token-raw-value').value = data.token;
+        document.getElementById('token-result').style.display = '';
+        document.getElementById('token-create-footer').style.display = 'none';
+        toast('Token created!', 'success');
+        loadDashTokens();
+    } catch (e) {
+        toast(`Failed: ${e.message}`, 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-plus"></i> Create Token';
+    }
+}
+
+async function revokeDashToken(id) {
+    if (!confirm('Revoke this token? Any bots using it will immediately lose access.')) return;
+    try {
+        await api(`/auth/tokens/${id}`, { method: 'DELETE' });
+        toast('Token revoked', 'success');
+        loadDashTokens();
+    } catch (e) {
+        toast(`Failed: ${e.message}`, 'error');
+    }
 }

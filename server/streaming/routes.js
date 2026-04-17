@@ -442,9 +442,10 @@ async function fetchWeather(zip) {
     try {
         const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}`
             + `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,cloud_cover,visibility,uv_index`
+            + `&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset`
             + `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,is_day`
             + `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch`
-            + `&timezone=auto&forecast_days=2`;
+            + `&timezone=auto&forecast_days=7`;
         const resp = await fetch(url);
         const data = await resp.json();
         const result = { ...data, location: { name: geo.name, region: geo.region, country: geo.country } };
@@ -519,6 +520,25 @@ router.get('/channel/:username/weather', async (req, res) => {
                     entry.uv_index = weather.hourly.uv_index[i];
                 }
                 response.hourly.push(entry);
+            }
+        }
+
+        // 7-day daily forecast — included for hourly and detailed levels
+        if (weather.daily && detail !== 'basic') {
+            const d = weather.daily;
+            response.daily = [];
+            for (let i = 0; i < (d.time || []).length; i++) {
+                response.daily.push({
+                    date: d.time[i],
+                    temp_max: d.temperature_2m_max[i],
+                    temp_min: d.temperature_2m_min[i],
+                    weather_code: d.weather_code[i],
+                    precipitation_sum: d.precipitation_sum[i],
+                    precipitation_probability: d.precipitation_probability_max[i],
+                    wind_speed_max: d.wind_speed_10m_max[i],
+                    sunrise: d.sunrise[i],
+                    sunset: d.sunset[i],
+                });
             }
         }
 
