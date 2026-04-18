@@ -268,6 +268,10 @@ app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, fi
 // Serve VOD/media files
 app.use('/media', express.static(path.resolve('./data/media')));
 
+// Internal (server-to-server) routes — allow hobo.tools to call into this service
+app.use('/internal', require('./internal/routes'));
+
+
 // Map file extensions to forced image MIME types
 const IMAGE_EXT_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.svg': 'image/svg+xml' };
 
