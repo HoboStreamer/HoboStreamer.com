@@ -98,10 +98,10 @@ class WebRTCSFU extends EventEmitter {
     /**
      * Create a WebRTC transport (for producer or consumer)
      */
-    async createTransport(roomId, peerId) {
+    async createTransport(roomId, peerId, options = {}) {
         const room = await this.getOrCreateRoom(roomId);
 
-        const transport = await room.router.createWebRtcTransport({
+        const transportOptions = {
             listenIps: [{
                 ip: config.mediasoup.listenIp,
                 announcedIp: config.mediasoup.announcedIp,
@@ -110,7 +110,16 @@ class WebRTCSFU extends EventEmitter {
             enableTcp: true,
             preferUdp: true,
             initialAvailableOutgoingBitrate: 1000000,
-        });
+        };
+
+        // Allow callers (e.g. WHIP ingest) to override transport settings.
+        // iceConsentTimeout: 0 disables RFC 7675 consent checks — needed for
+        // OBS/libdatachannel WHIP clients that don't respond to consent requests.
+        if (typeof options.iceConsentTimeout === 'number') {
+            transportOptions.iceConsentTimeout = options.iceConsentTimeout;
+        }
+
+        const transport = await room.router.createWebRtcTransport(transportOptions);
 
         console.log(`[WebRTC] Transport ${transport.id} (${peerId}) listenIp=${config.mediasoup.listenIp}, announcedIp=${config.mediasoup.announcedIp}`);
 

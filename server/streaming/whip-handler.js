@@ -487,7 +487,10 @@ async function handleWhipPost(req, res) {
 
         let transportInfo;
         try {
-            transportInfo = await webrtcSFU.createTransport(roomId, peerId);
+            // Disable ICE consent timeout for WHIP ingest — OBS/libdatachannel
+            // WHIP clients do not respond to RFC 7675 consent freshness checks,
+            // causing mediasoup to mark ICE as disconnected after 30 s (the default).
+            transportInfo = await webrtcSFU.createTransport(roomId, peerId, { iceConsentTimeout: 0 });
         } catch (err) {
             console.warn('[WHIP] Transport creation failed for stream', streamId, err.message);
             cleanupSession(resourceId);
