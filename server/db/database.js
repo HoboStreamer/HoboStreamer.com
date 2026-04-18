@@ -1359,21 +1359,26 @@ function isManagedStreamSlugTaken(userId, slug, excludeId = null) {
 }
 
 function getRecentlyOnlineStreamers(limit = 20, offset = 0) {
+    // Use a correlated subquery to aggregate managed streams per user — avoids session-row
+    // duplication that occurred when LEFT JOIN managed_streams was used in the outer query.
     return all(`
         SELECT u.id AS user_id, u.username, u.display_name, u.avatar_url, u.profile_color,
                MAX(s.ended_at) AS last_online_at,
-               json_group_array(json_object(
-                   'managed_stream_id', ms.id,
-                   'slug', ms.slug,
-                   'title', ms.title,
-                   'protocol', ms.protocol,
-                   'last_live_at', (SELECT MAX(s2.ended_at) FROM streams s2 WHERE s2.managed_stream_id = ms.id AND s2.ended_at IS NOT NULL),
-                   'vod_id', (SELECT v.id FROM vods v JOIN streams s3 ON v.stream_id = s3.id WHERE s3.managed_stream_id = ms.id AND COALESCE(v.is_recording, 0) = 0 AND v.is_public = 1 ORDER BY v.created_at DESC LIMIT 1),
-                   'vod_thumbnail', (SELECT v.thumbnail_url FROM vods v JOIN streams s3 ON v.stream_id = s3.id WHERE s3.managed_stream_id = ms.id AND COALESCE(v.is_recording, 0) = 0 AND v.is_public = 1 ORDER BY v.created_at DESC LIMIT 1)
-               )) AS managed_streams_json
+               (
+                   SELECT json_group_array(json_object(
+                       'managed_stream_id', ms2.id,
+                       'slug', ms2.slug,
+                       'title', ms2.title,
+                       'protocol', ms2.protocol,
+                       'last_live_at', (SELECT MAX(s2.ended_at) FROM streams s2 WHERE s2.managed_stream_id = ms2.id AND s2.ended_at IS NOT NULL),
+                       'vod_thumbnail', (SELECT v.thumbnail_url FROM vods v JOIN streams s3 ON v.stream_id = s3.id WHERE s3.managed_stream_id = ms2.id AND COALESCE(v.is_recording, 0) = 0 AND v.is_public = 1 ORDER BY v.created_at DESC LIMIT 1)
+                   ))
+                   FROM managed_streams ms2
+                   WHERE ms2.user_id = u.id
+                     AND EXISTS (SELECT 1 FROM streams sx WHERE sx.managed_stream_id = ms2.id AND sx.ended_at IS NOT NULL)
+               ) AS managed_streams_json
         FROM streams s
         JOIN users u ON s.user_id = u.id
-        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
         WHERE s.is_live = 0 AND s.ended_at IS NOT NULL
         GROUP BY u.id
         ORDER BY last_online_at DESC

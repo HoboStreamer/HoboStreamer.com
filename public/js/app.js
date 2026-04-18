@@ -785,6 +785,12 @@ async function loadHome() {
     void loadHomeChangelog();
     startHeroRotation();
 
+    // Reset homepage pagination on fresh load
+    _homeRecentOnlinePage = 1;
+    _homeRecentVodsPage = 1;
+    _homeClipsPage = 1;
+    _homePastesPage = 1;
+
     try {
         const liveData = await api('/streams');
         const streams = liveData.streams || [];
@@ -794,10 +800,7 @@ async function loadHome() {
         renderStreamGrid('stream-grid-live', streams, true);
     } catch (e) { console.error('Failed to load live streams', e); }
 
-    try {
-        const recentData = await api('/streams/recently-online?limit=20');
-        renderRecentlyOnline('stream-grid-recent', recentData.streamers || []);
-    } catch { /* silent */ }
+    loadHomeRecentOnline();
 
     // Load recent VODs
     loadHomeRecentVods();
@@ -811,6 +814,16 @@ async function loadHome() {
     loadHomeCanvas();
 }
 
+async function loadHomeRecentOnline(page) {
+    if (page !== undefined) _homeRecentOnlinePage = page;
+    const offset = (_homeRecentOnlinePage - 1) * HOME_RECENT_ONLINE_PAGE_SIZE;
+    try {
+        const recentData = await api(`/streams/recently-online?limit=${HOME_RECENT_ONLINE_PAGE_SIZE}&offset=${offset}`);
+        renderRecentlyOnline('stream-grid-recent', recentData.streamers || []);
+        renderHomePagination('stream-grid-recent-pagination', recentData.total || 0, _homeRecentOnlinePage, HOME_RECENT_ONLINE_PAGE_SIZE, 'loadHomeRecentOnline');
+    } catch { /* silent */ }
+}
+
 function renderRecentlyOnline(containerId, streamers) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -819,40 +832,52 @@ function renderRecentlyOnline(containerId, streamers) {
         return;
     }
     container.innerHTML = streamers.map(s => {
-        const ms = (s.managed_streams || []).filter(m => m.managed_stream_id);
-        const msSlug = ms.length ? (ms[0].slug || ms[0].managed_stream_id) : '';
-        const href = channelPath(s.username, msSlug || null);
-        const thumb = ms.length && ms[0].vod_thumbnail ? ms[0].vod_thumbnail : null;
-        const lastTitle = ms.length && ms[0].title ? ms[0].title : 'Stream';
-        return `
-            <a class="stream-card" href="${href}" onclick="return handleLinkClick(event, '${href}')">
-                <div class="stream-card-thumb">
-                    ${thumb
-                        ? `<img src="${esc(thumb)}" alt="" loading="lazy" class="stream-card-thumb-img">`
-                        : `<div class="stream-card-thumb-placeholder"><i class="fa-solid fa-video"></i></div>`
-                    }
-                    <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${timeAgo(s.last_online_at)}</span>
-                </div>
-                <div class="stream-card-info">
-                    <div class="stream-card-title">${esc(lastTitle)}</div>
-                    <div class="stream-card-streamer">
-                        <span class="stream-card-avatar" ${s.profile_color ? `style="background:${s.profile_color}"` : ''}>${(s.username || '?')[0].toUpperCase()}</span>
-                        ${esc(s.display_name || s.username)}
+        const msList = (s.managed_streams || []);
+        const avatar = s.profile_color
+            ? `<span class="stream-card-avatar" style="background:${s.profile_color}">${(s.username || '?')[0].toUpperCase()}</span>`
+            : `<span class="stream-card-avatar">${(s.username || '?')[0].toUpperCase()}</span>`;
+        const channelHref = `/@${s.username}`;
+        const streamsHtml = msList.length ? msList.map(ms => {
+            const href = channelPath(s.username, ms.slug || ms.managed_stream_id);
+            const thumb = ms.vod_thumbnail
+                ? `<img src="${esc(ms.vod_thumbnail)}" alt="" loading="lazy" class="streamer-group-stream-thumb-img">`
+                : `<div class="streamer-group-stream-thumb-placeholder"><i class="fa-solid fa-video"></i></div>`;
+            return `
+                <a class="streamer-group-stream" href="${href}" onclick="return handleLinkClick(event, '${href}')">
+                    <div class="streamer-group-stream-thumb">${thumb}</div>
+                    <div class="streamer-group-stream-info">
+                        <div class="streamer-group-stream-title">${esc(ms.title || 'Stream')}</div>
+                        <div class="streamer-group-stream-time muted"><i class="fa-solid fa-clock"></i> ${ms.last_live_at ? timeAgo(ms.last_live_at) : 'long ago'}</div>
                     </div>
+                </a>`;
+        }).join('') : `<a class="streamer-group-stream" href="${channelHref}" onclick="return handleLinkClick(event, '${channelHref}')">
+                    <div class="streamer-group-stream-info"><div class="streamer-group-stream-title muted">No streams</div></div>
+                </a>`;
+        return `
+            <div class="streamer-group-card">
+                <div class="streamer-group-header">
+                    <a class="streamer-group-identity" href="${channelHref}" onclick="return handleLinkClick(event, '${channelHref}')">
+                        ${avatar}
+                        <span class="streamer-group-name">${esc(s.display_name || s.username)}</span>
+                        <span class="streamer-group-last-online muted"><i class="fa-solid fa-clock"></i> ${timeAgo(s.last_online_at)}</span>
+                    </a>
                 </div>
-            </a>
+                <div class="streamer-group-streams">${streamsHtml}</div>
+            </div>
         `;
     }).join('');
 }
 
-async function loadHomeRecentVods() {
+async function loadHomeRecentVods(page) {
+    if (page !== undefined) _homeRecentVodsPage = page;
+    const offset = (_homeRecentVodsPage - 1) * HOME_RECENT_VODS_PAGE_SIZE;
     try {
-        const data = await api('/streams/recent-vods?limit=8');
+        const data = await api(`/streams/recent-vods?limit=${HOME_RECENT_VODS_PAGE_SIZE}&offset=${offset}`);
         const vods = data.vods || [];
         const header = document.getElementById('home-recent-vods-header');
         const grid = document.getElementById('home-recent-vods-grid');
         if (!header || !grid) return;
-        if (!vods.length) { header.style.display = 'none'; grid.innerHTML = ''; return; }
+        if (!vods.length && _homeRecentVodsPage === 1) { header.style.display = 'none'; grid.innerHTML = ''; return; }
         header.style.display = '';
         grid.innerHTML = vods.map(v => {
             const href = `/vod/${v.id}`;
@@ -874,16 +899,19 @@ async function loadHomeRecentVods() {
                 </a>
             `;
         }).join('');
+        renderHomePagination('home-recent-vods-pagination', data.total || 0, _homeRecentVodsPage, HOME_RECENT_VODS_PAGE_SIZE, 'loadHomeRecentVods');
     } catch { /* silent */ }
 }
 
-async function loadHomeClips() {
+async function loadHomeClips(page) {
+    if (page !== undefined) _homeClipsPage = page;
+    const offset = (_homeClipsPage - 1) * HOME_CLIPS_PAGE_SIZE;
     try {
-        const data = await api('/clips?limit=8');
+        const data = await api(`/clips?limit=${HOME_CLIPS_PAGE_SIZE}&offset=${offset}`);
         const clips = data.clips || [];
         const header = document.getElementById('home-clips-header');
         const grid = document.getElementById('home-clips-grid');
-        if (!clips.length) { if (header) header.style.display = 'none'; return; }
+        if (!clips.length && _homeClipsPage === 1) { if (header) header.style.display = 'none'; return; }
         if (header) header.style.display = '';
         grid.innerHTML = clips.map(c => `
             <a class="stream-card" href="/clip/${c.id}" onclick="return handleLinkClick(event, '/clip/${c.id}')">
@@ -902,16 +930,19 @@ async function loadHomeClips() {
                 </div>
             </a>
         `).join('');
+        renderHomePagination('home-clips-pagination', data.total || 0, _homeClipsPage, HOME_CLIPS_PAGE_SIZE, 'loadHomeClips');
     } catch { /* silent */ }
 }
 
-async function loadHomePastes() {
+async function loadHomePastes(page) {
+    if (page !== undefined) _homePastesPage = page;
+    const offset = (_homePastesPage - 1) * HOME_PASTES_PAGE_SIZE;
     try {
-        const data = await api('/pastes?limit=10');
+        const data = await api(`/pastes?limit=${HOME_PASTES_PAGE_SIZE}&offset=${offset}`);
         const pastes = data.pastes || [];
         const header = document.getElementById('home-pastes-header');
         const list = document.getElementById('home-pastes-list');
-        if (!pastes.length) { if (header) header.style.display = 'none'; return; }
+        if (!pastes.length && _homePastesPage === 1) { if (header) header.style.display = 'none'; return; }
         if (header) header.style.display = '';
         list.innerHTML = pastes.map(p => {
             const icon = p.type === 'screenshot' ? 'fa-image' : (p.language && p.language !== 'plaintext' ? 'fa-code' : 'fa-file-lines');
@@ -935,6 +966,7 @@ async function loadHomePastes() {
                 </div>
             </a>`;
         }).join('');
+        renderHomePagination('home-pastes-pagination', data.total || 0, _homePastesPage, HOME_PASTES_PAGE_SIZE, 'loadHomePastes');
     } catch { /* silent */ }
 }
 
@@ -1076,6 +1108,19 @@ let currentClipsStreamerFilter = 'all';
 const channelVodsPageByUser = Object.create(null);
 const channelClipsPageByUser = Object.create(null);
 const channelClipsOfPageByUser = Object.create(null);
+// Channel VOD filter/sort state
+let currentChannelVodFilter = null;   // numeric managed stream id or null = all
+let currentChannelVodOrder = 'newest'; // newest|oldest|views|peak_viewers
+let currentChannelManagedStreams = []; // populated on channel load, used for filter bar
+// Homepage pagination state
+let _homeRecentOnlinePage = 1;
+let _homeRecentVodsPage = 1;
+let _homeClipsPage = 1;
+let _homePastesPage = 1;
+const HOME_RECENT_ONLINE_PAGE_SIZE = 12;
+const HOME_RECENT_VODS_PAGE_SIZE = 12;
+const HOME_CLIPS_PAGE_SIZE = 12;
+const HOME_PASTES_PAGE_SIZE = 10;
 
 function renderVodsPagination(containerId, page, total, pageSize, setterName, itemLabel = 'videos') {
     const el = document.getElementById(containerId);
@@ -1105,9 +1150,42 @@ function renderVodsPagination(containerId, page, total, pageSize, setterName, it
     `;
 }
 
+// Thin wrapper for homepage section pagination — same visual style as renderVodsPagination.
+function renderHomePagination(containerId, total, page, pageSize, setterName) {
+    renderVodsPagination(containerId, page, total, pageSize, setterName, 'items');
+}
+
 async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) {
     const vodsGrid = document.getElementById('ch-vods-grid');
     if (!vodsGrid) return;
+
+    // Render the VOD filter bar if we have managed streams
+    const filterBar = document.getElementById('ch-vods-filter-bar');
+    if (filterBar && currentChannelManagedStreams.length > 0) {
+        const msOptions = currentChannelManagedStreams.map(ms =>
+            `<option value="${ms.id}" ${currentChannelVodFilter === ms.id ? 'selected' : ''}>${esc(ms.title || ms.slug || ('Stream #' + ms.id))}</option>`
+        ).join('');
+        const orderOptions = [
+            ['newest', 'Newest first'],
+            ['oldest', 'Oldest first'],
+            ['views', 'Most views'],
+            ['peak_viewers', 'Peak viewers'],
+        ].map(([val, label]) =>
+            `<option value="${val}" ${currentChannelVodOrder === val ? 'selected' : ''}>${label}</option>`
+        ).join('');
+        filterBar.innerHTML = `
+            <select class="ch-vods-filter-select" onchange="setChannelVodFilter(this.value ? parseInt(this.value) : null)">
+                <option value="" ${currentChannelVodFilter === null ? 'selected' : ''}>All streams</option>
+                ${msOptions}
+            </select>
+            <select class="ch-vods-filter-select" onchange="setChannelVodOrder(this.value)">
+                ${orderOptions}
+            </select>
+        `;
+        filterBar.style.display = '';
+    } else if (filterBar) {
+        filterBar.style.display = 'none';
+    }
 
     const pageSize = meta.limit || CHANNEL_VODS_PAGE_SIZE;
     const offset = meta.offset || 0;
@@ -1235,7 +1313,14 @@ async function refreshChannelVodsPage(username = currentChannelUsername) {
     const offset = (page - 1) * limit;
     const clipPage = channelClipsPageByUser[username] || 1;
     const clipOffset = (clipPage - 1) * CHANNEL_CLIPS_PAGE_SIZE;
-    const data = await api(`/streams/channel/${username}?vodLimit=${limit}&vodOffset=${offset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${clipOffset}`);
+
+    // Build filter/order query params — persist state across pagination
+    let extraParams = `&vodOrderBy=${encodeURIComponent(currentChannelVodOrder || 'newest')}`;
+    if (currentChannelVodFilter !== null && currentChannelVodFilter !== undefined) {
+        extraParams += `&vodManagedStreamId=${encodeURIComponent(currentChannelVodFilter)}`;
+    }
+
+    const data = await api(`/streams/channel/${username}?vodLimit=${limit}&vodOffset=${offset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${clipOffset}${extraParams}`);
     const liveStreams = (data.streams || []).filter(s => s && s.is_live);
     const totalPages = Math.max(1, Math.ceil((data.vodTotal || 0) / limit));
 
@@ -1249,6 +1334,20 @@ async function refreshChannelVodsPage(username = currentChannelUsername) {
         limit: data.vodLimit || limit,
         offset: data.vodOffset || offset,
     });
+}
+
+function setChannelVodFilter(managedStreamId) {
+    // Accept null (all streams) or a numeric managed stream id
+    currentChannelVodFilter = managedStreamId === null || managedStreamId === '' ? null : (parseInt(managedStreamId, 10) || null);
+    channelVodsPageByUser[currentChannelUsername] = 1; // reset to page 1 when filter changes
+    refreshChannelVodsPage();
+}
+
+function setChannelVodOrder(order) {
+    const ALLOWED = ['newest', 'oldest', 'views', 'peak_viewers'];
+    currentChannelVodOrder = ALLOWED.includes(order) ? order : 'newest';
+    channelVodsPageByUser[currentChannelUsername] = 1; // reset to page 1 when order changes
+    refreshChannelVodsPage();
 }
 
 function setVodsPage(page) {
@@ -1438,15 +1537,28 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         if (isNewChannel) {
             channelVodsPageByUser[username] = 1;
             channelClipsPageByUser[username] = 1;
+            // Reset VOD filter/sort state for fresh channel navigation
+            currentChannelVodFilter = null;
+            currentChannelVodOrder = 'newest';
         }
         const channelVodPage = channelVodsPageByUser[username] || 1;
         const channelClipPage = channelClipsPageByUser[username] || 1;
         const channelVodOffset = (channelVodPage - 1) * CHANNEL_VODS_PAGE_SIZE;
         const channelClipOffset = (channelClipPage - 1) * CHANNEL_CLIPS_PAGE_SIZE;
 
+        // If managedStreamRef is given on fresh navigation, pass it as a filter for the initial VOD load
+        let initialVodExtra = '';
+        if (isNewChannel && managedStreamRef) {
+            if (/^\d+$/.test(String(managedStreamRef))) {
+                initialVodExtra = `&vodManagedStreamId=${encodeURIComponent(managedStreamRef)}`;
+            } else {
+                initialVodExtra = `&vodManagedStreamSlug=${encodeURIComponent(managedStreamRef)}`;
+            }
+        }
+
         // Fetch channel data and media in parallel — player init shouldn't wait for media strip
         const [data, mediaData] = await Promise.all([
-            api(`/streams/channel/${username}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${channelVodOffset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${channelClipOffset}`),
+            api(`/streams/channel/${username}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${channelVodOffset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${channelClipOffset}${initialVodExtra}`),
             api(`/media/channel/${username}`).catch(() => null),
         ]);
         const ch = data.channel;
@@ -1459,6 +1571,14 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         const rsRestream = data.rs_restream || {};
         const restreamLinks = data.restream_links || null;
         const externalViewers = data.external_viewers || null;
+
+        // Populate managed streams for the VOD filter bar and resolve managedStreamRef → filter ID
+        currentChannelManagedStreams = managedStreams;
+        if (isNewChannel && managedStreamRef && managedStreams.length > 0) {
+            const ref = String(managedStreamRef);
+            const resolved = managedStreams.find(ms => String(ms.slug) === ref || String(ms.id) === ref);
+            if (resolved) currentChannelVodFilter = resolved.id;
+        }
 
         // Legacy backward compat: resolve ?stream=sessionId to managed stream
         let preferredStreamId = null;

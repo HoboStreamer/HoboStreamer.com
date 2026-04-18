@@ -1893,8 +1893,18 @@ function setRtmpStatusUI(receiving, connectedAt) {
 async function regenerateStreamKey() {
     if (!confirm('Generate a new stream key? Your current key will stop working immediately. You will need to update it in OBS/Streamlabs/etc.')) return;
     try {
-        const data = await api('/auth/stream-key/regenerate', { method: 'POST' });
-        const newKey = data.stream_key;
+        let newKey;
+        // Use the managed-stream endpoint if the active stream has a managed_stream_id
+        const activeSS = getActiveStreamState();
+        const managedId = activeSS?.streamData?.managed_stream_id;
+        if (managedId) {
+            const data = await api(`/streams/managed/${managedId}/regenerate-key`, { method: 'POST' });
+            newKey = data.stream_key;
+        } else {
+            // Fallback: user-level key (legacy / unmanaged streams)
+            const data = await api('/auth/stream-key/regenerate', { method: 'POST' });
+            newKey = data.stream_key;
+        }
         // Update all visible key displays
         const keyEl = document.getElementById('bc-rtmp-key');
         if (keyEl) keyEl.textContent = newKey;

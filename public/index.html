@@ -472,6 +472,7 @@
                     <p class="muted">No recent streams</p>
                 </div>
             </div>
+            <div id="stream-grid-recent-pagination" class="pastes-pagination" style="display:none"></div>
 
             <!-- Recent VODs -->
             <div class="section-header" id="home-recent-vods-header" style="display:none">
@@ -479,6 +480,7 @@
                 <a href="/vods" onclick="return handleLinkClick(event, '/vods')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
             </div>
             <div class="stream-grid" id="home-recent-vods-grid"></div>
+            <div id="home-recent-vods-pagination" class="pastes-pagination" style="display:none"></div>
 
             <!-- Recent Clips -->
             <div class="section-header" id="home-clips-header" style="display:none">
@@ -486,6 +488,7 @@
                 <a href="/clips" onclick="return handleLinkClick(event, '/clips')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
             </div>
             <div class="stream-grid home-clips-grid" id="home-clips-grid"></div>
+            <div id="home-clips-pagination" class="pastes-pagination" style="display:none"></div>
 
             <!-- Recent Pastes -->
             <div class="section-header" id="home-pastes-header" style="display:none">
@@ -493,6 +496,7 @@
                 <a href="/pastes" onclick="return handleLinkClick(event, '/pastes')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
             </div>
             <div class="home-pastes-list" id="home-pastes-list"></div>
+            <div id="home-pastes-pagination" class="pastes-pagination" style="display:none"></div>
 
             <!-- HoboQuest Leaderboards -->
             <div class="section-header" id="home-quest-header" style="display:none">
@@ -945,6 +949,7 @@
                 <div class="section-header">
                     <h2><i class="fa-solid fa-video"></i> Videos</h2>
                 </div>
+                <div id="ch-vods-filter-bar" class="ch-vods-filter-bar" style="display:none"></div>
                 <div class="stream-grid" id="ch-vods-grid">
                     <p class="muted">No videos yet</p>
                 </div>

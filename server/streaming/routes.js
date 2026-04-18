@@ -245,8 +245,24 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         const isOwner = req.user && req.user.id === channel.user_id;
         const vodLimit = Math.min(Math.max(parseInt(req.query.vodLimit || '12', 10), 1), 48);
         const vodOffset = Math.max(parseInt(req.query.vodOffset || '0', 10), 0);
-        const vodOrderBy = req.query.vodOrderBy || 'newest';
-        const vodManagedStreamId = req.query.vodManagedStreamId ? parseInt(req.query.vodManagedStreamId) : null;
+        const ALLOWED_VOD_ORDERS = new Set(['newest', 'oldest', 'views', 'peak_viewers']);
+        const vodOrderBy = ALLOWED_VOD_ORDERS.has(req.query.vodOrderBy) ? req.query.vodOrderBy : 'newest';
+        // Accept managed stream by numeric ID or slug
+        let vodManagedStreamId = null;
+        if (req.query.vodManagedStreamId) {
+            const rawMsId = req.query.vodManagedStreamId;
+            const numId = parseInt(rawMsId, 10);
+            if (!isNaN(numId) && String(numId) === String(rawMsId)) {
+                vodManagedStreamId = numId;
+            } else {
+                // Try slug resolution
+                const msRow = db.getManagedStreamBySlug(channel.user_id, rawMsId);
+                if (msRow) vodManagedStreamId = msRow.id;
+            }
+        } else if (req.query.vodManagedStreamSlug) {
+            const msRow = db.getManagedStreamBySlug(channel.user_id, req.query.vodManagedStreamSlug);
+            if (msRow) vodManagedStreamId = msRow.id;
+        }
         const clipLimit = Math.min(Math.max(parseInt(req.query.clipLimit || '12', 10), 1), 48);
         const clipOffset = Math.max(parseInt(req.query.clipOffset || '0', 10), 0);
         const vods = db.getVodsByUserFiltered(channel.user_id, { includePrivate: isOwner, managedStreamId: vodManagedStreamId, orderBy: vodOrderBy, limit: vodLimit, offset: vodOffset }) || [];
@@ -385,8 +401,12 @@ router.get('/channel/:username/live', (req, res) => {
         const liveStreams = db.getLiveStreamsByUserId(channel.user_id) || [];
         for (const liveStream of liveStreams) {
             if (liveStream.protocol === 'jsmpeg') {
-                const user = db.getUserById(liveStream.user_id);
-                liveStream.endpoint = jsmpegRelay.getChannelInfo(user.stream_key);
+                // Use managed stream key if linked, else fall back to user key
+                const lsUser = db.getUserById(liveStream.user_id);
+                const lsKey = liveStream.managed_stream_id
+                    ? (db.getManagedStreamById(liveStream.managed_stream_id)?.stream_key || lsUser.stream_key)
+                    : lsUser.stream_key;
+                liveStream.endpoint = jsmpegRelay.getChannelInfo(lsKey);
             } else if (liveStream.protocol === 'webrtc') {
                 liveStream.endpoint = { roomId: `stream-${liveStream.id}` };
             } else if (liveStream.protocol === 'rtmp') {
@@ -703,9 +723,18 @@ router.get('/recently-online', (req, res) => {
         const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
         const streamers = db.getRecentlyOnlineStreamers(limit, offset);
         const total = db.countRecentlyOnlineStreamers();
-        // Parse the JSON aggregate column
+        // Parse the JSON aggregate column; sort managed streams by last_live_at desc
         for (const s of streamers) {
-            try { s.managed_streams = JSON.parse(s.managed_streams_json || '[]'); } catch { s.managed_streams = []; }
+            try {
+                const parsed = JSON.parse(s.managed_streams_json || '[]');
+                // Sort by most recently live first; put null last
+                s.managed_streams = parsed.sort((a, b) => {
+                    if (!a.last_live_at && !b.last_live_at) return 0;
+                    if (!a.last_live_at) return 1;
+                    if (!b.last_live_at) return -1;
+                    return a.last_live_at < b.last_live_at ? 1 : -1;
+                });
+            } catch { s.managed_streams = []; }
             delete s.managed_streams_json;
         }
         res.json({ streamers, total, limit, offset, hasMore: offset + streamers.length < total });
@@ -1033,6 +1062,13 @@ router.delete('/managed/:id', requireAuth, (req, res) => {
         if (!ms) return res.status(404).json({ error: 'Managed stream not found' });
         if (ms.user_id !== req.user.id && req.user.role !== 'admin') {
             return res.status(403).json({ error: 'Not your managed stream' });
+        }
+
+        // Prevent deleting a managed stream that has an active live session
+        const liveSessions = db.getLiveStreamsByUserId(ms.user_id) || [];
+        const isLive = liveSessions.some(s => s.managed_stream_id === msId);
+        if (isLive) {
+            return res.status(409).json({ error: 'Cannot delete a managed stream that is currently live. End the stream first.' });
         }
 
         db.deleteManagedStream(msId, ms.user_id);
