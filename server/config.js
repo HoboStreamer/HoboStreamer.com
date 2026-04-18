@@ -20,11 +20,43 @@ const DEFAULTS = {
 };
 
 function buildConfig(registryValues) {
-    const baseUrl = registryValues.BASE_URL.value || DEFAULTS.BASE_URL;
-    const whipPublicUrl = registryValues.WHIP_PUBLIC_URL.value || registryValues.WEBRTC_PUBLIC_URL.value || registryValues.BASE_URL.value || baseUrl;
-    const webRtcPublicUrl = registryValues.WEBRTC_PUBLIC_URL.value || registryValues.WHIP_PUBLIC_URL.value || registryValues.BASE_URL.value || baseUrl;
-    const jsmpegPublicUrl = registryValues.JSMPEG_PUBLIC_URL.value || registryValues.BASE_URL.value || baseUrl;
-    const mediasoupAnnouncedIp = process.env.MEDIASOUP_ANNOUNCED_IP || registryValues.MEDIASOUP_ANNOUNCED_IP.value || new URL(whipPublicUrl).hostname;
+    const baseUrl = registryValues.BASE_URL.source !== 'default' ? registryValues.BASE_URL.value : DEFAULTS.BASE_URL;
+    const whipPublicUrl = registryValues.WHIP_PUBLIC_URL.source !== 'default'
+        ? registryValues.WHIP_PUBLIC_URL.value
+        : (registryValues.BASE_URL.source !== 'default' ? registryValues.BASE_URL.value : DEFAULTS.WHIP_PUBLIC_URL);
+    const webRtcPublicUrl = registryValues.WEBRTC_PUBLIC_URL.source !== 'default'
+        ? registryValues.WEBRTC_PUBLIC_URL.value
+        : (registryValues.BASE_URL.source !== 'default'
+            ? registryValues.BASE_URL.value
+            : (registryValues.WHIP_PUBLIC_URL.source !== 'default'
+                ? registryValues.WHIP_PUBLIC_URL.value
+                : DEFAULTS.WEBRTC_PUBLIC_URL));
+    const jsmpegPublicUrl = registryValues.JSMPEG_PUBLIC_URL.source !== 'default'
+        ? registryValues.JSMPEG_PUBLIC_URL.value
+        : (registryValues.BASE_URL.source !== 'default' ? registryValues.BASE_URL.value : DEFAULTS.JSMPEG_PUBLIC_URL);
+    const mediasoupAnnouncedIp = process.env.MEDIASOUP_ANNOUNCED_IP
+        || (registryValues.MEDIASOUP_ANNOUNCED_IP.source !== 'default' ? registryValues.MEDIASOUP_ANNOUNCED_IP.value : new URL(baseUrl).hostname);
+
+    const baseUrlSource = registryValues.BASE_URL.source || 'default';
+    const webRtcSource = registryValues.WEBRTC_PUBLIC_URL.source !== 'default'
+        ? registryValues.WEBRTC_PUBLIC_URL.source
+        : (registryValues.BASE_URL.source !== 'default'
+            ? registryValues.BASE_URL.source
+            : (registryValues.WHIP_PUBLIC_URL.source !== 'default'
+                ? registryValues.WHIP_PUBLIC_URL.source
+                : 'default'));
+    const whipSource = registryValues.WHIP_PUBLIC_URL.source !== 'default'
+        ? registryValues.WHIP_PUBLIC_URL.source
+        : registryValues.BASE_URL.source;
+    const mediaSoupSource = registryValues.MEDIASOUP_ANNOUNCED_IP.source !== 'default'
+        ? registryValues.MEDIASOUP_ANNOUNCED_IP.source
+        : 'default';
+
+    console.log('[Config] Effective URLs:');
+    console.log('[Config]  BASE_URL=', baseUrl, `(${baseUrlSource})`);
+    console.log('[Config]  WEBRTC_PUBLIC_URL=', webRtcPublicUrl, `(${webRtcSource})`);
+    console.log('[Config]  WHIP_PUBLIC_URL=', whipPublicUrl, `(${whipSource})`);
+    console.log('[Config]  MEDIASOUP_ANNOUNCED_IP=', mediasoupAnnouncedIp, `(${mediaSoupSource})`);
 
     return {
         port: parseInt(process.env.PORT || '3000', 10),
@@ -123,7 +155,7 @@ function buildConfig(registryValues) {
     };
 }
 
-const initialRegistry = resolveRegistryValues(process.env, {}, URL_DEFINITIONS);
+const initialRegistry = resolveRegistryValues(process.env, {}, {}, URL_DEFINITIONS);
 const config = buildConfig(initialRegistry);
 
 async function refreshRegistry() {
@@ -155,7 +187,7 @@ async function refreshRegistry() {
                 .filter(([, entry]) => entry && entry.source === 'admin' && entry.value != null)
                 .map(([key, entry]) => [key, entry.value])
         );
-        const registry = resolveRegistryValues(process.env, overrides, URL_DEFINITIONS);
+        const registry = resolveRegistryValues(process.env, overrides, {}, URL_DEFINITIONS);
         const updated = buildConfig(registry);
         Object.assign(config, updated);
         console.log('[Config] URL registry overrides loaded from hobo.tools');

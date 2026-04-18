@@ -142,7 +142,6 @@ function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
                 if (eqIdx > 0) {
                     const key = trimmed.slice(0, eqIdx).trim();
                     const val = trimmed.slice(eqIdx + 1).trim();
-                    // Keep certain params as strings, parse integers for others
                     if (key === 'profile-level-id' || key === 'sprop-parameter-sets' || key === 'level-asymmetry-allowed') {
                         params[key] = val;
                     } else {
@@ -172,14 +171,12 @@ function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
         const offered = rtpmaps[pt];
         if (!offered) continue;
 
-        // Skip RTX — handled separately after primary codec
         if (offered.mimeType.toLowerCase().endsWith('/rtx')) continue;
 
         const match = routerCodecs.find(rc => {
             if (rc.mimeType.toLowerCase() !== offered.mimeType.toLowerCase()) return false;
             if (rc.clockRate !== offered.clockRate) return false;
             if (offered.channels && rc.channels && offered.channels !== rc.channels) return false;
-            // H264 profile matching: compare first 4 chars of profile-level-id
             if (rc.mimeType.toLowerCase() === 'video/h264') {
                 const rcProfile = (rc.parameters?.['profile-level-id'] || '').toString().toLowerCase();
                 const offProfile = (offered.parameters?.['profile-level-id'] || '').toString().toLowerCase();
@@ -201,8 +198,7 @@ function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
     for (const pt of payloads) {
         const offered = rtpmaps[pt];
         if (!offered) continue;
-        if (offered.mimeType.toLowerCase() === `${media.type}/rtx` &&
-            offered.parameters?.apt === primaryCodec.payloadType) {
+        if (offered.mimeType.toLowerCase() === `${media.type}/rtx` && offered.parameters?.apt === primaryCodec.payloadType) {
             codecs.push(offered);
             break;
         }
@@ -223,30 +219,47 @@ function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
         }
     }
 
-    // Encodings (SSRC / RID)
-    const ssrcCandidates = Array.isArray(media.ssrcs) ? media.ssrcs : (media.ssrc ? [media.ssrc] : []);
-    const ssrcGroups = media.ssrcGroups || [];
+    function getSsrcEntries() {
+        if (Array.isArray(media.ssrcs)) return media.ssrcs.filter(Boolean);
+        if (media.ssrc) return [media.ssrc];
+        return [];
+    }
+
+    function normalizeSsrc(value) {
+        if (value === undefined || value === null) return null;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : String(value);
+    }
+
+    const ssrcCandidates = getSsrcEntries();
     const mainSsrc = ssrcCandidates.find(s => s.attribute === 'cname')?.id || ssrcCandidates[0]?.id;
+    let encoding = null;
 
     if (mainSsrc) {
-        const encoding = { ssrc: Number(mainSsrc) || mainSsrc };
-        const fidGroup = ssrcGroups.find(g => g.semantics === 'FID' || g.semantics === 'fid');
+        encoding = { ssrc: normalizeSsrc(mainSsrc) };
+        const fidGroup = (media.ssrcGroups || []).find(g => g.semantics === 'FID' || g.semantics === 'fid');
         if (fidGroup && typeof fidGroup.ssrcs === 'string') {
-            const parts = fidGroup.ssrcs.split(' ').map(Number);
-            if (parts.length >= 2 && parts[0] === encoding.ssrc) {
-                encoding.rtx = { ssrc: parts[1] };
+            const parts = fidGroup.ssrcs.split(' ').map(s => s.trim()).filter(Boolean);
+            if (parts.length >= 2 && String(normalizeSsrc(parts[0])) === String(encoding.ssrc)) {
+                encoding.rtx = { ssrc: normalizeSsrc(parts[1]) };
             }
         }
-        encodings.push(encoding);
     } else if (Array.isArray(media.rids) && media.rids.length > 0) {
-        const rid = String(media.rids[0].id || media.rids[0]);
-        encodings.push({ rid });
+        const ridValue = media.rids[0]?.id || media.rids[0];
+        if (ridValue) encoding = { rid: String(ridValue) };
     } else if (media.rid) {
-        encodings.push({ rid: String(media.rid) });
-    } else {
-        // No SSRC/RID in offer — provide a placeholder encoding for mediasoup
-        encodings.push({});
+        encoding = { rid: String(media.rid) };
     }
+
+    if (!encoding) {
+        const error = new Error('No RTP encoding found in SDP media section');
+        error.code = 'invalid_rtp_encoding';
+        error.mediaType = media.type;
+        error.mid = media.mid != null ? String(media.mid) : String(mediaIndex);
+        throw error;
+    }
+
+    encodings.push(encoding);
 
     const rtpParameters = { codecs, headerExtensions, encodings };
     rtpParameters.mid = media.mid != null ? String(media.mid) : String(mediaIndex);
@@ -432,13 +445,22 @@ async function handleWhipPost(req, res) {
         };
         sessions.set(resourceId, session);
 
-        const transportInfo = await webrtcSFU.createTransport(roomId, peerId);
+        let transportInfo;
+        try {
+            transportInfo = await webrtcSFU.createTransport(roomId, peerId);
+        } catch (err) {
+            console.warn('[WHIP] Transport creation failed for stream', streamId, err.message);
+            cleanupSession(resourceId);
+            logWhipStage('transport_creation', streamId, { success: false, error: err.message });
+            return sendWhipError(res, 502, 'transport_creation_failed', 'WHIP transport creation failed');
+        }
+
         session.transportId = transportInfo.id;
         const transport = room.transports.get(`${peerId}-${transportInfo.id}`);
         if (!transport) {
             console.error(`[WHIP] Transport missing after createTransport for stream ${streamId}, transport ${transportInfo.id}`);
             cleanupSession(resourceId);
-            return sendWhipError(res, 500, 'transport_creation_failed', 'WHIP transport creation failed');
+            return sendWhipError(res, 502, 'transport_creation_failed', 'WHIP transport creation failed');
         }
         logWhipStage('transport_creation', streamId, { transportId: transportInfo.id });
 
@@ -460,7 +482,19 @@ async function handleWhipPost(req, res) {
         for (const [mediaIndex, media] of (offerSdp.media || []).entries()) {
             if (media.port === 0) continue;
 
-            const rtpParams = extractRtpParameters(media, routerCaps, mediaIndex);
+            let rtpParams;
+            try {
+                rtpParams = extractRtpParameters(media, routerCaps, mediaIndex);
+            } catch (err) {
+                if (err.code === 'invalid_rtp_encoding') {
+                    console.warn('[WHIP] Invalid RTP encoding in SDP:', err.message);
+                    logWhipStage('rtp_parse', streamId, { kind: media.type, mid: err.mid, error: err.message });
+                    cleanupSession(resourceId);
+                    return sendWhipError(res, 400, 'invalid_rtp_encoding', `Invalid RTP encoding for ${media.type}`);
+                }
+                throw err;
+            }
+
             if (!rtpParams || rtpParams.codecs.length === 0) {
                 console.warn(`[WHIP] No compatible codec for ${media.type} in stream ${streamId}`);
                 logWhipStage('rtp_parse', streamId, { kind: media.type, success: false });
@@ -470,7 +504,7 @@ async function handleWhipPost(req, res) {
 
             let producer;
             try {
-                producer = await room.transports.get(`${peerId}-${transportInfo.id}`).produce({ kind: media.type, rtpParameters: rtpParams });
+                producer = await transport.produce({ kind: media.type, rtpParameters: rtpParams });
             } catch (err) {
                 console.warn(`[WHIP] Producer creation failed for ${media.type} in stream ${streamId}:`, err.message);
                 logWhipStage('producer_creation', streamId, { kind: media.type, success: false, error: err.message });
@@ -497,7 +531,15 @@ async function handleWhipPost(req, res) {
             return sendWhipError(res, 406, 'no_compatible_codecs', 'No compatible codecs — router supports VP8, H264, Opus');
         }
 
-        const answerSdp = buildSdpAnswer(room.transports.get(`${peerId}-${transportInfo.id}`), offerSdp, producersByKind);
+        let answerSdp;
+        try {
+            answerSdp = buildSdpAnswer(transport, offerSdp, producersByKind);
+        } catch (err) {
+            console.error('[WHIP] SDP answer generation failed:', err.message);
+            cleanupSession(resourceId);
+            logWhipStage('answer_generation', streamId, { success: false, error: err.message });
+            return sendWhipError(res, 500, 'answer_generation_failed', 'Failed to generate SDP answer');
+        }
         logWhipStage('answer_generation', streamId, { producers: session.producerIds.length });
 
         transport.on('dtlsstatechange', (state) => {
@@ -610,6 +652,5 @@ module.exports = {
     sessions,
     cleanupSession,
     available: !!sdpTransform,
-    _extractRtpParameters: extractRtpParameters,
     _extractRtpParameters: extractRtpParameters,
 };
