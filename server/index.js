@@ -132,7 +132,7 @@ function getAllowedOrigins() {
     return allowed;
 }
 
-const allowedOrigins = getAllowedOrigins();
+let allowedOrigins = getAllowedOrigins();
 
 // ── Middleware ────────────────────────────────────────────────
 app.set('trust proxy', 2); // Two hops: Cloudflare → nginx → Node
@@ -506,6 +506,7 @@ async function start() {
     console.log('');
 
     await config.refreshRegistry();
+    allowedOrigins = getAllowedOrigins();
 
     // 1. Initialize database
     db.initDb();
