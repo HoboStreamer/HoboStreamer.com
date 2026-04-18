@@ -114,6 +114,21 @@ function getAllowedOrigins() {
                 allowed.add(`${url.protocol}//www.${url.hostname}${url.port ? ':' + url.port : ''}`);
             }
         } catch {}
+
+        // Warn loudly when BASE_URL wasn't set and we're in production
+        if (process.env.NODE_ENV === 'production' && baseOrigin.includes('localhost')) {
+            console.error('[CORS] CRITICAL: config.baseUrl is localhost in production — CORS will reject all browser requests!');
+            console.error('[CORS] CRITICAL: Set BASE_URL in .env or configure it via the hobo.tools admin URL registry.');
+        }
+    }
+
+    // Add the SSO provider origin (hobo.tools) for OAuth callbacks and cross-domain API calls
+    const hoboToolsOrigin = normalizeOrigin(config.hoboToolsUrl || process.env.HOBO_TOOLS_URL);
+    if (hoboToolsOrigin) {
+        allowed.add(hoboToolsOrigin);
+    } else {
+        // Hobo Network default — allows hobo.tools and admin panel to call this service
+        allowed.add('https://hobo.tools');
     }
 
     // hobo.quest game client calls cosmetics API cross-origin
@@ -161,6 +176,7 @@ app.use(cors({
     origin(origin, callback) {
         if (!origin) return callback(null, true);
         if (allowedOrigins.has(origin)) return callback(null, true);
+        console.warn(`[CORS] Rejected origin: "${origin}" | allowed: ${[...allowedOrigins].join(', ')}`);
         return callback(new Error('Origin not allowed by CORS'));
     },
     credentials: true,
@@ -905,6 +921,23 @@ async function start() {
         }
     }, 60000);
     if (typeof maintenanceInterval.unref === 'function') maintenanceInterval.unref();
+
+    // 9. Periodic registry refresh — re-syncs config with hobo.tools every 5 minutes.
+    // This is a safety net: if the startup refresh failed (hobo.tools was temporarily
+    // unreachable), subsequent refreshes will fix CORS, issuer, and other URL config.
+    const registryRefreshInterval = setInterval(async () => {
+        try {
+            await config.refreshRegistry();
+            const freshOrigins = getAllowedOrigins();
+            if ([...freshOrigins].join(',') !== [...allowedOrigins].join(',')) {
+                allowedOrigins = freshOrigins;
+                console.log(`[Config] CORS origins updated after registry refresh: ${[...allowedOrigins].join(', ')}`);
+            }
+        } catch (err) {
+            console.warn('[Config] Periodic registry refresh failed:', err.message);
+        }
+    }, 5 * 60 * 1000);
+    if (typeof registryRefreshInterval.unref === 'function') registryRefreshInterval.unref();
 }
 
 // ── Graceful Shutdown ────────────────────────────────────────
