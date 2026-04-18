@@ -2,16 +2,23 @@
 /* ═══════════════════════════════════════════════════════════════
    broadcast-workspace.js — Managed-stream workspace UI.
 
-   Left sidebar: list of managed stream slots.
-   Right panel:  profile editor (autosave), device picker, Go Live
-                 button, live-session banner, and session history.
+   State model (3 explicit classes):
 
-   State separation:
-     Class A (server):    title, description, category, nsfw, method,
-                          resolution, fps, bitrate, control_config_id
-                          → saved to managed_streams.broadcast_settings via PUT
-     Class B (local):     camera deviceId, mic deviceId → broadcastState.settings
-     Class C (in-memory): live session id, stream state — broadcastState.streams
+   A. Persistent stream profile (server-backed, per managed stream):
+      Structured columns: title, description, category, is_nsfw,
+        protocol, control_config_id
+        Saved via: PUT /streams/managed/:id
+      Broadcast settings blob: bitrate, fps, resolution
+        Saved via: PUT /streams/broadcast-settings
+
+   B. Device-local preferences (this browser only):
+      camera deviceId, mic deviceId
+        Stored in: broadcastState.settings (unchanged)
+        Labeled clearly in UI: "This Device Only"
+
+   C. Live-session transient state (in-memory only):
+      broadcastState.streams Map — active stream state,
+        tracks, connections, timers, live session id
    ═══════════════════════════════════════════════════════════════ */
 
 /* ── Workspace state ─────────────────────────────────────────── */
@@ -19,11 +26,15 @@
 let _wsState = {
     managedStreams: [],
     selectedId: null,       // currently selected managed stream ID
-    selectedMs: null,       // the full managed stream object
-    profile: {},            // broadcast_settings JSON from server
-    dirty: false,
+    selectedMs: null,       // Class A structured fields (from managed_streams table)
+    streamKey: null,        // per-managed-stream key (shown in endpoint tools)
+    profile: {},            // Class A blob: { bitrate, fps, resolution }
+    streamDirty: false,     // dirty: structured fields changed
+    profileDirty: false,    // dirty: blob settings changed
+    savingStream: false,
     savingProfile: false,
-    autosaveTimer: null,
+    streamAutosaveTimer: null,
+    profileAutosaveTimer: null,
     history: [],
 };
 
@@ -55,7 +66,7 @@ function _wsRenderSidebar() {
     if (!list) return;
 
     if (_wsState.managedStreams.length === 0) {
-        list.innerHTML = '<p class="bc-ws-empty-hint muted">No stream slots yet.<br>Click <strong>+</strong> to create one.</p>';
+        list.innerHTML = '<p class="bc-ws-empty-hint muted">No stream slots yet.<br>Click <strong>+</strong> to create your first one.</p>';
         return;
     }
 
@@ -94,32 +105,61 @@ function _wsIsManagedStreamLive(managedStreamId) {
 // Public – called from sidebar onclick
 async function wsSelectStream(managedStreamId) {
     if (_wsState.selectedId === managedStreamId) return;
-    // Flush pending autosave before switching
-    if (_wsState.dirty && _wsState.autosaveTimer) {
-        clearTimeout(_wsState.autosaveTimer);
-        _wsState.autosaveTimer = null;
-        await _wsSaveProfile();
-    }
+    await _wsFlushPendingSaves();
     await _wsSelectStream(managedStreamId);
+}
+
+async function _wsFlushPendingSaves() {
+    if (_wsState.streamAutosaveTimer) {
+        clearTimeout(_wsState.streamAutosaveTimer);
+        _wsState.streamAutosaveTimer = null;
+        if (_wsState.streamDirty) await _wsSaveStreamFields();
+    }
+    if (_wsState.profileAutosaveTimer) {
+        clearTimeout(_wsState.profileAutosaveTimer);
+        _wsState.profileAutosaveTimer = null;
+        if (_wsState.profileDirty) await _wsSaveProfile();
+    }
 }
 
 async function _wsSelectStream(managedStreamId) {
     _wsState.selectedId = managedStreamId;
     _wsState.selectedMs = _wsState.managedStreams.find(ms => ms.id === managedStreamId) || null;
+    _wsState.streamDirty = false;
+    _wsState.profileDirty = false;
     _wsRenderSidebar();
+
+    // Show loading state while fetching profile
+    const panel = document.getElementById('bc-ws-panel');
+    const empty = document.getElementById('bc-ws-empty');
+    if (empty) empty.style.display = 'none';
+    if (panel) {
+        panel.style.display = '';
+        panel.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted)"><i class="fa-solid fa-spinner fa-spin"></i> Loading stream profile\u2026</div>';
+    }
+
     await _wsLoadProfile(managedStreamId);
     _wsRenderPanel();
     _wsLoadHistory(managedStreamId);
 }
 
+// Single round-trip: structured fields + broadcast settings blob
 async function _wsLoadProfile(managedStreamId) {
     try {
-        const data = await api(`/streams/broadcast-settings?managed_stream_id=${managedStreamId}`);
-        _wsState.profile = data.settings || {};
+        const data = await api(`/streams/managed/${managedStreamId}/profile`);
+        // Class A structured: merge into selectedMs
+        if (data.managed_stream) {
+            _wsState.selectedMs = { ..._wsState.selectedMs, ...data.managed_stream };
+        }
+        _wsState.streamKey = data.stream_key || null;
+        // Class A blob: bitrate/fps/resolution only
+        _wsState.profile = data.broadcast_settings || {};
     } catch {
         _wsState.profile = {};
+        _wsState.streamKey = _wsState.selectedMs?.stream_key || null;
     }
-    _wsState.dirty = false;
+    _wsState.streamDirty = false;
+    _wsState.profileDirty = false;
 }
 
 /* ── Panel rendering ─────────────────────────────────────────── */
@@ -139,27 +179,35 @@ function _wsRenderPanel() {
     const ms = _wsState.selectedMs;
     if (!ms) { _wsShowEmpty(); return; }
 
-    const p = _wsState.profile;
     if (empty) empty.style.display = 'none';
     panel.style.display = '';
 
+    const p = _wsState.profile;
     const isLive = _wsIsManagedStreamLive(ms.id);
-    const method = p.method || ms.protocol || 'webrtc';
+    const method = ms.protocol || 'webrtc';
+    const streamKey = _wsState.streamKey || '';
 
-    // Find active session ID for this managed stream
+    // Class C: find active session
     let liveSessionId = null;
+    let liveSessionData = null;
     if (broadcastState?.streams) {
         for (const [sid, ss] of broadcastState.streams) {
-            if (ss.streamData?.managed_stream_id === ms.id) { liveSessionId = sid; break; }
+            if (ss.streamData?.managed_stream_id === ms.id) {
+                liveSessionId = sid;
+                liveSessionData = ss;
+                break;
+            }
         }
     }
 
     panel.innerHTML = `
-        <!-- ── Header ── -->
+        <!-- ── Panel header ── -->
         <div class="bc-ws-panel-hd">
             <div class="bc-ws-panel-title">
-                <h2>${esc(ms.title || 'Untitled')}</h2>
-                ${ms.slug ? `<span class="bc-ws-slug muted">hobostreamer.com/${esc(ms.slug)}</span>` : ''}
+                <h2>${esc(ms.title || 'Untitled Stream')}</h2>
+                ${ms.slug
+                    ? `<span class="bc-ws-slug muted"><i class="fa-solid fa-link" style="font-size:0.7rem"></i> hobostreamer.com/${esc(ms.slug)}</span>`
+                    : '<span class="bc-ws-slug muted">No URL slug set</span>'}
             </div>
             ${isLive ? '<span class="bc-live-badge bc-ws-live-badge-hd"><i class="fa-solid fa-circle"></i> LIVE</span>' : ''}
         </div>
@@ -169,14 +217,17 @@ function _wsRenderPanel() {
             <div class="bc-ws-live-banner">
                 <div class="bc-ws-live-banner-left">
                     <span class="bc-live-badge"><i class="fa-solid fa-circle"></i> LIVE</span>
-                    <span class="bc-ws-uptime-wrap">
+                    <div class="bc-ws-uptime-wrap">
                         <i class="fa-solid fa-clock"></i>
-                        <span id="bc-ws-uptime">${liveSessionId ? _wsFormatUptime(getStreamState(liveSessionId)?.startedAt) : ''}</span>
-                    </span>
+                        <span id="bc-ws-uptime">${liveSessionId ? _wsFormatUptime(liveSessionData?.startedAt) : ''}</span>
+                    </div>
+                    ${liveSessionData?.streamData
+                        ? `<span class="bc-ws-live-proto-badge">${esc((liveSessionData.streamData.protocol || '').toUpperCase())}</span>`
+                        : ''}
                 </div>
                 <div class="bc-ws-live-banner-right">
-                    <button class="btn btn-small" onclick="openViewerPreview()" title="Open viewer preview in new tab">
-                        <i class="fa-solid fa-eye"></i> Preview
+                    <button class="btn btn-small" onclick="openViewerPreview()" title="Open viewer page">
+                        <i class="fa-solid fa-eye"></i> View
                     </button>
                     <button class="btn btn-small btn-danger" onclick="stopBroadcast()">
                         <i class="fa-solid fa-stop"></i> End Stream
@@ -185,47 +236,49 @@ function _wsRenderPanel() {
             </div>
         </div>
 
-        <!-- ── Profile form ── -->
+        <!-- ── Stream Profile (Class A structured fields) ── -->
         <div class="bc-ws-profile-section">
             <div class="bc-ws-profile-hd">
                 <h3><i class="fa-solid fa-sliders"></i> Stream Profile</h3>
                 <span id="bc-ws-save-status" class="bc-ws-save-status"></span>
             </div>
+            <p class="bc-ws-profile-note">
+                <i class="fa-solid fa-cloud"></i> Saved to your stream slot &mdash; pre-fills your session when you go live.
+            </p>
 
             <div class="form-group">
                 <label>Default Title</label>
                 <input type="text" id="bc-title" class="form-input"
-                    value="${esc(p.title !== undefined ? p.title : (ms.title || ''))}"
+                    value="${esc(ms.title || '')}"
                     placeholder="What are you streaming?" maxlength="200"
-                    oninput="_wsFieldChanged('title', this.value)">
-                <span class="bc-field-hint">Pre-fills the title when you go live on this slot</span>
+                    oninput="_wsStreamFieldChanged('title', this.value)">
             </div>
 
             <div class="form-group">
                 <label>Description</label>
                 <textarea id="bc-description" class="form-input" rows="2"
-                    placeholder="Optional description..." maxlength="500"
-                    oninput="_wsFieldChanged('description', this.value)">${esc(p.description || '')}</textarea>
+                    placeholder="Optional description\u2026" maxlength="500"
+                    oninput="_wsStreamFieldChanged('description', this.value)">${esc(ms.description || '')}</textarea>
             </div>
 
             <div class="bc-ws-row">
                 <div class="form-group" style="flex:2">
                     <label>Category</label>
-                    <select id="bc-category" class="form-input" onchange="_wsFieldChanged('category', this.value)">
-                        ${_wsRenderCategoryOptions(p.category || 'irl')}
+                    <select id="bc-category" class="form-input" onchange="_wsStreamFieldChanged('category', this.value)">
+                        ${_wsRenderCategoryOptions(ms.category || 'irl')}
                     </select>
                 </div>
-                <div class="form-group" style="flex:1;justify-content:flex-end">
+                <div class="form-group" style="flex:1">
                     <label>&nbsp;</label>
                     <label class="bc-toggle-label">
-                        <input type="checkbox" id="bc-nsfw" ${p.nsfw ? 'checked' : ''}
-                            onchange="_wsFieldChanged('nsfw', this.checked)">
+                        <input type="checkbox" id="bc-nsfw" ${ms.is_nsfw ? 'checked' : ''}
+                            onchange="_wsStreamFieldChanged('is_nsfw', this.checked)">
                         <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger)"></i> NSFW
                     </label>
                 </div>
             </div>
 
-            <!-- Streaming method -->
+            <!-- Streaming method (sets protocol column on managed stream) -->
             <div class="form-group">
                 <label>Streaming Method</label>
                 <div class="bc-method-picker bc-method-picker-sm">
@@ -239,20 +292,20 @@ function _wsRenderPanel() {
                 </div>
             </div>
 
-            <!-- Quality defaults (collapsible) -->
+            <!-- Video quality defaults (Class A blob) -->
             <details class="bc-ws-quality">
                 <summary><i class="fa-solid fa-film"></i> Video Quality Defaults</summary>
                 <div class="bc-ws-quality-inner bc-ws-row">
                     <div class="form-group" style="margin:0;flex:1">
                         <label style="font-size:0.82rem">Resolution</label>
-                        <select class="form-input form-input-sm" onchange="_wsFieldChanged('resolution', this.value)">
+                        <select class="form-input form-input-sm" onchange="_wsProfileFieldChanged('resolution', this.value)">
                             ${['360', '480', '720', '1080', '1440'].map(r =>
                                 `<option value="${r}"${(p.resolution || '720') === r ? ' selected' : ''}>${r}p</option>`).join('')}
                         </select>
                     </div>
                     <div class="form-group" style="margin:0;flex:1">
                         <label style="font-size:0.82rem">FPS</label>
-                        <select class="form-input form-input-sm" onchange="_wsFieldChanged('fps', this.value)">
+                        <select class="form-input form-input-sm" onchange="_wsProfileFieldChanged('fps', this.value)">
                             ${['24', '30', '60'].map(f =>
                                 `<option value="${f}"${(p.fps || '30') === f ? ' selected' : ''}>${f}</option>`).join('')}
                         </select>
@@ -261,51 +314,74 @@ function _wsRenderPanel() {
                         <label style="font-size:0.82rem">Bitrate (kbps)</label>
                         <input type="number" class="form-input form-input-sm"
                             value="${p.bitrate || 2500}" min="500" max="10000" step="100"
-                            oninput="_wsFieldChanged('bitrate', parseInt(this.value) || 2500)">
+                            oninput="_wsProfileFieldChanged('bitrate', parseInt(this.value) || 2500)">
                     </div>
                 </div>
             </details>
 
-            <!-- Control config -->
+            <!-- Control profile (Class A structured) -->
             <div class="form-group">
                 <label><i class="fa-solid fa-gamepad"></i> Control Profile</label>
                 <select id="bc-control-config" class="form-input form-input-sm"
-                    onchange="_wsFieldChanged('control_config_id', parseInt(this.value) || null)">
+                    onchange="_wsStreamFieldChanged('control_config_id', parseInt(this.value) || null)">
                     <option value="">None (no controls)</option>
                 </select>
             </div>
 
-            <!-- Hidden elements required by createNewStream() and device selection helpers -->
+            <!-- Hidden element required by createNewStream() -->
             <select id="bc-managed-stream" style="display:none">
                 <option value="${ms.id}" selected>${esc(ms.title || '')}</option>
             </select>
-            <input type="checkbox" id="bc-screen-mic-enabled" checked style="display:none">
-            <input type="checkbox" id="bc-screen-cam-enabled" style="display:none">
-            <input type="checkbox" id="bc-screenPreferCurrentTab-create" style="display:none">
-            <select id="bc-screenSystemAudio-create" style="display:none">
-                <option value="include" selected>Include</option><option value="auto">Auto</option><option value="exclude">Exclude</option>
-            </select>
-            <select id="bc-screenSelfBrowser-create" style="display:none">
-                <option value="exclude" selected>Exclude</option><option value="include">Include</option>
-            </select>
-            <select id="bc-screenSurfaceSwitching-create" style="display:none">
-                <option value="include" selected>Allow</option><option value="exclude">Disallow</option>
-            </select>
-            <select id="bc-screen-audio" style="display:none"><option value="default">Default</option></select>
-            <select id="bc-screen-camera" style="display:none"><option value="default">Default</option></select>
         </div>
 
-        <!-- ── Go Live section (hidden when already live) ── -->
+        <!-- ── Endpoint & Key Tools ── -->
+        <div class="bc-ws-endpoint-section">
+            <div class="bc-ws-endpoint-hd">
+                <h3><i class="fa-solid fa-plug"></i> Stream Endpoint &amp; Key</h3>
+            </div>
+            <p class="bc-ws-endpoint-note">
+                This key belongs to <strong>${esc(ms.title || 'this stream slot')}</strong> &mdash;
+                each slot has its own stable, reusable key.
+                Regenerating will immediately invalidate the current key.
+            </p>
+            <div class="bc-ws-key-row">
+                <div class="bc-ws-key-display">
+                    <input type="password" id="bc-ws-stream-key" class="form-input form-input-sm bc-ws-key-input"
+                        value="${esc(streamKey)}" readonly autocomplete="off" spellcheck="false"
+                        aria-label="Stream key">
+                    <button class="btn btn-small btn-ghost bc-ws-key-toggle"
+                        onclick="_wsToggleKeyVisibility()" title="Show / hide key">
+                        <i class="fa-solid fa-eye" id="bc-ws-key-eye"></i>
+                    </button>
+                    <button class="btn btn-small btn-ghost"
+                        onclick="_wsCopyStreamKey()" title="Copy stream key">
+                        <i class="fa-solid fa-copy"></i>
+                    </button>
+                </div>
+                <button class="btn btn-small btn-outline bc-ws-regen-btn"
+                    onclick="_wsRegenerateKey(${ms.id})">
+                    <i class="fa-solid fa-arrows-rotate"></i> Regen Key
+                </button>
+            </div>
+            <div id="bc-ws-method-endpoint">${_wsRenderMethodEndpoint(method, streamKey)}</div>
+        </div>
+
+        <!-- ── Go Live section (hidden when live) ── -->
         <div class="bc-ws-golive-section" id="bc-ws-golive-section"${liveSessionId ? ' style="display:none"' : ''}>
 
-            <!-- Device picker (WebRTC browser only) -->
+            <!-- Class B: Device-local preferences (this browser only) -->
             <div id="bc-ws-device-wrap"${method !== 'webrtc' ? ' style="display:none"' : ''}>
+                <div class="bc-ws-device-local-label">
+                    <i class="fa-solid fa-laptop"></i>
+                    <strong>This Device Only</strong>
+                    <span class="muted">&mdash; camera &amp; mic selection is not saved to your stream profile</span>
+                </div>
                 <div id="bc-perm-request" class="bc-perm-request">
                     <p class="bc-perm-hint"><i class="fa-solid fa-shield-halved"></i>
-                        Browser needs camera & mic access to stream.</p>
+                        Browser needs camera &amp; mic access to stream.</p>
                     <button id="bc-perm-btn" class="btn btn-outline" type="button"
                         onclick="requestMediaPermissions()">
-                        <i class="fa-solid fa-video"></i> Allow Camera & Mic
+                        <i class="fa-solid fa-video"></i> Allow Camera &amp; Mic
                     </button>
                     <p id="bc-perm-debug" style="display:none;font-size:0.75rem;color:var(--text-secondary);margin-top:6px"></p>
                 </div>
@@ -327,13 +403,23 @@ function _wsRenderPanel() {
                 </div>
             </div>
 
+            <!-- Screen-share hidden defaults (set by broadcast settings if needed) -->
+            <input type="checkbox" id="bc-screen-mic-enabled" checked style="display:none">
+            <input type="checkbox" id="bc-screen-cam-enabled" style="display:none">
+            <input type="checkbox" id="bc-screenPreferCurrentTab-create" style="display:none">
+            <select id="bc-screenSystemAudio-create" style="display:none"><option value="include" selected>Include</option><option value="auto">Auto</option><option value="exclude">Exclude</option></select>
+            <select id="bc-screenSelfBrowser-create" style="display:none"><option value="exclude" selected>Exclude</option><option value="include">Include</option></select>
+            <select id="bc-screenSurfaceSwitching-create" style="display:none"><option value="include" selected>Allow</option><option value="exclude">Disallow</option></select>
+            <select id="bc-screen-audio" style="display:none"><option value="default">Default</option></select>
+            <select id="bc-screen-camera" style="display:none"><option value="default">Default</option></select>
+
             <button class="btn btn-primary btn-lg bc-ws-golive-btn"
                 onclick="goLiveFromWorkspace()" id="bc-ws-golive-btn">
                 <i class="fa-solid fa-tower-broadcast"></i> Go Live
             </button>
-            <p class="bc-create-reassurance" style="margin-top:6px">
+            <p class="bc-create-reassurance" style="margin-top:6px;font-size:0.82rem">
                 <i class="fa-solid fa-circle-info"></i>
-                Your stream will be live at <strong>hobostreamer.com/${esc(ms.slug || (currentUser?.username || 'you'))}</strong>
+                Live at <strong>hobostreamer.com/${esc(ms.slug || (typeof currentUser !== 'undefined' && currentUser?.username) || 'your-channel')}</strong>
             </p>
         </div>
 
@@ -341,17 +427,17 @@ function _wsRenderPanel() {
         <div class="bc-ws-history-section" id="bc-ws-history-section">
             <h3><i class="fa-solid fa-clock-rotate-left"></i> Recent Sessions</h3>
             <div id="bc-ws-history-list" class="bc-ws-history-list">
-                <p class="muted" style="padding:12px 0"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</p>
+                <p class="muted" style="padding:12px 0"><i class="fa-solid fa-spinner fa-spin"></i> Loading\u2026</p>
             </div>
         </div>
     `;
 
-    // Async post-render: populate control configs and devices
-    _wsPopulateControlConfigs(p.control_config_id);
+    // Async post-render: populate control configs and check device permissions
+    _wsPopulateControlConfigs(ms.control_config_id);
     _wsInitDevicePicker(method);
 }
 
-/* ── Category options helper ─────────────────────────────────── */
+/* ── Category options ────────────────────────────────────────── */
 
 function _wsRenderCategoryOptions(selected) {
     const cats = [
@@ -364,7 +450,67 @@ function _wsRenderCategoryOptions(selected) {
     ).join('');
 }
 
-/* ── Device picker init ──────────────────────────────────────── */
+/* ── Method-specific endpoint info ───────────────────────────── */
+
+function _wsRenderMethodEndpoint(method, streamKey) {
+    if (!streamKey) return '';
+
+    if (method === 'rtmp') {
+        const rtmpServer = 'rtmp://hobostreamer.com/live';
+        return `
+        <div class="bc-ws-method-info">
+            <div class="bc-ws-method-info-row">
+                <span class="bc-ws-method-info-label">RTMP Server</span>
+                <div class="bc-ws-method-info-val">
+                    <code>${esc(rtmpServer)}</code>
+                    <button class="btn btn-xs btn-ghost" onclick="_wsCopyText('${esc(rtmpServer)}')" title="Copy">
+                        <i class="fa-solid fa-copy"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="bc-ws-method-info-row">
+                <span class="bc-ws-method-info-label">Stream Key</span>
+                <span class="bc-ws-method-info-note">Use the key shown above</span>
+            </div>
+            <p class="bc-ws-method-info-hint">OBS &rarr; Settings &rarr; Stream &rarr; Service: Custom &rarr; paste server &amp; key above.</p>
+        </div>`;
+    }
+
+    if (method === 'webrtc') {
+        const whipUrl = `https://whip.hobostreamer.com/whip/${streamKey}`;
+        return `
+        <div class="bc-ws-method-info">
+            <div class="bc-ws-method-info-row">
+                <span class="bc-ws-method-info-label">Browser</span>
+                <span class="bc-ws-method-info-note">Use the Go Live button below &mdash; no extra config needed.</span>
+            </div>
+            <div class="bc-ws-method-info-row">
+                <span class="bc-ws-method-info-label">WHIP (OBS)</span>
+                <div class="bc-ws-method-info-val">
+                    <code>${esc(whipUrl)}</code>
+                    <button class="btn btn-xs btn-ghost" onclick="_wsCopyText('${esc(whipUrl)}')" title="Copy WHIP URL">
+                        <i class="fa-solid fa-copy"></i>
+                    </button>
+                </div>
+            </div>
+            <p class="bc-ws-method-info-hint">OBS &rarr; Settings &rarr; Stream &rarr; Service: WHIP &rarr; paste URL above. No separate key needed for WHIP.</p>
+        </div>`;
+    }
+
+    if (method === 'jsmpeg') {
+        return `
+        <div class="bc-ws-method-info">
+            <p class="bc-ws-method-info-hint">
+                jsmpeg streams use dynamic ports assigned per session. Start the stream first, then
+                copy the full FFmpeg command from the live control panel.
+            </p>
+        </div>`;
+    }
+
+    return '';
+}
+
+/* ── Device picker init (Class B) ────────────────────────────── */
 
 async function _wsInitDevicePicker(method) {
     const wrap = document.getElementById('bc-ws-device-wrap');
@@ -380,7 +526,7 @@ async function _wsInitDevicePicker(method) {
         if (hasLabels) {
             if (permReq) permReq.style.display = 'none';
             if (devSelects) devSelects.style.display = '';
-            _populateCreateDeviceDropdowns(devices);
+            await populateCreateFormDevices();
         } else {
             if (permReq) permReq.style.display = '';
             if (devSelects) devSelects.style.display = 'none';
@@ -402,40 +548,142 @@ async function _wsPopulateControlConfigs(selectedId) {
         configs.forEach(cfg => {
             const opt = document.createElement('option');
             opt.value = cfg.id;
-            opt.textContent = `${esc(cfg.name)} (${cfg.button_count || 0} buttons)`;
+            opt.textContent = `${cfg.name} (${cfg.button_count || 0} buttons)`;
             if (cfg.id === selectedId) opt.selected = true;
             select.appendChild(opt);
         });
     } catch { /* leave as None */ }
 }
 
-/* ── Profile autosave ────────────────────────────────────────── */
+/* ── Stream key tools ────────────────────────────────────────── */
 
-function _wsFieldChanged(key, value) {
-    _wsState.profile[key] = value;
-    _wsState.dirty = true;
-    _wsShowSaveStatus('Unsaved changes');
-    _wsScheduleAutosave();
+function _wsToggleKeyVisibility() {
+    const input = document.getElementById('bc-ws-stream-key');
+    const eye = document.getElementById('bc-ws-key-eye');
+    if (!input) return;
+    input.type = input.type === 'password' ? 'text' : 'password';
+    if (eye) {
+        eye.classList.toggle('fa-eye', input.type === 'password');
+        eye.classList.toggle('fa-eye-slash', input.type === 'text');
+    }
+}
+
+function _wsCopyStreamKey() {
+    const key = _wsState.streamKey;
+    if (!key) { toast('No stream key available', 'error'); return; }
+    _wsCopyText(key, 'Stream key copied');
+}
+
+function _wsCopyText(text, message) {
+    navigator.clipboard.writeText(text).then(() => {
+        toast(message || 'Copied!', 'success');
+    }).catch(() => {
+        prompt('Copy the value manually:', text);
+    });
+}
+
+async function _wsRegenerateKey(managedStreamId) {
+    if (!confirm('Regenerate stream key?\n\nThis will immediately invalidate the current key. Any active connections using the old key will be disconnected.')) return;
+    try {
+        const data = await api(`/streams/managed/${managedStreamId}/regenerate-key`, { method: 'POST' });
+        _wsState.streamKey = data.stream_key;
+        const input = document.getElementById('bc-ws-stream-key');
+        if (input) input.value = data.stream_key;
+        // Refresh method endpoint (WHIP URL contains the key)
+        const methodEl = document.getElementById('bc-ws-method-endpoint');
+        if (methodEl && _wsState.selectedMs) {
+            methodEl.innerHTML = _wsRenderMethodEndpoint(_wsState.selectedMs.protocol || 'webrtc', data.stream_key);
+        }
+        toast('Stream key regenerated', 'success');
+    } catch (err) {
+        toast(err?.message || 'Failed to regenerate key', 'error');
+    }
+}
+
+/* ── Class A: Structured stream field save ───────────────────── */
+// title, description, category, is_nsfw, protocol, control_config_id
+// → PUT /streams/managed/:id
+
+function _wsStreamFieldChanged(key, value) {
+    if (!_wsState.selectedMs) return;
+    if (key === 'is_nsfw') value = value ? 1 : 0;
+    _wsState.selectedMs[key] = value;
+    _wsState.streamDirty = true;
+    _wsShowSaveStatus('Unsaved\u2026');
+    _wsScheduleStreamAutosave();
 }
 
 function _wsSelectMethod(method) {
-    _wsFieldChanged('method', method);
+    _wsStreamFieldChanged('protocol', method);
     document.querySelectorAll('[data-wsmethod]').forEach(el =>
         el.classList.toggle('selected', el.dataset.wsmethod === method)
     );
     const wrap = document.getElementById('bc-ws-device-wrap');
     if (wrap) wrap.style.display = method !== 'webrtc' ? 'none' : '';
+    const methodEl = document.getElementById('bc-ws-method-endpoint');
+    if (methodEl) methodEl.innerHTML = _wsRenderMethodEndpoint(method, _wsState.streamKey || '');
     broadcastState.selectedMethod = method;
+    _wsInitDevicePicker(method);
 }
 
-function _wsScheduleAutosave() {
-    if (_wsState.autosaveTimer) clearTimeout(_wsState.autosaveTimer);
-    _wsState.autosaveTimer = setTimeout(_wsSaveProfile, 1000);
+function _wsScheduleStreamAutosave() {
+    if (_wsState.streamAutosaveTimer) clearTimeout(_wsState.streamAutosaveTimer);
+    _wsState.streamAutosaveTimer = setTimeout(_wsSaveStreamFields, 1200);
+}
+
+async function _wsSaveStreamFields() {
+    _wsState.streamAutosaveTimer = null;
+    if (!_wsState.selectedId || _wsState.savingStream || !_wsState.streamDirty) return;
+    _wsState.savingStream = true;
+    _wsShowSaveStatus('Saving\u2026');
+    const ms = _wsState.selectedMs;
+    try {
+        const updated = await api(`/streams/managed/${_wsState.selectedId}`, {
+            method: 'PUT',
+            body: {
+                title: ms.title,
+                description: ms.description,
+                category: ms.category,
+                is_nsfw: ms.is_nsfw ? 1 : 0,
+                protocol: ms.protocol,
+                control_config_id: ms.control_config_id || null,
+            },
+        });
+        if (updated.managed_stream) {
+            _wsState.selectedMs = { ..._wsState.selectedMs, ...updated.managed_stream };
+            const idx = _wsState.managedStreams.findIndex(m => m.id === _wsState.selectedId);
+            if (idx !== -1) _wsState.managedStreams[idx] = { ..._wsState.managedStreams[idx], ...updated.managed_stream };
+            _wsRenderSidebar();
+        }
+        _wsState.streamDirty = false;
+        _wsShowSaveStatus('Saved \u2713');
+        setTimeout(() => { if (!_wsState.streamDirty && !_wsState.profileDirty) _wsShowSaveStatus(''); }, 2000);
+    } catch {
+        _wsShowSaveStatus('Save failed');
+    } finally {
+        _wsState.savingStream = false;
+    }
+}
+
+/* ── Class A: Broadcast settings blob save ───────────────────── */
+// bitrate, fps, resolution
+// → PUT /streams/broadcast-settings
+
+function _wsProfileFieldChanged(key, value) {
+    _wsState.profile[key] = value;
+    _wsState.profileDirty = true;
+    _wsShowSaveStatus('Unsaved\u2026');
+    _wsScheduleProfileAutosave();
+}
+
+function _wsScheduleProfileAutosave() {
+    if (_wsState.profileAutosaveTimer) clearTimeout(_wsState.profileAutosaveTimer);
+    _wsState.profileAutosaveTimer = setTimeout(_wsSaveProfile, 1200);
 }
 
 async function _wsSaveProfile() {
-    _wsState.autosaveTimer = null;
-    if (!_wsState.selectedId || _wsState.savingProfile) return;
+    _wsState.profileAutosaveTimer = null;
+    if (!_wsState.selectedId || _wsState.savingProfile || !_wsState.profileDirty) return;
     _wsState.savingProfile = true;
     _wsShowSaveStatus('Saving\u2026');
     try {
@@ -443,9 +691,9 @@ async function _wsSaveProfile() {
             method: 'PUT',
             body: { managed_stream_id: _wsState.selectedId, settings: _wsState.profile },
         });
-        _wsState.dirty = false;
+        _wsState.profileDirty = false;
         _wsShowSaveStatus('Saved \u2713');
-        setTimeout(() => { if (!_wsState.dirty) _wsShowSaveStatus(''); }, 2000);
+        setTimeout(() => { if (!_wsState.streamDirty && !_wsState.profileDirty) _wsShowSaveStatus(''); }, 2000);
     } catch {
         _wsShowSaveStatus('Save failed');
     } finally {
@@ -465,31 +713,22 @@ async function goLiveFromWorkspace() {
         toast('Select a stream slot first', 'error');
         return;
     }
-
-    // Flush any pending autosave first
-    if (_wsState.dirty) {
-        if (_wsState.autosaveTimer) {
-            clearTimeout(_wsState.autosaveTimer);
-            _wsState.autosaveTimer = null;
-        }
-        await _wsSaveProfile();
-    }
+    await _wsFlushPendingSaves();
 
     const p = _wsState.profile;
     const ms = _wsState.selectedMs;
 
-    // Apply quality settings to broadcastState before createNewStream reads them
+    // Apply quality defaults from saved profile into broadcastState
     if (p.resolution) broadcastState.settings.broadcastRes = String(p.resolution);
     if (p.fps) broadcastState.settings.broadcastFps = String(p.fps);
     if (p.bitrate) broadcastState.settings.broadcastBps = String(p.bitrate);
 
-    // Set method state (broadcastState fields used by createNewStream)
-    const method = p.method || ms.protocol || 'webrtc';
+    const method = ms.protocol || 'webrtc';
     broadcastState.selectedMethod = method;
     broadcastState.selectedWebRTCSub = 'browser';
     broadcastState.selectedBrowserSource = 'camera';
 
-    // Sync camera/audio from workspace device dropdowns
+    // Class B: sync local device selection
     const camSel = document.getElementById('bc-create-camera');
     const audSel = document.getElementById('bc-create-audio');
     if (camSel && camSel.value) _syncCameraSelectionUI(camSel.value, { persist: false });
@@ -500,19 +739,16 @@ async function goLiveFromWorkspace() {
     await createNewStream();
 }
 
-/* ── Live status hooks (called from broadcast.js) ────────────── */
+/* ── Live status refresh (called from broadcast.js) ─────────── */
 
-/** Call after any stream goes live or ends to refresh workspace badges */
 function updateWorkspaceLiveStatus() {
     _wsRenderSidebar();
-    if (_wsState.selectedId) {
-        // Refresh the live banner and Go Live section visibility
-        const liveSessionId = _wsGetLiveSessionId(_wsState.selectedId);
-        const banner = document.getElementById('bc-ws-live-banner');
-        const goliveSection = document.getElementById('bc-ws-golive-section');
-        if (banner) banner.style.display = liveSessionId ? '' : 'none';
-        if (goliveSection) goliveSection.style.display = liveSessionId ? 'none' : '';
-    }
+    if (!_wsState.selectedId) return;
+    const liveSessionId = _wsGetLiveSessionId(_wsState.selectedId);
+    const banner = document.getElementById('bc-ws-live-banner');
+    const goliveSection = document.getElementById('bc-ws-golive-section');
+    if (banner) banner.style.display = liveSessionId ? '' : 'none';
+    if (goliveSection) goliveSection.style.display = liveSessionId ? 'none' : '';
 }
 
 function _wsGetLiveSessionId(managedStreamId) {
@@ -523,7 +759,7 @@ function _wsGetLiveSessionId(managedStreamId) {
     return null;
 }
 
-/* ── Uptime helper ───────────────────────────────────────────── */
+/* ── Uptime ──────────────────────────────────────────────────── */
 
 function _wsFormatUptime(startedAt) {
     if (!startedAt) return '0:00';
@@ -539,17 +775,15 @@ function _wsFormatUptime(startedAt) {
 /* ── Session history ─────────────────────────────────────────── */
 
 async function _wsLoadHistory(managedStreamId) {
-    const section = document.getElementById('bc-ws-history-section');
     const list = document.getElementById('bc-ws-history-list');
     if (!list) return;
-    if (section) section.style.display = '';
 
     try {
         const data = await api(`/streams/managed/${managedStreamId}/history`);
         _wsState.history = data.sessions || [];
         _wsRenderHistory(_wsState.history);
     } catch {
-        list.innerHTML = '<p class="muted">Could not load session history</p>';
+        list.innerHTML = '<p class="muted">Could not load session history.</p>';
     }
 }
 
@@ -558,7 +792,7 @@ function _wsRenderHistory(sessions) {
     if (!list) return;
 
     if (!sessions.length) {
-        list.innerHTML = '<p class="muted" style="padding:8px 0">No past sessions yet. Go live to create your first session.</p>';
+        list.innerHTML = '<p class="muted" style="padding:8px 0">No past sessions yet. Go live to start your first session.</p>';
         return;
     }
 
@@ -572,11 +806,13 @@ function _wsRenderHistory(sessions) {
                    <i class="fa-solid fa-film"></i> VOD</a>` : '';
         const liveStr = s.is_live
             ? '<span class="bc-live-badge" style="font-size:0.7rem"><i class="fa-solid fa-circle"></i> LIVE</span>' : '';
+        const proto = s.protocol ? `<span class="bc-ws-item-proto">${esc(s.protocol.toUpperCase())}</span>` : '';
         return `
             <div class="bc-ws-session">
                 <div class="bc-ws-session-left">
                     <div class="bc-ws-session-title">${esc(s.title || 'Untitled')} ${liveStr}</div>
                     <div class="bc-ws-session-meta">
+                        ${proto}
                         <span><i class="fa-solid fa-calendar"></i> ${date.toLocaleDateString()}</span>
                         <span><i class="fa-solid fa-clock"></i> ${dur}</span>
                         ${peakStr}
@@ -598,13 +834,16 @@ function _wsFormatDuration(secs) {
 /* ── Managed stream CRUD helpers ─────────────────────────────── */
 
 function showCreateManagedStreamModal() {
-    // Reuse the create-managed-stream modal that the dashboard already has
     showModal('create-managed-stream');
 }
 
 function _wsConfirmDelete(managedStreamId) {
     const ms = _wsState.managedStreams.find(m => m.id === managedStreamId);
     if (!ms) return;
+    if (_wsIsManagedStreamLive(managedStreamId)) {
+        toast('Cannot delete a live stream slot. End the stream first.', 'error');
+        return;
+    }
     if (!confirm(`Delete stream slot "${ms.title || 'Untitled'}"?\n\nPast sessions and VODs are not affected. This cannot be undone.`)) return;
     _wsDeleteManagedStream(managedStreamId);
 }
@@ -616,22 +855,22 @@ async function _wsDeleteManagedStream(managedStreamId) {
         if (_wsState.selectedId === managedStreamId) {
             _wsState.selectedId = null;
             _wsState.selectedMs = null;
+            _wsState.streamKey = null;
             _wsState.profile = {};
         }
         _wsRenderSidebar();
-        if (_wsState.selectedId) {
-            await _wsLoadProfile(_wsState.selectedId);
-            _wsRenderPanel();
+        if (_wsState.managedStreams.length > 0) {
+            await _wsSelectStream(_wsState.managedStreams[0].id);
         } else {
             _wsShowEmpty();
         }
         toast('Stream slot deleted', 'success');
     } catch (err) {
-        toast('Could not delete stream slot: ' + (err?.message || 'Server error'), 'error');
+        toast('Could not delete: ' + (err?.message || 'Server error'), 'error');
     }
 }
 
-/** Called after a new managed stream is created (e.g. from the dashboard modal) */
+/** Called after a new managed stream is created (e.g. from the create modal) */
 async function onManagedStreamCreated(newManagedStreamId) {
     await _wsLoadManagedStreams();
     _wsRenderSidebar();

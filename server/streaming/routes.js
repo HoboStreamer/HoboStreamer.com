@@ -981,6 +981,33 @@ router.get('/managed/:managedStreamId/history', requireAuth, (req, res) => {
     }
 });
 
+// ── Get full managed stream profile (structured fields + broadcast settings blob) ──
+// Returned to the workspace panel for a single round-trip load.
+router.get('/managed/:managedStreamId/profile', requireAuth, (req, res) => {
+    const managedStreamId = parseInt(req.params.managedStreamId);
+    if (!Number.isFinite(managedStreamId)) return res.status(400).json({ error: 'Invalid ID' });
+    try {
+        const ms = db.getManagedStreamById(managedStreamId);
+        if (!ms) return res.status(404).json({ error: 'Managed stream not found' });
+        if (ms.user_id !== req.user.id) return res.status(403).json({ error: 'Not your managed stream' });
+
+        const broadcastSettings = db.getManagedStreamBroadcastSettings(managedStreamId, req.user.id);
+
+        // Do NOT expose stream_key to the broader response — return it in a dedicated key
+        // so the caller can display/copy it in the authenticated UI.
+        const { stream_key: streamKey, ...msPublic } = ms;
+
+        res.json({
+            managed_stream: msPublic,
+            stream_key: streamKey,
+            broadcast_settings: broadcastSettings,
+        });
+    } catch (err) {
+        console.error('[ManagedStreams] Profile error:', err.message);
+        res.status(500).json({ error: 'Could not load profile' });
+    }
+});
+
 // List own managed streams
 router.get('/managed', requireAuth, (req, res) => {
     try {
