@@ -583,9 +583,39 @@ async function handleWhipPost(req, res) {
         logWhipStage('answer_generation', streamId, { producers: session.producerIds.length });
 
         transport.on('dtlsstatechange', (state) => {
+            console.log(`[WHIP] stream=${streamId} session=${resourceId} transport=${transportInfo.id} DTLS: ${state}`);
             if (state === 'closed' || state === 'failed') {
-                console.log(`[WHIP] Transport DTLS ${state} for stream ${streamId}`);
+                if (_iceGraceTimer) { clearTimeout(_iceGraceTimer); _iceGraceTimer = null; }
                 cleanupSession(resourceId);
+            }
+        });
+
+        // ICE state monitoring — clean up stale WHIP sessions when ingest connectivity is lost.
+        // ICE 'disconnected' is transient (network blip); 'failed' is permanent.
+        // Grace timeout gives ICE restart 15 s to recover before tearing down producers.
+        let _iceGraceTimer = null;
+        transport.on('icestatechange', (state) => {
+            console.log(`[WHIP] stream=${streamId} session=${resourceId} transport=${transportInfo.id} ICE: ${state}`);
+            if (state === 'failed') {
+                if (_iceGraceTimer) { clearTimeout(_iceGraceTimer); _iceGraceTimer = null; }
+                console.warn(`[WHIP] ICE failed for stream ${streamId} (session ${resourceId}) — cleaning up`);
+                cleanupSession(resourceId);
+            } else if (state === 'disconnected') {
+                if (!_iceGraceTimer) {
+                    console.warn(`[WHIP] ICE disconnected for stream ${streamId} (session ${resourceId}) — starting 15 s grace timer`);
+                    _iceGraceTimer = setTimeout(() => {
+                        _iceGraceTimer = null;
+                        if (!sessions.has(resourceId)) return; // already cleaned up by DTLS or DELETE
+                        console.warn(`[WHIP] ICE grace expired for stream ${streamId} (session ${resourceId}) — removing stale session`);
+                        cleanupSession(resourceId);
+                    }, 15000);
+                }
+            } else if (state === 'connected' || state === 'completed') {
+                if (_iceGraceTimer) {
+                    clearTimeout(_iceGraceTimer);
+                    _iceGraceTimer = null;
+                    console.log(`[WHIP] ICE recovered to '${state}' for stream ${streamId} (session ${resourceId}) — grace timer canceled`);
+                }
             }
         });
 
@@ -650,8 +680,13 @@ function cleanupSession(resourceId) {
             for (const pid of session.producerIds) {
                 const entry = room.producers.get(pid);
                 if (entry) {
+                    const kind = entry.producer.kind;
                     try { entry.producer.close(); } catch {}
                     room.producers.delete(pid);
+                    // Explicitly notify broadcast-server so SFU viewers learn the source is gone.
+                    // (The 'transportclose' event on the producer would fire only if the transport
+                    //  is closed *after* the producer — explicit emit is the reliable path.)
+                    webrtcSFU.emit('producer-removed', { roomId: session.roomId, producerId: pid, kind });
                 }
             }
             const transportKey = `${session.peerId}-${session.transportId}`;

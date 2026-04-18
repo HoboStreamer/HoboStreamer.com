@@ -258,43 +258,84 @@ app.use((req, res, next) => {
 });
 
 // ── Static Files ─────────────────────────────────────────────
-// Serve hobo-shared client-side libs (navbar, notifications, themes)
-let sharedPath = null;
-const sharedCandidates = [
-    () => path.dirname(require.resolve('hobo-shared/package.json')),
-    () => path.resolve(__dirname, '../node_modules/hobo-shared'),
-    () => path.resolve(__dirname, '..', '..', 'HoboApp', 'packages', 'hobo-shared'),
-    () => path.resolve(__dirname, '..', '..', 'packages', 'hobo-shared'),
-];
-for (const getCandidate of sharedCandidates) {
-    try {
-        const candidate = getCandidate();
-        if (candidate && fs.existsSync(candidate)) {
-            sharedPath = candidate;
-            break;
-        }
-    } catch (_) {}
-}
-const REQUIRED_SHARED_FILES = ['theme-loader.js', 'notification-ui.js', 'account-switcher.js'];
-if (sharedPath) {
-    const missing = REQUIRED_SHARED_FILES.filter(name => !fs.existsSync(path.join(sharedPath, name)));
-    if (missing.length) {
-        console.error('[Server] Shared asset root found but missing required files:', missing.join(', '));
-        sharedPath = null;
+// Sync hobo-shared browser assets into public/shared/ at startup.
+// This makes the /shared route deterministic: it always serves from a local
+// directory with the correct Content-Type, regardless of symlink/node_modules state.
+const SHARED_BROWSER_FILES = ['theme-loader.js', 'notification-ui.js', 'account-switcher.js'];
+const sharedDestDir = path.join(__dirname, '../public/shared');
+let sharedServePath = null;
+
+(function syncSharedAssets() {
+    // Resolve source directory (hobo-shared package)
+    let srcDir = null;
+    const candidates = [
+        () => path.dirname(require.resolve('hobo-shared/package.json')),
+        () => path.resolve(__dirname, '../node_modules/hobo-shared'),
+        () => path.resolve(__dirname, '..', '..', 'HoboApp', 'packages', 'hobo-shared'),
+        () => path.resolve(__dirname, '..', '..', 'packages', 'hobo-shared'),
+    ];
+    for (const getPath of candidates) {
+        try {
+            const p = getPath();
+            if (p && fs.existsSync(p)) { srcDir = p; break; }
+        } catch (_) {}
     }
-}
-if (sharedPath) {
-    console.log('[Server] Mounting /shared from:', sharedPath);
-    app.use('/shared', express.static(sharedPath, {
+
+    if (!srcDir) {
+        console.error('[Server] /shared: hobo-shared source directory not found — shared browser assets will return 404');
+        return;
+    }
+
+    // Ensure destination exists
+    try {
+        if (!fs.existsSync(sharedDestDir)) fs.mkdirSync(sharedDestDir, { recursive: true });
+    } catch (err) {
+        console.error('[Server] /shared: could not create public/shared/:', err.message);
+        return;
+    }
+
+    // Copy each required file and log integrity
+    const synced = [];
+    const failed = [];
+    for (const name of SHARED_BROWSER_FILES) {
+        const src = path.join(srcDir, name);
+        const dest = path.join(sharedDestDir, name);
+        if (!fs.existsSync(src)) {
+            failed.push(`${name} (not found in source)`);
+            continue;
+        }
+        try {
+            fs.copyFileSync(src, dest);
+            const bytes = fs.statSync(dest).size;
+            synced.push(`${name} (${bytes}B)`);
+        } catch (err) {
+            failed.push(`${name} (copy error: ${err.message})`);
+        }
+    }
+
+    if (failed.length) console.error('[Server] /shared: failed to sync:', failed.join(', '));
+    if (synced.length) {
+        console.log(`[Server] /shared: synced from ${srcDir} → public/shared/ | ${synced.join(', ')}`);
+        sharedServePath = sharedDestDir;
+    }
+})();
+
+if (sharedServePath) {
+    app.use('/shared', express.static(sharedServePath, {
         fallthrough: false,
-        setHeaders(res) {
+        setHeaders(res, filePath) {
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
             res.setHeader('Cache-Control', 'public, max-age=300');
+            // Explicit Content-Type — prevents nosniff-blocked text/plain responses
+            // if the MIME-type database on the host is incomplete or returns the wrong type.
+            if (filePath.endsWith('.js')) {
+                res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+            }
         },
     }));
 } else {
-    console.error('[Server] /shared asset mount unavailable; shared browser files will return 404.');
+    console.error('[Server] /shared: serving unavailable — shared browser assets will return 404');
     app.use('/shared', (req, res) => {
         res.status(404).type('text/plain').send('Shared assets unavailable');
     });

@@ -132,6 +132,23 @@ class BroadcastServer extends EventEmitter {
             this._notifyPendingWatchers(streamId);
         });
 
+        // When a WHIP producer is removed (ICE timeout / DELETE), notify active SFU viewers
+        // so they learn the source is gone and can wait cleanly instead of showing frozen video.
+        webrtcSFU.on('producer-removed', ({ roomId, kind }) => {
+            if (kind !== 'video') return;
+            const match = roomId.match(/^stream-(\d+)$/);
+            if (!match) return;
+            const streamId = parseInt(match[1]);
+            // Only notify if there are no remaining healthy producers (avoid false alarms
+            // when only one of multiple producers is removed)
+            const remaining = webrtcSFU.getProducers(roomId).filter(
+                p => !p.paused && p.dtlsState === 'connected' && (p.iceState === 'connected' || p.iceState === 'completed')
+            );
+            if (remaining.length === 0) {
+                this._notifyViewersSourceLost(streamId);
+            }
+        });
+
         return this.wss;
     }
 
@@ -304,6 +321,9 @@ class BroadcastServer extends EventEmitter {
                         } else {
                             if (!room._pendingWatchers) room._pendingWatchers = new Set();
                             room._pendingWatchers.add(client.peerId);
+                            // Tell the client it is queued so it stops the watch→offer timeout.
+                            // It will receive 'broadcaster-ready' when a source becomes available.
+                            this.safeSend(ws, { type: 'watch-queued' });
                             console.log(`[Broadcast] Viewer ${client.peerId} wants to watch stream ${client.streamId} but no broadcaster or SFU — queued as pending`);
                         }
                     }).catch(err => {
@@ -317,6 +337,7 @@ class BroadcastServer extends EventEmitter {
                         } else {
                             if (!room._pendingWatchers) room._pendingWatchers = new Set();
                             room._pendingWatchers.add(client.peerId);
+                            this.safeSend(ws, { type: 'watch-queued' });
                         }
                     });
                 }
@@ -700,10 +721,25 @@ class BroadcastServer extends EventEmitter {
                 console.log(`[Broadcast] Skipping producer ${p.id} (${p.kind}) — DTLS: ${p.dtlsState}, ICE: ${p.iceState} (not connected)`);
                 return false;
             }
+            // Also require ICE to be in a healthy state — DTLS is application-layer and stays
+            // 'connected' even after ICE drops, but no RTP flows without ICE connectivity.
+            if (p.iceState !== 'connected' && p.iceState !== 'completed') {
+                console.log(`[Broadcast] Skipping producer ${p.id} (${p.kind}) — ICE state unhealthy: ${p.iceState} (DTLS: ${p.dtlsState})`);
+                return false;
+            }
             return true;
         });
 
         if (liveProducers.length === 0) {
+            if (allProducers.length > 0) {
+                // Producers are registered but none have healthy ICE/DTLS — ingest source is stale.
+                // Do not fall through to P2P (which would start a spurious 6s offer timer).
+                // Tell the client to wait; it will receive a fresh sfu-viewer-ready when the source
+                // reconnects, or sfu-source-unavailable when it is definitively gone.
+                console.log(`[Broadcast] All ${allProducers.length} producer(s) are stale for stream ${client.streamId} — sending source-unavailable to ${client.peerId}`);
+                this.safeSend(ws, { type: 'sfu-source-unavailable', reason: 'ingest_stale' });
+                return true; // handled — do not fall through to P2P offer path
+            }
             console.log(`[Broadcast] No live producers for stream ${client.streamId} (${allProducers.length} total, all dead/disconnected) — falling back to P2P`);
             return false;
         }
@@ -792,6 +828,24 @@ class BroadcastServer extends EventEmitter {
         client._sfuViewerTransportId = null;
         client._sfuViewerRoomId = null;
         client._sfuViewerConsumerIds = null;
+    }
+
+    /**
+     * Notify active SFU viewers that the ingest source is gone so they can
+     * wait cleanly instead of showing a frozen frame until the stall timer fires.
+     * Only sent to viewers that currently have an SFU transport open.
+     */
+    _notifyViewersSourceLost(streamId) {
+        let notified = 0;
+        for (const [viewerWs, client] of this.clients) {
+            if (client.streamId === streamId && client.role === 'viewer' && client._sfuViewerTransportId) {
+                this.safeSend(viewerWs, { type: 'sfu-source-unavailable', reason: 'producer_removed' });
+                notified++;
+            }
+        }
+        if (notified > 0) {
+            console.log(`[Broadcast] Notified ${notified} SFU viewer(s) of source loss for stream ${streamId}`);
+        }
     }
 
     /**

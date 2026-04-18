@@ -28,6 +28,8 @@ tmp/
 temp/
 .cache/
 .eslintcache
+# Synced from hobo-shared at server startup — not tracked in git
+public/shared/
 data/vods/
 data/clips/
 __pycache__/

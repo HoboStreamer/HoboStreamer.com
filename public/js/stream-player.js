@@ -655,6 +655,37 @@ async function initWebRTC(stream) {
                         if (typeof _cachedHsViewerCount !== 'undefined') _cachedHsViewerCount = msg.count || 0;
                         if (vcEl) vcEl.textContent = (msg.count || 0) + extVc;
                         break;
+                    case 'sfu-source-unavailable':
+                        // Server: ingest source is gone or stale — stop aggressive retrying.
+                        // We will poll gently every 10 s; if the source comes back, the server
+                        // sends sfu-viewer-ready (or broadcaster-ready) and we resume.
+                        console.warn(`[Player] SFU source unavailable (reason: ${msg.reason || 'unknown'}) — waiting for recovery`);
+                        if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
+                        if (_viewerRewatchTimer) { clearTimeout(_viewerRewatchTimer); _viewerRewatchTimer = null; }
+                        _rewatchCount = 0; // source loss does not count as a retry failure
+                        _updateStatus('Stream source temporarily unavailable — reconnecting...');
+                        _showReconnectingIndicator();
+                        // Clear the SFU frozen checker — a new one will start after recovery
+                        if (player._sfuFrozenInterval) { clearInterval(player._sfuFrozenInterval); player._sfuFrozenInterval = null; }
+                        // Gentle poll: send watch every 10 s WITHOUT starting the P2P offer timeout.
+                        // The server will respond with sfu-viewer-ready, sfu-source-unavailable, or watch-queued.
+                        _viewerRewatchTimer = setTimeout(() => {
+                            _viewerRewatchTimer = null;
+                            if (!player?.ws || player.ws.readyState !== WebSocket.OPEN || _viewerIntentionalClose) return;
+                            player.watchSent = false;
+                            sendPlayerSignal({ type: 'watch' });
+                            player.watchSent = true;
+                            // intentionally NOT calling _startWatchOfferTimeout() — SFU never responds with 'offer'
+                        }, 10000);
+                        break;
+                    case 'watch-queued':
+                        // Server: no broadcaster or healthy SFU yet — viewer added to pending queue.
+                        // Stop the watch→offer timeout; we'll receive broadcaster-ready when ready.
+                        console.log('[Player] Watch queued — waiting for stream source to become available');
+                        if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
+                        _rewatchCount = 0;
+                        _updateStatus('Waiting for stream source...');
+                        break;
                 }
             } catch (err) {
                 console.error('[Player] Message error:', err);
@@ -1007,6 +1038,8 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
     if (player._iceTimeout) { clearTimeout(player._iceTimeout); player._iceTimeout = null; }
     if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
     if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
+    // Clear any post-play frozen-video checker from the previous SFU session
+    if (player._sfuFrozenInterval) { clearInterval(player._sfuFrozenInterval); player._sfuFrozenInterval = null; }
     // Cancel pending ICE/DTLS connect timeout for any prior SFU transport
     if (player._sfuTransportConnectTimeout) {
         clearTimeout(player._sfuTransportConnectTimeout);
@@ -1087,7 +1120,8 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                 player.watchSent = false;
                 sendPlayerSignal({ type: 'watch' });
                 player.watchSent = true;
-                if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+                // Do NOT call _startWatchOfferTimeout() — we are in SFU mode; the server
+                // responds with sfu-viewer-ready, sfu-source-unavailable, or watch-queued.
             } else {
                 showStreamError('Could not establish media connection. Try refreshing.');
             }
@@ -1120,7 +1154,8 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                         player.watchSent = false;
                         sendPlayerSignal({ type: 'watch' });
                         player.watchSent = true;
-                        if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+                        // Do NOT call _startWatchOfferTimeout() — SFU mode; server responds with
+                        // sfu-viewer-ready / sfu-source-unavailable / watch-queued, never 'offer'.
                     }, 20000);
                 }
                 return;
@@ -1138,7 +1173,7 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                     player.watchSent = false;
                     sendPlayerSignal({ type: 'watch' });
                     player.watchSent = true;
-                    if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+                    // Do NOT call _startWatchOfferTimeout() — SFU mode; server never responds with 'offer'.
                 } else {
                     showStreamError('Could not establish media connection. Try refreshing.');
                 }
@@ -1221,7 +1256,7 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                     player.watchSent = false;
                     sendPlayerSignal({ type: 'watch' });
                     player.watchSent = true;
-                    if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+                    // Do NOT call _startWatchOfferTimeout() — SFU mode; server never responds with 'offer'.
                 }
             }, { once: true });
 
@@ -1256,6 +1291,40 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                 ph.innerHTML = `<i class="fa-solid fa-satellite-dish fa-3x"></i><p>Connecting to stream...</p>`;
             }
             if (!video.muted) document.getElementById('unmute-overlay')?.remove();
+
+            // Post-play frozen-frame detector: check video.currentTime every 10 s.
+            // If it stalls for ≥30 s the source is likely lost; request a re-watch without
+            // starting the P2P offer timeout (we are in SFU mode).
+            let _frozenLastTime = -1;
+            let _frozenTicks = 0;
+            const _frozenInterval = setInterval(() => {
+                if (!player || player._sfuRecvTransport !== recvTransport) {
+                    clearInterval(_frozenInterval);
+                    return;
+                }
+                if (video.paused || !(video.srcObject?.active)) {
+                    clearInterval(_frozenInterval);
+                    return;
+                }
+                const t = video.currentTime;
+                if (t === _frozenLastTime && t > 0) {
+                    _frozenTicks++;
+                    if (_frozenTicks >= 3) { // 3 × 10 s = 30 s frozen
+                        clearInterval(_frozenInterval);
+                        if (player._sfuFrozenInterval === _frozenInterval) player._sfuFrozenInterval = null;
+                        console.warn('[Player] SFU video frozen for ~30s — requesting source check via re-watch');
+                        _hasVideoFrames = false; // allow stall timer to re-arm if needed
+                        player.watchSent = false;
+                        sendPlayerSignal({ type: 'watch' });
+                        player.watchSent = true;
+                        // Intentionally NOT calling _startWatchOfferTimeout() — SFU mode.
+                    }
+                } else {
+                    _frozenLastTime = t;
+                    _frozenTicks = 0;
+                }
+            }, 10000);
+            player._sfuFrozenInterval = _frozenInterval;
         };
         video.addEventListener('playing', onPlaying);
 
