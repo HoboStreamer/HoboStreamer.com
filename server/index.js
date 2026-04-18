@@ -701,9 +701,13 @@ async function start() {
         console.log(`[Server] Environment:  ${config.nodeEnv}`);
         console.log(`[Server] BASE_URL:     ${config.baseUrl}`);
         console.log(`[Server] WHIP_PUBLIC_URL: ${config.whip?.publicUrl}`);
+        console.log(`[Server] WHIP_PUBLIC_URL_ENABLED: ${config.whip?.enabled}`);
         console.log(`[Server] WEBRTC_PUBLIC_URL: ${config.webrtc?.publicUrl}`);
         console.log(`[Server] MEDIASOUP_ANNOUNCED_IP: ${config.mediasoup?.announcedIp}`);
         console.log(`[Server] CORS origins: ${[...allowedOrigins].join(', ')}`);
+        if (config.whip?.publicUrl && !config.whip?.enabled) {
+            console.warn('[Server] NOTE: WHIP_PUBLIC_URL is configured but disabled. HoboStreamer will fall back to WEBRTC_PUBLIC_URL for client WHIP endpoints.');
+        }
         if (config.turn?.url) {
             console.log(`[Server] TURN server:  ${config.turn.url}`);
         } else {

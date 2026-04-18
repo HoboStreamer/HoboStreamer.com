@@ -19,6 +19,15 @@ const DEFAULTS = {
     HOBO_TOOLS_INTERNAL_URL: 'http://127.0.0.1:3100',
 };
 
+function normalizeValue(value, type) {
+    if (type === 'boolean') {
+        if (value === true || value === 'true' || value === '1' || value === 1) return true;
+        if (value === false || value === 'false' || value === '0' || value === 0 || value === '' || value === null || value === undefined) return false;
+        return null;
+    }
+    return value;
+}
+
 function buildConfig(registryValues) {
     registryValues = registryValues || {};
     const getRegistryEntry = (key) => {
@@ -33,6 +42,7 @@ function buildConfig(registryValues) {
     const mediaSoupEntry = getRegistryEntry('MEDIASOUP_ANNOUNCED_IP');
     const hoboToolsEntry = getRegistryEntry('HOBO_TOOLS_INTERNAL_URL');
     const hoboToolsPublicEntry = getRegistryEntry('HOBO_TOOLS_URL');
+    const whipEnabledEntry = getRegistryEntry('WHIP_PUBLIC_URL_ENABLED');
     const rtmpEntry = getRegistryEntry('RTMP_HOST');
     const turnEntry = getRegistryEntry('TURN_URL');
 
@@ -57,6 +67,12 @@ function buildConfig(registryValues) {
         : (baseEntry.source !== 'default' ? baseEntry.value : DEFAULTS.JSMPEG_PUBLIC_URL);
     const mediasoupAnnouncedIp = process.env.MEDIASOUP_ANNOUNCED_IP
         || (mediaSoupEntry.source !== 'default' ? mediaSoupEntry.value : new URL(baseUrl).hostname);
+    const whipEnabledEnv = normalizeValue(process.env.WHIP_PUBLIC_URL_ENABLED, 'boolean');
+    const whipEnabled = whipEnabledEnv !== null
+        ? whipEnabledEnv
+        : (whipEnabledEntry.source !== 'default'
+            ? normalizeValue(whipEnabledEntry.value, 'boolean') ?? false
+            : false);
 
     const baseUrlSource = baseEntry.source || 'default';
     const webRtcSource = webRtcEntry.source !== 'default'
@@ -97,6 +113,7 @@ function buildConfig(registryValues) {
         },
         whip: {
             publicUrl: whipPublicUrl,
+            enabled: whipEnabled,
         },
         hoboToolsInternalUrl: hoboToolsEntry.value || DEFAULTS.HOBO_TOOLS_INTERNAL_URL,
         rtmp: {

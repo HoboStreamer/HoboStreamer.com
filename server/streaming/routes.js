@@ -177,6 +177,32 @@ function cleanBooleanFlag(value) {
     return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+function resolveWhipUrlBase(config, req) {
+    const requestHostOrigin = `${req.protocol}://${req.get('host')}`;
+    const fallbackUrl = config.webrtc?.publicUrl || requestHostOrigin;
+    let whipUrlBase = fallbackUrl;
+    let whipUrlSource = config.webrtc?.publicUrl ? 'webrtc_public_url' : 'request_host';
+    let whipUrlWarning;
+
+    if (config.whip?.publicUrl && config.whip?.enabled) {
+        whipUrlBase = config.whip.publicUrl;
+        whipUrlSource = 'whip_public_url';
+        try {
+            const baseHost = new URL(config.baseUrl).hostname;
+            const whipHost = new URL(whipUrlBase).hostname;
+            if (whipHost !== baseHost && config.nodeEnv !== 'development') {
+                whipUrlWarning = 'Dedicated WHIP hostname differs from BASE_URL host. Ensure DNS/vhost/TLS are configured for this host before using it.';
+            }
+        } catch {
+            // invalid URL parsing should not block endpoint generation
+        }
+    } else if (config.whip?.publicUrl && !config.whip?.enabled) {
+        whipUrlWarning = 'Dedicated WHIP hostname is configured but not enabled. Falling back to the safe public WebRTC origin.';
+    }
+
+    return { whipUrlBase, whipUrlSource, whipUrlWarning };
+}
+
 // ── Get Channel by Username ──────────────────────────────────
 router.get('/channel/:username', optionalAuth, (req, res) => {
     try {
@@ -1096,18 +1122,7 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             endpoint.ffmpegAudioOnly = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f alsa -i default -f mpegts -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${audioUrl}`;
             endpoint.ffmpegHD = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 1280x720 -b:v 1200k -maxrate 1200k -bufsize 2400k -r 30 -g 15 -bf 0 -codec:a mp2 -b:a 128k -ar 44100 -ac 2 ${urlHD}`;
         } else if (stream.protocol === 'webrtc') {
-            const whipUrlBase = config.whip?.publicUrl || config.webrtc?.publicUrl || `${req.protocol}://${req.get('host')}`;
-            const whipUrlSource = config.whip?.publicUrl ? 'whip_public_url' : (config.webrtc?.publicUrl ? 'webrtc_public_url' : 'request_host');
-            let whipUrlWarning;
-            try {
-                const baseHost = new URL(config.baseUrl).hostname;
-                const whipHost = new URL(whipUrlBase).hostname;
-                if (whipUrlSource === 'whip_public_url' && whipHost !== baseHost && config.nodeEnv !== 'development') {
-                    whipUrlWarning = 'Dedicated WHIP hostname differs from BASE_URL host. Ensure DNS/vhost/TLS are configured for this host before using it.';
-                }
-            } catch (err) {
-                // invalid URL parsing should not block endpoint generation
-            }
+            const { whipUrlBase, whipUrlSource, whipUrlWarning } = resolveWhipUrlBase(config, req);
             endpoint = {
                 roomId: `stream-${stream.id}`,
                 signalingUrl: `/ws/broadcast?streamId=${stream.id}`,

@@ -70,10 +70,11 @@ HoboStreamer can advertise a dedicated WHIP ingestion origin such as `https://wh
 
 - DNS for `whip.<your-domain>` must point to the same origin
 - Nginx must serve the dedicated host and the TLS certificate must include it
-- `WHIP_PUBLIC_URL` may be configured separately from `BASE_URL`, but the app will warn about this mismatch if it is not aligned with your main site origin
+- `WHIP_PUBLIC_URL` may be configured separately from `BASE_URL`, but the app will not advertise a dedicated WHIP hostname unless the separate readiness flag `WHIP_PUBLIC_URL_ENABLED` is also set to `true`
+- if `WHIP_PUBLIC_URL` is configured but not enabled, HoboStreamer will fall back to the public WebRTC origin instead of advertising the dedicated host
 - `MEDIASOUP_ANNOUNCED_IP` is independent of `WHIP_PUBLIC_URL`; if you expect ICE candidates from a separate public host, set it explicitly
 
-For most installs, the safest production configuration is to use the same main HTTPS origin for `BASE_URL`, `WEBRTC_PUBLIC_URL`, and `WHIP_PUBLIC_URL`, unless you have a dedicated vhost and cert for the separate WHIP hostname.
+For most installs, the safest production configuration is to use the same main HTTPS origin for `BASE_URL`, `WEBRTC_PUBLIC_URL`, and `WHIP_PUBLIC_URL`, unless you have a dedicated vhost and cert for the separate WHIP hostname and you explicitly enable it with `WHIP_PUBLIC_URL_ENABLED=true`.
 
 ---
 
