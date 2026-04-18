@@ -214,11 +214,21 @@ class WebRTCSFU extends EventEmitter {
             room.consumers.delete(consumer.id);
         });
 
-        // Log the producer state for debugging
+        // Log the producer state and consumer startup state
         const producerEntry = room.producers.get(producerId);
         const producerTransportKey = producerEntry ? `${producerEntry.peerId}-${producerEntry.transportId}` : null;
         const producerTransport = producerTransportKey ? room.transports.get(producerTransportKey) : null;
-        console.log(`[WebRTC] Consumer ${consumer.id} consuming producer ${producerId} (${consumer.kind}), producer transport state: ${producerTransport?.connectionState || 'unknown'}`);
+        console.log(`[WebRTC] Consumer ${consumer.id} (${consumer.kind}) for ${peerId} in room ${roomId} — paused=${consumer.paused} producer transport state: ${producerTransport?.connectionState || 'unknown'}`);
+
+        // For video consumers, immediately request a keyframe so late-joining viewers
+        // do not have to wait up to a full GOP (OBS default keyint=250 @ 30fps ≈ 8.33s).
+        if (consumer.kind === 'video') {
+            consumer.requestKeyFrame().then(() => {
+                console.log(`[WebRTC] Keyframe requested for video consumer ${consumer.id} (${peerId})`);
+            }).catch((kfErr) => {
+                console.warn(`[WebRTC] Keyframe request failed for consumer ${consumer.id} (${peerId}):`, kfErr.message);
+            });
+        }
 
         return {
             id: consumer.id,

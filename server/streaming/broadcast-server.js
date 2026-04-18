@@ -657,7 +657,31 @@ class BroadcastServer extends EventEmitter {
         const roomId = `stream-${client.streamId}`;
         if (!whipHandler.hasSfuProducers(client.streamId)) return false;
 
-        // Clean up previous SFU viewer transport (e.g. on re-watch)
+        // If viewer already has a DTLS-connected transport, do not tear it down.
+        // A re-watch at this point was almost certainly triggered by the client-side stall
+        // timer firing before the first keyframe arrived — NOT by a real transport failure.
+        // Instead, nudge the producer with a keyframe request to unstick the decoder.
+        if (client._sfuViewerTransportId && client._sfuViewerRoomId) {
+            const existingRoom = webrtcSFU.rooms?.get(client._sfuViewerRoomId);
+            if (existingRoom) {
+                const tKey = `${client.peerId}-${client._sfuViewerTransportId}`;
+                const existingTransport = existingRoom.transports.get(tKey);
+                if (existingTransport && !existingTransport.closed && existingTransport.dtlsState === 'connected') {
+                    console.log(`[Broadcast] Viewer ${client.peerId} re-watch with connected SFU transport ${client._sfuViewerTransportId} — requesting keyframe instead of recreating transport`);
+                    for (const cid of (client._sfuViewerConsumerIds || [])) {
+                        const entry = existingRoom.consumers.get(cid);
+                        if (entry?.consumer && entry.consumer.kind === 'video' && !entry.consumer.closed) {
+                            entry.consumer.requestKeyFrame().catch(err => {
+                                console.warn(`[Broadcast] Keyframe re-request failed for consumer ${cid}:`, err.message);
+                            });
+                        }
+                    }
+                    return true; // handled — viewer session is still alive
+                }
+            }
+        }
+
+        // Clean up previous SFU viewer transport (e.g. on re-watch after real transport failure)
         this._cleanupSfuViewerTransport(client);
 
         // Get router capabilities and producer list

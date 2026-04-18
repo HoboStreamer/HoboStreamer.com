@@ -20,6 +20,8 @@ async function loadMediasoupClient() {
 // Module-level failure counter — prevents infinite reconnect loops
 let _totalIceFailures = 0;
 const MAX_ICE_FAILURES = 25;
+// Guard: prevents concurrent handleSfuViewerReady() executions causing cascading re-watches
+let _sfuViewerSetupInProgress = false;
 
 // Clip recording state (rolling buffer for live clips)
 let clipRecorder = null;
@@ -599,7 +601,18 @@ async function initWebRTC(stream) {
                         _rewatchCount = 0;
                         _hideReconnectingIndicator();
                         _clearStreamError();
-                        await handleSfuViewerReady(msg, player.ws, video, _updateStatus, scheduleViewerRewatch);
+                        // Prevent concurrent executions: a second sfu-viewer-ready can arrive while
+                        // the first is still mid-await (JS async yields to the event loop).
+                        if (_sfuViewerSetupInProgress) {
+                            console.warn('[Player] SFU viewer setup already in progress — ignoring duplicate sfu-viewer-ready');
+                            break;
+                        }
+                        _sfuViewerSetupInProgress = true;
+                        try {
+                            await handleSfuViewerReady(msg, player.ws, video, _updateStatus, scheduleViewerRewatch);
+                        } finally {
+                            _sfuViewerSetupInProgress = false;
+                        }
                         break;
                     case 'ice-candidate':
                         // ICE candidate from broadcaster
@@ -994,10 +1007,18 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
     if (player._iceTimeout) { clearTimeout(player._iceTimeout); player._iceTimeout = null; }
     if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
     if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
-    // Close previous SFU recv transport
+    // Cancel pending ICE/DTLS connect timeout for any prior SFU transport
+    if (player._sfuTransportConnectTimeout) {
+        clearTimeout(player._sfuTransportConnectTimeout);
+        player._sfuTransportConnectTimeout = null;
+    }
+    // Close previous SFU recv transport — null BEFORE close() so the old transport's
+    // 'connectionstatechange' → 'closed' event handler sees null and does not cascade into
+    // a spurious re-watch.
     if (player._sfuRecvTransport) {
-        try { player._sfuRecvTransport.close(); } catch {}
+        const _oldRecvTransport = player._sfuRecvTransport;
         player._sfuRecvTransport = null;
+        try { _oldRecvTransport.close(); } catch {}
     }
 
     const { rtpCapabilities, producers } = msg;
@@ -1053,12 +1074,67 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                 .catch(errback);
         });
 
+        // 15-second ICE/DTLS connect timeout — if transport never reaches 'connected', abandon and re-watch.
+        // This fires before the stall timer (which only starts once connected) and handles stuck ICE.
+        const _sfuConnectTimeout = setTimeout(() => {
+            if (!player || player._sfuRecvTransport !== recvTransport) return;
+            if (recvTransport.connectionState === 'connected') return;
+            console.warn(`[Player] SFU recv transport failed to connect within 15s (state: ${recvTransport.connectionState}) — re-watching`);
+            if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
+            player._sfuTransportConnectTimeout = null;
+            _totalIceFailures++;
+            if (_totalIceFailures < MAX_ICE_FAILURES) {
+                player.watchSent = false;
+                sendPlayerSignal({ type: 'watch' });
+                player.watchSent = true;
+                if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+            } else {
+                showStreamError('Could not establish media connection. Try refreshing.');
+            }
+        }, 15000);
+        player._sfuTransportConnectTimeout = _sfuConnectTimeout;
+
         recvTransport.on('connectionstatechange', (state) => {
+            // Guard: ignore events from a transport that is no longer the active one.
+            // This prevents the old transport's 'closed' event (fired when handleSfuViewerReady
+            // explicitly closes it) from cascading into a spurious re-watch.
+            if (!player || player._sfuRecvTransport !== recvTransport) return;
             console.log(`[Player] SFU recv transport state: ${state}`);
+            if (state === 'connected') {
+                // ICE + DTLS succeeded — clear the connect timeout
+                if (player._sfuTransportConnectTimeout) {
+                    clearTimeout(player._sfuTransportConnectTimeout);
+                    player._sfuTransportConnectTimeout = null;
+                }
+                // Start the first-frame grace window NOW, from when media can actually flow.
+                // OBS default keyint=250 @ 30fps = ~8.33s per keyframe. Allow 20s so a
+                // late-joining viewer receives the next keyframe even under jitter/TCP fallback.
+                if (!_hasVideoFrames && !player._stallTimer) {
+                    console.log('[Player] SFU transport connected — starting 20s first-frame grace window');
+                    player._stallTimer = setTimeout(() => {
+                        player._stallTimer = null;
+                        if (!player || player._sfuRecvTransport !== recvTransport || _hasVideoFrames) return;
+                        const streamTracks = video.srcObject?.getTracks() || [];
+                        const trackInfo = streamTracks.map(t => `${t.kind}:${t.readyState}:enabled=${t.enabled}:muted=${t.muted}`).join(', ');
+                        console.warn(`[Player] SFU video stall — no frames after 20s post-connect | readyState=${video.readyState} videoWidth=${video.videoWidth} paused=${video.paused} currentTime=${video.currentTime.toFixed(2)} networkState=${video.networkState} error=${video.error?.message || 'none'} srcObjectActive=${video.srcObject?.active} tracks=[${trackInfo}] transportState=${recvTransport.connectionState}`);
+                        player.watchSent = false;
+                        sendPlayerSignal({ type: 'watch' });
+                        player.watchSent = true;
+                        if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
+                    }, 20000);
+                }
+                return;
+            }
             if (state === 'failed' || state === 'closed') {
+                // Transport is dead — clear both timers before re-watching
+                if (player._sfuTransportConnectTimeout) {
+                    clearTimeout(player._sfuTransportConnectTimeout);
+                    player._sfuTransportConnectTimeout = null;
+                }
+                if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
                 _totalIceFailures++;
                 if (_totalIceFailures < MAX_ICE_FAILURES) {
-                    console.warn(`[Player] SFU transport ${state}, re-watching`);
+                    console.warn(`[Player] SFU transport ${state} — re-watching`);
                     player.watchSent = false;
                     sendPlayerSignal({ type: 'watch' });
                     player.watchSent = true;
@@ -1183,23 +1259,10 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
         };
         video.addEventListener('playing', onPlaying);
 
-        // Stall detection
-        if (!_hasVideoFrames) {
-            player._stallTimer = setTimeout(() => {
-                player._stallTimer = null;
-                if (!player || player._sfuRecvTransport !== recvTransport || _hasVideoFrames) return;
-                // Log comprehensive video element state for debugging
-                const streamTracks = video.srcObject?.getTracks() || [];
-                const trackInfo = streamTracks.map(t => `${t.kind}:${t.readyState}:enabled=${t.enabled}:muted=${t.muted}`).join(', ');
-                console.warn(`[Player] SFU video stall — no frames after 8s | readyState=${video.readyState} videoWidth=${video.videoWidth} paused=${video.paused} currentTime=${video.currentTime.toFixed(2)} networkState=${video.networkState} error=${video.error?.message || 'none'} srcObjectActive=${video.srcObject?.active} tracks=[${trackInfo}] transportState=${recvTransport.connectionState}`);
-                if (video.videoWidth === 0 || video.paused || video.readyState < 2) {
-                    player.watchSent = false;
-                    sendPlayerSignal({ type: 'watch' });
-                    player.watchSent = true;
-                    if (player._startWatchOfferTimeout) player._startWatchOfferTimeout();
-                }
-            }, 8000);
-        }
+        // NOTE: the first-frame stall timer is now armed in the 'connected'
+        // connectionstatechange handler above, not here. Arming it here (before transport
+        // connects) was the root cause of the 8-second re-watch loop: the timer fired before
+        // ICE + DTLS completed AND before the first H.264 keyframe could arrive.
 
         // Start playback after all tracks consumed
         if (consumedCount >= 2) {
