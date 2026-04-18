@@ -74,11 +74,37 @@ CREATE TABLE IF NOT EXISTS robotstreamer_integrations (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Streams (broadcast sessions on a channel)
+-- Managed Streams (persistent per-user stream definitions with stable endpoints)
+CREATE TABLE IF NOT EXISTS managed_streams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    channel_id INTEGER,
+    slug TEXT,                              -- optional unique string ID (must contain non-numeric chars)
+    title TEXT DEFAULT 'Untitled Stream',
+    description TEXT DEFAULT '',
+    category TEXT DEFAULT 'irl',
+    tags TEXT DEFAULT '[]',
+    protocol TEXT DEFAULT 'webrtc' CHECK(protocol IN ('jsmpeg', 'webrtc', 'rtmp')),
+    stream_key TEXT UNIQUE NOT NULL,       -- per-stream stable key (reusable across sessions)
+    is_nsfw INTEGER DEFAULT 0,
+    control_config_id INTEGER,
+    sort_order INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE SET NULL,
+    FOREIGN KEY (control_config_id) REFERENCES control_configs(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_managed_streams_user ON managed_streams(user_id);
+CREATE INDEX IF NOT EXISTS idx_managed_streams_slug ON managed_streams(slug);
+CREATE INDEX IF NOT EXISTS idx_managed_streams_key ON managed_streams(stream_key);
+
+-- Streams (broadcast sessions on a managed stream)
 CREATE TABLE IF NOT EXISTS streams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     channel_id INTEGER,
+    managed_stream_id INTEGER,
     control_config_id INTEGER,
     title TEXT DEFAULT 'Untitled Stream',
     description TEXT DEFAULT '',
@@ -99,6 +125,7 @@ CREATE TABLE IF NOT EXISTS streams (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE SET NULL,
+    FOREIGN KEY (managed_stream_id) REFERENCES managed_streams(id) ON DELETE SET NULL,
     FOREIGN KEY (control_config_id) REFERENCES control_configs(id) ON DELETE SET NULL
 );
 

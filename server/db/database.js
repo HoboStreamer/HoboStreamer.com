@@ -970,6 +970,97 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] stream_controls keyboard migration:', e.message); }
 
+    // ── Managed Streams Migration ────────────────────────────────
+    // Add the persistent managed_streams table and link sessions to it
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS managed_streams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            channel_id INTEGER,
+            slug TEXT,
+            title TEXT DEFAULT 'Untitled Stream',
+            description TEXT DEFAULT '',
+            category TEXT DEFAULT 'irl',
+            tags TEXT DEFAULT '[]',
+            protocol TEXT DEFAULT 'webrtc' CHECK(protocol IN ('jsmpeg', 'webrtc', 'rtmp')),
+            stream_key TEXT UNIQUE NOT NULL,
+            is_nsfw INTEGER DEFAULT 0,
+            control_config_id INTEGER,
+            sort_order INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE SET NULL,
+            FOREIGN KEY (control_config_id) REFERENCES control_configs(id) ON DELETE SET NULL
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_managed_streams_user ON managed_streams(user_id)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_managed_streams_slug ON managed_streams(slug)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_managed_streams_key ON managed_streams(stream_key)');
+    } catch (e) { console.warn('[DB] managed_streams table migration:', e.message); }
+
+    // Add managed_stream_id column to streams (session) table
+    try {
+        const streamCols = database.pragma('table_info(streams)').map(c => c.name);
+        if (!streamCols.includes('managed_stream_id')) {
+            database.exec('ALTER TABLE streams ADD COLUMN managed_stream_id INTEGER REFERENCES managed_streams(id) ON DELETE SET NULL');
+            database.exec('CREATE INDEX IF NOT EXISTS idx_streams_managed ON streams(managed_stream_id)');
+            console.log('[DB] Added managed_stream_id column to streams');
+        }
+    } catch (e) { console.warn('[DB] streams managed_stream_id migration:', e.message); }
+
+    // Add max_managed_streams column to users (admin override for stream limit)
+    try {
+        const userCols2 = database.pragma('table_info(users)').map(c => c.name);
+        if (!userCols2.includes('max_managed_streams')) {
+            database.exec('ALTER TABLE users ADD COLUMN max_managed_streams INTEGER DEFAULT 3');
+            console.log('[DB] Added max_managed_streams column to users');
+        }
+    } catch (e) { console.warn('[DB] users max_managed_streams migration:', e.message); }
+
+    // Backfill: Create a default managed stream for each streamer who has session history
+    // but no managed streams yet. This preserves all existing data.
+    try {
+        const streamersWithoutManaged = database.prepare(`
+            SELECT DISTINCT s.user_id, u.stream_key, u.username, u.display_name,
+                   c.id AS channel_id, c.title AS channel_title, c.protocol AS channel_protocol,
+                   c.category AS channel_category, c.is_nsfw AS channel_is_nsfw
+            FROM streams s
+            JOIN users u ON s.user_id = u.id
+            LEFT JOIN channels c ON c.user_id = s.user_id
+            WHERE s.user_id NOT IN (SELECT user_id FROM managed_streams)
+              AND u.stream_key IS NOT NULL
+        `).all();
+
+        if (streamersWithoutManaged.length > 0) {
+            const insertMs = database.prepare(`
+                INSERT INTO managed_streams (user_id, channel_id, title, category, protocol, stream_key, is_nsfw)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `);
+            const updateSessions = database.prepare(`
+                UPDATE streams SET managed_stream_id = ? WHERE user_id = ? AND managed_stream_id IS NULL
+            `);
+
+            const backfill = database.transaction(() => {
+                for (const s of streamersWithoutManaged) {
+                    const title = s.channel_title || `${s.display_name || s.username}'s Stream`;
+                    const result = insertMs.run(
+                        s.user_id,
+                        s.channel_id || null,
+                        title,
+                        s.channel_category || 'irl',
+                        s.channel_protocol || 'webrtc',
+                        s.stream_key,
+                        s.channel_is_nsfw || 0
+                    );
+                    // Link all existing sessions to this managed stream
+                    updateSessions.run(result.lastInsertRowid, s.user_id);
+                }
+            });
+            backfill();
+            console.log(`[DB] Backfilled ${streamersWithoutManaged.length} managed stream(s) for existing streamers`);
+        }
+    } catch (e) { console.warn('[DB] managed_streams backfill:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1038,9 +1129,11 @@ function getOrCreateAnonGameUser(anonId) {
 
 function getLiveStreams() {
     return all(`
-        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color,
+               ms.slug AS managed_stream_slug, ms.id AS managed_stream_id
         FROM streams s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
         WHERE s.is_live = 1
         ORDER BY s.viewer_count DESC, s.started_at DESC
     `);
@@ -1113,11 +1206,11 @@ function getStreamsByUserId(userId, limit = 50) {
     `, [userId, limit]);
 }
 
-function createStream({ user_id, channel_id, control_config_id, title, description, category, protocol, is_nsfw, thumbnail_url }) {
+function createStream({ user_id, channel_id, managed_stream_id, control_config_id, title, description, category, protocol, is_nsfw, thumbnail_url }) {
     return run(
-        `INSERT INTO streams (user_id, channel_id, control_config_id, title, description, category, protocol, is_nsfw, thumbnail_url, is_live, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
-        [user_id, channel_id || null, control_config_id || null, title || 'Untitled Stream', description || '', category || 'irl', protocol || 'webrtc', is_nsfw ? 1 : 0, thumbnail_url || null]
+        `INSERT INTO streams (user_id, channel_id, managed_stream_id, control_config_id, title, description, category, protocol, is_nsfw, thumbnail_url, is_live, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+        [user_id, channel_id || null, managed_stream_id || null, control_config_id || null, title || 'Untitled Stream', description || '', category || 'irl', protocol || 'webrtc', is_nsfw ? 1 : 0, thumbnail_url || null]
     );
 }
 
@@ -1135,6 +1228,278 @@ function endStream(streamId) {
 function updateViewerCount(streamId, count) {
     run(`UPDATE streams SET viewer_count = ?, peak_viewers = MAX(peak_viewers, ?) WHERE id = ?`,
         [count, count, streamId]);
+}
+
+// ── Managed Stream helpers ───────────────────────────────────
+
+function createManagedStream({ user_id, channel_id, slug, title, description, category, protocol, stream_key, is_nsfw, control_config_id }) {
+    return run(
+        `INSERT INTO managed_streams (user_id, channel_id, slug, title, description, category, protocol, stream_key, is_nsfw, control_config_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [user_id, channel_id || null, slug || null, title || 'Untitled Stream', description || '', category || 'irl', protocol || 'webrtc', stream_key, is_nsfw ? 1 : 0, control_config_id || null]
+    );
+}
+
+function getManagedStreamById(id) {
+    return get(`
+        SELECT ms.*, u.username, u.display_name, u.avatar_url, u.profile_color
+        FROM managed_streams ms
+        JOIN users u ON ms.user_id = u.id
+        WHERE ms.id = ?
+    `, [id]);
+}
+
+function getManagedStreamsByUserId(userId) {
+    return all(`
+        SELECT ms.*,
+               (SELECT COUNT(*) FROM streams s WHERE s.managed_stream_id = ms.id) AS session_count,
+               (SELECT MAX(s.ended_at) FROM streams s WHERE s.managed_stream_id = ms.id AND s.ended_at IS NOT NULL) AS last_live_at,
+               (SELECT s.is_live FROM streams s WHERE s.managed_stream_id = ms.id AND s.is_live = 1 LIMIT 1) AS is_currently_live,
+               (SELECT s.id FROM streams s WHERE s.managed_stream_id = ms.id AND s.is_live = 1 LIMIT 1) AS live_session_id
+        FROM managed_streams ms
+        WHERE ms.user_id = ?
+        ORDER BY ms.sort_order ASC, ms.created_at ASC
+    `, [userId]);
+}
+
+function getManagedStreamBySlug(userId, slug) {
+    return get(`
+        SELECT ms.*, u.username, u.display_name, u.avatar_url, u.profile_color
+        FROM managed_streams ms
+        JOIN users u ON ms.user_id = u.id
+        WHERE ms.user_id = ? AND ms.slug = ? COLLATE NOCASE
+    `, [userId, slug]);
+}
+
+function getManagedStreamByStreamKey(streamKey) {
+    return get(`
+        SELECT ms.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.stream_key AS user_stream_key
+        FROM managed_streams ms
+        JOIN users u ON ms.user_id = u.id
+        WHERE ms.stream_key = ?
+    `, [streamKey]);
+}
+
+function getManagedStreamByIdOrSlug(userId, idOrSlug) {
+    // Try numeric ID first
+    const numId = parseInt(idOrSlug, 10);
+    if (!isNaN(numId) && String(numId) === String(idOrSlug)) {
+        return get(`
+            SELECT ms.*, u.username, u.display_name, u.avatar_url, u.profile_color
+            FROM managed_streams ms
+            JOIN users u ON ms.user_id = u.id
+            WHERE ms.id = ? AND ms.user_id = ?
+        `, [numId, userId]);
+    }
+    // Try slug
+    return getManagedStreamBySlug(userId, idOrSlug);
+}
+
+function updateManagedStream(managedStreamId, userId, fields) {
+    const allowed = new Set([
+        'slug', 'title', 'description', 'category', 'tags', 'protocol',
+        'is_nsfw', 'control_config_id', 'sort_order',
+    ]);
+    const updates = [];
+    const params = [];
+    for (const [key, val] of Object.entries(fields)) {
+        if (val !== undefined && allowed.has(key)) {
+            updates.push(`${key} = ?`);
+            params.push(['tags'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
+        }
+    }
+    if (updates.length === 0) return;
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(managedStreamId, userId);
+    return run(`UPDATE managed_streams SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params);
+}
+
+function deleteManagedStream(managedStreamId, userId) {
+    // Unlink sessions first (don't delete them — they're historical)
+    run('UPDATE streams SET managed_stream_id = NULL WHERE managed_stream_id = ?', [managedStreamId]);
+    return run('DELETE FROM managed_streams WHERE id = ? AND user_id = ?', [managedStreamId, userId]);
+}
+
+function countManagedStreamsByUser(userId) {
+    return get('SELECT COUNT(*) AS count FROM managed_streams WHERE user_id = ?', [userId])?.count || 0;
+}
+
+function getManagedStreamLimit(user) {
+    // Admin override takes priority
+    if (user.max_managed_streams != null && user.max_managed_streams > 0) {
+        return user.max_managed_streams;
+    }
+    // Level-based expansion: base 3, +1 per 10 levels, max 10
+    const level = getUserTotalGameLevel(user.id);
+    const bonus = Math.floor(level / 10);
+    return Math.min(3 + bonus, 10);
+}
+
+function isValidManagedStreamSlug(slug) {
+    if (!slug || typeof slug !== 'string') return false;
+    const cleaned = slug.trim();
+    if (cleaned.length < 2 || cleaned.length > 32) return false;
+    // Must not be purely numeric
+    if (/^\d+$/.test(cleaned)) return false;
+    // Alphanumeric, hyphens, underscores only
+    if (!/^[a-zA-Z0-9_-]+$/.test(cleaned)) return false;
+    // Must start with a letter
+    if (!/^[a-zA-Z]/.test(cleaned)) return false;
+    return true;
+}
+
+function isManagedStreamSlugTaken(userId, slug, excludeId = null) {
+    const params = [userId, slug];
+    let sql = 'SELECT id FROM managed_streams WHERE user_id = ? AND slug = ? COLLATE NOCASE';
+    if (excludeId) {
+        sql += ' AND id != ?';
+        params.push(excludeId);
+    }
+    return !!get(sql, params);
+}
+
+function getRecentlyOnlineStreamers(limit = 20, offset = 0) {
+    return all(`
+        SELECT u.id AS user_id, u.username, u.display_name, u.avatar_url, u.profile_color,
+               MAX(s.ended_at) AS last_online_at,
+               json_group_array(json_object(
+                   'managed_stream_id', ms.id,
+                   'slug', ms.slug,
+                   'title', ms.title,
+                   'protocol', ms.protocol,
+                   'last_live_at', (SELECT MAX(s2.ended_at) FROM streams s2 WHERE s2.managed_stream_id = ms.id AND s2.ended_at IS NOT NULL),
+                   'vod_id', (SELECT v.id FROM vods v JOIN streams s3 ON v.stream_id = s3.id WHERE s3.managed_stream_id = ms.id AND COALESCE(v.is_recording, 0) = 0 AND v.is_public = 1 ORDER BY v.created_at DESC LIMIT 1),
+                   'vod_thumbnail', (SELECT v.thumbnail_url FROM vods v JOIN streams s3 ON v.stream_id = s3.id WHERE s3.managed_stream_id = ms.id AND COALESCE(v.is_recording, 0) = 0 AND v.is_public = 1 ORDER BY v.created_at DESC LIMIT 1)
+               )) AS managed_streams_json
+        FROM streams s
+        JOIN users u ON s.user_id = u.id
+        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
+        WHERE s.is_live = 0 AND s.ended_at IS NOT NULL
+        GROUP BY u.id
+        ORDER BY last_online_at DESC
+        LIMIT ? OFFSET ?
+    `, [limit, offset]);
+}
+
+function countRecentlyOnlineStreamers() {
+    return get(`
+        SELECT COUNT(DISTINCT user_id) AS count
+        FROM streams
+        WHERE is_live = 0 AND ended_at IS NOT NULL
+    `)?.count || 0;
+}
+
+function getRecentVods(limit = 12, offset = 0) {
+    return all(`
+        SELECT v.*, u.username, u.display_name, u.avatar_url, u.profile_color,
+               s.protocol AS stream_protocol, s.peak_viewers AS stream_peak_viewers,
+               ms.slug AS managed_stream_slug, ms.id AS managed_stream_id
+        FROM vods v
+        JOIN users u ON v.user_id = u.id
+        LEFT JOIN streams s ON v.stream_id = s.id
+        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
+        WHERE v.is_public = 1 AND COALESCE(v.is_recording, 0) = 0
+        ORDER BY v.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [limit, offset]);
+}
+
+function countRecentVods() {
+    return get(`
+        SELECT COUNT(*) AS count FROM vods
+        WHERE is_public = 1 AND COALESCE(is_recording, 0) = 0
+    `)?.count || 0;
+}
+
+function getVodsByUserFiltered(userId, { includePrivate = false, managedStreamId = null, orderBy = 'newest', limit = 12, offset = 0 } = {}) {
+    const conditions = ['v.user_id = ?', 'COALESCE(v.is_recording, 0) = 0'];
+    const params = [userId];
+
+    if (!includePrivate) {
+        conditions.push('v.is_public = 1');
+    }
+    if (managedStreamId) {
+        conditions.push('s.managed_stream_id = ?');
+        params.push(managedStreamId);
+    }
+
+    const orderClauses = {
+        newest: 'v.created_at DESC',
+        oldest: 'v.created_at ASC',
+        views: 'v.view_count DESC, v.created_at DESC',
+        peak_viewers: 's.peak_viewers DESC, v.created_at DESC',
+    };
+    const order = orderClauses[orderBy] || orderClauses.newest;
+
+    params.push(limit, offset);
+    return all(`
+        SELECT v.*, u.username, u.display_name, u.avatar_url,
+               s.protocol AS stream_protocol, s.peak_viewers AS stream_peak_viewers,
+               ms.slug AS managed_stream_slug, ms.id AS ms_id, ms.title AS ms_title
+        FROM vods v
+        JOIN users u ON v.user_id = u.id
+        LEFT JOIN streams s ON v.stream_id = s.id
+        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY ${order}
+        LIMIT ? OFFSET ?
+    `, params);
+}
+
+function countVodsByUserFiltered(userId, { includePrivate = false, managedStreamId = null } = {}) {
+    const conditions = ['v.user_id = ?', 'COALESCE(v.is_recording, 0) = 0'];
+    const params = [userId];
+    if (!includePrivate) conditions.push('v.is_public = 1');
+    if (managedStreamId) {
+        conditions.push('s.managed_stream_id = ?');
+        params.push(managedStreamId);
+    }
+    return get(`
+        SELECT COUNT(*) AS count
+        FROM vods v
+        LEFT JOIN streams s ON v.stream_id = s.id
+        WHERE ${conditions.join(' AND ')}
+    `, params)?.count || 0;
+}
+
+function getClipsOfUserStreamsPaginated(userId, limit = 12, offset = 0) {
+    return all(`
+        SELECT c.*, u.username AS clip_creator_username, u.display_name AS clip_creator_display_name, u.avatar_url AS clip_creator_avatar,
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol,
+               su.username AS streamer_username, su.display_name AS streamer_display_name
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        JOIN streams s ON c.stream_id = s.id
+        JOIN users su ON s.user_id = su.id
+        WHERE s.user_id = ? AND c.is_public = 1
+        ORDER BY c.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
+}
+
+function countClipsOfUserStreams(userId) {
+    return get(`
+        SELECT COUNT(*) AS count
+        FROM clips c
+        JOIN streams s ON c.stream_id = s.id
+        WHERE s.user_id = ? AND c.is_public = 1
+    `, [userId])?.count || 0;
+}
+
+function getClipsByUserPaginated(userId, includePrivate = false, limit = 12, offset = 0) {
+    const publicFilter = includePrivate ? '' : 'AND c.is_public = 1';
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol,
+               su.username AS streamer_username, su.display_name AS streamer_display_name, su.avatar_url AS streamer_avatar_url
+        FROM clips c
+        JOIN users u ON c.user_id = u.id
+        LEFT JOIN streams s ON c.stream_id = s.id
+        LEFT JOIN users su ON s.user_id = su.id
+        WHERE c.user_id = ? ${publicFilter}
+        ORDER BY c.created_at DESC
+        LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
 }
 
 // ── Channel helpers ──────────────────────────────────────────
@@ -3595,9 +3960,22 @@ module.exports = {
     getDb, initDb, run, get, all, close,
     // Users
     getUserById, getUserByUsername, getUserByStreamKey, createUser, getOrCreateAnonGameUser,
-    // Streams
+    // Managed Streams
+    createManagedStream, getManagedStreamById, getManagedStreamsByUserId,
+    getManagedStreamBySlug, getManagedStreamByStreamKey, getManagedStreamByIdOrSlug,
+    updateManagedStream, deleteManagedStream,
+    countManagedStreamsByUser, getManagedStreamLimit,
+    isValidManagedStreamSlug, isManagedStreamSlugTaken,
+    // Streams (sessions)
     getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId,
     createStream, endStream, updateViewerCount,
+    // Homepage helpers
+    getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
+    getRecentVods, countRecentVods,
+    // Filtered VODs/clips
+    getVodsByUserFiltered, countVodsByUserFiltered,
+    getClipsOfUserStreamsPaginated, countClipsOfUserStreams,
+    getClipsByUserPaginated,
     // Channels
     getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
     getChannelVodRecordingPolicyByUserId,

@@ -983,6 +983,7 @@ async function loadBroadcastPage() {
     loadRobotStreamerIntegration().catch(() => {});
     loadRestreamDestinations().catch(() => {});
     loadBroadcastControlConfigs().catch(() => {});
+    loadBroadcastManagedStreams().catch(() => {});
 
     // If THIS tab has active browser WebRTC streams (localStream exists), restore UI
     if (broadcastState.streams.size > 0 && broadcastState.activeStreamId != null) {
@@ -1032,6 +1033,20 @@ function _restoreLastBroadcastFields() {
     // Populate username in create reassurance text
     const usernameEl = document.getElementById('bc-create-username');
     if (usernameEl && currentUser?.username) usernameEl.textContent = currentUser.username;
+}
+
+async function loadBroadcastManagedStreams() {
+    const select = document.getElementById('bc-managed-stream');
+    if (!select) return;
+    try {
+        const data = await api('/streams/managed');
+        const managed = data.managed_streams || [];
+        select.innerHTML = managed.length
+            ? managed.map(ms => `<option value="${ms.id}">${esc(ms.title || 'Untitled')}${ms.slug ? ` (${esc(ms.slug)})` : ''}</option>`).join('')
+            : '<option value="">Default stream</option>';
+    } catch {
+        select.innerHTML = '<option value="">Default stream</option>';
+    }
 }
 
 /* ── Broadcast Stream Tabs ───────────────────────────────────── */
@@ -1569,6 +1584,8 @@ async function createNewStream() {
     try {
         const selectedConfig = document.getElementById('bc-control-config')?.value;
         const controlConfigId = selectedConfig ? parseInt(selectedConfig) : null;
+        const selectedManagedStream = document.getElementById('bc-managed-stream')?.value;
+        const managedStreamId = selectedManagedStream ? parseInt(selectedManagedStream) : null;
         const data = await api('/streams', {
             method: 'POST',
             body: {
@@ -1578,6 +1595,7 @@ async function createNewStream() {
                 category,
                 is_nsfw: document.getElementById('bc-nsfw')?.checked || false,
                 control_config_id: controlConfigId,
+                managed_stream_id: managedStreamId,
             }
         });
         const streamData = data.stream || data;

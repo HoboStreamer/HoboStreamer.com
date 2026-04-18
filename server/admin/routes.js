@@ -134,7 +134,7 @@ router.get('/users', (req, res) => {
 // ── Update User ──────────────────────────────────────────────
 router.put('/users/:id', (req, res) => {
     try {
-        let { role, display_name, username } = req.body;
+        let { role, display_name, username, max_managed_streams } = req.body;
         const updates = [];
         const params = [];
 
@@ -144,6 +144,13 @@ router.put('/users/:id', (req, res) => {
                 return res.status(400).json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` });
             }
             updates.push('role = ?'); params.push(role);
+        }
+        if (max_managed_streams !== undefined) {
+            const parsed = parseInt(max_managed_streams);
+            if (isNaN(parsed) || parsed < 1 || parsed > 50) {
+                return res.status(400).json({ error: 'max_managed_streams must be 1-50' });
+            }
+            updates.push('max_managed_streams = ?'); params.push(parsed);
         }
         if (username) {
             // Validate username format (same rules as registration)

@@ -473,6 +473,13 @@
                 </div>
             </div>
 
+            <!-- Recent VODs -->
+            <div class="section-header" id="home-recent-vods-header" style="display:none">
+                <h2><i class="fa-solid fa-video"></i> Recent VODs</h2>
+                <a href="/vods" onclick="return handleLinkClick(event, '/vods')" class="badge" style="cursor:pointer;text-decoration:none;background:var(--surface);">View All</a>
+            </div>
+            <div class="stream-grid" id="home-recent-vods-grid"></div>
+
             <!-- Recent Clips -->
             <div class="section-header" id="home-clips-header" style="display:none">
                 <h2><i class="fa-solid fa-scissors"></i> Recent Clips</h2>
@@ -951,6 +958,12 @@
                 </div>
                 <div id="ch-clips-pagination" class="pastes-pagination" style="display:none"></div>
 
+                <div class="section-header" id="ch-clips-of-header" style="display:none">
+                    <h2><i class="fa-solid fa-scissors"></i> Clips of Streams</h2>
+                </div>
+                <div class="stream-grid" id="ch-clips-of-grid"></div>
+                <div id="ch-clips-of-pagination" class="pastes-pagination" style="display:none"></div>
+
                 <!-- Channel Analytics Section -->
                 <div class="section-header" id="ch-analytics-header" style="display:none">
                     <h2><i class="fa-solid fa-chart-line"></i> Stream Analytics</h2>
@@ -1283,6 +1296,14 @@
                     <button class="btn btn-outline" onclick="regenerateStreamKey()">
                         <i class="fa-solid fa-rotate"></i> Regenerate Key
                     </button>
+                </div>
+
+                <!-- Managed Streams -->
+                <div class="dash-card">
+                    <h3><i class="fa-solid fa-tower-broadcast"></i> Stream Manager</h3>
+                    <p class="muted" style="margin-bottom:8px">Manage your persistent streams. Each has its own stream key, URL slug, and settings.</p>
+                    <p class="muted" style="margin-bottom:12px;font-size:0.8rem" id="dash-ms-limit"></p>
+                    <div id="dash-managed-streams"></div>
                 </div>
 
                 <div class="dash-card">
@@ -1935,6 +1956,17 @@
                             <button class="btn btn-small btn-outline" type="button" onclick="requestMediaPermissions()" style="margin-top:10px" title="Grant access and refresh device list">
                                 <i class="fa-solid fa-arrows-rotate"></i> Grant Access / Refresh Devices
                             </button>
+                        </div>
+
+                        <!-- Managed Stream Selection -->
+                        <div id="bc-managed-stream-selector" style="margin-top:10px">
+                            <label style="font-size:0.85rem;font-weight:600;color:var(--text-secondary)"><i class="fa-solid fa-tower-broadcast"></i> Stream Slot</label>
+                            <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+                                <select id="bc-managed-stream" class="form-input form-input-sm" style="flex:1">
+                                    <option value="">Default stream</option>
+                                </select>
+                            </div>
+                            <span class="bc-field-hint">Choose which managed stream to go live on. Each has its own stream key and URL.</span>
                         </div>
 
                         <!-- Control Config Selection -->

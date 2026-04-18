@@ -3366,6 +3366,29 @@ main#app { position: relative; z-index: 1; }
 }
 .dash-card-wide { grid-column: 1/-1; }
 
+/* Managed Stream cards */
+.dash-managed-stream-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px; margin-bottom: 12px;
+}
+.dash-ms-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 6px; flex-wrap: wrap;
+}
+.dash-ms-header strong { font-size: 0.95rem; }
+.dash-ms-details { font-size: 0.8rem; margin-bottom: 8px; }
+.dash-ms-key {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 8px; flex-wrap: wrap;
+}
+.dash-ms-key label { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; }
+.dash-ms-key-input { flex: 1; min-width: 120px; font-size: 0.8rem; padding: 4px 8px; }
+.dash-ms-actions { display: flex; gap: 6px; }
+.badge-live {
+    background: var(--danger, #e53935); color: #fff;
+    padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 700;
+}
+
 .form-group { margin-bottom: 12px; }
 .form-group label {
     display: block; font-size: 0.85rem;

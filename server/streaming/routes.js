@@ -5,11 +5,17 @@
  * GET    /api/streams/channel/:username  - Get channel + live stream
  * PUT    /api/streams/channel            - Update own channel
  * 
- * Streams (sessions on a channel):
+ * Managed Streams (persistent per-account stream definitions):
+ * GET    /api/streams/managed            - List own managed streams
+ * POST   /api/streams/managed            - Create a managed stream
+ * PUT    /api/streams/managed/:id        - Update a managed stream
+ * DELETE /api/streams/managed/:id        - Delete a managed stream
+ * 
+ * Streams (sessions on a managed stream):
  * GET    /api/streams                    - List live streams
  * GET    /api/streams/recent             - List recently ended streams
  * GET    /api/streams/:id                - Get stream details
- * POST   /api/streams                    - Go live (creates stream on channel)
+ * POST   /api/streams                    - Go live (creates session on managed stream)
  * PUT    /api/streams/:id                - Update stream info
  * DELETE /api/streams/:id                - End a stream
  * GET    /api/streams/:id/endpoint       - Get streaming endpoint info
@@ -218,9 +224,13 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         // Get live streams (may be multiple with different protocols)
         const liveStreams = db.getLiveStreamsByUserId(channel.user_id) || [];
         for (const liveStream of liveStreams) {
+            // Use managed stream key if linked, else fall back to user key
+            const lsUser = db.getUserById(liveStream.user_id);
+            const lsKey = liveStream.managed_stream_id
+                ? (db.getManagedStreamById(liveStream.managed_stream_id)?.stream_key || lsUser.stream_key)
+                : lsUser.stream_key;
             if (liveStream.protocol === 'jsmpeg') {
-                const user = db.getUserById(liveStream.user_id);
-                liveStream.endpoint = jsmpegRelay.getChannelInfo(user.stream_key);
+                liveStream.endpoint = jsmpegRelay.getChannelInfo(lsKey);
             } else if (liveStream.protocol === 'webrtc') {
                 liveStream.endpoint = { roomId: `stream-${liveStream.id}` };
             } else if (liveStream.protocol === 'rtmp') {
@@ -235,14 +245,23 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         const isOwner = req.user && req.user.id === channel.user_id;
         const vodLimit = Math.min(Math.max(parseInt(req.query.vodLimit || '12', 10), 1), 48);
         const vodOffset = Math.max(parseInt(req.query.vodOffset || '0', 10), 0);
+        const vodOrderBy = req.query.vodOrderBy || 'newest';
+        const vodManagedStreamId = req.query.vodManagedStreamId ? parseInt(req.query.vodManagedStreamId) : null;
         const clipLimit = Math.min(Math.max(parseInt(req.query.clipLimit || '12', 10), 1), 48);
         const clipOffset = Math.max(parseInt(req.query.clipOffset || '0', 10), 0);
-        const vods = db.getVodsByUser(channel.user_id, isOwner, vodLimit, vodOffset) || [];
-        const vodTotal = db.countVodsByUser(channel.user_id, isOwner);
+        const vods = db.getVodsByUserFiltered(channel.user_id, { includePrivate: isOwner, managedStreamId: vodManagedStreamId, orderBy: vodOrderBy, limit: vodLimit, offset: vodOffset }) || [];
+        const vodTotal = db.countVodsByUserFiltered(channel.user_id, { includePrivate: isOwner, managedStreamId: vodManagedStreamId });
         const clips = db.getClipsByUser(channel.user_id, isOwner, clipLimit, clipOffset) || [];
         const clipTotal = db.countClipsByUser(channel.user_id, isOwner);
+        // Clips of this user's streams (by others)
+        const clipsOfLimit = Math.min(Math.max(parseInt(req.query.clipsOfLimit || '12', 10), 1), 48);
+        const clipsOfOffset = Math.max(parseInt(req.query.clipsOfOffset || '0', 10), 0);
+        const clipsOfStreams = db.getClipsOfUserStreamsPaginated(channel.user_id, clipsOfLimit, clipsOfOffset) || [];
+        const clipsOfTotal = db.countClipsOfUserStreams(channel.user_id);
         const followerCount = db.getFollowerCount(channel.user_id);
         const isFollowing = req.user ? db.isFollowing(req.user.id, channel.user_id) : false;
+        // Managed streams for this channel
+        const managedStreams = db.getManagedStreamsByUserId(channel.user_id) || [];
 
         // Include RS restream status for each live stream
         const rsInfo = {};
@@ -328,6 +347,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             channel: publicChannel,
             stream: liveStreams[0] || null,
             streams: liveStreams,
+            managed_streams: managedStreams,
             rs_restream: Object.keys(rsInfo).length ? rsInfo : null,
             restream_links: restreamLinks,
             external_viewers: externalViewers,
@@ -335,12 +355,19 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             vodTotal,
             vodLimit,
             vodOffset,
+            vodOrderBy,
+            vodManagedStreamId: vodManagedStreamId || null,
             vodHasMore: vodOffset + vods.length < vodTotal,
             clips,
             clipTotal,
             clipLimit,
             clipOffset,
             clipHasMore: clipOffset + clips.length < clipTotal,
+            clipsOfStreams,
+            clipsOfTotal,
+            clipsOfLimit,
+            clipsOfOffset,
+            clipsOfHasMore: clipsOfOffset + clipsOfStreams.length < clipsOfTotal,
         });
     } catch (err) {
         console.error('[Channels] Get error:', err.message);
@@ -669,6 +696,39 @@ router.get('/recent', (req, res) => {
     }
 });
 
+// ── Recently Online (grouped by user) ────────────────────────
+router.get('/recently-online', (req, res) => {
+    try {
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const streamers = db.getRecentlyOnlineStreamers(limit, offset);
+        const total = db.countRecentlyOnlineStreamers();
+        // Parse the JSON aggregate column
+        for (const s of streamers) {
+            try { s.managed_streams = JSON.parse(s.managed_streams_json || '[]'); } catch { s.managed_streams = []; }
+            delete s.managed_streams_json;
+        }
+        res.json({ streamers, total, limit, offset, hasMore: offset + streamers.length < total });
+    } catch (err) {
+        console.error('[Streaming]', err.message);
+        res.status(500).json({ error: 'Failed to list recently online' });
+    }
+});
+
+// ── Recent VODs ──────────────────────────────────────────────
+router.get('/recent-vods', (req, res) => {
+    try {
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '12', 10), 1), 48);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const vods = db.getRecentVods(limit, offset);
+        const total = db.countRecentVods();
+        res.json({ vods, total, limit, offset, hasMore: offset + vods.length < total });
+    } catch (err) {
+        console.error('[Streaming]', err.message);
+        res.status(500).json({ error: 'Failed to list recent VODs' });
+    }
+});
+
 /* ── Voice Channels (global, non-stream) ───────────────────── */
 
 router.get('/voice-channels', (req, res) => {
@@ -834,6 +894,175 @@ router.get('/broadcast-settings', requireAuth, (req, res) => {
     }
 });
 
+// ── Managed Stream CRUD ──────────────────────────────────────
+
+// List own managed streams
+router.get('/managed', requireAuth, (req, res) => {
+    try {
+        const managed = db.getManagedStreamsByUserId(req.user.id);
+        const limit = db.getManagedStreamLimit(req.user);
+        res.json({ managed_streams: managed, limit });
+    } catch (err) {
+        console.error('[ManagedStreams] List error:', err.message);
+        res.status(500).json({ error: 'Failed to list managed streams' });
+    }
+});
+
+// Create a managed stream
+router.post('/managed', requireAuth, (req, res) => {
+    try {
+        const limit = db.getManagedStreamLimit(req.user);
+        const count = db.countManagedStreamsByUser(req.user.id);
+        if (count >= limit) {
+            return res.status(403).json({ error: `Managed stream limit reached (${limit})` });
+        }
+
+        const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH }) || 'Untitled Stream';
+        const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true }) || '';
+        const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH }) || 'irl';
+        const protocol = cleanProtocol(req.body.protocol) || 'webrtc';
+        const is_nsfw = cleanBooleanFlag(req.body.is_nsfw);
+        let slug = req.body.slug ? req.body.slug.trim().toLowerCase() : null;
+
+        if (slug) {
+            if (!db.isValidManagedStreamSlug(slug)) {
+                return res.status(400).json({ error: 'Invalid slug. Must be 2-32 chars, start with a letter, alphanumeric/hyphens/underscores only, not purely numeric.' });
+            }
+            if (db.isManagedStreamSlugTaken(req.user.id, slug)) {
+                return res.status(409).json({ error: 'Slug already in use for your account' });
+            }
+        }
+
+        const channel = db.ensureChannel(req.user.id);
+        if (req.user.role === 'user') {
+            db.run('UPDATE users SET role = ? WHERE id = ?', ['streamer', req.user.id]);
+        }
+
+        // Generate unique stream key for this managed stream
+        const crypto = require('crypto');
+        const stream_key = crypto.randomBytes(20).toString('hex');
+
+        const result = db.createManagedStream({
+            user_id: req.user.id,
+            channel_id: channel.id,
+            slug,
+            title,
+            description,
+            category,
+            protocol,
+            stream_key,
+            is_nsfw,
+            control_config_id: req.body.control_config_id ? parseInt(req.body.control_config_id) : null,
+        });
+
+        const managedStream = db.getManagedStreamById(result.lastInsertRowid);
+        res.status(201).json({ managed_stream: managedStream });
+    } catch (err) {
+        console.error('[ManagedStreams] Create error:', err.message);
+        res.status(500).json({ error: 'Failed to create managed stream' });
+    }
+});
+
+// Update a managed stream
+router.put('/managed/:id', requireAuth, (req, res) => {
+    try {
+        const msId = parseInt(req.params.id);
+        const ms = db.getManagedStreamById(msId);
+        if (!ms) return res.status(404).json({ error: 'Managed stream not found' });
+        if (ms.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Not your managed stream' });
+        }
+
+        const fields = {};
+        if (hasOwn(req.body, 'title')) {
+            fields.title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
+            if (fields.title === null) return res.status(400).json({ error: 'Invalid title' });
+        }
+        if (hasOwn(req.body, 'description')) {
+            fields.description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
+            if (fields.description === null) return res.status(400).json({ error: 'Invalid description' });
+        }
+        if (hasOwn(req.body, 'category')) {
+            fields.category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
+            if (fields.category === null) return res.status(400).json({ error: 'Invalid category' });
+        }
+        if (hasOwn(req.body, 'protocol')) {
+            fields.protocol = cleanProtocol(req.body.protocol);
+            if (fields.protocol === null) return res.status(400).json({ error: 'Invalid protocol' });
+        }
+        if (hasOwn(req.body, 'is_nsfw')) {
+            fields.is_nsfw = cleanBooleanFlag(req.body.is_nsfw) ? 1 : 0;
+        }
+        if (hasOwn(req.body, 'tags')) {
+            fields.tags = cleanTags(req.body.tags);
+            if (fields.tags === null) return res.status(400).json({ error: 'Invalid tags' });
+        }
+        if (hasOwn(req.body, 'control_config_id')) {
+            fields.control_config_id = req.body.control_config_id === null ? null : parseInt(req.body.control_config_id);
+        }
+        if (hasOwn(req.body, 'sort_order')) {
+            fields.sort_order = parseInt(req.body.sort_order) || 0;
+        }
+        if (hasOwn(req.body, 'slug')) {
+            const slug = req.body.slug ? req.body.slug.trim().toLowerCase() : null;
+            if (slug) {
+                if (!db.isValidManagedStreamSlug(slug)) {
+                    return res.status(400).json({ error: 'Invalid slug format' });
+                }
+                if (db.isManagedStreamSlugTaken(req.user.id, slug, msId)) {
+                    return res.status(409).json({ error: 'Slug already in use' });
+                }
+            }
+            fields.slug = slug;
+        }
+
+        db.updateManagedStream(msId, ms.user_id, fields);
+        const updated = db.getManagedStreamById(msId);
+        res.json({ managed_stream: updated });
+    } catch (err) {
+        console.error('[ManagedStreams] Update error:', err.message);
+        res.status(500).json({ error: 'Failed to update managed stream' });
+    }
+});
+
+// Delete a managed stream
+router.delete('/managed/:id', requireAuth, (req, res) => {
+    try {
+        const msId = parseInt(req.params.id);
+        const ms = db.getManagedStreamById(msId);
+        if (!ms) return res.status(404).json({ error: 'Managed stream not found' });
+        if (ms.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Not your managed stream' });
+        }
+
+        db.deleteManagedStream(msId, ms.user_id);
+        res.json({ message: 'Managed stream deleted' });
+    } catch (err) {
+        console.error('[ManagedStreams] Delete error:', err.message);
+        res.status(500).json({ error: 'Failed to delete managed stream' });
+    }
+});
+
+// Regenerate stream key for a managed stream
+router.post('/managed/:id/regenerate-key', requireAuth, (req, res) => {
+    try {
+        const msId = parseInt(req.params.id);
+        const ms = db.getManagedStreamById(msId);
+        if (!ms) return res.status(404).json({ error: 'Managed stream not found' });
+        if (ms.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Not your managed stream' });
+        }
+
+        const crypto = require('crypto');
+        const newKey = crypto.randomBytes(20).toString('hex');
+        db.run('UPDATE managed_streams SET stream_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [newKey, msId]);
+        res.json({ stream_key: newKey });
+    } catch (err) {
+        console.error('[ManagedStreams] Regenerate key error:', err.message);
+        res.status(500).json({ error: 'Failed to regenerate key' });
+    }
+});
+
 // ── Get Stream Details ───────────────────────────────────────
 router.get('/:id', optionalAuth, (req, res) => {
     try {
@@ -872,6 +1101,24 @@ router.get('/:id', optionalAuth, (req, res) => {
 // ── Start a New Stream (Go Live) ─────────────────────────────
 router.post('/', requireAuth, (req, res) => {
     try {
+        const managedStreamId = req.body.managed_stream_id ? parseInt(req.body.managed_stream_id) : null;
+
+        // Look up or auto-create a managed stream
+        let managedStream = null;
+        if (managedStreamId) {
+            managedStream = db.getManagedStreamById(managedStreamId);
+            if (!managedStream) return res.status(404).json({ error: 'Managed stream not found' });
+            if (managedStream.user_id !== req.user.id && req.user.role !== 'admin') {
+                return res.status(403).json({ error: 'Not your managed stream' });
+            }
+        } else {
+            // Backward compat: auto-select first managed stream or create one
+            const existing = db.getManagedStreamsByUserId(req.user.id);
+            if (existing.length > 0) {
+                managedStream = existing[0];
+            }
+        }
+
         const title = cleanText(req.body.title, { maxLength: MAX_TITLE_LENGTH });
         const description = cleanText(req.body.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true });
         const category = cleanText(req.body.category, { maxLength: MAX_CATEGORY_LENGTH });
@@ -894,8 +1141,27 @@ router.post('/', requireAuth, (req, res) => {
             db.run('UPDATE users SET role = ? WHERE id = ?', ['streamer', req.user.id]);
         }
 
-        const streamProtocol = protocol || cleanProtocol(channel.protocol) || 'webrtc';
-        const streamCategory = category || cleanText(channel.category, { maxLength: MAX_CATEGORY_LENGTH }) || 'irl';
+        // If no managed stream exists yet, create a default one
+        if (!managedStream) {
+            const crypto = require('crypto');
+            const stream_key = crypto.randomBytes(20).toString('hex');
+            const msResult = db.createManagedStream({
+                user_id: req.user.id,
+                channel_id: channel.id,
+                slug: null,
+                title: title || cleanText(channel.title, { maxLength: MAX_TITLE_LENGTH }) || `${req.user.display_name}'s Stream`,
+                description: description ?? '',
+                category: category || 'irl',
+                protocol: protocol || 'webrtc',
+                stream_key,
+                is_nsfw: false,
+            });
+            managedStream = db.getManagedStreamById(msResult.lastInsertRowid);
+        }
+
+        // Use managed stream's settings as defaults, allow per-session overrides
+        const streamProtocol = protocol || cleanProtocol(managedStream.protocol) || cleanProtocol(channel.protocol) || 'webrtc';
+        const streamCategory = category || cleanText(managedStream.category, { maxLength: MAX_CATEGORY_LENGTH }) || cleanText(channel.category, { maxLength: MAX_CATEGORY_LENGTH }) || 'irl';
         const requestedControlConfigId = req.body.control_config_id !== undefined ? (req.body.control_config_id === null ? null : parseInt(req.body.control_config_id)) : undefined;
 
         if (requestedControlConfigId !== undefined && requestedControlConfigId !== null) {
@@ -911,9 +1177,10 @@ router.post('/', requireAuth, (req, res) => {
         const result = db.createStream({
             user_id: req.user.id,
             channel_id: channel.id,
-            control_config_id: requestedControlConfigId !== undefined ? requestedControlConfigId : null,
-            title: title || cleanText(channel.title, { maxLength: MAX_TITLE_LENGTH }) || `${req.user.display_name}'s Stream`,
-            description: description ?? cleanText(channel.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true }) ?? '',
+            managed_stream_id: managedStream.id,
+            control_config_id: requestedControlConfigId !== undefined ? requestedControlConfigId : (managedStream.control_config_id || null),
+            title: title || cleanText(managedStream.title, { maxLength: MAX_TITLE_LENGTH }) || `${req.user.display_name}'s Stream`,
+            description: description ?? cleanText(managedStream.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true }) ?? '',
             category: streamCategory,
             protocol: streamProtocol,
             is_nsfw: channel.force_nsfw ? 1 : (hasOwn(req.body, 'is_nsfw') ? cleanBooleanFlag(req.body.is_nsfw) : !!channel.is_nsfw),
@@ -936,7 +1203,7 @@ router.post('/', requireAuth, (req, res) => {
 
         let endpoint = {};
         if (streamProtocol === 'jsmpeg') {
-            endpoint = jsmpegRelay.createChannel(req.user.stream_key);
+            endpoint = jsmpegRelay.createChannel(managedStream.stream_key);
         } else if (streamProtocol === 'webrtc') {
             endpoint = { roomId: `stream-${streamId}` };
         }
@@ -1058,8 +1325,11 @@ router.delete('/:id', requireAuth, (req, res) => {
         });
 
         const user = db.getUserById(stream.user_id);
+        const endKey = stream.managed_stream_id
+            ? (db.getManagedStreamById(stream.managed_stream_id)?.stream_key || user.stream_key)
+            : user.stream_key;
         if (stream.protocol === 'jsmpeg') {
-            jsmpegRelay.destroyChannel(user.stream_key);
+            jsmpegRelay.destroyChannel(endKey);
         } else if (stream.protocol === 'webrtc') {
             webrtcSFU.closeRoom(`stream-${stream.id}`);
         }
@@ -1091,28 +1361,32 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
         }
 
         const user = db.getUserById(stream.user_id);
+        // Use managed stream key if linked, else fallback to user key
+        const msKey = stream.managed_stream_id
+            ? (db.getManagedStreamById(stream.managed_stream_id)?.stream_key || user.stream_key)
+            : user.stream_key;
         let endpoint = {};
 
         const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
 
         if (stream.protocol === 'jsmpeg') {
-            endpoint = jsmpegRelay.getChannelInfo(user.stream_key) || jsmpegRelay.createChannel(user.stream_key);
+            endpoint = jsmpegRelay.getChannelInfo(msKey) || jsmpegRelay.createChannel(msKey);
 
             // Start server-side VOD recording for JSMPEG (taps the relay WebSocket, zero delay to live)
             const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id);
             if (stream.is_live && vodPolicy.recordingEnabled && !recorder.isRecording(stream.id)) {
                 recorder.startRecording(stream.id, 'jsmpeg', {
-                    streamKey: user.stream_key,
+                    streamKey: msKey,
                     videoPort: endpoint.videoPort,
                 });
             }
 
             const jsmpegOrigin = new URL(config.jsmpeg.publicUrl || `http://${hostname}`);
-            const videoUrl = new URL(`${user.stream_key}/640/480/`, jsmpegOrigin);
+            const videoUrl = new URL(`${msKey}/640/480/`, jsmpegOrigin);
             videoUrl.port = endpoint.videoPort;
-            const urlHD = new URL(`${user.stream_key}/1280/720/`, jsmpegOrigin);
+            const urlHD = new URL(`${msKey}/1280/720/`, jsmpegOrigin);
             urlHD.port = endpoint.videoPort;
-            const audioUrl = new URL(`${user.stream_key}/`, jsmpegOrigin);
+            const audioUrl = new URL(`${msKey}/`, jsmpegOrigin);
             audioUrl.port = endpoint.audioPort;
             const lowLatencyFlags = '-fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 -muxdelay 0.001 -flush_packets 1';
             endpoint.ffmpegCommand = `ffmpeg ${lowLatencyFlags} -thread_queue_size 512 -f v4l2 -framerate 24 -i /dev/video0 -thread_queue_size 512 -f alsa -i default -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k -maxrate 350k -bufsize 700k -g 12 -bf 0 -codec:a mp2 -b:a 96k -ar 44100 -ac 1 ${videoUrl}`;
@@ -1134,12 +1408,12 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             const rtmpHost = config.rtmp.host || hostname;
             endpoint = {
                 rtmpUrl: `rtmp://${rtmpHost}:${config.rtmp.port}/live`,
-                streamKey: user.stream_key,
+                streamKey: msKey,
                 flvUrl: `/api/streams/rtmp-proxy/${stream.id}.flv`,
             };
         }
 
-        res.json({ endpoint, stream_key: user.stream_key });
+        res.json({ endpoint, stream_key: msKey });
     } catch (err) {
         console.error('[Streaming]', err.message);
         res.status(500).json({ error: 'Failed to get endpoint' });

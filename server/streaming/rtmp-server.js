@@ -86,15 +86,18 @@ class RTMPServer extends EventEmitter {
             }
 
             const user = db.getUserByStreamKey(streamKey);
-            if (!user) {
+            // Also check if key belongs to a managed stream
+            const managedStream = !user ? db.getManagedStreamByStreamKey(streamKey) : null;
+            const resolvedUser = user || (managedStream ? db.getUserById(managedStream.user_id) : null);
+            if (!resolvedUser) {
                 console.log(`[RTMP] Rejected: invalid stream key ${streamKey}`);
                 const session = this.nms.getSession(id);
                 if (session) session.reject();
                 return;
             }
 
-            if (user.is_banned) {
-                console.log(`[RTMP] Rejected: banned user ${user.username}`);
+            if (resolvedUser.is_banned) {
+                console.log(`[RTMP] Rejected: banned user ${resolvedUser.username}`);
                 const session = this.nms.getSession(id);
                 if (session) session.reject();
                 return;
@@ -102,7 +105,7 @@ class RTMPServer extends EventEmitter {
 
             // Create or update stream record
             // Look for an existing RTMP stream (created via Go Live page) that's waiting for the RTMP client
-            const existingStreams = db.getLiveStreamsByUserId(user.id);
+            const existingStreams = db.getLiveStreamsByUserId(resolvedUser.id);
             const rtmpStream = existingStreams.find(s => s.protocol === 'rtmp');
             let streamId;
             if (rtmpStream) {
@@ -111,16 +114,17 @@ class RTMPServer extends EventEmitter {
                     [streamId]);
             } else {
                 // No pre-created RTMP stream — auto-create one (direct OBS connect without Go Live page)
-                db.ensureChannel(user.id);
+                db.ensureChannel(resolvedUser.id);
                 const result = db.createStream({
-                    user_id: user.id,
-                    title: `${user.display_name}'s Stream`,
+                    user_id: resolvedUser.id,
+                    managed_stream_id: managedStream ? managedStream.id : null,
+                    title: `${resolvedUser.display_name}'s Stream`,
                     protocol: 'rtmp',
                 });
                 streamId = result.lastInsertRowid;
 
                 // Auto-apply active control config
-                const channel = db.getChannelByUserId(user.id);
+                const channel = db.getChannelByUserId(resolvedUser.id);
                 if (channel && channel.active_control_config_id) {
                     try {
                         const applied = db.applyConfigToStream(channel.active_control_config_id, streamId);
@@ -134,20 +138,20 @@ class RTMPServer extends EventEmitter {
             // Ensure heartbeat is always set (for stale-stream cleanup)
             db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
 
-            this.activeStreams.set(streamKey, { streamId, userId: user.id, sessionId: id, connectedAt: new Date().toISOString() });
-            console.log(`[RTMP] Stream started: ${user.username} (stream ${streamId})`);
+            this.activeStreams.set(streamKey, { streamId, userId: resolvedUser.id, sessionId: id, connectedAt: new Date().toISOString() });
+            console.log(`[RTMP] Stream started: ${resolvedUser.username} (stream ${streamId})`);
 
             // Emit event for restream auto-start
-            this.emit('publish', { streamId, userId: user.id, streamKey });
+            this.emit('publish', { streamId, userId: resolvedUser.id, streamKey });
 
             // Discord webhook notification (fire-and-forget)
-            const stream = db.getStreamById ? db.getStreamById(streamId) : { id: streamId, title: `${user.display_name}'s Stream` };
-            notifyDiscordGoLive(user, stream || { id: streamId });
+            const stream = db.getStreamById ? db.getStreamById(streamId) : { id: streamId, title: `${resolvedUser.display_name}'s Stream` };
+            notifyDiscordGoLive(resolvedUser, stream || { id: streamId });
 
             // Start server-side VOD recording via FFmpeg
             // Small delay to let NMS fully register the RTMP stream before FFmpeg pulls it
             setTimeout(() => {
-                const vodPolicy = db.getChannelVodRecordingPolicyByUserId(user.id);
+                const vodPolicy = db.getChannelVodRecordingPolicyByUserId(resolvedUser.id);
                 if (vodPolicy.recordingEnabled) {
                     recorder.startRecording(streamId, 'rtmp', { streamKey });
                 }

@@ -20,6 +20,8 @@ async function loadDashboard() {
     loadDashChannel();
     // Load stream key
     loadDashStreamKey();
+    // Load managed streams
+    loadDashManagedStreams();
     // Load goals
     loadDashGoals();
     // Load VODs
@@ -70,6 +72,207 @@ function copyStreamKey() {
     const key = document.getElementById('dash-stream-key').value;
     if (!key) return toast('No stream key', 'error');
     navigator.clipboard.writeText(key).then(() => toast('Stream key copied!', 'success'));
+}
+
+/* ── Managed Streams ──────────────────────────────────────────── */
+async function loadDashManagedStreams() {
+    const container = document.getElementById('dash-managed-streams');
+    if (!container) return;
+    try {
+        const data = await api('/streams/managed');
+        const managed = data.managed_streams || [];
+        const limit = data.limit || 3;
+        container.innerHTML = '';
+
+        if (managed.length === 0) {
+            container.innerHTML = '<p class="muted">No managed streams. Create one to get started.</p>';
+        } else {
+            managed.forEach(ms => {
+                const card = document.createElement('div');
+                card.className = 'dash-managed-stream-card';
+                card.innerHTML = `
+                    <div class="dash-ms-header">
+                        <strong>${esc(ms.title || 'Untitled Stream')}</strong>
+                        ${ms.slug ? `<span class="muted">${esc(ms.slug)}</span>` : ''}
+                        ${ms.is_currently_live ? '<span class="badge badge-live">LIVE</span>' : ''}
+                    </div>
+                    <div class="dash-ms-details muted">
+                        Protocol: ${esc(ms.protocol || 'webrtc')} &middot;
+                        Category: ${esc(ms.category || 'irl')} &middot;
+                        Sessions: ${ms.session_count || 0}
+                        ${ms.last_live_at ? ` &middot; Last live: ${timeAgo(ms.last_live_at)}` : ''}
+                    </div>
+                    <div class="dash-ms-key">
+                        <label>Stream Key:</label>
+                        <input type="password" value="${esc(ms.stream_key)}" readonly class="input input-small dash-ms-key-input">
+                        <button class="btn btn-small btn-outline" onclick="this.previousElementSibling.type = this.previousElementSibling.type === 'password' ? 'text' : 'password'"><i class="fa-solid fa-eye"></i></button>
+                        <button class="btn btn-small btn-outline" onclick="navigator.clipboard.writeText('${esc(ms.stream_key)}').then(() => toast('Key copied!', 'success'))"><i class="fa-solid fa-copy"></i></button>
+                        <button class="btn btn-small btn-outline btn-danger" onclick="regenerateManagedStreamKey(${ms.id})"><i class="fa-solid fa-rotate"></i></button>
+                    </div>
+                    <div class="dash-ms-actions">
+                        <button class="btn btn-small btn-outline" onclick="editManagedStream(${ms.id})"><i class="fa-solid fa-pen"></i> Edit</button>
+                        <button class="btn btn-small btn-outline btn-danger" onclick="deleteManagedStream(${ms.id})"><i class="fa-solid fa-trash"></i> Delete</button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        // Add create button if under limit
+        if (managed.length < limit) {
+            const createBtn = document.createElement('button');
+            createBtn.className = 'btn btn-primary';
+            createBtn.innerHTML = '<i class="fa-solid fa-plus"></i> Create Managed Stream';
+            createBtn.onclick = () => showCreateManagedStreamModal();
+            container.appendChild(createBtn);
+        }
+
+        const limitInfo = document.getElementById('dash-ms-limit');
+        if (limitInfo) limitInfo.textContent = `${managed.length} / ${limit} streams`;
+    } catch (e) {
+        console.error('Failed to load managed streams:', e);
+        container.innerHTML = '<p class="muted">Failed to load managed streams</p>';
+    }
+}
+
+function showCreateManagedStreamModal() {
+    const html = `
+        <div class="modal-overlay" id="create-ms-modal" onclick="if(event.target===this)this.remove()">
+            <div class="modal-content" style="max-width:500px">
+                <h3>Create Managed Stream</h3>
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" id="ms-create-title" class="input" placeholder="Stream title" maxlength="140">
+                </div>
+                <div class="form-group">
+                    <label>Slug (optional URL-friendly name)</label>
+                    <input type="text" id="ms-create-slug" class="input" placeholder="e.g. main-cam" maxlength="32">
+                    <small class="muted">2-32 chars, letters/numbers/hyphens/underscores, starts with a letter</small>
+                </div>
+                <div class="form-group">
+                    <label>Protocol</label>
+                    <select id="ms-create-protocol" class="input">
+                        <option value="webrtc" selected>WebRTC</option>
+                        <option value="rtmp">RTMP</option>
+                        <option value="jsmpeg">JSMPEG</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Category</label>
+                    <input type="text" id="ms-create-category" class="input" placeholder="irl" maxlength="60" value="irl">
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="ms-create-nsfw"> NSFW</label>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-outline" onclick="document.getElementById('create-ms-modal').remove()">Cancel</button>
+                    <button class="btn btn-primary" onclick="submitCreateManagedStream()">Create</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function submitCreateManagedStream() {
+    const title = document.getElementById('ms-create-title')?.value.trim();
+    const slug = document.getElementById('ms-create-slug')?.value.trim().toLowerCase() || null;
+    const protocol = document.getElementById('ms-create-protocol')?.value || 'webrtc';
+    const category = document.getElementById('ms-create-category')?.value.trim() || 'irl';
+    const is_nsfw = document.getElementById('ms-create-nsfw')?.checked || false;
+    if (!title) return toast('Title is required', 'error');
+    try {
+        await api('/streams/managed', { method: 'POST', body: { title, slug, protocol, category, is_nsfw } });
+        document.getElementById('create-ms-modal')?.remove();
+        toast('Managed stream created!', 'success');
+        loadDashManagedStreams();
+    } catch (e) {
+        toast(e.message || 'Failed to create', 'error');
+    }
+}
+
+async function editManagedStream(id) {
+    try {
+        const data = await api('/streams/managed');
+        const ms = (data.managed_streams || []).find(m => m.id === id);
+        if (!ms) return toast('Not found', 'error');
+        const html = `
+            <div class="modal-overlay" id="edit-ms-modal" onclick="if(event.target===this)this.remove()">
+                <div class="modal-content" style="max-width:500px">
+                    <h3>Edit Managed Stream</h3>
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" id="ms-edit-title" class="input" value="${esc(ms.title || '')}" maxlength="140">
+                    </div>
+                    <div class="form-group">
+                        <label>Slug</label>
+                        <input type="text" id="ms-edit-slug" class="input" value="${esc(ms.slug || '')}" maxlength="32">
+                    </div>
+                    <div class="form-group">
+                        <label>Protocol</label>
+                        <select id="ms-edit-protocol" class="input">
+                            <option value="webrtc" ${ms.protocol === 'webrtc' ? 'selected' : ''}>WebRTC</option>
+                            <option value="rtmp" ${ms.protocol === 'rtmp' ? 'selected' : ''}>RTMP</option>
+                            <option value="jsmpeg" ${ms.protocol === 'jsmpeg' ? 'selected' : ''}>JSMPEG</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Category</label>
+                        <input type="text" id="ms-edit-category" class="input" value="${esc(ms.category || 'irl')}" maxlength="60">
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="ms-edit-nsfw" ${ms.is_nsfw ? 'checked' : ''}> NSFW</label>
+                    </div>
+                    <div class="modal-actions">
+                        <button class="btn btn-outline" onclick="document.getElementById('edit-ms-modal').remove()">Cancel</button>
+                        <button class="btn btn-primary" onclick="submitEditManagedStream(${id})">Save</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', html);
+    } catch (e) {
+        toast(e.message || 'Failed to load', 'error');
+    }
+}
+
+async function submitEditManagedStream(id) {
+    const title = document.getElementById('ms-edit-title')?.value.trim();
+    const slug = document.getElementById('ms-edit-slug')?.value.trim().toLowerCase() || null;
+    const protocol = document.getElementById('ms-edit-protocol')?.value || 'webrtc';
+    const category = document.getElementById('ms-edit-category')?.value.trim() || 'irl';
+    const is_nsfw = document.getElementById('ms-edit-nsfw')?.checked || false;
+    if (!title) return toast('Title is required', 'error');
+    try {
+        await api('/streams/managed/' + id, { method: 'PUT', body: { title, slug, protocol, category, is_nsfw } });
+        document.getElementById('edit-ms-modal')?.remove();
+        toast('Managed stream updated!', 'success');
+        loadDashManagedStreams();
+    } catch (e) {
+        toast(e.message || 'Failed to update', 'error');
+    }
+}
+
+async function deleteManagedStream(id) {
+    if (!confirm('Delete this managed stream? Historical sessions will be preserved but unlinked.')) return;
+    try {
+        await api('/streams/managed/' + id, { method: 'DELETE' });
+        toast('Managed stream deleted', 'info');
+        loadDashManagedStreams();
+    } catch (e) {
+        toast(e.message || 'Failed to delete', 'error');
+    }
+}
+
+async function regenerateManagedStreamKey(id) {
+    if (!confirm('Regenerate stream key? The old key will stop working immediately.')) return;
+    try {
+        await api('/streams/managed/' + id + '/regenerate-key', { method: 'POST' });
+        toast('Stream key regenerated!', 'success');
+        loadDashManagedStreams();
+    } catch (e) {
+        toast(e.message || 'Failed to regenerate', 'error');
+    }
 }
 
 function getDashObsOverlayUrl() {
