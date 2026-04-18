@@ -1046,9 +1046,6 @@ router.post('/managed', requireAuth, (req, res) => {
         }
 
         const channel = db.ensureChannel(req.user.id);
-        if (req.user.role === 'user') {
-            db.run('UPDATE users SET role = ? WHERE id = ?', ['streamer', req.user.id]);
-        }
 
         // Generate unique stream key for this managed stream
         const crypto = require('crypto');
@@ -1223,7 +1220,7 @@ router.post('/', requireAuth, (req, res) => {
     try {
         const managedStreamId = req.body.managed_stream_id ? parseInt(req.body.managed_stream_id) : null;
 
-        // Look up or auto-create a managed stream
+        // Look up managed stream — no auto-creation
         let managedStream = null;
         if (managedStreamId) {
             managedStream = db.getManagedStreamById(managedStreamId);
@@ -1232,10 +1229,12 @@ router.post('/', requireAuth, (req, res) => {
                 return res.status(403).json({ error: 'Not your managed stream' });
             }
         } else {
-            // Backward compat: auto-select first managed stream or create one
+            // Auto-select first managed stream (but never auto-create)
             const existing = db.getManagedStreamsByUserId(req.user.id);
             if (existing.length > 0) {
                 managedStream = existing[0];
+            } else {
+                return res.status(400).json({ error: 'Create a stream slot first' });
             }
         }
 
@@ -1257,26 +1256,10 @@ router.post('/', requireAuth, (req, res) => {
 
         const channel = db.ensureChannel(req.user.id);
 
+        // Promote to streamer role on first real live ingest
         if (req.user.role === 'user') {
             db.run('UPDATE users SET role = ? WHERE id = ?', ['streamer', req.user.id]);
-        }
-
-        // If no managed stream exists yet, create a default one
-        if (!managedStream) {
-            const crypto = require('crypto');
-            const stream_key = crypto.randomBytes(20).toString('hex');
-            const msResult = db.createManagedStream({
-                user_id: req.user.id,
-                channel_id: channel.id,
-                slug: null,
-                title: title || cleanText(channel.title, { maxLength: MAX_TITLE_LENGTH }) || `${req.user.display_name}'s Stream`,
-                description: description ?? '',
-                category: category || 'irl',
-                protocol: protocol || 'webrtc',
-                stream_key,
-                is_nsfw: false,
-            });
-            managedStream = db.getManagedStreamById(msResult.lastInsertRowid);
+            console.log(`[Streams] Promoted user ${req.user.id} to streamer on first go-live`);
         }
 
         // Use managed stream's settings as defaults, allow per-session overrides

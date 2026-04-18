@@ -1232,9 +1232,9 @@ function getStreamHistoryByManagedStream(managedStreamId, userId, limit = 20) {
         SELECT s.id, s.title, s.started_at, s.ended_at, s.is_live,
                s.peak_viewers, s.viewer_count, s.duration_seconds,
                s.protocol, s.category,
-               v.id AS vod_id, v.filename AS vod_filename
+               v.id AS vod_id, v.file_path AS vod_file_path
         FROM streams s
-        LEFT JOIN vods v ON v.stream_id = s.id AND v.deleted_at IS NULL
+        LEFT JOIN vods v ON v.stream_id = s.id
         WHERE s.managed_stream_id = ? AND s.user_id = ?
         ORDER BY s.started_at DESC
         LIMIT ?

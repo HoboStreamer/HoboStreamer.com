@@ -419,6 +419,15 @@ function buildSdpAnswer(transport, offerSdp, producersByKind) {
 
 /**
  * POST /whip/:streamId — WHIP offer → answer
+ *
+ * Supports two auth models:
+ *   1. Stream-key auth (OBS / external WHIP encoders):
+ *      - Path param is the managed stream's stream_key (hex string)
+ *      - Bearer token (optional, OBS sends it) must match the same key
+ *      - Server looks up managed_stream → finds live session
+ *   2. JWT Bearer auth (legacy / internal):
+ *      - Path param is the numeric stream session ID
+ *      - Bearer token is a valid JWT
  */
 async function handleWhipPost(req, res) {
     if (!sdpTransform) {
@@ -426,29 +435,89 @@ async function handleWhipPost(req, res) {
     }
 
     try {
-        // Auth via Bearer token
+        const pathParam = req.params.streamId;
         const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return res.status(401).set('WWW-Authenticate', 'Bearer').set('X-WHIP-ERROR', 'authentication_required').json({ error: 'Bearer token required', error_code: 'authentication_required' });
-        }
-        const token = authHeader.slice(7);
-        const decoded = verifyToken(token);
-        if (!decoded) return sendWhipError(res, 401, 'invalid_token', 'Invalid or expired token');
-        const user = resolveHoboToolsUser(decoded);
-        if (!user) return sendWhipError(res, 401, 'user_not_found', 'User not found');
-        logWhipStage('auth', 'unknown', { user_id: user.id });
+        const bearerToken = (authHeader && authHeader.startsWith('Bearer '))
+            ? authHeader.slice(7).trim()
+            : null;
 
-        // Stream validation
-        const streamId = parseInt(req.params.streamId, 10);
-        if (!streamId || isNaN(streamId)) return sendWhipError(res, 400, 'invalid_stream_id', 'Invalid stream ID');
+        let stream = null;
+        let userId = null;
 
-        const stream = db.getStreamById(streamId);
-        if (!stream) return sendWhipError(res, 404, 'stream_not_found', 'Stream not found');
-        if (stream.user_id !== user.id && user.role !== 'admin') {
-            return sendWhipError(res, 403, 'not_your_stream', 'Not your stream');
+        // ── Auth strategy 1: stream-key-based (hex key in path) ──
+        // OBS WHIP sends stream key both in the URL path and as Bearer token.
+        // A hex string ≥16 chars that isn't purely numeric → treat as stream key.
+        const isStreamKey = /^[0-9a-f]{16,}$/i.test(pathParam) && !/^\d+$/.test(pathParam);
+
+        if (isStreamKey) {
+            const managedStream = db.getManagedStreamByStreamKey(pathParam);
+            if (!managedStream) {
+                logWhipStage('auth_key_fail', pathParam, { reason: 'stream_key_not_found' });
+                return sendWhipError(res, 401, 'invalid_stream_key', 'Stream key not recognized');
+            }
+
+            // If Bearer token was sent (OBS does this), verify it matches the key
+            if (bearerToken && bearerToken !== pathParam) {
+                logWhipStage('auth_key_fail', pathParam, { reason: 'bearer_mismatch' });
+                return sendWhipError(res, 401, 'bearer_mismatch', 'Bearer token does not match stream key');
+            }
+
+            userId = managedStream.user_id;
+            logWhipStage('auth_key', pathParam, { user_id: userId, managed_stream_id: managedStream.id });
+
+            // Find a live session on this managed stream
+            const liveSessions = db.getLiveStreamsByUserId(managedStream.user_id) || [];
+            stream = liveSessions.find(s => s.managed_stream_id === managedStream.id);
+
+            if (!stream) {
+                logWhipStage('auth_key_fail', pathParam, { reason: 'no_live_session', managed_stream_id: managedStream.id });
+                return sendWhipError(res, 409, 'stream_not_live',
+                    'No live session for this stream key — click "Go Live" in the stream manager first, then start your encoder');
+            }
+            if (stream.protocol !== 'webrtc') {
+                logWhipStage('auth_key_fail', pathParam, { reason: 'wrong_protocol', protocol: stream.protocol });
+                return sendWhipError(res, 409, 'wrong_protocol',
+                    `Stream protocol is ${stream.protocol}, not webrtc — change the streaming method to Browser/WHIP in the stream manager`);
+            }
         }
-        if (!stream.is_live) return sendWhipError(res, 409, 'stream_not_live', 'Stream is not live — go live first');
-        if (stream.protocol !== 'webrtc') return sendWhipError(res, 409, 'wrong_protocol', 'Stream protocol must be webrtc for WHIP');
+        // ── Auth strategy 2: JWT Bearer (legacy numeric stream ID) ──
+        else {
+            if (!bearerToken) {
+                logWhipStage('auth_fail', pathParam, { reason: 'no_bearer_token' });
+                return res.status(401)
+                    .set('WWW-Authenticate', 'Bearer')
+                    .set('X-WHIP-ERROR', 'authentication_required')
+                    .json({ error: 'Bearer token required', error_code: 'authentication_required' });
+            }
+
+            const decoded = verifyToken(bearerToken);
+            if (!decoded) {
+                logWhipStage('auth_fail', pathParam, { reason: 'invalid_jwt' });
+                return sendWhipError(res, 401, 'invalid_token', 'Invalid or expired token');
+            }
+            const user = resolveHoboToolsUser(decoded);
+            if (!user) {
+                logWhipStage('auth_fail', pathParam, { reason: 'user_not_found' });
+                return sendWhipError(res, 401, 'user_not_found', 'User not found');
+            }
+            userId = user.id;
+
+            const streamId = parseInt(pathParam, 10);
+            if (!streamId || isNaN(streamId)) {
+                logWhipStage('auth_fail', pathParam, { reason: 'invalid_stream_id' });
+                return sendWhipError(res, 400, 'invalid_stream_id', 'Invalid stream ID');
+            }
+            stream = db.getStreamById(streamId);
+            if (!stream) return sendWhipError(res, 404, 'stream_not_found', 'Stream not found');
+            if (stream.user_id !== user.id && user.role !== 'admin') {
+                return sendWhipError(res, 403, 'not_your_stream', 'Not your stream');
+            }
+            if (!stream.is_live) return sendWhipError(res, 409, 'stream_not_live', 'Stream is not live — go live first');
+            if (stream.protocol !== 'webrtc') return sendWhipError(res, 409, 'wrong_protocol', 'Stream protocol must be webrtc for WHIP');
+            logWhipStage('auth_jwt', pathParam, { user_id: userId });
+        }
+
+        const streamId = stream.id;
         if (!webrtcSFU.ready) return sendWhipError(res, 503, 'sfu_unavailable', 'WebRTC SFU unavailable');
         logWhipStage('stream_validation', streamId, { protocol: stream.protocol, live: stream.is_live });
 

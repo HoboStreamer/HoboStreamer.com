@@ -364,6 +364,7 @@ function showModal(id) {
         'add-goal': addGoalModal(),
         'add-reward': addRewardModal(),
         'redeem-reward': (data) => redeemRewardModal(data),
+        'create-managed-stream': createManagedStreamModal,
     };
     content.innerHTML = typeof templates[id] === 'function' ? templates[id]() : (templates[id] || `<p>Unknown modal: ${id}</p>`);
     overlay.classList.add('show');
@@ -4097,6 +4098,81 @@ function switchVodTab(tab) {
 }
 
 /* ── Modal template stubs (filled by their modules) ──────────── */
+function createManagedStreamModal() {
+    return `
+        <h3><i class="fa-solid fa-plus"></i> Create Stream Slot</h3>
+        <p class="muted" style="margin-bottom:16px">Each stream slot has its own stream key, settings, and history.</p>
+        <div class="form-group">
+            <label>Title</label>
+            <input type="text" id="cms-title" class="form-input" placeholder="My Stream" maxlength="140">
+        </div>
+        <div class="form-group">
+            <label>Category</label>
+            <select id="cms-category" class="form-input">
+                <option value="irl" selected>IRL</option>
+                <option value="outdoors">Outdoors</option>
+                <option value="travel">Travel</option>
+                <option value="building">Building/Craft</option>
+                <option value="music">Music</option>
+                <option value="gaming">Gaming</option>
+                <option value="robot">Robot</option>
+                <option value="desktop">Desktop</option>
+                <option value="other">Other</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Streaming Method</label>
+            <select id="cms-protocol" class="form-input">
+                <option value="webrtc" selected>Browser / WHIP (WebRTC)</option>
+                <option value="rtmp">RTMP (OBS / IRL Pro)</option>
+                <option value="jsmpeg">CLI / FFmpeg (jsmpeg)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>URL Slug <span class="muted">(optional)</span></label>
+            <input type="text" id="cms-slug" class="form-input" placeholder="my-stream"
+                maxlength="32" pattern="[a-z][a-z0-9_-]*"
+                title="2-32 chars, start with a letter, alphanumeric/hyphens/underscores">
+            <small class="muted">hobostreamer.com/username/<strong>slug</strong></small>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px">
+            <button class="btn btn-primary" onclick="_cmsCreate()" id="cms-create-btn" style="flex:1">
+                <i class="fa-solid fa-plus"></i> Create
+            </button>
+            <button class="btn btn-outline" onclick="closeModal()" style="flex:1">Cancel</button>
+        </div>
+        <p id="cms-error" style="display:none;color:var(--danger);margin-top:8px;font-size:0.85rem"></p>`;
+}
+
+async function _cmsCreate() {
+    const btn = document.getElementById('cms-create-btn');
+    const errEl = document.getElementById('cms-error');
+    const title = (document.getElementById('cms-title')?.value || '').trim() || 'Untitled Stream';
+    const category = document.getElementById('cms-category')?.value || 'irl';
+    const protocol = document.getElementById('cms-protocol')?.value || 'webrtc';
+    const slug = (document.getElementById('cms-slug')?.value || '').trim().toLowerCase() || undefined;
+    if (btn) btn.disabled = true;
+    if (errEl) errEl.style.display = 'none';
+    try {
+        const data = await api('/streams/managed', {
+            method: 'POST',
+            body: { title, category, protocol, slug },
+        });
+        closeModal();
+        if (typeof onManagedStreamCreated === 'function' && data.managed_stream) {
+            await onManagedStreamCreated(data.managed_stream.id);
+        }
+        if (typeof toast === 'function') toast('Stream slot created!', 'success');
+    } catch (err) {
+        if (errEl) {
+            errEl.textContent = err?.message || 'Failed to create stream slot';
+            errEl.style.display = '';
+        }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 function streamKeyModal() {
     return `
         <h3><i class="fa-solid fa-key"></i> Stream Key</h3>
