@@ -87,22 +87,54 @@ function cleanupExistingSessionsForStream(streamId) {
 /**
  * Extract DTLS parameters from a parsed SDP object.
  */
+function getDtlsSetupAttribute(sdpObj) {
+    if (sdpObj.setup) return String(sdpObj.setup).toLowerCase();
+
+    for (const media of sdpObj.media || []) {
+        if (media.setup) return String(media.setup).toLowerCase();
+    }
+
+    return null;
+}
+
+function selectDtlsFingerprint(fingerprints) {
+    if (!Array.isArray(fingerprints) || fingerprints.length === 0) {
+        throw new Error('No DTLS fingerprints available');
+    }
+
+    const normalized = fingerprints.map(fp => ({
+        algorithm: String(fp.algorithm || '').toLowerCase(),
+        fingerprint: fp,
+    }));
+
+    const preferred = ['sha-256', 'sha-1'];
+    for (const algorithm of preferred) {
+        const match = normalized.find(item => item.algorithm === algorithm);
+        if (match) return match.fingerprint;
+    }
+
+    return fingerprints[0];
+}
+
 function extractDtlsParameters(sdpObj) {
     let fingerprint = sdpObj.fingerprint;
-    let setup = null;
+    let setup = getDtlsSetupAttribute(sdpObj);
 
     for (const media of sdpObj.media || []) {
         if (!fingerprint && media.fingerprint) fingerprint = media.fingerprint;
-        if (!setup && media.setup) setup = media.setup;
     }
 
     if (!fingerprint) throw new Error('No DTLS fingerprint in SDP');
 
-    // Map SDP setup attribute to mediasoup DTLS role:
-    // offer actpass → we are server (answer passive)
-    // offer active  → we are client
-    let role = 'server';
-    if (setup === 'active') role = 'client';
+    // In mediasoup, transport.connect() expects the remote endpoint's DTLS role.
+    // WHIP clients/encoders are typically DTLS clients, so an offer with
+    // setup=actpass or setup=active means the remote side will act as client.
+    // If the offer explicitly uses setup=passive, the remote side is the DTLS
+    // server and we must connect as the client.
+    let role = 'client';
+    if (setup === 'passive') {
+        role = 'server';
+    }
 
     return {
         role,
@@ -280,7 +312,8 @@ function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
  */
 function buildSdpAnswer(transport, offerSdp, producersByKind) {
     const { iceParameters, iceCandidates, dtlsParameters } = transport;
-    const fingerprint = dtlsParameters.fingerprints[dtlsParameters.fingerprints.length - 1];
+    const fingerprint = selectDtlsFingerprint(dtlsParameters.fingerprints);
+    const setup = getDtlsSetupAttribute(offerSdp) === 'passive' ? 'active' : 'passive';
     const mids = [];
 
     const sdpObj = {
@@ -321,7 +354,7 @@ function buildSdpAnswer(transport, offerSdp, producersByKind) {
             iceUfrag: iceParameters.usernameFragment,
             icePwd: iceParameters.password,
             fingerprint: { type: fingerprint.algorithm, hash: fingerprint.value },
-            setup: 'passive',
+            setup,
             direction: 'recvonly',
             rtcpMux: 'rtcp-mux',
             rtp: [],
@@ -474,7 +507,7 @@ async function handleWhipPost(req, res) {
         try {
             const dtlsParams = extractDtlsParameters(offerSdp);
             await webrtcSFU.connectTransport(roomId, peerId, transportInfo.id, dtlsParams);
-            console.log(`[WHIP] DTLS connected for stream ${streamId}, transport ${transportInfo.id}`);
+            console.log(`[WHIP] DTLS parameters accepted for stream ${streamId}, transport ${transportInfo.id}, remote_role=${dtlsParams.role}`);
         } catch (err) {
             console.warn('[WHIP] DTLS negotiation failed for stream', streamId, err.message);
             cleanupSession(resourceId);
@@ -660,4 +693,7 @@ module.exports = {
     cleanupSession,
     available: !!sdpTransform,
     _extractRtpParameters: extractRtpParameters,
+    _extractDtlsParameters: extractDtlsParameters,
+    _buildSdpAnswer: buildSdpAnswer,
+    _selectDtlsFingerprint: selectDtlsFingerprint,
 };

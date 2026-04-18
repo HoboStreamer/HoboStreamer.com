@@ -115,7 +115,8 @@ class WebRTCSFU extends EventEmitter {
         console.log(`[WebRTC] Transport ${transport.id} (${peerId}) listenIp=${config.mediasoup.listenIp}, announcedIp=${config.mediasoup.announcedIp}`);
 
         transport.on('dtlsstatechange', (dtlsState) => {
-            console.log(`[WebRTC] Transport ${transport.id} (${peerId}) DTLS: ${dtlsState}`);
+            const localRole = transport.dtlsParameters?.role || 'unknown';
+            console.log(`[WebRTC] Transport ${transport.id} (${peerId}) DTLS: ${dtlsState} local_role=${localRole}`);
             if (dtlsState === 'closed' || dtlsState === 'failed') {
                 console.log(`[WebRTC] Closing transport ${transport.id} (${peerId}) due to DTLS ${dtlsState}`);
                 transport.close();
@@ -149,7 +150,9 @@ class WebRTCSFU extends EventEmitter {
         const transport = room.transports.get(`${peerId}-${transportId}`);
         if (!transport) throw new Error('Transport not found');
 
+        console.log(`[WebRTC] connectTransport called for transport ${transport.id} (${peerId}) remote DTLS role=${dtlsParameters.role} fingerprints=${Array.isArray(dtlsParameters.fingerprints) ? dtlsParameters.fingerprints.map(f => f.algorithm).join(',') : 'none'}`);
         await transport.connect({ dtlsParameters });
+        console.log(`[WebRTC] connectTransport request accepted for transport ${transport.id} (${peerId}); local DTLS role=${transport.dtlsParameters.role}`);
     }
 
     /**
