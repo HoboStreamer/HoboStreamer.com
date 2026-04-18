@@ -20,36 +20,51 @@ const DEFAULTS = {
 };
 
 function buildConfig(registryValues) {
-    const baseUrl = registryValues.BASE_URL.source !== 'default' ? registryValues.BASE_URL.value : DEFAULTS.BASE_URL;
-    const whipPublicUrl = registryValues.WHIP_PUBLIC_URL.source !== 'default'
-        ? registryValues.WHIP_PUBLIC_URL.value
-        : (registryValues.BASE_URL.source !== 'default' ? registryValues.BASE_URL.value : DEFAULTS.WHIP_PUBLIC_URL);
-    const webRtcPublicUrl = registryValues.WEBRTC_PUBLIC_URL.source !== 'default'
-        ? registryValues.WEBRTC_PUBLIC_URL.value
-        : (registryValues.BASE_URL.source !== 'default'
-            ? registryValues.BASE_URL.value
-            : (registryValues.WHIP_PUBLIC_URL.source !== 'default'
-                ? registryValues.WHIP_PUBLIC_URL.value
-                : DEFAULTS.WEBRTC_PUBLIC_URL));
-    const jsmpegPublicUrl = registryValues.JSMPEG_PUBLIC_URL.source !== 'default'
-        ? registryValues.JSMPEG_PUBLIC_URL.value
-        : (registryValues.BASE_URL.source !== 'default' ? registryValues.BASE_URL.value : DEFAULTS.JSMPEG_PUBLIC_URL);
-    const mediasoupAnnouncedIp = process.env.MEDIASOUP_ANNOUNCED_IP
-        || (registryValues.MEDIASOUP_ANNOUNCED_IP.source !== 'default' ? registryValues.MEDIASOUP_ANNOUNCED_IP.value : new URL(baseUrl).hostname);
+    registryValues = registryValues || {};
+    const getRegistryEntry = (key) => {
+        const entry = registryValues[key];
+        return entry && typeof entry === 'object' ? entry : { value: null, source: 'default' };
+    };
 
-    const baseUrlSource = registryValues.BASE_URL.source || 'default';
-    const webRtcSource = registryValues.WEBRTC_PUBLIC_URL.source !== 'default'
-        ? registryValues.WEBRTC_PUBLIC_URL.source
-        : (registryValues.BASE_URL.source !== 'default'
-            ? registryValues.BASE_URL.source
-            : (registryValues.WHIP_PUBLIC_URL.source !== 'default'
-                ? registryValues.WHIP_PUBLIC_URL.source
+    const baseEntry = getRegistryEntry('BASE_URL');
+    const whipEntry = getRegistryEntry('WHIP_PUBLIC_URL');
+    const webRtcEntry = getRegistryEntry('WEBRTC_PUBLIC_URL');
+    const jsmpegEntry = getRegistryEntry('JSMPEG_PUBLIC_URL');
+    const mediaSoupEntry = getRegistryEntry('MEDIASOUP_ANNOUNCED_IP');
+    const hoboToolsEntry = getRegistryEntry('HOBO_TOOLS_INTERNAL_URL');
+    const rtmpEntry = getRegistryEntry('RTMP_HOST');
+    const turnEntry = getRegistryEntry('TURN_URL');
+
+    const baseUrl = baseEntry.source !== 'default' ? baseEntry.value : DEFAULTS.BASE_URL;
+    const whipPublicUrl = whipEntry.source !== 'default'
+        ? whipEntry.value
+        : (baseEntry.source !== 'default' ? baseEntry.value : DEFAULTS.WHIP_PUBLIC_URL);
+    const webRtcPublicUrl = webRtcEntry.source !== 'default'
+        ? webRtcEntry.value
+        : (baseEntry.source !== 'default'
+            ? baseEntry.value
+            : (whipEntry.source !== 'default'
+                ? whipEntry.value
+                : DEFAULTS.WEBRTC_PUBLIC_URL));
+    const jsmpegPublicUrl = jsmpegEntry.source !== 'default'
+        ? jsmpegEntry.value
+        : (baseEntry.source !== 'default' ? baseEntry.value : DEFAULTS.JSMPEG_PUBLIC_URL);
+    const mediasoupAnnouncedIp = process.env.MEDIASOUP_ANNOUNCED_IP
+        || (mediaSoupEntry.source !== 'default' ? mediaSoupEntry.value : new URL(baseUrl).hostname);
+
+    const baseUrlSource = baseEntry.source || 'default';
+    const webRtcSource = webRtcEntry.source !== 'default'
+        ? webRtcEntry.source
+        : (baseEntry.source !== 'default'
+            ? baseEntry.source
+            : (whipEntry.source !== 'default'
+                ? whipEntry.source
                 : 'default'));
-    const whipSource = registryValues.WHIP_PUBLIC_URL.source !== 'default'
-        ? registryValues.WHIP_PUBLIC_URL.source
-        : registryValues.BASE_URL.source;
-    const mediaSoupSource = registryValues.MEDIASOUP_ANNOUNCED_IP.source !== 'default'
-        ? registryValues.MEDIASOUP_ANNOUNCED_IP.source
+    const whipSource = whipEntry.source !== 'default'
+        ? whipEntry.source
+        : (baseEntry.source || 'default');
+    const mediaSoupSource = mediaSoupEntry.source !== 'default'
+        ? mediaSoupEntry.source
         : 'default';
 
     console.log('[Config] Effective URLs:');
@@ -70,14 +85,14 @@ function buildConfig(registryValues) {
         whip: {
             publicUrl: whipPublicUrl,
         },
-        hoboToolsInternalUrl: registryValues.HOBO_TOOLS_INTERNAL_URL.value || DEFAULTS.HOBO_TOOLS_INTERNAL_URL,
+        hoboToolsInternalUrl: hoboToolsEntry.value || DEFAULTS.HOBO_TOOLS_INTERNAL_URL,
         rtmp: {
             port: parseInt(process.env.RTMP_PORT || '1935', 10),
             chunkSize: parseInt(process.env.RTMP_CHUNK_SIZE || '60000', 10),
-            host: process.env.RTMP_HOST || registryValues.RTMP_HOST.value || '',
+            host: process.env.RTMP_HOST || rtmpEntry.value || '',
         },
         turn: {
-            url: process.env.TURN_URL || registryValues.TURN_URL.value || '',
+            url: process.env.TURN_URL || turnEntry.value || '',
             username: process.env.TURN_USERNAME || '',
             credential: process.env.TURN_CREDENTIAL || '',
         },
@@ -155,7 +170,7 @@ function buildConfig(registryValues) {
     };
 }
 
-const initialRegistry = resolveRegistryValues(process.env, {}, {}, URL_DEFINITIONS);
+const initialRegistry = resolveRegistryValues(process.env, {}, {}, URL_DEFINITIONS) || {};
 const config = buildConfig(initialRegistry);
 
 async function refreshRegistry() {
