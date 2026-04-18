@@ -1061,6 +1061,15 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] managed_streams backfill:', e.message); }
 
+    // Add broadcast_settings JSON column to managed_streams (per-stream broadcast config)
+    try {
+        const msCols = database.pragma('table_info(managed_streams)').map(c => c.name);
+        if (!msCols.includes('broadcast_settings')) {
+            database.exec("ALTER TABLE managed_streams ADD COLUMN broadcast_settings TEXT DEFAULT '{}'");
+            console.log('[DB] Added broadcast_settings column to managed_streams');
+        }
+    } catch (e) { console.warn('[DB] managed_streams broadcast_settings migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1161,9 +1170,12 @@ function getRecentStreams(limit = 20) {
 
 function getStreamById(id) {
     return get(`
-        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.stream_key
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color,
+               ms.slug AS managed_stream_slug, ms.stream_key AS managed_stream_key,
+               ms.title AS managed_stream_title, ms.protocol AS managed_stream_protocol
         FROM streams s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
         WHERE s.id = ?
     `, [id]);
 }
@@ -1177,9 +1189,12 @@ function getStreamByUserId(userId) {
 
 function getLiveStreamsByUserId(userId) {
     return all(`
-        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.stream_key
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color,
+               ms.slug AS managed_stream_slug, ms.stream_key AS managed_stream_key,
+               ms.title AS managed_stream_title
         FROM streams s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
         WHERE s.user_id = ? AND s.is_live = 1
         ORDER BY s.started_at DESC
     `, [userId]);
@@ -1187,9 +1202,12 @@ function getLiveStreamsByUserId(userId) {
 
 function getLiveStreamsByControlConfigId(controlConfigId) {
     return all(`
-        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.stream_key
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color,
+               ms.slug AS managed_stream_slug, ms.stream_key AS managed_stream_key,
+               ms.title AS managed_stream_title
         FROM streams s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
         WHERE s.control_config_id = ? AND s.is_live = 1
         ORDER BY s.started_at DESC
     `, [controlConfigId]);
@@ -1197,13 +1215,30 @@ function getLiveStreamsByControlConfigId(controlConfigId) {
 
 function getStreamsByUserId(userId, limit = 50) {
     return all(`
-        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color
+        SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color,
+               ms.slug AS managed_stream_slug, ms.stream_key AS managed_stream_key,
+               ms.title AS managed_stream_title, ms.id AS managed_stream_ref_id
         FROM streams s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
         WHERE s.user_id = ?
         ORDER BY s.created_at DESC
         LIMIT ?
     `, [userId, limit]);
+}
+
+function getStreamHistoryByManagedStream(managedStreamId, userId, limit = 20) {
+    return all(`
+        SELECT s.id, s.title, s.started_at, s.ended_at, s.is_live,
+               s.peak_viewers, s.viewer_count, s.duration_seconds,
+               s.protocol, s.category,
+               v.id AS vod_id, v.filename AS vod_filename
+        FROM streams s
+        LEFT JOIN vods v ON v.stream_id = s.id AND v.deleted_at IS NULL
+        WHERE s.managed_stream_id = ? AND s.user_id = ?
+        ORDER BY s.started_at DESC
+        LIMIT ?
+    `, [managedStreamId, userId, limit]);
 }
 
 function createStream({ user_id, channel_id, managed_stream_id, control_config_id, title, description, category, protocol, is_nsfw, thumbnail_url }) {
@@ -1318,6 +1353,20 @@ function deleteManagedStream(managedStreamId, userId) {
     // Unlink sessions first (don't delete them — they're historical)
     run('UPDATE streams SET managed_stream_id = NULL WHERE managed_stream_id = ?', [managedStreamId]);
     return run('DELETE FROM managed_streams WHERE id = ? AND user_id = ?', [managedStreamId, userId]);
+}
+
+function getManagedStreamBroadcastSettings(managedStreamId, userId) {
+    const row = get('SELECT broadcast_settings FROM managed_streams WHERE id = ? AND user_id = ?', [managedStreamId, userId]);
+    if (!row || !row.broadcast_settings) return {};
+    try { return JSON.parse(row.broadcast_settings); } catch { return {}; }
+}
+
+function updateManagedStreamBroadcastSettings(managedStreamId, userId, settings) {
+    const json = typeof settings === 'string' ? settings : JSON.stringify(settings || {});
+    return run(
+        'UPDATE managed_streams SET broadcast_settings = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+        [json, managedStreamId, userId]
+    );
 }
 
 function countManagedStreamsByUser(userId) {
@@ -3969,10 +4018,11 @@ module.exports = {
     createManagedStream, getManagedStreamById, getManagedStreamsByUserId,
     getManagedStreamBySlug, getManagedStreamByStreamKey, getManagedStreamByIdOrSlug,
     updateManagedStream, deleteManagedStream,
+    getManagedStreamBroadcastSettings, updateManagedStreamBroadcastSettings,
     countManagedStreamsByUser, getManagedStreamLimit,
     isValidManagedStreamSlug, isManagedStreamSlugTaken,
     // Streams (sessions)
-    getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId,
+    getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId, getStreamHistoryByManagedStream,
     createStream, endStream, updateViewerCount,
     // Homepage helpers
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,

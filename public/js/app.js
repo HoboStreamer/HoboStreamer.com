@@ -1631,11 +1631,18 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             setupBanBtn(document.getElementById('ch-btn-ban'));
 
             // Pick the preferred stream:
-            // 1. URL ?stream=ID (deep link / shared link)
+            // 0. URL /@username/:managedStreamRef (managed stream deep link)
+            // 1. URL ?stream=ID (legacy deep link / shared link)
             // 2. Last viewed stream in this session (sessionStorage)
             // 3. Highest viewer count stream (default)
             let targetStream;
-            if (preferredStreamId) {
+            if (managedStreamRef && !preferredStreamId) {
+                const ref = String(managedStreamRef);
+                targetStream = liveStreams.find(s =>
+                    String(s.managed_stream_slug) === ref || String(s.managed_stream_id) === ref
+                );
+            }
+            if (!targetStream && preferredStreamId) {
                 targetStream = liveStreams.find(s => s.id === preferredStreamId);
             }
             if (!targetStream) {

@@ -1,283 +1,13 @@
+'use strict';
 /* ═══════════════════════════════════════════════════════════════
-   HoboStreamer — Broadcast (Go Live)
-   Supports WebRTC (browser + OBS), RTMP, and JSMPEG methods.
-   Multiple simultaneous WebRTC browser streams with different devices.
+   broadcast.js — Core streaming: WebRTC signaling, RTMP, JSMPEG,
+   restream, RobotStreamer, live controls, TTS, clip creation.
+   State foundation  → broadcast-state.js
+   Device enumeration→ broadcast-devices.js
+   VOD archive       → broadcast-vods.js
+   Workspace UI      → broadcast-workspace.js
    ═══════════════════════════════════════════════════════════════ */
 
-/**
- * Per-stream state — one entry per active broadcast stream.
- */
-function createStreamState(streamData) {
-    return {
-        streamData,
-        localStream: null,
-        /** @type {Map<string, RTCPeerConnection>} peerId → PC */
-        viewerConnections: new Map(),
-        viewerReconnectTimers: new Map(),
-        signalingWs: null,
-        heartbeatInterval: null,
-        startedAt: streamData?.started_at || null,
-        lastStatBytes: 0,
-        lastStatTime: 0,
-        gainNode: null,
-        audioContext: null,
-        vodRecorder: null,
-        vodChunks: [],
-        vodUploading: false,
-        vodFinalized: false,
-        vodId: null,
-        vodSegmentId: 0,
-        // Per-stream signaling reconnect state
-        signalingReconnectTimer: null,
-        signalingIntentionalClose: false,
-        signalingReconnectDelay: 3000,
-        mediaRecoveryTimer: null,
-        mediaRecoveryAttempts: 0,
-        mediaRecoveryInProgress: false,
-        _suppressRecovery: false, // set true during intentional track stops (flip cam, screen share toggle)
-        _trackKeepaliveInterval: null,
-        _recoveryStartedAt: 0,
-        _lastRecoveryCompletedAt: 0,
-        lastThumbnailAt: 0,
-        thumbnailCanvas: null,
-        thumbnailCtx: null,
-        statsPollPending: false,
-        robotStreamer: null,
-        // Screen share + camera PiP composite state
-        _screenStream: null,       // raw getDisplayMedia stream
-        _cameraOverlayStream: null, // raw getUserMedia camera stream for PiP
-        _compositeCanvas: null,
-        _compositeCtx: null,
-        _compositeAnimFrame: null,
-        _cameraOverlayEnabled: false,
-        // PiP position/size (fraction of canvas, 0-1 range) — draggable/resizable
-        _pipX: 0.78,  // fractional X (top-left of PiP)
-        _pipY: 0.72,  // fractional Y
-        _pipW: 0.20,  // fractional width (20% of canvas)
-        _pipDragging: false,
-        _pipResizing: false,
-    };
-}
-
-const BROADCAST_SIGNALING_MAX_BUFFERED_AMOUNT = 512 * 1024;
-const BROADCAST_THUMBNAIL_INTERVAL_MS = 115000;
-
-/**
- * Keep the PipeWire / v4l2loopback / xdg-desktop-portal capture pipeline
- * active by periodically consuming a video frame.  On Linux (Steam Deck,
- * PipeWire) the capture source can be dropped if no consumer reads frames
- * for several seconds — this heartbeat prevents that idle-timeout.
- *
- * ALSO serves as the primary health watchdog: if frame grabs fail for
- * WATCHDOG_DEAD_THRESHOLD_MS consecutive milliseconds, we consider the
- * stream truly dead and trigger recovery. This replaces the unreliable
- * track ended/inactive event approach — PipeWire on Steam Deck fires
- * spurious ended events every few minutes during normal Gamescope
- * compositing, power transitions, and GPU context switches.
- */
-const KEEPALIVE_INTERVAL_MS = 1000;
-const WATCHDOG_DEAD_THRESHOLD_MS = 15000; // 15s of grabFrame failures with 'live' readyState
-const WATCHDOG_ENDED_THRESHOLD_MS = 8000;  // 8s for track.readyState !== 'live' (definitive death)
-
-function startTrackKeepalive(streamId) {
-    const ss = getStreamState(streamId);
-    if (!ss?.localStream) return;
-    stopTrackKeepalive(streamId);
-    const videoTrack = ss.localStream.getVideoTracks()[0];
-    if (!videoTrack || typeof ImageCapture === 'undefined') return;
-    let capture;
-    try { capture = new ImageCapture(videoTrack); } catch { return; }
-
-    // Watchdog state
-    let lastSuccessfulFrame = Date.now();
-    let watchdogTriggered = false;
-    const streamRef = ss.localStream; // capture reference for staleness check
-
-    ss._trackKeepaliveInterval = setInterval(() => {
-        const current = getStreamState(streamId);
-        if (!current?.localStream || current.localStream !== streamRef) {
-            stopTrackKeepalive(streamId);
-            return;
-        }
-
-        // If recovery is already in progress or suppressed, just keep ticking
-        if (current._suppressRecovery || current.mediaRecoveryInProgress || current.mediaRecoveryTimer) {
-            lastSuccessfulFrame = Date.now(); // reset watchdog during recovery
-            return;
-        }
-
-        // During cooldown after recovery, reset watchdog
-        if (current._lastRecoveryCompletedAt && (Date.now() - current._lastRecoveryCompletedAt) < 60000) {
-            lastSuccessfulFrame = Date.now();
-            return;
-        }
-
-        // Check for unmute reset signal from mute/unmute event handlers
-        if (current._watchdogResetRequested) {
-            current._watchdogResetRequested = false;
-            lastSuccessfulFrame = Date.now();
-            watchdogTriggered = false;
-        }
-
-        if (videoTrack.readyState !== 'live') {
-            // Track is definitively not live — use shorter threshold
-            const deadDuration = Date.now() - lastSuccessfulFrame;
-            if (deadDuration >= WATCHDOG_ENDED_THRESHOLD_MS && !watchdogTriggered) {
-                watchdogTriggered = true;
-                console.warn(`[Broadcast] Watchdog: video track dead for ${(deadDuration / 1000).toFixed(1)}s (readyState: ${videoTrack.readyState}) — triggering recovery`);
-                scheduleMediaRecovery(streamId, 'video track dead (watchdog)');
-            }
-            return;
-        }
-
-        capture.grabFrame()
-            .then(bmp => {
-                bmp.close();
-                lastSuccessfulFrame = Date.now();
-                watchdogTriggered = false; // reset if we got a frame
-            })
-            .catch(() => {
-                // Frame grab failed but track is still 'live' — PipeWire glitch
-                // If track is muted, PipeWire is renegotiating — be patient
-                const deadDuration = Date.now() - lastSuccessfulFrame;
-                if (deadDuration >= WATCHDOG_DEAD_THRESHOLD_MS && !watchdogTriggered) {
-                    watchdogTriggered = true;
-                    const mutedNote = current._videoTrackMutedAt ? ` (muted for ${((Date.now() - current._videoTrackMutedAt) / 1000).toFixed(1)}s)` : '';
-                    console.warn(`[Broadcast] Watchdog: frame grabs failing for ${(deadDuration / 1000).toFixed(1)}s${mutedNote} — triggering recovery`);
-                    scheduleMediaRecovery(streamId, 'frame capture failed (watchdog)');
-                }
-            });
-    }, KEEPALIVE_INTERVAL_MS);
-    console.log(`[Broadcast] Track keepalive + watchdog started (${KEEPALIVE_INTERVAL_MS / 1000}s interval, ${WATCHDOG_ENDED_THRESHOLD_MS / 1000}s ended/${WATCHDOG_DEAD_THRESHOLD_MS / 1000}s stall threshold)`);
-}
-
-function stopTrackKeepalive(streamId) {
-    const ss = getStreamState(streamId);
-    if (ss?._trackKeepaliveInterval) {
-        clearInterval(ss._trackKeepaliveInterval);
-        ss._trackKeepaliveInterval = null;
-        console.log('[Broadcast] Track keepalive stopped');
-    }
-}
-
-/* ── Wake Lock ─────────────────────────────────────────────────
-   Prevents the OS/browser from suspending media tracks when the
-   tab is backgrounded or the device enters power-saving mode.
-   ─────────────────────────────────────────────────────────────── */
-let _wakeLockSentinel = null;
-
-async function acquireWakeLock() {
-    if (_wakeLockSentinel) return; // already held
-    if (!('wakeLock' in navigator)) {
-        console.log('[Broadcast] Wake Lock API not supported');
-        return;
-    }
-    try {
-        _wakeLockSentinel = await navigator.wakeLock.request('screen');
-        console.log('[Broadcast] Wake Lock acquired');
-        _wakeLockSentinel.addEventListener('release', () => {
-            console.log('[Broadcast] Wake Lock released by system');
-            _wakeLockSentinel = null;
-            // Re-acquire if still broadcasting
-            if (isStreaming()) acquireWakeLock();
-        });
-    } catch (err) {
-        console.warn('[Broadcast] Wake Lock request failed:', err.message);
-        _wakeLockSentinel = null;
-    }
-}
-
-function releaseWakeLock() {
-    if (_wakeLockSentinel) {
-        _wakeLockSentinel.release().catch(() => {});
-        _wakeLockSentinel = null;
-        console.log('[Broadcast] Wake Lock released');
-    }
-}
-
-// Re-acquire wake lock when the tab becomes visible again
-document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && isStreaming() && !_wakeLockSentinel) {
-        acquireWakeLock();
-    }
-});
-
-function getBroadcastFrameRate() {
-    const fps = parseInt(broadcastState.settings.broadcastFps, 10);
-    return Number.isFinite(fps) && fps > 0 ? fps : 30;
-}
-
-function getTargetVideoBitrate() {
-    const kbps = parseInt(broadcastState.settings.broadcastBps, 10);
-    return (Number.isFinite(kbps) && kbps > 0 ? kbps : 2500) * 1000;
-}
-
-function getSuggestedScaleDown(settings) {
-    const res = String(settings.broadcastRes || '720');
-    const kbps = parseInt(settings.broadcastBps, 10) || 2500;
-    if (res === '1440' && kbps < 5500) return 2;
-    if (res === '1080' && kbps < 3500) return 1.5;
-    if (res === '720' && kbps < 1200) return 1.25;
-    return 1;
-}
-
-function optimizeOutgoingStream(streamId) {
-    const ss = getStreamState(streamId);
-    if (!ss || !ss.localStream) return;
-
-    const settings = broadcastState.settings;
-    const videoTrack = ss.localStream.getVideoTracks()[0] || null;
-    const audioTrack = ss.localStream.getAudioTracks()[0] || null;
-
-    if (videoTrack) {
-        try { videoTrack.contentHint = settings.screenShare ? 'detail' : 'motion'; } catch {}
-    }
-    if (audioTrack) {
-        try { audioTrack.contentHint = 'speech'; } catch {}
-    }
-}
-
-let broadcastState = {
-    /** @type {Map<number, object>} streamId → per-stream state */
-    streams: new Map(),
-    /** Which stream's preview is currently shown */
-    activeStreamId: null,
-    selectedMethod: 'webrtc',
-    selectedWebRTCSub: 'browser',
-    selectedBrowserSource: 'camera', // 'camera' or 'screen'
-
-    // Settings (persisted to localStorage) — global across all streams
-    settings: {
-        ttsMode: 'site-wide', ttsVolume: 800, ttsPitch: 100, ttsRate: 10, ttsVoice: '', ttsDuration: 10, ttsNames: 'off', ttsQueue: 5,
-        notificationVolume: 800, forceAudio: 'default', autoGain: false, echoCancellation: false, noiseSuppression: false,
-        manualGainEnabled: false, manualGain: 100, force48kSampleRate: false,
-        forceCamera: 'default', broadcastRes: '720', broadcastFps: '30', broadcastCodec: 'auto',
-        broadcastBps: '2500', broadcastBpsMin: '500', broadcastLimit: 'restart', screenShare: false,
-        // Screen share capture preferences (hints to getDisplayMedia)
-        screenCaptureSource: 'auto',        // 'auto' | 'monitor' | 'window' | 'browser'
-        screenSystemAudio: 'include',        // 'include' | 'exclude' | 'auto'
-        screenSelfBrowser: 'exclude',        // 'exclude' | 'include'
-        screenSurfaceSwitching: 'include',   // 'include' | 'exclude'
-        screenPreferCurrentTab: false,       // whether to bias toward the current tab
-        serverReconnect: true,
-        allowSounds: 'false', soundVolume: 800,
-    },
-    robotStreamer: {
-        loaded: false,
-        enabled: false,
-        mirrorChat: true,
-        hasToken: false,
-        robotId: '',
-        ownerId: '',
-        streamName: '',
-        ownerName: '',
-        availableRobots: [],
-    },
-};
-
-// Global display timers (stats + uptime) — always show active stream info
-let _globalStatsInterval = null;
-let _globalUptimeInterval = null;
 
 /* ── RS Restream Slot ────────────────────────────────────────── */
 // Only one stream at a time can restream to RobotStreamer.
@@ -783,6 +513,26 @@ function loadBroadcastSettings() {
 }
 function saveBroadcastSettings() {
     try { localStorage.setItem('hobo_broadcast_settings', JSON.stringify(broadcastState.settings)); } catch {}
+    // Persist to server for the selected managed stream (fire-and-forget)
+    const msSelect = document.getElementById('bc-managed-stream');
+    const msId = msSelect?.value ? parseInt(msSelect.value) : null;
+    if (msId) {
+        api('/streams/broadcast-settings', {
+            method: 'PUT',
+            body: { managed_stream_id: msId, settings: broadcastState.settings },
+        }).catch(() => {});
+    }
+}
+
+async function loadManagedStreamSettings(managedStreamId) {
+    if (!managedStreamId) return;
+    try {
+        const data = await api(`/streams/broadcast-settings?managed_stream_id=${managedStreamId}`);
+        if (data.settings && Object.keys(data.settings).length > 0) {
+            broadcastState.settings = { ...broadcastState.settings, ...data.settings };
+            try { localStorage.setItem('hobo_broadcast_settings', JSON.stringify(broadcastState.settings)); } catch {}
+        }
+    } catch { /* ignore — use localStorage fallback */ }
 }
 
 function setRobotStreamerStatus(message, tone = 'info', targetId = 'bc-rsStatus') {
@@ -982,8 +732,10 @@ async function loadBroadcastPage() {
     loadBroadcastSettings();
     loadRobotStreamerIntegration().catch(() => {});
     loadRestreamDestinations().catch(() => {});
-    loadBroadcastControlConfigs().catch(() => {});
-    loadBroadcastManagedStreams().catch(() => {});
+    loadBroadcastControlConfigs().catch(() => {}); // populates configs for other contexts
+
+    // Init workspace (replaces loadBroadcastManagedStreams)
+    initBroadcastWorkspace().catch(err => console.warn('[Broadcast] Workspace init failed:', err));
 
     // If THIS tab has active browser WebRTC streams (localStream exists), restore UI
     if (broadcastState.streams.size > 0 && broadcastState.activeStreamId != null) {
@@ -1008,9 +760,6 @@ async function loadBroadcastPage() {
     hideBroadcastTabs();
     showStreamManager();
     loadExistingStreams().catch(() => {});
-
-    // Pre-fill form with last-used values
-    _restoreLastBroadcastFields();
 }
 
 /* ── Stream Manager (Step 0) ─────────────────────────────────── */
@@ -1044,6 +793,18 @@ async function loadBroadcastManagedStreams() {
         select.innerHTML = managed.length
             ? managed.map(ms => `<option value="${ms.id}">${esc(ms.title || 'Untitled')}${ms.slug ? ` (${esc(ms.slug)})` : ''}</option>`).join('')
             : '<option value="">Default stream</option>';
+        // Load server-side settings for the initially selected managed stream
+        if (managed.length && select.value) {
+            loadManagedStreamSettings(parseInt(select.value)).then(() => syncSettingsUI()).catch(() => {});
+        }
+        // On change, load settings for the newly selected managed stream
+        select.addEventListener('change', async () => {
+            const msId = select.value ? parseInt(select.value) : null;
+            if (msId) {
+                await loadManagedStreamSettings(msId);
+                syncSettingsUI();
+            }
+        });
     } catch {
         select.innerHTML = '<option value="">Default stream</option>';
     }
@@ -1285,6 +1046,7 @@ async function resumeStreamView(stream) {
         broadcastState.streams.set(stream.id, ss);
         broadcastState.activeStreamId = stream.id;
         setNavLiveIndicator(true);
+        updateWorkspaceLiveStatus();
         showBrowserBroadcast();
         populateDeviceLists(); populateTTSVoices(); syncSettingsUI();
         ensureBroadcastChat(stream.id);
@@ -1303,6 +1065,7 @@ async function resumeStreamView(stream) {
         broadcastState.streams.set(stream.id, ss);
         broadcastState.activeStreamId = stream.id;
         setNavLiveIndicator(true);
+        updateWorkspaceLiveStatus();
         showRTMPInstructions(stream);
         startHeartbeat(stream.id);
         startGlobalDisplayTimers();
@@ -1316,6 +1079,7 @@ async function resumeStreamView(stream) {
         broadcastState.streams.set(stream.id, ss);
         broadcastState.activeStreamId = stream.id;
         setNavLiveIndicator(true);
+        updateWorkspaceLiveStatus();
         showJSMPEGInstructions(stream);
         startHeartbeat(stream.id);
         startGlobalDisplayTimers();
@@ -1606,6 +1370,7 @@ async function createNewStream() {
         broadcastState.streams.set(streamData.id, ss);
         broadcastState.activeStreamId = streamData.id;
         setNavLiveIndicator(true);
+        updateWorkspaceLiveStatus();
 
         // Init call controls (disabled by default, streamer enables after going live)
         _broadcastCallMode = null;
@@ -2078,350 +1843,7 @@ async function endSetupStream() {
     showStreamManager(); loadExistingStreams(endingStreamId); toast('Stream ended', 'info');
 }
 
-/* ── Device Enumeration ──────────────────────────────────────── */
-async function populateDeviceLists() {
-    try {
-        // Try to get a temp stream for permission/label enumeration.
-        // On Android, combined audio+video can fail — fall back to separate requests.
-        let tempStream = null;
-        try {
-            tempStream = await _getUserMediaWithTimeout({ audio: true, video: true }, 8000);
-        } catch {
-            // Separate fallback for Android
-            try {
-                tempStream = new MediaStream();
-                const vs = await _getUserMediaWithTimeout({ video: true }, 6000).catch(() => null);
-                const as = await _getUserMediaWithTimeout({ audio: true }, 6000).catch(() => null);
-                if (vs) vs.getTracks().forEach(t => tempStream.addTrack(t));
-                if (as) as.getTracks().forEach(t => tempStream.addTrack(t));
-            } catch {}
-        }
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const camSelect = document.getElementById('bc-forceCamera');
-        const audioSelect = document.getElementById('bc-forceAudio');
-        if (!camSelect || !audioSelect) return;
-        camSelect.innerHTML = '<option value="default">Default</option>';
-        audioSelect.innerHTML = '<option value="default">Default</option>';
-        devices.forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.deviceId;
-            opt.textContent = d.label || `Device ${d.deviceId.slice(0, 8)}`;
-            if (d.kind === 'videoinput') camSelect.appendChild(opt);
-            if (d.kind === 'audioinput') audioSelect.appendChild(opt.cloneNode(true));
-        });
-        const preferredCamera = broadcastState.settings.forceCamera || localStorage.getItem('bc-last-camera') || 'default';
-        _syncCameraSelectionUI(preferredCamera, { persist: false });
-        _syncAudioSelectionUI(broadcastState.settings.forceAudio || 'default', { persist: false });
-        if (tempStream) tempStream.getTracks().forEach(t => t.stop());
-    } catch (err) { console.warn('Could not enumerate devices:', err.message); }
-}
-
-function _getPreferredCameraId() {
-    return broadcastState.settings.forceCamera || localStorage.getItem('bc-last-camera') || 'default';
-}
-
-function _setSelectValueIfPresent(select, value) {
-    if (!select) return;
-    const normalized = value || 'default';
-    const hasExact = Array.from(select.options || []).some(opt => opt.value === normalized);
-    select.value = hasExact ? normalized : 'default';
-}
-
-let _switchingCamera = false;
-function _syncCameraSelectionUI(cameraId, { persist = true } = {}) {
-    const normalized = cameraId || 'default';
-    _setSelectValueIfPresent(document.getElementById('bc-forceCamera'), normalized);
-    _setSelectValueIfPresent(document.getElementById('bc-create-camera'), normalized);
-    _setSelectValueIfPresent(document.getElementById('bc-screen-camera'), normalized);
-    broadcastState.settings.forceCamera = normalized;
-    if (persist) {
-        saveBroadcastSettings();
-        try { localStorage.setItem('bc-last-camera', normalized); } catch {}
-        // If currently streaming (non-screen-share), switch the live camera track
-        const ss = getActiveStreamState();
-        if (ss && ss.localStream && !broadcastState.settings.screenShare && !_switchingCamera) {
-            _switchingCamera = true;
-            _switchActiveCamera(normalized).catch(err => {
-                console.warn('[Broadcast] Live camera switch failed:', err.message);
-            }).finally(() => { _switchingCamera = false; });
-        }
-    }
-}
-
-let _switchingAudio = false;
-function _syncAudioSelectionUI(audioId, { persist = true } = {}) {
-    const normalized = audioId || 'default';
-    _setSelectValueIfPresent(document.getElementById('bc-forceAudio'), normalized);
-    _setSelectValueIfPresent(document.getElementById('bc-create-audio'), normalized);
-    _setSelectValueIfPresent(document.getElementById('bc-screen-audio'), normalized);
-    broadcastState.settings.forceAudio = normalized;
-    if (persist) {
-        saveBroadcastSettings();
-        try { localStorage.setItem('bc-last-audio', normalized); } catch {}
-        const ss = getActiveStreamState();
-        const streamId = broadcastState.activeStreamId;
-        if (ss && ss.localStream && streamId && !_switchingAudio) {
-            _switchingAudio = true;
-            if (broadcastState.settings.screenShare) {
-                // During screen share: rebuild the audio mix with the new mic instead of blocking
-                _rebuildScreenShareAudio(normalized, streamId).catch(err => {
-                    console.warn('[Broadcast] Screen share audio rebuild failed:', err.message);
-                    toast('Could not switch mic during screen share: ' + err.message, 'error');
-                }).finally(() => { _switchingAudio = false; });
-            } else {
-                // Normal camera mode: replace the live audio track
-                _switchActiveAudio(normalized).catch(err => {
-                    console.warn('[Broadcast] Live audio switch failed:', err.message);
-                    toast('Could not switch mic: ' + err.message, 'error');
-                }).finally(() => { _switchingAudio = false; });
-            }
-        }
-    }
-}
-
-function _describeCameraRole(device, index = 0) {
-    const label = String(device?.label || '').toLowerCase();
-    if (label.includes('back') || label.includes('rear') || label.includes('environment') || label.includes('world')) {
-        return { icon: 'fa-solid fa-camera', title: 'Rear Camera', detail: 'Best for outward-facing mobile video.' };
-    }
-    if (label.includes('front') || label.includes('user') || label.includes('face') || label.includes('facetime')) {
-        return { icon: 'fa-solid fa-user', title: 'Front Camera', detail: 'Best for selfie-style streaming.' };
-    }
-    if (label.includes('external') || label.includes('usb') || label.includes('webcam') || label.includes('obs')) {
-        return { icon: 'fa-solid fa-video', title: 'External Camera', detail: 'Detected as an external or USB camera.' };
-    }
-    return { icon: 'fa-solid fa-camera-retro', title: `Camera ${index + 1}`, detail: 'Available video input device.' };
-}
-
-function _getCameraFacingHint(device) {
-    const label = String(device?.label || '').toLowerCase();
-    if (label.includes('back') || label.includes('rear') || label.includes('environment') || label.includes('world')) return 'environment';
-    if (label.includes('front') || label.includes('user') || label.includes('face') || label.includes('facetime')) return 'user';
-    return null;
-}
-
-async function _enumerateBroadcastVideoInputs({ ensureLabels = false } = {}) {
-    if (!navigator.mediaDevices?.enumerateDevices) return [];
-    let tempStream = null;
-    try {
-        let devices = await navigator.mediaDevices.enumerateDevices();
-        const missingLabels = devices.filter(d => d.kind === 'videoinput').some(d => !d.label);
-        if (ensureLabels && missingLabels && navigator.mediaDevices?.getUserMedia) {
-            try {
-                tempStream = await _getUserMediaWithTimeout({ video: true, audio: false }, 8000);
-                devices = await navigator.mediaDevices.enumerateDevices();
-            } catch (err) {
-                console.warn('[Broadcast] Could not refresh camera labels:', err.message);
-            }
-        }
-        return devices.filter(d => d.kind === 'videoinput');
-    } finally {
-        if (tempStream) tempStream.getTracks().forEach(t => t.stop());
-    }
-}
-
-/**
- * Check if we already have media permissions (devices have labels).
- * If so, show the device selects. Otherwise show the Request Permissions button.
- */
-async function populateCreateFormDevices() {
-    try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const hasLabels = devices.some(d => d.label);
-        const permReq = document.getElementById('bc-perm-request');
-        const devSelects = document.getElementById('bc-device-selects');
-        if (hasLabels) {
-            // Already have permissions — show dropdowns directly
-            if (permReq) permReq.style.display = 'none';
-            if (devSelects) devSelects.style.display = '';
-            _populateCreateDeviceDropdowns(devices);
-        } else {
-            // No permissions yet — show the request button
-            if (permReq) permReq.style.display = '';
-            if (devSelects) devSelects.style.display = 'none';
-        }
-    } catch (err) { console.warn('Could not enumerate devices for create form:', err.message); }
-}
-
-/**
- * Helper: call getUserMedia with a timeout to avoid indefinite hangs on mobile.
- * Also handles Android-specific quirks:
- *  - Some Android devices need the previous track fully stopped before re-acquiring
- *  - OverconstrainedError gets retried with relaxed constraints
- */
-function _getUserMediaWithTimeout(constraints, timeoutMs = 15000) {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Camera/mic request timed out — try tapping Allow in the browser prompt')), timeoutMs);
-        navigator.mediaDevices.getUserMedia(constraints).then(stream => {
-            clearTimeout(timer);
-            resolve(stream);
-        }).catch(err => {
-            clearTimeout(timer);
-            // On OverconstrainedError, retry with relaxed constraints
-            if (err.name === 'OverconstrainedError') {
-                const relaxed = {};
-                if (constraints.video) relaxed.video = typeof constraints.video === 'object' ? { facingMode: constraints.video.facingMode || 'user' } : true;
-                if (constraints.audio) relaxed.audio = typeof constraints.audio === 'object' ? { echoCancellation: true } : true;
-                console.warn('[Broadcast] OverconstrainedError, retrying with relaxed constraints:', relaxed);
-                navigator.mediaDevices.getUserMedia(relaxed).then(resolve).catch(reject);
-                return;
-            }
-            reject(err);
-        });
-    });
-}
-
-/**
- * User clicked "Allow Camera & Mic" — request permissions, then populate lists.
- * On mobile Android, requesting audio+video together can silently fail,
- * so we try combined first, then individually.
- */
-async function requestMediaPermissions() {
-    console.log('[Broadcast] requestMediaPermissions() called');
-    const permReq = document.getElementById('bc-perm-request');
-    const devSelects = document.getElementById('bc-device-selects');
-    const btn = document.getElementById('bc-perm-btn') || permReq?.querySelector('button');
-    const dbg = document.getElementById('bc-perm-debug');
-    const btnOrigText = btn?.innerHTML;
-
-    // Immediate visual feedback — if user doesn't see spinner, the function isn't reached
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Requesting access...';
-    }
-    if (dbg) { dbg.style.display = ''; dbg.textContent = 'Requesting permissions...'; }
-
-    // Feature detection
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        const msg = 'Camera/mic API not available — make sure you\'re using HTTPS';
-        console.warn('[Broadcast]', msg);
-        if (dbg) dbg.textContent = msg;
-        toast(msg, 'error');
-        if (btn) { btn.disabled = false; btn.innerHTML = btnOrigText; }
-        return;
-    }
-
-    try {
-        let tempStream;
-        // Strategy 1: combined audio+video
-        try {
-            if (dbg) dbg.textContent = 'Requesting camera + mic...';
-            tempStream = await _getUserMediaWithTimeout({ audio: true, video: true });
-        } catch (firstErr) {
-            console.warn('[Broadcast] Combined getUserMedia failed:', firstErr.message, '— trying separately');
-            // Strategy 2: separate requests (common on Android)
-            if (dbg) dbg.textContent = 'Combined failed, trying separately...';
-            let vidStream, audStream;
-            try { vidStream = await _getUserMediaWithTimeout({ video: { facingMode: 'user' } }, 10000); } catch (ve) {
-                console.warn('[Broadcast] Video facingMode failed:', ve.message);
-                // Strategy 2b: bare minimum video
-                try { vidStream = await _getUserMediaWithTimeout({ video: true }, 10000); } catch (ve2) {
-                    console.warn('[Broadcast] Video-only getUserMedia failed:', ve2.message);
-                }
-            }
-            try { audStream = await _getUserMediaWithTimeout({ audio: true }, 10000); } catch (ae) { console.warn('[Broadcast] Audio-only getUserMedia failed:', ae.message); }
-            if (!vidStream && !audStream) throw new Error('No camera or microphone available');
-            tempStream = new MediaStream();
-            if (vidStream) vidStream.getTracks().forEach(t => { tempStream.addTrack(t); });
-            if (audStream) audStream.getTracks().forEach(t => { tempStream.addTrack(t); });
-        }
-        tempStream.getTracks().forEach(t => t.stop());
-        if (dbg) dbg.textContent = 'Enumerating devices...';
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        _populateCreateDeviceDropdowns(devices);
-
-        // After permission grant, re-check what the browser actually gave us
-        // and try to match to the user's saved preference. If no preference exists,
-        // the browser's default selection stands.
-        const savedAudio = broadcastState.settings.forceAudio || localStorage.getItem('bc-last-audio');
-        if (savedAudio && savedAudio !== 'default') {
-            _syncAudioSelectionUI(savedAudio, { persist: false });
-        }
-        const savedCamera = broadcastState.settings.forceCamera || localStorage.getItem('bc-last-camera');
-        if (savedCamera && savedCamera !== 'default') {
-            _syncCameraSelectionUI(savedCamera, { persist: false });
-        }
-
-        if (permReq) permReq.style.display = 'none';
-        if (devSelects) devSelects.style.display = '';
-        toast('Camera & microphone access granted', 'success');
-    } catch (err) {
-        console.warn('[Broadcast] Permission request failed:', err.message, err.name);
-        const errDetail = `${err.name || 'Error'}: ${err.message}`;
-        if (dbg) { dbg.style.display = ''; dbg.textContent = errDetail; }
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            toast('Camera/mic permission denied — check your browser settings or tap the lock icon in the address bar', 'error');
-        } else if (err.name === 'NotFoundError') {
-            toast('No camera or microphone found on this device', 'error');
-        } else if (err.name === 'NotReadableError') {
-            toast('Camera/mic in use by another app — close other camera/video apps and try again', 'error');
-        } else if (err.name === 'OverconstrainedError') {
-            toast('Camera does not support the requested settings — try a different camera', 'error');
-        } else {
-            toast('Could not access camera/mic: ' + err.message, 'error');
-        }
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = btnOrigText;
-        }
-    }
-}
-
-function _populateCreateDeviceDropdowns(devices) {
-    const camSelect = document.getElementById('bc-create-camera');
-    const audioSelect = document.getElementById('bc-create-audio');
-    if (camSelect) {
-        camSelect.innerHTML = '<option value="default">Default</option>';
-        devices.filter(d => d.kind === 'videoinput').forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.deviceId;
-            opt.textContent = d.label || `Camera ${d.deviceId.slice(0, 8)}`;
-            camSelect.appendChild(opt);
-        });
-        _syncCameraSelectionUI(_getPreferredCameraId(), { persist: false });
-        camSelect.onchange = () => _syncCameraSelectionUI(camSelect.value);
-    }
-    if (audioSelect) {
-        audioSelect.innerHTML = '<option value="default">Default</option>';
-        devices.filter(d => d.kind === 'audioinput').forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.deviceId;
-            opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
-            audioSelect.appendChild(opt);
-        });
-        // Restore saved microphone selection (unified with broadcastState)
-        _syncAudioSelectionUI(broadcastState.settings.forceAudio || localStorage.getItem('bc-last-audio') || 'default', { persist: false });
-        audioSelect.onchange = () => _syncAudioSelectionUI(audioSelect.value);
-    }
-
-    // Also populate screen share device selects (same device lists)
-    const screenAudioSelect = document.getElementById('bc-screen-audio');
-    if (screenAudioSelect) {
-        screenAudioSelect.innerHTML = '<option value="default">Default Microphone</option>';
-        devices.filter(d => d.kind === 'audioinput').forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.deviceId;
-            opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
-            screenAudioSelect.appendChild(opt);
-        });
-        // Sync from unified audio state
-        _syncAudioSelectionUI(broadcastState.settings.forceAudio || 'default', { persist: false });
-        screenAudioSelect.onchange = () => _syncAudioSelectionUI(screenAudioSelect.value);
-    }
-    const screenCamSelect = document.getElementById('bc-screen-camera');
-    if (screenCamSelect) {
-        screenCamSelect.innerHTML = '<option value="default">Default Camera</option>';
-        devices.filter(d => d.kind === 'videoinput').forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.deviceId;
-            opt.textContent = d.label || `Camera ${d.deviceId.slice(0, 8)}`;
-            screenCamSelect.appendChild(opt);
-        });
-        _syncCameraSelectionUI(_getPreferredCameraId(), { persist: false });
-    }
-}
-
+/* Device enumeration functions → broadcast-devices.js */
 /* ── TTS Voice Population ─────────────────────────────────────── */
 function populateTTSVoices() {
     const select = document.getElementById('bc-ttsVoice');
@@ -2672,6 +2094,7 @@ function cleanupStream(streamId) {
 
     updateBroadcastMobileChatFab();
     updateRsRestreamSlotUI();
+    updateWorkspaceLiveStatus();
 }
 
 /**
@@ -6519,258 +5942,7 @@ function _connectMediaPipSocket() {
     });
     _mediaPipSocket = ws;
 }
-
-/* ═════════════════════════════════════════════════════════════
-   BROADCAST TABS — VOD ARCHIVE & SETTINGS
-   ═════════════════════════════════════════════════════════════ */
-
-let _vodArchive = [];
-let _vodCurrentModal = null;
-
-/**
- * Load VODs for the Past Streams tab
- */
-async function loadBroadcastVODs() {
-    const grid = document.getElementById('bc-vod-grid');
-    if (!grid) return;
-
-    try {
-        // Fetch VODs from API
-        const response = await fetch('/api/vods');
-        const vods = await response.json();
-
-        if (!Array.isArray(vods)) {
-            grid.innerHTML = '<p class="muted" style="grid-column: 1/-1; text-align: center; padding: 40px">No VODs found</p>';
-            return;
-        }
-
-        _vodArchive = vods;
-        renderBroadcastVODGrid(vods);
-    } catch (err) {
-        console.error('Error loading VODs:', err);
-        grid.innerHTML = '<p class="muted" style="grid-column: 1/-1; text-align: center; padding: 40px">Error loading VODs</p>';
-    }
-}
-
-/**
- * Render VOD cards in the grid
- */
-function renderBroadcastVODGrid(vods) {
-    const grid = document.getElementById('bc-vod-grid');
-    if (!grid) return;
-
-    if (vods.length === 0) {
-        grid.innerHTML = '<p class="muted" style="grid-column: 1/-1; text-align: center; padding: 40px">No VODs found</p>';
-        return;
-    }
-
-    grid.innerHTML = vods.map((vod, idx) => `
-        <div class="bc-vod-card" onclick="openBroadcastVODModal(${idx})">
-            <div class="bc-vod-card-thumb">
-                ${vod.thumbnail_url ? `<img src="${vod.thumbnail_url}" alt="${vod.title || 'VOD'}">` : '<i class="fa-solid fa-video"></i>'}
-                <div class="bc-vod-card-duration">${formatDuration(vod.duration_seconds || 0)}</div>
-            </div>
-            <div class="bc-vod-card-content">
-                <h4 class="bc-vod-card-title">${vod.title || 'Untitled Stream'}</h4>
-                <div class="bc-vod-card-meta">
-                    <span><i class="fa-solid fa-calendar-days"></i> ${new Date(vod.created_at).toLocaleDateString()}</span>
-                    <span><i class="fa-solid fa-eye"></i> ${vod.view_count || 0} views</span>
-                    <span><i class="fa-solid fa-${vod.is_public ? 'globe' : 'lock'}"></i> ${vod.is_public ? 'Public' : 'Private'}</span>
-                </div>
-            </div>
-        </div>
-    `).join('');
-}
-
-/**
- * Open VOD detail modal
- */
-function openBroadcastVODModal(vodIndex) {
-    const vod = _vodArchive[vodIndex];
-    if (!vod) return;
-
-    _vodCurrentModal = vod;
-    const modal = document.getElementById('bc-vod-modal');
-    if (!modal) return;
-
-    // Set VOD info
-    document.getElementById('bc-vod-modal-title').textContent = vod.title || 'Untitled Stream';
-    document.getElementById('bc-vod-modal-date').textContent = new Date(vod.created_at).toLocaleDateString();
-    document.getElementById('bc-vod-modal-duration').textContent = formatDuration(vod.duration_seconds || 0);
-    document.getElementById('bc-vod-modal-views').textContent = (vod.view_count || 0).toLocaleString();
-    document.getElementById('bc-vod-is-public').checked = vod.is_public === true;
-
-    // Set video source
-    const player = document.getElementById('bc-vod-player');
-    if (player && vod.stream_url) {
-        player.src = vod.stream_url;
-    }
-
-    // Load chat replay
-    loadVODChatReplay(vod.id);
-
-    // Show modal
-    modal.style.display = 'flex';
-    modal.classList.add('active');
-}
-
-/**
- * Load and display chat replay for a VOD
- */
-async function loadVODChatReplay(vodId) {
-    const chatContainer = document.getElementById('bc-vod-chat-replay');
-    if (!chatContainer) return;
-
-    try {
-        const response = await fetch(`/api/vods/${vodId}/chat`);
-        const messages = await response.json();
-
-        if (!Array.isArray(messages) || messages.length === 0) {
-            chatContainer.innerHTML = '<p class="muted">No chat messages during this stream</p>';
-            return;
-        }
-
-        chatContainer.innerHTML = messages.map(msg => `
-            <div class="bc-vod-chat-message" onclick="seekBroadcastVOD(${msg.timestamp || 0})">
-                <div class="bc-vod-chat-message-info">
-                    <span class="bc-vod-chat-message-username">${msg.username}</span>
-                    <span class="bc-vod-chat-message-time">${formatDuration(msg.timestamp || 0)}</span>
-                </div>
-                <div class="bc-vod-chat-message-text">${msg.message}</div>
-            </div>
-        `).join('');
-    } catch (err) {
-        console.error('Error loading chat replay:', err);
-        chatContainer.innerHTML = '<p class="muted">Error loading chat messages</p>';
-    }
-}
-
-/**
- * Seek VOD to a specific timestamp
- */
-function seekBroadcastVOD(seconds) {
-    const player = document.getElementById('bc-vod-player');
-    if (player) {
-        player.currentTime = Math.max(0, seconds);
-    }
-}
-
-/**
- * Close VOD modal
- */
-function closeBroadcastVODModal() {
-    const modal = document.getElementById('bc-vod-modal');
-    if (modal) {
-        modal.style.display = 'none';
-        modal.classList.remove('active');
-        const player = document.getElementById('bc-vod-player');
-        if (player) player.pause();
-    }
-    _vodCurrentModal = null;
-}
-
-/**
- * Search/filter VODs
- */
-function searchBroadcastVODs() {
-    const searchQuery = document.getElementById('bc-vod-search')?.value || '';
-    const filtered = _vodArchive.filter(vod => 
-        (vod.title || '').toLowerCase().includes(searchQuery.toLowerCase())
-    );
-    renderBroadcastVODGrid(filtered);
-}
-
-/**
- * Sort VODs
- */
-function sortBroadcastVODs(sortBy) {
-    let sorted = [..._vodArchive];
-
-    switch (sortBy) {
-        case 'newest':
-            sorted.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            break;
-        case 'oldest':
-            sorted.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-            break;
-        case 'longest':
-            sorted.sort((a, b) => (b.duration_seconds || 0) - (a.duration_seconds || 0));
-            break;
-        case 'mostviewed':
-            sorted.sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
-            break;
-    }
-
-    renderBroadcastVODGrid(sorted);
-}
-
-/**
- * Filter VODs by public/private status
- */
-function filterBroadcastVODs(filterValue, filterType) {
-    let filtered = _vodArchive;
-
-    if (filterValue === 'public') {
-        filtered = filtered.filter(v => v.is_public === true);
-    } else if (filterValue === 'private') {
-        filtered = filtered.filter(v => v.is_public !== true);
-    }
-
-    renderBroadcastVODGrid(filtered);
-}
-
-/**
- * Update VOD visibility (public/private)
- */
-async function updateBroadcastVODVisibility(isPublic) {
-    if (!_vodCurrentModal) return;
-
-    try {
-        const response = await fetch(`/api/vods/${_vodCurrentModal.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ is_public: isPublic })
-        });
-
-        if (response.ok) {
-            _vodCurrentModal.is_public = isPublic;
-            // Reload VOD grid to reflect changes
-            loadBroadcastVODs();
-        }
-    } catch (err) {
-        console.error('Error updating VOD visibility:', err);
-    }
-}
-
-/**
- * Download VOD
- */
-function downloadBroadcastVOD() {
-    if (!_vodCurrentModal || !_vodCurrentModal.stream_url) return;
-    const link = document.createElement('a');
-    link.href = _vodCurrentModal.stream_url;
-    link.download = `${_vodCurrentModal.title || 'stream'}.mp4`;
-    link.click();
-}
-
-/**
- * Delete VOD
- */
-async function deleteBroadcastVOD() {
-    if (!_vodCurrentModal) return;
-    if (!confirm('Delete this VOD? This cannot be undone.')) return;
-
-    try {
-        const response = await fetch(`/api/vods/${_vodCurrentModal.id}`, { method: 'DELETE' });
-        if (response.ok) {
-            closeBroadcastVODModal();
-            loadBroadcastVODs();
-        }
-    } catch (err) {
-        console.error('Error deleting VOD:', err);
-    }
-}
-
+/* VOD archive functions → broadcast-vods.js */
 /**
  * Load Broadcast Settings form
  */

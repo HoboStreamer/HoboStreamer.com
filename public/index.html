@@ -1708,7 +1708,7 @@
                 <!-- ═══ STEP 0: Stream Manager (existing streams + create new) ═══ -->
                 <div id="bc-stream-manager" class="broadcast-tab-content active" data-tab="go-live">
                     <h2><i class="fa-solid fa-tower-broadcast"></i> Go Live</h2>
-                    <p class="bc-page-subtitle">Set up your stream in 3 easy steps — pick a method, configure your devices, and hit Go Live.</p>
+                    <p class="bc-page-subtitle">Select a stream slot to configure your profile and go live. Settings are saved automatically.</p>
 
                     <!-- Active Streams Section (shown above if any live streams) -->
                     <div id="bc-active-streams-container" class="bc-active-streams-section">
@@ -1718,383 +1718,39 @@
                         </div>
                     </div>
 
-                    <div class="bc-manager-grid">
-                    <!-- Create new stream -->
-                    <div class="bc-create-section" id="bc-create-section">
-                        <h3>Create New Stream</h3>
+                    <!-- ═══ Managed-stream workspace (broadcast-workspace.js) ═══ -->
+                    <div class="bc-workspace" id="bc-workspace">
 
-                        <!-- Load from Broadcast Settings -->
-                        <div class="bc-quick-load">
-                            <p class="muted"><i class="fa-solid fa-lightbulb"></i> Use your saved defaults from Broadcast Settings</p>
-                            <button class="btn btn-outline btn-small" onclick="loadBroadcastSettingsToForm()" type="button">
-                                <i class="fa-solid fa-download"></i> Load Defaults
-                            </button>
-                        </div>
-
-                        <!-- STEP 1: Stream Info -->
-                        <div class="bc-step-header">
-                            <span class="bc-step-number">1</span>
-                            <div class="bc-step-text">
-                                <strong>Stream Info</strong>
-                                <span>Give your stream a title so viewers know what you're doing</span>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label>Stream Title <span class="bc-required">*</span></label>
-                            <input type="text" id="bc-title" class="form-input" placeholder="What are you streaming? e.g. Camping in the woods">
-                            <span class="bc-field-hint">This appears on your channel page and in the stream directory</span>
-                        </div>
-                        <div class="form-group">
-                            <label>Description</label>
-                            <textarea id="bc-description" class="form-input" rows="2" placeholder="Optional — tell viewers what to expect..."></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Category</label>
-                            <select id="bc-category" class="form-input">
-                                <option value="outdoors">Outdoors</option>
-                                <option value="travel">Travel</option>
-                                <option value="building">Building/Craft</option>
-                                <option value="music">Music</option>
-                                <option value="gaming">Gaming</option>
-                                <option value="robot">Robot</option>
-                                <option value="desktop">Desktop</option>
-                                <option value="irl">IRL</option>
-                                <option value="other">Other</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="bc-toggle-label" style="gap:8px">
-                                <input type="checkbox" id="bc-nsfw"> <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger)"></i> NSFW (18+)
-                            </label>
-                            <span class="bc-field-hint">Viewers will see an age verification gate before watching</span>
-                        </div>
-
-                        <!-- STEP 2: Method Selection -->
-                        <div class="bc-step-header">
-                            <span class="bc-step-number">2</span>
-                            <div class="bc-step-text">
-                                <strong>Streaming Method</strong>
-                                <span>How do you want to send your video to HoboStreamer?</span>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <div class="bc-method-picker">
-                                <div class="bc-method-card selected" data-method="webrtc" onclick="selectStreamMethod('webrtc')">
-                                    <i class="fa-solid fa-globe"></i>
-                                    <strong>WebRTC</strong>
-                                    <span class="bc-method-subtitle">Browser or OBS (WHIP)</span>
-                                    <span class="bc-method-best"><i class="fa-solid fa-star"></i> Easiest — no software to install</span>
-                                </div>
-                                <div class="bc-method-card" data-method="rtmp" onclick="selectStreamMethod('rtmp')">
-                                    <i class="fa-solid fa-server"></i>
-                                    <strong>RTMP</strong>
-                                    <span class="bc-method-subtitle">OBS / Streamlabs / IRL Pro</span>
-                                    <span class="bc-method-best"><i class="fa-solid fa-tv"></i> Best quality — use your streaming app</span>
-                                </div>
-                                <div class="bc-method-card" data-method="jsmpeg" onclick="selectStreamMethod('jsmpeg')">
-                                    <i class="fa-solid fa-terminal"></i>
-                                    <strong>JSMPEG</strong>
-                                    <span class="bc-method-subtitle">FFmpeg command line</span>
-                                    <span class="bc-method-best"><i class="fa-solid fa-microchip"></i> Lightweight — Raspberry Pi &amp; headless</span>
-                                </div>
-                            </div>
-                            <div class="bc-method-explainer" id="bc-method-explainer">
-                                <i class="fa-solid fa-circle-info"></i>
-                                <span id="bc-method-explainer-text"><strong>WebRTC</strong> lets you stream directly from this browser tab using your camera, microphone, or screen — no extra software needed. Just click Create Stream and you're live.</span>
-                            </div>
-                        </div>
-
-                        <!-- WebRTC sub-choice -->
-                        <div class="form-group" id="bc-webrtc-sub" style="display:block">
-                            <label>WebRTC Source</label>
-                            <p class="bc-choice-hint">Stream straight from this browser, or send video from OBS using WebRTC (WHIP).</p>
-                            <div class="bc-method-picker bc-method-picker-sm">
-                                <div class="bc-method-card-sm selected" data-sub="browser" onclick="selectWebRTCSub('browser')">
-                                    <i class="fa-solid fa-camera"></i>
-                                    <strong>Browser</strong>
-                                    <span class="bc-card-sm-hint">No extra software</span>
-                                </div>
-                                <div class="bc-method-card-sm" data-sub="obs" onclick="selectWebRTCSub('obs')">
-                                    <i class="fa-solid fa-desktop"></i>
-                                    <strong>OBS (WHIP)</strong>
-                                    <span class="bc-card-sm-hint">Requires OBS 30+</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Browser Source Choice (Camera vs Screen Share) -->
-                        <div class="form-group" id="bc-browser-source-choice" style="display:block">
-                            <label>What do you want to share?</label>
-                            <p class="bc-choice-hint">Pick whether to stream your webcam/phone camera, or share your screen/window/tab.</p>
-                            <div class="bc-method-picker bc-method-picker-sm">
-                                <div class="bc-method-card-sm selected" data-bsrc="camera" onclick="selectBrowserSource('camera')">
-                                    <i class="fa-solid fa-camera"></i>
-                                    <strong>Camera / Mic</strong>
-                                    <span class="bc-card-sm-hint">Webcam, phone cam, etc.</span>
-                                </div>
-                                <div class="bc-method-card-sm" data-bsrc="screen" onclick="selectBrowserSource('screen')">
-                                    <i class="fa-solid fa-display"></i>
-                                    <strong>Screen Share</strong>
-                                    <span class="bc-card-sm-hint">Desktop, app, or browser tab</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- STEP 3: Configure -->
-                        <div class="bc-step-header" id="bc-step3-header">
-                            <span class="bc-step-number">3</span>
-                            <div class="bc-step-text">
-                                <strong>Configure</strong>
-                                <span>Set up your camera, mic, or screen share</span>
-                            </div>
-                        </div>
-
-                        <!-- ═ Camera mode: device pickers ═ -->
-                        <div class="form-group" id="bc-create-devices" style="display:block">
-                            <div id="bc-perm-request" class="bc-perm-request">
-                                <p class="bc-perm-hint"><i class="fa-solid fa-shield-halved"></i> Your browser needs camera &amp; microphone access to list available devices and go live.</p>
-                                <button id="bc-perm-btn" class="btn btn-outline" type="button" style="touch-action:manipulation">
-                                    <i class="fa-solid fa-video"></i> Allow Camera &amp; Mic
-                                </button>
-                                <p class="bc-perm-extra">Click the button above — your browser will ask for permission. This is required to stream.</p>
-                                <p id="bc-perm-debug" style="display:none;font-size:0.75rem;color:var(--text-secondary);margin-top:8px"></p>
-                            </div>
-                            <div id="bc-device-selects" style="display:none">
-                                <label>Camera</label>
-                                <select id="bc-create-camera" class="form-input"><option value="default">Default</option></select>
-                                <label style="margin-top:8px">Microphone</label>
-                                <select id="bc-create-audio" class="form-input"><option value="default">Default</option></select>
-                                <button class="btn btn-small btn-outline" type="button" onclick="requestMediaPermissions()" style="margin-top:8px" title="Refresh device list">
-                                    <i class="fa-solid fa-arrows-rotate"></i> Refresh Devices
+                        <!-- Left sidebar: stream slot list -->
+                        <div class="bc-ws-sidebar">
+                            <div class="bc-ws-sidebar-hd">
+                                <span><i class="fa-solid fa-tower-broadcast"></i> My Streams</span>
+                                <button class="btn btn-small btn-ghost bc-ws-add-btn"
+                                    onclick="showCreateManagedStreamModal()" title="Add stream slot">
+                                    <i class="fa-solid fa-plus"></i>
                                 </button>
                             </div>
+                            <div class="bc-ws-list" id="bc-ws-list">
+                                <p class="muted" style="padding:12px"><i class="fa-solid fa-spinner fa-spin"></i> Loading&hellip;</p>
+                            </div>
                         </div>
 
-                        <!-- ═ Screen Share mode: info + optional devices ═ -->
-                        <div class="form-group" id="bc-screen-share-setup" style="display:none">
-                            <div class="bc-screen-share-info">
-                                <p class="bc-perm-hint"><i class="fa-solid fa-display"></i> Choose what to share and configure capture options below.</p>
-                            </div>
-
-                            <!-- Capture Source Preference -->
-                            <div class="bc-screen-capture-options">
-                                <label style="margin-top:10px;font-weight:500;font-size:0.85rem">Capture Source</label>
-                                <div class="bc-source-picker" id="bc-source-picker">
-                                    <button type="button" class="bc-source-btn selected" data-source="auto" onclick="selectScreenCaptureSource('auto')">
-                                        <i class="fa-solid fa-wand-magic-sparkles"></i>
-                                        <span>Auto</span>
-                                        <small>Browser decides</small>
-                                    </button>
-                                    <button type="button" class="bc-source-btn" data-source="monitor" onclick="selectScreenCaptureSource('monitor')">
-                                        <i class="fa-solid fa-desktop"></i>
-                                        <span>Screen</span>
-                                        <small>Entire display</small>
-                                    </button>
-                                    <button type="button" class="bc-source-btn" data-source="window" onclick="selectScreenCaptureSource('window')">
-                                        <i class="fa-regular fa-window-maximize"></i>
-                                        <span>Window</span>
-                                        <small>Single app</small>
-                                    </button>
-                                    <button type="button" class="bc-source-btn" data-source="browser" onclick="selectScreenCaptureSource('browser')">
-                                        <i class="fa-solid fa-globe"></i>
-                                        <span>Tab</span>
-                                        <small>Browser tab</small>
-                                    </button>
-                                </div>
-
-                                <!-- Advanced capture options (collapsible) -->
-                                <details class="bc-screen-advanced" style="margin-top:10px">
-                                    <summary><i class="fa-solid fa-sliders"></i> Advanced Capture Options</summary>
-                                    <div class="bc-screen-advanced-inner">
-                                        <div class="bc-screen-opt-row">
-                                            <label>System Audio</label>
-                                            <select id="bc-screenSystemAudio-create" class="form-input form-input-sm" onchange="updateBroadcastSetting('screenSystemAudio', this.value)">
-                                                <option value="include">Include (capture tab/system audio)</option>
-                                                <option value="auto">Auto (let browser decide)</option>
-                                                <option value="exclude">Exclude (mic only, no system audio)</option>
-                                            </select>
-                                        </div>
-                                        <div class="bc-screen-opt-row">
-                                            <label>This Tab in Picker</label>
-                                            <select id="bc-screenSelfBrowser-create" class="form-input form-input-sm" onchange="updateBroadcastSetting('screenSelfBrowser', this.value)">
-                                                <option value="exclude">Exclude (hide this tab from picker)</option>
-                                                <option value="include">Include (show this tab in picker)</option>
-                                            </select>
-                                        </div>
-                                        <div class="bc-screen-opt-row">
-                                            <label>Surface Switching</label>
-                                            <select id="bc-screenSurfaceSwitching-create" class="form-input form-input-sm" onchange="updateBroadcastSetting('screenSurfaceSwitching', this.value)">
-                                                <option value="include">Allow (switch source while live)</option>
-                                                <option value="exclude">Disallow (lock to initial source)</option>
-                                            </select>
-                                        </div>
-                                        <div class="bc-screen-opt-row">
-                                            <label class="bc-toggle-label">
-                                                <input type="checkbox" id="bc-screenPreferCurrentTab-create" onchange="updateBroadcastSetting('screenPreferCurrentTab', this.checked)">
-                                                Prefer current tab
-                                            </label>
-                                        </div>
-                                    </div>
-                                </details>
-                            </div>
-
-                            <div id="bc-screen-optional-devices">
-                                <div class="bc-screen-device-toggle" style="margin-top:10px">
-                                    <label class="bc-toggle-label">
-                                        <input type="checkbox" id="bc-screen-mic-enabled" checked>
-                                        <i class="fa-solid fa-microphone"></i> Include Microphone
-                                    </label>
-                                </div>
-                                <div id="bc-screen-mic-select" style="margin-top:6px">
-                                    <select id="bc-screen-audio" class="form-input"><option value="default">Default Microphone</option></select>
-                                </div>
-                                <div class="bc-screen-device-toggle" style="margin-top:10px">
-                                    <label class="bc-toggle-label">
-                                        <input type="checkbox" id="bc-screen-cam-enabled">
-                                        <i class="fa-solid fa-video"></i> Include Camera (PiP overlay)
-                                    </label>
-                                </div>
-                                <div id="bc-screen-cam-select" style="display:none;margin-top:6px">
-                                    <select id="bc-screen-camera" class="form-input"><option value="default">Default Camera</option></select>
-                                </div>
-                            </div>
-                            <button class="btn btn-small btn-outline" type="button" onclick="requestMediaPermissions()" style="margin-top:10px" title="Grant access and refresh device list">
-                                <i class="fa-solid fa-arrows-rotate"></i> Grant Access / Refresh Devices
-                            </button>
-                        </div>
-
-                        <!-- Managed Stream Selection -->
-                        <div id="bc-managed-stream-selector" style="margin-top:10px">
-                            <label style="font-size:0.85rem;font-weight:600;color:var(--text-secondary)"><i class="fa-solid fa-tower-broadcast"></i> Stream Slot</label>
-                            <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-                                <select id="bc-managed-stream" class="form-input form-input-sm" style="flex:1">
-                                    <option value="">Default stream</option>
-                                </select>
-                            </div>
-                            <span class="bc-field-hint">Choose which managed stream to go live on. Each has its own stream key and URL.</span>
-                        </div>
-
-                        <!-- Control Config Selection -->
-                        <div id="bc-config-selector" style="margin-top:10px;display:none">
-                            <label style="font-size:0.85rem;font-weight:600;color:var(--text-secondary)"><i class="fa-solid fa-gamepad"></i> Control Profile</label>
-                            <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-                                <select id="bc-control-config" class="form-input form-input-sm" style="flex:1">
-                                    <option value="">None (no controls)</option>
-                                </select>
-                                <button class="btn btn-small btn-outline" type="button" id="bc-download-bridge-btn" onclick="downloadControlBridgeScript()" title="Download a Python test script for this profile" style="display:none;white-space:nowrap">
-                                    <i class="fa-solid fa-download"></i> Script
+                        <!-- Right main panel -->
+                        <div class="bc-ws-main">
+                            <!-- Empty state: no stream selected -->
+                            <div class="bc-ws-empty" id="bc-ws-empty">
+                                <i class="fa-solid fa-tower-broadcast" style="font-size:2.5rem;opacity:0.2;margin-bottom:16px"></i>
+                                <p class="muted" style="margin:0 0 16px">Select a stream slot from the sidebar to configure and go live</p>
+                                <button class="btn btn-outline" onclick="showCreateManagedStreamModal()">
+                                    <i class="fa-solid fa-plus"></i> Create stream slot
                                 </button>
                             </div>
-                            <span class="bc-field-hint">Choose which control layout viewers will see. Use the Script button to download a hardware bridge template.</span>
+                            <!-- Profile editor + Go Live + History (populated by broadcast-workspace.js) -->
+                            <div class="bc-ws-panel" id="bc-ws-panel" style="display:none"></div>
                         </div>
 
-                        <button class="btn btn-primary btn-lg" style="width:100%;margin-top:14px" id="bc-create-btn" onclick="createNewStream()">
-                            <i class="fa-solid fa-tower-broadcast"></i> Create Stream
-                        </button>
+                    </div><!-- .bc-workspace -->
 
-                        <p class="bc-create-reassurance"><i class="fa-solid fa-circle-info"></i> Your stream will appear at <strong>hobostreamer.com/<span id="bc-create-username">you</span></strong> — this link stays the same every time you go live.</p>
-
-                        <!-- Which method should I use? -->
-                        <details class="bc-help-guide">
-                            <summary><i class="fa-solid fa-question-circle"></i> Which streaming method should I use?</summary>
-                            <div class="bc-help-guide-body">
-                                <div class="bc-help-comparison">
-                                    <div class="bc-help-col">
-                                        <div class="bc-help-col-header webrtc"><i class="fa-solid fa-globe"></i> WebRTC (Browser)</div>
-                                        <ul>
-                                            <li><strong>Easiest option</strong> — works right in your browser</li>
-                                            <li>No software to install</li>
-                                            <li>Use your webcam, phone camera, or screen share</li>
-                                            <li>Ultra-low latency (under 1 second)</li>
-                                            <li>Great for casual streaming, IRL, and quick screen shares</li>
-                                        </ul>
-                                        <p class="bc-help-verdict"><i class="fa-solid fa-arrow-right"></i> <strong>Choose this</strong> if you just want to go live fast without installing anything.</p>
-                                    </div>
-                                    <div class="bc-help-col">
-                                        <div class="bc-help-col-header rtmp"><i class="fa-solid fa-server"></i> RTMP</div>
-                                        <ul>
-                                            <li><strong>Best video quality</strong> — uses OBS, Streamlabs, or a mobile app</li>
-                                            <li>Full control over scenes, overlays, transitions</li>
-                                            <li>Supports OBS Studio, Streamlabs, IRL Pro (Android), and more</li>
-                                            <li>Just paste the Server URL and Stream Key into your app</li>
-                                            <li>Best for gaming, desktop content, and professional-looking streams</li>
-                                        </ul>
-                                        <p class="bc-help-verdict"><i class="fa-solid fa-arrow-right"></i> <strong>Choose this</strong> if you use OBS or a mobile streaming app like IRL Pro.</p>
-                                    </div>
-                                    <div class="bc-help-col">
-                                        <div class="bc-help-col-header jsmpeg"><i class="fa-solid fa-terminal"></i> JSMPEG</div>
-                                        <ul>
-                                            <li><strong>Lightweight</strong> — just a single FFmpeg command</li>
-                                            <li>Perfect for Raspberry Pi, security cameras, embedded devices</li>
-                                            <li>Works on headless servers (no GUI needed)</li>
-                                            <li>Lower quality than RTMP (mpeg1 codec), but very low CPU usage</li>
-                                            <li>Great for 24/7 unattended streams and IoT projects</li>
-                                        </ul>
-                                        <p class="bc-help-verdict"><i class="fa-solid fa-arrow-right"></i> <strong>Choose this</strong> if you're streaming from a Pi, Linux server, or anything command-line.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </details>
-
-                        <!-- FAQ -->
-                        <details class="bc-help-guide">
-                            <summary><i class="fa-solid fa-life-ring"></i> Need help? Common questions</summary>
-                            <div class="bc-help-guide-body">
-                                <div class="bc-faq-item">
-                                    <strong>My camera/mic isn't showing up</strong>
-                                    <p>Click "Allow Camera & Mic" and accept the browser permission popup. If you accidentally denied it, click the lock/camera icon in your browser's address bar to re-enable permissions, then refresh the page.</p>
-                                </div>
-                                <div class="bc-faq-item">
-                                    <strong>Can I stream from my phone?</strong>
-                                    <p>Yes! Use <strong>WebRTC → Browser → Camera/Mic</strong> to stream directly from your phone's browser. Or install <strong>IRL Pro</strong> (Android) and use the <strong>RTMP</strong> method — there's a setup guide on the RTMP instructions page.</p>
-                                </div>
-                                <div class="bc-faq-item">
-                                    <strong>How do I use OBS?</strong>
-                                    <p>Select <strong>RTMP</strong> as your method and click Create Stream. You'll get a <strong>Server URL</strong> and <strong>Stream Key</strong> — paste those into OBS under Settings → Stream → Custom. Then click "Start Streaming" in OBS. If you want WHIP and OBS 30+ does not show it, try the Flatpak or AppImage version of OBS, or use RTMP instead.</p>
-                                </div>
-                                <div class="bc-faq-item">
-                                    <strong>What's WHIP?</strong>
-                                    <p>WHIP (WebRTC HTTP Ingest Protocol) is a newer way for OBS to send video via WebRTC instead of RTMP. It gives you sub-second latency and is supported in OBS Studio 30+ on builds that include WebRTC support.</p>
-                                    <p>Some Linux distro packages disable WHIP even when OBS is version 30 or newer. If you do not see the WHIP service or option in OBS Settings → Stream, install OBS from Flatpak or AppImage instead of the system package:</p>
-                                    <pre style="margin:10px 0;padding:10px;background:var(--surface);border-radius:6px;font-size:0.85rem;white-space:pre-wrap;">flatpak install flathub com.obsproject.Studio
-flatpak run com.obsproject.Studio</pre>
-                                    <p>If you cannot use Flatpak, download the OBS AppImage from <strong>https://obsproject.com/download</strong>. Otherwise, use <strong>RTMP</strong> on system OBS builds.</p>
-                                    <p><strong>Export your OBS profile and scenes:</strong> In your existing OBS, go to <strong>Profile → Export</strong> and save your profile. Then go to <strong>Scene Collection → Export</strong> and save each scene collection you want to keep.</p>
-                                    <p><strong>Import into Flatpak OBS:</strong> Open Flatpak OBS, then use <strong>Profile → Import</strong> and <strong>Scene Collection → Import</strong>. If the file chooser remains greyed out, copy the exported files directly into the Flatpak OBS config folder.</p>
-                                    <pre style="margin:10px 0;padding:10px;background:var(--surface);border-radius:6px;font-size:0.85rem;white-space:pre-wrap;">~/.var/app/com.obsproject.Studio/config/obs-studio/basic/scenes</pre>
-                                    <p>For profiles, use:</p>
-                                    <pre style="margin:10px 0;padding:10px;background:var(--surface);border-radius:6px;font-size:0.85rem;white-space:pre-wrap;">~/.var/app/com.obsproject.Studio/config/obs-studio/basic/profiles</pre>
-                                    <p>Then restart Flatpak OBS and your exported scenes and profiles should be available. This is the most reliable method when Flatpak's file dialog cannot access your exported JSON files.</p>
-                                    <p><strong>Permissions note:</strong> Flatpak is sandboxed, so it may not see files outside your home directory by default. Make sure you copy exports into your home folder before restarting OBS. AppImage builds are not sandboxed, so they can read your normal OBS paths without extra flags.</p>
-                                </div>
-                                <div class="bc-faq-item">
-                                    <strong>Can I share my screen and my face at the same time?</strong>
-                                    <p>Yes! Choose <strong>Screen Share</strong>, then check the <strong>"Include Camera (PiP overlay)"</strong> checkbox. Your webcam will appear as a small picture-in-picture over your screen share.</p>
-                                </div>
-                                <div class="bc-faq-item">
-                                    <strong>Where is my stream link?</strong>
-                                    <p>Your stream is always at <strong>hobostreamer.com/your-username</strong>. This link never changes — share it once, and it works every time you go live.</p>
-                                </div>
-                                <div class="bc-faq-item">
-                                    <strong>Can I stream to multiple platforms at once?</strong>
-                                    <p>Yes! After you go live, scroll down to the <strong>Restreams</strong> section. You can add YouTube, Twitch, Kick, or any custom RTMP server as a restream destination.</p>
-                                </div>
-                                <div class="bc-faq-item">
-                                    <strong>My stream quality is bad / buffering</strong>
-                                    <p>Try lowering the resolution to 480p or 360p, or reduce the max bitrate. If on mobile data, use 1000–1500 kbps. Make sure you have a stable internet connection — WiFi is better than cellular for streaming.</p>
-                                </div>
-                            </div>
-                        </details>
-                    </div>
-
-                    <!-- Existing streams list (right / secondary) -->
-                    <div id="bc-existing-streams">
-                        <h3>Your Streams</h3>
-                        <div id="bc-streams-list" class="bc-streams-list">
-                            <p class="muted">Loading...</p>
-                        </div>
-                    </div>
-                    </div><!-- .bc-manager-grid -->
                 </div>
 
                 <!-- ═══ PAST STREAMS TAB ═══ -->
@@ -5464,7 +5120,12 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/hobo-bucks.js?v=2"></script>
 <script src="/js/hobo-coins.js?v=2"></script>
 <script src="/js/cosmetics-ui.js?v=2"></script>
-<script src="/js/broadcast.js?v=11"></script>
+<!-- Broadcast modules — load order matters: state → devices → vods → workspace → core -->
+<script src="/js/broadcast-state.js?v=1"></script>
+<script src="/js/broadcast-devices.js?v=1"></script>
+<script src="/js/broadcast-vods.js?v=1"></script>
+<script src="/js/broadcast-workspace.js?v=1"></script>
+<script src="/js/broadcast.js?v=12"></script>
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>

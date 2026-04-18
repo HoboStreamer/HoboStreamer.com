@@ -224,11 +224,9 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         // Get live streams (may be multiple with different protocols)
         const liveStreams = db.getLiveStreamsByUserId(channel.user_id) || [];
         for (const liveStream of liveStreams) {
-            // Use managed stream key if linked, else fall back to user key
-            const lsUser = db.getUserById(liveStream.user_id);
-            const lsKey = liveStream.managed_stream_id
-                ? (db.getManagedStreamById(liveStream.managed_stream_id)?.stream_key || lsUser.stream_key)
-                : lsUser.stream_key;
+            // Use managed stream key from the JOIN, else fall back to user key
+            const lsKey = liveStream.managed_stream_key
+                || db.getUserById(liveStream.user_id)?.stream_key;
             if (liveStream.protocol === 'jsmpeg') {
                 liveStream.endpoint = jsmpegRelay.getChannelInfo(lsKey);
             } else if (liveStream.protocol === 'webrtc') {
@@ -239,6 +237,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                 };
             }
             delete liveStream.stream_key;
+            delete liveStream.managed_stream_key;
         }
 
         // Show private VODs/clips to the channel owner, only public to others
@@ -356,6 +355,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         // Strip private fields from public channel response
         const publicChannel = { ...channel, follower_count: followerCount, is_following: isFollowing };
         delete publicChannel.weather_zip;
+        delete publicChannel.stream_key;
         delete publicChannel.vod_recording_enabled;
         delete publicChannel.force_vod_recording_disabled;
 
@@ -400,12 +400,10 @@ router.get('/channel/:username/live', (req, res) => {
 
         const liveStreams = db.getLiveStreamsByUserId(channel.user_id) || [];
         for (const liveStream of liveStreams) {
+            // Use managed stream key from the JOIN, else fall back to user key
+            const lsKey = liveStream.managed_stream_key
+                || db.getUserById(liveStream.user_id)?.stream_key;
             if (liveStream.protocol === 'jsmpeg') {
-                // Use managed stream key if linked, else fall back to user key
-                const lsUser = db.getUserById(liveStream.user_id);
-                const lsKey = liveStream.managed_stream_id
-                    ? (db.getManagedStreamById(liveStream.managed_stream_id)?.stream_key || lsUser.stream_key)
-                    : lsUser.stream_key;
                 liveStream.endpoint = jsmpegRelay.getChannelInfo(lsKey);
             } else if (liveStream.protocol === 'webrtc') {
                 liveStream.endpoint = { roomId: `stream-${liveStream.id}` };
@@ -415,6 +413,7 @@ router.get('/channel/:username/live', (req, res) => {
                 };
             }
             delete liveStream.stream_key;
+            delete liveStream.managed_stream_key;
         }
 
         res.json({
@@ -899,23 +898,14 @@ router.post('/voice-channels/call-user/respond', requireAuth, (req, res) => {
 // ── Broadcast Settings ──────────────────────────────────────
 router.get('/broadcast-settings', requireAuth, (req, res) => {
     try {
-        const user = req.user;
-        // Return default broadcast settings (these are typically stored client-side in localStorage)
+        const managedStreamId = req.query.managed_stream_id ? parseInt(req.query.managed_stream_id) : null;
+        if (managedStreamId) {
+            const settings = db.getManagedStreamBroadcastSettings(managedStreamId, req.user.id);
+            return res.json({ settings, managed_stream_id: managedStreamId });
+        }
+        // Fallback: return defaults when no managed stream specified
         res.json({
-            settings: {
-                defaultMethod: 'webrtc',
-                camera: '',
-                microphone: '',
-                micGain: 80,
-                echoCancellation: true,
-                noiseSuppression: true,
-                resolution: '1280x720',
-                fps: 30,
-                bitrate: 2500,
-                ttsMode: 'off',
-                ttsVoice: 'default',
-                vodPublic: true,
-            },
+            settings: {},
         });
     } catch (err) {
         console.error('[Streaming] broadcast-settings error:', err.message);
@@ -923,7 +913,73 @@ router.get('/broadcast-settings', requireAuth, (req, res) => {
     }
 });
 
+router.put('/broadcast-settings', requireAuth, (req, res) => {
+    try {
+        const managedStreamId = req.body.managed_stream_id ? parseInt(req.body.managed_stream_id) : null;
+        if (!managedStreamId) {
+            return res.status(400).json({ error: 'managed_stream_id is required' });
+        }
+        const managed = db.getManagedStreamById(managedStreamId);
+        if (!managed || managed.user_id !== req.user.id) {
+            return res.status(403).json({ error: 'Not your managed stream' });
+        }
+        const settings = req.body.settings || {};
+        db.updateManagedStreamBroadcastSettings(managedStreamId, req.user.id, settings);
+        res.json({ settings, managed_stream_id: managedStreamId });
+    } catch (err) {
+        console.error('[Streaming] broadcast-settings save error:', err.message);
+        res.status(500).json({ error: 'Failed to save broadcast settings' });
+    }
+});
+
+// ── Channel Stream Resolution ────────────────────────────────
+// Resolve a managed stream ref (slug or ID) to the currently live session for a channel.
+// Used by the SPA to deep-link /@username/:managedStreamRef to the correct live stream.
+router.get('/channel/:username/resolve/:ref', optionalAuth, (req, res) => {
+    try {
+        const username = req.params.username.replace(/^@/, '');
+        const ref = req.params.ref;
+        const channel = db.getChannelByUsername(username);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+        // Resolve the ref to a managed stream
+        const managed = db.getManagedStreamByIdOrSlug(channel.user_id, ref);
+        if (!managed) return res.status(404).json({ error: 'Managed stream not found' });
+
+        // Find a live session linked to this managed stream
+        const liveStreams = db.getLiveStreamsByUserId(channel.user_id);
+        const liveSession = liveStreams.find(s => s.managed_stream_id === managed.id);
+
+        res.json({
+            managed_stream: {
+                id: managed.id,
+                slug: managed.slug,
+                title: managed.title,
+                protocol: managed.protocol,
+            },
+            live_stream_id: liveSession?.id || null,
+            is_live: !!liveSession,
+        });
+    } catch (err) {
+        console.error('[Streaming] resolve error:', err.message);
+        res.status(500).json({ error: 'Failed to resolve stream' });
+    }
+});
+
 // ── Managed Stream CRUD ──────────────────────────────────────
+
+// Get past stream sessions for a managed stream (workspace history panel)
+router.get('/managed/:managedStreamId/history', requireAuth, (req, res) => {
+    const managedStreamId = parseInt(req.params.managedStreamId);
+    if (!Number.isFinite(managedStreamId)) return res.status(400).json({ error: 'Invalid ID' });
+    try {
+        const sessions = db.getStreamHistoryByManagedStream(managedStreamId, req.user.id);
+        res.json({ sessions });
+    } catch (err) {
+        console.error('[ManagedStreams] History error:', err.message);
+        res.status(500).json({ error: 'Could not load history' });
+    }
+});
 
 // List own managed streams
 router.get('/managed', requireAuth, (req, res) => {
@@ -1106,11 +1162,12 @@ router.get('/:id', optionalAuth, (req, res) => {
         if (!stream) return res.status(404).json({ error: 'Stream not found' });
 
         delete stream.stream_key;
+        delete stream.managed_stream_key;
 
         if (stream.is_live) {
-            const user = db.getUserById(stream.user_id);
             if (stream.protocol === 'jsmpeg') {
-                stream.endpoint = jsmpegRelay.getChannelInfo(user.stream_key);
+                const jsmpegKey = stream.managed_stream_key || db.getUserById(stream.user_id)?.stream_key;
+                stream.endpoint = jsmpegRelay.getChannelInfo(jsmpegKey);
             } else if (stream.protocol === 'webrtc') {
                 stream.endpoint = { roomId: `stream-${stream.id}` };
             } else if (stream.protocol === 'rtmp') {
@@ -1361,9 +1418,7 @@ router.delete('/:id', requireAuth, (req, res) => {
         });
 
         const user = db.getUserById(stream.user_id);
-        const endKey = stream.managed_stream_id
-            ? (db.getManagedStreamById(stream.managed_stream_id)?.stream_key || user.stream_key)
-            : user.stream_key;
+        const endKey = stream.managed_stream_key || user.stream_key;
         if (stream.protocol === 'jsmpeg') {
             jsmpegRelay.destroyChannel(endKey);
         } else if (stream.protocol === 'webrtc') {
@@ -1397,10 +1452,8 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
         }
 
         const user = db.getUserById(stream.user_id);
-        // Use managed stream key if linked, else fallback to user key
-        const msKey = stream.managed_stream_id
-            ? (db.getManagedStreamById(stream.managed_stream_id)?.stream_key || user.stream_key)
-            : user.stream_key;
+        // Use managed stream key from the JOIN, else fallback to user key
+        const msKey = stream.managed_stream_key || user.stream_key;
         let endpoint = {};
 
         const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
@@ -1485,9 +1538,9 @@ router.get('/:id/rtmp-status', requireAuth, (req, res) => {
         if (stream.protocol !== 'rtmp') {
             return res.status(400).json({ error: 'Not an RTMP stream' });
         }
-        const user = db.getUserById(stream.user_id);
+        const rtmpKey = stream.managed_stream_key || db.getUserById(stream.user_id)?.stream_key;
         const rtmpServer = require('./rtmp-server');
-        const status = rtmpServer.getStatus(user.stream_key);
+        const status = rtmpServer.getStatus(rtmpKey);
         res.json(status);
     } catch (err) {
         console.error('[Streaming]', err.message);
@@ -1638,11 +1691,11 @@ router.get('/rtmp-proxy/:streamId.flv', (req, res) => {
         if (!stream || !stream.is_live || stream.protocol !== 'rtmp') {
             return res.status(404).end();
         }
-        const user = db.getUserById(stream.user_id);
-        if (!user || !user.stream_key) return res.status(404).end();
+        const flvKey = stream.managed_stream_key || db.getUserById(stream.user_id)?.stream_key;
+        if (!flvKey) return res.status(404).end();
 
         const nmsPort = config.rtmp.port + 8000;
-        const url = `http://127.0.0.1:${nmsPort}/live/${user.stream_key}.flv`;
+        const url = `http://127.0.0.1:${nmsPort}/live/${flvKey}.flv`;
 
         const http = require('http');
         const upstream = http.get(url, (nmsRes) => {
