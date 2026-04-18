@@ -1968,15 +1968,22 @@ async function showWHIPInstructions(stream) {
     _startRsViewerPoll();
     _startRestreamViewerPoll();
     loadLiveControlsStatus(stream.id).catch(() => {});
-    let whipBaseUrl = location.origin;
+    const isLocalHost = /^(localhost|127\.|\[::1\])$/.test(location.hostname);
+    let whipBaseUrl = null;
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
-        whipBaseUrl = data.endpoint?.whipUrlBase || whipBaseUrl;
+        whipBaseUrl = data.endpoint?.whipUrlBase || null;
         if (data.endpoint?.whipUrlSource === 'request_host') {
-            console.warn('[WHIP] Using request host fallback for WHIP URL. Configure WHIP_PUBLIC_URL or WEBRTC_PUBLIC_URL if this host is incorrect.');
+            console.warn('[WHIP] Server did not provide a configured WHIP URL. Request-host fallback is being used; please configure WHIP_PUBLIC_URL or WEBRTC_PUBLIC_URL to avoid incorrect client endpoints.');
         }
-    } catch {
-        console.warn('[WHIP] Failed to load canonical WHIP endpoint from server; using current page origin as fallback.');
+    } catch (err) {
+        console.warn('[WHIP] Failed to load canonical WHIP endpoint from server:', err.message);
+    }
+    if (!whipBaseUrl) {
+        whipBaseUrl = location.origin;
+        if (!isLocalHost) {
+            console.warn('[WHIP] Falling back to the current page origin for WHIP URL outside of localhost. This is only safe for local development. Configure WHIP_PUBLIC_URL or WEBRTC_PUBLIC_URL in the registry to fix this.');
+        }
     }
     document.getElementById('bc-whip-url').textContent = `${whipBaseUrl}/whip/${stream.id}`;
     const token = getStoredAuthToken() || 'N/A';
