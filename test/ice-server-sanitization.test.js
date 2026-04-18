@@ -29,6 +29,12 @@ try {
     assert.strictEqual(iceServers2[2].credential, 'pass');
     assert.strictEqual(iceServers2[3].urls, 'turn:turn.example.com:3478?transport=tcp');
 
+    const normalized = config._normalizeTurnUrl('turn://turn.example.com:3478');
+    assert.strictEqual(normalized, 'turn:turn.example.com:3478');
+
+    const normalizedSecure = config._normalizeTurnUrl('turns://turn.example.com:5349');
+    assert.strictEqual(normalizedSecure, 'turns:turn.example.com:5349');
+
     console.log('✅ ICE server sanitization regression tests passed');
 } finally {
     config.turn.url = originalTurn.url;

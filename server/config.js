@@ -29,10 +29,27 @@ function normalizeValue(value, type) {
 }
 
 function normalizeTurnUrl(turnUrl) {
-    const url = String(turnUrl || '').trim();
-    if (!url) return '';
-    if (!/^turns?:/i.test(url)) return '';
-    return url;
+    const raw = String(turnUrl || '').trim();
+    if (!raw) return '';
+
+    // Accept both turn://host and turn:host forms, normalizing to the
+    // canonical WebRTC ICE URL form without double slashes.
+    let candidate = raw;
+    if (/^turns?:[^/]/i.test(candidate)) {
+        candidate = candidate.replace(/^turns?:/i, (s) => s + '//');
+    }
+    if (!/^turns?:\/\//i.test(candidate)) return '';
+
+    try {
+        const url = new URL(candidate);
+        if (!url.hostname) return '';
+        const protocol = url.protocol.toLowerCase();
+        if (protocol !== 'turn:' && protocol !== 'turns:') return '';
+        if (url.username || url.password) return '';
+        return `${protocol}${url.hostname}${url.port ? `:${url.port}` : ''}${url.pathname}${url.search}`;
+    } catch {
+        return '';
+    }
 }
 
 function buildConfig(registryValues) {
@@ -258,4 +275,5 @@ async function refreshRegistry() {
 }
 
 config.refreshRegistry = refreshRegistry;
+config._normalizeTurnUrl = normalizeTurnUrl;
 module.exports = config;

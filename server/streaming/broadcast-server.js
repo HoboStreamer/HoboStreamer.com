@@ -36,14 +36,16 @@ class BroadcastServer extends EventEmitter {
     }
 
     _isValidIceServerUrl(url) {
-        return typeof url === 'string' && url.trim().length > 0 && /^(stun|turn|turns):/i.test(url.trim());
+        const trimmed = String(url || '').trim();
+        return /^(stun|turn|turns):[^/][^\s]*$/i.test(trimmed);
     }
 
     _normalizeTurnUrl(url) {
         if (typeof url !== 'string') return '';
         const trimmed = url.trim();
-        if (!this._isValidIceServerUrl(trimmed)) return '';
-        return trimmed;
+        const normalized = trimmed.replace(/^(turns?):\/\//i, '$1:');
+        if (!this._isValidIceServerUrl(normalized)) return '';
+        return normalized;
     }
 
     _appendTransportParam(url, transport) {

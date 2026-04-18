@@ -121,7 +121,7 @@ function sendPlayerSignal(msg) {
 }
 
 function isValidIceServerUrl(url) {
-    return typeof url === 'string' && url.trim().length > 0 && /^(stun|turn|turns):/i.test(url.trim());
+    return /^(stun|turn|turns):[^/][^\s]*$/i.test(String(url || '').trim());
 }
 
 function sanitizeIceServers(iceServers) {

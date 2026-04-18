@@ -260,25 +260,44 @@ app.use((req, res, next) => {
 // ── Static Files ─────────────────────────────────────────────
 // Serve hobo-shared client-side libs (navbar, notifications, themes)
 let sharedPath = null;
-try {
-    sharedPath = path.dirname(require.resolve('hobo-shared/package.json'));
-} catch (err) {
-    const candidate = path.resolve(__dirname, '..', '..', 'HoboApp', 'packages', 'hobo-shared');
-    if (fs.existsSync(candidate)) {
-        sharedPath = candidate;
-    } else {
-        console.error('[Server] Failed to resolve hobo-shared package. /shared/* will not be served from disk.');
+const sharedCandidates = [
+    () => path.dirname(require.resolve('hobo-shared/package.json')),
+    () => path.resolve(__dirname, '../node_modules/hobo-shared'),
+    () => path.resolve(__dirname, '..', '..', 'HoboApp', 'packages', 'hobo-shared'),
+    () => path.resolve(__dirname, '..', '..', 'packages', 'hobo-shared'),
+];
+for (const getCandidate of sharedCandidates) {
+    try {
+        const candidate = getCandidate();
+        if (candidate && fs.existsSync(candidate)) {
+            sharedPath = candidate;
+            break;
+        }
+    } catch (_) {}
+}
+const REQUIRED_SHARED_FILES = ['theme-loader.js', 'notification-ui.js', 'account-switcher.js'];
+if (sharedPath) {
+    const missing = REQUIRED_SHARED_FILES.filter(name => !fs.existsSync(path.join(sharedPath, name)));
+    if (missing.length) {
+        console.error('[Server] Shared asset root found but missing required files:', missing.join(', '));
+        sharedPath = null;
     }
 }
 if (sharedPath) {
     console.log('[Server] Mounting /shared from:', sharedPath);
     app.use('/shared', express.static(sharedPath, {
+        fallthrough: false,
         setHeaders(res) {
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
             res.setHeader('Cache-Control', 'public, max-age=300');
         },
     }));
+} else {
+    console.error('[Server] /shared asset mount unavailable; shared browser files will return 404.');
+    app.use('/shared', (req, res) => {
+        res.status(404).type('text/plain').send('Shared assets unavailable');
+    });
 }
 
 const soundsPath = path.resolve(__dirname, '../public/assets/sounds');
