@@ -120,6 +120,29 @@ function sendPlayerSignal(msg) {
     return true;
 }
 
+function isValidIceServerUrl(url) {
+    return typeof url === 'string' && url.trim().length > 0 && /^(stun|turn|turns):/i.test(url.trim());
+}
+
+function sanitizeIceServers(iceServers) {
+    if (!Array.isArray(iceServers)) return [];
+    const sanitized = [];
+    for (const server of iceServers) {
+        if (!server || typeof server !== 'object') continue;
+        const urls = server.urls;
+        const candidates = Array.isArray(urls) ? urls : [urls];
+        const validUrls = candidates
+            .filter((url) => isValidIceServerUrl(url))
+            .map((url) => String(url).trim());
+        if (!validUrls.length) continue;
+        const safeServer = { urls: validUrls.length === 1 ? validUrls[0] : validUrls };
+        if (server.username) safeServer.username = server.username;
+        if (server.credential) safeServer.credential = server.credential;
+        sanitized.push(safeServer);
+    }
+    return sanitized;
+}
+
 function isMediaRecorderSupported() {
     return typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function';
 }
@@ -1001,12 +1024,19 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
         const transportParams = await _sfuViewerRequest(ws, 'sfu-viewer-create-transport', 'sfu-viewer-transport-created');
 
         // Step 4: Create the local RecvTransport
+        let iceServers = sanitizeIceServers(transportParams.iceServers);
+        if (!iceServers.length) {
+            iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+            console.warn('[Player] Falling back to default STUN-only ICE servers for mediasoup transport');
+        }
+        console.log('[Player] Using SFU ICE servers:', iceServers.map((s) => (Array.isArray(s.urls) ? s.urls.join(',') : s.urls)).join(' | '));
+
         const recvTransport = device.createRecvTransport({
             id: transportParams.id,
             iceParameters: transportParams.iceParameters,
             iceCandidates: transportParams.iceCandidates,
             dtlsParameters: transportParams.dtlsParameters,
-            iceServers: transportParams.iceServers || [{ urls: 'stun:stun.l.google.com:19302' }],
+            iceServers,
         });
         player._sfuRecvTransport = recvTransport;
 

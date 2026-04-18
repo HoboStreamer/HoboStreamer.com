@@ -259,11 +259,32 @@ app.use((req, res, next) => {
 
 // ── Static Files ─────────────────────────────────────────────
 // Serve hobo-shared client-side libs (navbar, notifications, themes)
-const sharedPath = path.resolve(__dirname, '..', '..', 'packages', 'hobo-shared');
-app.use('/shared', express.static(sharedPath, {
+let sharedPath = null;
+try {
+    sharedPath = path.dirname(require.resolve('hobo-shared/package.json'));
+} catch (err) {
+    const candidate = path.resolve(__dirname, '..', '..', 'HoboApp', 'packages', 'hobo-shared');
+    if (fs.existsSync(candidate)) {
+        sharedPath = candidate;
+    } else {
+        console.error('[Server] Failed to resolve hobo-shared package. /shared/* will not be served from disk.');
+    }
+}
+if (sharedPath) {
+    console.log('[Server] Mounting /shared from:', sharedPath);
+    app.use('/shared', express.static(sharedPath, {
+        setHeaders(res) {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+            res.setHeader('Cache-Control', 'public, max-age=300');
+        },
+    }));
+}
+
+const soundsPath = path.resolve(__dirname, '../public/assets/sounds');
+app.use('/assets/sounds', express.static(soundsPath, {
+    fallthrough: false,
     setHeaders(res) {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         res.setHeader('Cache-Control', 'public, max-age=300');
     },
 }));

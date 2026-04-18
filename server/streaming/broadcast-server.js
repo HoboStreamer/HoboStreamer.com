@@ -35,6 +35,42 @@ class BroadcastServer extends EventEmitter {
         this.heartbeatInterval = null;
     }
 
+    _isValidIceServerUrl(url) {
+        return typeof url === 'string' && url.trim().length > 0 && /^(stun|turn|turns):/i.test(url.trim());
+    }
+
+    _normalizeTurnUrl(url) {
+        if (typeof url !== 'string') return '';
+        const trimmed = url.trim();
+        if (!this._isValidIceServerUrl(trimmed)) return '';
+        return trimmed;
+    }
+
+    _appendTransportParam(url, transport) {
+        if (!url.includes('?')) return `${url}?transport=${transport}`;
+        if (/[?&]transport=/i.test(url)) return url;
+        return `${url}&transport=${transport}`;
+    }
+
+    _sanitizeIceServers(servers) {
+        if (!Array.isArray(servers)) return [];
+        const result = [];
+        for (const server of servers) {
+            if (!server || typeof server !== 'object') continue;
+            const urls = server.urls;
+            const normalizedUrls = Array.isArray(urls) ? urls : [urls];
+            const validUrls = normalizedUrls
+                .filter((url) => this._isValidIceServerUrl(url))
+                .map((url) => String(url).trim());
+            if (!validUrls.length) continue;
+            const sanitized = { urls: validUrls.length === 1 ? validUrls[0] : validUrls };
+            if (server.username) sanitized.username = server.username;
+            if (server.credential) sanitized.credential = server.credential;
+            result.push(sanitized);
+        }
+        return result;
+    }
+
     /** Build ICE servers array from config (STUN + optional TURN) */
     _getIceServers() {
         const servers = [
@@ -42,21 +78,25 @@ class BroadcastServer extends EventEmitter {
             { urls: 'stun:stun1.l.google.com:19302' },
         ];
         if (config.turn?.url) {
-            const turnUrl = config.turn.url;
-            const hasTurnAuth = config.turn.username && config.turn.credential;
-            servers.push(
-                hasTurnAuth
-                    ? { urls: turnUrl, username: config.turn.username, credential: config.turn.credential }
-                    : { urls: turnUrl },
-                hasTurnAuth
-                    ? { urls: `${turnUrl}?transport=tcp`, username: config.turn.username, credential: config.turn.credential }
-                    : { urls: `${turnUrl}?transport=tcp` },
-            );
-            if (!hasTurnAuth && (config.turn.username || config.turn.credential)) {
-                console.warn('[ICE] Incomplete TURN credentials configured; emitting TURN URLs without auth.');
+            const turnUrl = this._normalizeTurnUrl(config.turn.url);
+            if (turnUrl) {
+                const hasTurnAuth = config.turn.username && config.turn.credential;
+                servers.push(
+                    hasTurnAuth
+                        ? { urls: turnUrl, username: config.turn.username, credential: config.turn.credential }
+                        : { urls: turnUrl },
+                    hasTurnAuth
+                        ? { urls: this._appendTransportParam(turnUrl, 'tcp'), username: config.turn.username, credential: config.turn.credential }
+                        : { urls: this._appendTransportParam(turnUrl, 'tcp') },
+                );
+                if (!hasTurnAuth && (config.turn.username || config.turn.credential)) {
+                    console.warn('[ICE] Incomplete TURN credentials configured; emitting TURN URLs without auth.');
+                }
+            } else {
+                console.warn('[ICE] Skipping invalid TURN_URL; only turn: or turns: URLs are accepted:', config.turn.url);
             }
         }
-        return servers;
+        return this._sanitizeIceServers(servers);
     }
 
     init(server) {
@@ -551,7 +591,9 @@ class BroadcastServer extends EventEmitter {
         try {
             const roomId = `stream-${client.streamId}`;
             const transport = await webrtcSFU.createTransport(roomId, `sfu-${client.peerId}`);
-            this.safeSend(ws, { type: 'sfu-transport-created', ...transport, iceServers: this._getIceServers() });
+            const iceServers = this._getIceServers();
+            console.log(`[Broadcast] SFU create transport for ${client.peerId} using ${iceServers.length} ICE server(s)`);
+            this.safeSend(ws, { type: 'sfu-transport-created', ...transport, iceServers });
         } catch (err) {
             console.error('[Broadcast] SFU create-transport error:', err.message);
             this.safeSend(ws, { type: 'sfu-error', error: err.message });
@@ -661,13 +703,15 @@ class BroadcastServer extends EventEmitter {
         client._sfuViewerRoomId = roomId;
         client._sfuViewerConsumerIds = [];
 
+        const iceServers = this._getIceServers();
+        console.log(`[Broadcast] SFU viewer transport ${transport.id} created for ${client.peerId} with ${iceServers.length} ICE server(s)`);
         this.safeSend(ws, {
             type: 'sfu-viewer-transport-created',
             id: transport.id,
             iceParameters: transport.iceParameters,
             iceCandidates: transport.iceCandidates,
             dtlsParameters: transport.dtlsParameters,
-            iceServers: this._getIceServers(),
+            iceServers,
         });
     }
 

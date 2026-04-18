@@ -28,6 +28,13 @@ function normalizeValue(value, type) {
     return value;
 }
 
+function normalizeTurnUrl(turnUrl) {
+    const url = String(turnUrl || '').trim();
+    if (!url) return '';
+    if (!/^turns?:/i.test(url)) return '';
+    return url;
+}
+
 function buildConfig(registryValues) {
     registryValues = registryValues || {};
     const getRegistryEntry = (key) => {
@@ -45,7 +52,7 @@ function buildConfig(registryValues) {
     const whipEnabledEntry = getRegistryEntry('WHIP_PUBLIC_URL_ENABLED');
     const rtmpEntry = getRegistryEntry('RTMP_HOST');
     const turnEntry = getRegistryEntry('TURN_URL');
-    const turnUrl = turnEntry.value || '';
+    const turnUrl = normalizeTurnUrl(turnEntry.value || '');
 
     if (turnEntry.source !== 'default' && !turnUrl) {
         console.warn('[Config] Invalid TURN_URL configured; ICE metadata will be skipped. Expected a turn: or turns: URL with hostname and optional port/path.');
