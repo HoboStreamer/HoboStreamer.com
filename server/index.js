@@ -523,6 +523,9 @@ async function start() {
 
     await config.refreshRegistry();
     allowedOrigins = getAllowedOrigins();
+    console.log('[Server] Effective BASE_URL:', config.baseUrl);
+    console.log('[Server] Effective HOBO_TOOLS_URL:', config.hoboToolsUrl);
+    console.log('[Server] Allowed CORS/WebSocket origins:', [...allowedOrigins].join(', '));
 
     // 1. Initialize database
     db.initDb();

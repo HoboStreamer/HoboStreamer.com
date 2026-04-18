@@ -42,7 +42,6 @@ const MAX_PANELS_LENGTH = 20000;
 const { pushBulkNotification } = require('../utils/notify');
 const { notifyDiscordGoLive } = require('../integrations/discord-webhook');
 
-const config = require('../config');
 const INTERNAL_API_KEY = config.internalApiKey || process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '';
 
 /**
@@ -1066,7 +1065,6 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
         }
 
         const user = db.getUserById(stream.user_id);
-        const config = require('../config');
         let endpoint = {};
 
         const hostname = config.host === '0.0.0.0' ? req.hostname : config.host;
@@ -1318,7 +1316,6 @@ router.get('/rtmp-proxy/:streamId.flv', (req, res) => {
         const user = db.getUserById(stream.user_id);
         if (!user || !user.stream_key) return res.status(404).end();
 
-        const config = require('../config');
         const nmsPort = config.rtmp.port + 8000;
         const url = `http://127.0.0.1:${nmsPort}/live/${user.stream_key}.flv`;
 

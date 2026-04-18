@@ -188,6 +188,7 @@ const config = buildConfig(initialRegistry);
 
 async function refreshRegistry() {
     if (!config.hoboToolsInternalUrl || !config.internalApiKey) {
+        console.warn('[Config] Skipping registry refresh: missing internal URL or internal API key');
         return config;
     }
 
@@ -205,20 +206,22 @@ async function refreshRegistry() {
             return config;
         }
         const body = await res.json();
-        if (!body.registry) {
-            console.warn('[Config] Invalid registry response from hobo.tools');
+        if (!body.registry || typeof body.registry !== 'object') {
+            console.warn('[Config] Invalid registry response from hobo.tools:', JSON.stringify(body).slice(0, 200));
             return config;
         }
 
-        const overrides = Object.fromEntries(
-            Object.entries(body.registry)
-                .filter(([, entry]) => entry && entry.source === 'admin' && entry.value != null)
-                .map(([key, entry]) => [key, entry.value])
+        const registry = Object.fromEntries(
+            Object.entries(body.registry).map(([key, entry]) => {
+                if (entry && typeof entry === 'object' && Object.prototype.hasOwnProperty.call(entry, 'value')) {
+                    return [key, { value: entry.value, source: entry.source || 'admin' }];
+                }
+                return [key, { value: entry, source: 'admin' }];
+            })
         );
-        const registry = resolveRegistryValues(process.env, overrides, {}, URL_DEFINITIONS);
         const updated = buildConfig(registry);
         Object.assign(config, updated);
-        console.log('[Config] URL registry overrides loaded from hobo.tools');
+        console.log('[Config] URL registry loaded from hobo.tools resolved registry');
     } catch (err) {
         console.warn('[Config] Unable to load URL registry from hobo.tools:', err.message);
     }
