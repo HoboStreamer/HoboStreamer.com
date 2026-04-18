@@ -12,7 +12,14 @@ const db = require('../db/database');
 
 // ── Hobo.Tools Public Key (RS256 verification) ──────────────
 let hoboToolsPublicKey = null;
-const HOBO_TOOLS_ISSUER = 'https://hobo.tools';
+
+// The issuer is the public-facing URL of hobo.tools (the SSO provider).
+// It's initialized from env or registry after config loads; we read it lazily
+// at verify-time so config.refreshRegistry() updates are picked up automatically.
+const config = require('../config');
+function getHoboToolsIssuer() {
+    return config.hoboToolsUrl || process.env.HOBO_TOOLS_URL || 'https://hobo.tools';
+}
 
 function loadHoboToolsPublicKey() {
     const keyPaths = [
@@ -43,7 +50,7 @@ function verifyToken(token) {
     try {
         return jwt.verify(token, hoboToolsPublicKey, {
             algorithms: ['RS256'],
-            issuer: HOBO_TOOLS_ISSUER,
+            issuer: getHoboToolsIssuer(),
         });
     } catch {
         return null;

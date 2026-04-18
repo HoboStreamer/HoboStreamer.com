@@ -17,6 +17,7 @@
  */
 const express = require('express');
 const db = require('../db/database');
+const config = require('../config');
 const { requireAuth, requireStreamer, optionalAuth } = require('../auth/auth');
 const jsmpegRelay = require('./jsmpeg-relay');
 const webrtcSFU = require('./webrtc-sfu');
@@ -98,7 +99,7 @@ function _fallbackNotify(streamer, stream) {
         sender_id: streamer.id,
         sender_name: streamer.display_name || streamer.username,
         sender_avatar: streamer.avatar_url || null,
-        url: `https://hobostreamer.com/${streamer.username}`,
+        url: `${config.baseUrl}/${streamer.username}`,
         rich_content: {
             thumbnail: streamer.avatar_url || null,
             context: {
@@ -729,7 +730,7 @@ router.post('/voice-channels/call-user', requireAuth, (req, res) => {
             type: 'VC_CALL_INVITE',
             title: `${callerName} is calling you`,
             message: `Join voice channel: ${channel.name}`,
-            url: `https://hobostreamer.com/?vcInvite=${encodeURIComponent(channel.id)}`,
+            url: `${config.baseUrl}/?vcInvite=${encodeURIComponent(channel.id)}`,
             rich_content: {
                 context: {
                     channel_id: channel.id,
@@ -1196,7 +1197,7 @@ router.post('/:id/follow', requireAuth, (req, res) => {
                     type: 'FOLLOW',
                     title: 'New Follower',
                     message: `${follower?.display_name || follower?.username || 'Someone'} followed you`,
-                    url: `https://hobostreamer.com/${follower?.username || ''}`,
+                    url: `${config.baseUrl}/${follower?.username || ''}`,
                     ...actorInfo(follower),
                 });
             } catch { /* non-critical */ }
@@ -1233,7 +1234,7 @@ router.post('/channel/:username/follow', requireAuth, (req, res) => {
                     type: 'FOLLOW',
                     title: 'New Follower',
                     message: `${follower?.display_name || follower?.username || 'Someone'} followed you`,
-                    url: `https://hobostreamer.com/${follower?.username || ''}`,
+                    url: `${config.baseUrl}/${follower?.username || ''}`,
                     ...actorInfo(follower),
                 });
             } catch { /* non-critical */ }

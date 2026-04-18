@@ -32,10 +32,16 @@ function buildConfig(registryValues) {
     const jsmpegEntry = getRegistryEntry('JSMPEG_PUBLIC_URL');
     const mediaSoupEntry = getRegistryEntry('MEDIASOUP_ANNOUNCED_IP');
     const hoboToolsEntry = getRegistryEntry('HOBO_TOOLS_INTERNAL_URL');
+    const hoboToolsPublicEntry = getRegistryEntry('HOBO_TOOLS_URL');
     const rtmpEntry = getRegistryEntry('RTMP_HOST');
     const turnEntry = getRegistryEntry('TURN_URL');
 
     const baseUrl = baseEntry.source !== 'default' ? baseEntry.value : DEFAULTS.BASE_URL;
+    // Derive the public URL for hobo.tools (the SSO/auth provider).
+    // Used by getHoboToolsBase() in auth/routes.js and by issuer verification.
+    const hoboToolsUrl = (hoboToolsPublicEntry.source !== 'default' && hoboToolsPublicEntry.value)
+        ? hoboToolsPublicEntry.value
+        : (process.env.HOBO_TOOLS_URL || null);
     const whipPublicUrl = whipEntry.source !== 'default'
         ? whipEntry.value
         : (baseEntry.source !== 'default' ? baseEntry.value : DEFAULTS.WHIP_PUBLIC_URL);
@@ -72,11 +78,18 @@ function buildConfig(registryValues) {
     console.log('[Config]  WEBRTC_PUBLIC_URL=', webRtcPublicUrl, `(${webRtcSource})`);
     console.log('[Config]  WHIP_PUBLIC_URL=', whipPublicUrl, `(${whipSource})`);
     console.log('[Config]  MEDIASOUP_ANNOUNCED_IP=', mediasoupAnnouncedIp, `(${mediaSoupSource})`);
+    console.log('[Config]  HOBO_TOOLS_URL=', hoboToolsUrl || '(not set — SSO base will fall back to https://hobo.tools)');
+
+    if (process.env.NODE_ENV === 'production' && baseUrl.includes('localhost')) {
+        console.error('[Config] CRITICAL: BASE_URL is localhost in production! CORS will reject all browser requests.');
+        console.error('[Config] CRITICAL: Set BASE_URL env var or configure it in the hobo.tools admin registry.');
+    }
 
     return {
         port: parseInt(process.env.PORT || '3000', 10),
         host: process.env.HOST || '0.0.0.0',
         baseUrl,
+        hoboToolsUrl,   // public-facing URL of the SSO provider (e.g. https://hobo.tools)
         nodeEnv: process.env.NODE_ENV || 'development',
         internalApiKey: process.env.INTERNAL_API_KEY || process.env.HOBO_INTERNAL_KEY || '',
         webrtc: {
