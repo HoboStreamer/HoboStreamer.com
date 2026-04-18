@@ -157,7 +157,6 @@
                 <a href="/broadcast" onclick="return handleLinkClick(event, '/broadcast')"><i class="fa-solid fa-tower-broadcast"></i> Go Live</a>
                 <a href="/dashboard" onclick="return handleLinkClick(event, '/dashboard')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
                 <a href="/settings" onclick="return handleLinkClick(event, '/settings')"><i class="fa-solid fa-gear"></i> Settings</a>
-                <a href="#" onclick="event.preventDefault();showModal('stream-key')"><i class="fa-solid fa-key"></i> Stream Key</a>
                 <a href="#" onclick="event.preventDefault();showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
                 <a href="/themes" onclick="return handleLinkClick(event, '/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
                 <a href="https://my.hobo.tools" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
@@ -1687,7 +1686,7 @@
                 <!-- ═══════════════════════════════════════════════════════════ -->
                 <!-- BROADCAST SECTION TABS (Go Live | Past Streams | Settings) -->
                 <!-- ═══════════════════════════════════════════════════════════ -->
-                <div class="broadcast-page-tabs-nav">
+                <div class="broadcast-page-tabs-nav" style="display:none">
                     <div class="broadcast-page-tabs-container">
                         <button class="broadcast-page-tab-btn active" data-tab="go-live" onclick="switchBroadcastTab('go-live')">
                             <i class="fa-solid fa-tower-broadcast"></i>
@@ -1708,7 +1707,7 @@
                 <!-- ═══ STEP 0: Stream Manager (existing streams + create new) ═══ -->
                 <div id="bc-stream-manager" class="broadcast-tab-content active" data-tab="go-live">
                     <h2><i class="fa-solid fa-tower-broadcast"></i> Go Live</h2>
-                    <p class="bc-page-subtitle">Select a stream slot to configure your profile and go live. Settings are saved automatically.</p>
+                    <p class="bc-page-subtitle">Select a stream slot to configure your profile and go live.</p>
 
                     <!-- Active Streams Section (shown above if any live streams) -->
                     <div id="bc-active-streams-container" class="bc-active-streams-section">
