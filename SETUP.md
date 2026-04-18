@@ -364,6 +364,8 @@ MAX_EMOTES_PER_USER=10
 
 MIN_CASHOUT=5
 ESCROW_HOLD_DAYS=14
+HOBO_TOOLS_INTERNAL_URL=http://127.0.0.1:3100
+INTERNAL_API_KEY=change-me-to-a-random-secret
 ```
 
 Generate a strong JWT secret:
@@ -376,6 +378,8 @@ openssl rand -hex 32
 
 - set `BASE_URL` to your final public HTTPS hostname
 - set `MEDIASOUP_ANNOUNCED_IP` to the real public OVH IP if you use WebRTC
+- set `HOBO_TOOLS_INTERNAL_URL` and `INTERNAL_API_KEY` so HoboStreamer can fetch the registry from hobo.tools
+- much of the runtime network configuration is managed from hobo.tools admin via the URL registry, so use hobo.tools to update WHIP, WebRTC, JSMPEG, TURN, and RTMP endpoints when deploying production hostnames
 - keep upload and media limits low on small servers
 - do not expose unused protocols just because they are available in the codebase
 

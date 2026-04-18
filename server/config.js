@@ -165,7 +165,5 @@ async function refreshRegistry() {
     return config;
 }
 
-module.exports = {
-    ...config,
-    refreshRegistry,
-};
+config.refreshRegistry = refreshRegistry;
+module.exports = config;
