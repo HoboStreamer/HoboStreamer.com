@@ -40,3 +40,32 @@ assert.strictEqual(rtpParameters.codecs[0].mimeType, 'audio/opus');
 assert.notDeepStrictEqual(rtpParameters.encodings[0], {}, 'Encoding object must not be empty');
 
 console.log('✅ WHIP handler RTP encoding regression test passed');
+
+const { buildWhipResponseHeaders, handleWhipOptions } = require('../server/streaming/whip-handler');
+
+const req = {
+    protocol: 'https',
+    get: () => 'whip.example.com',
+};
+
+const headers = buildWhipResponseHeaders(req, '123', 'resource-abc');
+assert.strictEqual(headers.Location, 'http://localhost:3000/whip/123/resource-abc');
+assert.strictEqual(headers['Access-Control-Expose-Headers'], 'Location');
+assert.ok(!Object.prototype.hasOwnProperty.call(headers, 'Link'));
+
+const res = {
+    statusCode: null,
+    headers: {},
+    ended: false,
+    status(code) { this.statusCode = code; return this; },
+    set(key, value) { this.headers[key] = value; return this; },
+    end() { this.ended = true; },
+};
+
+handleWhipOptions({}, res);
+assert.strictEqual(res.statusCode, 204);
+assert.strictEqual(res.headers['Access-Control-Expose-Headers'], 'Location');
+assert.ok(!('Link' in res.headers));
+assert.strictEqual(res.ended, true);
+
+console.log('✅ WHIP handler response header regression test passed');

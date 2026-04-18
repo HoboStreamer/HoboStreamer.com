@@ -45,6 +45,11 @@ function buildConfig(registryValues) {
     const whipEnabledEntry = getRegistryEntry('WHIP_PUBLIC_URL_ENABLED');
     const rtmpEntry = getRegistryEntry('RTMP_HOST');
     const turnEntry = getRegistryEntry('TURN_URL');
+    const turnUrl = turnEntry.value || '';
+
+    if (turnEntry.source !== 'default' && !turnUrl) {
+        console.warn('[Config] Invalid TURN_URL configured; ICE metadata will be skipped. Expected a turn: or turns: URL with hostname and optional port/path.');
+    }
 
     const baseUrl = baseEntry.source !== 'default' ? baseEntry.value : DEFAULTS.BASE_URL;
     // Derive the public URL for hobo.tools (the SSO/auth provider).
@@ -122,7 +127,7 @@ function buildConfig(registryValues) {
             host: process.env.RTMP_HOST || rtmpEntry.value || '',
         },
         turn: {
-            url: process.env.TURN_URL || turnEntry.value || '',
+            url: turnUrl,
             username: process.env.TURN_USERNAME || '',
             credential: process.env.TURN_CREDENTIAL || '',
         },

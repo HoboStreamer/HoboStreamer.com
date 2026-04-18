@@ -596,10 +596,18 @@ router.get('/ice-servers', (req, res) => {
         { urls: 'stun:stun2.l.google.com:19302' },
     ];
     if (config.turn?.url) {
+        const hasTurnAuth = config.turn.username && config.turn.credential;
         servers.push(
-            { urls: config.turn.url, username: config.turn.username || '', credential: config.turn.credential || '' },
-            { urls: `${config.turn.url}?transport=tcp`, username: config.turn.username || '', credential: config.turn.credential || '' },
+            hasTurnAuth
+                ? { urls: config.turn.url, username: config.turn.username, credential: config.turn.credential }
+                : { urls: config.turn.url },
+            hasTurnAuth
+                ? { urls: `${config.turn.url}?transport=tcp`, username: config.turn.username, credential: config.turn.credential }
+                : { urls: `${config.turn.url}?transport=tcp` },
         );
+        if (!hasTurnAuth && (config.turn.username || config.turn.credential)) {
+            console.warn('[ICE] Incomplete TURN credentials configured; emitting TURN URLs without auth.');
+        }
     }
     res.json({ iceServers: servers });
 });

@@ -43,14 +43,18 @@ class BroadcastServer extends EventEmitter {
         ];
         if (config.turn?.url) {
             const turnUrl = config.turn.url;
-            const cred = {
-                username: config.turn.username || '',
-                credential: config.turn.credential || '',
-            };
-            // UDP TURN (primary)
-            servers.push({ urls: turnUrl, ...cred });
-            // TCP TURN fallback (works when UDP is blocked by firewalls)
-            servers.push({ urls: `${turnUrl}?transport=tcp`, ...cred });
+            const hasTurnAuth = config.turn.username && config.turn.credential;
+            servers.push(
+                hasTurnAuth
+                    ? { urls: turnUrl, username: config.turn.username, credential: config.turn.credential }
+                    : { urls: turnUrl },
+                hasTurnAuth
+                    ? { urls: `${turnUrl}?transport=tcp`, username: config.turn.username, credential: config.turn.credential }
+                    : { urls: `${turnUrl}?transport=tcp` },
+            );
+            if (!hasTurnAuth && (config.turn.username || config.turn.credential)) {
+                console.warn('[ICE] Incomplete TURN credentials configured; emitting TURN URLs without auth.');
+            }
         }
         return servers;
     }

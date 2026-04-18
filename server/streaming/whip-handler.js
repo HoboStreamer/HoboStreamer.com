@@ -46,6 +46,13 @@ function buildWhipResourceUrl(req, streamId, resourceId) {
     }
 }
 
+function buildWhipResponseHeaders(req, streamId, resourceId) {
+    return {
+        Location: buildWhipResourceUrl(req, streamId, resourceId),
+        'Access-Control-Expose-Headers': 'Location',
+    };
+}
+
 function sendWhipError(res, status, code, message) {
     res.status(status)
         .set('X-WHIP-ERROR', code)
@@ -554,9 +561,7 @@ async function handleWhipPost(req, res) {
 
         res.status(201)
             .set('Content-Type', 'application/sdp')
-            .set('Location', buildWhipResourceUrl(req, streamId, resourceId))
-            .set('Link', `<${buildWhipResourceUrl(req, streamId, resourceId)}>; rel=resource`)
-            .set('Access-Control-Expose-Headers', 'Location, Link')
+            .set(buildWhipResponseHeaders(req, streamId, resourceId))
             .send(answerSdp);
 
     } catch (err) {
@@ -593,7 +598,7 @@ function handleWhipOptions(req, res) {
     res.status(204)
         .set('Access-Control-Allow-Methods', 'POST, PATCH, DELETE, OPTIONS')
         .set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        .set('Access-Control-Expose-Headers', 'Location, Link')
+        .set('Access-Control-Expose-Headers', 'Location')
         .end();
 }
 
@@ -648,6 +653,8 @@ module.exports = {
     handleWhipPatch,
     handleWhipDelete,
     handleWhipOptions,
+    buildWhipResourceUrl,
+    buildWhipResponseHeaders,
     hasSfuProducers,
     sessions,
     cleanupSession,
