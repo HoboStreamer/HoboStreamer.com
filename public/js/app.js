@@ -50,8 +50,51 @@ function channelPath(username, streamId = null) {
 }
 
 /* ── API helpers ──────────────────────────────────────────────── */
+function parseJwtExp(token) {
+    if (!token) return null;
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (!payload || typeof payload.exp !== 'number') return null;
+        return payload.exp;
+    } catch {
+        return null;
+    }
+}
+
+function getStoredAuthToken() {
+    const candidates = [
+        localStorage.getItem('token'),
+        localStorage.getItem('hobo_token'),
+        (document.cookie.match(/(?:^|; )hobo_token=([^;]+)/) || [])[1],
+        (document.cookie.match(/(?:^|; )token=([^;]+)/) || [])[1],
+    ].filter(Boolean);
+
+    if (!candidates.length) return null;
+
+    const now = Math.floor(Date.now() / 1000);
+    const valid = candidates.map(token => ({
+        token,
+        exp: parseJwtExp(token),
+    })).filter(item => item.token && (item.exp === null || item.exp > now));
+
+    const chosen = valid.length
+        ? valid.sort((a, b) => (b.exp || 0) - (a.exp || 0))[0].token
+        : candidates[0];
+
+    if (chosen && chosen !== localStorage.getItem('token')) {
+        try {
+            localStorage.setItem('token', chosen);
+            localStorage.setItem('hobo_token', chosen);
+        } catch {
+            // ignore quota issues
+        }
+    }
+
+    return chosen;
+}
+
 function authHeaders() {
-    const tok = localStorage.getItem('token');
+    const tok = getStoredAuthToken();
     return tok ? { Authorization: `Bearer ${tok}` } : {};
 }
 

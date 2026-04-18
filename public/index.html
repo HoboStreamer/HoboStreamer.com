@@ -5441,9 +5441,13 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/shared/notification-ui.js"></script>
 <script src="/shared/account-switcher.js"></script>
 <script>
-// Initialize Hobo Network notifications (navbar is handled natively by hobostreamer)
+// Initialize Hobo Network notifications and theme sync (navbar is handled natively by hobostreamer)
 (function initHoboNetwork() {
     const token = localStorage.getItem('token') || (document.cookie.match(/(?:^|; )hobo_token=([^;]*)/) || [])[1] || null;
+
+    if (window.HoboThemeLoader && typeof HoboThemeLoader.init === 'function') {
+        HoboThemeLoader.init({ apiBase: window.location.origin });
+    }
 
     // Notifications bell
     const mount = document.getElementById('hobo-bell-mount');
@@ -5451,7 +5455,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
         HoboNotifications.init({
             token: token,
             apiBase: 'https://hobo.tools',
-            soundBase: 'https://hobo.tools/assets/sounds',
+            soundBase: '/assets/sounds',
         });
         mount.appendChild(HoboNotifications.createBell());
     }

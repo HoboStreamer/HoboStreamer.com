@@ -363,10 +363,10 @@ router.get('/callback', async (req, res) => {
         const isSecure = (process.env.BASE_URL || '').startsWith('https');
 
         // Set access token cookie (readable by JS for API calls)
-        res.cookie('token', hoboToolsToken, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
+        res.cookie('token', hoboToolsToken, { httpOnly: false, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
 
         // Also set hobo_token (used by shared navbar/notification libs)
-        res.cookie('hobo_token', hoboToolsToken, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
+        res.cookie('hobo_token', hoboToolsToken, { httpOnly: false, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
 
         // Store refresh token in httpOnly cookie (not readable by JS — server handles refresh)
         if (hoboRefreshToken) {
@@ -438,8 +438,8 @@ router.post('/refresh', async (req, res) => {
         }
 
         const isSecure = (process.env.BASE_URL || '').startsWith('https');
-        res.cookie('token', tokenData.access_token, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
-        res.cookie('hobo_token', tokenData.access_token, { httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
+        res.cookie('token', tokenData.access_token, { httpOnly: false, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
+        res.cookie('hobo_token', tokenData.access_token, { httpOnly: false, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
         if (tokenData.refresh_token) {
             res.cookie('hobo_refresh', tokenData.refresh_token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'Lax', secure: isSecure, path: '/api/auth' });
         }
