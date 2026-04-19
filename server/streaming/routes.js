@@ -1001,6 +1001,11 @@ router.get('/managed/:managedStreamId/profile', requireAuth, (req, res) => {
         // Slot-level restream destinations
         const restreamDestinations = db.getRestreamDestinationsByManagedStream(managedStreamId);
 
+        const rtmpHost = config.rtmp.host || (() => {
+            try { return new URL(config.baseUrl).hostname; } catch { return req.hostname; }
+        })();
+        const rtmpUrl = `rtmp://${rtmpHost}:${config.rtmp.port}/live`;
+
         res.json({
             managed_stream: msPublic,
             stream_key: streamKey,
@@ -1008,6 +1013,7 @@ router.get('/managed/:managedStreamId/profile', requireAuth, (req, res) => {
             whip_url_base: whipUrlBase,
             whip_url_source: whipUrlSource,
             whip_url_warning: whipUrlWarning,
+            rtmp_url: rtmpUrl,
             restream_destinations: restreamDestinations,
         });
     } catch (err) {
