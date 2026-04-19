@@ -946,6 +946,80 @@ main#app { position: relative; z-index: 1; }
 .protocol-jsmpeg { background: #4a9eff; color: #fff; }
 .protocol-webrtc { background: #10b981; color: #fff; }
 .protocol-rtmp   { background: #f59e0b; color: #1a1a2e; }
+
+/* ── Stream type badge ── */
+.stream-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    font-size: 0.65rem;
+    font-weight: 600;
+    vertical-align: middle;
+    background: rgba(255,255,255,.12);
+    color: #fff;
+}
+.stream-card-thumb .stream-type-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+}
+.stream-type-screen { background: rgba(139,92,246,.85); }
+.stream-type-mic_only { background: rgba(236,72,153,.85); }
+.stream-type-camera_only { background: rgba(59,130,246,.85); }
+
+/* ── Mic-only viewer overlay ── */
+.mic-only-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(26,26,46,.6) 0%, rgba(26,26,46,.85) 100%);
+    z-index: 3;
+    pointer-events: none;
+}
+.mic-only-visual {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+.mic-only-icon {
+    font-size: 3rem;
+    color: rgba(255,255,255,.25);
+}
+.mic-only-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 40px;
+}
+.mic-bar {
+    width: 6px;
+    border-radius: 3px;
+    background: var(--accent, #7c5cfc);
+    opacity: .6;
+    animation: mic-bar-pulse 1.2s ease-in-out infinite;
+}
+.mic-bar:nth-child(1) { height: 12px; animation-delay: 0s; }
+.mic-bar:nth-child(2) { height: 24px; animation-delay: .15s; }
+.mic-bar:nth-child(3) { height: 36px; animation-delay: .3s; }
+.mic-bar:nth-child(4) { height: 20px; animation-delay: .45s; }
+.mic-bar:nth-child(5) { height: 16px; animation-delay: .6s; }
+@keyframes mic-bar-pulse {
+    0%, 100% { transform: scaleY(0.4); opacity: .4; }
+    50% { transform: scaleY(1); opacity: .8; }
+}
+.mic-only-label {
+    font-size: 0.82rem;
+    color: rgba(255,255,255,.4);
+    font-weight: 500;
+    letter-spacing: .5px;
+}
+
 .stream-card-info { padding: 12px; }
 .stream-card-title {
     font-size: 0.98rem; font-weight: 650;
@@ -9608,5 +9682,24 @@ body.theme-light .user-dropdown {
     .bc-ws-history-section {
         padding-left: 14px;
         padding-right: 14px;
+    }
+    .bc-ws-save-bar {
+        padding: 8px 14px;
+    }
+    .bc-ws-cli-tabs {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .bc-ws-cli-tab {
+        white-space: nowrap;
+        font-size: 0.78rem;
+        padding: 6px 10px;
+    }
+    .bc-ws-row {
+        flex-direction: column;
+        gap: 8px;
+    }
+    .bc-ws-screen-info {
+        font-size: 0.78rem;
     }
 }

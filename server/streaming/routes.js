@@ -1067,6 +1067,7 @@ router.post('/managed', requireAuth, (req, res) => {
             description,
             category,
             protocol,
+            streaming_method: cleanText(req.body.streaming_method, { maxLength: 20 }) || null,
             stream_key,
             is_nsfw,
             control_config_id: req.body.control_config_id ? parseInt(req.body.control_config_id) : null,

@@ -136,6 +136,21 @@ async function loadDashManagedStreams() {
 }
 
 function showCreateManagedStreamModal() {
+    const methodCards = [
+        { id: 'browser', icon: 'globe', label: 'Browser', hint: 'Camera, mic, or screen share', protocol: 'webrtc' },
+        { id: 'whip', icon: 'satellite-dish', label: 'WHIP', hint: 'OBS, Larix, hardware encoders', protocol: 'webrtc' },
+        { id: 'rtmp', icon: 'server', label: 'RTMP', hint: 'OBS, Streamlabs, FFmpeg', protocol: 'rtmp' },
+        { id: 'cli', icon: 'terminal', label: 'CLI / FFmpeg', hint: 'Command-line, Pi, IoT', protocol: 'jsmpeg' },
+    ];
+    const cardsHtml = methodCards.map(m => `
+        <button type="button" class="bc-method-card${m.id === 'browser' ? ' selected' : ''}"
+            data-method="${m.id}" data-protocol="${m.protocol}"
+            onclick="_dashSelectMethod('${m.id}','${m.protocol}')">
+            <i class="fa-solid fa-${m.icon}"></i>
+            <span class="bc-method-card-label">${m.label}</span>
+            <span class="bc-method-card-hint">${m.hint}</span>
+        </button>`).join('');
+
     const html = `
         <div class="modal-overlay" id="create-ms-modal" onclick="if(event.target===this)this.remove()">
             <div class="modal-content" style="max-width:500px">
@@ -150,12 +165,10 @@ function showCreateManagedStreamModal() {
                     <small class="muted">2-32 chars, letters/numbers/hyphens/underscores, starts with a letter</small>
                 </div>
                 <div class="form-group">
-                    <label>Protocol</label>
-                    <select id="ms-create-protocol" class="input">
-                        <option value="webrtc" selected>WebRTC</option>
-                        <option value="rtmp">RTMP</option>
-                        <option value="jsmpeg">JSMPEG</option>
-                    </select>
+                    <label>Streaming Method</label>
+                    <div class="bc-method-picker bc-method-picker-sm">${cardsHtml}</div>
+                    <input type="hidden" id="ms-create-method" value="browser">
+                    <input type="hidden" id="ms-create-protocol" value="webrtc">
                 </div>
                 <div class="form-group">
                     <label>Category</label>
@@ -174,15 +187,23 @@ function showCreateManagedStreamModal() {
     document.body.insertAdjacentHTML('beforeend', html);
 }
 
+function _dashSelectMethod(method, protocol) {
+    document.getElementById('ms-create-method').value = method;
+    document.getElementById('ms-create-protocol').value = protocol;
+    document.querySelectorAll('#create-ms-modal .bc-method-card').forEach(c =>
+        c.classList.toggle('selected', c.dataset.method === method));
+}
+
 async function submitCreateManagedStream() {
     const title = document.getElementById('ms-create-title')?.value.trim();
     const slug = document.getElementById('ms-create-slug')?.value.trim().toLowerCase() || null;
     const protocol = document.getElementById('ms-create-protocol')?.value || 'webrtc';
+    const streaming_method = document.getElementById('ms-create-method')?.value || 'browser';
     const category = document.getElementById('ms-create-category')?.value.trim() || 'irl';
     const is_nsfw = document.getElementById('ms-create-nsfw')?.checked || false;
     if (!title) return toast('Title is required', 'error');
     try {
-        await api('/streams/managed', { method: 'POST', body: { title, slug, protocol, category, is_nsfw } });
+        await api('/streams/managed', { method: 'POST', body: { title, slug, protocol, streaming_method, category, is_nsfw } });
         document.getElementById('create-ms-modal')?.remove();
         toast('Managed stream created!', 'success');
         loadDashManagedStreams();

@@ -33,6 +33,8 @@ let _wsState = {
     dirty: false,           // any unsaved change (stream fields or profile blob)
     saving: false,
     history: [],
+    activeTab: 'profile',   // current workspace tab
+    _liveStatsTimer: null,  // interval for updating live stats
 };
 
 /* ── Init ────────────────────────────────────────────────────── */
@@ -115,7 +117,10 @@ function _wsIsManagedStreamLive(managedStreamId) {
 async function wsSelectStream(managedStreamId) {
     if (_wsState.selectedId === managedStreamId) return;
     if (_wsState.dirty) {
-        if (!confirm('You have unsaved changes. Discard them?')) return;
+        const action = await _wsConfirmUnsaved('You have unsaved changes. What would you like to do?');
+        if (action === 'save') await _wsSaveAll();
+        if (action === 'cancel') return;
+        // 'discard' falls through
     }
     await _wsSelectStream(managedStreamId);
 }
@@ -205,16 +210,21 @@ function _wsRenderPanel() {
                 <h2>${esc(ms.title || 'Untitled Stream')}</h2>
                 <span class="bc-ws-slug muted">
                     ${currentUser?.username
-                        ? `<i class="fa-solid fa-link" style="font-size:0.7rem"></i> hobostreamer.com${channelPath(currentUser.username, ms.slug || ms.id)}`
+                        ? `<a href="${channelPath(currentUser.username, ms.slug || ms.id)}" target="_blank" style="color:var(--text-muted);text-decoration:none"><i class="fa-solid fa-link" style="font-size:0.7rem"></i> hobostreamer.com${channelPath(currentUser.username, ms.slug || ms.id)}</a>`
                         : ms.slug
                             ? `<i class="fa-solid fa-link" style="font-size:0.7rem"></i> hobostreamer.com/${esc(ms.slug)}`
                             : `<i class="fa-solid fa-hashtag" style="font-size:0.7rem"></i> Stream #${ms.id}`}
                 </span>
             </div>
-            ${isLive ? '<span class="bc-live-badge bc-ws-live-badge-hd"><i class="fa-solid fa-circle"></i> LIVE</span>' : ''}
+            <div style="display:flex;align-items:center;gap:8px">
+                ${isLive ? '<span class="bc-live-badge bc-ws-live-badge-hd"><i class="fa-solid fa-circle"></i> LIVE</span>' : ''}
+                <button class="btn btn-small btn-ghost bc-ws-popout-chat-btn" onclick="_wsOpenPopoutChat()" title="Popout Chat">
+                    <i class="fa-solid fa-comment-dots"></i> Chat
+                </button>
+            </div>
         </div>
 
-        <!-- ── Live session banner ── -->
+        <!-- ── Live session banner (expanded with stats) ── -->
         <div id="bc-ws-live-banner" style="${liveSessionId ? '' : 'display:none'}">
             <div class="bc-ws-live-banner">
                 <div class="bc-ws-live-banner-left">
@@ -228,336 +238,638 @@ function _wsRenderPanel() {
                         : ''}
                 </div>
                 <div class="bc-ws-live-banner-right">
+                    <button class="btn btn-small" onclick="_wsOpenPopoutChat()" title="Popout Chat">
+                        <i class="fa-solid fa-comment-dots"></i>
+                    </button>
                     <button class="btn btn-small" onclick="openViewerPreview()" title="Open viewer page">
                         <i class="fa-solid fa-eye"></i> View
                     </button>
-                    <button class="btn btn-small btn-danger" onclick="stopBroadcast()">
+                    <button class="btn btn-small btn-danger" onclick="_wsEndStream()" title="End this stream">
                         <i class="fa-solid fa-stop"></i> End Stream
                     </button>
                 </div>
             </div>
+            <div class="bc-ws-live-stats" id="bc-ws-live-stats">
+                <div class="bc-ws-stat">
+                    <span class="bc-ws-stat-val" id="bc-ws-stat-viewers">0</span>
+                    <span class="bc-ws-stat-label">Viewers</span>
+                </div>
+                <div class="bc-ws-stat">
+                    <span class="bc-ws-stat-val" id="bc-ws-stat-uptime">0:00</span>
+                    <span class="bc-ws-stat-label">Uptime</span>
+                </div>
+                <div class="bc-ws-stat">
+                    <span class="bc-ws-stat-val" id="bc-ws-stat-bitrate">--</span>
+                    <span class="bc-ws-stat-label">Bitrate</span>
+                </div>
+            </div>
         </div>
 
-        <!-- ── Stream Profile (Class A) ── -->
-        <div class="bc-ws-profile-section">
-            <div class="bc-ws-profile-hd">
-                <h3><i class="fa-solid fa-sliders"></i> Stream Profile</h3>
-                <div class="bc-ws-save-row">
-                    <span id="bc-ws-save-status" class="bc-ws-save-status"></span>
-                    <button class="btn btn-primary btn-small bc-ws-save-btn" id="bc-ws-save-btn"
-                        onclick="_wsSaveAll()" disabled>
-                        <i class="fa-solid fa-floppy-disk"></i> Save
-                    </button>
-                </div>
-            </div>
+        <!-- ── Tabs ── -->
+        <div class="bc-ws-tabs" id="bc-ws-tabs">
+            <button class="bc-ws-tab active" data-wstab="profile" onclick="_wsTabSwitch('profile')">
+                <i class="fa-solid fa-sliders"></i> Stream
+            </button>
+            <button class="bc-ws-tab" data-wstab="settings" onclick="_wsTabSwitch('settings')">
+                <i class="fa-solid fa-gear"></i> Settings
+            </button>
+            <button class="bc-ws-tab" data-wstab="endpoint" onclick="_wsTabSwitch('endpoint')">
+                <i class="fa-solid fa-plug"></i> Endpoint
+            </button>
+            <button class="bc-ws-tab" data-wstab="history" onclick="_wsTabSwitch('history')">
+                <i class="fa-solid fa-clock-rotate-left"></i> History
+            </button>
+        </div>
 
-            <div class="form-group">
-                <label>Title</label>
-                <input type="text" id="bc-title" class="form-input"
-                    value="${esc(ms.title || '')}"
-                    placeholder="What are you streaming?" maxlength="200"
-                    oninput="_wsMarkDirty()">
-            </div>
+        <!-- ═══ TAB: Stream Profile ═══ -->
+        <div class="bc-ws-tab-panel active" data-wstabpanel="profile">
+            <div class="bc-ws-profile-section">
 
-            <div class="form-group">
-                <label>Description</label>
-                <textarea id="bc-description" class="form-input" rows="2"
-                    placeholder="Optional description\u2026" maxlength="500"
-                    oninput="_wsMarkDirty()">${esc(ms.description || '')}</textarea>
-            </div>
-
-            <div class="bc-ws-row">
-                <div class="form-group" style="flex:2">
-                    <label>Category</label>
-                    <select id="bc-category" class="form-input" onchange="_wsMarkDirty()">
-                        ${_wsRenderCategoryOptions(ms.category || 'irl')}
-                    </select>
-                </div>
-                <div class="form-group" style="flex:1">
-                    <label>&nbsp;</label>
-                    <label class="bc-toggle-label">
-                        <input type="checkbox" id="bc-nsfw" ${ms.is_nsfw ? 'checked' : ''}
-                            onchange="_wsMarkDirty()">
-                        <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger)"></i> NSFW
-                    </label>
-                </div>
-            </div>
-
-            <!-- URL Slug -->
-            <div class="form-group">
-                <label>URL Slug <span class="muted">(optional, for display URL)</span></label>
-                <div style="display:flex;align-items:center;gap:6px">
-                    <span class="muted" style="font-size:0.82rem;white-space:nowrap">hobostreamer.com/@${esc(currentUser?.username || '')}/</span>
-                    <input type="text" id="bc-slug" class="form-input form-input-sm"
-                        value="${esc(ms.slug || '')}" placeholder="my-stream" maxlength="32"
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" id="bc-title" class="form-input"
+                        value="${esc(ms.title || '')}"
+                        placeholder="What are you streaming?" maxlength="200"
                         oninput="_wsMarkDirty()">
                 </div>
-                <small class="muted">2-32 chars, starts with a letter. Numeric ID #${ms.id} is always valid.</small>
-            </div>
 
-            <!-- ═══ Streaming Method ═══ -->
-            <div class="form-group">
-                <label>Streaming Method</label>
-                <div class="bc-method-picker bc-method-picker-sm" id="bc-ws-method-picker">
-                    ${_wsRenderMethodCards(method)}
-                </div>
-            </div>
-
-            <!-- ═══ Browser Sub-mode (only when method is browser) ═══ -->
-            <div id="bc-ws-browser-submodes" style="${method === 'browser' ? '' : 'display:none'}">
                 <div class="form-group">
-                    <label>Browser Capture Mode</label>
-                    <div class="bc-method-picker bc-method-picker-sm" id="bc-ws-browser-mode-picker">
-                        ${_wsRenderBrowserModeCards(browserMode)}
-                    </div>
+                    <label>Description</label>
+                    <textarea id="bc-description" class="form-input" rows="2"
+                        placeholder="Optional description\u2026" maxlength="500"
+                        oninput="_wsMarkDirty()">${esc(ms.description || '')}</textarea>
                 </div>
 
-                <!-- Microphone Only: image upload -->
-                <div id="bc-ws-mic-only-opts" style="${browserMode === 'mic_only' ? '' : 'display:none'}">
-                    <div class="form-group">
-                        <label><i class="fa-solid fa-image"></i> Placeholder Image</label>
-                        <p class="muted" style="font-size:0.82rem;margin-bottom:6px">
-                            Displayed to viewers instead of video. Recommended: square, 400\u00d7400+.
-                        </p>
-                        <input type="file" id="bc-ws-mic-image" accept="image/*" class="form-input form-input-sm"
-                            onchange="_wsMicImageChanged(this)">
-                        <div id="bc-ws-mic-image-preview" class="bc-ws-mic-image-preview">
-                            ${p.micOnlyImage ? `<img src="${esc(p.micOnlyImage)}" alt="Mic-only placeholder">` : ''}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Screen Share options -->
-                <div id="bc-ws-screen-opts" style="${browserMode === 'screen' ? '' : 'display:none'}">
-                    <p class="muted" style="font-size:0.82rem;margin-bottom:8px">
-                        <i class="fa-solid fa-circle-info"></i>
-                        Available capture options depend on your browser and OS.
-                        Chrome/Edge support tab audio and system audio capture.
-                        Firefox supports window/screen but not tab audio.
-                        Mobile browsers have limited screen capture support.
-                    </p>
-                    <div class="bc-ws-row">
-                        <label class="bc-toggle-label" style="flex:1">
-                            <input type="checkbox" id="bc-ws-screen-mic" checked onchange="_wsMarkDirty()">
-                            <i class="fa-solid fa-microphone"></i> Microphone
-                        </label>
-                        <label class="bc-toggle-label" style="flex:1">
-                            <input type="checkbox" id="bc-ws-screen-cam" onchange="_wsMarkDirty()">
-                            <i class="fa-solid fa-video"></i> Camera PiP
-                        </label>
-                    </div>
-                    <div class="bc-ws-row" style="margin-top:8px">
-                        <label class="bc-toggle-label" style="flex:1">
-                            <input type="checkbox" id="bc-ws-screen-sysaudio" checked onchange="_wsMarkDirty()">
-                            <i class="fa-solid fa-volume-high"></i> System/Tab Audio
-                        </label>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Video quality defaults (Class A blob) -->
-            <details class="bc-ws-quality">
-                <summary><i class="fa-solid fa-film"></i> Video Quality Defaults</summary>
-                <div class="bc-ws-quality-inner bc-ws-row">
-                    <div class="form-group" style="margin:0;flex:1">
-                        <label style="font-size:0.82rem">Resolution</label>
-                        <select id="bc-ws-resolution" class="form-input form-input-sm" onchange="_wsMarkDirty()">
-                            ${['360', '480', '720', '1080', '1440'].map(r =>
-                                `<option value="${r}"${(p.resolution || '720') === r ? ' selected' : ''}>${r}p</option>`).join('')}
+                <div class="bc-ws-row">
+                    <div class="form-group" style="flex:2">
+                        <label>Category</label>
+                        <select id="bc-category" class="form-input" onchange="_wsMarkDirty()">
+                            ${_wsRenderCategoryOptions(ms.category || 'irl')}
                         </select>
                     </div>
-                    <div class="form-group" style="margin:0;flex:1">
-                        <label style="font-size:0.82rem">FPS</label>
-                        <select id="bc-ws-fps" class="form-input form-input-sm" onchange="_wsMarkDirty()">
-                            ${['24', '30', '60'].map(f =>
-                                `<option value="${f}"${(p.fps || '30') === f ? ' selected' : ''}>${f}</option>`).join('')}
-                        </select>
+                    <div class="form-group" style="flex:1">
+                        <label>&nbsp;</label>
+                        <label class="bc-toggle-label">
+                            <input type="checkbox" id="bc-nsfw" ${ms.is_nsfw ? 'checked' : ''}
+                                onchange="_wsMarkDirty()">
+                            <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger)"></i> NSFW
+                        </label>
                     </div>
-                    <div class="form-group" style="margin:0;flex:2">
-                        <label style="font-size:0.82rem">Bitrate (kbps)</label>
-                        <input type="number" id="bc-ws-bitrate" class="form-input form-input-sm"
-                            value="${p.bitrate || 2500}" min="500" max="10000" step="100"
+                </div>
+
+                <!-- URL Slug -->
+                <div class="form-group">
+                    <label>URL Slug <span class="muted">(optional)</span></label>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <span class="muted" style="font-size:0.82rem;white-space:nowrap">hobostreamer.com/@${esc(currentUser?.username || '')}/</span>
+                        <input type="text" id="bc-slug" class="form-input form-input-sm"
+                            value="${esc(ms.slug || '')}" placeholder="my-stream" maxlength="32"
                             oninput="_wsMarkDirty()">
                     </div>
                 </div>
-            </details>
 
-            <!-- Control profile (Class A structured) -->
-            <div class="form-group">
-                <label><i class="fa-solid fa-gamepad"></i> Control Profile</label>
-                <select id="bc-control-config" class="form-input form-input-sm"
-                    onchange="_wsMarkDirty()">
-                    <option value="">None (no controls)</option>
-                </select>
-            </div>
-
-            <!-- Hidden element required by createNewStream() -->
-            <select id="bc-managed-stream" style="display:none">
-                <option value="${ms.id}" selected>${esc(ms.title || '')}</option>
-            </select>
-        </div>
-
-        <!-- ── Endpoint & Key Tools ── -->
-        <div class="bc-ws-endpoint-section">
-            <div class="bc-ws-endpoint-hd">
-                <h3><i class="fa-solid fa-plug"></i> Stream Endpoint &amp; Key</h3>
-            </div>
-            <p class="bc-ws-endpoint-note">
-                This key belongs to <strong>${esc(ms.title || 'this stream slot')}</strong>.
-                Each slot has its own stable key. Regenerating invalidates the current key immediately.
-            </p>
-            <div class="bc-ws-key-row">
-                <div class="bc-ws-key-display">
-                    <input type="password" id="bc-ws-stream-key" class="form-input form-input-sm bc-ws-key-input"
-                        value="${esc(streamKey)}" readonly autocomplete="off" spellcheck="false"
-                        aria-label="Stream key">
-                    <button class="btn btn-small btn-ghost bc-ws-key-toggle"
-                        onclick="_wsToggleKeyVisibility()" title="Show / hide key">
-                        <i class="fa-solid fa-eye" id="bc-ws-key-eye"></i>
-                    </button>
-                    <button class="btn btn-small btn-ghost"
-                        onclick="_wsCopyStreamKey()" title="Copy stream key">
-                        <i class="fa-solid fa-copy"></i>
-                    </button>
+                <!-- ═══ Streaming Method ═══ -->
+                <div class="form-group">
+                    <label>Streaming Method</label>
+                    <div class="bc-method-picker bc-method-picker-sm" id="bc-ws-method-picker">
+                        ${_wsRenderMethodCards(method)}
+                    </div>
                 </div>
-                <button class="btn btn-small btn-outline bc-ws-regen-btn"
-                    onclick="_wsRegenerateKey(${ms.id})">
-                    <i class="fa-solid fa-arrows-rotate"></i> Regen Key
-                </button>
-            </div>
-            <div id="bc-ws-method-endpoint">${_wsRenderMethodEndpoint(method, streamKey, ms.id)}</div>
-        </div>
 
-        <!-- ── Go Live section (hidden when live) ── -->
-        <div class="bc-ws-golive-section" id="bc-ws-golive-section"${liveSessionId ? ' style="display:none"' : ''}>
+                <!-- ═══ Browser Sub-mode (only when method is browser) ═══ -->
+                <div id="bc-ws-browser-submodes" style="${method === 'browser' ? '' : 'display:none'}">
+                    <div class="form-group">
+                        <label>Browser Capture Mode</label>
+                        <div class="bc-method-picker bc-method-picker-sm" id="bc-ws-browser-mode-picker">
+                            ${_wsRenderBrowserModeCards(browserMode)}
+                        </div>
+                    </div>
 
-            <!-- Class B: Device-local preferences (browser/webrtc only) -->
-            <div id="bc-ws-device-wrap"${method !== 'webrtc' ? ' style="display:none"' : ''}>
-                <div class="bc-ws-device-local-label">
-                    <i class="fa-solid fa-laptop"></i>
-                    <strong>This Device Only</strong>
-                    <span class="muted">&mdash; camera &amp; mic selection is not saved to your stream profile</span>
+                    <!-- Microphone Only: image upload -->
+                    <div id="bc-ws-mic-only-opts" style="${browserMode === 'mic_only' ? '' : 'display:none'}">
+                        <div class="form-group">
+                            <label><i class="fa-solid fa-image"></i> Placeholder Image</label>
+                            <p class="muted" style="font-size:0.82rem;margin-bottom:6px">
+                                Displayed to viewers instead of video. Recommended: square, 400\u00d7400+.
+                            </p>
+                            <input type="file" id="bc-ws-mic-image" accept="image/*" class="form-input form-input-sm"
+                                onchange="_wsMicImageChanged(this)">
+                            <div id="bc-ws-mic-image-preview" class="bc-ws-mic-image-preview">
+                                ${p.micOnlyImage ? `<img src="${esc(p.micOnlyImage)}" alt="Mic-only placeholder">` : ''}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Screen Share options -->
+                    <div id="bc-ws-screen-opts" style="${browserMode === 'screen' ? '' : 'display:none'}">
+                        <div class="bc-ws-screen-info">
+                            <i class="fa-solid fa-circle-info"></i>
+                            <span>Screen capture options vary by browser and OS. Chrome/Edge support tab &amp; system audio.
+                            Firefox supports window/screen but not tab audio. Mobile support is limited.</span>
+                        </div>
+
+                        <div class="bc-ws-screen-section">
+                            <label class="bc-ws-screen-section-label">Audio Sources</label>
+                            <div class="bc-ws-row">
+                                <label class="bc-toggle-label" style="flex:1">
+                                    <input type="checkbox" id="bc-ws-screen-mic" ${(p.screenMic !== false) ? 'checked' : ''} onchange="_wsMarkDirty()">
+                                    <i class="fa-solid fa-microphone"></i> Microphone
+                                </label>
+                                <label class="bc-toggle-label" style="flex:1">
+                                    <input type="checkbox" id="bc-ws-screen-sysaudio" ${(p.screenSysAudio !== false) ? 'checked' : ''} onchange="_wsMarkDirty()">
+                                    <i class="fa-solid fa-volume-high"></i> System / Tab Audio
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="bc-ws-screen-section">
+                            <label class="bc-ws-screen-section-label">Camera Overlay (PiP)</label>
+                            <div class="bc-ws-row">
+                                <label class="bc-toggle-label" style="flex:1">
+                                    <input type="checkbox" id="bc-ws-screen-cam" ${p.screenCam ? 'checked' : ''} onchange="_wsScreenCamToggle(this.checked);_wsMarkDirty()">
+                                    <i class="fa-solid fa-video"></i> Show camera as picture-in-picture
+                                </label>
+                            </div>
+                            <div id="bc-ws-screen-pip-opts" style="${p.screenCam ? '' : 'display:none'}">
+                                <div class="bc-ws-row" style="margin-top:6px">
+                                    <div class="form-group" style="margin:0;flex:1">
+                                        <label style="font-size:0.78rem">Position</label>
+                                        <select id="bc-ws-screen-pip-pos" class="form-input form-input-sm" onchange="_wsMarkDirty()">
+                                            <option value="bottom-right"${(p.screenPipPos || 'bottom-right') === 'bottom-right' ? ' selected' : ''}>Bottom Right</option>
+                                            <option value="bottom-left"${p.screenPipPos === 'bottom-left' ? ' selected' : ''}>Bottom Left</option>
+                                            <option value="top-right"${p.screenPipPos === 'top-right' ? ' selected' : ''}>Top Right</option>
+                                            <option value="top-left"${p.screenPipPos === 'top-left' ? ' selected' : ''}>Top Left</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group" style="margin:0;flex:1">
+                                        <label style="font-size:0.78rem">Size</label>
+                                        <select id="bc-ws-screen-pip-size" class="form-input form-input-sm" onchange="_wsMarkDirty()">
+                                            <option value="small"${(p.screenPipSize || 'small') === 'small' ? ' selected' : ''}>Small</option>
+                                            <option value="medium"${p.screenPipSize === 'medium' ? ' selected' : ''}>Medium</option>
+                                            <option value="large"${p.screenPipSize === 'large' ? ' selected' : ''}>Large</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <details class="bc-ws-screen-quality">
+                            <summary><i class="fa-solid fa-film"></i> Screen Share Quality</summary>
+                            <div class="bc-ws-quality-inner bc-ws-row">
+                                <div class="form-group" style="margin:0;flex:1">
+                                    <label style="font-size:0.82rem">Resolution</label>
+                                    <select id="bc-ws-screen-resolution" class="form-input form-input-sm" onchange="_wsMarkDirty()">
+                                        ${['720', '1080', '1440', '2160'].map(r =>
+                                            `<option value="${r}"${(p.screenResolution || '1080') === r ? ' selected' : ''}>${r}p</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div class="form-group" style="margin:0;flex:1">
+                                    <label style="font-size:0.82rem">FPS</label>
+                                    <select id="bc-ws-screen-fps" class="form-input form-input-sm" onchange="_wsMarkDirty()">
+                                        ${['15', '24', '30', '60'].map(f =>
+                                            `<option value="${f}"${(p.screenFps || '30') === f ? ' selected' : ''}>${f}</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div class="form-group" style="margin:0;flex:2">
+                                    <label style="font-size:0.82rem">Bitrate (kbps)</label>
+                                    <input type="number" id="bc-ws-screen-bitrate" class="form-input form-input-sm"
+                                        value="${p.screenBitrate || 3000}" min="500" max="12000" step="100"
+                                        oninput="_wsMarkDirty()">
+                                </div>
+                            </div>
+                        </details>
+                    </div>
                 </div>
-                <div id="bc-perm-request" class="bc-perm-request">
-                    <p class="bc-perm-hint"><i class="fa-solid fa-shield-halved"></i>
-                        Browser needs camera &amp; mic access to stream.</p>
-                    <button id="bc-perm-btn" class="btn btn-outline" type="button"
-                        onclick="requestMediaPermissions()">
-                        <i class="fa-solid fa-video"></i> Allow Camera &amp; Mic
-                    </button>
-                    <p id="bc-perm-debug" style="display:none;font-size:0.75rem;color:var(--text-secondary);margin-top:6px"></p>
-                </div>
-                <div id="bc-device-selects" style="display:none">
-                    <div class="bc-ws-device-row">
-                        <div class="form-group" style="margin:0;flex:1" id="bc-ws-camera-group">
-                            <label style="font-size:0.82rem"><i class="fa-solid fa-camera"></i> Camera</label>
-                            <select id="bc-create-camera" class="form-input form-input-sm">
-                                <option value="default">Default</option>
+
+                <!-- Video quality defaults (Class A blob, browser method only) -->
+                <div id="bc-ws-quality-wrap" style="${method === 'browser' ? '' : 'display:none'}">
+                <details class="bc-ws-quality">
+                    <summary><i class="fa-solid fa-film"></i> Video Quality Defaults</summary>
+                    <div class="bc-ws-quality-inner bc-ws-row">
+                        <div class="form-group" style="margin:0;flex:1">
+                            <label style="font-size:0.82rem">Resolution</label>
+                            <select id="bc-ws-resolution" class="form-input form-input-sm" onchange="_wsMarkDirty()">
+                                ${['360', '480', '720', '1080', '1440'].map(r =>
+                                    `<option value="${r}"${(p.resolution || '720') === r ? ' selected' : ''}>${r}p</option>`).join('')}
                             </select>
                         </div>
                         <div class="form-group" style="margin:0;flex:1">
-                            <label style="font-size:0.82rem"><i class="fa-solid fa-microphone"></i> Microphone</label>
-                            <select id="bc-create-audio" class="form-input form-input-sm">
-                                <option value="default">Default</option>
+                            <label style="font-size:0.82rem">FPS</label>
+                            <select id="bc-ws-fps" class="form-input form-input-sm" onchange="_wsMarkDirty()">
+                                ${['24', '30', '60'].map(f =>
+                                    `<option value="${f}"${(p.fps || '30') === f ? ' selected' : ''}>${f}</option>`).join('')}
                             </select>
                         </div>
+                        <div class="form-group" style="margin:0;flex:2">
+                            <label style="font-size:0.82rem">Bitrate (kbps)</label>
+                            <input type="number" id="bc-ws-bitrate" class="form-input form-input-sm"
+                                value="${p.bitrate || 2500}" min="500" max="10000" step="100"
+                                oninput="_wsMarkDirty()">
+                        </div>
                     </div>
+                </details>
                 </div>
+
+                <!-- Control profile (Class A structured) -->
+                <div class="form-group">
+                    <label><i class="fa-solid fa-gamepad"></i> Control Profile</label>
+                    <select id="bc-control-config" class="form-input form-input-sm"
+                        onchange="_wsMarkDirty()">
+                        <option value="">None (no controls)</option>
+                    </select>
+                </div>
+
+                <!-- Hidden element required by createNewStream() -->
+                <select id="bc-managed-stream" style="display:none">
+                    <option value="${ms.id}" selected>${esc(ms.title || '')}</option>
+                </select>
             </div>
 
-            <!-- Screen-share hidden defaults -->
-            <input type="checkbox" id="bc-screen-mic-enabled" checked style="display:none">
-            <input type="checkbox" id="bc-screen-cam-enabled" style="display:none">
-            <input type="checkbox" id="bc-screenPreferCurrentTab-create" style="display:none">
-            <select id="bc-screenSystemAudio-create" style="display:none"><option value="include" selected>Include</option><option value="auto">Auto</option><option value="exclude">Exclude</option></select>
-            <select id="bc-screenSelfBrowser-create" style="display:none"><option value="exclude" selected>Exclude</option><option value="include">Include</option></select>
-            <select id="bc-screenSurfaceSwitching-create" style="display:none"><option value="include" selected>Allow</option><option value="exclude">Disallow</option></select>
-            <select id="bc-screen-audio" style="display:none"><option value="default">Default</option></select>
-            <select id="bc-screen-camera" style="display:none"><option value="default">Default</option></select>
+            <!-- ── Go Live / Auto-detect section ── -->
+            <div class="bc-ws-golive-section" id="bc-ws-golive-section"${liveSessionId ? ' style="display:none"' : ''}>
 
-            <!-- ═══ Slot-Level Settings ═══ -->
-            <details class="bc-ws-slot-settings">
-                <summary><i class="fa-solid fa-gear"></i> Stream Slot Settings</summary>
-                <div class="bc-ws-slot-settings-inner">
-                    <div class="bc-ws-row">
-                        <div class="form-group" style="flex:1">
-                            <label>Default VOD Visibility</label>
-                            <select id="bc-ws-vod-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
-                                <option value="public" ${(ms.default_vod_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
-                                <option value="private" ${ms.default_vod_visibility === 'private' ? 'selected' : ''}>Private</option>
-                            </select>
-                        </div>
-                        <div class="form-group" style="flex:1">
-                            <label>Default Clip Visibility</label>
-                            <select id="bc-ws-clip-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
-                                <option value="public" ${(ms.default_clip_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
-                                <option value="private" ${ms.default_clip_visibility === 'private' ? 'selected' : ''}>Private</option>
-                            </select>
-                        </div>
+                ${method === 'browser' ? `
+                <!-- Class B: Device-local preferences (browser only) -->
+                <div id="bc-ws-device-wrap">
+                    <div class="bc-ws-device-local-label">
+                        <i class="fa-solid fa-laptop"></i>
+                        <strong>This Device Only</strong>
+                        <span class="muted">&mdash; camera &amp; mic selection is saved after going live</span>
                     </div>
-                    <div class="form-group">
-                        <label class="bc-toggle-label">
-                            <input type="checkbox" id="bc-ws-vod-recording" ${ms.slot_vod_recording_enabled !== 0 ? 'checked' : ''}
-                                onchange="_wsSlotSettingChanged()">
-                            <i class="fa-solid fa-circle-dot"></i> VOD Recording Enabled
-                        </label>
+                    <div id="bc-perm-request" class="bc-perm-request">
+                        <p class="bc-perm-hint"><i class="fa-solid fa-shield-halved"></i>
+                            <span id="bc-perm-hint-text">${browserMode === 'mic_only' ? 'Browser needs microphone access to stream.'
+                                : browserMode === 'camera_only' ? 'Browser needs camera access to stream.'
+                                : browserMode === 'screen' ? 'Browser needs screen capture access to stream.'
+                                : 'Browser needs camera &amp; mic access to stream.'}</span></p>
+                        <button id="bc-perm-btn" class="btn btn-outline" type="button"
+                            onclick="requestMediaPermissions()">
+                            <i class="fa-solid ${browserMode === 'mic_only' ? 'fa-microphone'
+                                : browserMode === 'screen' ? 'fa-display'
+                                : 'fa-video'}"></i>
+                            <span id="bc-perm-btn-text">${browserMode === 'mic_only' ? 'Allow Microphone'
+                                : browserMode === 'camera_only' ? 'Allow Camera'
+                                : browserMode === 'screen' ? 'Allow Screen Share'
+                                : 'Allow Camera &amp; Mic'}</span>
+                        </button>
+                        <p id="bc-perm-debug" style="display:none;font-size:0.75rem;color:var(--text-secondary);margin-top:6px"></p>
                     </div>
-                    <div class="bc-ws-row">
-                        <div class="form-group" style="flex:2">
-                            <label><i class="fa-solid fa-cloud-sun"></i> Weather Zip/Location</label>
-                            <input type="text" id="bc-ws-weather-zip" class="form-input form-input-sm"
-                                value="${esc(ms.weather_zip || '')}" placeholder="e.g. 90210"
-                                maxlength="20" oninput="_wsSlotSettingChanged()">
+                    <div id="bc-device-selects" style="display:none">
+                        <div class="bc-ws-device-row">
+                            <div class="form-group" style="margin:0;flex:1" id="bc-ws-camera-group">
+                                <label style="font-size:0.82rem"><i class="fa-solid fa-camera"></i> Camera</label>
+                                <select id="bc-create-camera" class="form-input form-input-sm">
+                                    <option value="default">Default</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin:0;flex:1" id="bc-ws-audio-group">
+                                <label style="font-size:0.82rem"><i class="fa-solid fa-microphone"></i> Microphone</label>
+                                <select id="bc-create-audio" class="form-input form-input-sm">
+                                    <option value="default">Default</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="form-group" style="flex:1">
-                            <label>Detail Level</label>
-                            <select id="bc-ws-weather-detail" class="form-input" onchange="_wsSlotSettingChanged()">
-                                <option value="basic" ${(ms.weather_detail || 'basic') === 'basic' ? 'selected' : ''}>Basic</option>
-                                <option value="detailed" ${ms.weather_detail === 'detailed' ? 'selected' : ''}>Detailed</option>
-                                <option value="off" ${ms.weather_detail === 'off' ? 'selected' : ''}>Off</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="bc-toggle-label">
-                            <input type="checkbox" id="bc-ws-weather-location" ${ms.weather_show_location ? 'checked' : ''}
-                                onchange="_wsSlotSettingChanged()">
-                            <i class="fa-solid fa-map-marker-alt"></i> Show Location on Stream
-                        </label>
                     </div>
                 </div>
-            </details>
 
-            ${method === 'browser' ? `
-            <button class="btn btn-primary btn-lg bc-ws-golive-btn"
-                onclick="goLiveFromWorkspace()" id="bc-ws-golive-btn">
-                <i class="fa-solid fa-tower-broadcast"></i> Go Live
-            </button>
-            ` : `
-            <button class="btn btn-primary btn-lg bc-ws-golive-btn"
-                onclick="goLiveFromWorkspace()" id="bc-ws-golive-btn">
-                <i class="fa-solid fa-tower-broadcast"></i> Start Stream Session
-            </button>
-            `}
-            <p class="bc-create-reassurance" style="margin-top:6px;font-size:0.82rem">
-                <i class="fa-solid fa-circle-info"></i>
-                Live at <strong>hobostreamer.com${channelPath(currentUser?.username || 'your-channel', ms.slug || ms.id)}</strong>
-            </p>
+                <!-- Screen-share hidden defaults -->
+                <input type="checkbox" id="bc-screen-mic-enabled" checked style="display:none">
+                <input type="checkbox" id="bc-screen-cam-enabled" style="display:none">
+                <input type="checkbox" id="bc-screenPreferCurrentTab-create" style="display:none">
+                <select id="bc-screenSystemAudio-create" style="display:none"><option value="include" selected>Include</option><option value="auto">Auto</option><option value="exclude">Exclude</option></select>
+                <select id="bc-screenSelfBrowser-create" style="display:none"><option value="exclude" selected>Exclude</option><option value="include">Include</option></select>
+                <select id="bc-screenSurfaceSwitching-create" style="display:none"><option value="include" selected>Allow</option><option value="exclude">Disallow</option></select>
+                <select id="bc-screen-audio" style="display:none"><option value="default">Default</option></select>
+                <select id="bc-screen-camera" style="display:none"><option value="default">Default</option></select>
+
+                <button class="btn btn-primary btn-lg bc-ws-golive-btn"
+                    onclick="goLiveFromWorkspace()" id="bc-ws-golive-btn">
+                    <i class="fa-solid fa-tower-broadcast"></i> Go Live
+                </button>
+                <p class="bc-create-reassurance" style="margin-top:6px;font-size:0.82rem">
+                    <i class="fa-solid fa-circle-info"></i>
+                    Live at <strong>hobostreamer.com${channelPath(currentUser?.username || 'your-channel', ms.slug || ms.id)}</strong>
+                </p>
+                ` : `
+                <!-- Auto-detect notice for non-browser methods -->
+                <div class="bc-ws-autodetect">
+                    <div class="bc-ws-autodetect-pulse"></div>
+                    <div>
+                        <strong>Auto-detect enabled</strong><br>
+                        Your stream will go live automatically when ${method === 'rtmp' ? 'your streaming software connects via RTMP'
+                            : method === 'whip' ? 'your encoder connects via WHIP'
+                            : 'FFmpeg or your streaming tool sends data to the endpoint'}.
+                        Configure your software using the <strong>Endpoint</strong> tab, then just start streaming.
+                    </div>
+                </div>
+                <button class="btn btn-small btn-outline" onclick="_wsTabSwitch('endpoint')" style="width:100%">
+                    <i class="fa-solid fa-plug"></i> View Endpoint &amp; Setup Instructions
+                </button>
+                `}
+            </div>
         </div>
 
-        <!-- ── Session history ── -->
-        <div class="bc-ws-history-section" id="bc-ws-history-section">
-            <h3><i class="fa-solid fa-clock-rotate-left"></i> Recent Sessions</h3>
-            <div id="bc-ws-history-list" class="bc-ws-history-list">
-                <p class="muted" style="padding:12px 0"><i class="fa-solid fa-spinner fa-spin"></i> Loading\u2026</p>
+        <!-- ═══ TAB: Settings ═══ -->
+        <div class="bc-ws-tab-panel" data-wstabpanel="settings">
+            <div class="bc-ws-profile-section">
+
+                <!-- VOD / Clips Settings -->
+                <details class="bc-ws-slot-settings" open>
+                    <summary><i class="fa-solid fa-film"></i> VOD &amp; Clips Settings</summary>
+                    <div class="bc-ws-slot-settings-inner">
+                        <div class="form-group">
+                            <label class="bc-toggle-label">
+                                <input type="checkbox" id="bc-ws-vod-recording" ${ms.slot_vod_recording_enabled !== 0 ? 'checked' : ''}
+                                    onchange="_wsSlotSettingChanged()">
+                                <i class="fa-solid fa-circle-dot"></i> VOD Recording Enabled
+                            </label>
+                        </div>
+                        <div class="bc-ws-row">
+                            <div class="form-group" style="flex:1">
+                                <label>Default VOD Visibility</label>
+                                <select id="bc-ws-vod-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
+                                    <option value="public" ${(ms.default_vod_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
+                                    <option value="private" ${ms.default_vod_visibility === 'private' ? 'selected' : ''}>Private</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label>Default Clip Visibility</label>
+                                <select id="bc-ws-clip-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
+                                    <option value="public" ${(ms.default_clip_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
+                                    <option value="private" ${ms.default_clip_visibility === 'private' ? 'selected' : ''}>Private</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Weather Widget Settings -->
+                <details class="bc-ws-slot-settings">
+                    <summary><i class="fa-solid fa-cloud-sun"></i> Weather Widget Settings</summary>
+                    <div class="bc-ws-slot-settings-inner">
+                        <div class="bc-ws-row">
+                            <div class="form-group" style="flex:2">
+                                <label>Zip/Location</label>
+                                <input type="text" id="bc-ws-weather-zip" class="form-input form-input-sm"
+                                    value="${esc(ms.weather_zip || '')}" placeholder="e.g. 90210"
+                                    maxlength="20" oninput="_wsSlotSettingChanged()">
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label>Detail Level</label>
+                                <select id="bc-ws-weather-detail" class="form-input" onchange="_wsSlotSettingChanged()">
+                                    <option value="basic" ${(ms.weather_detail || 'basic') === 'basic' ? 'selected' : ''}>Current Only</option>
+                                    <option value="hourly" ${ms.weather_detail === 'hourly' ? 'selected' : ''}>+ 8-Hour Forecast</option>
+                                    <option value="detailed" ${ms.weather_detail === 'detailed' ? 'selected' : ''}>+ 24-Hour &amp; 7-Day</option>
+                                    <option value="off" ${ms.weather_detail === 'off' ? 'selected' : ''}>Off</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="bc-toggle-label">
+                                <input type="checkbox" id="bc-ws-weather-location" ${ms.weather_show_location ? 'checked' : ''}
+                                    onchange="_wsSlotSettingChanged()">
+                                <i class="fa-solid fa-map-marker-alt"></i> Show Location on Stream
+                            </label>
+                        </div>
+                    </div>
+                </details>
+
+            </div>
+        </div>
+
+        <!-- ═══ TAB: Endpoint & Key ═══ -->
+        <div class="bc-ws-tab-panel" data-wstabpanel="endpoint">
+            <div class="bc-ws-endpoint-section">
+                <div class="bc-ws-endpoint-hd">
+                    <h3><i class="fa-solid fa-plug"></i> Stream Endpoint &amp; Key</h3>
+                </div>
+                <p class="bc-ws-endpoint-note">
+                    This key belongs to <strong>${esc(ms.title || 'this stream slot')}</strong>.
+                    Each slot has its own stable key. Regenerating invalidates the current key immediately.
+                </p>
+                <div class="bc-ws-key-row">
+                    <div class="bc-ws-key-display">
+                        <input type="password" id="bc-ws-stream-key" class="form-input form-input-sm bc-ws-key-input"
+                            value="${esc(streamKey)}" readonly autocomplete="off" spellcheck="false"
+                            aria-label="Stream key">
+                        <button class="btn btn-small btn-ghost bc-ws-key-toggle"
+                            onclick="_wsToggleKeyVisibility()" title="Show / hide key">
+                            <i class="fa-solid fa-eye" id="bc-ws-key-eye"></i>
+                        </button>
+                        <button class="btn btn-small btn-ghost"
+                            onclick="_wsCopyStreamKey()" title="Copy stream key">
+                            <i class="fa-solid fa-copy"></i>
+                        </button>
+                    </div>
+                    <button class="btn btn-small btn-outline bc-ws-regen-btn"
+                        onclick="_wsRegenerateKey(${ms.id})">
+                        <i class="fa-solid fa-arrows-rotate"></i> Regen Key
+                    </button>
+                </div>
+                <div id="bc-ws-method-endpoint">${_wsRenderMethodEndpoint(method, streamKey, ms.id)}</div>
+            </div>
+        </div>
+
+        <!-- ═══ TAB: History ═══ -->
+        <div class="bc-ws-tab-panel" data-wstabpanel="history">
+            <div class="bc-ws-profile-section">
+                <h3><i class="fa-solid fa-clock-rotate-left"></i> Recent Sessions</h3>
+                <div id="bc-ws-history-list" class="bc-ws-history-list">
+                    <p class="muted" style="padding:12px 0"><i class="fa-solid fa-spinner fa-spin"></i> Loading\u2026</p>
+                </div>
             </div>
         </div>
     `;
 
+    // Restore active tab
+    _wsTabSwitch(_wsState.activeTab || 'profile');
+
     // Async post-render: populate control configs and check device permissions
     _wsPopulateControlConfigs(ms.control_config_id);
-    _wsInitDevicePicker(method, browserMode);
-    _wsSyncScreenShareHiddenDefaults(browserMode);
+    if (method === 'browser') {
+        _wsInitDevicePicker(method, browserMode);
+        _wsSyncScreenShareHiddenDefaults(browserMode);
+    }
+
+    // Start live stats timer if live
+    _wsStartLiveStatsTimer(liveSessionId, liveSessionData);
+
+    // Ensure floating save bar exists in document body
+    _wsEnsureSaveBar();
+}
+
+/* ── Tab switching ───────────────────────────────────────────── */
+
+function _wsTabSwitch(tabId) {
+    _wsState.activeTab = tabId;
+    document.querySelectorAll('.bc-ws-tab').forEach(t =>
+        t.classList.toggle('active', t.dataset.wstab === tabId)
+    );
+    document.querySelectorAll('.bc-ws-tab-panel').forEach(p =>
+        p.classList.toggle('active', p.dataset.wstabpanel === tabId)
+    );
+    // Load history lazily when switching to history tab
+    if (tabId === 'history' && _wsState.selectedId) {
+        _wsLoadHistory(_wsState.selectedId);
+    }
+}
+
+/* ── Floating save bar (Discord-style) ───────────────────────── */
+
+function _wsEnsureSaveBar() {
+    if (document.getElementById('bc-ws-save-bar')) return;
+    const bar = document.createElement('div');
+    bar.className = 'bc-ws-save-bar hidden';
+    bar.id = 'bc-ws-save-bar';
+    bar.style.display = 'none';
+    bar.innerHTML = `
+        <span id="bc-ws-save-status" class="bc-ws-save-status bc-ws-dirty">Unsaved changes</span>
+        <button class="btn btn-small bc-ws-discard-btn" onclick="_wsDiscardChanges()">
+            Discard
+        </button>
+        <button class="btn btn-primary btn-small bc-ws-save-btn" id="bc-ws-save-btn"
+            onclick="_wsSaveAll()">
+            <i class="fa-solid fa-floppy-disk"></i> Save Changes
+        </button>
+    `;
+    document.body.appendChild(bar);
+}
+
+function _wsDiscardChanges() {
+    _wsState.dirty = false;
+    _wsUpdateSaveButton();
+    // Re-render panel to restore original values
+    if (_wsState.selectedId) _wsSelectStream(_wsState.selectedId);
+}
+
+/* ── Custom confirm modal (replaces browser confirm()) ───────── */
+
+function _wsConfirmUnsaved(message) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'bc-ws-confirm-overlay';
+        overlay.innerHTML = `
+            <div class="bc-ws-confirm-dialog">
+                <h3><i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> Unsaved Changes</h3>
+                <p>${esc(message || 'You have unsaved changes.')}</p>
+                <div class="bc-ws-confirm-actions">
+                    <button class="btn btn-small" id="bc-ws-confirm-cancel">Cancel</button>
+                    <button class="btn btn-small btn-outline" id="bc-ws-confirm-discard">Discard</button>
+                    <button class="btn btn-small btn-primary" id="bc-ws-confirm-save">
+                        <i class="fa-solid fa-floppy-disk"></i> Save
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const cleanup = (result) => {
+            overlay.remove();
+            resolve(result);
+        };
+        overlay.querySelector('#bc-ws-confirm-cancel').onclick = () => cleanup('cancel');
+        overlay.querySelector('#bc-ws-confirm-discard').onclick = () => cleanup('discard');
+        overlay.querySelector('#bc-ws-confirm-save').onclick = () => cleanup('save');
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('cancel'); });
+    });
+}
+
+/** General-purpose confirm dialog (OK/Cancel) — for destructive actions like regenerate key, delete */
+function _wsConfirmAction(message, { title = 'Are you sure?', okLabel = 'Confirm', okClass = 'btn-danger' } = {}) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'bc-ws-confirm-overlay';
+        overlay.innerHTML = `
+            <div class="bc-ws-confirm-dialog">
+                <h3><i class="fa-solid fa-triangle-exclamation" style="color:var(--warning)"></i> ${esc(title)}</h3>
+                <p>${esc(message)}</p>
+                <div class="bc-ws-confirm-actions">
+                    <button class="btn btn-small" id="bc-ws-confirm-cancel">Cancel</button>
+                    <button class="btn btn-small ${okClass}" id="bc-ws-confirm-ok">${esc(okLabel)}</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const cleanup = (result) => {
+            overlay.remove();
+            resolve(result);
+        };
+        overlay.querySelector('#bc-ws-confirm-cancel').onclick = () => cleanup(false);
+        overlay.querySelector('#bc-ws-confirm-ok').onclick = () => cleanup(true);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+    });
+}
+
+/* ── Live stats timer ────────────────────────────────────────── */
+
+function _wsStartLiveStatsTimer(liveSessionId, liveSessionData) {
+    if (_wsState._liveStatsTimer) clearInterval(_wsState._liveStatsTimer);
+    if (!liveSessionId) return;
+
+    const update = () => {
+        const uptimeEl = document.getElementById('bc-ws-uptime');
+        const statUptimeEl = document.getElementById('bc-ws-stat-uptime');
+        const statViewersEl = document.getElementById('bc-ws-stat-viewers');
+        const statBitrateEl = document.getElementById('bc-ws-stat-bitrate');
+
+        if (uptimeEl && liveSessionData?.startedAt) {
+            uptimeEl.textContent = _wsFormatUptime(liveSessionData.startedAt);
+        }
+        if (statUptimeEl && liveSessionData?.startedAt) {
+            statUptimeEl.textContent = _wsFormatUptime(liveSessionData.startedAt);
+        }
+        if (statViewersEl && liveSessionData?.streamData) {
+            const viewers = liveSessionData.streamData.viewer_count || 0;
+            statViewersEl.textContent = String(viewers);
+        }
+        if (statBitrateEl) {
+            // Try to read bitrate from broadcastState stats
+            const stats = broadcastState?.stats;
+            if (stats?.bitrate) {
+                statBitrateEl.textContent = Math.round(stats.bitrate / 1000) + ' kbps';
+            }
+        }
+    };
+
+    update();
+    _wsState._liveStatsTimer = setInterval(update, 1000);
+}
+
+/* ── End stream (remote kill) ────────────────────────────────── */
+
+async function _wsEndStream() {
+    const confirmed = await _wsConfirmUnsaved('End this live stream? Viewers will be disconnected.');
+    if (confirmed === 'cancel') return;
+    if (confirmed === 'save') await _wsSaveAll();
+
+    // Find the active session for this managed stream
+    const liveSessionId = _wsGetLiveSessionId(_wsState.selectedId);
+    if (!liveSessionId) {
+        toast('No active stream found', 'error');
+        return;
+    }
+
+    try {
+        await api(`/streams/${liveSessionId}/end`, { method: 'POST' });
+        if (typeof stopBroadcast === 'function') stopBroadcast();
+        toast('Stream ended', 'success');
+        updateWorkspaceLiveStatus();
+    } catch (err) {
+        toast(err?.message || 'Failed to end stream', 'error');
+    }
+}
+
+/* ── Popout chat ─────────────────────────────────────────────── */
+
+function _wsOpenPopoutChat() {
+    const ms = _wsState.selectedMs;
+    if (!ms) return;
+    const slug = ms.slug || ms.id;
+    const username = currentUser?.username || '';
+    const path = channelPath(username, slug);
+    const chatUrl = `${window.location.origin}${path}?popout=chat`;
+    window.open(chatUrl, `hobo-chat-${ms.id}`, 'width=400,height=600,menubar=no,toolbar=no');
 }
 
 /* ── Method cards ────────────────────────────────────────────── */
@@ -641,10 +953,10 @@ function _wsRenderMethodEndpoint(method, streamKey, managedStreamId) {
         <div class="bc-ws-method-info">
             <div class="bc-ws-method-info-row">
                 <span class="bc-ws-method-info-label">Browser Streaming</span>
-                <span class="bc-ws-method-info-note">Use the Go Live button below &mdash; no extra config needed.</span>
+                <span class="bc-ws-method-info-note">Use the Go Live button on the Stream tab &mdash; no extra config needed.</span>
             </div>
             <p class="bc-ws-method-info-hint">
-                Your browser will capture camera, microphone, and/or screen depending on your selected capture mode above.
+                Your browser will capture camera, microphone, and/or screen depending on your selected capture mode.
                 Make sure to allow permissions when prompted.
             </p>
         </div>`;
@@ -670,62 +982,206 @@ function _wsRenderMethodEndpoint(method, streamKey, managedStreamId) {
             </div>
             <p class="bc-ws-method-info-hint">
                 <strong>OBS WHIP setup:</strong> Settings &rarr; Stream &rarr; Service: WHIP &rarr; paste URL above.
-                Set Bearer Token to your stream key. Click "Start Stream Session" here first, then start OBS.
+                Set Bearer Token to your stream key. Your stream will auto-start when OBS begins transmitting.
             </p>
         </div>`;
     }
 
     if (method === 'cli') {
+        const whipBaseUrl = (_wsState.whipUrlBase || window.location.origin).replace(/\/$/, '');
+        const whipUrl = `${whipBaseUrl}/whip/${managedStreamId || streamKey}`;
         return `
         <div class="bc-ws-method-info">
             <h4 style="margin:8px 0 4px"><i class="fa-solid fa-terminal"></i> CLI / FFmpeg Streaming</h4>
-            <p class="bc-ws-method-info-hint" style="margin-bottom:12px">
-                Start a stream session first, then copy the FFmpeg command from the live control panel.
-                The endpoint ports are assigned dynamically per session.
+            <p class="bc-ws-method-info-hint" style="margin-bottom:8px">
+                Stream from the command line using <strong>FFmpeg</strong>, <strong>GStreamer</strong>, or any tool that outputs to RTMP, WebRTC (WHIP), or JSMPEG.
+                Pick the protocol that fits your use case below.
             </p>
 
-            <details class="bc-ws-cli-examples">
-                <summary><i class="fa-solid fa-book"></i> FFmpeg Examples &amp; Commands</summary>
-                <div class="bc-ws-cli-examples-inner">
-                    <h5>jsmpeg (Lowest Latency)</h5>
-                    <p class="muted" style="font-size:0.82rem">Ports are shown after you click "Start Stream Session".</p>
-                    <pre class="bc-ws-cli-code">ffmpeg -f v4l2 -framerate 24 -i /dev/video0 \\
+            <div class="bc-ws-cli-tabs" id="bc-ws-cli-tabs">
+                <button type="button" class="bc-ws-cli-tab active" onclick="_wsCliTab('jsmpeg')"><i class="fa-solid fa-bolt"></i> JSMPEG</button>
+                <button type="button" class="bc-ws-cli-tab" onclick="_wsCliTab('rtmp')"><i class="fa-solid fa-server"></i> RTMP</button>
+                <button type="button" class="bc-ws-cli-tab" onclick="_wsCliTab('whip')"><i class="fa-solid fa-satellite-dish"></i> WebRTC (WHIP)</button>
+            </div>
+
+            <!-- ═══ JSMPEG Tab ═══ -->
+            <div class="bc-ws-cli-panel active" data-clipanel="jsmpeg">
+                <p class="bc-ws-cli-desc"><strong>Lowest latency</strong> &mdash; uses MPEG-TS over HTTP. Best for robots, Raspberry Pi, or any scenario where sub-second latency matters. Limited to MPEG1 video codec.</p>
+                <p class="muted" style="font-size:0.82rem"><i class="fa-solid fa-circle-info"></i> Port will be assigned once the stream session starts.</p>
+
+                <h5><i class="fa-solid fa-video"></i> Camera + Audio</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -f v4l2 -framerate 24 -i /dev/video0 \\
   -f alsa -i default \\
   -f mpegts -codec:v mpeg1video -s 640x480 -b:v 350k \\
   -codec:a mp2 -b:a 96k -ar 44100 \\
-  http://hobostreamer.com:PORT/STREAM_KEY/640/480/</pre>
+  http://hobostreamer.com:PORT/${esc(streamKey)}/640/480/</pre>
 
-                    <h5>RTMP via FFmpeg</h5>
-                    <pre class="bc-ws-cli-code">ffmpeg -f v4l2 -i /dev/video0 -f alsa -i default \\
+                <h5><i class="fa-solid fa-display"></i> Screen Capture (Linux X11)</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -f x11grab -s 1280x720 -r 24 -i :0.0 \\
+  -f pulse -i default \\
+  -f mpegts -codec:v mpeg1video -s 640x480 -b:v 400k \\
+  -codec:a mp2 -b:a 96k -ar 44100 \\
+  http://hobostreamer.com:PORT/${esc(streamKey)}/640/480/</pre>
+
+                <h5><i class="fa-solid fa-film"></i> MP4 / File Loop</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -re -stream_loop -1 -i video.mp4 \\
+  -f mpegts -codec:v mpeg1video -s 640x480 -b:v 400k \\
+  -codec:a mp2 -b:a 96k -ar 44100 \\
+  http://hobostreamer.com:PORT/${esc(streamKey)}/640/480/</pre>
+
+                <h5><i class="fa-solid fa-microchip"></i> Raspberry Pi Camera</h5>
+                <pre class="bc-ws-cli-code"># Pi Camera v2 / libcamera &rarr; JSMPEG
+rpicam-vid -t 0 --width 640 --height 480 --framerate 24 \\
+  --codec yuv420 -o - | \\
+  ffmpeg -f rawvideo -pix_fmt yuv420p -s 640x480 -r 24 -i - \\
+  -f mpegts -codec:v mpeg1video -b:v 350k \\
+  http://hobostreamer.com:PORT/${esc(streamKey)}/640/480/</pre>
+
+                <h5><i class="fa-solid fa-camera-cctv"></i> RTSP / IP Camera</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -rtsp_transport tcp -i rtsp://user:pass@192.168.1.100:554/stream \\
+  -f mpegts -codec:v mpeg1video -s 640x480 -b:v 400k \\
+  -codec:a mp2 -b:a 96k -ar 44100 \\
+  http://hobostreamer.com:PORT/${esc(streamKey)}/640/480/</pre>
+
+                <details class="bc-ws-cli-note">
+                    <summary>About JSMPEG</summary>
+                    <p>JSMPEG uses MPEG1 video decoded in JavaScript — no native video element needed.
+                    Quality is lower than H.264 but latency can be under 200ms.
+                    Ideal for IoT, robots, and embedded hardware. Audio uses MP2 codec at 44100 Hz sample rate.</p>
+                </details>
+            </div>
+
+            <!-- ═══ RTMP Tab ═══ -->
+            <div class="bc-ws-cli-panel" data-clipanel="rtmp">
+                <p class="bc-ws-cli-desc"><strong>Best compatibility</strong> &mdash; RTMP works with nearly all streaming tools (OBS, Streamlabs, FFmpeg, GStreamer). Supports H.264 video + AAC audio at high quality. Slightly higher latency than JSMPEG or WHIP.</p>
+
+                <div class="bc-ws-method-info-row" style="margin-bottom:8px">
+                    <span class="bc-ws-method-info-label">RTMP Server</span>
+                    <div class="bc-ws-method-info-val">
+                        <code>rtmp://hobostreamer.com/live</code>
+                        <button class="btn btn-xs btn-ghost" onclick="_wsCopyText('rtmp://hobostreamer.com/live')" title="Copy"><i class="fa-solid fa-copy"></i></button>
+                    </div>
+                </div>
+
+                <h5><i class="fa-solid fa-video"></i> Camera + Audio</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -f v4l2 -i /dev/video0 -f alsa -i default \\
   -c:v libx264 -preset veryfast -b:v 2500k \\
   -c:a aac -b:a 128k \\
   -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
 
-                    <h5>Screen Capture (Linux X11)</h5>
-                    <pre class="bc-ws-cli-code">ffmpeg -f x11grab -s 1920x1080 -r 30 -i :0.0 \\
+                <h5><i class="fa-solid fa-display"></i> Screen Capture (Linux X11)</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -f x11grab -s 1920x1080 -r 30 -i :0.0 \\
   -f pulse -i default \\
   -c:v libx264 -preset veryfast -b:v 3000k \\
   -c:a aac -b:a 128k \\
   -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
 
-                    <h5>MP4 / File Loop</h5>
-                    <pre class="bc-ws-cli-code">ffmpeg -re -stream_loop -1 -i video.mp4 \\
+                <h5><i class="fa-solid fa-display"></i> Screen Capture (macOS)</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -f avfoundation -framerate 30 -i "1:0" \\
+  -c:v libx264 -preset veryfast -b:v 3000k \\
+  -c:a aac -b:a 128k \\
+  -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
+
+                <h5><i class="fa-solid fa-film"></i> MP4 / File Loop</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -re -stream_loop -1 -i video.mp4 \\
   -c:v libx264 -preset veryfast -b:v 2500k \\
   -c:a aac -b:a 128k \\
   -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
 
-                    <h5>RTSP / IP Camera</h5>
-                    <pre class="bc-ws-cli-code">ffmpeg -rtsp_transport tcp -i rtsp://user:pass@192.168.1.100:554/stream \\
+                <h5><i class="fa-solid fa-camera-cctv"></i> RTSP / IP Camera</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -rtsp_transport tcp -i rtsp://user:pass@192.168.1.100:554/stream \\
   -c:v libx264 -preset veryfast -b:v 2000k \\
   -c:a aac -b:a 96k \\
   -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
 
-                    <h5>Raspberry Pi Camera</h5>
-                    <pre class="bc-ws-cli-code"># Pi Camera v2 / libcamera
+                <h5><i class="fa-solid fa-microchip"></i> Raspberry Pi Camera</h5>
+                <pre class="bc-ws-cli-code"># Pi Camera &rarr; RTMP
 rpicam-vid -t 0 --width 1280 --height 720 --framerate 30 \\
   --codec h264 --bitrate 2000000 -o - | \\
   ffmpeg -f h264 -i - -c:v copy -an \\
   -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
+
+                <h5><i class="fa-solid fa-robot"></i> GStreamer</h5>
+                <pre class="bc-ws-cli-code">gst-launch-1.0 v4l2src ! videoconvert ! \\
+  x264enc tune=zerolatency bitrate=2500 ! flvmux ! \\
+  rtmpsink location="rtmp://hobostreamer.com/live/${esc(streamKey)}"</pre>
+            </div>
+
+            <!-- ═══ WebRTC (WHIP) Tab ═══ -->
+            <div class="bc-ws-cli-panel" data-clipanel="whip">
+                <p class="bc-ws-cli-desc"><strong>Low latency + high quality</strong> &mdash; WHIP (WebRTC HTTP Ingest Protocol) supports H.264/VP8/VP9 + Opus audio. Sub-second latency with modern codecs. Requires FFmpeg 7+ or GStreamer with WHIP support.</p>
+
+                <div class="bc-ws-method-info-row" style="margin-bottom:4px">
+                    <span class="bc-ws-method-info-label">WHIP URL</span>
+                    <div class="bc-ws-method-info-val">
+                        <code style="word-break:break-all">${esc(whipUrl)}</code>
+                        <button class="btn btn-xs btn-ghost" onclick="_wsCopyText('${esc(whipUrl)}')" title="Copy"><i class="fa-solid fa-copy"></i></button>
+                    </div>
+                </div>
+                <div class="bc-ws-method-info-row" style="margin-bottom:8px">
+                    <span class="bc-ws-method-info-label">Bearer Token</span>
+                    <span class="bc-ws-method-info-note">Use the stream key above</span>
+                </div>
+
+                <h5><i class="fa-solid fa-video"></i> Camera + Audio (FFmpeg 7+)</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -f v4l2 -i /dev/video0 -f alsa -i default \\
+  -c:v libx264 -preset veryfast -tune zerolatency -b:v 2500k \\
+  -c:a libopus -b:a 128k -ar 48000 \\
+  -f whip "${esc(whipUrl)}"</pre>
+
+                <h5><i class="fa-solid fa-display"></i> Screen Capture (FFmpeg 7+)</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -f x11grab -s 1920x1080 -r 30 -i :0.0 \\
+  -f pulse -i default \\
+  -c:v libx264 -preset veryfast -tune zerolatency -b:v 3000k \\
+  -c:a libopus -b:a 128k -ar 48000 \\
+  -f whip "${esc(whipUrl)}"</pre>
+
+                <h5><i class="fa-solid fa-film"></i> MP4 / File Loop (FFmpeg 7+)</h5>
+                <pre class="bc-ws-cli-code">ffmpeg -re -stream_loop -1 -i video.mp4 \\
+  -c:v libx264 -preset veryfast -tune zerolatency -b:v 2500k \\
+  -c:a libopus -b:a 128k -ar 48000 \\
+  -f whip "${esc(whipUrl)}"</pre>
+
+                <h5><i class="fa-solid fa-robot"></i> GStreamer WHIP</h5>
+                <pre class="bc-ws-cli-code">gst-launch-1.0 v4l2src ! videoconvert ! \\
+  x264enc tune=zerolatency bitrate=2500 ! video/x-h264,profile=baseline ! \\
+  whipsink whip-endpoint="${esc(whipUrl)}"</pre>
+
+                <details class="bc-ws-cli-note">
+                    <summary>About WHIP via CLI</summary>
+                    <p>WHIP support in FFmpeg requires version 7.0+ (released April 2024). Run <code>ffmpeg -version</code> to check.
+                    On older systems, use the RTMP tab instead. GStreamer WHIP requires the <code>gst-plugins-rs</code> Rust plugins.
+                    The Bearer token goes in the <code>Authorization</code> header automatically when using <code>-f whip</code>.</p>
+                </details>
+            </div>
+
+            <!-- ═══ Common Reference ═══ -->
+            <details class="bc-ws-cli-examples" style="margin-top:12px">
+                <summary><i class="fa-solid fa-circle-question"></i> Input Device Reference</summary>
+                <div class="bc-ws-cli-examples-inner">
+                    <h5>Finding Devices</h5>
+                    <pre class="bc-ws-cli-code"># Linux cameras
+v4l2-ctl --list-devices
+
+# Linux audio
+arecord -l           # ALSA devices
+pactl list sources   # PulseAudio sources
+
+# macOS devices
+ffmpeg -f avfoundation -list_devices true -i ""
+
+# Windows devices
+ffmpeg -f dshow -list_devices true -i dummy</pre>
+
+                    <h5>Common Input Formats</h5>
+                    <table class="bc-ws-cli-ref-table">
+                        <tr><th>Platform</th><th>Video</th><th>Audio</th></tr>
+                        <tr><td>Linux</td><td><code>-f v4l2 -i /dev/video0</code></td><td><code>-f alsa -i default</code> or <code>-f pulse -i default</code></td></tr>
+                        <tr><td>macOS</td><td><code>-f avfoundation -i "0"</code></td><td><code>-f avfoundation -i ":0"</code></td></tr>
+                        <tr><td>Windows</td><td><code>-f dshow -i video="cam"</code></td><td><code>-f dshow -i audio="mic"</code></td></tr>
+                        <tr><td>Pi Camera</td><td><code>rpicam-vid -o -</code></td><td><code>-f alsa -i hw:0</code></td></tr>
+                        <tr><td>RTSP</td><td colspan="2"><code>-rtsp_transport tcp -i rtsp://user:pass@ip:554/stream</code></td></tr>
+                    </table>
                 </div>
             </details>
         </div>`;
@@ -741,9 +1197,9 @@ async function _wsInitDevicePicker(method, browserMode) {
     if (wrap) wrap.style.display = method !== 'browser' ? 'none' : '';
     if (method !== 'browser') return;
 
-    // Hide camera selector in mic-only mode
+    // Hide camera selector in mic-only or screen mode
     const camGroup = document.getElementById('bc-ws-camera-group');
-    if (camGroup) camGroup.style.display = (browserMode === 'mic_only') ? 'none' : '';
+    if (camGroup) camGroup.style.display = (browserMode === 'mic_only' || browserMode === 'screen') ? 'none' : '';
 
     // Hide audio selector in camera-only mode
     const audioGroup = document.getElementById('bc-ws-audio-group');
@@ -759,12 +1215,94 @@ async function _wsInitDevicePicker(method, browserMode) {
             if (permReq) permReq.style.display = 'none';
             if (devSelects) devSelects.style.display = '';
             if (typeof populateCreateFormDevices === 'function') await populateCreateFormDevices();
+            // Restore persisted device selections for this slot (localStorage first, then server profile)
+            _wsRestoreSlotDevices();
+            _wsRestoreDevicesFromProfile();
         } else {
             if (permReq) permReq.style.display = '';
             if (devSelects) devSelects.style.display = 'none';
         }
     } catch (err) {
         console.warn('[Workspace] Device enumeration failed:', err.message);
+    }
+}
+
+/** Persist current device selections for the active slot */
+function _wsPersistSlotDevices() {
+    const slotId = _wsState.selectedId;
+    if (!slotId) return;
+    const camSel = document.getElementById('bc-create-camera');
+    const audSel = document.getElementById('bc-create-audio');
+    const data = {};
+    if (camSel?.value && camSel.value !== 'default') data.camera = camSel.value;
+    if (audSel?.value && audSel.value !== 'default') data.audio = audSel.value;
+    if (Object.keys(data).length) {
+        try { localStorage.setItem(`hobo-slot-devices-${slotId}`, JSON.stringify(data)); } catch {}
+    }
+}
+
+/** Restore persisted device selections for the active slot */
+function _wsRestoreSlotDevices() {
+    const slotId = _wsState.selectedId;
+    if (!slotId) return;
+    try {
+        const raw = localStorage.getItem(`hobo-slot-devices-${slotId}`);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        const camSel = document.getElementById('bc-create-camera');
+        const audSel = document.getElementById('bc-create-audio');
+        if (data.camera && camSel) {
+            const opt = Array.from(camSel.options).find(o => o.value === data.camera);
+            if (opt) camSel.value = data.camera;
+        }
+        if (data.audio && audSel) {
+            const opt = Array.from(audSel.options).find(o => o.value === data.audio);
+            if (opt) audSel.value = data.audio;
+        }
+    } catch {}
+}
+
+/** Restore device selections from server-side profile (fallback when localStorage has nothing) */
+function _wsRestoreDevicesFromProfile() {
+    const p = _wsState.profile;
+    if (!p) return;
+    const camSel = document.getElementById('bc-create-camera');
+    const audSel = document.getElementById('bc-create-audio');
+    // Only apply if the selects are still on 'default' (localStorage didn't override)
+    if (p.lastCameraDeviceId && camSel && camSel.value === 'default') {
+        const opt = Array.from(camSel.options).find(o => o.value === p.lastCameraDeviceId);
+        if (opt) camSel.value = p.lastCameraDeviceId;
+    }
+    if (p.lastAudioDeviceId && audSel && audSel.value === 'default') {
+        const opt = Array.from(audSel.options).find(o => o.value === p.lastAudioDeviceId);
+        if (opt) audSel.value = p.lastAudioDeviceId;
+    }
+}
+
+/** Save device selections to server-side profile after going live */
+async function _wsSaveDevicesToProfile() {
+    const slotId = _wsState.selectedId;
+    if (!slotId) return;
+    const camSel = document.getElementById('bc-create-camera');
+    const audSel = document.getElementById('bc-create-audio');
+    const camDevice = camSel?.value || null;
+    const audDevice = audSel?.value || null;
+    if (!camDevice && !audDevice) return;
+
+    try {
+        const profileUpdate = { ..._wsState.profile };
+        if (camDevice && camDevice !== 'default') profileUpdate.lastCameraDeviceId = camDevice;
+        if (audDevice && audDevice !== 'default') profileUpdate.lastAudioDeviceId = audDevice;
+        // Find labels for the selected devices
+        if (camSel && camSel.selectedOptions?.[0]?.text) profileUpdate.lastCameraLabel = camSel.selectedOptions[0].text;
+        if (audSel && audSel.selectedOptions?.[0]?.text) profileUpdate.lastAudioLabel = audSel.selectedOptions[0].text;
+        await api('/streams/broadcast-settings', {
+            method: 'PUT',
+            body: { managed_stream_id: slotId, settings: profileUpdate },
+        });
+        _wsState.profile = profileUpdate;
+    } catch (err) {
+        console.warn('[Workspace] Failed to save device selections to profile:', err.message);
     }
 }
 
@@ -776,6 +1314,14 @@ function _wsSyncScreenShareHiddenDefaults(browserMode) {
     if (micEl) micEl.checked = document.getElementById('bc-ws-screen-mic')?.checked ?? true;
     if (camEl) camEl.checked = document.getElementById('bc-ws-screen-cam')?.checked ?? false;
     if (syaEl) syaEl.value = document.getElementById('bc-ws-screen-sysaudio')?.checked ? 'include' : 'exclude';
+
+    // Sync PiP position/size to broadcastState for use in _startPipComposite
+    const pipPos = document.getElementById('bc-ws-screen-pip-pos')?.value || 'bottom-right';
+    const pipSize = document.getElementById('bc-ws-screen-pip-size')?.value || 'small';
+    if (typeof broadcastState !== 'undefined') {
+        broadcastState.settings.screenPipPos = pipPos;
+        broadcastState.settings.screenPipSize = pipSize;
+    }
 }
 
 /* ── Control config population ───────────────────────────────── */
@@ -824,8 +1370,17 @@ function _wsCopyText(text, message) {
     });
 }
 
+/** Switch CLI protocol tab */
+function _wsCliTab(proto) {
+    const tabs = document.querySelectorAll('.bc-ws-cli-tab');
+    const panels = document.querySelectorAll('.bc-ws-cli-panel');
+    tabs.forEach(t => t.classList.toggle('active', t.textContent.toLowerCase().includes(proto) || t.getAttribute('onclick')?.includes(proto)));
+    panels.forEach(p => p.classList.toggle('active', p.dataset.clipanel === proto));
+}
+
 async function _wsRegenerateKey(managedStreamId) {
-    if (!confirm('Regenerate stream key?\n\nThis will immediately invalidate the current key. Any active connections using the old key will be disconnected.')) return;
+    const confirmed = await _wsConfirmAction('This will immediately invalidate the current key. Any active connections using the old key will be disconnected.', { title: 'Regenerate Stream Key?', okLabel: 'Regenerate', okClass: 'btn-danger' });
+    if (!confirmed) return;
     try {
         const data = await api(`/streams/managed/${managedStreamId}/regenerate-key`, { method: 'POST' });
         _wsState.streamKey = data.stream_key;
@@ -833,7 +1388,7 @@ async function _wsRegenerateKey(managedStreamId) {
         if (input) input.value = data.stream_key;
         const methodEl = document.getElementById('bc-ws-method-endpoint');
         if (methodEl && _wsState.selectedMs) {
-            methodEl.innerHTML = _wsRenderMethodEndpoint(_wsState.selectedMs.protocol || 'webrtc', data.stream_key, _wsState.selectedMs.id);
+            methodEl.innerHTML = _wsRenderMethodEndpoint(_wsState.selectedMs.streaming_method || _wsState.selectedMs.protocol || 'browser', data.stream_key, _wsState.selectedMs.id);
         }
         toast('Stream key regenerated', 'success');
     } catch (err) {
@@ -849,14 +1404,26 @@ function _wsMarkDirty() {
 }
 
 function _wsUpdateSaveButton() {
+    const bar = document.getElementById('bc-ws-save-bar');
     const btn = document.getElementById('bc-ws-save-btn');
     const status = document.getElementById('bc-ws-save-status');
-    if (btn) btn.disabled = !_wsState.dirty;
-    if (status) {
-        if (_wsState.dirty) {
+    if (!bar) return;
+    if (_wsState.dirty) {
+        bar.style.display = '';
+        bar.classList.remove('hidden');
+        if (btn) btn.disabled = false;
+        if (status) {
             status.textContent = 'Unsaved changes';
             status.className = 'bc-ws-save-status bc-ws-dirty';
-        } else {
+        }
+    } else {
+        bar.classList.add('hidden');
+        // Remove after animation
+        setTimeout(() => {
+            if (!_wsState.dirty && bar) bar.style.display = 'none';
+        }, 200);
+        if (btn) btn.disabled = true;
+        if (status) {
             status.textContent = '';
             status.className = 'bc-ws-save-status';
         }
@@ -865,10 +1432,13 @@ function _wsUpdateSaveButton() {
 
 function _wsShowSaveStatus(msg, cls) {
     const el = document.getElementById('bc-ws-save-status');
+    const bar = document.getElementById('bc-ws-save-bar');
     if (el) {
         el.textContent = msg;
         el.className = 'bc-ws-save-status' + (cls ? ' ' + cls : '');
     }
+    // Show the bar briefly for save/error feedback even when not dirty
+    if (bar && msg) bar.style.display = '';
 }
 
 /** Save all changes (structured fields + profile blob) */
@@ -907,6 +1477,15 @@ async function _wsSaveAll() {
             bitrate: parseInt(document.getElementById('bc-ws-bitrate')?.value) || 2500,
             browserMode: ms.browser_mode || _wsState.profile.browserMode || 'camera',
             micOnlyImage: _wsState.profile.micOnlyImage || null,
+            // Screen share settings
+            screenMic: document.getElementById('bc-ws-screen-mic')?.checked ?? true,
+            screenCam: document.getElementById('bc-ws-screen-cam')?.checked ?? false,
+            screenSysAudio: document.getElementById('bc-ws-screen-sysaudio')?.checked ?? true,
+            screenPipPos: document.getElementById('bc-ws-screen-pip-pos')?.value || 'bottom-right',
+            screenPipSize: document.getElementById('bc-ws-screen-pip-size')?.value || 'small',
+            screenResolution: document.getElementById('bc-ws-screen-resolution')?.value || '1080',
+            screenFps: document.getElementById('bc-ws-screen-fps')?.value || '30',
+            screenBitrate: parseInt(document.getElementById('bc-ws-screen-bitrate')?.value) || 3000,
         };
 
         // Save structured fields
@@ -958,24 +1537,8 @@ function _wsSelectMethod(method) {
     _wsState.selectedMs.protocol = protocol;
     _wsMarkDirty();
 
-    document.querySelectorAll('[data-wsmethod]').forEach(el =>
-        el.classList.toggle('selected', el.dataset.wsmethod === method)
-    );
-
-    // Show/hide browser submodes (only for 'browser' method)
-    const submodesEl = document.getElementById('bc-ws-browser-submodes');
-    if (submodesEl) submodesEl.style.display = method === 'browser' ? '' : 'none';
-
-    // Show/hide device picker (only for 'browser' method)
-    const wrap = document.getElementById('bc-ws-device-wrap');
-    if (wrap) wrap.style.display = method !== 'browser' ? 'none' : '';
-
-    // Update endpoint info
-    const methodEl = document.getElementById('bc-ws-method-endpoint');
-    if (methodEl) methodEl.innerHTML = _wsRenderMethodEndpoint(method, _wsState.streamKey || '', _wsState.selectedMs?.id);
-
-    broadcastState.selectedMethod = protocol;
-    _wsInitDevicePicker(method, _wsState.profile.browserMode || 'camera');
+    // Re-render the panel to update go-live/auto-detect section and endpoint
+    _wsRenderPanel();
 }
 
 function _wsSelectBrowserMode(mode) {
@@ -993,13 +1556,35 @@ function _wsSelectBrowserMode(mode) {
     if (micOpts) micOpts.style.display = mode === 'mic_only' ? '' : 'none';
     if (screenOpts) screenOpts.style.display = mode === 'screen' ? '' : 'none';
 
-    // Hide camera selector for mic-only
+    // Hide camera selector for mic-only; hide audio selector for camera-only
     const camGroup = document.getElementById('bc-ws-camera-group');
-    if (camGroup) camGroup.style.display = mode === 'mic_only' ? 'none' : '';
-
-    // Hide audio selector for camera-only
+    if (camGroup) camGroup.style.display = (mode === 'mic_only' || mode === 'screen') ? 'none' : '';
     const audioGroup = document.getElementById('bc-ws-audio-group');
     if (audioGroup) audioGroup.style.display = mode === 'camera_only' ? 'none' : '';
+
+    // Update permission button text/icon per mode
+    const permHintText = document.getElementById('bc-perm-hint-text');
+    const permBtnText = document.getElementById('bc-perm-btn-text');
+    const permBtn = document.getElementById('bc-perm-btn');
+    if (permHintText) {
+        const hints = { mic_only: 'Browser needs microphone access to stream.',
+            camera_only: 'Browser needs camera access to stream.',
+            screen: 'Browser needs screen capture access to stream.',
+            camera: 'Browser needs camera & mic access to stream.' };
+        permHintText.textContent = hints[mode] || hints.camera;
+    }
+    if (permBtnText) {
+        const labels = { mic_only: 'Allow Microphone', camera_only: 'Allow Camera',
+            screen: 'Allow Screen Share', camera: 'Allow Camera & Mic' };
+        permBtnText.textContent = labels[mode] || labels.camera;
+    }
+    if (permBtn) {
+        const icon = permBtn.querySelector('i');
+        if (icon) {
+            icon.className = 'fa-solid ' + (mode === 'mic_only' ? 'fa-microphone'
+                : mode === 'screen' ? 'fa-display' : 'fa-video');
+        }
+    }
 
     _wsSyncScreenShareHiddenDefaults(mode);
 }
@@ -1035,6 +1620,12 @@ function _wsMicImageChanged(input) {
     reader.readAsDataURL(file);
 }
 
+/** Toggle PiP options visibility when camera overlay checkbox changes */
+function _wsScreenCamToggle(checked) {
+    const opts = document.getElementById('bc-ws-screen-pip-opts');
+    if (opts) opts.style.display = checked ? '' : 'none';
+}
+
 /* ── Go Live ─────────────────────────────────────────────────── */
 
 async function goLiveFromWorkspace() {
@@ -1045,9 +1636,9 @@ async function goLiveFromWorkspace() {
 
     // Prompt to save if dirty
     if (_wsState.dirty) {
-        if (confirm('You have unsaved changes. Save before going live?')) {
-            await _wsSaveAll();
-        }
+        const action = await _wsConfirmUnsaved('You have unsaved changes. Save before going live?');
+        if (action === 'cancel') return;
+        if (action === 'save') await _wsSaveAll();
     }
 
     const p = _wsState.profile;
@@ -1070,6 +1661,10 @@ async function goLiveFromWorkspace() {
         if (browserMode === 'screen') {
             broadcastState.selectedBrowserSource = 'screen';
             broadcastState.settings.screenShare = true;
+            // Apply screen-specific quality settings if set
+            if (p.screenResolution) broadcastState.settings.screenRes = String(p.screenResolution);
+            if (p.screenFps) broadcastState.settings.screenFps = String(p.screenFps);
+            if (p.screenBitrate) broadcastState.settings.screenBps = String(p.screenBitrate);
         } else if (browserMode === 'mic_only') {
             broadcastState.selectedBrowserSource = 'camera';
             broadcastState.settings.micOnly = true;
@@ -1094,10 +1689,16 @@ async function goLiveFromWorkspace() {
     if (camSel && camSel.value) _syncCameraSelectionUI(camSel.value, { persist: false });
     if (audSel && audSel.value) _syncAudioSelectionUI(audSel.value, { persist: false });
 
+    // Persist device selections for this slot (localStorage)
+    _wsPersistSlotDevices();
+
     // Sync screen-share hidden defaults
     _wsSyncScreenShareHiddenDefaults(browserMode);
 
     await createNewStream();
+
+    // After going live, save device selections to server-side profile
+    _wsSaveDevicesToProfile();
 }
 
 /* ── Live status refresh (called from broadcast.js) ─────────── */
@@ -1198,14 +1799,15 @@ function showCreateManagedStreamModal() {
     showModal('create-managed-stream');
 }
 
-function _wsConfirmDelete(managedStreamId) {
+async function _wsConfirmDelete(managedStreamId) {
     const ms = _wsState.managedStreams.find(m => m.id === managedStreamId);
     if (!ms) return;
     if (_wsIsManagedStreamLive(managedStreamId)) {
         toast('Cannot delete a live stream slot. End the stream first.', 'error');
         return;
     }
-    if (!confirm(`Delete stream slot "${ms.title || 'Untitled'}"?\n\nPast sessions and VODs are not affected. This cannot be undone.`)) return;
+    const confirmed = await _wsConfirmAction(`Past sessions and VODs are not affected. This cannot be undone.`, { title: `Delete "${ms.title || 'Untitled'}"?`, okLabel: 'Delete', okClass: 'btn-danger' });
+    if (!confirmed) return;
     _wsDeleteManagedStream(managedStreamId);
 }
 

@@ -196,6 +196,39 @@ function protocolBadge(protocol) {
     return `<span class="protocol-badge protocol-${protocol}">${labels[protocol] || protocol.toUpperCase()}</span>`;
 }
 
+function streamTypeBadge(browserMode, streamingMethod) {
+    if (!browserMode || (streamingMethod && streamingMethod !== 'browser')) return '';
+    const types = {
+        screen: { icon: 'fa-display', label: 'Screen Share' },
+        mic_only: { icon: 'fa-microphone', label: 'Audio Only' },
+        camera_only: { icon: 'fa-video', label: 'Camera' },
+        camera: { icon: 'fa-video', label: 'Camera & Mic' },
+    };
+    const t = types[browserMode];
+    if (!t || browserMode === 'camera') return '';
+    return `<span class="stream-type-badge stream-type-${browserMode}"><i class="fa-solid ${t.icon}"></i> ${t.label}</span>`;
+}
+
+function _updateMicOnlyOverlay(browserMode, streamingMethod) {
+    const container = document.getElementById('video-container');
+    if (!container) return;
+    const existing = container.querySelector('.mic-only-overlay');
+    if (existing) existing.remove();
+    if (browserMode !== 'mic_only' || (streamingMethod && streamingMethod !== 'browser')) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'mic-only-overlay';
+    overlay.innerHTML = `
+        <div class="mic-only-visual">
+            <div class="mic-only-icon"><i class="fa-solid fa-microphone"></i></div>
+            <div class="mic-only-bars">
+                <span class="mic-bar"></span><span class="mic-bar"></span><span class="mic-bar"></span>
+                <span class="mic-bar"></span><span class="mic-bar"></span>
+            </div>
+            <div class="mic-only-label">Audio Only Stream</div>
+        </div>`;
+    container.appendChild(overlay);
+}
+
 /* ── Toast ────────────────────────────────────────────────────── */
 function toast(msg, type = 'info') {
     const c = document.getElementById('toast-container');
@@ -1079,6 +1112,7 @@ function renderStreamGrid(containerId, streams, isLive) {
                 ${thumbImg(thumb, 'fa-campground', s.title, !isLive && s.vod_id ? `/api/thumbnails/generate/vod/${s.vod_id}` : null)}
                 ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
                 ${s.protocol ? protocolBadge(s.protocol) : ''}
+                ${streamTypeBadge(s.browser_mode, s.streaming_method)}
                 ${s.is_nsfw ? '<span class="stream-card-nsfw">18+</span>' : ''}
                 ${isLive ? `<span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${s.total_viewer_count || s.viewer_count || 0}</span>` : ''}
                 ${duration}
@@ -2514,7 +2548,12 @@ function activateChannelStream(stream) {
     document.getElementById('ch-stream-title').textContent = stream.title || 'Untitled Stream';
     // Protocol badge on live channel page (moved from tabs to info bar)
     const chProtoEl = document.getElementById('ch-protocol-badge');
-    if (chProtoEl) chProtoEl.innerHTML = stream.protocol ? protocolBadge(stream.protocol) : '';
+    if (chProtoEl) chProtoEl.innerHTML = (stream.protocol ? protocolBadge(stream.protocol) : '') +
+        streamTypeBadge(stream.browser_mode, stream.streaming_method);
+
+    // Mic-only audio overlay for viewers
+    _updateMicOnlyOverlay(stream.browser_mode, stream.streaming_method);
+
     // Description on live channel page
     const chDescEl = document.getElementById('ch-stream-description');
     if (chDescEl) {
@@ -4099,6 +4138,18 @@ function switchVodTab(tab) {
 
 /* ── Modal template stubs (filled by their modules) ──────────── */
 function createManagedStreamModal() {
+    const methods = [
+        { id: 'browser', icon: 'globe', label: 'Browser', hint: 'Camera, mic, or screen from your browser' },
+        { id: 'whip', icon: 'satellite-dish', label: 'WHIP', hint: 'OBS WHIP encoder / external WebRTC' },
+        { id: 'rtmp', icon: 'server', label: 'RTMP', hint: 'OBS / Streamlabs / IRL Pro' },
+        { id: 'cli', icon: 'terminal', label: 'CLI / FFmpeg', hint: 'FFmpeg, Pi, RTSP cameras' },
+    ];
+    const methodCards = methods.map(m => `
+        <div class="bc-method-card-sm${m.id === 'browser' ? ' selected' : ''}" data-cmsmethod="${m.id}" onclick="_cmsSelectMethod('${m.id}')">
+            <i class="fa-solid fa-${m.icon}"></i>
+            <strong>${m.label}</strong>
+            <span class="bc-card-sm-hint">${m.hint}</span>
+        </div>`).join('');
     return `
         <h3><i class="fa-solid fa-plus"></i> Create Stream Slot</h3>
         <p class="muted" style="margin-bottom:16px">Each stream slot has its own stream key, settings, and history.</p>
@@ -4122,18 +4173,16 @@ function createManagedStreamModal() {
         </div>
         <div class="form-group">
             <label>Streaming Method</label>
-            <select id="cms-protocol" class="form-input">
-                <option value="webrtc" selected>Browser / WHIP (WebRTC)</option>
-                <option value="rtmp">RTMP (OBS / IRL Pro)</option>
-                <option value="jsmpeg">CLI / FFmpeg (jsmpeg)</option>
-            </select>
+            <div class="bc-method-picker bc-method-picker-sm">${methodCards}</div>
+            <input type="hidden" id="cms-method" value="browser">
+            <input type="hidden" id="cms-protocol" value="webrtc">
         </div>
         <div class="form-group">
             <label>URL Slug <span class="muted">(optional)</span></label>
             <input type="text" id="cms-slug" class="form-input" placeholder="my-stream"
                 maxlength="32" pattern="[a-z][a-z0-9_-]*"
                 title="2-32 chars, start with a letter, alphanumeric/hyphens/underscores">
-            <small class="muted">hobostreamer.com/username/<strong>slug</strong></small>
+            <small class="muted">hobostreamer.com/@${currentUser?.username || 'username'}/<strong>slug</strong></small>
         </div>
         <div style="display:flex;gap:8px;margin-top:16px">
             <button class="btn btn-primary" onclick="_cmsCreate()" id="cms-create-btn" style="flex:1">
@@ -4144,19 +4193,31 @@ function createManagedStreamModal() {
         <p id="cms-error" style="display:none;color:var(--danger);margin-top:8px;font-size:0.85rem"></p>`;
 }
 
+function _cmsSelectMethod(method) {
+    const methodToProtocol = { browser: 'webrtc', whip: 'webrtc', cli: 'jsmpeg', rtmp: 'rtmp' };
+    const methodEl = document.getElementById('cms-method');
+    const protoEl = document.getElementById('cms-protocol');
+    if (methodEl) methodEl.value = method;
+    if (protoEl) protoEl.value = methodToProtocol[method] || 'webrtc';
+    document.querySelectorAll('[data-cmsmethod]').forEach(el =>
+        el.classList.toggle('selected', el.dataset.cmsmethod === method)
+    );
+}
+
 async function _cmsCreate() {
     const btn = document.getElementById('cms-create-btn');
     const errEl = document.getElementById('cms-error');
     const title = (document.getElementById('cms-title')?.value || '').trim() || 'Untitled Stream';
     const category = document.getElementById('cms-category')?.value || 'irl';
     const protocol = document.getElementById('cms-protocol')?.value || 'webrtc';
+    const streamingMethod = document.getElementById('cms-method')?.value || 'browser';
     const slug = (document.getElementById('cms-slug')?.value || '').trim().toLowerCase() || undefined;
     if (btn) btn.disabled = true;
     if (errEl) errEl.style.display = 'none';
     try {
         const data = await api('/streams/managed', {
             method: 'POST',
-            body: { title, category, protocol, slug },
+            body: { title, category, protocol, streaming_method: streamingMethod, slug },
         });
         closeModal();
         if (typeof onManagedStreamCreated === 'function' && data.managed_stream) {
