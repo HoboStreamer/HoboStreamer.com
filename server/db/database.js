@@ -1195,7 +1195,8 @@ function getOrCreateAnonGameUser(anonId) {
 function getLiveStreams() {
     return all(`
         SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color,
-               ms.slug AS managed_stream_slug, ms.id AS managed_stream_id
+               ms.slug AS managed_stream_slug, ms.id AS managed_stream_id,
+               ms.browser_mode, ms.streaming_method
         FROM streams s
         JOIN users u ON s.user_id = u.id
         LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
@@ -1323,11 +1324,11 @@ function updateViewerCount(streamId, count) {
 
 // ── Managed Stream helpers ───────────────────────────────────
 
-function createManagedStream({ user_id, channel_id, slug, title, description, category, protocol, stream_key, is_nsfw, control_config_id }) {
+function createManagedStream({ user_id, channel_id, slug, title, description, category, protocol, streaming_method, stream_key, is_nsfw, control_config_id }) {
     return run(
-        `INSERT INTO managed_streams (user_id, channel_id, slug, title, description, category, protocol, stream_key, is_nsfw, control_config_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [user_id, channel_id || null, slug || null, title || 'Untitled Stream', description || '', category || 'irl', protocol || 'webrtc', stream_key, is_nsfw ? 1 : 0, control_config_id || null]
+        `INSERT INTO managed_streams (user_id, channel_id, slug, title, description, category, protocol, streaming_method, stream_key, is_nsfw, control_config_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [user_id, channel_id || null, slug || null, title || 'Untitled Stream', description || '', category || 'irl', protocol || 'webrtc', streaming_method || null, stream_key, is_nsfw ? 1 : 0, control_config_id || null]
     );
 }
 

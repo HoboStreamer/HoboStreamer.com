@@ -3429,6 +3429,98 @@
     flex-wrap: wrap;
 }
 
+/* ── Fixed save bar (Discord-style floating) ── */
+.bc-ws-save-bar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: color-mix(in srgb, var(--bg-primary, #16161a) 95%, var(--accent));
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2);
+    animation: bc-save-bar-in 0.25s ease;
+    max-width: 500px;
+    width: auto;
+}
+.bc-ws-save-bar.hidden {
+    animation: bc-save-bar-out 0.2s ease forwards;
+    pointer-events: none;
+}
+@keyframes bc-save-bar-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes bc-save-bar-out {
+    from { opacity: 1; transform: translateX(-50%) translateY(0); }
+    to   { opacity: 0; transform: translateX(-50%) translateY(16px); }
+}
+.bc-ws-save-bar .bc-ws-save-status {
+    font-size: 0.82rem;
+    white-space: nowrap;
+}
+.bc-ws-save-bar .bc-ws-save-btn {
+    min-width: 120px;
+}
+.bc-ws-save-bar .bc-ws-discard-btn {
+    min-width: 80px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+}
+.bc-ws-save-bar .bc-ws-discard-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+}
+
+/* ── Unsaved changes modal ── */
+.bc-ws-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: bc-confirm-fade-in 0.15s ease;
+}
+@keyframes bc-confirm-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.bc-ws-confirm-dialog {
+    background: var(--surface, #1e1e22);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 16px 64px rgba(0,0,0,0.5);
+}
+.bc-ws-confirm-dialog h3 {
+    margin: 0 0 8px;
+    font-size: 1.05rem;
+}
+.bc-ws-confirm-dialog p {
+    margin: 0 0 20px;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+.bc-ws-confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+.bc-ws-confirm-actions .btn { min-width: 90px; }
+
 /* ── Quality defaults ── */
 .bc-ws-quality { margin: 8px 0 12px; }
 .bc-ws-quality summary {
@@ -3439,7 +3531,7 @@
 }
 .bc-ws-quality-inner { margin-top: 8px; }
 
-/* ── Slot-level settings ── */
+/* ── Slot-level settings (split into sections) ── */
 .bc-ws-slot-settings {
     margin: 12px 0 8px;
     border: 1px solid var(--border);
@@ -3469,6 +3561,106 @@
     gap: 8px;
     font-size: 0.85rem;
     cursor: pointer;
+}
+
+/* ── Workspace tabs ── */
+.bc-ws-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    background: color-mix(in srgb, var(--surface) 80%, var(--bg));
+}
+.bc-ws-tab {
+    padding: 10px 16px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+.bc-ws-tab:hover { color: var(--text-primary); }
+.bc-ws-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+.bc-ws-tab-panel { display: none; }
+.bc-ws-tab-panel.active { display: block; }
+
+/* ── Live stats ── */
+.bc-ws-live-stats {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px 0;
+}
+.bc-ws-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 16px;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    min-width: 80px;
+}
+.bc-ws-stat-val {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.bc-ws-stat-label {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ── Auto-detect notice ── */
+.bc-ws-autodetect {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+    border-radius: 8px;
+    margin: 12px 0 16px;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+.bc-ws-autodetect i {
+    font-size: 1.3rem;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+.bc-ws-autodetect .bc-ws-autodetect-pulse {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+    animation: ws-autodetect-pulse 2s ease infinite;
+}
+@keyframes ws-autodetect-pulse {
+    0%, 100% { opacity: 0.3; box-shadow: 0 0 0 0 var(--accent); }
+    50% { opacity: 1; box-shadow: 0 0 0 6px transparent; }
+}
+
+/* ── Popout chat button ── */
+.bc-ws-popout-chat-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
 }
 
 /* ── Live banner ── */
@@ -3546,6 +3738,41 @@
     border: 1px solid var(--border);
 }
 
+/* ── Screen Share workspace options ── */
+.bc-ws-screen-info {
+    display: flex;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.bc-ws-screen-info i { margin-top: 2px; flex-shrink: 0; opacity: .7; }
+.bc-ws-screen-section {
+    margin-bottom: 12px;
+}
+.bc-ws-screen-section-label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.bc-ws-screen-quality {
+    margin-top: 4px;
+}
+.bc-ws-screen-quality summary {
+    font-size: 0.82rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    padding: 6px 0;
+}
+.bc-ws-screen-quality summary i { margin-right: 4px; }
+
 /* ── CLI examples ── */
 .bc-ws-cli-examples { margin-top: 12px; }
 .bc-ws-cli-examples summary {
@@ -3572,4 +3799,83 @@
     white-space: pre;
     color: var(--text-primary);
     font-family: 'Fira Code', 'Cascadia Code', monospace;
+}
+
+/* ── CLI protocol tabs ── */
+.bc-ws-cli-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 0;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+}
+.bc-ws-cli-tab {
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color .15s, border-color .15s;
+}
+.bc-ws-cli-tab:hover { color: var(--text-primary); }
+.bc-ws-cli-tab.active {
+    color: var(--accent, #7c5cfc);
+    border-bottom-color: var(--accent, #7c5cfc);
+}
+.bc-ws-cli-panel {
+    display: none;
+    padding: 12px 0 0;
+}
+.bc-ws-cli-panel.active { display: block; }
+.bc-ws-cli-panel h5 {
+    margin: 14px 0 4px;
+    font-size: 0.82rem;
+    color: var(--text-primary);
+}
+.bc-ws-cli-panel h5:first-of-type { margin-top: 8px; }
+.bc-ws-cli-panel h5 i { margin-right: 4px; opacity: .6; }
+.bc-ws-cli-desc {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    margin: 0 0 8px;
+    line-height: 1.5;
+}
+.bc-ws-cli-note {
+    margin-top: 12px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+.bc-ws-cli-note summary { cursor: pointer; }
+.bc-ws-cli-note p { margin: 8px 0 0; line-height: 1.5; }
+.bc-ws-cli-note code {
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.78rem;
+}
+.bc-ws-cli-ref-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    margin-top: 8px;
+}
+.bc-ws-cli-ref-table th,
+.bc-ws-cli-ref-table td {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+}
+.bc-ws-cli-ref-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.bc-ws-cli-ref-table code {
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.75rem;
 }
