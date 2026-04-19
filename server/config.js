@@ -53,6 +53,14 @@ function normalizeTurnUrl(turnUrl) {
     }
 }
 
+function normalizeRtmpHost(host) {
+    const raw = String(host || '').trim();
+    if (!raw) return '';
+    let cleaned = raw.replace(/^rtmp:\/\//i, '');
+    cleaned = cleaned.replace(/\/.*$/, '');
+    return cleaned;
+}
+
 function buildConfig(registryValues) {
     registryValues = registryValues || {};
     const getRegistryEntry = (key) => {
@@ -150,7 +158,7 @@ function buildConfig(registryValues) {
         rtmp: {
             port: parseInt(process.env.RTMP_PORT || '1935', 10),
             chunkSize: parseInt(process.env.RTMP_CHUNK_SIZE || '60000', 10),
-            host: process.env.RTMP_HOST || rtmpEntry.value || '',
+            host: normalizeRtmpHost(process.env.RTMP_HOST || rtmpEntry.value || ''),
         },
         turn: {
             url: turnUrl,

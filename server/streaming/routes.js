@@ -1552,7 +1552,9 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
                 ...(whipUrlWarning ? { whipUrlWarning } : {}),
             };
         } else if (stream.protocol === 'rtmp') {
-            const rtmpHost = config.rtmp.host || hostname;
+            const rtmpHost = config.rtmp.host || (() => {
+                try { return new URL(config.baseUrl).hostname; } catch { return hostname; }
+            })();
             endpoint = {
                 rtmpUrl: `rtmp://${rtmpHost}:${config.rtmp.port}/live`,
                 streamKey: msKey,
