@@ -1147,6 +1147,9 @@ const channelClipsOfPageByUser = Object.create(null);
 let currentChannelVodFilter = null;   // numeric managed stream id or null = all
 let currentChannelVodOrder = 'newest'; // newest|oldest|views|peak_viewers
 let currentChannelManagedStreams = []; // populated on channel load, used for filter bar
+let currentVodsStreamers = [];
+let vodsStreamerFiltersExpanded = false;
+let vodsStreamerFiltersSearch = '';
 // Homepage pagination state
 let _homeRecentOnlinePage = 1;
 let _homeRecentVodsPage = 1;
@@ -1410,11 +1413,17 @@ function renderMediaStreamerFilters({
     onSelect = 'setVodsStreamerFilter',
     countKey = 'vod_count',
     allLabel = 'All streamers',
+    collapsed = false,
+    searchQuery = '',
+    maxVisible = 6,
+    showToggle = false,
+    showSearch = false,
 } = {}) {
     const bar = document.getElementById(barId);
     if (!bar) return;
 
     const normalizedActive = (activeFilter || 'all').toLowerCase();
+    const normalizedSearch = String(searchQuery || '').trim().toLowerCase();
     const unique = [];
     const seen = new Set();
     for (const streamer of (streamers || [])) {
@@ -1432,27 +1441,72 @@ function renderMediaStreamerFilters({
         return;
     }
 
+    const filtered = normalizedSearch
+        ? unique.filter(streamer => {
+            const username = String(streamer.username || '').toLowerCase();
+            const display = String(streamer.display_name || streamer.username || '').toLowerCase();
+            return username.includes(normalizedSearch) || display.includes(normalizedSearch);
+        })
+        : unique;
+
+    if (!filtered.length) {
+        bar.style.display = 'flex';
+        bar.innerHTML = `
+            <div class="media-filter-chip-wrap">
+                <button class="media-filter-chip ${normalizedActive === 'all' ? 'active' : ''}" onclick="${onSelect}('all')">
+                    <i class="fa-solid fa-layer-group"></i>
+                    <span>${esc(allLabel)}</span>
+                </button>
+            </div>
+            ${showSearch ? `<div class="media-filter-search-wrap"><input id="${barId}-search" class="media-filter-search" type="search" placeholder="Search streamers..." value="${esc(searchQuery)}" oninput="setVodsStreamerFilterSearch(this.value)"></div>` : ''}
+        `;
+        return;
+    }
+
+    const isCollapsed = collapsed && !vodsStreamerFiltersExpanded;
+    const primaryVisible = isCollapsed ? filtered.slice(0, maxVisible) : filtered;
+    const activeStreamer = normalizedActive !== 'all' ? filtered.find(streamer => String(streamer.username || '').toLowerCase() === normalizedActive) : null;
+    const visible = activeStreamer && isCollapsed && !primaryVisible.some(streamer => String(streamer.username || '').toLowerCase() === normalizedActive)
+        ? [...primaryVisible.slice(0, Math.max(0, maxVisible - 1)), activeStreamer]
+        : primaryVisible;
+    const hiddenCount = Math.max(0, filtered.length - visible.length);
+    const showToggleButton = showToggle && hiddenCount > 0;
+
     bar.style.display = 'flex';
     bar.innerHTML = `
-        <button class="media-filter-chip ${normalizedActive === 'all' ? 'active' : ''}" onclick="${onSelect}('all')">
-            <i class="fa-solid fa-layer-group"></i>
-            <span>${esc(allLabel)}</span>
-        </button>
-        ${unique.map(streamer => {
-            const username = String(streamer.username || '').trim();
-            const label = streamer.display_name || username;
-            const count = Number(streamer[countKey] || 0);
-            return `
-                <button class="media-filter-chip ${normalizedActive === username.toLowerCase() ? 'active' : ''}" onclick="${onSelect}('${esc(username)}')">
-                    <span>${esc(label)}</span>
-                    ${count > 0 ? `<span class="media-filter-chip-count">${count}</span>` : ''}
+        <div class="media-filter-chip-wrap">
+            <button class="media-filter-chip ${normalizedActive === 'all' ? 'active' : ''}" onclick="${onSelect}('all')">
+                <i class="fa-solid fa-layer-group"></i>
+                <span>${esc(allLabel)}</span>
+            </button>
+            ${visible.map(streamer => {
+                const username = String(streamer.username || '').trim();
+                const label = streamer.display_name || username;
+                const count = Number(streamer[countKey] || 0);
+                return `
+                    <button class="media-filter-chip ${normalizedActive === username.toLowerCase() ? 'active' : ''}" onclick="${onSelect}('${esc(username)}')">
+                        <span>${esc(label)}</span>
+                        ${count > 0 ? `<span class="media-filter-chip-count">${count}</span>` : ''}
+                    </button>
+                `;
+            }).join('')}
+            ${showToggleButton ? `
+                <button class="media-filter-chip media-filter-toggle" onclick="toggleVodsStreamerFilterExpanded()">
+                    <i class="fa-solid fa-angle-${vodsStreamerFiltersExpanded ? 'up' : 'down'}"></i>
+                    <span>${vodsStreamerFiltersExpanded ? 'Show less' : `Show all (${hiddenCount})`}</span>
                 </button>
-            `;
-        }).join('')}
+            ` : ''}
+        </div>
+        ${showSearch ? `
+            <div class="media-filter-search-wrap">
+                <input id="${barId}-search" class="media-filter-search" type="search" placeholder="Search streamers..." value="${esc(searchQuery)}" oninput="setVodsStreamerFilterSearch(this.value)">
+            </div>
+        ` : ''}
     `;
 }
 
 function renderVodsStreamerFilters(streamers = [], activeFilter = 'all') {
+    currentVodsStreamers = streamers;
     renderMediaStreamerFilters({
         barId: 'vods-streamer-filters',
         streamers,
@@ -1460,7 +1514,27 @@ function renderVodsStreamerFilters(streamers = [], activeFilter = 'all') {
         onSelect: 'setVodsStreamerFilter',
         countKey: 'vod_count',
         allLabel: 'All streamers',
+        collapsed: true,
+        searchQuery: vodsStreamerFiltersSearch,
+        maxVisible: 6,
+        showToggle: true,
+        showSearch: true,
     });
+}
+
+function toggleVodsStreamerFilterExpanded() {
+    vodsStreamerFiltersExpanded = !vodsStreamerFiltersExpanded;
+    renderVodsStreamerFilters(currentVodsStreamers, currentVodsStreamerFilter);
+}
+
+function setVodsStreamerFilterSearch(value = '') {
+    const nextValue = String(value || '').trim();
+    if (nextValue === vodsStreamerFiltersSearch) return;
+    vodsStreamerFiltersSearch = nextValue;
+    if (nextValue) {
+        vodsStreamerFiltersExpanded = true;
+    }
+    renderVodsStreamerFilters(currentVodsStreamers, currentVodsStreamerFilter);
 }
 
 function renderClipsStreamerFilters(streamers = [], activeFilter = 'all') {

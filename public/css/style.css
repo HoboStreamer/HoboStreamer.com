@@ -865,6 +865,41 @@ main#app { position: relative; z-index: 1; }
     color: inherit;
     font-size: 0.74rem;
 }
+.media-filter-chip-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    min-width: 0;
+}
+.media-filter-search-wrap {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    margin-left: auto;
+    min-width: 220px;
+    max-width: 320px;
+    width: 100%;
+}
+.media-filter-search {
+    width: 100%;
+    min-width: 180px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.media-filter-search:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(192,150,92,0.12);
+}
+.media-filter-toggle {
+    white-space: nowrap;
+}
 .stream-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
