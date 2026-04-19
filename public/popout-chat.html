@@ -9,6 +9,457 @@
     <style>
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body { display: flex; flex-direction: column; background: var(--bg-primary, #0d0d1a); }
+
+        /* ── Header ── */
+        .pc-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 10px; background: var(--bg-secondary, #1a1a2e);
+            border-bottom: 1px solid var(--border, #2a2a3e);
+            font-size: 0.82rem; font-weight: 600; flex-shrink: 0;
+        }
+        .pc-header-left { display: flex; align-items: center; gap: 6px; }
+        .pc-header-btns { display: flex; gap: 4px; }
+        .pc-hbtn {
+            background: none; border: none; color: var(--text-secondary, #aaa);
+            cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 0.8rem;
+            line-height: 1;
+        }
+        .pc-hbtn:hover, .pc-hbtn.active { background: var(--bg-tertiary, #252540); color: var(--text-primary, #e0e0e0); }
+        .pc-hbtn.active { color: var(--accent, #c0965c); }
+
+        /* ── Main layout ── */
+        .pc-body {
+            flex: 1; display: flex; overflow: hidden;
+        }
+        .pc-chat-col {
+            flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+        }
+
+        /* ── Side panels ── */
+        .pc-panel {
+            width: 200px; flex-shrink: 0; border-left: 1px solid var(--border, #2a2a3e);
+            background: var(--bg-secondary, #1a1a2e); display: none; flex-direction: column;
+            font-size: 0.78rem;
+        }
+        .pc-panel.visible { display: flex; }
+        .pc-panel-hd {
+            padding: 8px 10px 6px; font-size: 0.75rem; font-weight: 700;
+            color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.06em;
+            border-bottom: 1px solid var(--border, #2a2a3e);
+        }
+        .pc-panel-body { flex: 1; overflow-y: auto; padding: 6px 8px; }
+
+        /* Users panel */
+        .pc-user-item {
+            display: flex; align-items: center; gap: 6px; padding: 3px 0;
+            color: var(--text-secondary, #ccc);
+        }
+        .pc-user-avatar {
+            width: 20px; height: 20px; border-radius: 50%; object-fit: cover;
+            background: var(--bg-tertiary, #252540); font-size: 0.7rem; display: flex;
+            align-items: center; justify-content: center; flex-shrink: 0;
+            color: var(--text-muted, #888);
+        }
+        .pc-user-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pc-user-role { font-size: 0.65rem; color: var(--accent, #c0965c); flex-shrink: 0; }
+        .pc-user-anon { color: var(--text-muted, #888); font-style: italic; padding: 3px 0; }
+
+        /* Settings panel */
+        .pc-setting-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 5px 0; border-bottom: 1px solid var(--border, #2a2a3e);
+        }
+        .pc-setting-row:last-child { border-bottom: none; }
+        .pc-setting-label { color: var(--text-secondary, #ccc); font-size: 0.78rem; }
+        .pc-toggle-wrap { display: flex; align-items: center; }
+        .pc-toggle { width: 30px; height: 17px; background: var(--border, #444); border-radius: 9px; position: relative; cursor: pointer; transition: background 0.2s; }
+        .pc-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; background: #fff; border-radius: 50%; transition: transform 0.2s; }
+        .pc-toggle.on { background: var(--accent, #c0965c); }
+        .pc-toggle.on::after { transform: translateX(13px); }
+
+        /* ── Messages ── */
+        .pc-messages {
+            flex: 1; overflow-y: auto; padding: 6px 8px;
+            font-size: 0.83rem; line-height: 1.4;
+        }
+        .pc-msg { padding: 2px 0; word-break: break-word; }
+        .pc-msg.system { color: var(--text-muted, #888); font-style: italic; font-size: 0.75rem; }
+        .pc-msg.deleted { opacity: 0.4; text-decoration: line-through; font-size: 0.75rem; }
+        .pc-msg.error { color: var(--danger, #e05555); font-size: 0.75rem; }
+        .pc-user-name-tag { font-weight: 600; cursor: default; }
+        .pc-time { font-size: 0.68rem; color: var(--text-muted, #888); margin-right: 3px; }
+        .pc-stream-badge {
+            font-size: 0.62rem; background: rgba(192,150,92,0.2); color: var(--accent, #c0965c);
+            padding: 1px 4px; border-radius: 3px; margin-right: 4px;
+        }
+        .pc-badge-admin { font-size: 0.6rem; color: var(--accent, #c0965c); margin-right: 2px; }
+        .pc-badge-mod { font-size: 0.6rem; color: var(--success, #55e090); margin-right: 2px; }
+        .pc-emote { height: 1.2em; vertical-align: middle; }
+
+        /* ── Input ── */
+        .pc-input-area {
+            display: flex; gap: 5px; padding: 7px 8px;
+            border-top: 1px solid var(--border, #2a2a3e);
+            background: var(--bg-secondary, #1a1a2e); flex-shrink: 0;
+        }
+        .pc-input-area input {
+            flex: 1; background: var(--bg-primary, #0d0d1a);
+            border: 1px solid var(--border, #2a2a3e);
+            border-radius: 4px; color: var(--text-primary, #e0e0e0);
+            padding: 5px 9px; font-size: 0.82rem; outline: none; min-width: 0;
+        }
+        .pc-input-area input:focus { border-color: var(--accent, #c0965c); }
+        .pc-input-area button {
+            background: var(--accent, #c0965c); color: #fff; border: none;
+            border-radius: 4px; padding: 5px 11px; cursor: pointer; font-size: 0.82rem;
+            flex-shrink: 0; white-space: nowrap;
+        }
+        .pc-input-area button:hover { opacity: 0.85; }
+
+        /* Connection badge */
+        .pc-conn-dot {
+            width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted, #888); flex-shrink: 0;
+        }
+        .pc-conn-dot.connected { background: var(--success, #55e090); }
+        .pc-conn-dot.error { background: var(--danger, #e05555); }
+    </style>
+</head>
+<body>
+    <div class="pc-header">
+        <div class="pc-header-left">
+            <div class="pc-conn-dot" id="pc-conn-dot"></div>
+            <i class="fa-solid fa-comments"></i>
+            <span id="pc-title">Chat</span>
+        </div>
+        <div class="pc-header-btns">
+            <button class="pc-hbtn" id="pc-btn-users" title="Viewer list" onclick="togglePanel('users')">
+                <i class="fa-solid fa-users"></i>
+            </button>
+            <button class="pc-hbtn" id="pc-btn-settings" title="Settings" onclick="togglePanel('settings')">
+                <i class="fa-solid fa-gear"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="pc-body">
+        <div class="pc-chat-col">
+            <div class="pc-messages" id="pc-msgs"></div>
+            <div class="pc-input-area">
+                <input type="text" id="pc-input" placeholder="Send a message…" maxlength="500" autocomplete="off">
+                <button id="pc-send">Send</button>
+            </div>
+        </div>
+
+        <!-- Users panel -->
+        <div class="pc-panel" id="pc-panel-users">
+            <div class="pc-panel-hd">
+                <i class="fa-solid fa-users"></i> Viewers
+            </div>
+            <div class="pc-panel-body" id="pc-users-body">
+                <div class="pc-user-anon muted">Loading…</div>
+            </div>
+        </div>
+
+        <!-- Settings panel -->
+        <div class="pc-panel" id="pc-panel-settings">
+            <div class="pc-panel-hd">
+                <i class="fa-solid fa-gear"></i> Settings
+            </div>
+            <div class="pc-panel-body">
+                <div class="pc-setting-row">
+                    <span class="pc-setting-label">Timestamps</span>
+                    <div class="pc-toggle-wrap">
+                        <div class="pc-toggle on" id="pc-toggle-ts" onclick="toggleSetting('timestamps')"></div>
+                    </div>
+                </div>
+                <div class="pc-setting-row">
+                    <span class="pc-setting-label">Sound alerts</span>
+                    <div class="pc-toggle-wrap">
+                        <div class="pc-toggle" id="pc-toggle-sound" onclick="toggleSetting('sound')"></div>
+                    </div>
+                </div>
+                <div class="pc-setting-row">
+                    <span class="pc-setting-label">Compact mode</span>
+                    <div class="pc-toggle-wrap">
+                        <div class="pc-toggle" id="pc-toggle-compact" onclick="toggleSetting('compact')"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    'use strict';
+
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode') || 'global';
+    const streamId = params.get('stream') || null;
+    const streamTitle = params.get('title') || streamId || '';
+    const chatLabel = mode === 'stream'
+        ? ('Chat' + (streamTitle ? ' \u2014 ' + streamTitle : ''))
+        : 'Global Chat';
+
+    document.title = chatLabel + ' \u2014 HoboStreamer';
+    document.getElementById('pc-title').textContent = chatLabel;
+
+    const host = window.location.hostname;
+    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const token = localStorage.getItem('token');
+
+    const wsParams = new URLSearchParams();
+    if (token) wsParams.set('token', token);
+    if (mode === 'stream' && streamId) wsParams.set('stream', streamId);
+    const wsUrl = wsProto + '://' + host + ':' + port + '/ws/chat?' + wsParams.toString();
+
+    // ── Settings ──────────────────────────────────────────────
+    const settings = {
+        timestamps: true,
+        sound: false,
+        compact: false,
+    };
+    try {
+        const saved = JSON.parse(localStorage.getItem('popout-chat-settings') || '{}');
+        Object.assign(settings, saved);
+    } catch {}
+
+    function toggleSetting(key) {
+        settings[key] = !settings[key];
+        document.getElementById('pc-toggle-' + (key === 'timestamps' ? 'ts' : key === 'sound' ? 'sound' : 'compact'))
+            .classList.toggle('on', settings[key]);
+        try { localStorage.setItem('popout-chat-settings', JSON.stringify(settings)); } catch {}
+        if (key === 'compact') {
+            document.getElementById('pc-msgs').classList.toggle('compact', settings.compact);
+        }
+    }
+
+    // Sync toggle UI on load
+    Object.entries({ ts: 'timestamps', sound: 'sound', compact: 'compact' }).forEach(([id, key]) => {
+        const el = document.getElementById('pc-toggle-' + id);
+        if (el) el.classList.toggle('on', settings[key]);
+    });
+
+    // ── Panel toggles ─────────────────────────────────────────
+    let activePanel = null;
+
+    function togglePanel(name) {
+        const panelEl = document.getElementById('pc-panel-' + name);
+        const btnEl = document.getElementById('pc-btn-' + name);
+        if (!panelEl) return;
+        const opening = !panelEl.classList.contains('visible');
+        // Close all panels first
+        document.querySelectorAll('.pc-panel').forEach(p => p.classList.remove('visible'));
+        document.querySelectorAll('.pc-hbtn').forEach(b => b.classList.remove('active'));
+        if (opening) {
+            panelEl.classList.add('visible');
+            if (btnEl) btnEl.classList.add('active');
+            activePanel = name;
+            if (name === 'users') requestUserList();
+        } else {
+            activePanel = null;
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = String(s || '');
+        return d.innerHTML;
+    }
+
+    // Parse emotes using opener's function if available, else basic img tag parsing
+    function parseEmotes(text) {
+        if (window.opener && typeof window.opener.parseEmotes === 'function') {
+            try { return window.opener.parseEmotes(esc(text)); } catch {}
+        }
+        // Fallback: escape + replace :emote: syntax with placeholder
+        return esc(text);
+    }
+
+    // Parse emote img tags from the opener (they may be pre-rendered HTML from chat.js)
+    function renderChatContent(rawText, preRenderedHtml) {
+        if (preRenderedHtml) return preRenderedHtml;
+        return parseEmotes(rawText);
+    }
+
+    function now() {
+        return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    let _notifSound = null;
+    function playNotifSound() {
+        if (!settings.sound) return;
+        try {
+            if (!_notifSound) _notifSound = new Audio('/sounds/chat-notify.mp3');
+            _notifSound.currentTime = 0;
+            _notifSound.play().catch(() => {});
+        } catch {}
+    }
+
+    function appendMsg(html, cls) {
+        const container = document.getElementById('pc-msgs');
+        if (!container) return;
+        const el = document.createElement('div');
+        el.className = 'pc-msg' + (cls ? ' ' + cls : '');
+        el.innerHTML = html;
+        const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+        container.appendChild(el);
+        if (atBottom) container.scrollTop = container.scrollHeight;
+        while (container.children.length > 600) container.removeChild(container.firstChild);
+    }
+
+    // ── User list ─────────────────────────────────────────────
+    let ws = null;
+
+    function requestUserList() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'get-users' }));
+        }
+    }
+
+    function renderUserList(data) {
+        const body = document.getElementById('pc-users-body');
+        if (!body) return;
+        const { logged = [], anonCount = 0 } = data;
+        let html = '';
+        for (const u of logged) {
+            const roleLabel = u.role === 'admin' ? 'admin'
+                : u.role === 'global_mod' ? 'mod'
+                : u.role === 'streamer' ? 'streamer' : '';
+            const initial = (u.display_name || u.username || '?')[0].toUpperCase();
+            const avatarHtml = u.avatar_url
+                ? `<img class="pc-user-avatar" src="${esc(u.avatar_url)}" alt="" loading="lazy">`
+                : `<div class="pc-user-avatar">${initial}</div>`;
+            html += `<div class="pc-user-item">
+                ${avatarHtml}
+                <span class="pc-user-name">${esc(u.display_name || u.username)}</span>
+                ${roleLabel ? `<span class="pc-user-role">${esc(roleLabel)}</span>` : ''}
+            </div>`;
+        }
+        if (anonCount > 0) {
+            html += `<div class="pc-user-anon">${anonCount} anonymous viewer${anonCount !== 1 ? 's' : ''}</div>`;
+        }
+        if (!html) html = '<div class="pc-user-anon">No viewers yet</div>';
+        body.innerHTML = html;
+    }
+
+    // ── WebSocket ─────────────────────────────────────────────
+    let reconnectTimer = null;
+    let reconnectDelay = 2000;
+    const connDot = document.getElementById('pc-conn-dot');
+
+    function setConnStatus(status) {
+        connDot.className = 'pc-conn-dot' + (status === 'connected' ? ' connected' : status === 'error' ? ' error' : '');
+    }
+
+    function connect() {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = function() {
+            reconnectDelay = 2000;
+            setConnStatus('connected');
+            ws.send(JSON.stringify({
+                type: 'join',
+                streamId: mode === 'stream' ? streamId : undefined,
+                token: token || undefined
+            }));
+        };
+
+        ws.onmessage = function(e) {
+            let msg;
+            try { msg = JSON.parse(e.data); } catch { return; }
+
+            if (msg.type === 'chat') {
+                const roleBadge = msg.role === 'admin'
+                    ? '<i class="fa-solid fa-shield pc-badge-admin" title="Admin"></i>'
+                    : msg.role === 'global_mod'
+                    ? '<i class="fa-solid fa-shield-halved pc-badge-mod" title="Mod"></i>'
+                    : '';
+                const nameColor = esc(msg.profile_color || '#999');
+                const tsHtml = settings.timestamps
+                    ? `<span class="pc-time">${now()}</span> ` : '';
+                const badgeHtml = msg.stream_channel
+                    ? `<span class="pc-stream-badge">${esc(msg.stream_channel)}</span> ` : '';
+                const contentHtml = renderChatContent(msg.message, null);
+                appendMsg(
+                    tsHtml + badgeHtml + roleBadge +
+                    `<span class="pc-user-name-tag" style="color:${nameColor}">${esc(msg.username)}</span>: ` +
+                    contentHtml
+                );
+                playNotifSound();
+                // Refresh user list if it's open
+                if (activePanel === 'users') requestUserList();
+            } else if (msg.type === 'system') {
+                const tsHtml = settings.timestamps
+                    ? `<span class="pc-time">${now()}</span> ` : '';
+                appendMsg(tsHtml + esc(msg.message), 'system');
+            } else if (msg.type === 'error') {
+                appendMsg(esc(msg.message), 'error');
+            } else if (msg.type === 'delete-message') {
+                const el = document.querySelector(`.pc-msg[data-msgid="${esc(msg.messageId)}"]`);
+                if (el) el.classList.add('deleted');
+            } else if (msg.type === 'users-list') {
+                renderUserList(msg.users || { logged: [], anonCount: 0 });
+            } else if (msg.type === 'auth') {
+                // Authenticated — optionally request user list now
+                if (activePanel === 'users') requestUserList();
+            }
+        };
+
+        ws.onclose = function() {
+            setConnStatus('');
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(function() {
+                reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+                connect();
+            }, reconnectDelay);
+        };
+
+        ws.onerror = function() { setConnStatus('error'); };
+    }
+
+    connect();
+
+    // ── Input ─────────────────────────────────────────────────
+    var input = document.getElementById('pc-input');
+    var sendBtn = document.getElementById('pc-send');
+
+    function doSend() {
+        var text = input.value.trim();
+        if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({
+            type: 'chat',
+            message: text,
+            streamId: mode === 'stream' ? streamId : undefined
+        }));
+        input.value = '';
+        input.focus();
+    }
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') doSend(); });
+    sendBtn.addEventListener('click', doSend);
+    input.focus();
+
+    // ── Compact mode ──────────────────────────────────────────
+    if (settings.compact) document.getElementById('pc-msgs').classList.add('compact');
+
+    // ── Inherit theme from opener ─────────────────────────────
+    if (window.opener) {
+        try {
+            var openerStyle = window.opener.document.documentElement.style;
+            var cssVars = ['--bg-primary', '--bg-secondary', '--bg-tertiary', '--border',
+                           '--text-primary', '--text-secondary', '--text-muted', '--accent',
+                           '--danger', '--success'];
+            cssVars.forEach(function(v) {
+                var val = openerStyle.getPropertyValue(v);
+                if (val) document.documentElement.style.setProperty(v, val);
+            });
+        } catch {}
+    }
+    </script>
+</body>
+</html>
+        html, body { height: 100%; margin: 0; overflow: hidden; }
+        body { display: flex; flex-direction: column; background: var(--bg-primary, #0d0d1a); }
         .popout-header {
             display: flex; align-items: center; justify-content: space-between;
             padding: 8px 12px; background: var(--bg-secondary, #1a1a2e);

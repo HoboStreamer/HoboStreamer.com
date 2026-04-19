@@ -375,9 +375,12 @@ function _wsRenderPanel() {
                                     <i class="fa-solid fa-microphone"></i> Microphone
                                 </label>
                                 <div id="bc-ws-screen-mic-device" class="bc-ws-screen-device-inline" style="display:none">
-                                    <select id="bc-ws-screen-mic-select" class="form-input form-input-sm" style="max-width:260px">
-                                        <option value="default">Default Microphone</option>
-                                    </select>
+                                    <div style="display:flex;gap:4px;align-items:center">
+                                        <select id="bc-ws-screen-mic-select" class="form-input form-input-sm" style="max-width:240px;flex:1">
+                                            <option value="default">Default Microphone</option>
+                                        </select>
+                                        <button type="button" class="btn btn-small btn-ghost" title="Refresh device list" onclick="refreshDeviceLists()" style="flex-shrink:0;padding:4px 7px"><i class="fa-solid fa-rotate"></i></button>
+                                    </div>
                                 </div>
                                 <div id="bc-ws-screen-mic-perm" class="bc-ws-screen-perm-inline" style="display:none">
                                     <button class="btn btn-small btn-outline" onclick="_wsRequestMicPermission()">
@@ -409,9 +412,12 @@ function _wsRenderPanel() {
                                 <div id="bc-ws-screen-cam-device" class="bc-ws-screen-device-inline" style="display:none">
                                     <div class="form-group" style="margin:0">
                                         <label style="font-size:0.78rem">Camera</label>
-                                        <select id="bc-ws-screen-cam-select" class="form-input form-input-sm" style="max-width:260px">
-                                            <option value="default">Default Camera</option>
-                                        </select>
+                                        <div style="display:flex;gap:4px;align-items:center">
+                                            <select id="bc-ws-screen-cam-select" class="form-input form-input-sm" style="max-width:240px;flex:1">
+                                                <option value="default">Default Camera</option>
+                                            </select>
+                                            <button type="button" class="btn btn-small btn-ghost" title="Refresh device list" onclick="refreshDeviceLists()" style="flex-shrink:0;padding:4px 7px"><i class="fa-solid fa-rotate"></i></button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -438,7 +444,7 @@ function _wsRenderPanel() {
                             </div>
                         </div>
 
-                        <details class="bc-ws-screen-quality">
+                        <details class="bc-ws-quality bc-ws-screen-quality">
                             <summary><i class="fa-solid fa-film"></i> Screen Share Quality</summary>
                             <div class="bc-ws-quality-inner bc-ws-row">
                                 <div class="form-group" style="margin:0;flex:1">
@@ -543,9 +549,12 @@ function _wsRenderPanel() {
                         <div class="bc-ws-device-row">
                             <div class="form-group" style="margin:0;flex:1" id="bc-ws-camera-group">
                                 <label style="font-size:0.82rem"><i class="fa-solid fa-camera"></i> Camera</label>
-                                <select id="bc-create-camera" class="form-input form-input-sm">
-                                    <option value="default">Default</option>
-                                </select>
+                                <div style="display:flex;gap:4px;align-items:center">
+                                    <select id="bc-create-camera" class="form-input form-input-sm" style="flex:1">
+                                        <option value="default">Default</option>
+                                    </select>
+                                    <button type="button" class="btn btn-small btn-ghost" title="Refresh device list" onclick="refreshDeviceLists()" style="flex-shrink:0;padding:4px 7px"><i class="fa-solid fa-rotate"></i></button>
+                                </div>
                             </div>
                             <div class="form-group" style="margin:0;flex:1" id="bc-ws-audio-group">
                                 <label style="font-size:0.82rem"><i class="fa-solid fa-microphone"></i> Microphone</label>

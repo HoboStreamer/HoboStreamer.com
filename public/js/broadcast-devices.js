@@ -5,6 +5,74 @@
    ─────────────────────────────────────────────────────────────── */
 
 /* ── Device Enumeration ──────────────────────────────────────── */
+/**
+ * Refresh all device lists without requesting new permissions.
+ * Useful after the user plugs in a new device or changes system defaults.
+ * Call after navigator.mediaDevices.enumerateDevices() via the refresh button.
+ */
+async function refreshDeviceLists() {
+    try {
+        // Try to get labels — if we already have permission, this will work without prompting.
+        // If we don't have permission, we'll get unlabeled devices but still refresh the lists.
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        _populateCreateDeviceDropdowns(devices);
+        // Also refresh the settings panel selects
+        const camSelect = document.getElementById('bc-forceCamera');
+        const audioSelect = document.getElementById('bc-forceAudio');
+        if (camSelect) {
+            const prev = camSelect.value;
+            camSelect.innerHTML = '<option value="default">Default</option>';
+            devices.filter(d => d.kind === 'videoinput').forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId;
+                opt.textContent = d.label || `Camera ${d.deviceId.slice(0, 8)}`;
+                camSelect.appendChild(opt);
+            });
+            _setSelectValueIfPresent(camSelect, prev);
+        }
+        if (audioSelect) {
+            const prev = audioSelect.value;
+            audioSelect.innerHTML = '<option value="default">Default</option>';
+            devices.filter(d => d.kind === 'audioinput').forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId;
+                opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
+                audioSelect.appendChild(opt);
+            });
+            _setSelectValueIfPresent(audioSelect, prev);
+        }
+        // Refresh screen share device selects too
+        const screenMicSelect = document.getElementById('bc-ws-screen-mic-select');
+        if (screenMicSelect) {
+            const prev = screenMicSelect.value;
+            screenMicSelect.innerHTML = '<option value="default">Default Microphone</option>';
+            devices.filter(d => d.kind === 'audioinput').forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId;
+                opt.textContent = d.label || `Mic ${d.deviceId.slice(0, 8)}`;
+                screenMicSelect.appendChild(opt);
+            });
+            _setSelectValueIfPresent(screenMicSelect, prev);
+        }
+        const screenCamSelect = document.getElementById('bc-ws-screen-cam-select');
+        if (screenCamSelect) {
+            const prev = screenCamSelect.value;
+            screenCamSelect.innerHTML = '<option value="default">Default Camera</option>';
+            devices.filter(d => d.kind === 'videoinput').forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId;
+                opt.textContent = d.label || `Camera ${d.deviceId.slice(0, 8)}`;
+                screenCamSelect.appendChild(opt);
+            });
+            _setSelectValueIfPresent(screenCamSelect, prev);
+        }
+        if (typeof toast === 'function') toast('Device list refreshed', 'success');
+    } catch (err) {
+        console.warn('[Broadcast] refreshDeviceLists failed:', err.message);
+        if (typeof toast === 'function') toast('Could not refresh devices: ' + err.message, 'error');
+    }
+}
+
 async function populateDeviceLists() {
     try {
         // Try to get a temp stream for permission/label enumeration.

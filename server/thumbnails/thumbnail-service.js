@@ -462,6 +462,146 @@ function generateJSMPEGThumbnail(streamId, videoPort) {
     });
 }
 
+// ── Generate Live Thumbnail from WebRTC/WHIP/Browser Stream (server-side via SFU) ──
+/**
+ * Capture a thumbnail from a live WebRTC/WHIP/browser stream by creating
+ * a short-lived PlainRTP consumer from the SFU video producer and piping
+ * the RTP data through ffmpeg to extract a single JPEG frame.
+ *
+ * @param {number} streamId – Stream DB id
+ * @returns {Promise<string|null>} The thumbnail URL, or null on failure
+ */
+function generateWebRTCThumbnail(streamId) {
+    return new Promise(async (resolve) => {
+        if (!shouldRefreshLiveThumbnail(streamId, LIVE_THUMB_MIN_INTERVAL_MS)) {
+            return resolve(getCurrentLiveThumbnailUrl(streamId));
+        }
+
+        const jobKey = `webrtc:${streamId}`;
+        if (activeLiveThumbnailJobs.has(jobKey)) {
+            return resolve(getCurrentLiveThumbnailUrl(streamId));
+        }
+        activeLiveThumbnailJobs.add(jobKey);
+
+        let webrtcSFU;
+        try {
+            webrtcSFU = require('../streaming/webrtc-sfu');
+        } catch (err) {
+            activeLiveThumbnailJobs.delete(jobKey);
+            return resolve(null);
+        }
+
+        const roomId = `stream-${streamId}`;
+        let videoProducer;
+        try {
+            videoProducer = await webrtcSFU.waitForProducer(roomId, 'video', 5000);
+        } catch {
+            // No video producer found within timeout — silently skip thumbnail
+            activeLiveThumbnailJobs.delete(jobKey);
+            return resolve(null);
+        }
+
+        // Allocate a local UDP port for RTP (use a range distinct from recorder.js)
+        const rtpPort = 26100 + (streamId % 100) * 2;
+        const rtcpPort = rtpPort + 1;
+
+        let consumer;
+        try {
+            consumer = await webrtcSFU.createPlainConsumer(
+                roomId, videoProducer.id, '127.0.0.1', rtpPort, rtcpPort
+            );
+        } catch (err) {
+            console.warn(`[Thumbnails] WebRTC thumbnail: PlainRTP consumer failed for stream ${streamId}:`, err.message);
+            activeLiveThumbnailJobs.delete(jobKey);
+            return resolve(null);
+        }
+
+        const vPT = consumer.payloadType;
+        const mimeType = consumer.mimeType || 'video/VP8';
+        const codecName = mimeType.split('/')[1];
+        const clockRate = consumer.clockRate || 90000;
+        const sdpLines = [
+            'v=0',
+            'o=- 0 0 IN IP4 127.0.0.1',
+            's=HoboStreamer Thumbnail',
+            'c=IN IP4 127.0.0.1',
+            't=0 0',
+            `m=video ${rtpPort} RTP/AVP ${vPT}`,
+            `a=rtpmap:${vPT} ${codecName}/${clockRate}`,
+            'a=recvonly',
+            '',
+        ];
+        if (consumer.ssrc) sdpLines.splice(-1, 0, `a=ssrc:${consumer.ssrc} cname:thumb-video`);
+        const sdpContent = sdpLines.join('\r\n');
+        const sdpPath = path.join(require('os').tmpdir(), `hobo-thumb-${streamId}-${Date.now()}.sdp`);
+
+        try {
+            fs.writeFileSync(sdpPath, sdpContent, 'utf8');
+        } catch (err) {
+            webrtcSFU.closePlainConsumer(roomId, consumer.transportId);
+            activeLiveThumbnailJobs.delete(jobKey);
+            return resolve(null);
+        }
+
+        const filename = `stream-${streamId}-${Date.now()}.jpg`;
+        const outPath = path.join(THUMB_DIR, filename);
+
+        const ffmpegArgs = [
+            '-y',
+            '-protocol_whitelist', 'file,rtp,udp',
+            '-thread_queue_size', '512',
+            '-analyzeduration', '3000000',
+            '-probesize', '1000000',
+            '-use_wallclock_as_timestamps', '1',
+            '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
+            '-err_detect', 'ignore_err',
+            '-i', sdpPath,
+            '-vframes', '1',
+            '-vf', `scale=${THUMB_WIDTH}:-1`,
+            '-q:v', String(THUMB_QUALITY),
+            outPath,
+        ];
+
+        let ff;
+        try {
+            ff = spawn('ffmpeg', ffmpegArgs, { stdio: 'ignore' });
+        } catch {
+            webrtcSFU.closePlainConsumer(roomId, consumer.transportId);
+            try { fs.unlinkSync(sdpPath); } catch {}
+            activeLiveThumbnailJobs.delete(jobKey);
+            return resolve(null);
+        }
+
+        // Kill after 12s to avoid stalls
+        const killTimer = setTimeout(() => {
+            try { ff.kill('SIGKILL'); } catch {}
+        }, 12000);
+
+        ff.on('close', (code) => {
+            clearTimeout(killTimer);
+            activeLiveThumbnailJobs.delete(jobKey);
+            webrtcSFU.closePlainConsumer(roomId, consumer.transportId);
+            try { fs.unlinkSync(sdpPath); } catch {}
+
+            if (code === 0 && fs.existsSync(outPath)) {
+                const thumbUrl = `/api/thumbnails/${filename}`;
+                db.run('UPDATE streams SET thumbnail_url = ? WHERE id = ?', [thumbUrl, streamId]);
+                resolve(thumbUrl);
+            } else {
+                if (fs.existsSync(outPath)) { try { fs.unlinkSync(outPath); } catch {} }
+                resolve(null);
+            }
+        });
+        ff.on('error', () => {
+            clearTimeout(killTimer);
+            activeLiveThumbnailJobs.delete(jobKey);
+            webrtcSFU.closePlainConsumer(roomId, consumer.transportId);
+            try { fs.unlinkSync(sdpPath); } catch {}
+            resolve(null);
+        });
+    });
+}
+
 // ── Cleanup Old Live Thumbnails ──────────────────────────────
 /**
  * Remove live-stream thumbnails older than `maxAgeMs` (default 1 hour).
@@ -499,6 +639,7 @@ module.exports = {
     generateClipThumbnail,
     generateLiveStreamThumbnail,
     generateJSMPEGThumbnail,
+    generateWebRTCThumbnail,
     saveLiveThumbnail,
     serveThumbnail,
     shouldRefreshLiveThumbnail,

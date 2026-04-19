@@ -994,6 +994,20 @@ async function start() {
                     thumbnailService.generateJSMPEGThumbnail(js.id, channelInfo.videoPort).catch(() => {});
                 }
             }
+
+            // Generate server-side thumbnails for WebRTC/WHIP/browser streams via PlainRTP consumer.
+            // The browser client also periodically POSTs canvas-capture thumbnails via the saveLiveThumbnail
+            // endpoint; this server-side path covers WHIP (OBS) and cases where the browser hasn't sent one.
+            if (typeof thumbnailService.generateWebRTCThumbnail === 'function') {
+                const webrtcStreams = db.all(
+                    `SELECT s.id FROM streams s
+                     WHERE s.is_live = 1 AND s.protocol IN ('webrtc', 'browser', 'screen', 'whip')`
+                );
+                for (const ws of webrtcStreams) {
+                    if (!thumbnailService.shouldRefreshLiveThumbnail(ws.id, 120000)) continue;
+                    thumbnailService.generateWebRTCThumbnail(ws.id).catch(() => {});
+                }
+            }
         } catch (err) {
             console.error('[Heartbeat] Cleanup error:', err.message);
         } finally {
