@@ -1459,6 +1459,7 @@ function showBrowserBroadcast() {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
+    syncBroadcastLiveButtonVisibility();
 }
 
 let _rtmpStatusPollTimer = null;
@@ -1579,6 +1580,7 @@ async function showRTMPInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
+    syncBroadcastLiveButtonVisibility();
     loadLiveControlsStatus(stream.id).catch(() => {});
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
@@ -1714,6 +1716,7 @@ async function showJSMPEGInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
+    syncBroadcastLiveButtonVisibility();
     loadLiveControlsStatus(stream.id).catch(() => {});
     try {
         const data = await api(`/streams/${stream.id}/endpoint`);
@@ -1766,6 +1769,7 @@ async function showWHIPInstructions(stream) {
     const ib = document.getElementById('bc-info-bar'); if (ib) ib.style.display = '';
     _startRsViewerPoll();
     _startRestreamViewerPoll();
+    syncBroadcastLiveButtonVisibility();
     loadLiveControlsStatus(stream.id).catch(() => {});
     const isLocalHost = /^(localhost|127\.|\[::1\])$/.test(location.hostname);
     let whipBaseUrl = null;
@@ -2700,6 +2704,11 @@ async function startMediaCapture(streamId, opts = {}) {
             ss.localStream = combined;
         }
     } else {
+        // Hoist these so post-capture verification below can see them regardless of
+        // which inner branch ran (micOnly / cameraOnly / standard).
+        let hasExplicitCamera = forceCamera && forceCamera !== 'default';
+        let hasExplicitAudio  = forceAudio  && forceAudio  !== 'default' && forceAudio !== null;
+
         // ── Mic-only mode: audio only, generate a placeholder video canvas ──
         if (s.micOnly) {
             audioConstraints = buildAudioConstraints(s, forceAudio);
@@ -2736,7 +2745,6 @@ async function startMediaCapture(streamId, opts = {}) {
                 height: { ideal: res.h },
                 frameRate: { ideal: getBroadcastFrameRate() },
             };
-            const hasExplicitCamera = forceCamera && forceCamera !== 'default';
             if (hasExplicitCamera) videoConstraints.deviceId = { exact: forceCamera };
             try {
                 ss.localStream = await _getUserMediaWithTimeout({ video: videoConstraints, audio: false });
@@ -2757,9 +2765,7 @@ async function startMediaCapture(streamId, opts = {}) {
         };
         // Use exact deviceId for explicit selections so Chrome must use the chosen camera.
         // On exact failure (OverconstrainedError / NotFoundError) we fall back and warn.
-        const hasExplicitCamera = forceCamera && forceCamera !== 'default';
         if (hasExplicitCamera) videoConstraints.deviceId = { exact: forceCamera };
-        const hasExplicitAudio = forceAudio && forceAudio !== 'default' && forceAudio !== null;
         audioConstraints = buildAudioConstraints(s, forceAudio); // uses exact internally
         let _captureFellBack = false;
         try {
@@ -5163,6 +5169,48 @@ function _syncScreenShareUI() {
     if (!active && camBtn) camBtn.classList.remove('bc-ctrl-btn-active');
 }
 
+/**
+ * Sync which live-control buttons are visible/enabled based on the current active
+ * stream's protocol.  Browser streams show Screen/Cam-PiP/Mic; RTMP/JSMPEG/WHIP do not.
+ */
+function syncBroadcastLiveButtonVisibility() {
+    const isBrowser = !!(getActiveStreamState()?.localStream);
+    const hasDisplayMedia = !!(navigator.mediaDevices?.getDisplayMedia);
+
+    const screenBtn = document.getElementById('bc-btn-screenshare');
+    const switchCamBtn = document.getElementById('bc-btn-switch-cam');
+
+    if (screenBtn) {
+        screenBtn.style.display = (isBrowser && hasDisplayMedia) ? '' : 'none';
+        screenBtn.title = hasDisplayMedia ? 'Toggle screen share' : 'Screen sharing not supported in this browser';
+    }
+    if (switchCamBtn) {
+        switchCamBtn.style.display = isBrowser ? '' : 'none';
+    }
+    // Mic / Cam PiP are further gated by _syncScreenShareLiveControls()
+}
+
+/**
+ * Sync which live-control buttons are visible/enabled based on the current active
+ * stream's protocol.  Browser streams show Screen/Cam-PiP/Mic; RTMP/JSMPEG/WHIP do not.
+ */
+function syncBroadcastLiveButtonVisibility() {
+    const isBrowser = !!(getActiveStreamState()?.localStream);
+    const hasDisplayMedia = !!(navigator.mediaDevices?.getDisplayMedia);
+
+    const screenBtn = document.getElementById('bc-btn-screenshare');
+    const switchCamBtn = document.getElementById('bc-btn-switch-cam');
+
+    if (screenBtn) {
+        screenBtn.style.display = (isBrowser && hasDisplayMedia) ? '' : 'none';
+        screenBtn.title = hasDisplayMedia ? 'Toggle screen share' : 'Screen sharing not supported in this browser';
+    }
+    if (switchCamBtn) {
+        switchCamBtn.style.display = isBrowser ? '' : 'none';
+    }
+    // Mic / Cam PiP are further gated by _syncScreenShareLiveControls()
+}
+
 function toggleBroadcastStats() { const el = document.getElementById('bc-stats-overlay'); if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none'; }
 
 /* ── Group Call Controls ───────────────────────────────────────── */
@@ -6220,11 +6268,13 @@ function toggleBroadcastPreview() {
 }
 
 /**
- * Open a viewer-style preview — shows what viewers actually see by
- * opening your own channel page in a popup window (real mediasoup consumer path).
+ * Open a viewer-style preview — shows what viewers actually see.
+ * Opens the active stream's direct watch URL so the user sees the right stream
+ * even if they have multiple slots.
  */
 function openViewerPreview() {
-    if (!currentUser?.username) {
+    const streamId = broadcastState.activeStreamId;
+    if (!streamId && !currentUser?.username) {
         toast('Log in to use viewer preview', 'error');
         return;
     }
@@ -6232,10 +6282,22 @@ function openViewerPreview() {
         _viewerPreviewWindow.focus();
         return;
     }
+    // Use the stream's direct URL (slug from streamData if available, else /watch/:id)
+    const ss = streamId ? getStreamState(streamId) : null;
+    const streamData = ss?.streamData || null;
+    const slug = streamData?.slug || null;
+    let url;
+    if (streamId) {
+        url = slug && currentUser?.username
+            ? `/${currentUser.username}/${slug}`
+            : `/watch/${streamId}`;
+    } else {
+        url = `/${currentUser?.username || ''}`;
+    }
     _viewerPreviewWindow = window.open(
-        `/${currentUser.username}`,
+        url,
         'viewer-preview',
-        'width=900,height=600,menubar=no,toolbar=no,location=no'
+        'width=960,height=620,menubar=no,toolbar=no,location=no'
     );
 }
 
