@@ -306,12 +306,20 @@ html, body {
     const RECONNECT_MAX = 30000;
     const EMOTE_LOAD_INTERVAL = 300000; // Refresh emotes every 5 min
 
-    // ── Parse username from URL: /obs/chat/:username ───────────
-    const pathParts = window.location.pathname.split('/');
-    const username = decodeURIComponent(pathParts[pathParts.length - 1] || '');
+    // ── Parse username (and optional slot) from URL ──────────
+    // Supported: /obs/chat/:username, /overlay/chat/:username, /overlay/chat/:username/:slot
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    let username = '';
+    let slotParam = null;
+    if (pathParts[0] === 'overlay' && pathParts[1] === 'chat') {
+        username = decodeURIComponent(pathParts[2] || '');
+        slotParam = pathParts[3] ? decodeURIComponent(pathParts[3]) : null;
+    } else if (pathParts[0] === 'obs' && pathParts[1] === 'chat') {
+        username = decodeURIComponent(pathParts[2] || '');
+    }
     if (!username) {
         document.getElementById('chat-container').innerHTML =
-            '<div class="msg system">No username specified. Use /obs/chat/yourusername</div>';
+            '<div class="msg system">No username specified. Use /overlay/chat/yourusername</div>';
         return;
     }
 
@@ -525,7 +533,7 @@ html, body {
         container.scrollTop = container.scrollHeight;
     }
 
-    // ── Resolve stream ID from username ────────────────────────
+    // ── Resolve stream ID from username (+ optional slot) ─────
     async function resolveStream() {
         setStatus('Looking up channel...');
         try {
@@ -537,14 +545,39 @@ html, body {
             const data = await resp.json();
             channelUserId = data.channel?.user_id;
 
-            if (data.stream && data.stream.id) {
-                streamId = data.stream.id;
-                return true;
-            }
+            // Collect all live streams
+            const allStreams = [];
+            if (data.stream && data.stream.id) allStreams.push(data.stream);
+            if (data.streams) allStreams.push(...data.streams);
 
-            // No live stream — try all streams
-            if (data.streams && data.streams.length > 0) {
-                streamId = data.streams[0].id;
+            if (allStreams.length > 0) {
+                if (slotParam) {
+                    // Match by managed_stream_id or slug
+                    const slotNum = parseInt(slotParam, 10);
+                    const match = allStreams.find(s =>
+                        (slotNum && s.managed_stream_id === slotNum) ||
+                        s.managed_stream_slug === slotParam
+                    );
+                    if (match) {
+                        streamId = match.id;
+                        return true;
+                    }
+                    // Slot specified but not live — try to find managed stream for slot
+                    if (data.managedStreams) {
+                        const ms = data.managedStreams.find(m =>
+                            (slotNum && m.id === slotNum) || m.slug === slotParam
+                        );
+                        if (ms) {
+                            setStatus(`${ms.title || 'Slot'} is offline — waiting...`);
+                            return false;
+                        }
+                    }
+                    setStatus('Slot not found — waiting for stream...');
+                    return false;
+                }
+
+                // No slot specified — use first live stream
+                streamId = allStreams[0].id;
                 return true;
             }
 

@@ -298,7 +298,7 @@ async function regenerateManagedStreamKey(id) {
 
 function getDashObsOverlayUrl() {
     if (!currentUser?.username) return '';
-    return `${window.location.origin}/obs/chat/${encodeURIComponent(currentUser.username)}`;
+    return `${window.location.origin}/overlay/chat/${encodeURIComponent(currentUser.username)}`;
 }
 
 function updateDashObsOverlayUrl() {

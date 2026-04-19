@@ -13,6 +13,11 @@ const config = require('../config');
 const webrtcSFU = require('./webrtc-sfu');
 const { verifyToken, resolveHoboToolsUser } = require('../auth/auth');
 const db = require('../db/database');
+const recorder = require('../vod/recorder');
+const { notifyDiscordGoLive } = require('../integrations/discord-webhook');
+
+let chatRelayService;
+try { chatRelayService = require('../integrations/chat-relay-service'); } catch {}
 
 let sdpTransform;
 try {
@@ -316,9 +321,10 @@ function buildSdpAnswer(transport, offerSdp, producersByKind) {
     const setup = getDtlsSetupAttribute(offerSdp) === 'passive' ? 'active' : 'passive';
     const mids = [];
 
+    const serverAddress = iceCandidates?.[0]?.ip || config.mediasoup.announcedIp || '127.0.0.1';
     const sdpObj = {
         version: 0,
-        origin: { username: '-', sessionId: String(Date.now()), sessionVersion: 2, netType: 'IN', ipVer: 4, address: '127.0.0.1' },
+        origin: { username: '-', sessionId: String(Date.now()), sessionVersion: 2, netType: 'IN', ipVer: 4, address: serverAddress },
         name: 'HoboStreamer',
         timing: { start: 0, stop: 0 },
         icelite: 'ice-lite',
@@ -346,10 +352,10 @@ function buildSdpAnswer(transport, offerSdp, producersByKind) {
 
         const answerMedia = {
             type: offerMedia.type,
-            port: 7,
+            port: 9,
             protocol: offerMedia.protocol || 'UDP/TLS/RTP/SAVPF',
             payloads: '',
-            connection: { ip: '127.0.0.1', version: 4 },
+            connection: { ip: '0.0.0.0', version: 4 },
             mid,
             iceUfrag: iceParameters.usernameFragment,
             icePwd: iceParameters.password,
@@ -365,7 +371,7 @@ function buildSdpAnswer(transport, offerSdp, producersByKind) {
                 const cand = {
                     foundation: c.foundation,
                     component: 1,
-                    transport: c.protocol.toLowerCase(),
+                    transport: c.protocol.toUpperCase(),
                     priority: c.priority,
                     ip: c.ip,
                     port: c.port,
@@ -416,6 +422,55 @@ function buildSdpAnswer(transport, offerSdp, producersByKind) {
 }
 
 // ── WHIP HTTP Handlers ───────────────────────────────────────
+
+/**
+ * Auto-create a live stream session for WHIP, mirroring RTMP prePublish behavior.
+ * Returns the newly created stream record, or null on failure.
+ */
+function autoCreateWhipSession(managedStream, user) {
+    try {
+        db.ensureChannel(user.id);
+        const result = db.createStream({
+            user_id: user.id,
+            managed_stream_id: managedStream.id,
+            title: managedStream.title || `${user.display_name || user.username}'s Stream`,
+            description: managedStream.description || '',
+            category: managedStream.category || 'irl',
+            protocol: 'webrtc',
+            is_nsfw: managedStream.is_nsfw || 0,
+        });
+        const streamId = result.lastInsertRowid;
+        db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
+        db.run(`INSERT INTO cameras (stream_id, camera_index, label, protocol) VALUES (?, 0, 'Main', 'webrtc')`, [streamId]);
+
+        // Apply control config
+        const channel = db.getChannelByUserId(user.id);
+        const configId = managedStream.control_config_id || (channel && channel.active_control_config_id);
+        if (configId) {
+            try { db.applyConfigToStream(configId, streamId); } catch {}
+        }
+
+        const stream = db.getStreamById(streamId);
+        console.log(`[WHIP] Auto-created live session ${streamId} for WHIP slot ${managedStream.id} (user: ${user.username})`);
+
+        // Fire-and-forget side effects
+        notifyDiscordGoLive(user, stream || { id: streamId });
+        if (chatRelayService) {
+            chatRelayService.startForStream(stream).catch(() => {});
+        }
+        setTimeout(() => {
+            const vodPolicy = db.getChannelVodRecordingPolicyByUserId(user.id);
+            if (vodPolicy.recordingEnabled) {
+                recorder.startRecording(streamId, 'webrtc', {});
+            }
+        }, 2000);
+
+        return stream;
+    } catch (err) {
+        console.error('[WHIP] Failed to auto-create session:', err.message);
+        return null;
+    }
+}
 
 /**
  * POST /whip/:streamId — WHIP offer → answer
@@ -475,9 +530,19 @@ async function handleWhipPost(req, res) {
             stream = liveSessions.find(s => s.managed_stream_id === managedStream.id);
 
             if (!stream) {
-                logWhipStage('auth_key_fail', pathParam, { reason: 'no_live_session', managed_stream_id: managedStream.id });
-                return sendWhipError(res, 409, 'stream_not_live',
-                    'No live session for this stream key — click "Go Live" in the stream manager first, then start your encoder');
+                // Auto-create session (like RTMP prePublish)
+                const user = db.getUserById(managedStream.user_id);
+                if (!user) {
+                    return sendWhipError(res, 401, 'user_not_found', 'Stream owner not found');
+                }
+                if (user.is_banned) {
+                    return sendWhipError(res, 403, 'user_banned', 'Account is banned');
+                }
+                logWhipStage('auto_create', pathParam, { managed_stream_id: managedStream.id });
+                stream = autoCreateWhipSession(managedStream, user);
+                if (!stream) {
+                    return sendWhipError(res, 500, 'session_create_failed', 'Failed to auto-create stream session');
+                }
             }
             if (stream.protocol !== 'webrtc') {
                 logWhipStage('auth_key_fail', pathParam, { reason: 'wrong_protocol', protocol: stream.protocol });
@@ -508,7 +573,12 @@ async function handleWhipPost(req, res) {
                         // Find live session for this slot owned by this user
                         const liveSessions = db.getLiveStreamsByUserId(user.id) || [];
                         stream = liveSessions.find(s => s.managed_stream_id === slotId);
-                        if (!stream) return sendWhipError(res, 409, 'stream_not_live', 'No live session for this slot');
+                        if (!stream) {
+                            // Auto-create session
+                            logWhipStage('auto_create_jwt', pathParam, { slot_id: slotId });
+                            stream = autoCreateWhipSession(managedStream, user);
+                            if (!stream) return sendWhipError(res, 500, 'session_create_failed', 'Failed to auto-create stream session');
+                        }
                         if (stream.protocol !== 'webrtc') return sendWhipError(res, 409, 'wrong_protocol', `Stream protocol is ${stream.protocol}, not webrtc`);
                         logWhipStage('auth_slot_jwt', pathParam, { user_id: userId, slot_id: slotId });
                     } else {
@@ -528,8 +598,13 @@ async function handleWhipPost(req, res) {
                 stream = liveSessions.find(s => s.managed_stream_id === slotId);
 
                 if (!stream) {
-                    return sendWhipError(res, 409, 'stream_not_live',
-                        'No live session for this slot — click "Go Live" in the stream manager first');
+                    // Auto-create session
+                    const user = db.getUserById(managedStream.user_id);
+                    if (!user) return sendWhipError(res, 401, 'user_not_found', 'Stream owner not found');
+                    if (user.is_banned) return sendWhipError(res, 403, 'user_banned', 'Account is banned');
+                    logWhipStage('auto_create', pathParam, { slot_id: slotId });
+                    stream = autoCreateWhipSession(managedStream, user);
+                    if (!stream) return sendWhipError(res, 500, 'session_create_failed', 'Failed to auto-create stream session');
                 }
                 if (stream.protocol !== 'webrtc') {
                     return sendWhipError(res, 409, 'wrong_protocol',
@@ -594,6 +669,12 @@ async function handleWhipPost(req, res) {
             return sendWhipError(res, 400, 'invalid_sdp', 'Invalid SDP offer');
         }
 
+        const offerCandidateSummary = (offerSdp.media || []).map(media => {
+            const count = Array.isArray(media.candidates) ? media.candidates.length : 0;
+            return `${media.type || 'unknown'}=${count}`;
+        }).join(', ');
+        console.log(`[WHIP] offer candidate counts for stream ${streamId}: ${offerCandidateSummary}`);
+
         const roomId = `stream-${streamId}`;
         const room = await webrtcSFU.getOrCreateRoom(roomId);
         logWhipStage('room_creation', streamId, { roomId });
@@ -608,6 +689,7 @@ async function handleWhipPost(req, res) {
             transportId: null,
             producerIds: [],
             userId,
+            createdAt: Date.now(),
         };
         sessions.set(resourceId, session);
 
@@ -750,6 +832,9 @@ async function handleWhipPost(req, res) {
                     _iceGraceTimer = null;
                     console.log(`[WHIP] ICE recovered to '${state}' for stream ${streamId} (session ${resourceId}) — grace timer canceled`);
                 }
+                // Notify broadcast server so queued viewers can be promoted to SFU
+                webrtcSFU.emit('whip-ice-connected', { streamId, roomId });
+                console.log(`[WHIP] ICE connected for stream ${streamId} — notifying broadcast server`);
             }
         });
 
@@ -775,6 +860,20 @@ function handleWhipPatch(req, res) {
     const session = sessions.get(resourceId);
     if (!session) return sendWhipError(res, 404, 'session_not_found', 'Session not found');
 
+    const payload = req.body;
+    let patchCandidates = 0;
+    if (typeof payload === 'string' && payload.trim().length > 0) {
+        try {
+            const parsed = sdpTransform.parse(payload);
+            patchCandidates = Array.isArray(parsed.media)
+                ? parsed.media.reduce((sum, media) => sum + (Array.isArray(media.candidates) ? media.candidates.length : 0), 0)
+                : 0;
+        } catch (err) {
+            console.warn(`[WHIP] Invalid trickle ICE patch for session ${resourceId}:`, err.message);
+        }
+    }
+
+    logWhipStage('patch', session.streamId, { resourceId, candidates: patchCandidates });
     // Mediasoup handles ICE internally — acknowledge
     res.status(204).end();
 }
