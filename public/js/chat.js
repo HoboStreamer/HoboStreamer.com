@@ -4524,7 +4524,13 @@ function popoutChat(mode = 'global', streamId = null) {
     const left = window.screenX + window.outerWidth - w - 20;
     const top = window.screenY + 80;
 
-    const popup = window.open('', `hobo_chat_${key}`,
+    // Build popout URL — loads main page with #chat-popout route
+    const params = new URLSearchParams();
+    params.set('popout', '1');
+    params.set('mode', mode);
+    if (streamId) params.set('stream', streamId);
+
+    const popup = window.open(`/popout-chat.html?${params.toString()}`, `hobo_chat_${key}`,
         `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=no`);
     if (!popup) {
         toast('Popup blocked — please allow popups for this site', 'error');
@@ -4533,168 +4539,10 @@ function popoutChat(mode = 'global', streamId = null) {
 
     _popoutChatWindows.set(key, popup);
 
-    // Build the popout HTML
-    const doc = popup.document;
-    doc.open();
-    doc.write(`<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>${title}</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-primary, #0d0d1a);
-            color: var(--text-primary, #e0e0e0);
-            display: flex; flex-direction: column; height: 100vh;
-            --bg-primary: #0d0d1a; --bg-secondary: #1a1a2e; --border: #2a2a3e;
-            --text-primary: #e0e0e0; --text-muted: #888; --accent: #c0965c;
-            --danger: #e74c3c; --success: #2ecc71; --radius-sm: 4px;
-        }
-        .popout-header {
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 8px 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);
-            font-size: 0.85rem; font-weight: 600; flex-shrink: 0;
-        }
-        .popout-header i { margin-right: 6px; }
-        .popout-messages {
-            flex: 1; overflow-y: auto; padding: 8px;
-            font-size: 0.85rem; line-height: 1.4;
-        }
-        .popout-messages .chat-msg { padding: 2px 0; word-break: break-word; }
-        .popout-messages .chat-msg.system { color: var(--text-muted); font-style: italic; font-size: 0.8rem; }
-        .popout-messages .chat-user { font-weight: 600; cursor: default; }
-        .popout-messages .chat-time-inline { font-size: 0.7rem; color: var(--text-muted); margin-right: 4px; }
-        .popout-messages .chat-stream-badge {
-            font-size: 0.65rem; background: rgba(192,150,92,0.2); color: var(--accent);
-            padding: 1px 5px; border-radius: 3px; margin-right: 4px; cursor: pointer;
-        }
-        .popout-messages .chat-avatar, .popout-messages .chat-avatar-letter { display: none; }
-        .popout-messages .chat-badge { display: none; }
-        .popout-input-area {
-            display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--border);
-            background: var(--bg-secondary); flex-shrink: 0;
-        }
-        .popout-input-area input {
-            flex: 1; background: var(--bg-primary); border: 1px solid var(--border);
-            border-radius: var(--radius-sm); color: var(--text-primary);
-            padding: 6px 10px; font-size: 0.85rem; outline: none;
-        }
-        .popout-input-area input:focus { border-color: var(--accent); }
-        .popout-input-area button {
-            background: var(--accent); color: #fff; border: none;
-            border-radius: var(--radius-sm); padding: 6px 12px;
-            cursor: pointer; font-size: 0.85rem;
-        }
-        .popout-input-area button:hover { opacity: 0.85; }
-    </style>
-</head>
-<body>
-    <div class="popout-header">
-        <span><i class="fa-solid fa-comments"></i> ${title}</span>
-    </div>
-    <div class="popout-messages" id="popout-msgs"></div>
-    <div class="popout-input-area">
-        <input type="text" id="popout-input" placeholder="Send a message..." maxlength="500" autocomplete="off">
-        <button id="popout-send">Send</button>
-    </div>
-</body>
-</html>`);
-    doc.close();
-
-    // Set up the popout's WS connection
-    const host = window.location.hostname;
-    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const token = localStorage.getItem('token');
-    const params = new URLSearchParams();
-    if (token) params.set('token', token);
-    if (mode === 'stream' && streamId) params.set('stream', streamId);
-    const wsUrl = `${protocol}://${host}:${port}/ws/chat?${params.toString()}`;
-
-    let popupWs = null;
-    let popupReconnectTimer = null;
-    let popupReconnectDelay = 2000;
-
-    function esc(s) {
-        const d = doc.createElement('div');
-        d.textContent = String(s || '');
-        return d.innerHTML;
-    }
-
-    function appendMsg(html) {
-        const container = doc.getElementById('popout-msgs');
-        if (!container) return;
-        const el = doc.createElement('div');
-        el.className = 'chat-msg';
-        el.innerHTML = html;
-        container.appendChild(el);
-        container.scrollTop = container.scrollHeight;
-        // Trim old messages
-        while (container.children.length > 500) container.removeChild(container.firstChild);
-    }
-
-    function connectPopout() {
-        popupWs = new WebSocket(wsUrl);
-        popupWs.onopen = () => {
-            popupReconnectDelay = 2000;
-            popupWs.send(JSON.stringify({ type: 'join', streamId: mode === 'stream' ? streamId : undefined, token: token || undefined }));
-            appendMsg('<div class="chat-msg system">Connected</div>');
-        };
-        popupWs.onmessage = (e) => {
-            try {
-                const msg = JSON.parse(e.data);
-                if (msg.type === 'chat') {
-                    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    const nameColor = msg.profile_color || '#999';
-                    let badge = '';
-                    if (msg.stream_channel) badge = `<span class="chat-stream-badge">${esc(msg.stream_channel)}</span> `;
-                    appendMsg(`<span class="chat-time-inline">${ts}</span> ${badge}<span class="chat-user" style="color:${esc(nameColor)}">${esc(msg.username)}</span>: ${(typeof parseEmotes === 'function') ? parseEmotes(msg.message) : esc(msg.message)}`);
-                } else if (msg.type === 'system') {
-                    appendMsg(`<span class="chat-msg system">${esc(msg.message)}</span>`);
-                }
-            } catch {}
-        };
-        popupWs.onclose = () => {
-            if (popup.closed) return;
-            appendMsg('<span class="chat-msg system">Disconnected — reconnecting...</span>');
-            popupReconnectTimer = setTimeout(() => {
-                if (!popup.closed) {
-                    popupReconnectDelay = Math.min(popupReconnectDelay * 1.5, 30000);
-                    connectPopout();
-                }
-            }, popupReconnectDelay);
-        };
-        popupWs.onerror = () => {};
-    }
-
-    connectPopout();
-
-    // Wire up input
-    popup.addEventListener('load', () => {
-        const input = doc.getElementById('popout-input');
-        const sendBtn = doc.getElementById('popout-send');
-        if (input && sendBtn) {
-            const doSend = () => {
-                const text = input.value.trim();
-                if (!text || !popupWs || popupWs.readyState !== WebSocket.OPEN) return;
-                popupWs.send(JSON.stringify({ type: 'chat', message: text, streamId: mode === 'stream' ? streamId : undefined }));
-                input.value = '';
-                input.focus();
-            };
-            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
-            sendBtn.addEventListener('click', doSend);
-            input.focus();
-        }
-    });
-
     // Clean up on popup close
     const checkClosed = setInterval(() => {
         if (popup.closed) {
             clearInterval(checkClosed);
-            if (popupReconnectTimer) clearTimeout(popupReconnectTimer);
-            if (popupWs) { try { popupWs.close(); } catch {} }
             _popoutChatWindows.delete(key);
         }
     }, 1000);

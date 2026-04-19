@@ -643,6 +643,11 @@ class BroadcastServer extends EventEmitter {
                 roomId, `sfu-${client.peerId}`, msg.transportId, msg.kind, msg.rtpParameters
             );
             this.safeSend(ws, { type: 'sfu-produced', id: result.id, kind: msg.kind });
+
+            // Promote to streamer role on first real feed ingest
+            if (client.userId) {
+                db.ensureStreamerRoleOnFeed(client.userId);
+            }
         } catch (err) {
             console.error('[Broadcast] SFU produce error:', err.message);
             this.safeSend(ws, { type: 'sfu-error', error: err.message });

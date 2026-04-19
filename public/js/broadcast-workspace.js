@@ -70,7 +70,7 @@ function _wsRenderSidebar() {
     list.innerHTML = _wsState.managedStreams.map(ms => {
         const isSelected = ms.id === _wsState.selectedId;
         const isLive = _wsIsManagedStreamLive(ms.id);
-        const proto = _wsMethodLabel(ms.protocol);
+        const proto = _wsMethodLabel(ms.streaming_method || ms.protocol);
         return `
             <div class="bc-ws-item${isSelected ? ' selected' : ''}" onclick="wsSelectStream(${ms.id})">
                 <div class="bc-ws-item-status${isLive ? ' live' : ''}"></div>
@@ -90,11 +90,15 @@ function _wsRenderSidebar() {
 }
 
 /** Human-readable method label for sidebar/panel */
-function _wsMethodLabel(protocol) {
-    if (protocol === 'webrtc') return 'Browser / WHIP';
-    if (protocol === 'rtmp') return 'RTMP';
-    if (protocol === 'jsmpeg') return 'CLI / FFmpeg';
-    return (protocol || 'webrtc').toUpperCase();
+function _wsMethodLabel(method) {
+    if (method === 'browser') return 'Browser';
+    if (method === 'whip') return 'WHIP';
+    if (method === 'rtmp') return 'RTMP';
+    if (method === 'cli') return 'CLI / FFmpeg';
+    // Legacy protocol fallback
+    if (method === 'webrtc') return 'Browser';
+    if (method === 'jsmpeg') return 'CLI / FFmpeg';
+    return (method || 'browser').toUpperCase();
 }
 
 function _wsIsManagedStreamLive(managedStreamId) {
@@ -175,7 +179,7 @@ function _wsRenderPanel() {
 
     const p = _wsState.profile;
     const isLive = _wsIsManagedStreamLive(ms.id);
-    const method = ms.protocol || 'webrtc';
+    const method = ms.streaming_method || 'browser';
     const streamKey = _wsState.streamKey || '';
 
     // Class C: find active session
@@ -191,8 +195,8 @@ function _wsRenderPanel() {
         }
     }
 
-    // Determine browser submode from profile
-    const browserMode = p.browserMode || 'camera';
+    // Determine browser submode from managed stream or profile
+    const browserMode = ms.browser_mode || p.browserMode || 'camera';
 
     panel.innerHTML = `
         <!-- ── Panel header ── -->
@@ -299,8 +303,8 @@ function _wsRenderPanel() {
                 </div>
             </div>
 
-            <!-- ═══ Browser Sub-mode (only when method is webrtc + browser submode) ═══ -->
-            <div id="bc-ws-browser-submodes" style="${method === 'webrtc' ? '' : 'display:none'}">
+            <!-- ═══ Browser Sub-mode (only when method is browser) ═══ -->
+            <div id="bc-ws-browser-submodes" style="${method === 'browser' ? '' : 'display:none'}">
                 <div class="form-group">
                     <label>Browser Capture Mode</label>
                     <div class="bc-method-picker bc-method-picker-sm" id="bc-ws-browser-mode-picker">
@@ -309,7 +313,7 @@ function _wsRenderPanel() {
                 </div>
 
                 <!-- Microphone Only: image upload -->
-                <div id="bc-ws-mic-only-opts" style="${browserMode === 'miconly' ? '' : 'display:none'}">
+                <div id="bc-ws-mic-only-opts" style="${browserMode === 'mic_only' ? '' : 'display:none'}">
                     <div class="form-group">
                         <label><i class="fa-solid fa-image"></i> Placeholder Image</label>
                         <p class="muted" style="font-size:0.82rem;margin-bottom:6px">
@@ -471,7 +475,60 @@ function _wsRenderPanel() {
             <select id="bc-screen-audio" style="display:none"><option value="default">Default</option></select>
             <select id="bc-screen-camera" style="display:none"><option value="default">Default</option></select>
 
-            ${method === 'webrtc' ? `
+            <!-- ═══ Slot-Level Settings ═══ -->
+            <details class="bc-ws-slot-settings">
+                <summary><i class="fa-solid fa-gear"></i> Stream Slot Settings</summary>
+                <div class="bc-ws-slot-settings-inner">
+                    <div class="bc-ws-row">
+                        <div class="form-group" style="flex:1">
+                            <label>Default VOD Visibility</label>
+                            <select id="bc-ws-vod-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
+                                <option value="public" ${(ms.default_vod_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
+                                <option value="private" ${ms.default_vod_visibility === 'private' ? 'selected' : ''}>Private</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex:1">
+                            <label>Default Clip Visibility</label>
+                            <select id="bc-ws-clip-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
+                                <option value="public" ${(ms.default_clip_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
+                                <option value="private" ${ms.default_clip_visibility === 'private' ? 'selected' : ''}>Private</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="bc-toggle-label">
+                            <input type="checkbox" id="bc-ws-vod-recording" ${ms.slot_vod_recording_enabled !== 0 ? 'checked' : ''}
+                                onchange="_wsSlotSettingChanged()">
+                            <i class="fa-solid fa-circle-dot"></i> VOD Recording Enabled
+                        </label>
+                    </div>
+                    <div class="bc-ws-row">
+                        <div class="form-group" style="flex:2">
+                            <label><i class="fa-solid fa-cloud-sun"></i> Weather Zip/Location</label>
+                            <input type="text" id="bc-ws-weather-zip" class="form-input form-input-sm"
+                                value="${esc(ms.weather_zip || '')}" placeholder="e.g. 90210"
+                                maxlength="20" oninput="_wsSlotSettingChanged()">
+                        </div>
+                        <div class="form-group" style="flex:1">
+                            <label>Detail Level</label>
+                            <select id="bc-ws-weather-detail" class="form-input" onchange="_wsSlotSettingChanged()">
+                                <option value="basic" ${(ms.weather_detail || 'basic') === 'basic' ? 'selected' : ''}>Basic</option>
+                                <option value="detailed" ${ms.weather_detail === 'detailed' ? 'selected' : ''}>Detailed</option>
+                                <option value="off" ${ms.weather_detail === 'off' ? 'selected' : ''}>Off</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="bc-toggle-label">
+                            <input type="checkbox" id="bc-ws-weather-location" ${ms.weather_show_location ? 'checked' : ''}
+                                onchange="_wsSlotSettingChanged()">
+                            <i class="fa-solid fa-map-marker-alt"></i> Show Location on Stream
+                        </label>
+                    </div>
+                </div>
+            </details>
+
+            ${method === 'browser' ? `
             <button class="btn btn-primary btn-lg bc-ws-golive-btn"
                 onclick="goLiveFromWorkspace()" id="bc-ws-golive-btn">
                 <i class="fa-solid fa-tower-broadcast"></i> Go Live
@@ -507,9 +564,10 @@ function _wsRenderPanel() {
 
 function _wsRenderMethodCards(selected) {
     const methods = [
-        { id: 'webrtc', icon: 'globe', label: 'Browser / WHIP', hint: 'WebRTC from browser or OBS WHIP' },
+        { id: 'browser', icon: 'globe', label: 'Browser', hint: 'Camera, mic, or screen from your browser' },
+        { id: 'whip', icon: 'satellite-dish', label: 'WHIP', hint: 'OBS WHIP encoder / external WebRTC' },
         { id: 'rtmp', icon: 'server', label: 'RTMP', hint: 'OBS / Streamlabs / IRL Pro' },
-        { id: 'jsmpeg', icon: 'terminal', label: 'CLI / FFmpeg', hint: 'FFmpeg, Pi, RTSP cameras' },
+        { id: 'cli', icon: 'terminal', label: 'CLI / FFmpeg', hint: 'FFmpeg, Pi, RTSP cameras' },
     ];
     return methods.map(m => `
         <div class="bc-method-card-sm${selected === m.id ? ' selected' : ''}"
@@ -522,8 +580,9 @@ function _wsRenderMethodCards(selected) {
 
 function _wsRenderBrowserModeCards(selected) {
     const modes = [
-        { id: 'camera', icon: 'video', label: 'Camera / Mic', hint: 'Webcam + microphone' },
-        { id: 'miconly', icon: 'microphone', label: 'Mic Only', hint: 'Audio-only with image' },
+        { id: 'camera', icon: 'video', label: 'Camera & Mic', hint: 'Webcam + microphone' },
+        { id: 'camera_only', icon: 'camera', label: 'Camera Only', hint: 'Video only, no audio' },
+        { id: 'mic_only', icon: 'microphone', label: 'Mic Only', hint: 'Audio-only with image' },
         { id: 'screen', icon: 'display', label: 'Screen Share', hint: 'Tab, window, or display' },
     ];
     return modes.map(m => `
@@ -577,17 +636,27 @@ function _wsRenderMethodEndpoint(method, streamKey, managedStreamId) {
         </div>`;
     }
 
-    if (method === 'webrtc') {
-        const whipBaseUrl = (_wsState.whipUrlBase || window.location.origin).replace(/\/$/, '');
-        const whipUrl = `${whipBaseUrl}/whip/${streamKey}`;
+    if (method === 'browser') {
         return `
         <div class="bc-ws-method-info">
             <div class="bc-ws-method-info-row">
-                <span class="bc-ws-method-info-label">Browser</span>
+                <span class="bc-ws-method-info-label">Browser Streaming</span>
                 <span class="bc-ws-method-info-note">Use the Go Live button below &mdash; no extra config needed.</span>
             </div>
+            <p class="bc-ws-method-info-hint">
+                Your browser will capture camera, microphone, and/or screen depending on your selected capture mode above.
+                Make sure to allow permissions when prompted.
+            </p>
+        </div>`;
+    }
+
+    if (method === 'whip') {
+        const whipBaseUrl = (_wsState.whipUrlBase || window.location.origin).replace(/\/$/, '');
+        const whipUrl = `${whipBaseUrl}/whip/${managedStreamId || streamKey}`;
+        return `
+        <div class="bc-ws-method-info">
             <div class="bc-ws-method-info-row">
-                <span class="bc-ws-method-info-label">WHIP URL (OBS)</span>
+                <span class="bc-ws-method-info-label">WHIP URL</span>
                 <div class="bc-ws-method-info-val">
                     <code style="word-break:break-all">${esc(whipUrl)}</code>
                     <button class="btn btn-xs btn-ghost" onclick="_wsCopyText('${esc(whipUrl)}')" title="Copy WHIP URL">
@@ -595,15 +664,18 @@ function _wsRenderMethodEndpoint(method, streamKey, managedStreamId) {
                     </button>
                 </div>
             </div>
+            <div class="bc-ws-method-info-row">
+                <span class="bc-ws-method-info-label">Bearer Token</span>
+                <span class="bc-ws-method-info-note">Use the stream key shown above as the Bearer Token in OBS.</span>
+            </div>
             <p class="bc-ws-method-info-hint">
-                <strong>OBS WHIP setup:</strong> Settings &rarr; Stream &rarr; Service: WHIP &rarr; paste the URL above.
-                Leave the "Bearer Token" field <strong>empty</strong> (the key is already in the URL).
-                Click "Start Stream Session" here first, then start OBS.
+                <strong>OBS WHIP setup:</strong> Settings &rarr; Stream &rarr; Service: WHIP &rarr; paste URL above.
+                Set Bearer Token to your stream key. Click "Start Stream Session" here first, then start OBS.
             </p>
         </div>`;
     }
 
-    if (method === 'jsmpeg') {
+    if (method === 'cli') {
         return `
         <div class="bc-ws-method-info">
             <h4 style="margin:8px 0 4px"><i class="fa-solid fa-terminal"></i> CLI / FFmpeg Streaming</h4>
@@ -666,12 +738,16 @@ rpicam-vid -t 0 --width 1280 --height 720 --framerate 30 \\
 
 async function _wsInitDevicePicker(method, browserMode) {
     const wrap = document.getElementById('bc-ws-device-wrap');
-    if (wrap) wrap.style.display = method !== 'webrtc' ? 'none' : '';
-    if (method !== 'webrtc') return;
+    if (wrap) wrap.style.display = method !== 'browser' ? 'none' : '';
+    if (method !== 'browser') return;
 
     // Hide camera selector in mic-only mode
     const camGroup = document.getElementById('bc-ws-camera-group');
-    if (camGroup) camGroup.style.display = (browserMode === 'miconly') ? 'none' : '';
+    if (camGroup) camGroup.style.display = (browserMode === 'mic_only') ? 'none' : '';
+
+    // Hide audio selector in camera-only mode
+    const audioGroup = document.getElementById('bc-ws-audio-group');
+    if (audioGroup) audioGroup.style.display = (browserMode === 'camera_only') ? 'none' : '';
 
     if (!navigator.mediaDevices?.enumerateDevices) return;
     try {
@@ -812,15 +888,24 @@ async function _wsSaveAll() {
             category: document.getElementById('bc-category')?.value || 'irl',
             is_nsfw: document.getElementById('bc-nsfw')?.checked ? 1 : 0,
             protocol: ms.protocol,
+            streaming_method: ms.streaming_method || 'browser',
+            browser_mode: ms.browser_mode || _wsState.profile.browserMode || 'camera',
             control_config_id: parseInt(document.getElementById('bc-control-config')?.value) || null,
             slug: document.getElementById('bc-slug')?.value.trim().toLowerCase() || null,
+            // Slot-level settings
+            default_vod_visibility: ms.default_vod_visibility || 'public',
+            default_clip_visibility: ms.default_clip_visibility || 'public',
+            slot_vod_recording_enabled: ms.slot_vod_recording_enabled !== undefined ? ms.slot_vod_recording_enabled : 1,
+            weather_zip: ms.weather_zip || null,
+            weather_detail: ms.weather_detail || 'basic',
+            weather_show_location: ms.weather_show_location || 0,
         };
 
         const profileBlob = {
             resolution: document.getElementById('bc-ws-resolution')?.value || '720',
             fps: document.getElementById('bc-ws-fps')?.value || '30',
             bitrate: parseInt(document.getElementById('bc-ws-bitrate')?.value) || 2500,
-            browserMode: _wsState.profile.browserMode || 'camera',
+            browserMode: ms.browser_mode || _wsState.profile.browserMode || 'camera',
             micOnlyImage: _wsState.profile.micOnlyImage || null,
         };
 
@@ -850,7 +935,8 @@ async function _wsSaveAll() {
         setTimeout(() => { if (!_wsState.dirty) _wsShowSaveStatus(''); }, 2500);
 
         // Update sidebar method display
-        broadcastState.selectedMethod = streamFields.protocol;
+        const methodToProtocol = { browser: 'webrtc', whip: 'webrtc', cli: 'jsmpeg', rtmp: 'rtmp' };
+        broadcastState.selectedMethod = methodToProtocol[streamFields.streaming_method] || streamFields.protocol;
     } catch (err) {
         _wsShowSaveStatus('Save failed: ' + (err?.message || 'unknown error'), 'bc-ws-save-error');
     } finally {
@@ -863,31 +949,38 @@ async function _wsSaveAll() {
 
 function _wsSelectMethod(method) {
     if (!_wsState.selectedMs) return;
-    _wsState.selectedMs.protocol = method;
+
+    // Map user-facing method to protocol
+    const methodToProtocol = { browser: 'webrtc', whip: 'webrtc', cli: 'jsmpeg', rtmp: 'rtmp' };
+    const protocol = methodToProtocol[method] || 'webrtc';
+
+    _wsState.selectedMs.streaming_method = method;
+    _wsState.selectedMs.protocol = protocol;
     _wsMarkDirty();
 
     document.querySelectorAll('[data-wsmethod]').forEach(el =>
         el.classList.toggle('selected', el.dataset.wsmethod === method)
     );
 
-    // Show/hide browser submodes
+    // Show/hide browser submodes (only for 'browser' method)
     const submodesEl = document.getElementById('bc-ws-browser-submodes');
-    if (submodesEl) submodesEl.style.display = method === 'webrtc' ? '' : 'none';
+    if (submodesEl) submodesEl.style.display = method === 'browser' ? '' : 'none';
 
-    // Show/hide device picker
+    // Show/hide device picker (only for 'browser' method)
     const wrap = document.getElementById('bc-ws-device-wrap');
-    if (wrap) wrap.style.display = method !== 'webrtc' ? 'none' : '';
+    if (wrap) wrap.style.display = method !== 'browser' ? 'none' : '';
 
     // Update endpoint info
     const methodEl = document.getElementById('bc-ws-method-endpoint');
     if (methodEl) methodEl.innerHTML = _wsRenderMethodEndpoint(method, _wsState.streamKey || '', _wsState.selectedMs?.id);
 
-    broadcastState.selectedMethod = method;
+    broadcastState.selectedMethod = protocol;
     _wsInitDevicePicker(method, _wsState.profile.browserMode || 'camera');
 }
 
 function _wsSelectBrowserMode(mode) {
     _wsState.profile.browserMode = mode;
+    if (_wsState.selectedMs) _wsState.selectedMs.browser_mode = mode;
     _wsMarkDirty();
 
     document.querySelectorAll('[data-wsbrowsermode]').forEach(el =>
@@ -897,14 +990,31 @@ function _wsSelectBrowserMode(mode) {
     // Show/hide sub-mode options
     const micOpts = document.getElementById('bc-ws-mic-only-opts');
     const screenOpts = document.getElementById('bc-ws-screen-opts');
-    if (micOpts) micOpts.style.display = mode === 'miconly' ? '' : 'none';
+    if (micOpts) micOpts.style.display = mode === 'mic_only' ? '' : 'none';
     if (screenOpts) screenOpts.style.display = mode === 'screen' ? '' : 'none';
 
     // Hide camera selector for mic-only
     const camGroup = document.getElementById('bc-ws-camera-group');
-    if (camGroup) camGroup.style.display = mode === 'miconly' ? 'none' : '';
+    if (camGroup) camGroup.style.display = mode === 'mic_only' ? 'none' : '';
+
+    // Hide audio selector for camera-only
+    const audioGroup = document.getElementById('bc-ws-audio-group');
+    if (audioGroup) audioGroup.style.display = mode === 'camera_only' ? 'none' : '';
 
     _wsSyncScreenShareHiddenDefaults(mode);
+}
+
+/** Handle slot-level settings changes — sync to managed stream state */
+function _wsSlotSettingChanged() {
+    if (!_wsState.selectedMs) return;
+    const ms = _wsState.selectedMs;
+    ms.default_vod_visibility = document.getElementById('bc-ws-vod-visibility')?.value || 'public';
+    ms.default_clip_visibility = document.getElementById('bc-ws-clip-visibility')?.value || 'public';
+    ms.slot_vod_recording_enabled = document.getElementById('bc-ws-vod-recording')?.checked ? 1 : 0;
+    ms.weather_zip = document.getElementById('bc-ws-weather-zip')?.value.trim() || null;
+    ms.weather_detail = document.getElementById('bc-ws-weather-detail')?.value || 'basic';
+    ms.weather_show_location = document.getElementById('bc-ws-weather-location')?.checked ? 1 : 0;
+    _wsMarkDirty();
 }
 
 /** Handle mic-only placeholder image selection */
@@ -942,30 +1052,40 @@ async function goLiveFromWorkspace() {
 
     const p = _wsState.profile;
     const ms = _wsState.selectedMs;
-    const browserMode = p.browserMode || 'camera';
+    const browserMode = ms.browser_mode || p.browserMode || 'camera';
+    const streamingMethod = ms.streaming_method || 'browser';
 
     // Apply quality defaults from saved profile into broadcastState
     if (p.resolution) broadcastState.settings.broadcastRes = String(p.resolution);
     if (p.fps) broadcastState.settings.broadcastFps = String(p.fps);
     if (p.bitrate) broadcastState.settings.broadcastBps = String(p.bitrate);
 
-    const method = ms.protocol || 'webrtc';
-    broadcastState.selectedMethod = method;
+    // Map streaming_method to protocol for broadcastState
+    const methodToProtocol = { browser: 'webrtc', whip: 'webrtc', cli: 'jsmpeg', rtmp: 'rtmp' };
+    const protocol = methodToProtocol[streamingMethod] || ms.protocol || 'webrtc';
+    broadcastState.selectedMethod = protocol;
 
-    if (method === 'webrtc') {
+    if (streamingMethod === 'browser') {
+        broadcastState.selectedWebRTCSub = 'browser';
         if (browserMode === 'screen') {
-            broadcastState.selectedWebRTCSub = 'browser';
             broadcastState.selectedBrowserSource = 'screen';
             broadcastState.settings.screenShare = true;
-        } else if (browserMode === 'miconly') {
-            broadcastState.selectedWebRTCSub = 'browser';
+        } else if (browserMode === 'mic_only') {
             broadcastState.selectedBrowserSource = 'camera';
-            // Mic-only: will be handled by disabling video track after capture
+            broadcastState.settings.micOnly = true;
+            broadcastState.settings.screenShare = false;
+        } else if (browserMode === 'camera_only') {
+            broadcastState.selectedBrowserSource = 'camera';
+            broadcastState.settings.cameraOnly = true;
+            broadcastState.settings.screenShare = false;
         } else {
-            broadcastState.selectedWebRTCSub = 'browser';
             broadcastState.selectedBrowserSource = 'camera';
             broadcastState.settings.screenShare = false;
+            broadcastState.settings.micOnly = false;
+            broadcastState.settings.cameraOnly = false;
         }
+    } else if (streamingMethod === 'whip') {
+        broadcastState.selectedWebRTCSub = 'whip';
     }
 
     // Class B: sync local device selection

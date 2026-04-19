@@ -1070,6 +1070,62 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] managed_streams broadcast_settings migration:', e.message); }
 
+    // ── Slot-Level Settings Migration ────────────────────────────
+    // Move per-channel settings down to per-slot (managed_stream) level
+    try {
+        const msCols2 = database.pragma('table_info(managed_streams)').map(c => c.name);
+        if (!msCols2.includes('streaming_method')) {
+            database.exec("ALTER TABLE managed_streams ADD COLUMN streaming_method TEXT DEFAULT 'browser'");
+            // Backfill: derive streaming_method from protocol
+            database.exec("UPDATE managed_streams SET streaming_method = 'browser' WHERE protocol = 'webrtc'");
+            database.exec("UPDATE managed_streams SET streaming_method = 'cli' WHERE protocol = 'jsmpeg'");
+            database.exec("UPDATE managed_streams SET streaming_method = 'rtmp' WHERE protocol = 'rtmp'");
+            console.log('[DB] Added streaming_method column to managed_streams');
+        }
+        if (!msCols2.includes('browser_mode')) {
+            database.exec("ALTER TABLE managed_streams ADD COLUMN browser_mode TEXT DEFAULT 'camera'");
+            console.log('[DB] Added browser_mode column to managed_streams');
+        }
+        if (!msCols2.includes('default_vod_visibility')) {
+            database.exec("ALTER TABLE managed_streams ADD COLUMN default_vod_visibility TEXT DEFAULT 'public'");
+            console.log('[DB] Added default_vod_visibility column to managed_streams');
+        }
+        if (!msCols2.includes('default_clip_visibility')) {
+            database.exec("ALTER TABLE managed_streams ADD COLUMN default_clip_visibility TEXT DEFAULT 'public'");
+            console.log('[DB] Added default_clip_visibility column to managed_streams');
+        }
+        if (!msCols2.includes('slot_vod_recording_enabled')) {
+            database.exec('ALTER TABLE managed_streams ADD COLUMN slot_vod_recording_enabled INTEGER DEFAULT 1');
+            console.log('[DB] Added slot_vod_recording_enabled column to managed_streams');
+        }
+        if (!msCols2.includes('weather_zip')) {
+            database.exec('ALTER TABLE managed_streams ADD COLUMN weather_zip TEXT DEFAULT NULL');
+            console.log('[DB] Added weather_zip column to managed_streams');
+        }
+        if (!msCols2.includes('weather_detail')) {
+            database.exec("ALTER TABLE managed_streams ADD COLUMN weather_detail TEXT DEFAULT 'basic'");
+            console.log('[DB] Added weather_detail column to managed_streams');
+        }
+        if (!msCols2.includes('weather_show_location')) {
+            database.exec('ALTER TABLE managed_streams ADD COLUMN weather_show_location INTEGER DEFAULT 0');
+            console.log('[DB] Added weather_show_location column to managed_streams');
+        }
+        if (!msCols2.includes('mic_only_image')) {
+            database.exec('ALTER TABLE managed_streams ADD COLUMN mic_only_image TEXT DEFAULT NULL');
+            console.log('[DB] Added mic_only_image column to managed_streams');
+        }
+    } catch (e) { console.warn('[DB] managed_streams slot-level settings migration:', e.message); }
+
+    // Migrate: add managed_stream_id to restream_destinations for slot-level restreaming
+    try {
+        const rdCols = database.pragma('table_info(restream_destinations)').map(c => c.name);
+        if (!rdCols.includes('managed_stream_id')) {
+            database.exec('ALTER TABLE restream_destinations ADD COLUMN managed_stream_id INTEGER REFERENCES managed_streams(id) ON DELETE SET NULL');
+            database.exec('CREATE INDEX IF NOT EXISTS idx_restream_dest_managed ON restream_destinations(managed_stream_id)');
+            console.log('[DB] Added managed_stream_id column to restream_destinations');
+        }
+    } catch (e) { console.warn('[DB] restream_destinations managed_stream_id migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
@@ -1334,6 +1390,9 @@ function updateManagedStream(managedStreamId, userId, fields) {
     const allowed = new Set([
         'slug', 'title', 'description', 'category', 'tags', 'protocol',
         'is_nsfw', 'control_config_id', 'sort_order',
+        'streaming_method', 'browser_mode',
+        'default_vod_visibility', 'default_clip_visibility', 'slot_vod_recording_enabled',
+        'weather_zip', 'weather_detail', 'weather_show_location', 'mic_only_image',
     ]);
     const updates = [];
     const params = [];
@@ -1382,6 +1441,16 @@ function getManagedStreamLimit(user) {
     const level = getUserTotalGameLevel(user.id);
     const bonus = Math.floor(level / 10);
     return Math.min(3 + bonus, 10);
+}
+
+function ensureStreamerRoleOnFeed(userId) {
+    const user = getUserById(userId);
+    if (user && user.role === 'user') {
+        run('UPDATE users SET role = ? WHERE id = ?', ['streamer', userId]);
+        console.log(`[DB] Promoted user ${userId} to streamer on first real feed`);
+        return true;
+    }
+    return false;
 }
 
 function isValidManagedStreamSlug(slug) {
@@ -1706,6 +1775,10 @@ function updateRestreamDestination(id, fields) {
 
 function deleteRestreamDestination(id) {
     return run('DELETE FROM restream_destinations WHERE id = ?', [id]);
+}
+
+function getRestreamDestinationsByManagedStream(managedStreamId) {
+    return all('SELECT * FROM restream_destinations WHERE managed_stream_id = ? ORDER BY created_at', [managedStreamId]);
 }
 
 // ── Chat helpers ─────────────────────────────────────────────
@@ -4021,6 +4094,7 @@ module.exports = {
     getManagedStreamBroadcastSettings, updateManagedStreamBroadcastSettings,
     countManagedStreamsByUser, getManagedStreamLimit,
     isValidManagedStreamSlug, isManagedStreamSlugTaken,
+    ensureStreamerRoleOnFeed,
     // Streams (sessions)
     getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId, getStreamHistoryByManagedStream,
     createStream, endStream, updateViewerCount,
@@ -4039,6 +4113,7 @@ module.exports = {
     // Restream destinations
     getRestreamDestinationsByUserId, getRestreamDestinationById,
     createRestreamDestination, updateRestreamDestination, deleteRestreamDestination,
+    getRestreamDestinationsByManagedStream,
     // Chat
     saveChatMessage, searchChatMessages, getUserChatHistory,
     // Profiles

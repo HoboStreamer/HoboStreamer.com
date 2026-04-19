@@ -449,6 +449,11 @@ async function handleWhipPost(req, res) {
         // A hex string ≥16 chars that isn't purely numeric → treat as stream key.
         const isStreamKey = /^[0-9a-f]{16,}$/i.test(pathParam) && !/^\d+$/.test(pathParam);
 
+        // ── Auth strategy 2: slot numeric ID + key auth ──
+        // Path: /whip/:slotId with Bearer token = stream key or ?key= query param.
+        const isSlotId = /^\d+$/.test(pathParam);
+        const keyParam = req.query?.key || null;
+
         if (isStreamKey) {
             const managedStream = db.getManagedStreamByStreamKey(pathParam);
             if (!managedStream) {
@@ -480,7 +485,59 @@ async function handleWhipPost(req, res) {
                     `Stream protocol is ${stream.protocol}, not webrtc — change the streaming method to Browser/WHIP in the stream manager`);
             }
         }
-        // ── Auth strategy 2: JWT Bearer (legacy numeric stream ID) ──
+        // ── Auth strategy 2: slot numeric ID + key (Bearer or ?key= query) ──
+        else if (isSlotId && (bearerToken || keyParam)) {
+            const slotId = parseInt(pathParam, 10);
+            const streamKey = keyParam || bearerToken;
+
+            // First try: slot ID + key
+            const managedStream = db.getManagedStreamById(slotId);
+            if (!managedStream) {
+                logWhipStage('auth_slot_fail', pathParam, { reason: 'slot_not_found' });
+                return sendWhipError(res, 404, 'slot_not_found', 'Stream slot not found');
+            }
+
+            // Verify key matches slot's stream key
+            if (managedStream.stream_key !== streamKey) {
+                // If the Bearer is a JWT, fall through to JWT auth below
+                const decoded = verifyToken(bearerToken);
+                if (decoded) {
+                    const user = resolveHoboToolsUser(decoded);
+                    if (user) {
+                        userId = user.id;
+                        // Find live session for this slot owned by this user
+                        const liveSessions = db.getLiveStreamsByUserId(user.id) || [];
+                        stream = liveSessions.find(s => s.managed_stream_id === slotId);
+                        if (!stream) return sendWhipError(res, 409, 'stream_not_live', 'No live session for this slot');
+                        if (stream.protocol !== 'webrtc') return sendWhipError(res, 409, 'wrong_protocol', `Stream protocol is ${stream.protocol}, not webrtc`);
+                        logWhipStage('auth_slot_jwt', pathParam, { user_id: userId, slot_id: slotId });
+                    } else {
+                        return sendWhipError(res, 401, 'invalid_key', 'Stream key or token does not match');
+                    }
+                } else {
+                    logWhipStage('auth_slot_fail', pathParam, { reason: 'key_mismatch' });
+                    return sendWhipError(res, 401, 'invalid_key', 'Stream key does not match this slot');
+                }
+            }
+
+            if (!stream) {
+                userId = managedStream.user_id;
+                logWhipStage('auth_slot_key', pathParam, { user_id: userId, slot_id: slotId });
+
+                const liveSessions = db.getLiveStreamsByUserId(managedStream.user_id) || [];
+                stream = liveSessions.find(s => s.managed_stream_id === slotId);
+
+                if (!stream) {
+                    return sendWhipError(res, 409, 'stream_not_live',
+                        'No live session for this slot — click "Go Live" in the stream manager first');
+                }
+                if (stream.protocol !== 'webrtc') {
+                    return sendWhipError(res, 409, 'wrong_protocol',
+                        `Stream protocol is ${stream.protocol}, not webrtc`);
+                }
+            }
+        }
+        // ── Auth strategy 3: JWT Bearer (legacy numeric stream ID) ──
         else {
             if (!bearerToken) {
                 logWhipStage('auth_fail', pathParam, { reason: 'no_bearer_token' });
@@ -550,7 +607,7 @@ async function handleWhipPost(req, res) {
             peerId,
             transportId: null,
             producerIds: [],
-            userId: user.id,
+            userId,
         };
         sessions.set(resourceId, session);
 
@@ -641,6 +698,11 @@ async function handleWhipPost(req, res) {
         if (session.producerIds.length === 0) {
             cleanupSession(resourceId);
             return sendWhipError(res, 406, 'no_compatible_codecs', 'No compatible codecs — router supports VP8, H264, Opus');
+        }
+
+        // Promote user to streamer role on first real feed ingest
+        if (userId) {
+            db.ensureStreamerRoleOnFeed(userId);
         }
 
         let answerSdp;

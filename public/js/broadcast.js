@@ -1185,15 +1185,19 @@ async function endExistingStream(streamId) {
 
 /* ── Method Selection ────────────────────────────────────────── */
 const _methodExplainers = {
-    webrtc: '<strong>WebRTC</strong> lets you stream directly from this browser tab using your camera, microphone, or screen — no extra software needed. Just click Create Stream and you\'re live.',
+    browser: '<strong>Browser</strong> lets you stream directly from this browser tab using your camera, microphone, or screen — no extra software needed. Just click Create Stream and you\'re live.',
+    whip: '<strong>WHIP</strong> sends video from OBS Studio (or any WHIP-compatible encoder) to our server via WebRTC. After creating the stream, you\'ll get a <strong>WHIP URL</strong> and <strong>Bearer Token</strong> to paste into OBS.',
     rtmp: '<strong>RTMP</strong> sends video from a dedicated streaming app (OBS Studio, Streamlabs, IRL Pro, etc.) to our server. After creating the stream, you\'ll get a <strong>Server URL</strong> and <strong>Stream Key</strong> to paste into your app. This gives you the best video quality and most customization.',
-    jsmpeg: '<strong>JSMPEG</strong> uses a single FFmpeg command in your terminal to send video. It\'s the most lightweight method — ideal for Raspberry Pi, security cameras, headless Linux servers, and 24/7 unattended streams. After creating the stream, you\'ll get a ready-to-paste terminal command.',
+    cli: '<strong>CLI / FFmpeg</strong> uses a single FFmpeg command in your terminal to send video. It\'s the most lightweight method — ideal for Raspberry Pi, security cameras, headless Linux servers, and 24/7 unattended streams. After creating the stream, you\'ll get a ready-to-paste terminal command.',
+    // Legacy aliases
+    webrtc: '<strong>WebRTC</strong> lets you stream directly from this browser tab using your camera, microphone, or screen — no extra software needed.',
+    jsmpeg: '<strong>JSMPEG</strong> uses a single FFmpeg command in your terminal to send video.',
 };
 function selectStreamMethod(method) {
     broadcastState.selectedMethod = method;
     document.querySelectorAll('.bc-method-card').forEach(el => el.classList.toggle('selected', el.dataset.method === method));
     const sub = document.getElementById('bc-webrtc-sub');
-    if (sub) sub.style.display = method === 'webrtc' ? 'block' : 'none';
+    if (sub) sub.style.display = (method === 'browser' || method === 'webrtc') ? 'block' : 'none';
     // Update method explainer text
     const explainer = document.getElementById('bc-method-explainer-text');
     if (explainer && _methodExplainers[method]) explainer.innerHTML = _methodExplainers[method];
@@ -1207,12 +1211,14 @@ function _syncStep3Header(method) {
     if (!hdr) return;
     const textEl = hdr.querySelector('.bc-step-text span');
     if (!textEl) return;
-    if (method === 'webrtc') {
+    if (method === 'browser' || method === 'webrtc') {
         hdr.style.display = '';
         textEl.textContent = 'Set up your camera, mic, or screen share';
+    } else if (method === 'whip') {
+        hdr.style.display = 'none';
     } else if (method === 'rtmp') {
         hdr.style.display = 'none';
-    } else if (method === 'jsmpeg') {
+    } else if (method === 'cli' || method === 'jsmpeg') {
         hdr.style.display = 'none';
     }
 }
@@ -2694,6 +2700,56 @@ async function startMediaCapture(streamId, opts = {}) {
             ss.localStream = combined;
         }
     } else {
+        // ── Mic-only mode: audio only, generate a placeholder video canvas ──
+        if (s.micOnly) {
+            audioConstraints = buildAudioConstraints(s, forceAudio);
+            try {
+                const audioStream = await _getUserMediaWithTimeout({ video: false, audio: audioConstraints });
+                // Create a placeholder canvas video track (dark with mic icon)
+                const canvas = document.createElement('canvas');
+                canvas.width = 640;
+                canvas.height = 360;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(0, 0, 640, 360);
+                ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                ctx.font = '48px FontAwesome, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('\uF130', 320, 160);  // microphone icon
+                ctx.font = '18px sans-serif';
+                ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                ctx.fillText('Audio Only', 320, 220);
+                const canvasStream = canvas.captureStream(1);
+                ss.localStream = new MediaStream();
+                canvasStream.getVideoTracks().forEach(t => ss.localStream.addTrack(t));
+                audioStream.getAudioTracks().forEach(t => ss.localStream.addTrack(t));
+                ss._micOnlyCanvas = canvas;  // keep reference to prevent GC
+            } catch (e) {
+                console.error('[Broadcast] Mic-only capture failed:', e.message);
+                throw new Error('Could not access microphone for audio-only mode');
+            }
+        // ── Camera-only mode: video only, no microphone ──
+        } else if (s.cameraOnly) {
+            videoConstraints = {
+                width: { ideal: res.w },
+                height: { ideal: res.h },
+                frameRate: { ideal: getBroadcastFrameRate() },
+            };
+            const hasExplicitCamera = forceCamera && forceCamera !== 'default';
+            if (hasExplicitCamera) videoConstraints.deviceId = { exact: forceCamera };
+            try {
+                ss.localStream = await _getUserMediaWithTimeout({ video: videoConstraints, audio: false });
+            } catch (e) {
+                console.warn('[Broadcast] Camera-only exact constraint failed, trying fallback:', e.message);
+                try {
+                    ss.localStream = await _getUserMediaWithTimeout({ video: true, audio: false });
+                } catch (e2) {
+                    throw new Error('Could not access camera for video-only mode');
+                }
+            }
+        // ── Standard camera + mic mode ──
+        } else {
         videoConstraints = {
             width: { ideal: res.w },
             height: { ideal: res.h },
@@ -2748,6 +2804,7 @@ async function startMediaCapture(streamId, opts = {}) {
             }
             } // end if (!ss.localStream)
         }
+        } // end standard camera+mic mode
 
         // Post-capture device verification — detect if browser silently used a different device
         if (ss.localStream) {

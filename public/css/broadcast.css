@@ -2254,13 +2254,13 @@
 /* ── Method Picker ───────────────────────────────────────────── */
 .bc-method-picker {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 12px;
     margin-top: 4px;
 }
 
 .bc-method-picker-sm {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(4, 1fr);
 }
 
 .bc-method-card,
@@ -2950,11 +2950,11 @@
     }
 
     .bc-method-picker {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, 1fr);
     }
 
     .bc-method-picker-sm {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, 1fr);
     }
 
     .bc-stream-item {
@@ -3438,6 +3438,38 @@
     padding: 4px 0;
 }
 .bc-ws-quality-inner { margin-top: 8px; }
+
+/* ── Slot-level settings ── */
+.bc-ws-slot-settings {
+    margin: 12px 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.bc-ws-slot-settings summary {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 10px 14px;
+    background: var(--bg-tertiary);
+    user-select: none;
+}
+.bc-ws-slot-settings summary:hover {
+    color: var(--text-primary);
+}
+.bc-ws-slot-settings-inner {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.bc-ws-slot-settings .bc-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
 
 /* ── Live banner ── */
 .bc-ws-live-banner {

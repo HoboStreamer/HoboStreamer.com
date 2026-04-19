@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════
    HoboStreamer — Settings Page
-   Account settings with tabs: Profile, Appearance, Broadcaster, My Streams
+   Account settings with tabs: Profile, Appearance
+   (Broadcaster & My Streams moved to per-slot workspace)
    ═══════════════════════════════════════════════════════════════ */
 
 let settingsActiveTab = 'profile';
@@ -21,8 +22,6 @@ function switchSettingsTab(tab) {
     switch (tab) {
         case 'profile': loadSettingsProfile(); break;
         case 'appearance': loadSettingsAppearance(); break;
-        case 'broadcaster': loadSettingsBroadcaster(); break;
-        case 'streams': loadSettingsStreams(); break;
     }
 }
 

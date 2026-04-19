@@ -998,6 +998,9 @@ router.get('/managed/:managedStreamId/profile', requireAuth, (req, res) => {
         // so the caller can display/copy it in the authenticated UI.
         const { stream_key: streamKey, ...msPublic } = ms;
 
+        // Slot-level restream destinations
+        const restreamDestinations = db.getRestreamDestinationsByManagedStream(managedStreamId);
+
         res.json({
             managed_stream: msPublic,
             stream_key: streamKey,
@@ -1005,6 +1008,7 @@ router.get('/managed/:managedStreamId/profile', requireAuth, (req, res) => {
             whip_url_base: whipUrlBase,
             whip_url_source: whipUrlSource,
             whip_url_warning: whipUrlWarning,
+            restream_destinations: restreamDestinations,
         });
     } catch (err) {
         console.error('[ManagedStreams] Profile error:', err.message);
@@ -1127,6 +1131,48 @@ router.put('/managed/:id', requireAuth, (req, res) => {
                 }
             }
             fields.slug = slug;
+        }
+
+        // Slot-level settings
+        if (hasOwn(req.body, 'streaming_method')) {
+            const validMethods = new Set(['browser', 'whip', 'cli', 'rtmp']);
+            const method = String(req.body.streaming_method || '').trim().toLowerCase();
+            if (!validMethods.has(method)) return res.status(400).json({ error: 'Invalid streaming_method' });
+            fields.streaming_method = method;
+            // Auto-derive protocol from method
+            if (method === 'browser' || method === 'whip') fields.protocol = 'webrtc';
+            else if (method === 'cli') fields.protocol = 'jsmpeg';
+            else if (method === 'rtmp') fields.protocol = 'rtmp';
+        }
+        if (hasOwn(req.body, 'browser_mode')) {
+            const validModes = new Set(['camera', 'camera_only', 'mic_only', 'screen']);
+            const mode = String(req.body.browser_mode || '').trim().toLowerCase();
+            if (!validModes.has(mode)) return res.status(400).json({ error: 'Invalid browser_mode' });
+            fields.browser_mode = mode;
+        }
+        if (hasOwn(req.body, 'default_vod_visibility')) {
+            const vis = String(req.body.default_vod_visibility || 'public').trim().toLowerCase();
+            fields.default_vod_visibility = vis === 'private' ? 'private' : 'public';
+        }
+        if (hasOwn(req.body, 'default_clip_visibility')) {
+            const vis = String(req.body.default_clip_visibility || 'public').trim().toLowerCase();
+            fields.default_clip_visibility = vis === 'private' ? 'private' : 'public';
+        }
+        if (hasOwn(req.body, 'slot_vod_recording_enabled')) {
+            fields.slot_vod_recording_enabled = cleanBooleanFlag(req.body.slot_vod_recording_enabled) ? 1 : 0;
+        }
+        if (hasOwn(req.body, 'weather_zip')) {
+            fields.weather_zip = req.body.weather_zip ? String(req.body.weather_zip).trim().slice(0, 20) : null;
+        }
+        if (hasOwn(req.body, 'weather_detail')) {
+            const detail = String(req.body.weather_detail || 'basic').trim().toLowerCase();
+            fields.weather_detail = ['basic', 'detailed', 'off'].includes(detail) ? detail : 'basic';
+        }
+        if (hasOwn(req.body, 'weather_show_location')) {
+            fields.weather_show_location = cleanBooleanFlag(req.body.weather_show_location) ? 1 : 0;
+        }
+        if (hasOwn(req.body, 'mic_only_image')) {
+            fields.mic_only_image = req.body.mic_only_image ? String(req.body.mic_only_image).trim().slice(0, 500) : null;
         }
 
         db.updateManagedStream(msId, ms.user_id, fields);
@@ -1260,11 +1306,8 @@ router.post('/', requireAuth, (req, res) => {
 
         const channel = db.ensureChannel(req.user.id);
 
-        // Promote to streamer role on first real live ingest
-        if (req.user.role === 'user') {
-            db.run('UPDATE users SET role = ? WHERE id = ?', ['streamer', req.user.id]);
-            console.log(`[Streams] Promoted user ${req.user.id} to streamer on first go-live`);
-        }
+        // Streamer role promotion deferred — applied on first real feed ingest
+        // (see whip-handler.js, webrtc-sfu producer, jsmpeg relay, rtmp handler)
 
         // Use managed stream's settings as defaults, allow per-session overrides
         const streamProtocol = protocol || cleanProtocol(managedStream.protocol) || cleanProtocol(channel.protocol) || 'webrtc';

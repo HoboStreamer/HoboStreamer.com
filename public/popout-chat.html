@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat — HoboStreamer</title>
+    <link rel="stylesheet" href="/css/style.css?v=15">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        html, body { height: 100%; margin: 0; overflow: hidden; }
+        body { display: flex; flex-direction: column; background: var(--bg-primary, #0d0d1a); }
+        .popout-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 12px; background: var(--bg-secondary, #1a1a2e);
+            border-bottom: 1px solid var(--border, #2a2a3e);
+            font-size: 0.85rem; font-weight: 600; flex-shrink: 0;
+        }
+        .popout-header i { margin-right: 6px; }
+        .popout-chat-wrap {
+            flex: 1; display: flex; flex-direction: column; overflow: hidden;
+        }
+        .popout-messages {
+            flex: 1; overflow-y: auto; padding: 8px;
+            font-size: 0.85rem; line-height: 1.4;
+        }
+        .popout-messages .chat-msg { padding: 2px 0; word-break: break-word; }
+        .popout-messages .chat-msg.system { color: var(--text-muted, #888); font-style: italic; font-size: 0.8rem; }
+        .popout-messages .chat-user { font-weight: 600; cursor: default; }
+        .popout-messages .chat-time-inline { font-size: 0.7rem; color: var(--text-muted, #888); margin-right: 4px; }
+        .popout-messages .chat-stream-badge {
+            font-size: 0.65rem; background: rgba(192,150,92,0.2); color: var(--accent, #c0965c);
+            padding: 1px 5px; border-radius: 3px; margin-right: 4px;
+        }
+        .popout-messages .chat-avatar, .popout-messages .chat-avatar-letter { display: none; }
+        .popout-messages .chat-badge { display: none; }
+        .popout-input-area {
+            display: flex; gap: 6px; padding: 8px;
+            border-top: 1px solid var(--border, #2a2a3e);
+            background: var(--bg-secondary, #1a1a2e); flex-shrink: 0;
+        }
+        .popout-input-area input {
+            flex: 1; background: var(--bg-primary, #0d0d1a);
+            border: 1px solid var(--border, #2a2a3e);
+            border-radius: 4px; color: var(--text-primary, #e0e0e0);
+            padding: 6px 10px; font-size: 0.85rem; outline: none;
+        }
+        .popout-input-area input:focus { border-color: var(--accent, #c0965c); }
+        .popout-input-area button {
+            background: var(--accent, #c0965c); color: #fff; border: none;
+            border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.85rem;
+        }
+        .popout-input-area button:hover { opacity: 0.85; }
+        .popout-emote { height: 1.2em; vertical-align: middle; }
+    </style>
+</head>
+<body>
+    <div class="popout-header">
+        <span><i class="fa-solid fa-comments"></i> <span id="popout-title">Chat</span></span>
+    </div>
+    <div class="popout-chat-wrap">
+        <div class="popout-messages" id="popout-msgs"></div>
+        <div class="popout-input-area">
+            <input type="text" id="popout-input" placeholder="Send a message..." maxlength="500" autocomplete="off">
+            <button id="popout-send">Send</button>
+        </div>
+    </div>
+
+    <script>
+    'use strict';
+
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode') || 'global';
+    const streamId = params.get('stream') || null;
+    const title = mode === 'stream' ? ('Stream Chat \u2014 ' + (streamId || '')) : 'Global Chat';
+
+    document.title = title + ' \u2014 HoboStreamer';
+    document.getElementById('popout-title').textContent = title;
+
+    const host = window.location.hostname;
+    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+    const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const token = localStorage.getItem('token');
+
+    const wsParams = new URLSearchParams();
+    if (token) wsParams.set('token', token);
+    if (mode === 'stream' && streamId) wsParams.set('stream', streamId);
+    const wsUrl = wsProto + '://' + host + ':' + port + '/ws/chat?' + wsParams.toString();
+
+    let ws = null;
+    let reconnectTimer = null;
+    let reconnectDelay = 2000;
+
+    function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = String(s || '');
+        return d.innerHTML;
+    }
+
+    // Basic emote parser — check if opener has emotes data
+    function tryParseEmotes(text) {
+        if (window.opener && typeof window.opener.parseEmotes === 'function') {
+            try { return window.opener.parseEmotes(text); } catch {}
+        }
+        return esc(text);
+    }
+
+    function appendMsg(html) {
+        const container = document.getElementById('popout-msgs');
+        if (!container) return;
+        const el = document.createElement('div');
+        el.className = 'chat-msg';
+        el.innerHTML = html;
+        container.appendChild(el);
+        container.scrollTop = container.scrollHeight;
+        while (container.children.length > 500) container.removeChild(container.firstChild);
+    }
+
+    function connect() {
+        ws = new WebSocket(wsUrl);
+        ws.onopen = function() {
+            reconnectDelay = 2000;
+            ws.send(JSON.stringify({
+                type: 'join',
+                streamId: mode === 'stream' ? streamId : undefined,
+                token: token || undefined
+            }));
+            appendMsg('<div class="chat-msg system">Connected</div>');
+        };
+        ws.onmessage = function(e) {
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'chat') {
+                    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const nameColor = msg.profile_color || '#999';
+                    let badge = '';
+                    if (msg.stream_channel) {
+                        badge = '<span class="chat-stream-badge">' + esc(msg.stream_channel) + '</span> ';
+                    }
+                    appendMsg(
+                        '<span class="chat-time-inline">' + ts + '</span> ' +
+                        badge +
+                        '<span class="chat-user" style="color:' + esc(nameColor) + '">' + esc(msg.username) + '</span>: ' +
+                        tryParseEmotes(msg.message)
+                    );
+                } else if (msg.type === 'system') {
+                    appendMsg('<span class="chat-msg system">' + esc(msg.message) + '</span>');
+                }
+            } catch (err) { /* ignore parse errors */ }
+        };
+        ws.onclose = function() {
+            appendMsg('<span class="chat-msg system">Disconnected \u2014 reconnecting\u2026</span>');
+            reconnectTimer = setTimeout(function() {
+                reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+                connect();
+            }, reconnectDelay);
+        };
+        ws.onerror = function() {};
+    }
+
+    connect();
+
+    // Wire up input
+    var input = document.getElementById('popout-input');
+    var sendBtn = document.getElementById('popout-send');
+    function doSend() {
+        var text = input.value.trim();
+        if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({
+            type: 'chat',
+            message: text,
+            streamId: mode === 'stream' ? streamId : undefined
+        }));
+        input.value = '';
+        input.focus();
+    }
+    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') doSend(); });
+    sendBtn.addEventListener('click', doSend);
+    input.focus();
+
+    // Apply theme from opener if available
+    if (window.opener) {
+        try {
+            var openerStyle = window.opener.document.documentElement.style;
+            var cssVars = ['--bg-primary', '--bg-secondary', '--bg-tertiary', '--border',
+                           '--text-primary', '--text-secondary', '--text-muted', '--accent',
+                           '--danger', '--success'];
+            cssVars.forEach(function(v) {
+                var val = openerStyle.getPropertyValue(v);
+                if (val) document.documentElement.style.setProperty(v, val);
+            });
+        } catch (err) { /* cross-origin or no opener */ }
+    }
+    </script>
+</body>
+</html>

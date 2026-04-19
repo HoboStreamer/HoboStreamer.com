@@ -267,6 +267,8 @@ let broadcastState = {
         screenSurfaceSwitching: 'include',   // 'include' | 'exclude'
         screenPreferCurrentTab: false,       // whether to bias toward the current tab
         serverReconnect: true,
+        micOnly: false,                      // mic-only mode (no video)
+        cameraOnly: false,                   // camera-only mode (no audio)
         allowSounds: 'false', soundVolume: 800,
     },
     robotStreamer: {
