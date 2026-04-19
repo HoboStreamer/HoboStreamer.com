@@ -155,9 +155,11 @@ async function _wsLoadProfile(managedStreamId) {
         _wsState.whipUrlBase = data.whip_url_base || null;
         _wsState.whipUrlSource = data.whip_url_source || null;
         _wsState.whipUrlWarning = data.whip_url_warning || null;
+        _wsState.rtmpUrl = data.rtmp_url || null;
     } catch {
         _wsState.profile = {};
         _wsState.streamKey = _wsState.selectedMs?.stream_key || null;
+        _wsState.rtmpUrl = null;
     }
     _wsState.dirty = false;
 }
@@ -1018,9 +1020,9 @@ function _wsRenderCategoryOptions(selected) {
 
 function _wsRenderMethodEndpoint(method, streamKey, managedStreamId) {
     if (!streamKey) return '';
+    const rtmpServer = _wsState.rtmpUrl || 'rtmp://hobostreamer.com/live';
 
     if (method === 'rtmp') {
-        const rtmpServer = 'rtmp://hobostreamer.com/live';
         return `
         <div class="bc-ws-method-info">
             <div class="bc-ws-method-info-row">
@@ -1162,44 +1164,44 @@ rpicam-vid -t 0 --width 640 --height 480 --framerate 24 \\
                 <pre class="bc-ws-cli-code">ffmpeg -f v4l2 -i /dev/video0 -f alsa -i default \\
   -c:v libx264 -preset veryfast -b:v 2500k \\
   -c:a aac -b:a 128k \\
-  -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
+  -f flv ${esc(rtmpServer)}/${esc(streamKey)}</pre>
 
                 <h5><i class="fa-solid fa-display"></i> Screen Capture (Linux X11)</h5>
                 <pre class="bc-ws-cli-code">ffmpeg -f x11grab -s 1920x1080 -r 30 -i :0.0 \\
   -f pulse -i default \\
   -c:v libx264 -preset veryfast -b:v 3000k \\
   -c:a aac -b:a 128k \\
-  -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
+  -f flv ${esc(rtmpServer)}/${esc(streamKey)}</pre>
 
                 <h5><i class="fa-solid fa-display"></i> Screen Capture (macOS)</h5>
                 <pre class="bc-ws-cli-code">ffmpeg -f avfoundation -framerate 30 -i "1:0" \\
   -c:v libx264 -preset veryfast -b:v 3000k \\
   -c:a aac -b:a 128k \\
-  -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
+  -f flv ${esc(rtmpServer)}/${esc(streamKey)}</pre>
 
                 <h5><i class="fa-solid fa-film"></i> MP4 / File Loop</h5>
                 <pre class="bc-ws-cli-code">ffmpeg -re -stream_loop -1 -i video.mp4 \\
   -c:v libx264 -preset veryfast -b:v 2500k \\
   -c:a aac -b:a 128k \\
-  -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
+  -f flv ${esc(rtmpServer)}/${esc(streamKey)}</pre>
 
                 <h5><i class="fa-solid fa-camera-cctv"></i> RTSP / IP Camera</h5>
                 <pre class="bc-ws-cli-code">ffmpeg -rtsp_transport tcp -i rtsp://user:pass@192.168.1.100:554/stream \\
   -c:v libx264 -preset veryfast -b:v 2000k \\
   -c:a aac -b:a 96k \\
-  -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
+  -f flv ${esc(rtmpServer)}/${esc(streamKey)}</pre>
 
                 <h5><i class="fa-solid fa-microchip"></i> Raspberry Pi Camera</h5>
                 <pre class="bc-ws-cli-code"># Pi Camera &rarr; RTMP
 rpicam-vid -t 0 --width 1280 --height 720 --framerate 30 \\
   --codec h264 --bitrate 2000000 -o - | \\
   ffmpeg -f h264 -i - -c:v copy -an \\
-  -f flv rtmp://hobostreamer.com/live/${esc(streamKey)}</pre>
+  -f flv ${esc(rtmpServer)}/${esc(streamKey)}</pre>
 
                 <h5><i class="fa-solid fa-robot"></i> GStreamer</h5>
                 <pre class="bc-ws-cli-code">gst-launch-1.0 v4l2src ! videoconvert ! \\
   x264enc tune=zerolatency bitrate=2500 ! flvmux ! \\
-  rtmpsink location="rtmp://hobostreamer.com/live/${esc(streamKey)}"</pre>
+  rtmpsink location="${esc(rtmpServer)}/${esc(streamKey)}"</pre>
             </div>
 
             <!-- ═══ WebRTC (WHIP) Tab ═══ -->
