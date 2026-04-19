@@ -3522,13 +3522,17 @@
 .bc-ws-confirm-actions .btn { min-width: 90px; }
 
 /* ── Quality defaults ── */
-.bc-ws-quality { margin: 8px 0 12px; }
-.bc-ws-quality summary {
+.bc-ws-quality,
+.bc-ws-screen-quality { margin: 8px 0 4px; }
+.bc-ws-quality summary,
+.bc-ws-screen-quality summary {
     font-size: 0.82rem;
     color: var(--text-secondary);
     cursor: pointer;
-    padding: 4px 0;
+    padding: 6px 0;
 }
+.bc-ws-quality summary i,
+.bc-ws-screen-quality summary i { margin-right: 4px; }
 .bc-ws-quality-inner { margin-top: 8px; }
 
 /* ── Slot-level settings (split into sections) ── */
@@ -3561,6 +3565,58 @@
     gap: 8px;
     font-size: 0.85rem;
     cursor: pointer;
+}
+
+/* ── Restream destination cards ── */
+.bc-ws-restream-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.bc-ws-restream-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    transition: opacity 0.15s;
+}
+.bc-ws-restream-card.disabled {
+    opacity: 0.5;
+}
+.bc-ws-restream-card-hd {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.bc-ws-restream-platform {
+    font-weight: 600;
+    font-size: 0.88rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.bc-ws-restream-badges {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+    font-size: 0.78rem;
+}
+.bc-ws-restream-badge {
+    color: var(--text-secondary);
+}
+.bc-ws-restream-actions {
+    display: flex;
+    gap: 4px;
+    margin-left: 4px;
+}
+.bc-ws-restream-actions .btn {
+    padding: 2px 6px;
+    font-size: 0.75rem;
+}
+.bc-ws-restream-card-info {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
 }
 
 /* ── Workspace tabs ── */
@@ -3762,16 +3818,21 @@
     color: var(--text-secondary);
     margin-bottom: 6px;
 }
-.bc-ws-screen-quality {
-    margin-top: 4px;
+
+/* ── Screen share inline permission items ── */
+.bc-ws-screen-perm-item {
+    margin-bottom: 4px;
 }
-.bc-ws-screen-quality summary {
-    font-size: 0.82rem;
-    cursor: pointer;
-    color: var(--text-secondary);
-    padding: 6px 0;
+.bc-ws-screen-device-inline {
+    margin: 4px 0 2px 26px;
 }
-.bc-ws-screen-quality summary i { margin-right: 4px; }
+.bc-ws-screen-perm-inline {
+    margin: 6px 0 2px 26px;
+}
+.bc-ws-screen-perm-inline .btn {
+    font-size: 0.78rem;
+    padding: 4px 10px;
+}
 
 /* ── CLI examples ── */
 .bc-ws-cli-examples { margin-top: 12px; }

@@ -132,6 +132,12 @@ class BroadcastServer extends EventEmitter {
             this._notifyPendingWatchers(streamId);
         });
 
+        // When WHIP ICE connects, pending viewers that were queued during ICE negotiation
+        // can now be served — the producers are truly live.
+        webrtcSFU.on('whip-ice-connected', ({ streamId }) => {
+            this._notifyPendingWatchers(streamId);
+        });
+
         // When a WHIP producer is removed (ICE timeout / DELETE), notify active SFU viewers
         // so they learn the source is gone and can wait cleanly instead of showing frozen video.
         webrtcSFU.on('producer-removed', ({ roomId, kind }) => {
@@ -737,10 +743,24 @@ class BroadcastServer extends EventEmitter {
 
         if (liveProducers.length === 0) {
             if (allProducers.length > 0) {
-                // Producers are registered but none have healthy ICE/DTLS — ingest source is stale.
-                // Do not fall through to P2P (which would start a spurious 6s offer timer).
-                // Tell the client to wait; it will receive a fresh sfu-viewer-ready when the source
-                // reconnects, or sfu-source-unavailable when it is definitively gone.
+                // Producers exist but none have healthy ICE/DTLS.
+                // Check if this is a brand-new WHIP session still establishing ICE (within 30s).
+                // In that case, queue the viewer as pending so they are notified when ICE connects,
+                // rather than immediately sending ingest_stale which causes a reconnect loop.
+                const recentWhipSession = Array.from(whipHandler.sessions.values()).find(
+                    s => s.streamId === client.streamId && (Date.now() - (s.createdAt || 0)) < 30000
+                );
+                if (recentWhipSession) {
+                    const room = this.rooms.get(client.streamId);
+                    if (room) {
+                        if (!room._pendingWatchers) room._pendingWatchers = new Set();
+                        room._pendingWatchers.add(client.peerId);
+                    }
+                    console.log(`[Broadcast] WHIP ICE establishing for stream ${client.streamId} — queueing viewer ${client.peerId} as pending`);
+                    this.safeSend(ws, { type: 'watch-queued' });
+                    return true;
+                }
+                // True stale: ICE never connected or has definitively failed.
                 console.log(`[Broadcast] All ${allProducers.length} producer(s) are stale for stream ${client.streamId} — sending source-unavailable to ${client.peerId}`);
                 this.safeSend(ws, { type: 'sfu-source-unavailable', reason: 'ingest_stale' });
                 return true; // handled — do not fall through to P2P offer path

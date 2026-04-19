@@ -79,9 +79,21 @@ router.get('/presets', requireAuth, (req, res) => {
 });
 
 // ── GET /destinations — list user's restream destinations ────
+// ?managed_stream_id=N — filter by stream slot
 router.get('/destinations', requireAuth, (req, res) => {
     try {
-        const dests = db.getRestreamDestinationsByUserId(req.user.id) || [];
+        const managedStreamId = req.query.managed_stream_id ? parseInt(req.query.managed_stream_id) : null;
+        let dests;
+        if (managedStreamId) {
+            // Verify ownership
+            const ms = db.getManagedStreamById(managedStreamId);
+            if (!ms || ms.user_id !== req.user.id) {
+                return res.status(403).json({ error: 'Not your stream slot' });
+            }
+            dests = db.getRestreamDestinationsByManagedStream(managedStreamId) || [];
+        } else {
+            dests = db.getRestreamDestinationsByUserId(req.user.id) || [];
+        }
         res.json({ destinations: dests.map(sanitizeDest) });
     } catch (err) {
         console.error('[Restream] List destinations error:', err.message);
@@ -92,7 +104,7 @@ router.get('/destinations', requireAuth, (req, res) => {
 // ── POST /destinations — create a new restream destination ───
 router.post('/destinations', requireAuth, (req, res) => {
     try {
-        const { platform, name, server_url, stream_key, enabled, auto_start, quality_preset } = req.body;
+        const { platform, name, server_url, stream_key, enabled, auto_start, quality_preset, managed_stream_id } = req.body;
 
         if (!platform || !VALID_PLATFORMS.includes(platform)) {
             return res.status(400).json({ error: `Invalid platform. Must be one of: ${VALID_PLATFORMS.join(', ')}` });
@@ -102,8 +114,20 @@ router.post('/destinations', requireAuth, (req, res) => {
             return res.status(400).json({ error: `Invalid quality preset. Must be one of: ${VALID_QUALITY_PRESETS.join(', ')}` });
         }
 
-        // Enforce a reasonable limit
-        const existing = db.getRestreamDestinationsByUserId(req.user.id) || [];
+        // Validate managed_stream_id ownership if provided
+        let resolvedSlotId = null;
+        if (managed_stream_id) {
+            const ms = db.getManagedStreamById(parseInt(managed_stream_id));
+            if (!ms || ms.user_id !== req.user.id) {
+                return res.status(403).json({ error: 'Not your stream slot' });
+            }
+            resolvedSlotId = ms.id;
+        }
+
+        // Enforce a reasonable limit per slot (or globally if no slot)
+        const existing = resolvedSlotId
+            ? (db.getRestreamDestinationsByManagedStream(resolvedSlotId) || [])
+            : (db.getRestreamDestinationsByUserId(req.user.id) || []);
         if (existing.length >= MAX_DESTINATIONS) {
             return res.status(400).json({ error: `Maximum ${MAX_DESTINATIONS} restream destinations allowed` });
         }
@@ -123,6 +147,7 @@ router.post('/destinations', requireAuth, (req, res) => {
 
         const dest = db.createRestreamDestination(req.user.id, {
             platform,
+            managed_stream_id: resolvedSlotId,
             name: name?.trim() || PLATFORM_PRESETS[platform]?.name || platform,
             server_url: finalUrl,
             stream_key: stream_key.trim(),
@@ -176,6 +201,19 @@ router.put('/destinations/:id', requireAuth, (req, res) => {
         // Channel URL + chat relay
         if (req.body.channel_url !== undefined) updates.channel_url = req.body.channel_url?.trim() || null;
         if (req.body.chat_relay !== undefined) updates.chat_relay = req.body.chat_relay ? 1 : 0;
+
+        // Managed stream ID (slot assignment)
+        if (req.body.managed_stream_id !== undefined) {
+            if (req.body.managed_stream_id) {
+                const ms = db.getManagedStreamById(parseInt(req.body.managed_stream_id));
+                if (!ms || ms.user_id !== req.user.id) {
+                    return res.status(403).json({ error: 'Not your stream slot' });
+                }
+                updates.managed_stream_id = ms.id;
+            } else {
+                updates.managed_stream_id = null;
+            }
+        }
 
         const updated = db.updateRestreamDestination(dest.id, updates);
 

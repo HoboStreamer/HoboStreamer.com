@@ -100,13 +100,22 @@ class ChatRelayService {
     }
 
     /**
-     * Start chat relay for all eligible restream destinations of a stream.
+     * Start chat relay for eligible restream destinations matching this stream's slot.
      * Called when a stream goes live or restream starts.
      */
     async startForStream(stream) {
         if (!stream?.id || !stream?.user_id) return;
 
-        const destinations = db.getRestreamDestinationsByUserId(stream.user_id) || [];
+        // Load destinations scoped to this stream's managed_stream_id (slot),
+        // falling back to all user destinations if stream has no slot
+        let destinations;
+        if (stream.managed_stream_id) {
+            destinations = db.getRestreamDestinationsByManagedStream(stream.managed_stream_id) || [];
+        } else {
+            // Legacy: un-slotted destinations only
+            const all = db.getRestreamDestinationsByUserId(stream.user_id) || [];
+            destinations = all.filter(d => !d.managed_stream_id);
+        }
         for (const dest of destinations) {
             if (!dest.enabled || !dest.chat_relay || !dest.channel_url) continue;
             this.startBridge(stream.id, dest);
@@ -208,15 +217,21 @@ class ChatRelayService {
     /**
      * Sync relay bridges for a user after destination settings change.
      * Stops bridges for destinations that no longer have relay enabled,
-     * starts bridges for newly enabled ones on all live streams.
+     * starts bridges for newly enabled ones on matching live streams.
      */
     syncForUser(userId) {
         const liveStreams = db.getLiveStreamsByUserId(userId) || [];
         if (!liveStreams.length) return;
 
-        const destinations = db.getRestreamDestinationsByUserId(userId) || [];
+        const allDests = db.getRestreamDestinationsByUserId(userId) || [];
 
         for (const stream of liveStreams) {
+            // Filter destinations to those matching this stream's slot
+            const destinations = allDests.filter(d =>
+                d.managed_stream_id ? d.managed_stream_id === stream.managed_stream_id
+                    : !stream.managed_stream_id
+            );
+
             // Stop bridges for disabled/removed relay destinations
             for (const [key, bridge] of this.bridges) {
                 if (bridge.streamId !== stream.id) continue;

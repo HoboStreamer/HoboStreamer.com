@@ -4084,9 +4084,17 @@ function isMobileChatLayout() {
 }
 
 function toggleMobileChat() {
-    const sidebar = document.getElementById('chat-sidebar');
-    const fab = document.getElementById('mobile-chat-toggle');
+    // Try live chat sidebar first, fall back to offline global chat
+    let sidebar = document.getElementById('chat-sidebar');
+    const offlineChat = document.getElementById('offline-global-chat');
+    const isOffline = !sidebar || sidebar.offsetParent === null;
+
+    if (isOffline && offlineChat) {
+        sidebar = offlineChat;
+    }
     if (!sidebar) return;
+
+    const fab = document.getElementById('mobile-chat-toggle');
 
     _mobileChatOpen = !_mobileChatOpen;
     sidebar.classList.toggle('mobile-chat-open', _mobileChatOpen);

@@ -364,31 +364,56 @@ function _wsRenderPanel() {
                     <div id="bc-ws-screen-opts" style="${browserMode === 'screen' ? '' : 'display:none'}">
                         <div class="bc-ws-screen-info">
                             <i class="fa-solid fa-circle-info"></i>
-                            <span>Screen capture options vary by browser and OS. Chrome/Edge support tab &amp; system audio.
-                            Firefox supports window/screen but not tab audio. Mobile support is limited.</span>
+                            <span>Screen capture is requested when you click Go Live. Toggle the options below to add microphone or camera to your screen share.</span>
                         </div>
 
                         <div class="bc-ws-screen-section">
                             <label class="bc-ws-screen-section-label">Audio Sources</label>
-                            <div class="bc-ws-row">
-                                <label class="bc-toggle-label" style="flex:1">
-                                    <input type="checkbox" id="bc-ws-screen-mic" ${(p.screenMic !== false) ? 'checked' : ''} onchange="_wsMarkDirty()">
+                            <div class="bc-ws-screen-perm-item">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-ws-screen-mic" ${(p.screenMic !== false) ? 'checked' : ''} onchange="_wsScreenMicToggle(this.checked)">
                                     <i class="fa-solid fa-microphone"></i> Microphone
                                 </label>
-                                <label class="bc-toggle-label" style="flex:1">
+                                <div id="bc-ws-screen-mic-device" class="bc-ws-screen-device-inline" style="display:none">
+                                    <select id="bc-ws-screen-mic-select" class="form-input form-input-sm" style="max-width:260px">
+                                        <option value="default">Default Microphone</option>
+                                    </select>
+                                </div>
+                                <div id="bc-ws-screen-mic-perm" class="bc-ws-screen-perm-inline" style="display:none">
+                                    <button class="btn btn-small btn-outline" onclick="_wsRequestMicPermission()">
+                                        <i class="fa-solid fa-shield-halved"></i> Allow Microphone Access
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="bc-ws-screen-perm-item" style="margin-top:6px">
+                                <label class="bc-toggle-label">
                                     <input type="checkbox" id="bc-ws-screen-sysaudio" ${(p.screenSysAudio !== false) ? 'checked' : ''} onchange="_wsMarkDirty()">
                                     <i class="fa-solid fa-volume-high"></i> System / Tab Audio
                                 </label>
+                                <p class="muted" style="font-size:0.75rem;margin:2px 0 0 26px">Included in screen capture prompt. Chrome/Edge only.</p>
                             </div>
                         </div>
 
                         <div class="bc-ws-screen-section">
                             <label class="bc-ws-screen-section-label">Camera Overlay (PiP)</label>
-                            <div class="bc-ws-row">
-                                <label class="bc-toggle-label" style="flex:1">
-                                    <input type="checkbox" id="bc-ws-screen-cam" ${p.screenCam ? 'checked' : ''} onchange="_wsScreenCamToggle(this.checked);_wsMarkDirty()">
+                            <div class="bc-ws-screen-perm-item">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-ws-screen-cam" ${p.screenCam ? 'checked' : ''} onchange="_wsScreenCamToggle(this.checked)">
                                     <i class="fa-solid fa-video"></i> Show camera as picture-in-picture
                                 </label>
+                                <div id="bc-ws-screen-cam-perm" class="bc-ws-screen-perm-inline" style="display:none">
+                                    <button class="btn btn-small btn-outline" onclick="_wsRequestCamPermission()">
+                                        <i class="fa-solid fa-shield-halved"></i> Allow Camera Access
+                                    </button>
+                                </div>
+                                <div id="bc-ws-screen-cam-device" class="bc-ws-screen-device-inline" style="display:none">
+                                    <div class="form-group" style="margin:0">
+                                        <label style="font-size:0.78rem">Camera</label>
+                                        <select id="bc-ws-screen-cam-select" class="form-input form-input-sm" style="max-width:260px">
+                                            <option value="default">Default Camera</option>
+                                        </select>
+                                    </div>
+                                </div>
                             </div>
                             <div id="bc-ws-screen-pip-opts" style="${p.screenCam ? '' : 'display:none'}">
                                 <div class="bc-ws-row" style="margin-top:6px">
@@ -573,15 +598,63 @@ function _wsRenderPanel() {
         <div class="bc-ws-tab-panel" data-wstabpanel="settings">
             <div class="bc-ws-profile-section">
 
-                <!-- VOD / Clips Settings -->
+                <!-- Restream Destinations -->
                 <details class="bc-ws-slot-settings" open>
+                    <summary><i class="fa-solid fa-tower-broadcast"></i> Restream Destinations</summary>
+                    <div class="bc-ws-slot-settings-inner">
+                        <p class="muted" style="font-size:0.82rem;margin-bottom:10px">
+                            Stream this slot to external platforms (Twitch, YouTube, Kick, etc.). Each slot can have its own destinations.
+                        </p>
+                        <div id="bc-ws-restream-list" class="bc-ws-restream-list">
+                            <div class="bc-ws-loading"><i class="fa-solid fa-spinner fa-spin"></i> Loading…</div>
+                        </div>
+                        <button class="btn btn-small btn-outline" style="margin-top:8px" onclick="_wsAddRestreamDest()">
+                            <i class="fa-solid fa-plus"></i> Add Destination
+                        </button>
+                    </div>
+                </details>
+
+                <!-- Chat Overlay -->
+                <details class="bc-ws-slot-settings">
+                    <summary><i class="fa-solid fa-closed-captioning"></i> Chat Overlay</summary>
+                    <div class="bc-ws-slot-settings-inner">
+                        <p class="muted" style="font-size:0.82rem;margin-bottom:8px">
+                            Add this URL as a Browser Source in OBS to display chat on stream.
+                            This overlay shows chat for this stream slot only, including relayed restream chats.
+                        </p>
+                        <div class="form-group">
+                            <label>Slot Chat Overlay URL</label>
+                            <div style="display:flex;gap:6px;align-items:center">
+                                <input type="text" class="form-input form-input-sm" readonly
+                                    id="bc-ws-overlay-url"
+                                    value="${esc(window.location.origin)}/overlay/chat/${esc(currentUser?.username || '')}/${ms.slug || ms.id}">
+                                <button class="btn btn-small" onclick="_wsCopyOverlayUrl()" title="Copy URL">
+                                    <i class="fa-solid fa-copy"></i>
+                                </button>
+                                <button class="btn btn-small" onclick="_wsPreviewOverlay()" title="Preview">
+                                    <i class="fa-solid fa-external-link"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <details style="margin-top:6px">
+                            <summary style="font-size:0.82rem;color:var(--text-secondary);cursor:pointer"><i class="fa-solid fa-sliders"></i> Customize</summary>
+                            <p class="muted" style="font-size:0.78rem;margin-top:6px">
+                                Add query params: <code>?fade=10</code> (seconds), <code>&amp;max=30</code> (max messages),
+                                <code>&amp;fontsize=18</code> (px), <code>&amp;bg=1</code> (dark background).
+                            </p>
+                        </details>
+                    </div>
+                </details>
+
+                <!-- VOD / Clips Settings -->
+                <details class="bc-ws-slot-settings">
                     <summary><i class="fa-solid fa-film"></i> VOD &amp; Clips Settings</summary>
                     <div class="bc-ws-slot-settings-inner">
                         <div class="form-group">
                             <label class="bc-toggle-label">
                                 <input type="checkbox" id="bc-ws-vod-recording" ${ms.slot_vod_recording_enabled !== 0 ? 'checked' : ''}
                                     onchange="_wsSlotSettingChanged()">
-                                <i class="fa-solid fa-circle-dot"></i> VOD Recording Enabled
+                                VOD Recording Enabled
                             </label>
                         </div>
                         <div class="bc-ws-row">
@@ -696,6 +769,9 @@ function _wsRenderPanel() {
 
     // Ensure floating save bar exists in document body
     _wsEnsureSaveBar();
+
+    // Load restream destinations for this slot
+    _wsLoadRestreamDests(ms.id);
 }
 
 /* ── Tab switching ───────────────────────────────────────────── */
@@ -865,11 +941,21 @@ async function _wsEndStream() {
 function _wsOpenPopoutChat() {
     const ms = _wsState.selectedMs;
     if (!ms) return;
-    const slug = ms.slug || ms.id;
-    const username = currentUser?.username || '';
-    const path = channelPath(username, slug);
-    const chatUrl = `${window.location.origin}${path}?popout=chat`;
-    window.open(chatUrl, `hobo-chat-${ms.id}`, 'width=400,height=600,menubar=no,toolbar=no');
+
+    // Use the managed stream's live session ID if live, otherwise open global chat for the channel
+    const liveSessionId = _wsGetLiveSessionId(ms.id);
+    if (liveSessionId && typeof popoutChat === 'function') {
+        popoutChat('stream', liveSessionId);
+    } else {
+        // Even when not live, open a popout chat scoped to the channel
+        if (typeof popoutChat === 'function') {
+            popoutChat('global');
+        } else {
+            const params = new URLSearchParams({ popout: '1', mode: 'global' });
+            window.open(`/popout-chat.html?${params.toString()}`, `hobo-chat-global`,
+                'width=400,height=600,menubar=no,toolbar=no,resizable=yes');
+        }
+    }
 }
 
 /* ── Method cards ────────────────────────────────────────────── */
@@ -1197,9 +1283,20 @@ async function _wsInitDevicePicker(method, browserMode) {
     if (wrap) wrap.style.display = method !== 'browser' ? 'none' : '';
     if (method !== 'browser') return;
 
-    // Hide camera selector in mic-only or screen mode
+    // In screen mode, hide the main permission/device section — handled inline
+    if (browserMode === 'screen') {
+        const permReq = document.getElementById('bc-perm-request');
+        const devSelects = document.getElementById('bc-device-selects');
+        if (permReq) permReq.style.display = 'none';
+        if (devSelects) devSelects.style.display = 'none';
+        // Check if mic/cam permissions already granted and show inline devices
+        await _wsCheckScreenInlinePermissions();
+        return;
+    }
+
+    // Hide camera selector in mic-only mode
     const camGroup = document.getElementById('bc-ws-camera-group');
-    if (camGroup) camGroup.style.display = (browserMode === 'mic_only' || browserMode === 'screen') ? 'none' : '';
+    if (camGroup) camGroup.style.display = (browserMode === 'mic_only') ? 'none' : '';
 
     // Hide audio selector in camera-only mode
     const audioGroup = document.getElementById('bc-ws-audio-group');
@@ -1314,6 +1411,18 @@ function _wsSyncScreenShareHiddenDefaults(browserMode) {
     if (micEl) micEl.checked = document.getElementById('bc-ws-screen-mic')?.checked ?? true;
     if (camEl) camEl.checked = document.getElementById('bc-ws-screen-cam')?.checked ?? false;
     if (syaEl) syaEl.value = document.getElementById('bc-ws-screen-sysaudio')?.checked ? 'include' : 'exclude';
+
+    // Sync inline screen-mode device selects to hidden form selects
+    const screenMicSel = document.getElementById('bc-ws-screen-mic-select');
+    const screenCamSel = document.getElementById('bc-ws-screen-cam-select');
+    const hiddenAudio = document.getElementById('bc-screen-audio');
+    const hiddenCamera = document.getElementById('bc-screen-camera');
+    if (screenMicSel && hiddenAudio && screenMicSel.value !== 'default') {
+        hiddenAudio.value = screenMicSel.value;
+    }
+    if (screenCamSel && hiddenCamera && screenCamSel.value !== 'default') {
+        hiddenCamera.value = screenCamSel.value;
+    }
 
     // Sync PiP position/size to broadcastState for use in _startPipComposite
     const pipPos = document.getElementById('bc-ws-screen-pip-pos')?.value || 'bottom-right';
@@ -1562,27 +1671,35 @@ function _wsSelectBrowserMode(mode) {
     const audioGroup = document.getElementById('bc-ws-audio-group');
     if (audioGroup) audioGroup.style.display = mode === 'camera_only' ? 'none' : '';
 
-    // Update permission button text/icon per mode
-    const permHintText = document.getElementById('bc-perm-hint-text');
-    const permBtnText = document.getElementById('bc-perm-btn-text');
-    const permBtn = document.getElementById('bc-perm-btn');
-    if (permHintText) {
-        const hints = { mic_only: 'Browser needs microphone access to stream.',
-            camera_only: 'Browser needs camera access to stream.',
-            screen: 'Browser needs screen capture access to stream.',
-            camera: 'Browser needs camera & mic access to stream.' };
-        permHintText.textContent = hints[mode] || hints.camera;
-    }
-    if (permBtnText) {
-        const labels = { mic_only: 'Allow Microphone', camera_only: 'Allow Camera',
-            screen: 'Allow Screen Share', camera: 'Allow Camera & Mic' };
-        permBtnText.textContent = labels[mode] || labels.camera;
-    }
-    if (permBtn) {
-        const icon = permBtn.querySelector('i');
-        if (icon) {
-            icon.className = 'fa-solid ' + (mode === 'mic_only' ? 'fa-microphone'
-                : mode === 'screen' ? 'fa-display' : 'fa-video');
+    const permReq = document.getElementById('bc-perm-request');
+    const devSelects = document.getElementById('bc-device-selects');
+
+    if (mode === 'screen') {
+        // In screen mode, hide the main permission/device section — handled inline
+        if (permReq) permReq.style.display = 'none';
+        if (devSelects) devSelects.style.display = 'none';
+        _wsCheckScreenInlinePermissions();
+    } else {
+        // Update permission button text/icon per mode
+        const permHintText = document.getElementById('bc-perm-hint-text');
+        const permBtnText = document.getElementById('bc-perm-btn-text');
+        const permBtn = document.getElementById('bc-perm-btn');
+        if (permHintText) {
+            const hints = { mic_only: 'Browser needs microphone access to stream.',
+                camera_only: 'Browser needs camera access to stream.',
+                camera: 'Browser needs camera & mic access to stream.' };
+            permHintText.textContent = hints[mode] || hints.camera;
+        }
+        if (permBtnText) {
+            const labels = { mic_only: 'Allow Microphone', camera_only: 'Allow Camera',
+                camera: 'Allow Camera & Mic' };
+            permBtnText.textContent = labels[mode] || labels.camera;
+        }
+        if (permBtn) {
+            const icon = permBtn.querySelector('i');
+            if (icon) {
+                icon.className = 'fa-solid ' + (mode === 'mic_only' ? 'fa-microphone' : 'fa-video');
+            }
         }
     }
 
@@ -1624,6 +1741,91 @@ function _wsMicImageChanged(input) {
 function _wsScreenCamToggle(checked) {
     const opts = document.getElementById('bc-ws-screen-pip-opts');
     if (opts) opts.style.display = checked ? '' : 'none';
+    _wsMarkDirty();
+    if (checked) _wsRequestCamPermission();
+}
+
+function _wsScreenMicToggle(checked) {
+    _wsMarkDirty();
+    if (checked) _wsRequestMicPermission();
+}
+
+/** Check if mic/cam permissions are already granted and show inline device selects */
+async function _wsCheckScreenInlinePermissions() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter(d => d.kind === 'audioinput' && d.label);
+        const cams = devices.filter(d => d.kind === 'videoinput' && d.label);
+
+        if (mics.length > 0) {
+            _wsPopulateInlineDevices('bc-ws-screen-mic-select', mics);
+            _wsShowEl('bc-ws-screen-mic-device', true);
+            _wsShowEl('bc-ws-screen-mic-perm', false);
+        } else if (document.getElementById('bc-ws-screen-mic')?.checked) {
+            _wsShowEl('bc-ws-screen-mic-perm', true);
+        }
+
+        if (cams.length > 0 && document.getElementById('bc-ws-screen-cam')?.checked) {
+            _wsPopulateInlineDevices('bc-ws-screen-cam-select', cams);
+            _wsShowEl('bc-ws-screen-cam-device', true);
+            _wsShowEl('bc-ws-screen-cam-perm', false);
+        } else if (document.getElementById('bc-ws-screen-cam')?.checked) {
+            _wsShowEl('bc-ws-screen-cam-perm', true);
+        }
+    } catch (err) {
+        console.warn('[Workspace] Inline permission check failed:', err.message);
+    }
+}
+
+async function _wsRequestMicPermission() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter(d => d.kind === 'audioinput' && d.label);
+        _wsPopulateInlineDevices('bc-ws-screen-mic-select', mics);
+        _wsShowEl('bc-ws-screen-mic-device', true);
+        _wsShowEl('bc-ws-screen-mic-perm', false);
+        // Also sync to the hidden form selects used by createNewStream
+        _wsPopulateInlineDevices('bc-screen-audio', mics);
+    } catch (err) {
+        console.warn('[Workspace] Mic permission denied:', err.message);
+        _wsShowEl('bc-ws-screen-mic-perm', true);
+        _wsShowEl('bc-ws-screen-mic-device', false);
+    }
+}
+
+async function _wsRequestCamPermission() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(t => t.stop());
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter(d => d.kind === 'videoinput' && d.label);
+        _wsPopulateInlineDevices('bc-ws-screen-cam-select', cams);
+        _wsShowEl('bc-ws-screen-cam-device', true);
+        _wsShowEl('bc-ws-screen-cam-perm', false);
+        // Also sync to the hidden form selects used by createNewStream
+        _wsPopulateInlineDevices('bc-screen-camera', cams);
+    } catch (err) {
+        console.warn('[Workspace] Camera permission denied:', err.message);
+        _wsShowEl('bc-ws-screen-cam-perm', true);
+        _wsShowEl('bc-ws-screen-cam-device', false);
+    }
+}
+
+function _wsPopulateInlineDevices(selectId, devices) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    const currentVal = sel.value;
+    sel.innerHTML = '<option value="default">Default</option>' +
+        devices.map(d => `<option value="${esc(d.deviceId)}">${esc(d.label || d.deviceId)}</option>`).join('');
+    if (currentVal) sel.value = currentVal;
+}
+
+function _wsShowEl(id, show) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? '' : 'none';
 }
 
 /* ── Go Live ─────────────────────────────────────────────────── */
@@ -1838,4 +2040,250 @@ async function onManagedStreamCreated(newManagedStreamId) {
     await _wsLoadManagedStreams();
     _wsRenderSidebar();
     if (newManagedStreamId) await _wsSelectStream(newManagedStreamId);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RESTREAM DESTINATIONS (per-slot)
+   ══════════════════════════════════════════════════════════════ */
+
+const _wsRestreamPlatforms = {
+    twitch:  { name: 'Twitch', icon: 'fa-brands fa-twitch', color: '#9146ff', defaultUrl: 'rtmps://live.twitch.tv/app' },
+    youtube: { name: 'YouTube', icon: 'fa-brands fa-youtube', color: '#ff0000', defaultUrl: 'rtmp://a.rtmp.youtube.com/live2' },
+    kick:    { name: 'Kick', icon: 'fa-solid fa-k', color: '#53fc18', defaultUrl: '' },
+    custom:  { name: 'Custom RTMP', icon: 'fa-solid fa-globe', color: '#888', defaultUrl: '' },
+};
+
+let _wsRestreamDests = []; // cached for current slot
+
+async function _wsLoadRestreamDests(managedStreamId) {
+    const container = document.getElementById('bc-ws-restream-list');
+    if (!container) return;
+    try {
+        const data = await api(`/restream/destinations?managed_stream_id=${managedStreamId}`);
+        _wsRestreamDests = data.destinations || [];
+        _wsRenderRestreamList(container);
+    } catch (err) {
+        container.innerHTML = '<p class="muted" style="font-size:0.82rem"><i class="fa-solid fa-triangle-exclamation"></i> Failed to load restream destinations</p>';
+    }
+}
+
+function _wsRenderRestreamList(container) {
+    if (!container) container = document.getElementById('bc-ws-restream-list');
+    if (!container) return;
+
+    if (_wsRestreamDests.length === 0) {
+        container.innerHTML = '<p class="muted" style="font-size:0.82rem">No restream destinations configured for this stream slot.</p>';
+        return;
+    }
+
+    container.innerHTML = _wsRestreamDests.map(d => {
+        const plat = _wsRestreamPlatforms[d.platform] || _wsRestreamPlatforms.custom;
+        const statusClass = d.enabled ? '' : ' disabled';
+        return `
+        <div class="bc-ws-restream-card${statusClass}" data-restreamid="${d.id}">
+            <div class="bc-ws-restream-card-hd">
+                <span class="bc-ws-restream-platform" style="color:${plat.color}">
+                    <i class="${plat.icon}"></i> ${esc(d.name || plat.name)}
+                </span>
+                <span class="bc-ws-restream-badges">
+                    ${d.chat_relay ? '<span class="bc-ws-restream-badge" title="Chat relay enabled"><i class="fa-solid fa-comments"></i></span>' : ''}
+                    ${d.auto_start ? '<span class="bc-ws-restream-badge" title="Auto-start"><i class="fa-solid fa-bolt"></i></span>' : ''}
+                    ${!d.enabled ? '<span class="bc-ws-restream-badge muted" title="Disabled"><i class="fa-solid fa-pause"></i></span>' : ''}
+                </span>
+                <div class="bc-ws-restream-actions">
+                    <button class="btn btn-small btn-outline" onclick="_wsEditRestreamDest(${d.id})" title="Edit">
+                        <i class="fa-solid fa-pen"></i>
+                    </button>
+                    <button class="btn btn-small btn-outline" style="color:var(--danger)" onclick="_wsDeleteRestreamDest(${d.id})" title="Delete">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="bc-ws-restream-card-info">
+                <span class="muted" style="font-size:0.78rem">${esc(d.server_url || '')} · Key: ****${esc(d.stream_key ? d.stream_key.slice(-4) : '')}</span>
+                <span class="muted" style="font-size:0.78rem">Quality: ${esc(d.quality_preset || 'auto')}</span>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function _wsAddRestreamDest() {
+    _wsShowRestreamForm(null);
+}
+
+function _wsEditRestreamDest(destId) {
+    const dest = _wsRestreamDests.find(d => d.id === destId);
+    if (!dest) return;
+    _wsShowRestreamForm(dest);
+}
+
+async function _wsDeleteRestreamDest(destId) {
+    const confirmed = await _wsConfirmAction('This restream destination will be permanently removed.', {
+        title: 'Delete Restream Destination?', okLabel: 'Delete', okClass: 'btn-danger'
+    });
+    if (!confirmed) return;
+    try {
+        await api(`/restream/destinations/${destId}`, { method: 'DELETE' });
+        _wsRestreamDests = _wsRestreamDests.filter(d => d.id !== destId);
+        _wsRenderRestreamList();
+        toast('Restream destination deleted', 'success');
+    } catch (err) {
+        toast(err?.message || 'Failed to delete', 'error');
+    }
+}
+
+function _wsShowRestreamForm(existing) {
+    const isEdit = !!existing;
+    const overlay = document.createElement('div');
+    overlay.className = 'bc-ws-confirm-overlay';
+
+    const plats = Object.entries(_wsRestreamPlatforms).map(([id, p]) =>
+        `<option value="${id}" ${(existing?.platform || '') === id ? 'selected' : ''}>${esc(p.name)}</option>`
+    ).join('');
+
+    const qualityOpts = ['auto', 'low', 'medium', 'high', 'ultra', 'source'].map(q =>
+        `<option value="${q}" ${(existing?.quality_preset || 'auto') === q ? 'selected' : ''}>${q.charAt(0).toUpperCase() + q.slice(1)}</option>`
+    ).join('');
+
+    overlay.innerHTML = `
+    <div class="bc-ws-confirm-dialog" style="max-width:480px">
+        <h3><i class="fa-solid fa-tower-broadcast"></i> ${isEdit ? 'Edit' : 'Add'} Restream Destination</h3>
+        <div class="form-group">
+            <label>Platform</label>
+            <select id="ws-rs-platform" class="form-input" onchange="_wsRestreamPlatformChanged()">
+                ${plats}
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="ws-rs-name" class="form-input form-input-sm" value="${esc(existing?.name || '')}" placeholder="e.g. My Twitch" maxlength="50">
+        </div>
+        <div class="form-group">
+            <label>Server URL</label>
+            <input type="text" id="ws-rs-server-url" class="form-input form-input-sm" value="${esc(existing?.server_url || '')}" placeholder="rtmp://...">
+        </div>
+        <div class="form-group">
+            <label>Stream Key</label>
+            <input type="password" id="ws-rs-stream-key" class="form-input form-input-sm" value="${esc(existing?.stream_key || '')}" placeholder="Paste stream key" autocomplete="off">
+        </div>
+        <div class="form-group">
+            <label>Channel URL <span class="muted">(for chat relay)</span></label>
+            <input type="text" id="ws-rs-channel-url" class="form-input form-input-sm" value="${esc(existing?.channel_url || '')}" placeholder="https://twitch.tv/username">
+        </div>
+        <div class="form-group">
+            <label>Quality Preset</label>
+            <select id="ws-rs-quality" class="form-input">${qualityOpts}</select>
+        </div>
+        <div class="bc-ws-row" style="gap:16px">
+            <label class="bc-toggle-label" style="flex:1">
+                <input type="checkbox" id="ws-rs-enabled" ${existing ? (existing.enabled ? 'checked' : '') : 'checked'}>
+                Enabled
+            </label>
+            <label class="bc-toggle-label" style="flex:1">
+                <input type="checkbox" id="ws-rs-auto-start" ${existing?.auto_start ? 'checked' : ''}>
+                Auto-start
+            </label>
+            <label class="bc-toggle-label" style="flex:1">
+                <input type="checkbox" id="ws-rs-chat-relay" ${existing?.chat_relay ? 'checked' : ''}>
+                <i class="fa-solid fa-comments"></i> Chat Relay
+            </label>
+        </div>
+        <details style="margin-top:8px">
+            <summary style="font-size:0.82rem;color:var(--text-secondary);cursor:pointer"><i class="fa-solid fa-sliders"></i> Custom Encoding Overrides</summary>
+            <div class="bc-ws-row" style="margin-top:8px">
+                <div class="form-group" style="flex:1;margin:0">
+                    <label style="font-size:0.78rem">Video Bitrate (kbps)</label>
+                    <input type="number" id="ws-rs-video-bitrate" class="form-input form-input-sm" value="${existing?.custom_video_bitrate || ''}" placeholder="Auto" min="500" max="50000">
+                </div>
+                <div class="form-group" style="flex:1;margin:0">
+                    <label style="font-size:0.78rem">Audio Bitrate (kbps)</label>
+                    <input type="number" id="ws-rs-audio-bitrate" class="form-input form-input-sm" value="${existing?.custom_audio_bitrate || ''}" placeholder="Auto" min="32" max="512">
+                </div>
+                <div class="form-group" style="flex:1;margin:0">
+                    <label style="font-size:0.78rem">FPS</label>
+                    <input type="number" id="ws-rs-fps" class="form-input form-input-sm" value="${existing?.custom_fps || ''}" placeholder="Auto" min="15" max="120">
+                </div>
+            </div>
+        </details>
+        <div class="bc-ws-confirm-actions" style="margin-top:16px">
+            <button class="btn btn-small" id="ws-rs-cancel">Cancel</button>
+            <button class="btn btn-small btn-primary" id="ws-rs-save">
+                <i class="fa-solid fa-floppy-disk"></i> ${isEdit ? 'Save' : 'Add'}
+            </button>
+        </div>
+    </div>`;
+
+    document.body.appendChild(overlay);
+
+    // Auto-fill server URL on platform change
+    if (!isEdit) _wsRestreamPlatformChanged();
+
+    overlay.querySelector('#ws-rs-cancel').onclick = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('#ws-rs-save').onclick = async () => {
+        const body = {
+            platform: document.getElementById('ws-rs-platform').value,
+            name: document.getElementById('ws-rs-name').value.trim(),
+            server_url: document.getElementById('ws-rs-server-url').value.trim(),
+            stream_key: document.getElementById('ws-rs-stream-key').value.trim(),
+            channel_url: document.getElementById('ws-rs-channel-url').value.trim(),
+            quality_preset: document.getElementById('ws-rs-quality').value,
+            enabled: document.getElementById('ws-rs-enabled').checked,
+            auto_start: document.getElementById('ws-rs-auto-start').checked,
+            chat_relay: document.getElementById('ws-rs-chat-relay').checked,
+            custom_video_bitrate: parseInt(document.getElementById('ws-rs-video-bitrate').value) || null,
+            custom_audio_bitrate: parseInt(document.getElementById('ws-rs-audio-bitrate').value) || null,
+            custom_fps: parseInt(document.getElementById('ws-rs-fps').value) || null,
+            managed_stream_id: _wsState.selectedId,
+        };
+
+        if (!body.stream_key) {
+            toast('Stream key is required', 'error');
+            return;
+        }
+
+        try {
+            if (isEdit) {
+                const data = await api(`/restream/destinations/${existing.id}`, { method: 'PUT', body });
+                const idx = _wsRestreamDests.findIndex(d => d.id === existing.id);
+                if (idx >= 0) _wsRestreamDests[idx] = data.destination;
+            } else {
+                const data = await api('/restream/destinations', { method: 'POST', body });
+                _wsRestreamDests.push(data.destination);
+            }
+            _wsRenderRestreamList();
+            overlay.remove();
+            toast(isEdit ? 'Destination updated' : 'Destination added', 'success');
+        } catch (err) {
+            toast(err?.message || 'Failed to save', 'error');
+        }
+    };
+}
+
+function _wsRestreamPlatformChanged() {
+    const platform = document.getElementById('ws-rs-platform')?.value;
+    const urlInput = document.getElementById('ws-rs-server-url');
+    const nameInput = document.getElementById('ws-rs-name');
+    if (!platform) return;
+    const plat = _wsRestreamPlatforms[platform];
+    if (plat && urlInput && !urlInput.value) {
+        urlInput.value = plat.defaultUrl || '';
+    }
+    if (plat && nameInput && !nameInput.value) {
+        nameInput.value = plat.name;
+    }
+}
+
+function _wsCopyOverlayUrl() {
+    const input = document.getElementById('bc-ws-overlay-url');
+    if (!input) return;
+    navigator.clipboard.writeText(input.value).then(() => toast('Overlay URL copied!', 'success'))
+        .catch(() => { prompt('Copy manually:', input.value); });
+}
+
+function _wsPreviewOverlay() {
+    const input = document.getElementById('bc-ws-overlay-url');
+    if (!input) return;
+    window.open(input.value, '_blank', 'noopener');
 }

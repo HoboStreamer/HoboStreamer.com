@@ -488,6 +488,14 @@ app.get('/obs/chat/:username', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/obs/chat.html'));
 });
 
+// New overlay routes — per-slot and global
+app.get('/overlay/chat/:username/:slotIdOrSlug', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/obs/chat.html'));
+});
+app.get('/overlay/chat/:username', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/obs/chat.html'));
+});
+
 app.get('/media/:username', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/media-player.html'));
 });
@@ -783,17 +791,26 @@ async function start() {
                 // ignore malformed host
             }
         }
+        function hostsEquivalent(a, b) {
+            const normalize = (value) => String(value || '').toLowerCase().replace(/^[\[\]]+/g, '').replace(/[\[\]]+$/g, '');
+            const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+            const na = normalize(a);
+            const nb = normalize(b);
+            if (na === nb) return true;
+            return localHosts.has(na) && localHosts.has(nb);
+        }
+
         if (config.whip?.publicUrl && config.mediasoup?.announcedIp) {
             try {
                 const whipHost = new URL(config.whip.publicUrl).hostname;
-                if (config.mediasoup.announcedIp !== whipHost) {
+                if (!hostsEquivalent(config.mediasoup.announcedIp, whipHost)) {
                     console.warn('[Server] WARNING: MEDIASOUP_ANNOUNCED_IP does not match WHIP_PUBLIC_URL host. This may cause incorrect ICE candidate advertisement for WHIP/WebRTC.');
                 }
             } catch (e) {
                 // ignore malformed host
             }
         }
-        if (config.nodeEnv === 'production' && config.mediasoup?.announcedIp && ['127.0.0.1', 'localhost'].includes(config.mediasoup.announcedIp)) {
+        if (config.nodeEnv === 'production' && config.mediasoup?.announcedIp && ['127.0.0.1', 'localhost', '::1'].includes(config.mediasoup.announcedIp)) {
             console.warn('[Server] WARNING: Mediasoup announcedIp is configured as a local address. External WebRTC clients may be unable to connect. Set MEDIASOUP_ANNOUNCED_IP to your public WHIP/WebRTC hostname.');
         }
         console.log('');
