@@ -221,7 +221,12 @@ function getHoboToolsBase() {
     return config.hoboToolsUrl || config.baseUrl || 'https://hobo.tools';
 }
 
-function getHoboRedirectUri() {
+function getHoboToolsHttpModule() {
+    const url = new URL(getHoboToolsBase());
+    return url.protocol === 'http:' ? require('http') : require('https');
+}
+
+function getHoboToolsRedirectUri() {
     return `${config.baseUrl.toLowerCase()}/api/auth/callback`;
 }
 
@@ -229,11 +234,12 @@ function getHoboRedirectUri() {
 router.get('/sso/login', (req, res) => {
     const state = require('crypto').randomBytes(16).toString('hex');
     // Store state in a short-lived cookie for CSRF protection
-    res.cookie('oauth_state', state, { httpOnly: true, maxAge: 5 * 60 * 1000, sameSite: 'Lax', secure: true });
+    const isSecure = config.baseUrl.startsWith('https');
+    res.cookie('oauth_state', state, { httpOnly: true, maxAge: 5 * 60 * 1000, sameSite: 'Lax', secure: isSecure });
 
     const params = new URLSearchParams({
         client_id: HOBO_CLIENT_ID,
-        redirect_uri: getHoboRedirectUri(),
+        redirect_uri: getHoboToolsRedirectUri(),
         response_type: 'code',
         scope: 'profile theme',
         state,
@@ -255,21 +261,21 @@ router.get('/callback', async (req, res) => {
         res.clearCookie('oauth_state');
 
         // Exchange code for tokens
-        const https = require('https');
         const tokenData = await new Promise((resolve, reject) => {
             const body = JSON.stringify({
                 grant_type: 'authorization_code',
                 client_id: HOBO_CLIENT_ID,
                 client_secret: HOBO_CLIENT_SECRET,
                 code,
-                redirect_uri: getHoboRedirectUri(),
+                redirect_uri: getHoboToolsRedirectUri(),
             });
 
             const url = new URL(`${getHoboToolsBase()}/oauth/token`);
+            const httpModule = getHoboToolsHttpModule();
             const reqOpts = {
                 hostname: url.hostname,
-                port: url.port || 443,
-                path: url.pathname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -277,7 +283,7 @@ router.get('/callback', async (req, res) => {
                 },
             };
 
-            const httpReq = https.request(reqOpts, (httpRes) => {
+            const httpReq = httpModule.request(reqOpts, (httpRes) => {
                 let data = '';
                 httpRes.on('data', chunk => data += chunk);
                 httpRes.on('end', () => {
@@ -405,7 +411,6 @@ router.post('/refresh', async (req, res) => {
         return res.status(401).json({ error: 'No refresh token' });
     }
     try {
-        const https = require('https');
         const tokenData = await new Promise((resolve, reject) => {
             const body = JSON.stringify({
                 grant_type: 'refresh_token',
@@ -414,8 +419,11 @@ router.post('/refresh', async (req, res) => {
                 refresh_token: refreshToken,
             });
             const url = new URL(`${getHoboToolsBase()}/oauth/token`);
-            const httpReq = https.request({
-                hostname: url.hostname, port: url.port || 443, path: url.pathname,
+            const httpModule = getHoboToolsHttpModule();
+            const httpReq = httpModule.request({
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
             }, (httpRes) => {

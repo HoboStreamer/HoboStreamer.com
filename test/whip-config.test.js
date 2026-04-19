@@ -24,11 +24,17 @@ assert.strictEqual(config.turn.url, '');
 
 console.log('✅ WHIP config defaults regression test passed');
 
+delete process.env.WHIP_PUBLIC_URL_ENABLED;
+config = loadConfig();
+assert.strictEqual(config.whip.publicUrl, 'https://whip.example.com');
+assert.strictEqual(config.whip.enabled, true);
+console.log('✅ WHIP public URL defaults to enabled when configured without an explicit enabled flag');
+
 process.env.TURN_URL = 'turn:turn.example.com:3478';
 process.env.TURN_USERNAME = 'testuser';
 process.env.TURN_CREDENTIAL = 'testpass';
 config = loadConfig();
-assert.strictEqual(config.turn.url, 'turn://turn.example.com:3478');
+assert.strictEqual(config.turn.url, 'turn:turn.example.com:3478');
 assert.strictEqual(config.turn.username, 'testuser');
 assert.strictEqual(config.turn.credential, 'testpass');
 

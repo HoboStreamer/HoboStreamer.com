@@ -143,6 +143,9 @@ async function _wsLoadProfile(managedStreamId) {
         }
         _wsState.streamKey = data.stream_key || null;
         _wsState.profile = data.broadcast_settings || {};
+        _wsState.whipUrlBase = data.whip_url_base || null;
+        _wsState.whipUrlSource = data.whip_url_source || null;
+        _wsState.whipUrlWarning = data.whip_url_warning || null;
     } catch {
         _wsState.profile = {};
         _wsState.streamKey = _wsState.selectedMs?.stream_key || null;
@@ -197,9 +200,11 @@ function _wsRenderPanel() {
             <div class="bc-ws-panel-title">
                 <h2>${esc(ms.title || 'Untitled Stream')}</h2>
                 <span class="bc-ws-slug muted">
-                    ${ms.slug
-                        ? `<i class="fa-solid fa-link" style="font-size:0.7rem"></i> hobostreamer.com/${esc(ms.slug)}`
-                        : `<i class="fa-solid fa-hashtag" style="font-size:0.7rem"></i> Stream #${ms.id}`}
+                    ${currentUser?.username
+                        ? `<i class="fa-solid fa-link" style="font-size:0.7rem"></i> hobostreamer.com${channelPath(currentUser.username, ms.slug || ms.id)}`
+                        : ms.slug
+                            ? `<i class="fa-solid fa-link" style="font-size:0.7rem"></i> hobostreamer.com/${esc(ms.slug)}`
+                            : `<i class="fa-solid fa-hashtag" style="font-size:0.7rem"></i> Stream #${ms.id}`}
                 </span>
             </div>
             ${isLive ? '<span class="bc-live-badge bc-ws-live-badge-hd"><i class="fa-solid fa-circle"></i> LIVE</span>' : ''}
@@ -278,7 +283,7 @@ function _wsRenderPanel() {
             <div class="form-group">
                 <label>URL Slug <span class="muted">(optional, for display URL)</span></label>
                 <div style="display:flex;align-items:center;gap:6px">
-                    <span class="muted" style="font-size:0.82rem;white-space:nowrap">hobostreamer.com/</span>
+                    <span class="muted" style="font-size:0.82rem;white-space:nowrap">hobostreamer.com/@${esc(currentUser?.username || '')}/</span>
                     <input type="text" id="bc-slug" class="form-input form-input-sm"
                         value="${esc(ms.slug || '')}" placeholder="my-stream" maxlength="32"
                         oninput="_wsMarkDirty()">
@@ -479,7 +484,7 @@ function _wsRenderPanel() {
             `}
             <p class="bc-create-reassurance" style="margin-top:6px;font-size:0.82rem">
                 <i class="fa-solid fa-circle-info"></i>
-                Live at <strong>hobostreamer.com/${esc(ms.slug || (typeof currentUser !== 'undefined' && currentUser?.username) || 'your-channel')}${ms.slug ? '' : '/' + ms.id}</strong>
+                Live at <strong>hobostreamer.com${channelPath(currentUser?.username || 'your-channel', ms.slug || ms.id)}</strong>
             </p>
         </div>
 
@@ -573,7 +578,8 @@ function _wsRenderMethodEndpoint(method, streamKey, managedStreamId) {
     }
 
     if (method === 'webrtc') {
-        const whipUrl = 'https://whip.hobostreamer.com/whip/' + streamKey;
+        const whipBaseUrl = (_wsState.whipUrlBase || window.location.origin).replace(/\/$/, '');
+        const whipUrl = `${whipBaseUrl}/whip/${streamKey}`;
         return `
         <div class="bc-ws-method-info">
             <div class="bc-ws-method-info-row">
