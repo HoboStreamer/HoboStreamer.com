@@ -1,190 +1,97 @@
 # HoboStreamer
 
-HoboStreamer is a self-hosted live streaming platform for stealth campers, nomads, outdoor IRL creators, and adjacent communities.
+HoboStreamer is a self-hosted live streaming platform for the Hobo Network. It provides streaming ingest, chat, VOD/clip management, monetization, and moderation features.
 
-It pairs a Node/Express backend with WebSocket real-time systems, SQLite storage, three broadcast paths, chat, VODs, clips, cosmetics, moderation, hardware controls, calls, and a browser game.
-
-**Community:** [Join the Discord](https://discord.gg/M6MuRUaeJj)
+This repository contains the HoboStreamer server, browser assets, and runtime configuration. It relies on the sibling `hobo.tools` service for central SSO/OAuth2 authentication, JWT verification, and internal URL registry values.
 
 ---
 
-## What the current codebase includes
+## What this repo contains
 
-The server entrypoint in [server/index.js](server/index.js) wires together:
+- `server/` — Node/Express backend, WebSocket handling, streaming routes, chat, auth, monetization, and media services.
+- `public/` — static browser UI assets.
+- `data/` — runtime storage for SQLite, VODs, clips, thumbnails, emotes, analytics, and other media artifacts.
+- `.env.example` — runtime configuration template.
+- `docs/broadcasting.md` — broadcast mode and streaming UX guidance.
+- `server/db/init.js` — SQLite schema initialization script.
+- `package.json` — Node scripts and dependencies.
 
-- Express API routes under `/api/*`
-- WebSocket endpoints under `/ws/*`
-- JSMPEG relay support
-- RTMP ingest support via `node-media-server`
-- optional WebRTC SFU support via `mediasoup`
-- chat, control, broadcast, call, and game realtime services
-- SQLite persistence via `better-sqlite3`
-- VOD, clip, thumbnail, emote, avatar, and media storage under `data/`
-
----
-
-## Major features
-
-### Streaming
-
-HoboStreamer currently supports three live broadcast paths:
-
-- **JSMPEG** — low-latency FFmpeg-to-browser workflow
-- **WebRTC** — browser-based live broadcast path
-- **RTMP** — OBS/FFmpeg ingest path
-
-The codebase also exposes supporting systems for:
-
-- multi-camera streams
-- live thumbnails
-- stream discovery and follow data
-- private/public VOD workflows
-- clip creation from recorded VODs or browser-side live recording
-
-### Chat
-
-The chat server in [server/chat/chat-server.js](server/chat/chat-server.js) supports:
-
-- authenticated and anonymous chat
-- stable anon IDs such as `anon123`
-- global chat and per-stream chat rooms
-- moderation tools
-- rate limiting and spam controls
-- word filtering / opsec-focused filtering
-- WebSocket chat history and presence updates
-- chat-linked cosmetics and username metadata
-- server-synced chat settings (persist across devices)
-- chat log viewer with search, export (CSV/JSON), and bulk purge
-
-### HoboGame and realtime extras
-
-The codebase also includes:
-
-- HoboGame REST and WebSocket services in [server/game](server/game)
-- anon-capable game identity resolution
-- browser group-call signaling in [server/streaming/call-server.js](server/streaming/call-server.js)
-- broadcaster/viewer control channels in [server/controls](server/controls)
-- Raspberry Pi / hardware integration helpers in [hardware](hardware)
-
-### Monetization and identity
-
-HoboStreamer includes:
-
-- JWT auth
-- API token auth for bots and integrations (`hbt_` prefix tokens with scoped permissions)
-- profile and stream-key management
-- Hobo Bucks / coin systems
-- donations, goals, and cashout flows
-- cosmetics, themes, emotes, and avatars
-- admin and moderation routes
-
-### VODs and clips
-
-The current codebase supports:
-
-- automatic or live-assisted recording flows depending on protocol
-- clip extraction from VODs
-- browser-uploaded live clip support
-- near-duplicate clip reuse
-- clip anti-spam throttling
-- thumbnail generation and serving
-
-Recent backend changes also reduce duplicate clip creation when multiple users clip the same moment at nearly the same time.
+> Note: `package.json` depends on a local `hobo-shared` package at `../packages/hobo-shared` relative to `HoboStreamer.com`.
+> If that path does not exist in your workspace, create a matching symlink or clone the package to that location before `npm install`.
 
 ---
 
-## Architecture overview
+## Runtime architecture
 
-### HTTP and API
+### Core server
 
-[server/index.js](server/index.js) mounts route groups including:
+`server/index.js` is the entrypoint. It loads environment configuration, initializes the database, and starts the HTTP server and WebSocket upgrade handler.
 
-- `/api/auth`
-- `/api/streams`
-- `/api/chat`
-- `/api/funds`
-- `/api/coins`
-- `/api/cosmetics`
-- `/api/vods`
-- `/api/clips`
-- `/api/comments`
-- `/api/controls`
-- `/api/admin`
-- `/api/thumbnails`
-- `/api/themes`
-- `/api/emotes`
-- `/api/game`
+### Streaming support
 
-### WebSocket endpoints
+- RTMP ingest using `node-media-server`.
+- optional WebRTC SFU via `mediasoup`.
+- JSMPEG relay.
+- WHIP/HTTP ingestion support.
+- real-time broadcast and control channels.
 
-The main server upgrades connections for:
+### Authentication
 
-- `/ws/chat`
-- `/ws/broadcast`
-- `/ws/control`
-- `/ws/call`
-- `/ws/game`
+- User auth is handled via `hobo.tools` OAuth2 and JWT.
+- HoboStreamer verifies RS256 tokens using the hobo.tools public key.
+- Local user records are joined to hobo.tools identities via `linked_accounts`.
+- The local login redirect URI is typically `http://localhost:3000/api/auth/callback`.
 
-### Storage
+### Data storage
 
-Persistent app data lives under [data](data), including:
-
-- SQLite database
-- VODs
-- clips
-- thumbnails
-- avatars
-- emotes
-- other media assets
+- `data/hobostreamer.db` — primary SQLite database.
+- `data/vods` — VOD storage.
+- `data/clips` — extracted clips.
+- `data/thumbnails` — generated thumbnails.
+- `data/emotes` — uploaded emotes.
+- `data/analytics.db` — analytics tracker.
 
 ---
 
-## Tech stack
+## Ownership and dependencies
 
-The checked-in package metadata in [package.json](package.json) currently uses:
+### HoboStreamer owns
 
-- Node.js
-- Express
-- ws
-- better-sqlite3
-- bcryptjs
-- jsonwebtoken
-- multer
-- helmet
-- cors
-- express-rate-limit
-- node-media-server
-- mediasoup
+- streaming ingest and viewer playback.
+- chat, moderation, and anonymous chat support.
+- VODs, clips, thumbnails, avatars, and emotes.
+- streamer controls, admin endpoints, and restream management.
+
+### HoboStreamer depends on hobo.tools for
+
+- SSO/OAuth2 provider.
+- JWT public key verification.
+- internal URL registry overrides for `BASE_URL`, `WEBRTC_PUBLIC_URL`, `WHIP_PUBLIC_URL`, and related values.
+- internal API access for notifications and registry resolution.
+- optional admin proxy integration.
 
 ---
 
-## Current implementation notes
+## Important files
 
-### Protocol caveats
+- `server/config.js` — env defaults, hobo.tools registry overrides, media and protocol settings.
+- `server/index.js` — app startup, database migrations, chat and streaming initialization.
+- `server/auth/auth.js` — hobo.tools token verification and local account resolution.
+- `server/db/init.js` — create the database schema.
+- `docs/broadcasting.md` — broadcast protocol and stream page guidance.
 
-- **JSMPEG** is implemented and remains useful for low-latency FFmpeg-driven broadcasting.
-- **RTMP** ingest is implemented, with endpoint exposure for playback URLs in the server responses.
-- **WebRTC** support exists in the codebase, but deployment depends on `mediasoup` compiling correctly for the target machine.
+---
 
-### Clip and VOD behavior
+## Package scripts
 
-The current implementation uses different recording paths depending on protocol. Recent changes improved:
+The current `package.json` includes:
 
-- live clip timing accuracy
-- MediaRecorder fallback behavior
-- RTMP/JSMPEG/WebRTC clip handling consistency
-- duplicate clip reuse
-- per-user and per-IP clip throttling
+- `npm install` — install dependencies.
+- `npm start` — start the server.
+- `npm run dev` — start in development mode (`NODE_ENV=development`).
+- `npm run init-db` — initialize the SQLite database schema.
 
-### Anonymous access
-
-Anonymous users are supported in:
-
-- chat
-- calls
-- HoboGame access paths
-
-The game auth flow in [server/game/game-auth.js](server/game/game-auth.js) resolves either authenticated users or chat-style anon identities.
+> `package.json` also includes a `seed` script, but this repository does not contain `server/db/seed.js`. Use `npm run init-db` instead.
 
 ---
 
@@ -192,134 +99,87 @@ The game auth flow in [server/game/game-auth.js](server/game/game-auth.js) resol
 
 ### Requirements
 
-- Node.js 18+
-- npm
-- FFmpeg for media workflows
-- Linux recommended for production deployment
+- Node.js 18 or newer.
+- npm.
+- FFmpeg for media workflows.
+- A running `hobo.tools` instance for authentication.
+- Linux is preferred for production.
 
-Node 20 LTS is the safest production baseline if you want the fewest native-module surprises.
-
-### Install
+### Install dependencies
 
 ```bash
 npm install
 ```
 
-### Environment
-
-Copy and edit your environment file:
+### Configure the environment
 
 ```bash
 cp .env.example .env
 ```
 
-At minimum, configure:
+Edit `.env` and configure at minimum:
 
-- `PORT`
-- `HOST`
 - `BASE_URL`
 - `JWT_SECRET`
-- media storage paths if you want custom locations
-- RTMP/JSMPEG/WebRTC values only for the protocols you actually plan to expose
+- `HOBO_TOOLS_INTERNAL_URL`
+- `INTERNAL_API_KEY`
+- `HOBO_TOOLS_PUBLIC_KEY` or copy the public key to `./data/keys/hobo-tools-public.pem`
 
-### Run
+Optional protocol settings:
 
-```bash
-npm start
-```
+- `RTMP_HOST`, `RTMP_PORT`
+- `JSMPEG_VIDEO_PORT`, `JSMPEG_AUDIO_PORT`
+- `MEDIASOUP_ANNOUNCED_IP`, `WEBRTC_PORT`
+- `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL`
+- `WHIP_PUBLIC_URL`, `WHIP_PUBLIC_URL_ENABLED`
 
-Development mode:
-
-```bash
-npm run dev
-```
-
-Optional schema initialization script:
+### Initialize the database
 
 ```bash
 npm run init-db
 ```
 
----
+### Start the server
 
-## Security and deployment guidance
+```bash
+npm start
+```
 
-For real deployment, read [SETUP.md](SETUP.md).
+For development:
 
-Key operational guidance from the current codebase:
-
-- keep the website behind Nginx and Cloudflare
-- only open media ports for protocols you actively use
-- keep registration closed when you are not onboarding users
-- keep upload limits low on small servers
-- monitor VOD, clip, thumbnail, avatar, and emote storage growth
-- prefer least-exposed protocol combinations for small VPS deployments
-
-The server already includes:
-
-- `helmet`
-- CORS origin checks
-- route-level rate limits
-- upload-size limits
-- clip dedupe and anti-spam protection
+```bash
+npm run dev
+```
 
 ---
 
-## Repository layout
+## Setup guidance
 
-- [server](server) — backend API, WebSockets, chat, streaming, auth, admin, game
-- [public](public) — web UI assets
-- [hardware](hardware) — controller and streaming helpers for hardware clients
-- [scripts](scripts) — utility and startup scripts
-- [deploy](deploy) — deployment examples for Nginx, Cloudflare, fail2ban, systemd
-- [data](data) — runtime storage
+See [SETUP.md](SETUP.md) for complete first-time setup, local development, and protocol-specific configuration.
 
-Useful starting points:
+### Notes
 
-- [server/index.js](server/index.js)
-- [server/config.js](server/config.js)
-- [server/chat/chat-server.js](server/chat/chat-server.js)
-- [server/streaming/routes.js](server/streaming/routes.js)
-- [server/vod/routes.js](server/vod/routes.js)
-- [server/game/routes.js](server/game/routes.js)
-- [public/js/stream-player.js](public/js/stream-player.js)
-- [public/js/chat.js](public/js/chat.js)
-
-## Documentation
-
-Detailed guides for specific subsystems:
-
-- [Broadcasting Guide](docs/broadcasting.md) — broadcast methods, controls, multi-stream
-- [Chat System](docs/chat-system.md) — WebSocket protocol, moderation, admin tools
-- [API Tokens](docs/api-tokens.md) — bot/integration auth, scopes, examples
-- [Restream Branding](docs/restream-branding.md) — multi-platform overlay setup
+- `server/index.js` attempts to refresh registry values from `hobo.tools` on startup when `HOBO_TOOLS_INTERNAL_URL` and `INTERNAL_API_KEY` are configured.
+- If the `hobo.tools` public key cannot be found, authentication will fail.
+- `mediasoup` must compile successfully for WebRTC support; the server can continue without SFU if it fails.
+- This repo expects a local `hobo-shared` package at `../packages/hobo-shared` from the `HoboStreamer.com` folder.
+- The `INTERNAL_API_KEY` environment variable is used by default; the code also honors `HOBO_INTERNAL_KEY` as an alternate name.
+- The default OAuth client ID is `hobostreamer`; the local redirect callback URI must match one of the allowed URIs registered in `hobo.tools`.
 
 ---
 
-## Project status
+## Local login callback details
 
-- package version is currently `1.0.0`
-- the platform is broad in scope and mixes streaming, social, game, and hardware systems
-- some features depend on optional infrastructure or native components
-- deployment quality depends heavily on how many public-facing media ports you expose
+For local development, `hobo.tools` now seeds HoboStreamer with local redirect URIs when running in `local-dev` mode. The expected local login callback URIs include:
 
----
+- `http://localhost:3000/api/auth/callback`
+- `http://localhost:3000/auth/callback`
 
-## Hobo Network
-
-HoboStreamer is part of the **Hobo Network** — a multi-domain platform sharing one identity system.
-
-| Service | URL | Description |
-|---------|-----|-------------|
-| **HoboStreamer** | [hobostreamer.com](https://hobostreamer.com) | Live streaming platform |
-| **HoboTools** | [hobo.tools](https://hobo.tools) | Central hub, SSO, utilities |
-| **HoboQuest** | [hobo.quest](https://hobo.quest) | Community MMORPG & canvas |
-| **HoboMaps** | [maps.hobo.tools](https://maps.hobo.tools) | Camp & shelter locator |
-
-See [ARCHITECTURE.md](../ARCHITECTURE.md) for the full multi-domain design.
+If you see `invalid redirect_uri`, confirm that `HOBO_TOOLS_INTERNAL_URL`, `INTERNAL_API_KEY`, and `HOBO_TOOLS_PUBLIC_KEY` are configured correctly and that `hobotools` is running.
 
 ---
 
-## License
+## Additional docs
 
-See [LICENSE](LICENSE).
+- [docs/broadcasting.md](docs/broadcasting.md) — streaming method and broadcast page guide.
+- [SETUP.md](SETUP.md) — first-time setup and local development guide.

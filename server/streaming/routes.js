@@ -992,6 +992,7 @@ router.get('/managed/:managedStreamId/profile', requireAuth, (req, res) => {
         if (ms.user_id !== req.user.id) return res.status(403).json({ error: 'Not your managed stream' });
 
         const broadcastSettings = db.getManagedStreamBroadcastSettings(managedStreamId, req.user.id);
+        const { whipUrlBase, whipUrlSource, whipUrlWarning } = resolveWhipUrlBase(config, req);
 
         // Do NOT expose stream_key to the broader response — return it in a dedicated key
         // so the caller can display/copy it in the authenticated UI.
@@ -1001,6 +1002,9 @@ router.get('/managed/:managedStreamId/profile', requireAuth, (req, res) => {
             managed_stream: msPublic,
             stream_key: streamKey,
             broadcast_settings: broadcastSettings,
+            whip_url_base: whipUrlBase,
+            whip_url_source: whipUrlSource,
+            whip_url_warning: whipUrlWarning,
         });
     } catch (err) {
         console.error('[ManagedStreams] Profile error:', err.message);

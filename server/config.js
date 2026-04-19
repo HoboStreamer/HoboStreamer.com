@@ -21,8 +21,9 @@ const DEFAULTS = {
 
 function normalizeValue(value, type) {
     if (type === 'boolean') {
+        if (value === undefined || value === null) return null;
         if (value === true || value === 'true' || value === '1' || value === 1) return true;
-        if (value === false || value === 'false' || value === '0' || value === 0 || value === '' || value === null || value === undefined) return false;
+        if (value === false || value === 'false' || value === '0' || value === 0 || value === '') return false;
         return null;
     }
     return value;
@@ -97,11 +98,12 @@ function buildConfig(registryValues) {
     const mediasoupAnnouncedIp = process.env.MEDIASOUP_ANNOUNCED_IP
         || (mediaSoupEntry.source !== 'default' ? mediaSoupEntry.value : new URL(baseUrl).hostname);
     const whipEnabledEnv = normalizeValue(process.env.WHIP_PUBLIC_URL_ENABLED, 'boolean');
+    const hasExplicitWhipPublicUrl = whipEntry.source !== 'default' || Boolean(process.env.WHIP_PUBLIC_URL);
     const whipEnabled = whipEnabledEnv !== null
         ? whipEnabledEnv
         : (whipEnabledEntry.source !== 'default'
             ? normalizeValue(whipEnabledEntry.value, 'boolean') ?? false
-            : false);
+            : (hasExplicitWhipPublicUrl ? true : false));
 
     const baseUrlSource = baseEntry.source || 'default';
     const webRtcSource = webRtcEntry.source !== 'default'
