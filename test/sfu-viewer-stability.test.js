@@ -130,6 +130,10 @@ assert.ok(
     'whip-handler.js must cancel the grace timer if ICE recovers'
 );
 assert.ok(
+    whipSrc.includes('hasActiveSessionsForStream') && whipSrc.includes('iceReady'),
+    'whip-handler.js must track healthy WHIP sessions for protocol-aware stale cleanup'
+);
+assert.ok(
     whipSrc.includes("ICE: ${state}") && whipSrc.includes('session=${resourceId}'),
     'whip-handler.js ICE state log must include stream, session, and transport IDs'
 );

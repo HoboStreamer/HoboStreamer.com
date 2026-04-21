@@ -10,6 +10,27 @@ let currentStreamId = null;
 let currentStreamData = null;
 let hoboAppMetaData = null;
 let hoboAppMetaPromise = null;
+
+function getDefaultHoboNetworkUrls() {
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    return {
+        tools: isLocal ? 'http://localhost:3100' : 'https://hobo.tools',
+        quest: isLocal ? 'http://localhost:3200' : 'https://hobo.quest',
+    };
+}
+
+function getHoboNetworkUrl(service) {
+    const urls = window.HoboNetworkUrls || getDefaultHoboNetworkUrls();
+    return (urls && urls[service]) ? urls[service] : getDefaultHoboNetworkUrls()[service];
+}
+
+function getHoboToolsUrl() {
+    return getHoboNetworkUrl('tools');
+}
+
+function getHoboQuestUrl() {
+    return getHoboNetworkUrl('quest');
+}
 /** Cached external viewer count (Kick/Twitch/RS) — updated by cumulative viewer poll */
 let _cachedExternalViewerCount = 0;
 /** Cached native HS viewer count from WebSocket — updated by stream-player.js WS handler */
@@ -621,7 +642,7 @@ function routeFromURL() {
         showPage('broadcast');
         loadBroadcastPage();
     } else if (segments[0] === 'admin') {
-        window.location.href = 'https://hobo.tools/admin';
+        window.location.href = `${getHoboToolsUrl()}/admin`;
         return;
     } else if (segments[0] === 'themes') {
         showPage('themes');
@@ -630,10 +651,10 @@ function routeFromURL() {
         showPage('chat');
         loadChatPage();
     } else if (segments[0] === 'game') {
-        window.location.href = 'https://hobo.quest/game';
+        window.location.href = `${getHoboQuestUrl()}/game`;
         return;
     } else if (segments[0] === 'canvas') {
-        window.location.href = 'https://hobo.quest/canvas';
+        window.location.href = `${getHoboQuestUrl()}/canvas`;
         return;
     } else if (segments[0] === 'pastes') {
         showPage('pastes');
@@ -1007,8 +1028,9 @@ async function loadHomePastes(page) {
 async function loadHomeLeaderboards() {
     try {
         const boards = ['total_level', 'combat', 'mining', 'fishing'];
+        const questUrl = getHoboQuestUrl();
         const results = await Promise.all(boards.map(b =>
-            fetch(`https://hobo.quest/api/game/leaderboard/${b}`).then(r => r.json()).catch(() => ({ entries: [] }))
+            fetch(`${questUrl}/api/game/leaderboard/${b}`).then(r => r.json()).catch(() => ({ entries: [] }))
         ));
         const header = document.getElementById('home-quest-header');
         const container = document.getElementById('home-leaderboards');
@@ -1040,7 +1062,7 @@ async function loadHomeLeaderboards() {
 
 async function loadHomeCanvas() {
     try {
-        const data = await fetch('https://hobo.quest/api/game/canvas/state').then(r => r.json());
+        const data = await fetch(`${getHoboQuestUrl()}/api/game/canvas/state`).then(r => r.json());
         const header = document.getElementById('home-canvas-header');
         const container = document.getElementById('home-canvas-preview');
         if (!data || !data.board) { if (header) header.style.display = 'none'; return; }
@@ -1064,7 +1086,7 @@ async function loadHomeCanvas() {
                     <div class="home-canvas-stat"><strong>${width}×${height}</strong> <span>board size</span></div>
                     <div class="home-canvas-stat"><strong>${recentActions.length}</strong> <span>recent actions</span></div>
                 </div>
-                <a href="https://hobo.quest/canvas" class="btn btn-outline" style="margin-top:12px;">
+                <a href="${getHoboQuestUrl()}/canvas" class="btn btn-outline" style="margin-top:12px;">
                     <i class="fa-solid fa-palette"></i> Open Canvas
                 </a>
             </div>

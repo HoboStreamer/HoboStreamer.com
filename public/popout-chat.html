@@ -188,6 +188,7 @@
         </div>
     </div>
 
+        <script src="/js/chat.js"></script>
     <script>
     'use strict';
 
@@ -196,451 +197,94 @@
     const streamId = params.get('stream') || null;
     const streamTitle = params.get('title') || streamId || '';
     const chatLabel = mode === 'stream'
-        ? ('Chat' + (streamTitle ? ' \u2014 ' + streamTitle : ''))
+        ? ('Chat' + (streamTitle ? ' — ' + streamTitle : ''))
         : 'Global Chat';
 
-    document.title = chatLabel + ' \u2014 HoboStreamer';
+    document.title = chatLabel + ' — HoboStreamer';
     document.getElementById('pc-title').textContent = chatLabel;
 
-    const host = window.location.hostname;
-    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
-    const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const token = localStorage.getItem('token');
-
-    const wsParams = new URLSearchParams();
-    if (token) wsParams.set('token', token);
-    if (mode === 'stream' && streamId) wsParams.set('stream', streamId);
-    const wsUrl = wsProto + '://' + host + ':' + port + '/ws/chat?' + wsParams.toString();
-
-    // ── Settings ──────────────────────────────────────────────
-    const settings = {
-        timestamps: true,
-        sound: false,
-        compact: false,
-    };
-    try {
-        const saved = JSON.parse(localStorage.getItem('popout-chat-settings') || '{}');
-        Object.assign(settings, saved);
-    } catch {}
-
-    function toggleSetting(key) {
-        settings[key] = !settings[key];
-        document.getElementById('pc-toggle-' + (key === 'timestamps' ? 'ts' : key === 'sound' ? 'sound' : 'compact'))
-            .classList.toggle('on', settings[key]);
-        try { localStorage.setItem('popout-chat-settings', JSON.stringify(settings)); } catch {}
-        if (key === 'compact') {
-            document.getElementById('pc-msgs').classList.toggle('compact', settings.compact);
+    function restorePopoutSettings() {
+        try {
+            chatSettings = JSON.parse(localStorage.getItem('popout-chat-settings') || '{}');
+        } catch {
+            chatSettings = {};
         }
+        chatSettings = Object.assign({ timestamps: true, sound: false, compact: false }, chatSettings);
+        if (chatSettings.compact) document.getElementById('pc-msgs')?.classList.add('compact');
+        Object.entries({ ts: 'timestamps', sound: 'sound', compact: 'compact' }).forEach(([id, key]) => {
+            const el = document.getElementById('pc-toggle-' + id);
+            if (el) el.classList.toggle('on', chatSettings[key]);
+        });
     }
 
-    // Sync toggle UI on load
-    Object.entries({ ts: 'timestamps', sound: 'sound', compact: 'compact' }).forEach(([id, key]) => {
-        const el = document.getElementById('pc-toggle-' + id);
-        if (el) el.classList.toggle('on', settings[key]);
-    });
+    window.toggleSetting = function(key) {
+        if (typeof chatSettings === 'undefined') restorePopoutSettings();
+        chatSettings[key] = !chatSettings[key];
+        const toggleId = key === 'timestamps' ? 'ts' : key === 'sound' ? 'sound' : 'compact';
+        const toggleEl = document.getElementById('pc-toggle-' + toggleId);
+        if (toggleEl) toggleEl.classList.toggle('on', chatSettings[key]);
+        try { localStorage.setItem('popout-chat-settings', JSON.stringify(chatSettings)); } catch {}
+        if (key === 'compact') document.getElementById('pc-msgs')?.classList.toggle('compact', chatSettings.compact);
+        if (typeof applyChatSettings === 'function') applyChatSettings();
+    };
 
-    // ── Panel toggles ─────────────────────────────────────────
-    let activePanel = null;
-
-    function togglePanel(name) {
+    window.togglePanel = function(name) {
         const panelEl = document.getElementById('pc-panel-' + name);
         const btnEl = document.getElementById('pc-btn-' + name);
         if (!panelEl) return;
         const opening = !panelEl.classList.contains('visible');
-        // Close all panels first
         document.querySelectorAll('.pc-panel').forEach(p => p.classList.remove('visible'));
         document.querySelectorAll('.pc-hbtn').forEach(b => b.classList.remove('active'));
         if (opening) {
             panelEl.classList.add('visible');
             if (btnEl) btnEl.classList.add('active');
-            activePanel = name;
-            if (name === 'users') requestUserList();
-        } else {
-            activePanel = null;
+            if (name === 'users' && typeof requestUserList === 'function') requestUserList();
         }
-    }
+    };
 
-    // ── Helpers ───────────────────────────────────────────────
-    function esc(s) {
-        const d = document.createElement('div');
-        d.textContent = String(s || '');
-        return d.innerHTML;
-    }
-
-    // Parse emotes using opener's function if available, else basic img tag parsing
-    function parseEmotes(text) {
-        if (window.opener && typeof window.opener.parseEmotes === 'function') {
-            try { return window.opener.parseEmotes(esc(text)); } catch {}
+    function initPopoutChat() {
+        restorePopoutSettings();
+        if (typeof initChat === 'function') {
+            initChat(mode === 'stream' && streamId ? streamId : null);
         }
-        // Fallback: escape + replace :emote: syntax with placeholder
-        return esc(text);
-    }
-
-    // Parse emote img tags from the opener (they may be pre-rendered HTML from chat.js)
-    function renderChatContent(rawText, preRenderedHtml) {
-        if (preRenderedHtml) return preRenderedHtml;
-        return parseEmotes(rawText);
-    }
-
-    function now() {
-        return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-
-    let _notifSound = null;
-    function playNotifSound() {
-        if (!settings.sound) return;
-        try {
-            if (!_notifSound) _notifSound = new Audio('/sounds/chat-notify.mp3');
-            _notifSound.currentTime = 0;
-            _notifSound.play().catch(() => {});
-        } catch {}
-    }
-
-    function appendMsg(html, cls) {
-        const container = document.getElementById('pc-msgs');
-        if (!container) return;
-        const el = document.createElement('div');
-        el.className = 'pc-msg' + (cls ? ' ' + cls : '');
-        el.innerHTML = html;
-        const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
-        container.appendChild(el);
-        if (atBottom) container.scrollTop = container.scrollHeight;
-        while (container.children.length > 600) container.removeChild(container.firstChild);
-    }
-
-    // ── User list ─────────────────────────────────────────────
-    let ws = null;
-
-    function requestUserList() {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'get-users' }));
-        }
-    }
-
-    function renderUserList(data) {
-        const body = document.getElementById('pc-users-body');
-        if (!body) return;
-        const { logged = [], anonCount = 0 } = data;
-        let html = '';
-        for (const u of logged) {
-            const roleLabel = u.role === 'admin' ? 'admin'
-                : u.role === 'global_mod' ? 'mod'
-                : u.role === 'streamer' ? 'streamer' : '';
-            const initial = (u.display_name || u.username || '?')[0].toUpperCase();
-            const avatarHtml = u.avatar_url
-                ? `<img class="pc-user-avatar" src="${esc(u.avatar_url)}" alt="" loading="lazy">`
-                : `<div class="pc-user-avatar">${initial}</div>`;
-            html += `<div class="pc-user-item">
-                ${avatarHtml}
-                <span class="pc-user-name">${esc(u.display_name || u.username)}</span>
-                ${roleLabel ? `<span class="pc-user-role">${esc(roleLabel)}</span>` : ''}
-            </div>`;
-        }
-        if (anonCount > 0) {
-            html += `<div class="pc-user-anon">${anonCount} anonymous viewer${anonCount !== 1 ? 's' : ''}</div>`;
-        }
-        if (!html) html = '<div class="pc-user-anon">No viewers yet</div>';
-        body.innerHTML = html;
-    }
-
-    // ── WebSocket ─────────────────────────────────────────────
-    let reconnectTimer = null;
-    let reconnectDelay = 2000;
-    const connDot = document.getElementById('pc-conn-dot');
-
-    function setConnStatus(status) {
-        connDot.className = 'pc-conn-dot' + (status === 'connected' ? ' connected' : status === 'error' ? ' error' : '');
-    }
-
-    function connect() {
-        ws = new WebSocket(wsUrl);
-
-        ws.onopen = function() {
-            reconnectDelay = 2000;
-            setConnStatus('connected');
-            ws.send(JSON.stringify({
-                type: 'join',
-                streamId: mode === 'stream' ? streamId : undefined,
-                token: token || undefined
-            }));
-        };
-
-        ws.onmessage = function(e) {
-            let msg;
-            try { msg = JSON.parse(e.data); } catch { return; }
-
-            if (msg.type === 'chat') {
-                const roleBadge = msg.role === 'admin'
-                    ? '<i class="fa-solid fa-shield pc-badge-admin" title="Admin"></i>'
-                    : msg.role === 'global_mod'
-                    ? '<i class="fa-solid fa-shield-halved pc-badge-mod" title="Mod"></i>'
-                    : '';
-                const nameColor = esc(msg.profile_color || '#999');
-                const tsHtml = settings.timestamps
-                    ? `<span class="pc-time">${now()}</span> ` : '';
-                const badgeHtml = msg.stream_channel
-                    ? `<span class="pc-stream-badge">${esc(msg.stream_channel)}</span> ` : '';
-                const contentHtml = renderChatContent(msg.message, null);
-                appendMsg(
-                    tsHtml + badgeHtml + roleBadge +
-                    `<span class="pc-user-name-tag" style="color:${nameColor}">${esc(msg.username)}</span>: ` +
-                    contentHtml
-                );
-                playNotifSound();
-                // Refresh user list if it's open
-                if (activePanel === 'users') requestUserList();
-            } else if (msg.type === 'system') {
-                const tsHtml = settings.timestamps
-                    ? `<span class="pc-time">${now()}</span> ` : '';
-                appendMsg(tsHtml + esc(msg.message), 'system');
-            } else if (msg.type === 'error') {
-                appendMsg(esc(msg.message), 'error');
-            } else if (msg.type === 'delete-message') {
-                const el = document.querySelector(`.pc-msg[data-msgid="${esc(msg.messageId)}"]`);
-                if (el) el.classList.add('deleted');
-            } else if (msg.type === 'users-list') {
-                renderUserList(msg.users || { logged: [], anonCount: 0 });
-            } else if (msg.type === 'auth') {
-                // Authenticated — optionally request user list now
-                if (activePanel === 'users') requestUserList();
-            }
-        };
-
-        ws.onclose = function() {
-            setConnStatus('');
-            clearTimeout(reconnectTimer);
-            reconnectTimer = setTimeout(function() {
-                reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
-                connect();
-            }, reconnectDelay);
-        };
-
-        ws.onerror = function() { setConnStatus('error'); };
-    }
-
-    connect();
-
-    // ── Input ─────────────────────────────────────────────────
-    var input = document.getElementById('pc-input');
-    var sendBtn = document.getElementById('pc-send');
-
-    function doSend() {
-        var text = input.value.trim();
-        if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({
-            type: 'chat',
-            message: text,
-            streamId: mode === 'stream' ? streamId : undefined
-        }));
-        input.value = '';
-        input.focus();
-    }
-    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') doSend(); });
-    sendBtn.addEventListener('click', doSend);
-    input.focus();
-
-    // ── Compact mode ──────────────────────────────────────────
-    if (settings.compact) document.getElementById('pc-msgs').classList.add('compact');
-
-    // ── Inherit theme from opener ─────────────────────────────
-    if (window.opener) {
-        try {
-            var openerStyle = window.opener.document.documentElement.style;
-            var cssVars = ['--bg-primary', '--bg-secondary', '--bg-tertiary', '--border',
-                           '--text-primary', '--text-secondary', '--text-muted', '--accent',
-                           '--danger', '--success'];
-            cssVars.forEach(function(v) {
-                var val = openerStyle.getPropertyValue(v);
-                if (val) document.documentElement.style.setProperty(v, val);
-            });
-        } catch {}
-    }
-    </script>
-</body>
-</html>
-        html, body { height: 100%; margin: 0; overflow: hidden; }
-        body { display: flex; flex-direction: column; background: var(--bg-primary, #0d0d1a); }
-        .popout-header {
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 8px 12px; background: var(--bg-secondary, #1a1a2e);
-            border-bottom: 1px solid var(--border, #2a2a3e);
-            font-size: 0.85rem; font-weight: 600; flex-shrink: 0;
-        }
-        .popout-header i { margin-right: 6px; }
-        .popout-chat-wrap {
-            flex: 1; display: flex; flex-direction: column; overflow: hidden;
-        }
-        .popout-messages {
-            flex: 1; overflow-y: auto; padding: 8px;
-            font-size: 0.85rem; line-height: 1.4;
-        }
-        .popout-messages .chat-msg { padding: 2px 0; word-break: break-word; }
-        .popout-messages .chat-msg.system { color: var(--text-muted, #888); font-style: italic; font-size: 0.8rem; }
-        .popout-messages .chat-user { font-weight: 600; cursor: default; }
-        .popout-messages .chat-time-inline { font-size: 0.7rem; color: var(--text-muted, #888); margin-right: 4px; }
-        .popout-messages .chat-stream-badge {
-            font-size: 0.65rem; background: rgba(192,150,92,0.2); color: var(--accent, #c0965c);
-            padding: 1px 5px; border-radius: 3px; margin-right: 4px;
-        }
-        .popout-messages .chat-avatar, .popout-messages .chat-avatar-letter { display: none; }
-        .popout-messages .chat-badge { display: none; }
-        .popout-input-area {
-            display: flex; gap: 6px; padding: 8px;
-            border-top: 1px solid var(--border, #2a2a3e);
-            background: var(--bg-secondary, #1a1a2e); flex-shrink: 0;
-        }
-        .popout-input-area input {
-            flex: 1; background: var(--bg-primary, #0d0d1a);
-            border: 1px solid var(--border, #2a2a3e);
-            border-radius: 4px; color: var(--text-primary, #e0e0e0);
-            padding: 6px 10px; font-size: 0.85rem; outline: none;
-        }
-        .popout-input-area input:focus { border-color: var(--accent, #c0965c); }
-        .popout-input-area button {
-            background: var(--accent, #c0965c); color: #fff; border: none;
-            border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.85rem;
-        }
-        .popout-input-area button:hover { opacity: 0.85; }
-        .popout-emote { height: 1.2em; vertical-align: middle; }
-    </style>
-</head>
-<body>
-    <div class="popout-header">
-        <span><i class="fa-solid fa-comments"></i> <span id="popout-title">Chat</span></span>
-    </div>
-    <div class="popout-chat-wrap">
-        <div class="popout-messages" id="popout-msgs"></div>
-        <div class="popout-input-area">
-            <input type="text" id="popout-input" placeholder="Send a message..." maxlength="500" autocomplete="off">
-            <button id="popout-send">Send</button>
-        </div>
-    </div>
-
-    <script>
-    'use strict';
-
-    const params = new URLSearchParams(window.location.search);
-    const mode = params.get('mode') || 'global';
-    const streamId = params.get('stream') || null;
-    const title = mode === 'stream' ? ('Stream Chat \u2014 ' + (streamId || '')) : 'Global Chat';
-
-    document.title = title + ' \u2014 HoboStreamer';
-    document.getElementById('popout-title').textContent = title;
-
-    const host = window.location.hostname;
-    const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
-    const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const token = localStorage.getItem('token');
-
-    const wsParams = new URLSearchParams();
-    if (token) wsParams.set('token', token);
-    if (mode === 'stream' && streamId) wsParams.set('stream', streamId);
-    const wsUrl = wsProto + '://' + host + ':' + port + '/ws/chat?' + wsParams.toString();
-
-    let ws = null;
-    let reconnectTimer = null;
-    let reconnectDelay = 2000;
-
-    function esc(s) {
-        const d = document.createElement('div');
-        d.textContent = String(s || '');
-        return d.innerHTML;
-    }
-
-    // Basic emote parser — check if opener has emotes data
-    function tryParseEmotes(text) {
-        if (window.opener && typeof window.opener.parseEmotes === 'function') {
-            try { return window.opener.parseEmotes(text); } catch {}
-        }
-        return esc(text);
-    }
-
-    function appendMsg(html) {
-        const container = document.getElementById('popout-msgs');
-        if (!container) return;
-        const el = document.createElement('div');
-        el.className = 'chat-msg';
-        el.innerHTML = html;
-        container.appendChild(el);
-        container.scrollTop = container.scrollHeight;
-        while (container.children.length > 500) container.removeChild(container.firstChild);
-    }
-
-    function connect() {
-        ws = new WebSocket(wsUrl);
-        ws.onopen = function() {
-            reconnectDelay = 2000;
-            ws.send(JSON.stringify({
-                type: 'join',
-                streamId: mode === 'stream' ? streamId : undefined,
-                token: token || undefined
-            }));
-            appendMsg('<div class="chat-msg system">Connected</div>');
-        };
-        ws.onmessage = function(e) {
-            try {
-                const msg = JSON.parse(e.data);
-                if (msg.type === 'chat') {
-                    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    const nameColor = msg.profile_color || '#999';
-                    let badge = '';
-                    if (msg.stream_channel) {
-                        badge = '<span class="chat-stream-badge">' + esc(msg.stream_channel) + '</span> ';
-                    }
-                    appendMsg(
-                        '<span class="chat-time-inline">' + ts + '</span> ' +
-                        badge +
-                        '<span class="chat-user" style="color:' + esc(nameColor) + '">' + esc(msg.username) + '</span>: ' +
-                        tryParseEmotes(msg.message)
-                    );
-                } else if (msg.type === 'system') {
-                    appendMsg('<span class="chat-msg system">' + esc(msg.message) + '</span>');
+        const input = document.getElementById('pc-input');
+        const sendBtn = document.getElementById('pc-send');
+        if (input) {
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (typeof sendChat === 'function') sendChat();
                 }
-            } catch (err) { /* ignore parse errors */ }
-        };
-        ws.onclose = function() {
-            appendMsg('<span class="chat-msg system">Disconnected \u2014 reconnecting\u2026</span>');
-            reconnectTimer = setTimeout(function() {
-                reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
-                connect();
-            }, reconnectDelay);
-        };
-        ws.onerror = function() {};
+            });
+            input.focus();
+        }
+        if (sendBtn) {
+            sendBtn.addEventListener('click', () => {
+                if (typeof sendChat === 'function') sendChat();
+            });
+        }
     }
 
-    connect();
-
-    // Wire up input
-    var input = document.getElementById('popout-input');
-    var sendBtn = document.getElementById('popout-send');
-    function doSend() {
-        var text = input.value.trim();
-        if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({
-            type: 'chat',
-            message: text,
-            streamId: mode === 'stream' ? streamId : undefined
-        }));
-        input.value = '';
-        input.focus();
-    }
-    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') doSend(); });
-    sendBtn.addEventListener('click', doSend);
-    input.focus();
-
-    // Apply theme from opener if available
-    if (window.opener) {
+    function inheritTheme() {
+        if (!window.opener) return;
         try {
-            var openerStyle = window.opener.document.documentElement.style;
-            var cssVars = ['--bg-primary', '--bg-secondary', '--bg-tertiary', '--border',
-                           '--text-primary', '--text-secondary', '--text-muted', '--accent',
-                           '--danger', '--success'];
-            cssVars.forEach(function(v) {
-                var val = openerStyle.getPropertyValue(v);
+            const openerStyle = window.opener.document.documentElement.style;
+            const cssVars = ['--bg-primary', '--bg-secondary', '--bg-tertiary', '--border',
+                '--text-primary', '--text-secondary', '--text-muted', '--accent',
+                '--danger', '--success'];
+            cssVars.forEach((v) => {
+                const val = openerStyle.getPropertyValue(v);
                 if (val) document.documentElement.style.setProperty(v, val);
             });
-        } catch (err) { /* cross-origin or no opener */ }
+        } catch {}
     }
+
+    function startPopoutChat() {
+        inheritTheme();
+        initPopoutChat();
+    }
+
+    startPopoutChat();
     </script>
 </body>
 </html>

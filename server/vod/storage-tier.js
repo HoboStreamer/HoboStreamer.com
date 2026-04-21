@@ -187,12 +187,19 @@ function moveToCold(vodId) {
         }
 
         // Safe to remove source
-        fs.unlinkSync(src);
+        try {
+            fs.unlinkSync(src);
+        } catch (err) {
+            console.error(`[StorageTier] Failed to remove hot source after cold copy for VOD ${vodId}:`, err.message);
+            return { ok: false, error: `Failed to remove hot source after copy: ${err.message}` };
+        }
 
         // Also move seekable sidecar if it exists
         const seekSrc = src.replace(/\.webm$/, '.seekable.webm');
         if (fs.existsSync(seekSrc)) {
-            try { fs.unlinkSync(seekSrc); } catch {} // seekable isn't needed for cold VODs
+            try { fs.unlinkSync(seekSrc); } catch (err) {
+                console.warn(`[StorageTier] Could not remove seekable sidecar for VOD ${vodId}:`, err.message);
+            }
         }
 
         // Update DB
@@ -234,7 +241,12 @@ function moveToHot(vodId) {
             return { ok: false, error: `Size mismatch after copy: ${srcSize} vs ${dstSize}` };
         }
 
-        fs.unlinkSync(src);
+        try {
+            fs.unlinkSync(src);
+        } catch (err) {
+            console.error(`[StorageTier] Failed to remove cold source after hot copy for VOD ${vodId}:`, err.message);
+            return { ok: false, error: `Failed to remove cold source after copy: ${err.message}` };
+        }
         db.run("UPDATE vods SET storage_tier = 'hot' WHERE id = ?", [vodId]);
 
         console.log(`[StorageTier] VOD ${vodId} promoted to hot: ${basename} (${(srcSize / 1048576).toFixed(1)} MB)`);

@@ -64,9 +64,30 @@ async function saveSettingsProfile() {
     }
 }
 
+function getDefaultHoboToolsUrl() {
+    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    return isLocal ? 'http://localhost:3100' : 'https://hobo.tools';
+}
+
+function getHoboToolsUrl() {
+    const urls = window.HoboNetworkUrls || { tools: getDefaultHoboToolsUrl() };
+    return urls.tools || getDefaultHoboToolsUrl();
+}
+
+function getHoboToolsAdminUrl() {
+    const url = getHoboToolsUrl();
+    try {
+        const u = new URL(url);
+        u.hostname = u.hostname.replace(/^www\./, 'my.');
+        return u.toString().replace(/\/$/, '');
+    } catch {
+        return `${url.replace(/\/$/, '')}/admin`;
+    }
+}
+
 // Password management handled on hobo.tools
 function changePassword() {
-    window.open('https://my.hobo.tools', '_blank');
+    window.open(getHoboToolsAdminUrl(), '_blank');
 }
 
 /* ── Broadcaster Tab ──────────────────────────────────────────── */

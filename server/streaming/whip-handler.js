@@ -80,11 +80,73 @@ function findSessionsByStreamId(streamId) {
     return matches;
 }
 
+const _WHIP_KEEPALIVE_INTERVAL_MS = 30000;
+
 function cleanupExistingSessionsForStream(streamId) {
     for (const { resourceId } of findSessionsByStreamId(streamId)) {
         console.log(`[WHIP] Cleaning existing WHIP session ${resourceId} for stream ${streamId}`);
-        cleanupSession(resourceId);
+        cleanupSession(resourceId, { endStreamIfNoActiveSessions: false, reason: 'replace' });
     }
+}
+
+function touchWhipHeartbeat(streamId, reason = 'whip_session') {
+    if (!streamId) return;
+    db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
+    console.log(`[WHIP] Refreshed heartbeat for stream ${streamId} via ${reason}`);
+}
+
+function hasActiveSessionsForStream(streamId) {
+    return findSessionsByStreamId(streamId).some(session => session.iceReady === true);
+}
+
+function ensureWhipHeartbeatTimer(session) {
+    if (!session || session.heartbeatTimer || !session.iceReady) return;
+    session.heartbeatTimer = setInterval(() => {
+        if (!sessions.has(session.resourceId) || !session.iceReady) {
+            if (session.heartbeatTimer) {
+                clearInterval(session.heartbeatTimer);
+                session.heartbeatTimer = null;
+            }
+            return;
+        }
+        touchWhipHeartbeat(session.streamId, 'whip_keepalive');
+    }, _WHIP_KEEPALIVE_INTERVAL_MS);
+}
+
+function endActiveWhipStream(streamId, reason = 'whip_cleanup') {
+    const stream = db.getStreamById(streamId);
+    if (!stream || !stream.is_live) return;
+
+    console.log(`[WHIP] Ending live stream ${streamId} due to WHIP session termination (${reason})`);
+    try {
+        db.endStream(streamId);
+    } catch (err) {
+        console.error(`[WHIP] Failed to end stream ${streamId}:`, err.message);
+    }
+
+    try { db.computeAndCacheStreamAnalytics(streamId); } catch (err) { /* ignore */ }
+
+    try {
+        const vodRoutes = require('../vod/routes');
+        if (!vodRoutes.isFinalizingStream || !vodRoutes.isFinalizingStream(streamId)) {
+            vodRoutes.finalizeVodRecording(streamId).catch(err => {
+                console.warn(`[VOD] Finalization failed for WHIP stream ${streamId}:`, err.message);
+            });
+        }
+    } catch (err) {
+        console.warn('[VOD] WHIP end stream finalize helper failed:', err.message);
+    }
+
+    try {
+        const restreamManager = require('./restream-manager');
+        restreamManager.stopAllForStream(streamId);
+    } catch (err) { /* ignore */ }
+
+    try { robotStreamerService.stopForStream(streamId); } catch (err) { /* ignore */ }
+    try { if (chatRelayService) chatRelayService.stopForStream(streamId); } catch (err) { /* ignore */ }
+    try { require('./broadcast-server').endStream(streamId); } catch (err) { /* ignore */ }
+    try { webrtcSFU.closeRoom(`stream-${streamId}`); } catch (err) { /* ignore */ }
+    try { require('./call-server').removeStreamChannel(streamId); } catch (err) { /* ignore */ }
 }
 
 // ── SDP Parsing Utilities ────────────────────────────────────
@@ -690,8 +752,12 @@ async function handleWhipPost(req, res) {
             producerIds: [],
             userId,
             createdAt: Date.now(),
+            resourceId,
+            iceReady: false,
+            heartbeatTimer: null,
         };
         sessions.set(resourceId, session);
+        touchWhipHeartbeat(streamId, 'whip_post');
 
         let transportInfo;
         try {
@@ -832,9 +898,13 @@ async function handleWhipPost(req, res) {
                     _iceGraceTimer = null;
                     console.log(`[WHIP] ICE recovered to '${state}' for stream ${streamId} (session ${resourceId}) — grace timer canceled`);
                 }
-                // Notify broadcast server so queued viewers can be promoted to SFU
-                webrtcSFU.emit('whip-ice-connected', { streamId, roomId });
-                console.log(`[WHIP] ICE connected for stream ${streamId} — notifying broadcast server`);
+                if (!session.iceReady) {
+                    session.iceReady = true;
+                    touchWhipHeartbeat(streamId, 'whip_ice_connected');
+                    ensureWhipHeartbeatTimer(session);
+                    webrtcSFU.emit('whip-ice-connected', { streamId, roomId, resourceId });
+                    console.log(`[WHIP] ICE connected for stream ${streamId} — notifying broadcast server`);
+                }
             }
         });
 
@@ -873,6 +943,9 @@ function handleWhipPatch(req, res) {
         }
     }
 
+    if (patchCandidates > 0) {
+        touchWhipHeartbeat(session.streamId, 'whip_patch');
+    }
     logWhipStage('patch', session.streamId, { resourceId, candidates: patchCandidates });
     // Mediasoup handles ICE internally — acknowledge
     res.status(204).end();
@@ -883,7 +956,7 @@ function handleWhipPatch(req, res) {
  */
 function handleWhipDelete(req, res) {
     const { resourceId } = req.params;
-    cleanupSession(resourceId);
+    cleanupSession(resourceId, { endStreamIfNoActiveSessions: true, reason: 'delete' });
     res.status(200).end();
 }
 
@@ -901,11 +974,15 @@ function handleWhipOptions(req, res) {
 /**
  * Clean up a WHIP ingestion session.
  */
-function cleanupSession(resourceId) {
+function cleanupSession(resourceId, { endStreamIfNoActiveSessions = true, reason = null } = {}) {
     const session = sessions.get(resourceId);
     if (!session) return;
 
     sessions.delete(resourceId);
+    if (session.heartbeatTimer) {
+        clearInterval(session.heartbeatTimer);
+        session.heartbeatTimer = null;
+    }
 
     try {
         const room = webrtcSFU.rooms?.get(session.roomId);
@@ -929,9 +1006,13 @@ function cleanupSession(resourceId) {
                 room.transports.delete(transportKey);
             }
         }
-        console.log(`[WHIP] Session ${resourceId} cleaned up (stream ${session.streamId})`);
+        console.log(`[WHIP] Session ${resourceId} cleaned up (stream ${session.streamId})${reason ? ` reason=${reason}` : ''}`);
     } catch (err) {
         console.error(`[WHIP] Cleanup error for ${resourceId}:`, err.message);
+    }
+
+    if (endStreamIfNoActiveSessions && !hasActiveSessionsForStream(session.streamId)) {
+        endActiveWhipStream(session.streamId, reason || 'session_cleanup');
     }
 }
 
@@ -957,6 +1038,7 @@ module.exports = {
     buildWhipResourceUrl,
     buildWhipResponseHeaders,
     hasSfuProducers,
+    hasActiveSessionsForStream,
     sessions,
     cleanupSession,
     available: !!sdpTransform,

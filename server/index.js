@@ -929,13 +929,19 @@ async function start() {
                  )`
             );
             for (const stream of staleStreams) {
+                if (stream.protocol === 'webrtc' && whipHandler.hasActiveSessionsForStream(stream.id)) {
+                    console.log(`[Heartbeat] Skipping stale cleanup for WHIP stream ${stream.id} because active WHIP session exists`);
+                    continue;
+                }
                 console.log(`[Heartbeat] Ending stale stream ${stream.id} (no heartbeat for 5+ minutes)`);
                 db.endStream(stream.id);
                 try { db.computeAndCacheStreamAnalytics(stream.id); } catch {}
                 // Auto-finalize any active VOD recording for this stream
-                vodRoutes.finalizeVodRecording(stream.id).catch(err => {
-                    console.warn(`[VOD] Auto-finalize failed for stale stream ${stream.id}:`, err.message);
-                });
+                if (!vodRoutes.isFinalizingStream?.(stream.id)) {
+                    vodRoutes.finalizeVodRecording(stream.id).catch(err => {
+                        console.warn(`[VOD] Auto-finalize failed for stale stream ${stream.id}:`, err.message);
+                    });
+                }
                 // Stop RS chat bridge for this stream (prevents zombie bridges)
                 robotStreamerService.stopForStream(stream.id);
                 // Stop chat relay bridges for this stream
@@ -956,6 +962,7 @@ async function start() {
             try {
                 const orphaned = db.getOrphanedRecordingVods();
                 for (const vod of orphaned) {
+                    if (vodRoutes.isFinalizingStream?.(vod.stream_id)) continue;
                     console.log(`[VOD] Finalizing orphaned recording: vod ${vod.id} (stream ${vod.stream_id})`);
                     vodRoutes.finalizeVodRecording(vod.stream_id).catch(() => {
                         // If no stream match, just mark it as done

@@ -37,6 +37,12 @@ function _allocateRecordRtpPort() {
     return port;
 }
 
+function _isControlledFfmpegError(line, expectedShutdown) {
+    if (!line || !expectedShutdown) return false;
+    const normalized = line.toLowerCase();
+    return /demux.*timeout|timeout|broken pipe|connection.*reset|closed|end of file|sigterm|sigint|error while reading/i.test(normalized);
+}
+
 /**
  * Build an SDP string for FFmpeg to receive RTP from mediasoup PlainRTP consumers.
  */
@@ -150,6 +156,7 @@ class StreamRecorder {
                 remuxTimer: null,
                 webrtcState: null,
                 _cancelWebrtc: false,
+                _expectedShutdown: false,
             });
             this._startWebrtcRecording(streamId, vodId, filePath, timestamp, protocol).catch(err => {
                 console.error(`[VOD] WebRTC recording startup failed for stream ${streamId}:`, err.message);
@@ -206,7 +213,9 @@ class StreamRecorder {
 
             proc.stderr.on('data', (data) => {
                 const line = data.toString();
+                const recording = this.activeRecordings.get(streamId);
                 if (line.includes('Error') || line.includes('error')) {
+                    if (_isControlledFfmpegError(line, recording?._expectedShutdown)) return;
                     console.error(`[VOD] FFmpeg error (stream ${streamId}):`, line.trim());
                 }
             });
@@ -253,6 +262,7 @@ class StreamRecorder {
                 startTime: timestamp,
                 ws: null,
                 remuxTimer: null,
+                _expectedShutdown: false,
             };
 
             // For JSMPEG: connect to the relay WebSocket and pipe data to FFmpeg stdin
@@ -332,6 +342,8 @@ class StreamRecorder {
 
         console.log(`[VOD] Stopping recording for stream ${streamId}`);
 
+        // Mark this as an expected teardown so FFmpeg shutdown noise is suppressed
+        recording._expectedShutdown = true;
         // Signal any pending WebRTC async startup to abort
         recording._cancelWebrtc = true;
 
@@ -481,7 +493,9 @@ class StreamRecorder {
 
         proc.stderr.on('data', (data) => {
             const line = data.toString();
-            if (line.includes('Error') || (line.includes('error') && !line.includes('error while'))) {
+            const recording = this.activeRecordings.get(streamId);
+            if (line.includes('Error') || line.includes('error')) {
+                if (_isControlledFfmpegError(line, recording?._expectedShutdown)) return;
                 console.error(`[VOD] FFmpeg error (webrtc stream ${streamId}):`, line.trim());
             }
         });

@@ -1548,9 +1548,41 @@ class RestreamManager extends EventEmitter {
      * restreams also resume — the stream is live, so they should be running.
      * Skips destinations that already have an active session.
      */
+    _getDestinationsForStream(streamId, userId) {
+        const stream = db.getStreamById(streamId);
+        if (!stream) return [];
+
+        const globalDests = db.getRestreamDestinationsByUserId(userId) || [];
+        const slotDests = stream.managed_stream_id
+            ? db.getRestreamDestinationsByManagedStream(stream.managed_stream_id) || []
+            : [];
+
+        // Preserve user-global destinations while allowing slot-specific overrides.
+        const merged = new Map();
+        for (const dest of globalDests) merged.set(dest.id, dest);
+        for (const dest of slotDests) merged.set(dest.id, dest);
+        return Array.from(merged.values());
+    }
+
+    async autoStartForStream(streamId, userId, streamInfo) {
+        const destinations = this._getDestinationsForStream(streamId, userId);
+        if (!destinations?.length) return;
+
+        for (const dest of destinations) {
+            if (!dest.enabled || !dest.auto_start) continue;
+            if (!dest.server_url || !dest.stream_key) continue;
+
+            console.log(`[Restream] Auto-starting ${dest.platform} restream for stream ${streamId}`);
+            try {
+                await this.startRestream(streamId, dest, streamInfo);
+            } catch (err) {
+                console.warn(`[Restream] Auto-start failed for dest ${dest.id}:`, err.message);
+            }
+        }
+    }
+
     async resumeForStream(streamId, userId, streamInfo) {
-        const db = require('../db/database');
-        const destinations = db.getRestreamDestinationsByUserId(userId);
+        const destinations = this._getDestinationsForStream(streamId, userId);
         if (!destinations?.length) return;
 
         let resumed = 0;

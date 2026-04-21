@@ -11,30 +11,76 @@
 
 /* ── RS Restream Slot ────────────────────────────────────────── */
 // Only one stream at a time can restream to RobotStreamer.
-// The slot stores which streamId is assigned. Persisted in localStorage.
+// The slot stores either a managed_stream_id or a legacy streamId.
+function parseRsRestreamSlotValue() {
+    const raw = localStorage.getItem('bc-rs-restream-slot');
+    if (!raw) return null;
+    if (raw.startsWith('m:')) {
+        const id = parseInt(raw.slice(2), 10);
+        return Number.isFinite(id) && id > 0 ? { managedStreamId: id } : null;
+    }
+    if (raw.startsWith('s:')) {
+        const id = parseInt(raw.slice(2), 10);
+        return Number.isFinite(id) && id > 0 ? { streamId: id } : null;
+    }
+    const id = parseInt(raw, 10);
+    return Number.isFinite(id) && id > 0 ? { streamId: id } : null;
+}
 function getRsRestreamSlotStreamId() {
-    const v = localStorage.getItem('bc-rs-restream-slot');
-    return v ? parseInt(v) : null;
+    const value = parseRsRestreamSlotValue();
+    if (!value) return null;
+
+    if (value.streamId) {
+        const ss = getStreamState(value.streamId);
+        if (ss && ss.localStream) return value.streamId;
+        // Legacy stream reference stale
+        setRsRestreamSlot(null);
+        return null;
+    }
+
+    if (value.managedStreamId) {
+        for (const [id, ss] of broadcastState.streams) {
+            if (ss.localStream && ss.streamData?.managed_stream_id === value.managedStreamId) {
+                return id;
+            }
+        }
+        return null;
+    }
+
+    return null;
 }
 function setRsRestreamSlot(streamId) {
-    if (streamId) localStorage.setItem('bc-rs-restream-slot', String(streamId));
-    else localStorage.removeItem('bc-rs-restream-slot');
+    if (!streamId) {
+        localStorage.removeItem('bc-rs-restream-slot');
+        return;
+    }
+    const ss = getStreamState(streamId);
+    if (ss?.streamData?.managed_stream_id) {
+        localStorage.setItem('bc-rs-restream-slot', `m:${ss.streamData.managed_stream_id}`);
+    } else {
+        localStorage.setItem('bc-rs-restream-slot', `s:${streamId}`);
+    }
 }
-/** Should RS restream auto-start for this stream? */
 function isRsRestreamAssigned(streamId) {
-    const slot = getRsRestreamSlotStreamId();
-    // If no slot assigned, auto-assign to the first stream that goes live
-    if (!slot) return true;
-    if (slot === streamId) return true;
-    // Validate the slotted stream still exists and has media — if not, the slot is
-    // stale from a previous session. Clear it so this new stream can auto-assign.
-    const slotState = broadcastState.streams.get(slot);
+    const value = parseRsRestreamSlotValue();
+    if (!value) return true;
+    const ss = getStreamState(streamId);
+    if (!ss) return false;
+
+    if (value.managedStreamId) {
+        return ss.streamData?.managed_stream_id === value.managedStreamId;
+    }
+    if (value.streamId && value.streamId === streamId) {
+        return true;
+    }
+
+    const slotState = getStreamState(value.streamId);
     if (!slotState || !slotState.localStream) {
-        console.log(`[RS Slot] Clearing stale slot ${slot} — stream no longer active, auto-assigning to ${streamId}`);
+        console.log('[RS Slot] Clearing stale legacy stream assignment — stream no longer active');
         setRsRestreamSlot(null);
         return true;
     }
-    return false; // another LIVE stream holds the slot
+    return false;
 }
 /** Toggle RS restream for the currently active stream */
 function toggleRsRestreamSlot() {
@@ -70,7 +116,6 @@ function assignRsRestreamToStream(streamId) {
     streamId = parseInt(streamId);
     if (!streamId || !Number.isFinite(streamId)) return;
     const currentSlot = getRsRestreamSlotStreamId();
-    // Stop old restream
     if (currentSlot && currentSlot !== streamId) {
         stopRobotStreamerRestream(currentSlot, { quiet: true }).catch(() => {});
     }
@@ -94,15 +139,28 @@ function stopRsRestream() {
 
 /** Start or retry RS restream for the current slot / active stream */
 function startOrRetryRsRestream() {
-    let targetId = getRsRestreamSlotStreamId() || broadcastState.activeStreamId;
+    const slotStreamId = getRsRestreamSlotStreamId();
+    let targetId = slotStreamId || broadcastState.activeStreamId;
+    const slotValue = parseRsRestreamSlotValue();
+
+    // If a managed slot is reserved but not currently live, do not auto-assign a different stream.
+    if (!targetId && slotValue?.managedStreamId) {
+        toast('RobotStreamer slot is reserved for a different stream slot.', 'info');
+        return;
+    }
+
     if (!targetId) return;
     const ss = getStreamState(targetId);
     if (!ss?.localStream) {
-        // Slot stream has no media — try active stream instead
+        if (slotStreamId) {
+            // Slot stream is reserved but not live yet.
+            toast('RobotStreamer slot stream is not live yet.', 'info');
+            updateRsRestreamSlotUI();
+            return;
+        }
         targetId = broadcastState.activeStreamId;
         if (!targetId) return;
     }
-    // Reset retry counters for fresh attempt
     const targetSs = getStreamState(targetId);
     if (targetSs) {
         targetSs._rsConsecutiveShortLived = 0;
@@ -2911,7 +2969,11 @@ let _restreamEditingId = null; // null = adding new, number = editing existing
 /** Load restream destinations from server */
 async function loadRestreamDestinations() {
     try {
-        const data = await api('/restream/destinations');
+        const activeSS = getActiveStreamState();
+        const selectedManagedStream = document.getElementById('bc-managed-stream')?.value;
+        const managedStreamId = activeSS?.streamData?.managed_stream_id || (selectedManagedStream ? parseInt(selectedManagedStream, 10) : null);
+        const url = managedStreamId ? `/restream/destinations?managed_stream_id=${managedStreamId}` : '/restream/destinations';
+        const data = await api(url);
         _restreamDestinations = data.destinations || [];
         renderRestreamDestinations();
     } catch (err) {
@@ -2945,6 +3007,7 @@ function renderRestreamDestinations() {
         const customBadge = customParts.length > 0
             ? `<span style="font-size:0.6rem;color:var(--accent);margin-left:3px" title="Custom overrides: ${customParts.join(', ')}">[${customParts.join(' ')}]</span>`
             : '';
+        const slotBadge = dest.managed_stream_id ? '<span style="font-size:0.65rem;color:#aaa;margin-left:4px" title="Slot-specific destination">[slot]</span>' : '';
 
         const keyDisplay = dest.has_key ? `Key: ${dest.stream_key}` : 'No key set';
         const chatRelayBadge = dest.chat_relay ? '<span style="font-size:0.65rem;color:#53fc18;margin-left:4px" title="Chat relay enabled">[relay]</span>' : '';
@@ -2953,7 +3016,7 @@ function renderRestreamDestinations() {
         html += `<div class="bc-restream-dest-card" ${enabledClass} data-dest-id="${dest.id}">
             <span class="bc-restream-platform-icon" style="color:${meta.color}"><i class="${meta.icon}"></i></span>
             <span class="bc-restream-name" title="${dest.name || meta.name}">${dest.name || meta.name}</span>
-            ${autoStartBadge}${qualityBadge}${customBadge}${chatRelayBadge}${channelUrlBadge}
+            ${autoStartBadge}${qualityBadge}${customBadge}${chatRelayBadge}${slotBadge}${channelUrlBadge}
             <span class="bc-restream-dest-meta">${keyDisplay}</span>
             <div class="bc-restream-dest-actions">
                 <button class="bc-ctrl-btn-sm" onclick="editRestreamDestination(${dest.id})" title="Edit"><i class="fa-solid fa-pen"></i></button>
@@ -3089,6 +3152,9 @@ async function saveRestreamDestination() {
 
     try {
         const customFields = { custom_video_bitrate, custom_audio_bitrate, custom_fps, custom_encoder_preset };
+        const activeSS = getActiveStreamState();
+        const selectedManagedStream = document.getElementById('bc-managed-stream')?.value;
+        const managed_stream_id = activeSS?.streamData?.managed_stream_id || (selectedManagedStream ? parseInt(selectedManagedStream, 10) : null);
 
         if (_restreamEditingId) {
             // Update existing
@@ -3098,9 +3164,11 @@ async function saveRestreamDestination() {
             toast('Destination updated', 'success');
         } else {
             // Create new
+            const body = { platform, name, server_url, stream_key, auto_start, channel_url, chat_relay, quality_preset, ...customFields };
+            if (managed_stream_id) body.managed_stream_id = managed_stream_id;
             await api('/restream/destinations', {
                 method: 'POST',
-                body: { platform, name, server_url, stream_key, auto_start, channel_url, chat_relay, quality_preset, ...customFields },
+                body,
             });
             toast('Destination added', 'success');
         }
@@ -3189,7 +3257,8 @@ async function deleteRestreamDestination(destId) {
 /** Start restream for a specific destination */
 async function startRestreamDest(destId) {
     try {
-        await api(`/restream/destinations/${destId}/start`, { method: 'POST', body: {} });
+        const payload = broadcastState.activeStreamId ? { streamId: broadcastState.activeStreamId } : {};
+        await api(`/restream/destinations/${destId}/start`, { method: 'POST', body: payload });
         toast('Restream starting…', 'info');
         // Poll status immediately
         await pollRestreamStatus();

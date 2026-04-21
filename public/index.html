@@ -4502,9 +4502,11 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
     // Notifications bell
     const mount = document.getElementById('hobo-bell-mount');
     if (mount && window.HoboNotifications && token) {
+        const hoboToolsBase = (window.HoboNetworkUrls && window.HoboNetworkUrls.tools)
+            || (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://localhost:3100' : 'https://hobo.tools');
         HoboNotifications.init({
             token: token,
-            apiBase: 'https://hobo.tools',
+            apiBase: hoboToolsBase,
             soundBase: '/assets/sounds',
         });
         mount.appendChild(HoboNotifications.createBell());

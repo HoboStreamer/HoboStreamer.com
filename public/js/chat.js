@@ -6,6 +6,24 @@ let chatWs = null;
 let chatStreamId = null;
 let chatRenderTargetId = null;
 
+function esc(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function toast(message, type = 'info') {
+    if (typeof window.toast === 'function') {
+        return window.toast(message, type);
+    }
+    if (typeof console !== 'undefined' && console.log) {
+        console.log(`[Chat toast ${type}] ${String(message)}`);
+    }
+}
+
 // ── Chat mode (Global / Voice Call) ──────────────────────────
 let chatMode = 'global'; // 'global' or 'voice'
 
@@ -725,6 +743,14 @@ function getChatEl() {
         return {
             input: document.getElementById('bc-chat-input'),
             messages: document.getElementById('bc-chat-messages'),
+        };
+    }
+    const popoutMessages = document.getElementById('pc-msgs');
+    if (popoutMessages) {
+        return {
+            input: document.getElementById('pc-input'),
+            messages: popoutMessages,
+            isPopout: true,
         };
     }
     return {

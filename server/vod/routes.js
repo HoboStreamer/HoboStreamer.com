@@ -690,7 +690,6 @@ const _finalizingStreams = new Set();
 async function finalizeVodRecording(streamId) {
     // Prevent double finalization (exit handler + POST /finalize race)
     if (_finalizingStreams.has(streamId)) {
-        console.log(`[VOD] Finalization already in progress for stream ${streamId}, skipping`);
         return null;
     }
     _finalizingStreams.add(streamId);
@@ -700,6 +699,10 @@ async function finalizeVodRecording(streamId) {
     } finally {
         _finalizingStreams.delete(streamId);
     }
+}
+
+function isFinalizingStream(streamId) {
+    return _finalizingStreams.has(streamId);
 }
 
 async function _doFinalize(streamId) {
@@ -766,7 +769,14 @@ async function _doFinalize(streamId) {
         return null;
     }
 
-    const stat = fs.statSync(filePath);
+    let stat;
+    try {
+        stat = fs.statSync(filePath);
+    } catch (err) {
+        console.error(`[VOD] Failed to stat finalized VOD ${vodId}:`, err.message);
+        db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
+        return null;
+    }
     db.run('UPDATE vods SET is_recording = 0, duration_seconds = ?, file_size = ? WHERE id = ?',
         [durationSeconds, stat.size, vodId]);
 
@@ -1676,4 +1686,5 @@ router.get('/clips/stream/:streamId', optionalAuth, (req, res) => {
     }
 });
 
+router.isFinalizingStream = isFinalizingStream;
 module.exports = router;

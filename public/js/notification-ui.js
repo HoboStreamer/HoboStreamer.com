@@ -14,7 +14,17 @@
     const MAX_TOASTS = 3;
     const SOUNDS = { normal: 'notification.mp3', high: 'notification-high.mp3', critical: 'notification-alarm.mp3' };
 
-    let _config = { token: null, apiBase: 'https://hobo.tools', soundBase: '/assets/sounds', onAction: null };
+    function getDefaultHoboToolsUrl() {
+        const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        return isLocal ? 'http://localhost:3100' : 'https://hobo.tools';
+    }
+
+    let _config = {
+        token: null,
+        apiBase: (window.HoboNetworkUrls && window.HoboNetworkUrls.tools) || getDefaultHoboToolsUrl(),
+        soundBase: '/assets/sounds',
+        onAction: null,
+    };
     let _pollTimer = null;
     let _lastCheck = null;
     let _unreadCount = 0;
