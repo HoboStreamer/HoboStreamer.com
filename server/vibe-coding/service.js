@@ -379,6 +379,14 @@ function truncateText(value, maxChars, depth) {
     return `${text.slice(0, Math.max(20, limit - 1)).trim()}…`;
 }
 
+function shouldExposePublicToolPreview(toolName, settings) {
+    if (settings?.show_tool_arguments) return true;
+    const normalized = String(toolName || '').trim().toLowerCase();
+    return normalized === 'run_in_terminal'
+        || normalized === 'create_and_run_task'
+        || normalized === 'run_notebook_cell';
+}
+
 function projectViewerEvent(event, settings) {
     if (!event || !settings || !settings.enabled || settings.paused) {
         return null;
@@ -391,6 +399,7 @@ function projectViewerEvent(event, settings) {
         sequence: event.sequence,
         depth: settings.viewer_depth,
         summary: '',
+        source: event.source || null,
         prompt: null,
         response: null,
         thinking: null,
@@ -401,6 +410,8 @@ function projectViewerEvent(event, settings) {
         metadata: {
             requestId: event?.metadata?.requestId || null,
             responseId: event?.metadata?.responseId || null,
+            workspaceName: event?.metadata?.workspaceName || null,
+            model: event?.metadata?.model || null,
         },
     };
 
@@ -435,12 +446,13 @@ function projectViewerEvent(event, settings) {
 
     if (event.eventType === 'tool.call') {
         if (!settings.show_tool_calls) return null;
+        const includeToolPreview = shouldExposePublicToolPreview(event?.tool?.name, settings);
         projected.summary = truncateText(event.summary || `Used ${event?.tool?.name || 'tool'}`, settings.max_tool_chars, settings.viewer_depth);
         projected.tool = {
             name: event?.tool?.name || 'tool',
             phase: event?.tool?.phase || 'completed',
-            argumentsPreview: settings.show_tool_arguments ? truncateText(event?.tool?.argumentsPreview || '', settings.max_tool_chars, settings.viewer_depth) : null,
-            resultPreview: settings.show_tool_arguments ? truncateText(event?.tool?.resultPreview || '', settings.max_tool_chars, settings.viewer_depth) : null,
+            argumentsPreview: includeToolPreview ? truncateText(event?.tool?.argumentsPreview || '', settings.max_tool_chars, settings.viewer_depth) : null,
+            resultPreview: includeToolPreview ? truncateText(event?.tool?.resultPreview || '', settings.max_tool_chars, settings.viewer_depth) : null,
         };
         return projected;
     }

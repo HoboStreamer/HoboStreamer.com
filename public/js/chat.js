@@ -65,16 +65,45 @@ let _globalFeedReconnectDelay = 3000;
 const _GLOBAL_FEED_RECONNECT_MAX = 20000;
 
 // ── Vibe coding widget ──────────────────────────────────────
+function _loadVibeWidgetCollapsedPreference() {
+    try {
+        return localStorage.getItem('hobo_vibe_widget_collapsed') === '1';
+    } catch {
+        return false;
+    }
+}
+
+function _saveVibeWidgetCollapsedPreference(collapsed) {
+    try {
+        if (collapsed) {
+            localStorage.setItem('hobo_vibe_widget_collapsed', '1');
+            return;
+        }
+        localStorage.removeItem('hobo_vibe_widget_collapsed');
+    } catch {
+        // Ignore storage failures so the widget still works in restricted contexts.
+    }
+}
+
 let _vibeWidgetState = {
     key: null,
     panel: null,
     feed: null,
+    indicator: null,
     settings: null,
     publisher: null,
     events: [],
     timers: [],
+    collapsed: _loadVibeWidgetCollapsedPreference(),
+    userScrolledUp: false,
+    unreadCount: 0,
+    refreshTimer: null,
+    syncState: 'idle',
+    lastSyncedAt: 0,
 };
-const VIBE_WIDGET_FALLBACK_MAX = 12;
+const VIBE_WIDGET_FALLBACK_MAX = 18;
+const VIBE_WIDGET_REFRESH_MS = 5000;
+const VIBE_WIDGET_SCROLL_THRESHOLD = 56;
 
 // ── Slow mode state ─────────────────────────────────────────
 let chatSlowModeSeconds = 0;
@@ -541,6 +570,7 @@ function bindContainedChatScroll() {
         '.chat-sidebar',
         '.global-chat-main',
         '.offline-global-chat',
+        '.chat-vibe-widget-feed',
         '.chat-messages',
         '.global-chat-messages',
         '.fullscreen-chat-messages',
@@ -805,21 +835,47 @@ function _clearVibeWidgetTimers() {
     _vibeWidgetState.timers = [];
 }
 
+function _clearVibeWidgetRefreshTimer() {
+    if (_vibeWidgetState.refreshTimer) {
+        clearInterval(_vibeWidgetState.refreshTimer);
+        _vibeWidgetState.refreshTimer = null;
+    }
+}
+
+function _setVibeWidgetCollapsed(collapsed) {
+    _vibeWidgetState.collapsed = !!collapsed;
+    _saveVibeWidgetCollapsedPreference(_vibeWidgetState.collapsed);
+    if (_vibeWidgetState.panel) {
+        _renderVibeWidget();
+    }
+}
+
+function _toggleVibeWidgetCollapsed() {
+    _setVibeWidgetCollapsed(!_vibeWidgetState.collapsed);
+}
+
 function _resetVibeWidget(removePanel = false) {
     _clearVibeWidgetTimers();
+    _clearVibeWidgetRefreshTimer();
     _vibeWidgetState.key = null;
     _vibeWidgetState.settings = null;
     _vibeWidgetState.publisher = null;
     _vibeWidgetState.events = [];
+    _vibeWidgetState.userScrolledUp = false;
+    _vibeWidgetState.unreadCount = 0;
+    _vibeWidgetState.syncState = 'idle';
+    _vibeWidgetState.lastSyncedAt = 0;
     if (removePanel && _vibeWidgetState.panel) {
         _vibeWidgetState.panel.remove();
         _vibeWidgetState.panel = null;
         _vibeWidgetState.feed = null;
+        _vibeWidgetState.indicator = null;
         return;
     }
     if (_vibeWidgetState.feed) {
         _vibeWidgetState.feed.innerHTML = '';
     }
+    _hideVibeWidgetNewMessagesIndicator();
     if (_vibeWidgetState.panel) {
         _vibeWidgetState.panel.style.display = 'none';
     }
@@ -840,46 +896,811 @@ function _ensureVibeWidgetPanel() {
     if (!panel) {
         panel = document.createElement('section');
         panel.className = 'chat-vibe-widget';
-        panel.innerHTML = '<div class="chat-vibe-widget-head"><div class="chat-vibe-widget-title"><i class="fa-solid fa-code"></i> <span>Vibe Coding</span></div><div class="chat-vibe-widget-status">Live</div></div><div class="chat-vibe-widget-feed"></div>';
+        panel.innerHTML = '<div class="chat-vibe-widget-head"><div class="chat-vibe-widget-title"><i class="fa-solid fa-code"></i> <span>Vibe Coding</span></div><div class="chat-vibe-widget-actions"><div class="chat-vibe-widget-status">Live</div><button type="button" class="chat-vibe-widget-toggle" aria-expanded="true">Hide</button></div></div><div class="chat-vibe-widget-feed" tabindex="0" aria-label="Vibe coding event feed"></div><button type="button" class="chat-vibe-new-msgs-indicator"><i class="fa-solid fa-arrow-down"></i> New messages below</button>';
         const header = host.querySelector('.chat-header, .global-chat-header');
         if (header) header.after(panel);
         else host.prepend(panel);
     }
+    if (panel.dataset.vibeWidgetBound !== '1') {
+        const toggle = panel.querySelector('.chat-vibe-widget-toggle');
+        if (toggle) {
+            toggle.addEventListener('click', () => {
+                _toggleVibeWidgetCollapsed();
+            });
+        }
+        panel.dataset.vibeWidgetBound = '1';
+    }
     _vibeWidgetState.panel = panel;
     _vibeWidgetState.feed = panel.querySelector('.chat-vibe-widget-feed');
+    _vibeWidgetState.indicator = panel.querySelector('.chat-vibe-new-msgs-indicator');
+    if (_vibeWidgetState.feed && _vibeWidgetState.feed.dataset.vibeWidgetScrollBound !== '1') {
+        _vibeWidgetState.feed.dataset.vibeWidgetScrollBound = '1';
+        _vibeWidgetState.feed.addEventListener('scroll', () => {
+            _syncVibeWidgetScrollState();
+        }, { passive: true });
+    }
+    if (_vibeWidgetState.indicator && _vibeWidgetState.indicator.dataset.vibeWidgetIndicatorBound !== '1') {
+        _vibeWidgetState.indicator.dataset.vibeWidgetIndicatorBound = '1';
+        _vibeWidgetState.indicator.addEventListener('click', () => {
+            _scrollVibeWidgetToBottom();
+        });
+    }
     return panel;
 }
 
-function _getVibeEventLabel(eventType) {
-    switch (eventType) {
-        case 'prompt': return 'Prompt';
-        case 'response': return 'Response';
-        case 'thinking': return 'Thinking';
-        case 'tool.call': return 'Tool';
-        case 'file.change': return 'Edit';
-        case 'file.save': return 'Save';
-        case 'session.status': return 'Session';
-        default: return 'Update';
+function _getVibeWidgetFetchLimit() {
+    return Math.max(VIBE_WIDGET_FALLBACK_MAX, parseInt(_vibeWidgetState.settings?.max_events, 10) || 0);
+}
+
+function _getVibeWidgetEventKey(event) {
+    if (!event) return '';
+    return String(
+        event.eventId
+        || [event.sessionId || '', event.sequence || '', event.eventType || '', event.summary || '', event.occurredAt || ''].join(':')
+    );
+}
+
+function _sortVibeWidgetEvents(events) {
+    return (Array.isArray(events) ? events.slice() : []).sort((left, right) => {
+        const leftSeq = Number(left?.sequence || 0);
+        const rightSeq = Number(right?.sequence || 0);
+        if (leftSeq && rightSeq && leftSeq !== rightSeq) {
+            return leftSeq - rightSeq;
+        }
+
+        const leftTime = Date.parse(left?.occurredAt || '') || 0;
+        const rightTime = Date.parse(right?.occurredAt || '') || 0;
+        if (leftTime !== rightTime) {
+            return leftTime - rightTime;
+        }
+
+        return _getVibeWidgetEventKey(left).localeCompare(_getVibeWidgetEventKey(right));
+    });
+}
+
+function _replaceVibeWidgetEvents(events) {
+    const deduped = [];
+    const seen = new Set();
+    _sortVibeWidgetEvents(events).forEach((event) => {
+        const key = _getVibeWidgetEventKey(event);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        deduped.push(event);
+    });
+    const maxStored = Math.max(_getVibeWidgetFetchLimit() * 3, VIBE_WIDGET_FALLBACK_MAX);
+    _vibeWidgetState.events = deduped.slice(-maxStored);
+}
+
+function _mergeVibeWidgetEvents(events) {
+    const existingKeys = new Set(_vibeWidgetState.events.map((event) => _getVibeWidgetEventKey(event)));
+    const nextEvents = _vibeWidgetState.events.slice();
+    let added = 0;
+    (Array.isArray(events) ? events : []).forEach((event) => {
+        const key = _getVibeWidgetEventKey(event);
+        if (!key || existingKeys.has(key)) return;
+        existingKeys.add(key);
+        nextEvents.push(event);
+        added += 1;
+    });
+    if (!added) return 0;
+    _replaceVibeWidgetEvents(nextEvents);
+    return added;
+}
+
+function _isVibeWidgetNearBottom() {
+    const feed = _vibeWidgetState.feed;
+    if (!feed) return true;
+    return (feed.scrollHeight - feed.scrollTop - feed.clientHeight) < VIBE_WIDGET_SCROLL_THRESHOLD;
+}
+
+function _showVibeWidgetNewMessagesIndicator() {
+    const indicator = _vibeWidgetState.indicator;
+    if (!indicator || _vibeWidgetState.collapsed || !_vibeWidgetState.unreadCount) return;
+    indicator.innerHTML = `<i class="fa-solid fa-arrow-down"></i> ${_vibeWidgetState.unreadCount} new message${_vibeWidgetState.unreadCount !== 1 ? 's' : ''} below`;
+    indicator.style.display = 'flex';
+}
+
+function _hideVibeWidgetNewMessagesIndicator() {
+    if (_vibeWidgetState.indicator) {
+        _vibeWidgetState.indicator.style.display = 'none';
     }
 }
 
-function _getVibeEventText(event) {
-    if (event?.prompt?.text) return event.prompt.text;
-    if (event?.response?.text) return event.response.text;
-    if (event?.thinking?.text) return event.thinking.text;
-    if (event?.tool?.argumentsPreview) return event.tool.argumentsPreview;
-    if (event?.tool?.resultPreview) return event.tool.resultPreview;
-    if (event?.file?.snippet) return event.file.snippet;
-    return event?.summary || '';
+function _scrollVibeWidgetToBottom() {
+    const feed = _vibeWidgetState.feed;
+    if (!feed) return;
+    feed.scrollTop = feed.scrollHeight;
+    _vibeWidgetState.userScrolledUp = false;
+    _vibeWidgetState.unreadCount = 0;
+    _hideVibeWidgetNewMessagesIndicator();
 }
 
-function _getVibeEventMeta(event) {
-    const parts = [];
-    if (event?.publisher?.integrationLabel) parts.push(event.publisher.integrationLabel);
-    if (event?.file?.relativePath) parts.push(event.file.relativePath);
-    else if (event?.tool?.name) parts.push(event.tool.name);
-    else if (event?.session?.state) parts.push(event.session.state);
-    return parts.join(' · ');
+function _syncVibeWidgetScrollState() {
+    if (_isVibeWidgetNearBottom()) {
+        _vibeWidgetState.userScrolledUp = false;
+        _vibeWidgetState.unreadCount = 0;
+        _hideVibeWidgetNewMessagesIndicator();
+        return;
+    }
+    _vibeWidgetState.userScrolledUp = true;
+}
+
+function _ensureVibeWidgetRefreshTimer() {
+    if (_vibeWidgetState.refreshTimer) return;
+    _vibeWidgetState.refreshTimer = setInterval(() => {
+        if (!_vibeWidgetState.key || document.hidden) return;
+        refreshVibeWidgetFeed().catch(() => {});
+    }, VIBE_WIDGET_REFRESH_MS);
+}
+
+function _formatVibeEventTime(value) {
+    const time = Date.parse(value || '');
+    if (!time) return '';
+    try {
+        return new Date(time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    } catch {
+        return '';
+    }
+}
+
+function _normalizeVibeDisplayText(value) {
+    return String(value || '')
+        .replace(/\r/g, ' ')
+        .replace(/`+/g, '')
+    .replace(/\binlineReference\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, 'reference')
+        .replace(/\s*#{1,6}\s*/g, ' ')
+    .replace(/\s+([.,;:!?])/g, '$1')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function _truncateVibeDisplayText(value, maxChars = 84) {
+    const text = _normalizeVibeDisplayText(value);
+    if (!text) return '';
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, Math.max(24, maxChars - 1)).trim()}…`;
+}
+
+function _splitVibeNarrative(value, maxSegments = 3) {
+    const text = _normalizeVibeDisplayText(value);
+    if (!text) return [];
+    const parts = text
+        .split(/(?<=[.!?])\s+(?=(?:[A-Z0-9✅❌•-]))/g)
+        .map((part) => _normalizeVibeDisplayText(part))
+        .filter(Boolean);
+    if (parts.length <= 1) return [text];
+    if (parts.length <= maxSegments) return parts;
+    const tailCount = Math.max(1, maxSegments - 1);
+    const head = _normalizeVibeDisplayText(parts.slice(0, parts.length - tailCount).join(' '));
+    return [head, ...parts.slice(-tailCount)].filter(Boolean);
+}
+
+function _extractVibeListParts(value) {
+    const text = _normalizeVibeDisplayText(value);
+    if (!text || !/\s[•-]\s/.test(text) && !/^[•-]\s/.test(text)) {
+        return { lead: text, items: [] };
+    }
+    const startsWithBullet = /^[•-]\s/.test(text);
+    const normalized = startsWithBullet ? text.replace(/^[•-]\s+/, '') : text;
+    const parts = normalized
+        .split(/\s+[•-]\s+/g)
+        .map((part) => _normalizeVibeDisplayText(part))
+        .filter(Boolean);
+    if (parts.length < 2) {
+        return { lead: text, items: [] };
+    }
+    if (startsWithBullet) {
+        return { lead: '', items: parts };
+    }
+    return { lead: parts[0], items: parts.slice(1) };
+}
+
+function _pushUniqueVibeBlock(blocks, blockText) {
+    const text = _normalizeVibeDisplayText(blockText);
+    if (!text) return;
+    const normalized = text.toLowerCase();
+    const exactIndex = blocks.findIndex((block) => block.normalized === normalized);
+    if (exactIndex >= 0) return;
+    const containingIndex = blocks.findIndex((block) => text.includes(block.text) && text.length > block.text.length);
+    if (containingIndex >= 0) {
+        blocks[containingIndex] = { text, normalized };
+        for (let index = blocks.length - 1; index >= 0; index -= 1) {
+            if (index === containingIndex) continue;
+            if (text.includes(blocks[index].text)) {
+                blocks.splice(index, 1);
+            }
+        }
+        return;
+    }
+    if (blocks.some((block) => block.text.includes(text))) return;
+    blocks.push({ text, normalized });
+}
+
+function _createVibeTurn(event, key) {
+    const occurredAt = event?.occurredAt || '';
+    return {
+        kind: 'turn',
+        key,
+        occurredAt,
+        lastAt: occurredAt,
+        promptText: '',
+        responseBlocks: [],
+        thinkingBlocks: [],
+        sourceLabel: _normalizeVibeDisplayText(event?.publisher?.integrationLabel || ''),
+        tools: new Map(),
+        files: new Map(),
+    };
+}
+
+function _isVibeExecutionToolName(toolName) {
+    const normalized = _normalizeVibeDisplayText(toolName).toLowerCase();
+    return normalized === 'run_in_terminal'
+        || normalized === 'create_and_run_task'
+        || normalized === 'run_notebook_cell';
+}
+
+function _hasMeaningfulVibeToolPreview(tool) {
+    const preview = _normalizeVibeDisplayText(tool?.preview || '');
+    if (!preview) return false;
+    const normalizedName = _normalizeVibeDisplayText(tool?.name || '').toLowerCase();
+    return preview.toLowerCase() !== `used ${normalizedName}`;
+}
+
+function _formatVibeToolLabel(toolName) {
+    const normalized = _normalizeVibeDisplayText(toolName);
+    if (!normalized) return 'Tool';
+    return normalized
+        .replace(/[._-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function _canReuseLoosePromptTurn(turn, promptText, event) {
+    if (!turn || !promptText) return false;
+    if (_normalizeVibeDisplayText(turn.promptText).toLowerCase() !== promptText.toLowerCase()) {
+        return false;
+    }
+    return _canMergeLooseVibeEvent(turn, event);
+}
+
+function _claimPendingVibePromptTurn(pendingPromptTurns, event) {
+    for (let index = 0; index < pendingPromptTurns.length; index += 1) {
+        const candidate = pendingPromptTurns[index];
+        if (!_canMergeLooseVibeEvent(candidate, event)) continue;
+        pendingPromptTurns.splice(index, 1);
+        return candidate;
+    }
+    return null;
+}
+
+function _addVibeToolToTurn(turn, event) {
+    const toolName = _normalizeVibeDisplayText(event?.tool?.name || event?.summary || 'tool');
+    if (!toolName) return;
+    const existing = turn.tools.get(toolName);
+    const argumentsPreview = _normalizeVibeDisplayText(event?.tool?.argumentsPreview || '');
+    const resultPreview = _normalizeVibeDisplayText(event?.tool?.resultPreview || '');
+    const preview = [
+        argumentsPreview,
+        resultPreview,
+        event?.summary,
+    ]
+        .map((value) => _normalizeVibeDisplayText(value))
+        .find((value) => value && value.toLowerCase() !== toolName.toLowerCase()) || '';
+    turn.tools.set(toolName, {
+        name: toolName,
+        label: _formatVibeToolLabel(toolName),
+        count: (existing?.count || 0) + 1,
+        argumentsPreview: argumentsPreview || existing?.argumentsPreview || '',
+        resultPreview: resultPreview || existing?.resultPreview || '',
+        preview: preview || existing?.preview || '',
+        isExecution: _isVibeExecutionToolName(toolName),
+    });
+}
+
+function _addVibeFileToTurn(turn, event) {
+    const fileName = _normalizeVibeDisplayText(event?.file?.relativePath || event?.file?.name || event?.summary || 'file');
+    if (!fileName) return;
+    const existing = turn.files.get(fileName);
+    const operation = event?.file?.operation === 'save' ? 'save' : 'edit';
+    const changeCount = Math.max(0, Number(event?.file?.changeCount || 0));
+    const snippet = _normalizeVibeDisplayText(event?.file?.snippet || '');
+    turn.files.set(fileName, {
+        name: fileName,
+        count: (existing?.count || 0) + 1,
+        changeCount: (existing?.changeCount || 0) + changeCount,
+        edited: !!existing?.edited || operation === 'edit',
+        saved: !!existing?.saved || operation === 'save',
+        snippet: snippet || existing?.snippet || '',
+    });
+}
+
+function _getExplicitVibeTurnKey(event) {
+    const requestId = _normalizeVibeDisplayText(event?.metadata?.requestId);
+    const responseId = _normalizeVibeDisplayText(event?.metadata?.responseId);
+    if (requestId || responseId) {
+        return `turn:${requestId || responseId}:${responseId || ''}`;
+    }
+    return '';
+}
+
+function _ensureVibeTurn(items, turns, key, event) {
+    let turn = turns.get(key);
+    if (turn) return turn;
+    turn = _createVibeTurn(event, key);
+    turns.set(key, turn);
+    items.push(turn);
+    return turn;
+}
+
+function _canMergeLooseVibeEvent(turn, event) {
+    if (!turn || !event || event?.eventType === 'prompt' || event?.eventType === 'session.status') {
+        return false;
+    }
+    const turnTime = Date.parse(turn.lastAt || turn.occurredAt || '') || 0;
+    const eventTime = Date.parse(event?.occurredAt || '') || 0;
+    if (turnTime && eventTime && Math.abs(eventTime - turnTime) > (5 * 60 * 1000)) {
+        return false;
+    }
+    return true;
+}
+
+function _getVibeTurnTimeValue(turn, preferLast = false) {
+    if (!turn) return 0;
+    const preferred = Date.parse(preferLast ? (turn.lastAt || turn.occurredAt || '') : (turn.occurredAt || turn.lastAt || '')) || 0;
+    if (preferred) return preferred;
+    return Date.parse(turn.occurredAt || turn.lastAt || '') || 0;
+}
+
+function _getVibeTurnTextValues(turn) {
+    const values = [];
+    if (turn?.promptText) values.push(_normalizeVibeDisplayText(turn.promptText));
+    (Array.isArray(turn?.responseBlocks) ? turn.responseBlocks : []).forEach((block) => values.push(_normalizeVibeDisplayText(block?.text || block)));
+    (Array.isArray(turn?.thinkingBlocks) ? turn.thinkingBlocks : []).forEach((block) => values.push(_normalizeVibeDisplayText(block?.text || block)));
+    return values.filter(Boolean);
+}
+
+function _getVibeTextTokenCount(leftText, rightText) {
+    const leftTokens = Array.from(new Set(_normalizeVibeDisplayText(leftText).toLowerCase().split(/[^a-z0-9]+/g).filter((token) => token.length >= 4)));
+    if (!leftTokens.length) return 0;
+    const rightTokens = new Set(_normalizeVibeDisplayText(rightText).toLowerCase().split(/[^a-z0-9]+/g).filter((token) => token.length >= 4));
+    return leftTokens.reduce((count, token) => count + (rightTokens.has(token) ? 1 : 0), 0);
+}
+
+function _getVibeTurnOverlapScore(sourceTurn, targetTurn) {
+    const sourceTexts = _getVibeTurnTextValues(sourceTurn);
+    const targetTexts = _getVibeTurnTextValues(targetTurn);
+    let bestScore = 0;
+    sourceTexts.forEach((sourceText) => {
+        targetTexts.forEach((targetText) => {
+            if (!sourceText || !targetText) return;
+            if (sourceText === targetText) {
+                bestScore = Math.max(bestScore, 100);
+                return;
+            }
+            if (targetText.includes(sourceText) || sourceText.includes(targetText)) {
+                bestScore = Math.max(bestScore, 60);
+                return;
+            }
+            bestScore = Math.max(bestScore, _getVibeTextTokenCount(sourceText, targetText));
+        });
+    });
+    return bestScore;
+}
+
+function _mergeVibeBlockHistory(existingBlocks, incomingBlocks, placeIncomingFirst) {
+    const ordered = placeIncomingFirst
+        ? [...(incomingBlocks || []), ...(existingBlocks || [])]
+        : [...(existingBlocks || []), ...(incomingBlocks || [])];
+    const merged = [];
+    ordered.forEach((block) => {
+        const text = _normalizeVibeDisplayText(block?.text || block);
+        if (!text) return;
+        const normalized = text.toLowerCase();
+        if (merged.some((item) => item.normalized === normalized)) return;
+        merged.push({ text, normalized });
+    });
+    return merged;
+}
+
+function _mergeVibeTurnIntoTarget(targetTurn, sourceTurn) {
+    if (!targetTurn || !sourceTurn || targetTurn === sourceTurn) return;
+    const sourceTime = _getVibeTurnTimeValue(sourceTurn, true);
+    const targetStart = _getVibeTurnTimeValue(targetTurn, false);
+    const placeIncomingFirst = !!sourceTime && !!targetStart && sourceTime <= targetStart;
+
+    targetTurn.responseBlocks = _mergeVibeBlockHistory(targetTurn.responseBlocks, sourceTurn.responseBlocks, placeIncomingFirst);
+    targetTurn.thinkingBlocks = _mergeVibeBlockHistory(targetTurn.thinkingBlocks, sourceTurn.thinkingBlocks, placeIncomingFirst);
+
+    sourceTurn.tools.forEach((tool, toolName) => {
+        const existing = targetTurn.tools.get(toolName);
+        targetTurn.tools.set(toolName, {
+            name: tool.name,
+            label: existing?.label || tool?.label || _formatVibeToolLabel(tool.name),
+            count: (existing?.count || 0) + (tool?.count || 0),
+            argumentsPreview: existing?.argumentsPreview || tool?.argumentsPreview || '',
+            resultPreview: existing?.resultPreview || tool?.resultPreview || '',
+            preview: existing?.preview || tool?.preview || '',
+            isExecution: !!existing?.isExecution || !!tool?.isExecution,
+        });
+    });
+
+    sourceTurn.files.forEach((file, fileName) => {
+        const existing = targetTurn.files.get(fileName);
+        targetTurn.files.set(fileName, {
+            name: file.name,
+            count: (existing?.count || 0) + (file?.count || 0),
+            changeCount: (existing?.changeCount || 0) + (file?.changeCount || 0),
+            edited: !!existing?.edited || !!file?.edited,
+            saved: !!existing?.saved || !!file?.saved,
+            snippet: existing?.snippet || file?.snippet || '',
+        });
+    });
+
+    if (!targetTurn.sourceLabel && sourceTurn.sourceLabel) {
+        targetTurn.sourceLabel = sourceTurn.sourceLabel;
+    }
+    if (!targetTurn.occurredAt || (sourceTurn.occurredAt && Date.parse(sourceTurn.occurredAt) < Date.parse(targetTurn.occurredAt))) {
+        targetTurn.occurredAt = sourceTurn.occurredAt || targetTurn.occurredAt;
+    }
+    if (!targetTurn.lastAt || (sourceTurn.lastAt && Date.parse(sourceTurn.lastAt) > Date.parse(targetTurn.lastAt))) {
+        targetTurn.lastAt = sourceTurn.lastAt || targetTurn.lastAt;
+    }
+}
+
+function _getVibeLooseMergeScore(sourceTurn, targetTurn) {
+    if (!sourceTurn || !targetTurn || sourceTurn === targetTurn || !targetTurn.promptText || sourceTurn.promptText) {
+        return -1;
+    }
+
+    const sourceTime = _getVibeTurnTimeValue(sourceTurn, true);
+    const targetStart = _getVibeTurnTimeValue(targetTurn, false);
+    const targetEnd = _getVibeTurnTimeValue(targetTurn, true) || targetStart;
+    if (sourceTime && targetStart && (sourceTime < (targetStart - (3 * 60 * 1000)) || sourceTime > (targetEnd + (4 * 60 * 1000)))) {
+        return -1;
+    }
+
+    let score = _getVibeTurnOverlapScore(sourceTurn, targetTurn);
+    if ((sourceTurn.tools.size || sourceTurn.files.size) && sourceTime && targetStart) {
+        score += sourceTime >= (targetStart - (60 * 1000)) ? 25 : 10;
+    }
+
+    if (sourceTime && targetEnd) {
+        const distance = Math.abs(sourceTime - targetEnd);
+        score += Math.max(0, 12 - Math.floor(distance / 30000));
+    }
+
+    return score;
+}
+
+function _normalizeVibeWidgetDisplayItems(items) {
+    const turns = items.filter((item) => item?.kind === 'turn');
+    const removedKeys = new Set();
+
+    turns.forEach((turn) => {
+        if (turn.promptText) return;
+        let bestTarget = null;
+        let bestScore = -1;
+        turns.forEach((candidate) => {
+            const score = _getVibeLooseMergeScore(turn, candidate);
+            if (score > bestScore) {
+                bestScore = score;
+                bestTarget = candidate;
+            }
+        });
+
+        if (bestTarget && bestScore >= 8) {
+            _mergeVibeTurnIntoTarget(bestTarget, turn);
+            removedKeys.add(turn.key);
+        }
+    });
+
+    return items
+        .filter((item) => !removedKeys.has(item?.key))
+        .sort((left, right) => {
+            const leftTime = left?.kind === 'turn'
+                ? _getVibeTurnTimeValue(left, false)
+                : (Date.parse(left?.occurredAt || '') || 0);
+            const rightTime = right?.kind === 'turn'
+                ? _getVibeTurnTimeValue(right, false)
+                : (Date.parse(right?.occurredAt || '') || 0);
+            if (leftTime !== rightTime) return leftTime - rightTime;
+            return String(left?.key || '').localeCompare(String(right?.key || ''));
+        });
+}
+
+function _buildVibeWidgetDisplayItems(events) {
+    const items = [];
+    const turns = new Map();
+    const pendingPromptTurns = [];
+    let activeLooseTurn = null;
+    let lastLoosePromptTurn = null;
+    let looseCounter = 0;
+
+    _sortVibeWidgetEvents(events).forEach((event, index) => {
+        if (event?.eventType === 'session.status') {
+            items.push({
+                kind: 'system',
+                key: `system:${_getVibeWidgetEventKey(event) || index}`,
+                occurredAt: event?.occurredAt || '',
+                text: _normalizeVibeDisplayText(event?.summary || 'Copilot session update'),
+            });
+            activeLooseTurn = null;
+            lastLoosePromptTurn = null;
+            return;
+        }
+
+        const explicitKey = _getExplicitVibeTurnKey(event);
+        let turn = null;
+        if (event?.eventType === 'prompt') {
+            const promptText = _normalizeVibeDisplayText(event?.prompt?.text || event?.summary);
+            if (!explicitKey && _canReuseLoosePromptTurn(lastLoosePromptTurn, promptText, event)) {
+                turn = lastLoosePromptTurn;
+            } else {
+                turn = _ensureVibeTurn(items, turns, explicitKey || `prompt:${_getVibeWidgetEventKey(event) || index}`, event);
+            }
+            activeLooseTurn = turn;
+            if (!explicitKey && !pendingPromptTurns.includes(turn)
+                && !turn.responseBlocks.length
+                && !turn.thinkingBlocks.length
+                && !turn.tools.size
+                && !turn.files.size) {
+                pendingPromptTurns.push(turn);
+            }
+            lastLoosePromptTurn = explicitKey ? null : turn;
+        } else if (explicitKey) {
+            turn = _ensureVibeTurn(items, turns, explicitKey, event);
+            activeLooseTurn = turn;
+            lastLoosePromptTurn = null;
+        } else {
+            const claimedPromptTurn = _claimPendingVibePromptTurn(pendingPromptTurns, event);
+            if (claimedPromptTurn) {
+                turn = claimedPromptTurn;
+            } else if (_canMergeLooseVibeEvent(activeLooseTurn, event)) {
+                turn = activeLooseTurn;
+            } else {
+                turn = _ensureVibeTurn(items, turns, `loose-group:${looseCounter += 1}:${_getVibeWidgetEventKey(event) || index}`, event);
+            }
+            activeLooseTurn = turn;
+        }
+
+        if (event?.occurredAt) {
+            if (!turn.occurredAt || Date.parse(event.occurredAt) < Date.parse(turn.occurredAt)) {
+                turn.occurredAt = event.occurredAt;
+            }
+            if (!turn.lastAt || Date.parse(event.occurredAt) > Date.parse(turn.lastAt)) {
+                turn.lastAt = event.occurredAt;
+            }
+        }
+        if (!turn.sourceLabel && event?.publisher?.integrationLabel) {
+            turn.sourceLabel = _normalizeVibeDisplayText(event.publisher.integrationLabel);
+        }
+
+        if (event?.eventType === 'prompt') {
+            const promptText = _normalizeVibeDisplayText(event?.prompt?.text || event?.summary);
+            if (promptText) turn.promptText = promptText;
+            return;
+        }
+
+        if (event?.eventType === 'response') {
+            _pushUniqueVibeBlock(turn.responseBlocks, event?.response?.text || event?.summary);
+            return;
+        }
+
+        if (event?.eventType === 'thinking') {
+            _pushUniqueVibeBlock(turn.thinkingBlocks, event?.thinking?.text || event?.summary);
+            return;
+        }
+
+        if (event?.eventType === 'tool.call') {
+            _addVibeToolToTurn(turn, event);
+            return;
+        }
+
+        if (event?.eventType === 'file.change' || event?.eventType === 'file.save') {
+            _addVibeFileToTurn(turn, event);
+        }
+    });
+
+    const filteredItems = items.filter((item) => item.kind === 'system'
+        || item.promptText
+        || item.responseBlocks.length
+        || item.thinkingBlocks.length
+        || item.tools.size
+        || item.files.size);
+
+    return _normalizeVibeWidgetDisplayItems(filteredItems);
+}
+
+function _renderVibeDisclosure(kind, label, preview, meta, bodyHtml) {
+    if (!bodyHtml) return '';
+    return `<details class="chat-vibe-turn-disclosure chat-vibe-turn-disclosure-${esc(kind)}"><summary><span class="chat-vibe-turn-disclosure-kicker">${esc(label)}</span><span class="chat-vibe-turn-disclosure-title">${esc(preview || label)}</span>${meta ? `<span class="chat-vibe-turn-disclosure-meta">${esc(meta)}</span>` : ''}</summary><div class="chat-vibe-turn-disclosure-body">${bodyHtml}</div></details>`;
+}
+
+function _renderVibeParagraphs(text, maxSegments = 3, muted = false) {
+    return _splitVibeNarrative(text, maxSegments)
+        .map((part) => `<p class="chat-vibe-turn-paragraph${muted ? ' is-muted' : ''}">${esc(part)}</p>`)
+        .join('');
+}
+
+function _renderVibeRichText(text, maxSegments = 3, muted = false) {
+    const { lead, items } = _extractVibeListParts(text);
+    if (!items.length) {
+        return _renderVibeParagraphs(text, maxSegments, muted);
+    }
+    const leadHtml = lead ? _renderVibeParagraphs(lead, Math.max(1, maxSegments - 1), muted) : '';
+    const listHtml = `<ul class="chat-vibe-turn-bullets">${items.map((item) => `<li class="chat-vibe-turn-list-item${muted ? ' is-muted' : ''}">${esc(item)}</li>`).join('')}</ul>`;
+    return `${leadHtml}${listHtml}`;
+}
+
+function _renderVibeSystemItem(item) {
+    const timestamp = _formatVibeEventTime(item?.occurredAt);
+    return `<div class="chat-vibe-system">${timestamp ? `<span class="chat-vibe-system-time">${esc(timestamp)}</span>` : ''}<span class="chat-vibe-system-text">${esc(item?.text || 'Copilot session update')}</span></div>`;
+}
+
+function _renderVibeTurnItem(turn) {
+    const hasSecondarySections = turn.thinkingBlocks.length || turn.tools.size || turn.files.size;
+    const turnClasses = ['chat-vibe-turn'];
+    if (!turn.promptText) turnClasses.push('is-compact');
+    if (!turn.promptText && !hasSecondarySections) turnClasses.push('is-update');
+    const promptHtml = turn.promptText
+        ? `<div class="chat-vibe-turn-prompt-row"><div class="chat-vibe-turn-prompt">${esc(turn.promptText)}</div></div>`
+        : '';
+    const responseBlocks = Array.isArray(turn.responseBlocks) ? turn.responseBlocks : [];
+    const primaryResponse = responseBlocks.length ? responseBlocks[responseBlocks.length - 1].text : '';
+    let progressBlocks = responseBlocks.slice(0, -1);
+    let thinkingBlocks = turn.thinkingBlocks.slice();
+    let visibleFallbackText = '';
+    let fallbackMuted = false;
+
+    if (!primaryResponse && progressBlocks.length) {
+        visibleFallbackText = progressBlocks[progressBlocks.length - 1].text;
+        progressBlocks = progressBlocks.slice(0, -1);
+        fallbackMuted = false;
+    } else if (!primaryResponse && thinkingBlocks.length) {
+        visibleFallbackText = thinkingBlocks[thinkingBlocks.length - 1].text;
+        thinkingBlocks = thinkingBlocks.slice(0, -1);
+        fallbackMuted = true;
+    }
+
+    const responseHtml = primaryResponse
+        ? _renderVibeRichText(primaryResponse, 3, false)
+        : visibleFallbackText
+            ? _renderVibeRichText(visibleFallbackText, 2, fallbackMuted)
+            : '<p class="chat-vibe-turn-paragraph is-muted">Working…</p>';
+
+    const progressHtml = progressBlocks.length
+        ? _renderVibeDisclosure(
+            'progress',
+            'Progress',
+            _truncateVibeDisplayText(progressBlocks[progressBlocks.length - 1].text, 90),
+            `${progressBlocks.length} update${progressBlocks.length === 1 ? '' : 's'}`,
+            progressBlocks.map((block) => `<p class="chat-vibe-turn-note">${esc(block.text)}</p>`).join('')
+        )
+        : '';
+
+    const thinkingHtml = thinkingBlocks.length
+        ? _renderVibeDisclosure(
+            'thinking',
+            'Thinking',
+            _truncateVibeDisplayText(thinkingBlocks[thinkingBlocks.length - 1].text, 90),
+            `${thinkingBlocks.length} note${thinkingBlocks.length === 1 ? '' : 's'}`,
+            thinkingBlocks.map((block) => `<p class="chat-vibe-turn-note">${esc(block.text)}</p>`).join('')
+        )
+        : '';
+
+    const toolEntries = Array.from(turn.tools.values()).sort((left, right) => {
+        if ((right?.count || 0) !== (left?.count || 0)) {
+            return (right?.count || 0) - (left?.count || 0);
+        }
+        return String(left?.name || '').localeCompare(String(right?.name || ''));
+    });
+    const commandEntries = toolEntries.filter((tool) => tool.isExecution);
+    const otherToolEntries = toolEntries.filter((tool) => !tool.isExecution);
+    const commandTotal = commandEntries.reduce((sum, tool) => sum + (tool.count || 0), 0);
+    const commandHtml = commandEntries.length
+        ? _renderVibeDisclosure(
+            'commands',
+            'Commands',
+            _truncateVibeDisplayText(commandEntries[commandEntries.length - 1].argumentsPreview || commandEntries[commandEntries.length - 1].preview || commandEntries[0].name, 96),
+            `${commandTotal} run${commandTotal === 1 ? '' : 's'}`,
+            commandEntries.map((tool) => {
+                const subtitle = tool.resultPreview
+                    ? 'Completed execution'
+                    : tool.argumentsPreview
+                        ? 'Ran command'
+                        : 'Executed tool';
+                return `
+                    <div class="chat-vibe-turn-file-card">
+                        <div class="chat-vibe-turn-list-row">
+                            <div class="chat-vibe-turn-list-main">
+                                <div class="chat-vibe-turn-list-title">${esc(tool.label || tool.name)}</div>
+                                <div class="chat-vibe-turn-list-subtitle">${esc(subtitle)}</div>
+                            </div>
+                            <div class="chat-vibe-turn-pill-group"><span class="chat-vibe-turn-pill is-count">${esc(tool.count > 1 ? `x${tool.count}` : '1x')}</span></div>
+                        </div>
+                        ${tool.argumentsPreview ? `<p class="chat-vibe-turn-note chat-vibe-turn-note-mono is-command">${esc(_truncateVibeDisplayText(tool.argumentsPreview, 180))}</p>` : ''}
+                        ${tool.resultPreview ? `<p class="chat-vibe-turn-note">${esc(_truncateVibeDisplayText(tool.resultPreview, 180))}</p>` : ''}
+                    </div>`;
+            }).join('')
+        )
+        : '';
+    const toolTotal = otherToolEntries.reduce((sum, tool) => sum + (tool.count || 0), 0);
+    const toolsHtml = otherToolEntries.length
+        ? _renderVibeDisclosure(
+            'tools',
+            'Tools',
+            otherToolEntries.slice(0, 2).map((tool) => tool.label || tool.name).join(', '),
+            `${toolTotal} call${toolTotal === 1 ? '' : 's'}`,
+            otherToolEntries.map((tool) => {
+                const subtitle = _hasMeaningfulVibeToolPreview(tool)
+                    ? _truncateVibeDisplayText(tool.preview, 120)
+                    : '';
+                return `
+                    <div class="chat-vibe-turn-list-row">
+                        <div class="chat-vibe-turn-list-main">
+                            <div class="chat-vibe-turn-list-title">${esc(tool.label || tool.name)}</div>
+                            ${subtitle ? `<div class="chat-vibe-turn-list-subtitle">${esc(subtitle)}</div>` : ''}
+                        </div>
+                        <div class="chat-vibe-turn-pill-group"><span class="chat-vibe-turn-pill is-count">${esc(tool.count > 1 ? `x${tool.count}` : '1x')}</span></div>
+                    </div>`;
+            }).join('')
+        )
+        : '';
+
+    const fileEntries = Array.from(turn.files.values()).sort((left, right) => {
+        if ((right?.changeCount || 0) !== (left?.changeCount || 0)) {
+            return (right?.changeCount || 0) - (left?.changeCount || 0);
+        }
+        return String(left?.name || '').localeCompare(String(right?.name || ''));
+    });
+    const filesHtml = fileEntries.length
+        ? _renderVibeDisclosure(
+            'files',
+            'Edited files',
+            fileEntries.slice(0, 2).map((file) => file.name).join(', '),
+            `${fileEntries.length} file${fileEntries.length === 1 ? '' : 's'}`,
+            fileEntries.map((file) => {
+                const badges = [];
+                if (file.changeCount > 0) {
+                    badges.push(`<span class="chat-vibe-turn-pill is-edit">${esc(`${file.changeCount} edit${file.changeCount === 1 ? '' : 's'}`)}</span>`);
+                }
+                if (file.saved) {
+                    badges.push('<span class="chat-vibe-turn-pill is-save">saved</span>');
+                }
+                if (!badges.length && file.edited) {
+                    badges.push('<span class="chat-vibe-turn-pill is-edit">edited</span>');
+                }
+                return `
+                    <div class="chat-vibe-turn-file-card">
+                        <div class="chat-vibe-turn-list-row">
+                            <div class="chat-vibe-turn-list-main">
+                                <div class="chat-vibe-turn-list-title is-mono">${esc(file.name)}</div>
+                                <div class="chat-vibe-turn-list-subtitle">${esc(file.saved && file.edited ? 'Edited and saved during this turn' : file.saved ? 'Saved in workspace' : 'Edited in workspace')}</div>
+                            </div>
+                            <div class="chat-vibe-turn-pill-group">${badges.join('')}</div>
+                        </div>
+                        ${file.snippet ? `<p class="chat-vibe-turn-note chat-vibe-turn-note-mono">${esc(_truncateVibeDisplayText(file.snippet, 180))}</p>` : ''}
+                    </div>`;
+            }).join('')
+        )
+        : '';
+
+    return `
+        <article class="${turnClasses.join(' ')}">
+            ${promptHtml}
+            <div class="chat-vibe-turn-response">
+                <div class="chat-vibe-turn-response-top">
+                    <span class="chat-vibe-turn-time">${esc(_formatVibeEventTime(turn.lastAt || turn.occurredAt))}</span>
+                </div>
+                <div class="chat-vibe-turn-body">${responseHtml}</div>
+                ${progressHtml}
+                ${thinkingHtml}
+                ${commandHtml}
+                ${toolsHtml}
+                ${filesHtml}
+            </div>
+        </article>`;
 }
 
 function _renderVibeWidget() {
@@ -892,36 +1713,57 @@ function _renderVibeWidget() {
     }
 
     panel.style.display = '';
+    panel.classList.toggle('is-collapsed', !!_vibeWidgetState.collapsed);
     const titleEl = panel.querySelector('.chat-vibe-widget-title span');
     if (titleEl) titleEl.textContent = settings.widget_title || 'Vibe Coding';
     const statusEl = panel.querySelector('.chat-vibe-widget-status');
     if (statusEl) {
         const parts = [];
         if (_vibeWidgetState.publisher?.integrationLabel) parts.push(_vibeWidgetState.publisher.integrationLabel);
-        parts.push(settings.paused ? 'Paused' : 'Live');
+        if (settings.paused) parts.push('Paused');
+        else if (_vibeWidgetState.syncState === 'retrying') parts.push('Reconnecting');
+        else parts.push('Live');
+        if (_vibeWidgetState.userScrolledUp && _vibeWidgetState.unreadCount > 0) {
+            parts.push(`${_vibeWidgetState.unreadCount} new`);
+        }
         statusEl.textContent = parts.join(' · ');
+    }
+    const toggleEl = panel.querySelector('.chat-vibe-widget-toggle');
+    if (toggleEl) {
+        toggleEl.textContent = _vibeWidgetState.collapsed ? 'Show' : 'Hide';
+        toggleEl.setAttribute('aria-expanded', _vibeWidgetState.collapsed ? 'false' : 'true');
+        toggleEl.setAttribute('aria-label', _vibeWidgetState.collapsed ? 'Expand vibe coding widget' : 'Collapse vibe coding widget');
+    }
+    if (_vibeWidgetState.collapsed) {
+        _hideVibeWidgetNewMessagesIndicator();
     }
 
     const maxEvents = settings.max_events || VIBE_WIDGET_FALLBACK_MAX;
-    const items = _vibeWidgetState.events.slice(-maxEvents).reverse();
+    const previousOffsetFromBottom = _vibeWidgetState.feed.scrollHeight - _vibeWidgetState.feed.scrollTop;
+    const shouldStickToBottom = !_vibeWidgetState.userScrolledUp || _isVibeWidgetNearBottom();
+    const items = _buildVibeWidgetDisplayItems(_vibeWidgetState.events).slice(-maxEvents);
     if (!items.length) {
         _vibeWidgetState.feed.innerHTML = '<div class="chat-vibe-widget-empty">No coding events yet for this slot.</div>';
+        _hideVibeWidgetNewMessagesIndicator();
         return;
     }
 
-    _vibeWidgetState.feed.innerHTML = items.map((event) => {
-        const label = _getVibeEventLabel(event.eventType);
-        const text = _getVibeEventText(event);
-        const meta = _getVibeEventMeta(event);
-        return `
-            <article class="chat-vibe-item chat-vibe-item-${esc(String(event.eventType || 'update').replace(/[^a-z0-9]+/gi, '-').toLowerCase())}">
-                <div class="chat-vibe-item-top">
-                    <span class="chat-vibe-item-label">${esc(label)}</span>
-                    ${meta ? `<span class="chat-vibe-item-meta">${esc(meta)}</span>` : ''}
-                </div>
-                <div class="chat-vibe-item-text">${esc(text || event.summary || '')}</div>
-            </article>`;
+    _vibeWidgetState.feed.innerHTML = items.map((item) => {
+        if (item.kind === 'system') {
+            return _renderVibeSystemItem(item);
+        }
+        return _renderVibeTurnItem(item);
     }).join('');
+
+    requestAnimationFrame(() => {
+        if (!_vibeWidgetState.feed) return;
+        if (shouldStickToBottom) {
+            _scrollVibeWidgetToBottom();
+            return;
+        }
+        _vibeWidgetState.feed.scrollTop = Math.max(0, _vibeWidgetState.feed.scrollHeight - previousOffsetFromBottom);
+        _showVibeWidgetNewMessagesIndicator();
+    });
 }
 
 function _pushVibeWidgetEvent(event) {
@@ -929,10 +1771,19 @@ function _pushVibeWidgetEvent(event) {
     if (event.publisher) {
         _vibeWidgetState.publisher = event.publisher;
     }
-    const maxEvents = _vibeWidgetState.settings?.max_events || VIBE_WIDGET_FALLBACK_MAX;
-    _vibeWidgetState.events.push(event);
-    if (_vibeWidgetState.events.length > maxEvents * 2) {
-        _vibeWidgetState.events = _vibeWidgetState.events.slice(-maxEvents * 2);
+    const wasNearBottom = _isVibeWidgetNearBottom();
+    const addedCount = _mergeVibeWidgetEvents([event]);
+    if (!addedCount) {
+        return;
+    }
+    _vibeWidgetState.lastSyncedAt = Date.now();
+    _vibeWidgetState.syncState = 'live';
+    if (!wasNearBottom) {
+        _vibeWidgetState.userScrolledUp = true;
+        _vibeWidgetState.unreadCount += addedCount;
+    } else {
+        _vibeWidgetState.userScrolledUp = false;
+        _vibeWidgetState.unreadCount = 0;
     }
     _renderVibeWidget();
 }
@@ -959,15 +1810,37 @@ async function refreshVibeWidgetFeed() {
     }
 
     const widgetKey = `${context.username}:${context.slotRef}`;
+    if (_vibeWidgetState.key && _vibeWidgetState.key !== widgetKey) {
+        _resetVibeWidget(true);
+    }
+
+    const previousKeys = new Set(_vibeWidgetState.events.map((event) => _getVibeWidgetEventKey(event)));
+    const wasNearBottom = _isVibeWidgetNearBottom();
     try {
-        const data = await api(`/vibe-coding/channel/${encodeURIComponent(context.username)}/${encodeURIComponent(String(context.slotRef))}/events?limit=${VIBE_WIDGET_FALLBACK_MAX}`);
+        const data = await api(`/vibe-coding/channel/${encodeURIComponent(context.username)}/${encodeURIComponent(String(context.slotRef))}/events?limit=${_getVibeWidgetFetchLimit()}`);
         _vibeWidgetState.key = widgetKey;
         _vibeWidgetState.settings = data.settings || null;
         _vibeWidgetState.publisher = data.publisher || null;
-        _vibeWidgetState.events = Array.isArray(data.events) ? data.events.slice() : [];
+        _replaceVibeWidgetEvents(Array.isArray(data.events) ? data.events : []);
+        const addedCount = _vibeWidgetState.events.reduce((count, event) => {
+            return count + (previousKeys.has(_getVibeWidgetEventKey(event)) ? 0 : 1);
+        }, 0);
+        _vibeWidgetState.lastSyncedAt = Date.now();
+        _vibeWidgetState.syncState = 'live';
+        if (!wasNearBottom && addedCount > 0) {
+            _vibeWidgetState.userScrolledUp = true;
+            _vibeWidgetState.unreadCount += addedCount;
+        } else if (wasNearBottom) {
+            _vibeWidgetState.userScrolledUp = false;
+            _vibeWidgetState.unreadCount = 0;
+        }
+        _ensureVibeWidgetRefreshTimer();
         _renderVibeWidget();
     } catch {
-        _resetVibeWidget(true);
+        _vibeWidgetState.syncState = _vibeWidgetState.settings?.enabled ? 'retrying' : 'idle';
+        if (_vibeWidgetState.panel && _vibeWidgetState.settings?.enabled) {
+            _renderVibeWidget();
+        }
     }
 }
 
