@@ -6,6 +6,7 @@
 
 ## Features
 - [Chat System](chat-system.md) — Chat features, moderation, popout chat, TTS
+- [Vibe Coding](vibe-coding.md) — Copilot companion publisher protocol, slot settings, and viewer feed
 - [VOD & Clips](vods-and-clips.md) — Recordings, DVR seeking, clip creation
 - [API Tokens](api-tokens.md) — Bot/integration authentication
 

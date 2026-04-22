@@ -1549,6 +1549,7 @@ class RestreamManager extends EventEmitter {
      * Skips destinations that already have an active session.
      */
     _getDestinationsForStream(streamId, userId) {
+        const db = require('../db/database');
         const stream = db.getStreamById(streamId);
         if (!stream) return [];
 

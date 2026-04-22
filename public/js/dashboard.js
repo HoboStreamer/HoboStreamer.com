@@ -20,8 +20,6 @@ async function loadDashboard() {
     loadDashChannel();
     // Load stream key
     loadDashStreamKey();
-    // Load managed streams
-    loadDashManagedStreams();
     // Load goals
     loadDashGoals();
     // Load VODs
@@ -72,228 +70,6 @@ function copyStreamKey() {
     const key = document.getElementById('dash-stream-key').value;
     if (!key) return toast('No stream key', 'error');
     navigator.clipboard.writeText(key).then(() => toast('Stream key copied!', 'success'));
-}
-
-/* ── Managed Streams ──────────────────────────────────────────── */
-async function loadDashManagedStreams() {
-    const container = document.getElementById('dash-managed-streams');
-    if (!container) return;
-    try {
-        const data = await api('/streams/managed');
-        const managed = data.managed_streams || [];
-        const limit = data.limit || 3;
-        container.innerHTML = '';
-
-        if (managed.length === 0) {
-            container.innerHTML = '<p class="muted">No managed streams. Create one to get started.</p>';
-        } else {
-            managed.forEach(ms => {
-                const card = document.createElement('div');
-                card.className = 'dash-managed-stream-card';
-                card.innerHTML = `
-                    <div class="dash-ms-header">
-                        <strong>${esc(ms.title || 'Untitled Stream')}</strong>
-                        ${ms.slug ? `<span class="muted">${esc(ms.slug)}</span>` : ''}
-                        ${ms.is_currently_live ? '<span class="badge badge-live">LIVE</span>' : ''}
-                    </div>
-                    <div class="dash-ms-details muted">
-                        Protocol: ${esc(ms.protocol || 'webrtc')} &middot;
-                        Category: ${esc(ms.category || 'irl')} &middot;
-                        Sessions: ${ms.session_count || 0}
-                        ${ms.last_live_at ? ` &middot; Last live: ${timeAgo(ms.last_live_at)}` : ''}
-                    </div>
-                    <div class="dash-ms-key">
-                        <label>Stream Key:</label>
-                        <input type="password" value="${esc(ms.stream_key)}" readonly class="input input-small dash-ms-key-input">
-                        <button class="btn btn-small btn-outline" onclick="this.previousElementSibling.type = this.previousElementSibling.type === 'password' ? 'text' : 'password'"><i class="fa-solid fa-eye"></i></button>
-                        <button class="btn btn-small btn-outline" onclick="navigator.clipboard.writeText('${esc(ms.stream_key)}').then(() => toast('Key copied!', 'success'))"><i class="fa-solid fa-copy"></i></button>
-                        <button class="btn btn-small btn-outline btn-danger" onclick="regenerateManagedStreamKey(${ms.id})"><i class="fa-solid fa-rotate"></i></button>
-                    </div>
-                    <div class="dash-ms-actions">
-                        <button class="btn btn-small btn-outline" onclick="editManagedStream(${ms.id})"><i class="fa-solid fa-pen"></i> Edit</button>
-                        <button class="btn btn-small btn-outline btn-danger" onclick="deleteManagedStream(${ms.id})"><i class="fa-solid fa-trash"></i> Delete</button>
-                    </div>
-                `;
-                container.appendChild(card);
-            });
-        }
-
-        // Add create button if under limit
-        if (managed.length < limit) {
-            const createBtn = document.createElement('button');
-            createBtn.className = 'btn btn-primary';
-            createBtn.innerHTML = '<i class="fa-solid fa-plus"></i> Create Managed Stream';
-            createBtn.onclick = () => showCreateManagedStreamModal();
-            container.appendChild(createBtn);
-        }
-
-        const limitInfo = document.getElementById('dash-ms-limit');
-        if (limitInfo) limitInfo.textContent = `${managed.length} / ${limit} streams`;
-    } catch (e) {
-        console.error('Failed to load managed streams:', e);
-        container.innerHTML = '<p class="muted">Failed to load managed streams</p>';
-    }
-}
-
-function showCreateManagedStreamModal() {
-    const methodCards = [
-        { id: 'browser', icon: 'globe', label: 'Browser', hint: 'Camera, mic, or screen share', protocol: 'webrtc' },
-        { id: 'whip', icon: 'satellite-dish', label: 'WHIP', hint: 'OBS, Larix, hardware encoders', protocol: 'webrtc' },
-        { id: 'rtmp', icon: 'server', label: 'RTMP', hint: 'OBS, Streamlabs, FFmpeg', protocol: 'rtmp' },
-        { id: 'cli', icon: 'terminal', label: 'CLI / FFmpeg', hint: 'Command-line, Pi, IoT', protocol: 'jsmpeg' },
-    ];
-    const cardsHtml = methodCards.map(m => `
-        <button type="button" class="bc-method-card${m.id === 'browser' ? ' selected' : ''}"
-            data-method="${m.id}" data-protocol="${m.protocol}"
-            onclick="_dashSelectMethod('${m.id}','${m.protocol}')">
-            <i class="fa-solid fa-${m.icon}"></i>
-            <span class="bc-method-card-label">${m.label}</span>
-            <span class="bc-method-card-hint">${m.hint}</span>
-        </button>`).join('');
-
-    const html = `
-        <div class="modal-overlay" id="create-ms-modal" onclick="if(event.target===this)this.remove()">
-            <div class="modal-content" style="max-width:500px">
-                <h3>Create Managed Stream</h3>
-                <div class="form-group">
-                    <label>Title</label>
-                    <input type="text" id="ms-create-title" class="input" placeholder="Stream title" maxlength="140">
-                </div>
-                <div class="form-group">
-                    <label>Slug (optional URL-friendly name)</label>
-                    <input type="text" id="ms-create-slug" class="input" placeholder="e.g. main-cam" maxlength="32">
-                    <small class="muted">2-32 chars, letters/numbers/hyphens/underscores, starts with a letter</small>
-                </div>
-                <div class="form-group">
-                    <label>Streaming Method</label>
-                    <div class="bc-method-picker bc-method-picker-sm">${cardsHtml}</div>
-                    <input type="hidden" id="ms-create-method" value="browser">
-                    <input type="hidden" id="ms-create-protocol" value="webrtc">
-                </div>
-                <div class="form-group">
-                    <label>Category</label>
-                    <input type="text" id="ms-create-category" class="input" placeholder="irl" maxlength="60" value="irl">
-                </div>
-                <div class="form-group">
-                    <label><input type="checkbox" id="ms-create-nsfw"> NSFW</label>
-                </div>
-                <div class="modal-actions">
-                    <button class="btn btn-outline" onclick="document.getElementById('create-ms-modal').remove()">Cancel</button>
-                    <button class="btn btn-primary" onclick="submitCreateManagedStream()">Create</button>
-                </div>
-            </div>
-        </div>
-    `;
-    document.body.insertAdjacentHTML('beforeend', html);
-}
-
-function _dashSelectMethod(method, protocol) {
-    document.getElementById('ms-create-method').value = method;
-    document.getElementById('ms-create-protocol').value = protocol;
-    document.querySelectorAll('#create-ms-modal .bc-method-card').forEach(c =>
-        c.classList.toggle('selected', c.dataset.method === method));
-}
-
-async function submitCreateManagedStream() {
-    const title = document.getElementById('ms-create-title')?.value.trim();
-    const slug = document.getElementById('ms-create-slug')?.value.trim().toLowerCase() || null;
-    const protocol = document.getElementById('ms-create-protocol')?.value || 'webrtc';
-    const streaming_method = document.getElementById('ms-create-method')?.value || 'browser';
-    const category = document.getElementById('ms-create-category')?.value.trim() || 'irl';
-    const is_nsfw = document.getElementById('ms-create-nsfw')?.checked || false;
-    if (!title) return toast('Title is required', 'error');
-    try {
-        await api('/streams/managed', { method: 'POST', body: { title, slug, protocol, streaming_method, category, is_nsfw } });
-        document.getElementById('create-ms-modal')?.remove();
-        toast('Managed stream created!', 'success');
-        loadDashManagedStreams();
-    } catch (e) {
-        toast(e.message || 'Failed to create', 'error');
-    }
-}
-
-async function editManagedStream(id) {
-    try {
-        const data = await api('/streams/managed');
-        const ms = (data.managed_streams || []).find(m => m.id === id);
-        if (!ms) return toast('Not found', 'error');
-        const html = `
-            <div class="modal-overlay" id="edit-ms-modal" onclick="if(event.target===this)this.remove()">
-                <div class="modal-content" style="max-width:500px">
-                    <h3>Edit Managed Stream</h3>
-                    <div class="form-group">
-                        <label>Title</label>
-                        <input type="text" id="ms-edit-title" class="input" value="${esc(ms.title || '')}" maxlength="140">
-                    </div>
-                    <div class="form-group">
-                        <label>Slug</label>
-                        <input type="text" id="ms-edit-slug" class="input" value="${esc(ms.slug || '')}" maxlength="32">
-                    </div>
-                    <div class="form-group">
-                        <label>Protocol</label>
-                        <select id="ms-edit-protocol" class="input">
-                            <option value="webrtc" ${ms.protocol === 'webrtc' ? 'selected' : ''}>WebRTC</option>
-                            <option value="rtmp" ${ms.protocol === 'rtmp' ? 'selected' : ''}>RTMP</option>
-                            <option value="jsmpeg" ${ms.protocol === 'jsmpeg' ? 'selected' : ''}>JSMPEG</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Category</label>
-                        <input type="text" id="ms-edit-category" class="input" value="${esc(ms.category || 'irl')}" maxlength="60">
-                    </div>
-                    <div class="form-group">
-                        <label><input type="checkbox" id="ms-edit-nsfw" ${ms.is_nsfw ? 'checked' : ''}> NSFW</label>
-                    </div>
-                    <div class="modal-actions">
-                        <button class="btn btn-outline" onclick="document.getElementById('edit-ms-modal').remove()">Cancel</button>
-                        <button class="btn btn-primary" onclick="submitEditManagedStream(${id})">Save</button>
-                    </div>
-                </div>
-            </div>
-        `;
-        document.body.insertAdjacentHTML('beforeend', html);
-    } catch (e) {
-        toast(e.message || 'Failed to load', 'error');
-    }
-}
-
-async function submitEditManagedStream(id) {
-    const title = document.getElementById('ms-edit-title')?.value.trim();
-    const slug = document.getElementById('ms-edit-slug')?.value.trim().toLowerCase() || null;
-    const protocol = document.getElementById('ms-edit-protocol')?.value || 'webrtc';
-    const category = document.getElementById('ms-edit-category')?.value.trim() || 'irl';
-    const is_nsfw = document.getElementById('ms-edit-nsfw')?.checked || false;
-    if (!title) return toast('Title is required', 'error');
-    try {
-        await api('/streams/managed/' + id, { method: 'PUT', body: { title, slug, protocol, category, is_nsfw } });
-        document.getElementById('edit-ms-modal')?.remove();
-        toast('Managed stream updated!', 'success');
-        loadDashManagedStreams();
-    } catch (e) {
-        toast(e.message || 'Failed to update', 'error');
-    }
-}
-
-async function deleteManagedStream(id) {
-    if (!confirm('Delete this managed stream? Historical sessions will be preserved but unlinked.')) return;
-    try {
-        await api('/streams/managed/' + id, { method: 'DELETE' });
-        toast('Managed stream deleted', 'info');
-        loadDashManagedStreams();
-    } catch (e) {
-        toast(e.message || 'Failed to delete', 'error');
-    }
-}
-
-async function regenerateManagedStreamKey(id) {
-    if (!confirm('Regenerate stream key? The old key will stop working immediately.')) return;
-    try {
-        await api('/streams/managed/' + id + '/regenerate-key', { method: 'POST' });
-        toast('Stream key regenerated!', 'success');
-        loadDashManagedStreams();
-    } catch (e) {
-        toast(e.message || 'Failed to regenerate', 'error');
-    }
 }
 
 function getDashObsOverlayUrl() {
@@ -1126,18 +902,188 @@ async function loadDashCoins() {
 }
 
 /* ── API Tokens (Bot / Integration) ─────────────────────────── */
+const DASH_TOKEN_DEFAULT_LIMIT = 10;
+const DASH_TOKEN_SCOPE_FALLBACKS = Object.freeze([
+    {
+        id: 'chat',
+        label: 'chat',
+        title: 'Chat bot access',
+        description: 'Send and receive authenticated chat messages via WebSocket and related chat APIs.',
+    },
+    {
+        id: 'read',
+        label: 'read',
+        title: 'Read access',
+        description: 'Read streams, VODs, user info, and other non-mutating integration surfaces.',
+    },
+    {
+        id: 'stream',
+        label: 'stream',
+        title: 'Stream control',
+        description: 'Start or stop streams and update stream state or metadata.',
+    },
+    {
+        id: 'control',
+        label: 'control',
+        title: 'Hardware control bridge',
+        description: 'Use the hardware control bridge and related remote-control surfaces.',
+    },
+    {
+        id: 'vibe_coding_publish',
+        label: 'vibe_coding_publish',
+        title: 'Vibe coding publisher',
+        description: 'Publish sanitized coding-feed events to /ws/vibe-coding/publish for a managed stream slot.',
+    },
+]);
+const DASH_TOKEN_PRESET_FALLBACKS = Object.freeze([
+    {
+        id: 'chat-bot',
+        label: 'Chat Bot',
+        description: 'Recommended for bots that read chat and post messages back into chat.',
+        suggested_label: 'Chat Bot',
+        scopes: ['chat', 'read'],
+    },
+    {
+        id: 'vibe-coding-publisher',
+        label: 'GitHub Copilot Companion',
+        description: 'Recommended for the HoboStreamer VS Code companion and other coding-feed publishers.',
+        suggested_label: 'Copilot Companion',
+        scopes: ['read', 'vibe_coding_publish'],
+    },
+    {
+        id: 'stream-controller',
+        label: 'Stream Controller',
+        description: 'Recommended for integrations that control live state, metadata, or hardware workflows.',
+        suggested_label: 'Stream Controller',
+        scopes: ['read', 'stream', 'control'],
+    },
+]);
+
+let dashTokenScopeDefinitions = DASH_TOKEN_SCOPE_FALLBACKS.map((definition) => ({ ...definition }));
+let dashTokenPresets = DASH_TOKEN_PRESET_FALLBACKS.map((preset) => ({ ...preset, scopes: [...preset.scopes] }));
+
+function normalizeDashTokenScopeDefinitions(definitions) {
+    const source = Array.isArray(definitions) && definitions.length ? definitions : DASH_TOKEN_SCOPE_FALLBACKS;
+    const normalized = source.map((definition) => {
+        const id = String(definition?.id || definition?.label || '').trim();
+        if (!id) return null;
+        return {
+            id,
+            label: String(definition?.label || id).trim() || id,
+            title: String(definition?.title || definition?.label || id).trim() || id,
+            description: String(definition?.description || '').trim(),
+        };
+    }).filter(Boolean);
+
+    return normalized.length
+        ? normalized
+        : DASH_TOKEN_SCOPE_FALLBACKS.map((definition) => ({ ...definition }));
+}
+
+function normalizeDashTokenPresets(presets) {
+    const validScopeIds = new Set((dashTokenScopeDefinitions || []).map((definition) => definition.id));
+    const source = Array.isArray(presets) && presets.length ? presets : DASH_TOKEN_PRESET_FALLBACKS;
+    const normalized = source.map((preset) => {
+        const id = String(preset?.id || '').trim();
+        if (!id) return null;
+        const scopes = Array.isArray(preset?.scopes)
+            ? [...new Set(preset.scopes.map((scope) => String(scope || '').trim()).filter((scope) => validScopeIds.has(scope)))]
+            : [];
+        if (!scopes.length) return null;
+        return {
+            id,
+            label: String(preset?.label || id).trim() || id,
+            description: String(preset?.description || '').trim(),
+            suggested_label: String(preset?.suggested_label || '').trim(),
+            scopes,
+        };
+    }).filter(Boolean);
+
+    return normalized.length
+        ? normalized
+        : DASH_TOKEN_PRESET_FALLBACKS.map((preset) => ({ ...preset, scopes: [...preset.scopes] }));
+}
+
+function renderDashTokenScopeOptions(selectedScopes) {
+    const selected = new Set(Array.isArray(selectedScopes) && selectedScopes.length ? selectedScopes : ['chat', 'read']);
+    return (dashTokenScopeDefinitions || []).map((definition) => `
+        <label style="font-size:0.85rem;display:flex;align-items:flex-start;gap:8px">
+            <input type="checkbox" data-token-scope="${definition.id}" ${selected.has(definition.id) ? 'checked' : ''}>
+            <span>
+                <strong>${esc(definition.label || definition.id)}</strong>
+                ${definition.description ? ` — ${esc(definition.description)}` : ''}
+            </span>
+        </label>`).join('');
+}
+
+function renderDashTokenPresetButtons() {
+    if (!Array.isArray(dashTokenPresets) || !dashTokenPresets.length) {
+        return '';
+    }
+    return `
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+            ${dashTokenPresets.map((preset) => `
+                <button type="button" class="btn btn-small btn-outline" onclick="applyDashTokenPreset('${preset.id}')">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> ${esc(preset.label)}
+                </button>`).join('')}
+        </div>
+        <p class="muted" id="token-preset-hint" style="font-size:0.78rem;margin-top:8px">Use a preset to preselect the scopes needed for a common integration.</p>`;
+}
+
+function applyDashTokenPreset(presetId) {
+    const preset = (dashTokenPresets || []).find((entry) => entry.id === presetId);
+    if (!preset) return;
+
+    const labelInput = document.getElementById('token-label');
+    if (labelInput && (!labelInput.value || labelInput.value === 'Bot Token')) {
+        labelInput.value = preset.suggested_label || preset.label || 'Bot Token';
+    }
+
+    document.querySelectorAll('[data-token-scope]').forEach((input) => {
+        const scopeId = input?.dataset?.tokenScope;
+        input.checked = !!scopeId && preset.scopes.includes(scopeId);
+    });
+
+    const hint = document.getElementById('token-preset-hint');
+    if (hint) {
+        hint.textContent = preset.description || 'Preset applied.';
+    }
+}
+
 async function loadDashTokens() {
     const list = document.getElementById('dash-token-list');
+    const summary = document.getElementById('dash-token-summary');
+    const createButton = document.getElementById('dash-token-create-btn');
     if (!list) return;
+    list.innerHTML = '<p class="muted" style="font-size:0.82rem">Loading tokens...</p>';
     try {
         const data = await api('/auth/tokens');
-        const tokens = data.tokens || [];
+        dashTokenScopeDefinitions = normalizeDashTokenScopeDefinitions(data.scope_definitions);
+        dashTokenPresets = normalizeDashTokenPresets(data.token_presets);
+        const tokens = Array.isArray(data.tokens) ? data.tokens : [];
+        const maxActiveTokens = Number.isInteger(data.max_active_tokens)
+            ? data.max_active_tokens
+            : DASH_TOKEN_DEFAULT_LIMIT;
+        const activeTokenCount = Number.isInteger(data.active_token_count)
+            ? data.active_token_count
+            : tokens.filter(token => token.is_active).length;
+
+        if (summary) summary.textContent = `${activeTokenCount} / ${maxActiveTokens} active tokens`;
+        if (createButton) {
+            const atLimit = activeTokenCount >= maxActiveTokens;
+            createButton.disabled = atLimit;
+            createButton.title = atLimit
+                ? `Maximum ${maxActiveTokens} active tokens reached`
+                : 'Create a new API token';
+        }
+
         if (!tokens.length) {
             list.innerHTML = '<p class="muted" style="font-size:0.82rem">No API tokens yet. Create one to connect bots or integrations.</p>';
             return;
         }
         list.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px">${tokens.map(t => {
-            const scopes = (t.scopes || []).join(', ');
+            const scopes = (t.scopes || []).join(', ') || 'None';
+            const created = t.created_at ? new Date(t.created_at).toLocaleDateString() : 'Unknown';
             const lastUsed = t.last_used_at ? new Date(t.last_used_at).toLocaleDateString() : 'Never';
             const expires = t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never';
             const statusClass = t.is_active ? 'color:var(--success)' : 'color:var(--danger)';
@@ -1145,19 +1091,29 @@ async function loadDashTokens() {
             return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border)">
                 <div style="flex:1;min-width:0">
                     <div style="font-weight:600;font-size:0.85rem">${esc(t.label)}</div>
-                    <div style="font-size:0.75rem;color:var(--text-muted)">Scopes: ${esc(scopes)} · Last used: ${lastUsed} · Expires: ${expires} · <span style="${statusClass}">${statusLabel}</span></div>
+                    <div style="font-size:0.75rem;color:var(--text-muted)">Scopes: ${esc(scopes)} · Created: ${created} · Last used: ${lastUsed} · Expires: ${expires} · <span style="${statusClass}">${statusLabel}</span></div>
                 </div>
                 ${t.is_active ? `<button class="btn btn-small btn-danger" onclick="revokeDashToken(${t.id})" title="Revoke"><i class="fa-solid fa-ban"></i></button>` : ''}
             </div>`;
         }).join('')}</div>`;
     } catch (e) {
+        if (summary) summary.textContent = 'Failed to load tokens';
+        if (createButton) {
+            createButton.disabled = false;
+            createButton.title = 'Create a new API token';
+        }
         list.innerHTML = `<p class="muted" style="font-size:0.82rem">Failed to load tokens</p>`;
     }
 }
 
 function showCreateTokenModal() {
+    const overlay = document.getElementById('modal-overlay');
     const content = document.getElementById('modal-content');
-    if (!content) return;
+    const createButton = document.getElementById('dash-token-create-btn');
+    if (createButton?.disabled) {
+        return toast(createButton.title || 'Token limit reached', 'error');
+    }
+    if (!overlay || !content) return;
     content.innerHTML = `
         <div class="modal-header"><h3><i class="fa-solid fa-key"></i> Create API Token</h3></div>
         <div class="modal-body">
@@ -1166,21 +1122,15 @@ function showCreateTokenModal() {
                 <input type="text" id="token-label" class="form-input" placeholder="My Chat Bot" maxlength="50">
             </div>
             <div class="form-group">
+                <label>Quick Presets</label>
+                ${renderDashTokenPresetButtons()}
+            </div>
+            <div class="form-group">
                 <label>Scopes</label>
                 <div style="display:flex;flex-direction:column;gap:6px">
-                    <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px">
-                        <input type="checkbox" id="token-scope-chat" checked> <strong>chat</strong> — Send/receive chat messages via WebSocket
-                    </label>
-                    <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px">
-                        <input type="checkbox" id="token-scope-read" checked> <strong>read</strong> — Read streams, VODs, user info
-                    </label>
-                    <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px">
-                        <input type="checkbox" id="token-scope-stream"> <strong>stream</strong> — Start/stop streams, update stream info
-                    </label>
-                    <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px">
-                        <input type="checkbox" id="token-scope-control"> <strong>control</strong> — Hardware control bridge
-                    </label>
+                    ${renderDashTokenScopeOptions(['chat', 'read'])}
                 </div>
+                <p class="muted" style="font-size:0.78rem;margin-top:8px">Use <strong>vibe_coding_publish</strong> for coding-feed publishers such as the HoboStreamer VS Code companion.</p>
             </div>
             <div class="form-group">
                 <label>Expires</label>
@@ -1204,16 +1154,14 @@ function showCreateTokenModal() {
             <button class="btn btn-primary" id="token-create-btn" onclick="createDashToken()"><i class="fa-solid fa-plus"></i> Create Token</button>
         </div>
     `;
-    showModal('modal-overlay');
+    overlay.classList.add('show');
 }
 
 async function createDashToken() {
     const label = document.getElementById('token-label')?.value?.trim() || 'Bot Token';
-    const scopes = [];
-    if (document.getElementById('token-scope-chat')?.checked) scopes.push('chat');
-    if (document.getElementById('token-scope-read')?.checked) scopes.push('read');
-    if (document.getElementById('token-scope-stream')?.checked) scopes.push('stream');
-    if (document.getElementById('token-scope-control')?.checked) scopes.push('control');
+    const scopes = Array.from(document.querySelectorAll('[data-token-scope]'))
+        .filter((input) => input.checked && input.dataset?.tokenScope)
+        .map((input) => input.dataset.tokenScope);
     if (!scopes.length) { toast('Select at least one scope', 'error'); return; }
 
     const expDays = document.getElementById('token-expires')?.value;

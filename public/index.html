@@ -1302,14 +1302,6 @@
                     </button>
                 </div>
 
-                <!-- Managed Streams -->
-                <div class="dash-card">
-                    <h3><i class="fa-solid fa-tower-broadcast"></i> Stream Manager</h3>
-                    <p class="muted" style="margin-bottom:8px">Manage your persistent streams. Each has its own stream key, URL slug, and settings.</p>
-                    <p class="muted" style="margin-bottom:12px;font-size:0.8rem" id="dash-ms-limit"></p>
-                    <div id="dash-managed-streams"></div>
-                </div>
-
                 <div class="dash-card">
                     <h3><i class="fa-solid fa-layer-group"></i> Chat Overlay</h3>
                     <p class="muted" style="margin-bottom:12px">Use this as a Browser Source in OBS to show your live chat on stream. This global URL shows chat from any of your live stream slots.</p>
@@ -1463,9 +1455,10 @@
                 <!-- API Tokens (Bot / Integration) -->
                 <div class="dash-card">
                     <h3><i class="fa-solid fa-key"></i> API Tokens</h3>
-                    <p class="muted" style="font-size:0.85rem;margin-bottom:12px">Create long-lived API tokens for bots and integrations. Tokens can authenticate via REST API and chat WebSocket without OAuth login.</p>
+                    <p class="muted" style="font-size:0.85rem;margin-bottom:8px">Create long-lived API tokens for bots and integrations. Tokens can authenticate against the REST API and authenticated WebSocket integrations without an OAuth login.</p>
+                    <p class="muted" style="font-size:0.8rem;margin-bottom:12px" id="dash-token-summary"></p>
                     <div id="dash-token-list" style="margin-bottom:10px"></div>
-                    <button class="btn btn-outline btn-small" onclick="showCreateTokenModal()">
+                    <button class="btn btn-outline btn-small" id="dash-token-create-btn" onclick="showCreateTokenModal()">
                         <i class="fa-solid fa-plus"></i> Create Token
                     </button>
                 </div>

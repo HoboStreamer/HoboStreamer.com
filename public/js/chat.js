@@ -64,6 +64,18 @@ let _globalFeedReconnectTimer = null;
 let _globalFeedReconnectDelay = 3000;
 const _GLOBAL_FEED_RECONNECT_MAX = 20000;
 
+// ── Vibe coding widget ──────────────────────────────────────
+let _vibeWidgetState = {
+    key: null,
+    panel: null,
+    feed: null,
+    settings: null,
+    publisher: null,
+    events: [],
+    timers: [],
+};
+const VIBE_WIDGET_FALLBACK_MAX = 12;
+
 // ── Slow mode state ─────────────────────────────────────────
 let chatSlowModeSeconds = 0;
 let chatSlowModeCooldownTimer = null;
@@ -771,6 +783,194 @@ function getChatRenderTargetId() {
     return getChatEl().messages?.id || null;
 }
 
+function _getVibeWidgetContext() {
+    let streamData = currentStreamData;
+    if ((!streamData || streamData.id !== chatStreamId) && typeof broadcastState !== 'undefined' && broadcastState?.streams && chatStreamId) {
+        const stateEntry = broadcastState.streams instanceof Map
+            ? broadcastState.streams.get(chatStreamId)
+            : broadcastState.streams[chatStreamId];
+        if (stateEntry?.streamData) {
+            streamData = stateEntry.streamData;
+        }
+    }
+    const username = streamData?.username || currentUser?.username || null;
+    const slotRef = streamData?.managed_stream_slug || streamData?.managed_stream_id || null;
+    const managedStreamId = streamData?.managed_stream_id || null;
+    if (!username || !slotRef || !managedStreamId) return null;
+    return { username, slotRef, managedStreamId };
+}
+
+function _clearVibeWidgetTimers() {
+    (_vibeWidgetState.timers || []).forEach((timerId) => clearTimeout(timerId));
+    _vibeWidgetState.timers = [];
+}
+
+function _resetVibeWidget(removePanel = false) {
+    _clearVibeWidgetTimers();
+    _vibeWidgetState.key = null;
+    _vibeWidgetState.settings = null;
+    _vibeWidgetState.publisher = null;
+    _vibeWidgetState.events = [];
+    if (removePanel && _vibeWidgetState.panel) {
+        _vibeWidgetState.panel.remove();
+        _vibeWidgetState.panel = null;
+        _vibeWidgetState.feed = null;
+        return;
+    }
+    if (_vibeWidgetState.feed) {
+        _vibeWidgetState.feed.innerHTML = '';
+    }
+    if (_vibeWidgetState.panel) {
+        _vibeWidgetState.panel.style.display = 'none';
+    }
+}
+
+function _getVibeWidgetHost() {
+    const { messages } = getChatEl();
+    if (!messages) return null;
+    return messages.closest('#chat-sidebar, .chat-sidebar, .bc-chat-sidebar, .chat-panel, .bc-ws-panel, .bc-chat-panel')
+        || messages.parentElement
+        || null;
+}
+
+function _ensureVibeWidgetPanel() {
+    const host = _getVibeWidgetHost();
+    if (!host) return null;
+    let panel = host.querySelector('.chat-vibe-widget');
+    if (!panel) {
+        panel = document.createElement('section');
+        panel.className = 'chat-vibe-widget';
+        panel.innerHTML = '<div class="chat-vibe-widget-head"><div class="chat-vibe-widget-title"><i class="fa-solid fa-code"></i> <span>Vibe Coding</span></div><div class="chat-vibe-widget-status">Live</div></div><div class="chat-vibe-widget-feed"></div>';
+        const header = host.querySelector('.chat-header, .global-chat-header');
+        if (header) header.after(panel);
+        else host.prepend(panel);
+    }
+    _vibeWidgetState.panel = panel;
+    _vibeWidgetState.feed = panel.querySelector('.chat-vibe-widget-feed');
+    return panel;
+}
+
+function _getVibeEventLabel(eventType) {
+    switch (eventType) {
+        case 'prompt': return 'Prompt';
+        case 'response': return 'Response';
+        case 'thinking': return 'Thinking';
+        case 'tool.call': return 'Tool';
+        case 'file.change': return 'Edit';
+        case 'file.save': return 'Save';
+        case 'session.status': return 'Session';
+        default: return 'Update';
+    }
+}
+
+function _getVibeEventText(event) {
+    if (event?.prompt?.text) return event.prompt.text;
+    if (event?.response?.text) return event.response.text;
+    if (event?.thinking?.text) return event.thinking.text;
+    if (event?.tool?.argumentsPreview) return event.tool.argumentsPreview;
+    if (event?.tool?.resultPreview) return event.tool.resultPreview;
+    if (event?.file?.snippet) return event.file.snippet;
+    return event?.summary || '';
+}
+
+function _getVibeEventMeta(event) {
+    const parts = [];
+    if (event?.publisher?.integrationLabel) parts.push(event.publisher.integrationLabel);
+    if (event?.file?.relativePath) parts.push(event.file.relativePath);
+    else if (event?.tool?.name) parts.push(event.tool.name);
+    else if (event?.session?.state) parts.push(event.session.state);
+    return parts.join(' · ');
+}
+
+function _renderVibeWidget() {
+    const panel = _ensureVibeWidgetPanel();
+    if (!panel || !_vibeWidgetState.feed) return;
+    const settings = _vibeWidgetState.settings;
+    if (!settings?.enabled) {
+        _resetVibeWidget(true);
+        return;
+    }
+
+    panel.style.display = '';
+    const titleEl = panel.querySelector('.chat-vibe-widget-title span');
+    if (titleEl) titleEl.textContent = settings.widget_title || 'Vibe Coding';
+    const statusEl = panel.querySelector('.chat-vibe-widget-status');
+    if (statusEl) {
+        const parts = [];
+        if (_vibeWidgetState.publisher?.integrationLabel) parts.push(_vibeWidgetState.publisher.integrationLabel);
+        parts.push(settings.paused ? 'Paused' : 'Live');
+        statusEl.textContent = parts.join(' · ');
+    }
+
+    const maxEvents = settings.max_events || VIBE_WIDGET_FALLBACK_MAX;
+    const items = _vibeWidgetState.events.slice(-maxEvents).reverse();
+    if (!items.length) {
+        _vibeWidgetState.feed.innerHTML = '<div class="chat-vibe-widget-empty">No coding events yet for this slot.</div>';
+        return;
+    }
+
+    _vibeWidgetState.feed.innerHTML = items.map((event) => {
+        const label = _getVibeEventLabel(event.eventType);
+        const text = _getVibeEventText(event);
+        const meta = _getVibeEventMeta(event);
+        return `
+            <article class="chat-vibe-item chat-vibe-item-${esc(String(event.eventType || 'update').replace(/[^a-z0-9]+/gi, '-').toLowerCase())}">
+                <div class="chat-vibe-item-top">
+                    <span class="chat-vibe-item-label">${esc(label)}</span>
+                    ${meta ? `<span class="chat-vibe-item-meta">${esc(meta)}</span>` : ''}
+                </div>
+                <div class="chat-vibe-item-text">${esc(text || event.summary || '')}</div>
+            </article>`;
+    }).join('');
+}
+
+function _pushVibeWidgetEvent(event) {
+    if (!event) return;
+    if (event.publisher) {
+        _vibeWidgetState.publisher = event.publisher;
+    }
+    const maxEvents = _vibeWidgetState.settings?.max_events || VIBE_WIDGET_FALLBACK_MAX;
+    _vibeWidgetState.events.push(event);
+    if (_vibeWidgetState.events.length > maxEvents * 2) {
+        _vibeWidgetState.events = _vibeWidgetState.events.slice(-maxEvents * 2);
+    }
+    _renderVibeWidget();
+}
+
+function _handleVibeSocketMessage(msg) {
+    if (!msg?.event || !_vibeWidgetState.settings?.enabled) return;
+    const delayMs = Math.max(0, parseInt(msg.delay_ms, 10) || parseInt(_vibeWidgetState.settings.delay_ms, 10) || 0);
+    if (delayMs > 0) {
+        const timerId = setTimeout(() => {
+            _vibeWidgetState.timers = _vibeWidgetState.timers.filter((id) => id !== timerId);
+            _pushVibeWidgetEvent(msg.event);
+        }, delayMs);
+        _vibeWidgetState.timers.push(timerId);
+        return;
+    }
+    _pushVibeWidgetEvent(msg.event);
+}
+
+async function refreshVibeWidgetFeed() {
+    const context = _getVibeWidgetContext();
+    if (!context) {
+        _resetVibeWidget(true);
+        return;
+    }
+
+    const widgetKey = `${context.username}:${context.slotRef}`;
+    try {
+        const data = await api(`/vibe-coding/channel/${encodeURIComponent(context.username)}/${encodeURIComponent(String(context.slotRef))}/events?limit=${VIBE_WIDGET_FALLBACK_MAX}`);
+        _vibeWidgetState.key = widgetKey;
+        _vibeWidgetState.settings = data.settings || null;
+        _vibeWidgetState.publisher = data.publisher || null;
+        _vibeWidgetState.events = Array.isArray(data.events) ? data.events.slice() : [];
+        _renderVibeWidget();
+    } catch {
+        _resetVibeWidget(true);
+    }
+}
+
 function getFullscreenChatEls() {
     return {
         container: document.getElementById('video-container'),
@@ -975,6 +1175,7 @@ function initChat(streamId) {
             if (targetChanged || needsHydrate) {
                 hydrateActiveChatHistory(streamId, { clear: true }).catch(() => {});
             }
+            refreshVibeWidgetFeed().catch(() => {});
             applyChatSettings();
             return;
         }
@@ -982,6 +1183,7 @@ function initChat(streamId) {
 
     // Reclaim background broadcast WS if it's connected to the same stream
     if (_bgBroadcastWs && _bgBroadcastWs.readyState === WebSocket.OPEN && _bgBroadcastStreamId === streamId) {
+        refreshVibeWidgetFeed().catch(() => {});
         destroyChat(); // close any existing foreground chat
         chatWs = _bgBroadcastWs;
         chatStreamId = _bgBroadcastStreamId;
@@ -1013,6 +1215,7 @@ function initChat(streamId) {
     destroyChat();
     chatStreamId = streamId;
     chatRenderTargetId = nextTargetId;
+    refreshVibeWidgetFeed().catch(() => {});
 
     const host = window.location.hostname;
     const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
@@ -1193,6 +1396,7 @@ function _reconnectChatWs(streamId) {
 }
 
 function destroyChat(forceClose = false) {
+    _resetVibeWidget(true);
     _chatIntentionalClose = true;
     _chatActive = false;
     _closeGlobalFeed();
@@ -1284,6 +1488,9 @@ function destroyBgBroadcastChat() {
 /* ── Message handling ─────────────────────────────────────────── */
 function handleChatMessage(msg) {
     switch (msg.type) {
+        case 'vibe-coding':
+            _handleVibeSocketMessage(msg);
+            break;
         case 'chat':
             addChatMessage(msg);
             // Self-mode TTS: speak every incoming chat message via browser synthesis

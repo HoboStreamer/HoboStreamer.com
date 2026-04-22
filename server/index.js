@@ -48,6 +48,7 @@ const chatServer = require('./chat/chat-server');
 const controlServer = require('./controls/control-server');
 const broadcastServer = require('./streaming/broadcast-server');
 const callServer = require('./streaming/call-server');
+const VibeCodingPublishServer = require('./vibe-coding/publish-server');
 
 // Routes
 const authRoutes = require('./auth/routes');
@@ -75,6 +76,7 @@ const pasteRoutes = require('./pastes/routes');
 const mediaRoutes = require('./media/routes');
 const robotStreamerService = require('./integrations/robotstreamer-service');
 const chatRelayService = require('./integrations/chat-relay-service');
+const vibeCodingRoutes = require('./vibe-coding/routes');
 
 // Restream
 const restreamRoutes = require('./streaming/restream-routes');
@@ -89,6 +91,7 @@ const whipHandler = require('./streaming/whip-handler');
 // ── Express App ──────────────────────────────────────────────
 const app = express();
 const server = http.createServer(app);
+const vibeCodingPublishServer = new VibeCodingPublishServer(chatServer, db);
 
 function normalizeOrigin(origin) {
     if (!origin || typeof origin !== 'string') return null;
@@ -394,6 +397,7 @@ app.use('/api/game', (req, res) => res.status(410).json({ error: 'Game has moved
 app.use('/api/meta', metaRoutes);
 app.use('/api/pastes', pasteRoutes);
 app.use('/api/media', mediaRoutes);
+app.use('/api/vibe-coding', vibeCodingRoutes);
 const ttsRoutes = require('./chat/tts-routes');
 app.use('/api/tts', ttsRoutes);
 const dmRoutes = require('./chat/dm-routes');
@@ -561,6 +565,8 @@ server.on('upgrade', (req, socket, head) => {
 
     if (url.startsWith('/ws/chat')) {
         chatServer.handleUpgrade(req, socket, head);
+    } else if (url.startsWith('/ws/vibe-coding/publish')) {
+        vibeCodingPublishServer.handleUpgrade(req, socket, head);
     } else if (url.startsWith('/ws/broadcast')) {
         broadcastServer.handleUpgrade(req, socket, head);
     } else if (url.startsWith('/ws/control')) {
@@ -649,6 +655,7 @@ async function start() {
 
     // 3. Initialize chat server
     chatServer.init(server);
+    vibeCodingPublishServer.init(server);
 
     // 3b. Initialize breaking news service
     const newsService = require('./news/news-service');

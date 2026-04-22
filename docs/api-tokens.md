@@ -8,6 +8,7 @@ API tokens provide programmatic access to HoboStreamer for bots, integrations, a
 - Each user can create up to **10 active tokens**
 - Tokens are hashed with SHA-256 before storage — the raw token is shown only once at creation
 - Tokens support scoped permissions and optional expiration
+- The dashboard exposes integration presets, including a dedicated vibe-coding publisher preset
 
 ## Creating a Token
 
@@ -16,7 +17,7 @@ API tokens provide programmatic access to HoboStreamer for bots, integrations, a
 1. Go to your **Dashboard**
 2. Find the **API Tokens** card
 3. Click **Create Token**
-4. Enter a label, select scopes, and optionally set an expiration
+4. Enter a label or use a preset, select scopes, and optionally set an expiration
 5. **Copy the token immediately** — it will not be shown again
 
 ### REST API
@@ -46,6 +47,13 @@ Response:
 | `read` | Read streams, VODs, user info |
 | `stream` | Start/stop streams, update stream info |
 | `control` | Hardware control bridge access |
+| `vibe_coding_publish` | Publish sanitized coding-feed events to `/ws/vibe-coding/publish` |
+
+## Recommended Presets
+
+- `Chat Bot` → `chat`, `read`
+- `GitHub Copilot Companion` → `read`, `vibe_coding_publish`
+- `Stream Controller` → `read`, `stream`, `control`
 
 ## Using a Token
 
@@ -57,6 +65,10 @@ Include the token in the `Authorization` header:
 curl https://hobostreamer.com/api/streams \
   -H "Authorization: Bearer hbt_YOUR_TOKEN_HERE"
 ```
+
+### Vibe Coding Publisher
+
+For the HoboStreamer VS Code companion or any other coding-feed publisher, use a token with `vibe_coding_publish` scope instead of broader stream control when possible.
 
 ### WebSocket (Chat)
 
@@ -119,6 +131,7 @@ ws.on('message', (data) => {
 
 - Treat API tokens like passwords — never commit them to source control
 - Use the narrowest scope necessary for your use case
+- Prefer `vibe_coding_publish` over `stream` for coding-feed publishers so tokens stay least-privilege
 - Set an expiration for tokens used in shared environments
 - Revoke tokens immediately if compromised
 - The `last_used_at` field in the token list helps identify unused tokens for cleanup

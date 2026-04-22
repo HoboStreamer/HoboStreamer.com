@@ -536,7 +536,117 @@ router.put('/preferences', requireAuth, (req, res) => {
 });
 
 // ── API Tokens (Bot / Integration) ───────────────────────────────────────────
-const VALID_TOKEN_SCOPES = ['chat', 'read', 'stream', 'control'];
+const TOKEN_SCOPE_DEFINITIONS = Object.freeze([
+    {
+        id: 'chat',
+        label: 'chat',
+        title: 'Chat bot access',
+        description: 'Send and receive authenticated chat messages via WebSocket and related chat APIs.',
+    },
+    {
+        id: 'read',
+        label: 'read',
+        title: 'Read access',
+        description: 'Read streams, VODs, user info, and other non-mutating integration surfaces.',
+    },
+    {
+        id: 'stream',
+        label: 'stream',
+        title: 'Stream control',
+        description: 'Start or stop streams and update stream state or metadata.',
+    },
+    {
+        id: 'control',
+        label: 'control',
+        title: 'Hardware control bridge',
+        description: 'Use the hardware control bridge and related remote-control surfaces.',
+    },
+    {
+        id: 'vibe_coding_publish',
+        label: 'vibe_coding_publish',
+        title: 'Vibe coding publisher',
+        description: 'Publish sanitized coding-feed events to /ws/vibe-coding/publish for a managed stream slot.',
+    },
+]);
+
+const TOKEN_PRESET_DEFINITIONS = Object.freeze([
+    {
+        id: 'chat-bot',
+        label: 'Chat Bot',
+        description: 'Recommended for bots that read chat and post messages back into chat.',
+        suggested_label: 'Chat Bot',
+        scopes: ['chat', 'read'],
+    },
+    {
+        id: 'vibe-coding-publisher',
+        label: 'GitHub Copilot Companion',
+        description: 'Recommended for the HoboStreamer VS Code companion and other coding-feed publishers.',
+        suggested_label: 'Copilot Companion',
+        scopes: ['read', 'vibe_coding_publish'],
+    },
+    {
+        id: 'stream-controller',
+        label: 'Stream Controller',
+        description: 'Recommended for integrations that control live state, metadata, or hardware workflows.',
+        suggested_label: 'Stream Controller',
+        scopes: ['read', 'stream', 'control'],
+    },
+]);
+
+const VALID_TOKEN_SCOPES = TOKEN_SCOPE_DEFINITIONS.map((scope) => scope.id);
+const MAX_ACTIVE_API_TOKENS = 10;
+
+function parseApiTokenScopes(rawScopes) {
+    if (rawScopes !== undefined && !Array.isArray(rawScopes)) {
+        return { error: 'Scopes must be an array' };
+    }
+    const requestedScopes = Array.isArray(rawScopes) && rawScopes.length
+        ? rawScopes
+        : ['chat', 'read'];
+    const scopes = [...new Set(requestedScopes.filter(scope => VALID_TOKEN_SCOPES.includes(scope)))];
+    if (!scopes.length) {
+        return { error: 'At least one valid scope is required' };
+    }
+    return { scopes };
+}
+
+function parseApiTokenExpiry(rawExpiresAt) {
+    if (rawExpiresAt === undefined || rawExpiresAt === null || rawExpiresAt === '') {
+        return { expiresAt: null };
+    }
+    const expiresAt = new Date(rawExpiresAt);
+    if (Number.isNaN(expiresAt.getTime())) {
+        return { error: 'Invalid expiresAt value' };
+    }
+    if (expiresAt.getTime() <= Date.now()) {
+        return { error: 'Expiration must be in the future' };
+    }
+    return { expiresAt: expiresAt.toISOString() };
+}
+
+function normalizeApiTokenLabel(rawLabel) {
+    if (typeof rawLabel !== 'string') return 'Bot Token';
+    const label = rawLabel.trim();
+    return label ? label.slice(0, 50) : 'Bot Token';
+}
+
+function serializeApiToken(token) {
+    return {
+        id: token.id,
+        label: token.label,
+        scopes: (() => {
+            try {
+                return JSON.parse(token.scopes);
+            } catch {
+                return [];
+            }
+        })(),
+        created_at: token.created_at,
+        last_used_at: token.last_used_at,
+        expires_at: token.expires_at,
+        is_active: !!token.is_active,
+    };
+}
 
 router.post('/tokens', requireAuth, (req, res) => {
     try {
@@ -544,19 +654,32 @@ router.post('/tokens', requireAuth, (req, res) => {
         if (req.authSource === 'api_token') {
             return res.status(403).json({ error: 'Cannot create tokens using an API token' });
         }
-        const { label, scopes, expiresAt } = req.body;
-        const validScopes = (scopes || ['chat', 'read']).filter(s => VALID_TOKEN_SCOPES.includes(s));
-        if (!validScopes.length) {
-            return res.status(400).json({ error: 'At least one valid scope is required' });
+        const { scopes, expiresAt } = req.body || {};
+        const label = normalizeApiTokenLabel(req.body?.label);
+        const scopeResult = parseApiTokenScopes(scopes);
+        if (scopeResult.error) {
+            return res.status(400).json({ error: scopeResult.error });
+        }
+        const expiryResult = parseApiTokenExpiry(expiresAt);
+        if (expiryResult.error) {
+            return res.status(400).json({ error: expiryResult.error });
         }
         // Limit to 10 active tokens per user
         const existing = db.listApiTokens(req.user.id).filter(t => t.is_active);
-        if (existing.length >= 10) {
-            return res.status(400).json({ error: 'Maximum 10 active tokens per account' });
+        if (existing.length >= MAX_ACTIVE_API_TOKENS) {
+            return res.status(400).json({ error: `Maximum ${MAX_ACTIVE_API_TOKENS} active tokens per account` });
         }
-        const result = db.createApiToken(req.user.id, label, validScopes, expiresAt || null);
-        console.log(`[Auth] API token created: user=${req.user.username} label=${label} scopes=${validScopes.join(',')}`);
-        res.json({ id: result.id, token: result.token, created_at: result.created_at, scopes: validScopes });
+        const result = db.createApiToken(req.user.id, label, scopeResult.scopes, expiryResult.expiresAt);
+        console.log(`[Auth] API token created: user=${req.user.username} label=${label} scopes=${scopeResult.scopes.join(',')}`);
+        res.json({
+            id: result.id,
+            token: result.token,
+            label,
+            created_at: result.created_at,
+            expires_at: expiryResult.expiresAt,
+            scopes: scopeResult.scopes,
+            max_active_tokens: MAX_ACTIVE_API_TOKENS,
+        });
     } catch (e) {
         console.error('[Auth] Token creation error:', e.message);
         res.status(500).json({ error: 'Failed to create token' });
@@ -565,14 +688,18 @@ router.post('/tokens', requireAuth, (req, res) => {
 
 router.get('/tokens', requireAuth, (req, res) => {
     try {
-        const tokens = db.listApiTokens(req.user.id);
-        // Never return the token hash
-        res.json({ tokens: tokens.map(t => ({
-            id: t.id, label: t.label,
-            scopes: (() => { try { return JSON.parse(t.scopes); } catch { return []; } })(),
-            created_at: t.created_at, last_used_at: t.last_used_at,
-            expires_at: t.expires_at, is_active: !!t.is_active,
-        })) });
+        if (req.authSource === 'api_token') {
+            return res.status(403).json({ error: 'Cannot list tokens using an API token' });
+        }
+        const tokens = db.listApiTokens(req.user.id).map(serializeApiToken);
+        res.json({
+            tokens,
+            valid_scopes: VALID_TOKEN_SCOPES,
+            scope_definitions: TOKEN_SCOPE_DEFINITIONS,
+            token_presets: TOKEN_PRESET_DEFINITIONS,
+            max_active_tokens: MAX_ACTIVE_API_TOKENS,
+            active_token_count: tokens.filter(token => token.is_active).length,
+        });
     } catch (e) {
         console.error('[Auth] Token list error:', e.message);
         res.status(500).json({ error: 'Failed to list tokens' });

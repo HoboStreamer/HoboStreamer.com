@@ -1152,6 +1152,66 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] Restream destinations backfill:', e.message); }
 
+    // Vibe-coding sessions and events
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS vibe_coding_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            managed_stream_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            session_key TEXT NOT NULL,
+            slot_slug TEXT,
+            workspace_name TEXT,
+            machine_name TEXT,
+            extension_version TEXT,
+            publisher_id TEXT,
+            publisher_label TEXT,
+            publisher_vendor TEXT,
+            publisher_client_type TEXT,
+            publisher_client_name TEXT,
+            publisher_client_version TEXT,
+            publisher_capabilities_json TEXT,
+            publisher_depth TEXT DEFAULT 'standard',
+            status TEXT DEFAULT 'active' CHECK(status IN ('active', 'ended')),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_event_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            ended_at DATETIME,
+            FOREIGN KEY (managed_stream_id) REFERENCES managed_streams(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE (managed_stream_id, session_key)
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_vibe_sessions_managed ON vibe_coding_sessions(managed_stream_id)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_vibe_sessions_user ON vibe_coding_sessions(user_id)');
+        const vibeSessionCols = database.prepare("PRAGMA table_info('vibe_coding_sessions')").all().map((column) => column.name);
+        if (!vibeSessionCols.includes('publisher_id')) database.exec('ALTER TABLE vibe_coding_sessions ADD COLUMN publisher_id TEXT');
+        if (!vibeSessionCols.includes('publisher_label')) database.exec('ALTER TABLE vibe_coding_sessions ADD COLUMN publisher_label TEXT');
+        if (!vibeSessionCols.includes('publisher_vendor')) database.exec('ALTER TABLE vibe_coding_sessions ADD COLUMN publisher_vendor TEXT');
+        if (!vibeSessionCols.includes('publisher_client_type')) database.exec('ALTER TABLE vibe_coding_sessions ADD COLUMN publisher_client_type TEXT');
+        if (!vibeSessionCols.includes('publisher_client_name')) database.exec('ALTER TABLE vibe_coding_sessions ADD COLUMN publisher_client_name TEXT');
+        if (!vibeSessionCols.includes('publisher_client_version')) database.exec('ALTER TABLE vibe_coding_sessions ADD COLUMN publisher_client_version TEXT');
+        if (!vibeSessionCols.includes('publisher_capabilities_json')) database.exec('ALTER TABLE vibe_coding_sessions ADD COLUMN publisher_capabilities_json TEXT');
+        database.exec(`CREATE TABLE IF NOT EXISTS vibe_coding_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            managed_stream_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            stream_id INTEGER,
+            session_key TEXT,
+            event_id TEXT NOT NULL,
+            sequence_num INTEGER DEFAULT 0,
+            event_type TEXT NOT NULL,
+            visibility TEXT DEFAULT 'public' CHECK(visibility IN ('public', 'streamer')),
+            depth TEXT DEFAULT 'standard',
+            summary TEXT DEFAULT '',
+            payload_json TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (managed_stream_id) REFERENCES managed_streams(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE SET NULL,
+            UNIQUE (managed_stream_id, event_id)
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_vibe_events_managed ON vibe_coding_events(managed_stream_id, id DESC)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_vibe_events_stream ON vibe_coding_events(stream_id)');
+    } catch (e) { console.warn('[DB] vibe_coding migration:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
