@@ -203,29 +203,31 @@
     document.title = chatLabel + ' — HoboStreamer';
     document.getElementById('pc-title').textContent = chatLabel;
 
-    function restorePopoutSettings() {
-        try {
-            chatSettings = JSON.parse(localStorage.getItem('popout-chat-settings') || '{}');
-        } catch {
-            chatSettings = {};
+    // ── Settings panel: delegate entirely to the shared chat.js settings system ──
+    // chat.js already called loadChatSettings() on boot (persisted to hobo_chat_settings),
+    // so chatSettings is populated before this code runs.
+
+    function syncPopoutSettingsUI() {
+        // Map popout toggle IDs → shared chatSettings keys
+        const mapping = [
+            { toggleId: 'pc-toggle-ts',      key: 'showTimestamps' },
+            { toggleId: 'pc-toggle-sound',   key: 'soundOnMention' },
+            { toggleId: 'pc-toggle-compact', key: 'compactMode' },
+        ];
+        for (const { toggleId, key } of mapping) {
+            const el = document.getElementById(toggleId);
+            if (el) el.classList.toggle('on', !!chatSettings[key]);
         }
-        chatSettings = Object.assign({ timestamps: true, sound: false, compact: false }, chatSettings);
-        if (chatSettings.compact) document.getElementById('pc-msgs')?.classList.add('compact');
-        Object.entries({ ts: 'timestamps', sound: 'sound', compact: 'compact' }).forEach(([id, key]) => {
-            const el = document.getElementById('pc-toggle-' + id);
-            if (el) el.classList.toggle('on', chatSettings[key]);
-        });
     }
 
+    // Popout toggle handler: changes the shared chatSettings and saves/applies them.
     window.toggleSetting = function(key) {
-        if (typeof chatSettings === 'undefined') restorePopoutSettings();
-        chatSettings[key] = !chatSettings[key];
-        const toggleId = key === 'timestamps' ? 'ts' : key === 'sound' ? 'sound' : 'compact';
-        const toggleEl = document.getElementById('pc-toggle-' + toggleId);
-        if (toggleEl) toggleEl.classList.toggle('on', chatSettings[key]);
-        try { localStorage.setItem('popout-chat-settings', JSON.stringify(chatSettings)); } catch {}
-        if (key === 'compact') document.getElementById('pc-msgs')?.classList.toggle('compact', chatSettings.compact);
-        if (typeof applyChatSettings === 'function') applyChatSettings();
+        // Map legacy popout key names to shared settings keys
+        const keyMap = { timestamps: 'showTimestamps', sound: 'soundOnMention', compact: 'compactMode' };
+        const settingKey = keyMap[key] || key;
+        chatSettings[settingKey] = !chatSettings[settingKey];
+        syncPopoutSettingsUI();
+        if (typeof saveChatSettings === 'function') saveChatSettings();
     };
 
     window.togglePanel = function(name) {
@@ -243,7 +245,9 @@
     };
 
     function initPopoutChat() {
-        restorePopoutSettings();
+        // Sync the popout toggle UI from the shared settings (already loaded by chat.js)
+        syncPopoutSettingsUI();
+
         if (typeof initChat === 'function') {
             initChat(mode === 'stream' && streamId ? streamId : null);
         }

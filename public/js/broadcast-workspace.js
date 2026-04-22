@@ -2058,10 +2058,11 @@ async function onManagedStreamCreated(newManagedStreamId) {
    ══════════════════════════════════════════════════════════════ */
 
 const _wsRestreamPlatforms = {
-    twitch:  { name: 'Twitch', icon: 'fa-brands fa-twitch', color: '#9146ff', defaultUrl: 'rtmps://live.twitch.tv/app' },
-    youtube: { name: 'YouTube', icon: 'fa-brands fa-youtube', color: '#ff0000', defaultUrl: 'rtmp://a.rtmp.youtube.com/live2' },
-    kick:    { name: 'Kick', icon: 'fa-solid fa-k', color: '#53fc18', defaultUrl: '' },
-    custom:  { name: 'Custom RTMP', icon: 'fa-solid fa-globe', color: '#888', defaultUrl: '' },
+    twitch:        { name: 'Twitch',        icon: 'fa-brands fa-twitch',  color: '#9146ff', defaultUrl: 'rtmps://live.twitch.tv/app' },
+    youtube:       { name: 'YouTube',       icon: 'fa-brands fa-youtube', color: '#ff0000', defaultUrl: 'rtmp://a.rtmp.youtube.com/live2' },
+    kick:          { name: 'Kick',          icon: 'fa-solid fa-k',        color: '#53fc18', defaultUrl: '' },
+    custom:        { name: 'Custom RTMP',   icon: 'fa-solid fa-globe',    color: '#888',    defaultUrl: '' },
+    robotstreamer: { name: 'RobotStreamer', icon: 'fa-solid fa-robot',    color: '#4a9eff', defaultUrl: '', isRobotStreamer: true },
 };
 
 let _wsRestreamDests = []; // cached for current slot
@@ -2165,57 +2166,63 @@ function _wsShowRestreamForm(existing) {
                 ${plats}
             </select>
         </div>
-        <div class="form-group">
-            <label>Name</label>
-            <input type="text" id="ws-rs-name" class="form-input form-input-sm" value="${esc(existing?.name || '')}" placeholder="e.g. My Twitch" maxlength="50">
+        <div id="ws-rs-robotstreamer-notice" style="display:none;background:rgba(74,158,255,0.1);border:1px solid rgba(74,158,255,0.3);border-radius:8px;padding:12px;margin:8px 0">
+            <p style="margin:0 0 8px;font-size:0.9rem"><i class="fa-solid fa-robot" style="color:#4a9eff"></i> <strong>RobotStreamer</strong> uses a dedicated WebSocket connection.</p>
+            <p style="margin:0;font-size:0.82rem;color:var(--text-secondary)">It is not an RTMP destination. Paste your RobotStreamer token and select a robot in the <strong>RobotStreamer</strong> section of the Broadcast Settings panel, then enable the toggle to start restreaming automatically when you go live.</p>
         </div>
-        <div class="form-group">
-            <label>Server URL</label>
-            <input type="text" id="ws-rs-server-url" class="form-input form-input-sm" value="${esc(existing?.server_url || '')}" placeholder="rtmp://...">
-        </div>
-        <div class="form-group">
-            <label>Stream Key</label>
-            <input type="password" id="ws-rs-stream-key" class="form-input form-input-sm" value="${esc(existing?.stream_key || '')}" placeholder="Paste stream key" autocomplete="off">
-        </div>
-        <div class="form-group">
-            <label>Channel URL <span class="muted">(for chat relay)</span></label>
-            <input type="text" id="ws-rs-channel-url" class="form-input form-input-sm" value="${esc(existing?.channel_url || '')}" placeholder="https://twitch.tv/username">
-        </div>
-        <div class="form-group">
-            <label>Quality Preset</label>
-            <select id="ws-rs-quality" class="form-input">${qualityOpts}</select>
-        </div>
-        <div class="bc-ws-row" style="gap:16px">
-            <label class="bc-toggle-label" style="flex:1">
-                <input type="checkbox" id="ws-rs-enabled" ${existing ? (existing.enabled ? 'checked' : '') : 'checked'}>
-                Enabled
-            </label>
-            <label class="bc-toggle-label" style="flex:1">
-                <input type="checkbox" id="ws-rs-auto-start" ${existing?.auto_start ? 'checked' : ''}>
-                Auto-start
-            </label>
-            <label class="bc-toggle-label" style="flex:1">
-                <input type="checkbox" id="ws-rs-chat-relay" ${existing?.chat_relay ? 'checked' : ''}>
-                <i class="fa-solid fa-comments"></i> Chat Relay
-            </label>
-        </div>
-        <details style="margin-top:8px">
-            <summary style="font-size:0.82rem;color:var(--text-secondary);cursor:pointer"><i class="fa-solid fa-sliders"></i> Custom Encoding Overrides</summary>
-            <div class="bc-ws-row" style="margin-top:8px">
-                <div class="form-group" style="flex:1;margin:0">
-                    <label style="font-size:0.78rem">Video Bitrate (kbps)</label>
-                    <input type="number" id="ws-rs-video-bitrate" class="form-input form-input-sm" value="${existing?.custom_video_bitrate || ''}" placeholder="Auto" min="500" max="50000">
-                </div>
-                <div class="form-group" style="flex:1;margin:0">
-                    <label style="font-size:0.78rem">Audio Bitrate (kbps)</label>
-                    <input type="number" id="ws-rs-audio-bitrate" class="form-input form-input-sm" value="${existing?.custom_audio_bitrate || ''}" placeholder="Auto" min="32" max="512">
-                </div>
-                <div class="form-group" style="flex:1;margin:0">
-                    <label style="font-size:0.78rem">FPS</label>
-                    <input type="number" id="ws-rs-fps" class="form-input form-input-sm" value="${existing?.custom_fps || ''}" placeholder="Auto" min="15" max="120">
-                </div>
+        <div id="ws-rs-rtmp-fields">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="ws-rs-name" class="form-input form-input-sm" value="${esc(existing?.name || '')}" placeholder="e.g. My Twitch" maxlength="50">
             </div>
-        </details>
+            <div class="form-group">
+                <label>Server URL</label>
+                <input type="text" id="ws-rs-server-url" class="form-input form-input-sm" value="${esc(existing?.server_url || '')}" placeholder="rtmp://...">
+            </div>
+            <div class="form-group">
+                <label>Stream Key</label>
+                <input type="password" id="ws-rs-stream-key" class="form-input form-input-sm" value="${esc(existing?.stream_key || '')}" placeholder="Paste stream key" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Channel URL <span class="muted">(for chat relay)</span></label>
+                <input type="text" id="ws-rs-channel-url" class="form-input form-input-sm" value="${esc(existing?.channel_url || '')}" placeholder="https://twitch.tv/username">
+            </div>
+            <div class="form-group">
+                <label>Quality Preset</label>
+                <select id="ws-rs-quality" class="form-input">${qualityOpts}</select>
+            </div>
+            <div class="bc-ws-row" style="gap:16px">
+                <label class="bc-toggle-label" style="flex:1">
+                    <input type="checkbox" id="ws-rs-enabled" ${existing ? (existing.enabled ? 'checked' : '') : 'checked'}>
+                    Enabled
+                </label>
+                <label class="bc-toggle-label" style="flex:1">
+                    <input type="checkbox" id="ws-rs-auto-start" ${existing?.auto_start ? 'checked' : ''}>
+                    Auto-start
+                </label>
+                <label class="bc-toggle-label" style="flex:1">
+                    <input type="checkbox" id="ws-rs-chat-relay" ${existing?.chat_relay ? 'checked' : ''}>
+                    <i class="fa-solid fa-comments"></i> Chat Relay
+                </label>
+            </div>
+            <details style="margin-top:8px">
+                <summary style="font-size:0.82rem;color:var(--text-secondary);cursor:pointer"><i class="fa-solid fa-sliders"></i> Custom Encoding Overrides</summary>
+                <div class="bc-ws-row" style="margin-top:8px">
+                    <div class="form-group" style="flex:1;margin:0">
+                        <label style="font-size:0.78rem">Video Bitrate (kbps)</label>
+                        <input type="number" id="ws-rs-video-bitrate" class="form-input form-input-sm" value="${existing?.custom_video_bitrate || ''}" placeholder="Auto" min="500" max="50000">
+                    </div>
+                    <div class="form-group" style="flex:1;margin:0">
+                        <label style="font-size:0.78rem">Audio Bitrate (kbps)</label>
+                        <input type="number" id="ws-rs-audio-bitrate" class="form-input form-input-sm" value="${existing?.custom_audio_bitrate || ''}" placeholder="Auto" min="32" max="512">
+                    </div>
+                    <div class="form-group" style="flex:1;margin:0">
+                        <label style="font-size:0.78rem">FPS</label>
+                        <input type="number" id="ws-rs-fps" class="form-input form-input-sm" value="${existing?.custom_fps || ''}" placeholder="Auto" min="15" max="120">
+                    </div>
+                </div>
+            </details>
+        </div>
         <div class="bc-ws-confirm-actions" style="margin-top:16px">
             <button class="btn btn-small" id="ws-rs-cancel">Cancel</button>
             <button class="btn btn-small btn-primary" id="ws-rs-save">
@@ -2226,15 +2233,25 @@ function _wsShowRestreamForm(existing) {
 
     document.body.appendChild(overlay);
 
-    // Auto-fill server URL on platform change
-    if (!isEdit) _wsRestreamPlatformChanged();
+    // Apply platform-specific UI on open
+    _wsRestreamPlatformChanged();
 
     overlay.querySelector('#ws-rs-cancel').onclick = () => overlay.remove();
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
     overlay.querySelector('#ws-rs-save').onclick = async () => {
+        const platform = document.getElementById('ws-rs-platform').value;
+        const plat = _wsRestreamPlatforms[platform];
+
+        // RobotStreamer is not an RTMP destination — block save and close
+        if (plat && plat.isRobotStreamer) {
+            overlay.remove();
+            toast('Configure RobotStreamer in the Broadcast Settings panel, not as an RTMP destination.', 'info');
+            return;
+        }
+
         const body = {
-            platform: document.getElementById('ws-rs-platform').value,
+            platform,
             name: document.getElementById('ws-rs-name').value.trim(),
             server_url: document.getElementById('ws-rs-server-url').value.trim(),
             stream_key: document.getElementById('ws-rs-stream-key').value.trim(),
@@ -2276,13 +2293,23 @@ function _wsRestreamPlatformChanged() {
     const platform = document.getElementById('ws-rs-platform')?.value;
     const urlInput = document.getElementById('ws-rs-server-url');
     const nameInput = document.getElementById('ws-rs-name');
+    const rtmpFields = document.getElementById('ws-rs-rtmp-fields');
+    const rsNotice = document.getElementById('ws-rs-robotstreamer-notice');
     if (!platform) return;
     const plat = _wsRestreamPlatforms[platform];
-    if (plat && urlInput && !urlInput.value) {
-        urlInput.value = plat.defaultUrl || '';
-    }
-    if (plat && nameInput && !nameInput.value) {
-        nameInput.value = plat.name;
+
+    // Toggle RTMP vs RS view
+    const isRs = !!(plat && plat.isRobotStreamer);
+    if (rtmpFields) rtmpFields.style.display = isRs ? 'none' : '';
+    if (rsNotice) rsNotice.style.display = isRs ? '' : 'none';
+
+    if (!isRs) {
+        if (plat && urlInput && !urlInput.value) {
+            urlInput.value = plat.defaultUrl || '';
+        }
+        if (plat && nameInput && !nameInput.value) {
+            nameInput.value = plat.name;
+        }
     }
 }
 

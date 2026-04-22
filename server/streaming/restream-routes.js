@@ -45,12 +45,15 @@ function sanitizeDest(d) {
 function getLiveStreamForDestination(dest, userId, requestedStreamId) {
     const liveStreams = db.getLiveStreamsByUserId(userId) || [];
     if (dest.managed_stream_id) {
-        return liveStreams.find(s => s.managed_stream_id === dest.managed_stream_id);
+        return liveStreams.find(s => s.managed_stream_id === dest.managed_stream_id) || null;
     }
     if (requestedStreamId) {
-        return liveStreams.find(s => s.id === parseInt(requestedStreamId, 10));
+        return liveStreams.find(s => s.id === parseInt(requestedStreamId, 10)) || null;
     }
-    return liveStreams[0] || null;
+    // Destination has no managed_stream_id (legacy unbound row — DB backfill not yet run).
+    // Return null so start/stop returns a clear error rather than silently picking any stream.
+    console.warn(`[Restream] Destination ${dest.id} has no managed_stream_id; refusing to pick first live stream. Assign the destination to a stream slot.`);
+    return null;
 }
 
 function getLiveStreamsForDestination(dest, userId) {
@@ -288,7 +291,7 @@ router.post('/destinations/:id/start', requireAuth, async (req, res) => {
         if (!stream) {
             const message = dest.managed_stream_id
                 ? 'No live stream found for this stream slot. Go live on that slot first.'
-                : 'No live stream found. Go live first.';
+                : 'This destination has no stream slot assigned. Edit the destination and assign it to a stream slot, then go live on that slot.';
             return res.status(400).json({ error: message });
         }
 
