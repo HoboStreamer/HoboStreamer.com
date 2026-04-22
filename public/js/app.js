@@ -12,10 +12,12 @@ let hoboAppMetaData = null;
 let hoboAppMetaPromise = null;
 
 function getDefaultHoboNetworkUrls() {
-    const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const host = window.location.hostname;
+    const isLocalHost = ['localhost', '127.0.0.1'].includes(host);
+    const isThoboAlias = ['thobo.tools', 'thobostreamer.com', 'thobo.quest'].includes(host);
     return {
-        tools: isLocal ? 'http://localhost:3100' : 'https://hobo.tools',
-        quest: isLocal ? 'http://localhost:3200' : 'https://hobo.quest',
+        tools: isLocalHost ? 'http://localhost:3100' : (isThoboAlias ? 'https://thobo.tools' : 'https://hobo.tools'),
+        quest: isLocalHost ? 'http://localhost:3200' : (isThoboAlias ? 'https://thobo.quest' : 'https://hobo.quest'),
     };
 }
 

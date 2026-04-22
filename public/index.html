@@ -4493,7 +4493,11 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
     const mount = document.getElementById('hobo-bell-mount');
     if (mount && window.HoboNotifications && token) {
         const hoboToolsBase = (window.HoboNetworkUrls && window.HoboNetworkUrls.tools)
-            || (['localhost', '127.0.0.1'].includes(window.location.hostname) ? 'http://localhost:3100' : 'https://hobo.tools');
+            || (['localhost', '127.0.0.1'].includes(window.location.hostname)
+                ? 'http://localhost:3100'
+                : (['thobo.tools', 'thobostreamer.com', 'thobo.quest'].includes(window.location.hostname)
+                    ? 'https://thobo.tools'
+                    : 'https://hobo.tools'));
         HoboNotifications.init({
             token: token,
             apiBase: hoboToolsBase,

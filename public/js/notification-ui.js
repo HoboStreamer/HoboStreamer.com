@@ -15,8 +15,10 @@
     const SOUNDS = { normal: 'notification.mp3', high: 'notification-high.mp3', critical: 'notification-alarm.mp3' };
 
     function getDefaultHoboToolsUrl() {
-        const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-        return isLocal ? 'http://localhost:3100' : 'https://hobo.tools';
+        const host = window.location.hostname;
+        const isLocalHost = ['localhost', '127.0.0.1'].includes(host);
+        const isThoboAlias = ['thobo.tools', 'thobostreamer.com', 'thobo.quest'].includes(host);
+        return isLocalHost ? 'http://localhost:3100' : (isThoboAlias ? 'https://thobo.tools' : 'https://hobo.tools');
     }
 
     let _config = {
