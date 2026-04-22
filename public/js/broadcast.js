@@ -11,7 +11,8 @@
 
 /* ── RS Restream Slot ────────────────────────────────────────── */
 // Only one stream at a time can restream to RobotStreamer.
-// The slot stores either a managed_stream_id or a legacy streamId.
+// Slot is stored as 'm:<managed_stream_id>' only.
+// Legacy 's:<streamId>' and bare-integer formats are auto-migrated on read.
 function parseRsRestreamSlotValue() {
     const raw = localStorage.getItem('bc-rs-restream-slot');
     if (!raw) return null;
@@ -19,24 +20,29 @@ function parseRsRestreamSlotValue() {
         const id = parseInt(raw.slice(2), 10);
         return Number.isFinite(id) && id > 0 ? { managedStreamId: id } : null;
     }
-    if (raw.startsWith('s:')) {
-        const id = parseInt(raw.slice(2), 10);
-        return Number.isFinite(id) && id > 0 ? { streamId: id } : null;
+    // Legacy 's:<streamId>' or bare integer — migrate on read:
+    // try to resolve to a managed_stream_id; if not possible, clear the slot.
+    const legacyId = raw.startsWith('s:') ? parseInt(raw.slice(2), 10) : parseInt(raw, 10);
+    if (Number.isFinite(legacyId) && legacyId > 0) {
+        // Find corresponding managed stream among active broadcast streams
+        for (const [, ss] of (typeof broadcastState !== 'undefined' ? broadcastState.streams : new Map())) {
+            if (ss.streamData?.id === legacyId && ss.streamData?.managed_stream_id) {
+                // Migrate to managed format in-place
+                const migratedId = ss.streamData.managed_stream_id;
+                localStorage.setItem('bc-rs-restream-slot', `m:${migratedId}`);
+                console.log(`[RS Slot] Migrated legacy s:${legacyId} → m:${migratedId}`);
+                return { managedStreamId: migratedId };
+            }
+        }
+        // Could not migrate (stream not active) — clear stale legacy slot
+        localStorage.removeItem('bc-rs-restream-slot');
+        console.log(`[RS Slot] Cleared stale legacy slot value: ${raw}`);
     }
-    const id = parseInt(raw, 10);
-    return Number.isFinite(id) && id > 0 ? { streamId: id } : null;
+    return null;
 }
 function getRsRestreamSlotStreamId() {
     const value = parseRsRestreamSlotValue();
     if (!value) return null;
-
-    if (value.streamId) {
-        const ss = getStreamState(value.streamId);
-        if (ss && ss.localStream) return value.streamId;
-        // Legacy stream reference stale
-        setRsRestreamSlot(null);
-        return null;
-    }
 
     if (value.managedStreamId) {
         for (const [id, ss] of broadcastState.streams) {
@@ -58,29 +64,18 @@ function setRsRestreamSlot(streamId) {
     if (ss?.streamData?.managed_stream_id) {
         localStorage.setItem('bc-rs-restream-slot', `m:${ss.streamData.managed_stream_id}`);
     } else {
-        localStorage.setItem('bc-rs-restream-slot', `s:${streamId}`);
+        // Stream has no managed_stream_id — cannot store a slot-safe reference; clear slot.
+        console.warn(`[RS Slot] Cannot assign RS slot for stream ${streamId}: no managed_stream_id`);
+        localStorage.removeItem('bc-rs-restream-slot');
     }
 }
 function isRsRestreamAssigned(streamId) {
     const value = parseRsRestreamSlotValue();
-    if (!value) return true;
+    if (!value) return true; // no slot assigned → any stream can be used
     const ss = getStreamState(streamId);
     if (!ss) return false;
-
-    if (value.managedStreamId) {
-        return ss.streamData?.managed_stream_id === value.managedStreamId;
-    }
-    if (value.streamId && value.streamId === streamId) {
-        return true;
-    }
-
-    const slotState = getStreamState(value.streamId);
-    if (!slotState || !slotState.localStream) {
-        console.log('[RS Slot] Clearing stale legacy stream assignment — stream no longer active');
-        setRsRestreamSlot(null);
-        return true;
-    }
-    return false;
+    // Only managed_stream_id-based slots are now valid
+    return ss.streamData?.managed_stream_id === value.managedStreamId;
 }
 /** Toggle RS restream for the currently active stream */
 function toggleRsRestreamSlot() {
@@ -2948,10 +2943,13 @@ function applyManualGain(streamId) {
 /* ── Multi-Platform Restream Destinations ──────────────────── */
 
 const RESTREAM_PLATFORM_META = {
-    youtube: { name: 'YouTube', icon: 'fa-brands fa-youtube', color: '#ff0000' },
-    twitch:  { name: 'Twitch', icon: 'fa-brands fa-twitch', color: '#9146ff' },
-    kick:    { name: 'Kick', icon: 'fa-solid fa-k', color: '#53fc18' },
-    custom:  { name: 'Custom', icon: 'fa-solid fa-globe', color: '#888' },
+    youtube:       { name: 'YouTube',       icon: 'fa-brands fa-youtube', color: '#ff0000' },
+    twitch:        { name: 'Twitch',        icon: 'fa-brands fa-twitch',  color: '#9146ff' },
+    kick:          { name: 'Kick',          icon: 'fa-solid fa-k',        color: '#53fc18' },
+    custom:        { name: 'Custom',        icon: 'fa-solid fa-globe',    color: '#888' },
+    // RobotStreamer uses WebSocket (not RTMP) so it is NOT a standard RTMP destination.
+    // It is listed here so the UI can show its status card and link to its own settings panel.
+    robotstreamer: { name: 'RobotStreamer', icon: 'fa-solid fa-robot',    color: '#00bcd4', isRobotStreamer: true },
 };
 
 const RESTREAM_DEFAULT_URLS = {

@@ -16,8 +16,11 @@ function esc(str) {
 }
 
 function toast(message, type = 'info') {
-    if (typeof window.toast === 'function') {
-        return window.toast(message, type);
+    // Delegate to the app-level toast saved in app.js (loaded before this file).
+    // Do NOT use window.toast here — chat.js's own function declaration overwrites
+    // window.toast, so that check is always self-referential and causes infinite recursion.
+    if (typeof window._appToast === 'function') {
+        return window._appToast(message, type);
     }
     if (typeof console !== 'undefined' && console.log) {
         console.log(`[Chat toast ${type}] ${String(message)}`);
@@ -96,6 +99,7 @@ const CHAT_SETTINGS_DEFAULTS = {
     // Widget
     showFloatingChat: true,       // Show floating global chat button on non-chat pages
     fullscreenOverlayChat: true,  // Show OBS-style chat overlay in fullscreen live player
+    compactMode: false,           // Compact message layout (popout & popout-compatible surfaces)
     // Cross-feed — show messages from other sources while in a stream chat
     showGlobalInStream: false,    // Show global chat messages in stream chat
     showAllStreamsInStream: false, // Show messages from ALL live streams in stream chat
@@ -614,6 +618,10 @@ function applyChatSettings() {
     document.documentElement.classList.toggle('chat-alt-bg', chatSettings.alternateBackground);
     // System messages
     document.documentElement.classList.toggle('chat-hide-system', !chatSettings.showSystemMessages);
+    // Compact mode (used by popout and any surface that renders .pc-msgs or .chat-messages)
+    document.querySelectorAll('.chat-messages, .global-chat-messages, #pc-msgs').forEach(el => {
+        el.classList.toggle('compact', !!chatSettings.compactMode);
+    });
     // Sync all settings panel checkboxes/selects if any are open
     syncSettingsPanelUI();
     updateFullscreenChatOverlayState();
@@ -4110,13 +4118,18 @@ function isMobileChatLayout() {
 }
 
 function toggleMobileChat() {
-    // Try live chat sidebar first, fall back to offline global chat
-    let sidebar = document.getElementById('chat-sidebar');
-    const offlineChat = document.getElementById('offline-global-chat');
-    const isOffline = !sidebar || sidebar.offsetParent === null;
+    // Determine which chat surface is currently active.
+    // IMPORTANT: do NOT use offsetParent === null to detect "offline" mode —
+    // .chat-sidebar is position:fixed on mobile, so offsetParent is always null
+    // even when the live stream is running.
+    const liveArea = document.getElementById('ch-live-area');
+    const isLive = liveArea && liveArea.style.display !== 'none';
 
-    if (isOffline && offlineChat) {
-        sidebar = offlineChat;
+    let sidebar;
+    if (isLive) {
+        sidebar = document.getElementById('chat-sidebar');
+    } else {
+        sidebar = document.getElementById('offline-global-chat') || document.getElementById('chat-sidebar');
     }
     if (!sidebar) return;
 

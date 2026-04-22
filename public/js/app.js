@@ -279,6 +279,9 @@ function toast(msg, type = 'info') {
         setTimeout(() => el.remove(), 220);
     }, timeout);
 }
+// Expose app-level toast under a stable name so chat.js (loaded after this file)
+// can delegate to it without triggering infinite recursion.
+window._appToast = toast;
 
 /* ── HoboApp Popover ─────────────────────────────────────────── */
 function toggleHoboAppPopover() {

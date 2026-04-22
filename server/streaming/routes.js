@@ -297,12 +297,36 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             }
         }
 
-        // Include restream destination links (Twitch/Kick/YouTube) for live streams
+        // Include restream destination links (Twitch/Kick/YouTube) for live streams.
+        // SLOT-ONLY: only show destinations bound to the managed_stream_id of the active live
+        // stream(s). Never silently fall back to all account-level destinations — that caused
+        // stale old-slot badges to appear on new streams.
+        // Migration aid: if a live stream has NO managed_stream_id (legacy session), include
+        // destinations that are also unbound (null managed_stream_id) as a temporary fallback
+        // while the DB backfill migration has not yet run.
         let restreamLinks = null;
         let externalViewers = null;
         if (liveStreams.length > 0) {
             const restreamManager = require('./restream-manager');
-            const dests = db.getRestreamDestinationsByUserId(channel.user_id) || [];
+            const allDests = db.getRestreamDestinationsByUserId(channel.user_id) || [];
+
+            // Collect managed_stream_ids for all current live sessions
+            const activeManagedIds = new Set(
+                liveStreams.map(s => s.managed_stream_id).filter(Boolean)
+            );
+
+            let dests;
+            if (activeManagedIds.size > 0) {
+                // Slot-bound: only show destinations that belong to one of the live slots
+                dests = allDests.filter(d => d.managed_stream_id && activeManagedIds.has(d.managed_stream_id));
+            } else {
+                // Legacy live session with no managed_stream_id — show unbound destinations only
+                dests = allDests.filter(d => !d.managed_stream_id);
+                if (dests.length > 0) {
+                    console.warn(`[Restream] Channel ${channel.user_id} has a live stream with no managed_stream_id — showing unbound destinations. Run DB backfill migration.`);
+                }
+            }
+
             const enabledWithUrl = dests.filter(d => d.enabled && d.channel_url);
             if (enabledWithUrl.length > 0) {
                 restreamLinks = enabledWithUrl.map(d => {
@@ -319,10 +343,8 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                     if (activeSession) {
                         const platformLive = restreamManager.isPlatformLive(d.id);
                         if (platformLive != null) {
-                            // We have a definitive platform signal — trust it
                             isLive = platformLive;
                         } else {
-                            // No platform signal yet — show as live during grace period (first 60s)
                             const sessionAge = Date.now() - (activeSession.startedAt || Date.now());
                             isLive = sessionAge < 60000;
                         }

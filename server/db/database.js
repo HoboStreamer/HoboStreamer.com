@@ -1126,6 +1126,32 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] restream_destinations managed_stream_id migration:', e.message); }
 
+    // Backfill: assign managed_stream_id to restream_destinations that still have NULL.
+    // Rule: if a user has exactly ONE managed stream, auto-assign all their unbound destinations
+    // to it. If they have 0 or 2+ managed streams, leave unbound rows alone (ambiguous — owner
+    // must assign manually via the broadcast settings UI).
+    // This is safe and idempotent; existing installs won't lose data.
+    try {
+        const unbound = database.prepare(`
+            SELECT DISTINCT rd.user_id
+            FROM restream_destinations rd
+            WHERE rd.managed_stream_id IS NULL
+        `).all();
+        for (const { user_id } of unbound) {
+            const managedStreams = database.prepare(
+                'SELECT id FROM managed_streams WHERE user_id = ? ORDER BY created_at'
+            ).all(user_id);
+            if (managedStreams.length === 1) {
+                const result = database.prepare(
+                    'UPDATE restream_destinations SET managed_stream_id = ? WHERE user_id = ? AND managed_stream_id IS NULL'
+                ).run(managedStreams[0].id, user_id);
+                if (result.changes > 0) {
+                    console.log(`[DB] Backfilled ${result.changes} restream destination(s) for user ${user_id} → managed stream ${managedStreams[0].id}`);
+                }
+            }
+        }
+    } catch (e) { console.warn('[DB] Restream destinations backfill:', e.message); }
+
     console.log('[DB] Schema initialized');
     return database;
 }
