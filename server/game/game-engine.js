@@ -1064,7 +1064,7 @@ function fish(userId, tileX, tileY, reelScore) {
     const zone = getWaterZone(tileX, tileY, worldSeed);
 
     // Build loot table filtered by rod tier + zone
-    const table = buildFishTable(zone, rodTier);
+    const table = buildFishTable(zone, rodTier, player.fishing_level, player.total_level);
     if (!table.length) return { error: 'No fish here!' };
 
     // Roll loot
