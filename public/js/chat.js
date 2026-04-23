@@ -100,6 +100,7 @@ let _vibeWidgetState = {
     refreshTimer: null,
     syncState: 'idle',
     lastSyncedAt: 0,
+    openDisclosures: new Set(),
 };
 const VIBE_WIDGET_FALLBACK_MAX = 18;
 const VIBE_WIDGET_REFRESH_MS = 5000;
@@ -870,6 +871,7 @@ function _resetVibeWidget(removePanel = false) {
         _vibeWidgetState.panel = null;
         _vibeWidgetState.feed = null;
         _vibeWidgetState.indicator = null;
+        _vibeWidgetState.openDisclosures.clear();
         return;
     }
     if (_vibeWidgetState.feed) {
@@ -918,6 +920,15 @@ function _ensureVibeWidgetPanel() {
         _vibeWidgetState.feed.addEventListener('scroll', () => {
             _syncVibeWidgetScrollState();
         }, { passive: true });
+        _vibeWidgetState.feed.addEventListener('toggle', (event) => {
+            const details = event.target.closest('details');
+            if (!details || !details.dataset.vibeDisclosureKey) return;
+            if (details.open) {
+                _vibeWidgetState.openDisclosures.add(details.dataset.vibeDisclosureKey);
+            } else {
+                _vibeWidgetState.openDisclosures.delete(details.dataset.vibeDisclosureKey);
+            }
+        });
     }
     if (_vibeWidgetState.indicator && _vibeWidgetState.indicator.dataset.vibeWidgetIndicatorBound !== '1') {
         _vibeWidgetState.indicator.dataset.vibeWidgetIndicatorBound = '1';
@@ -1518,9 +1529,11 @@ function _buildVibeWidgetDisplayItems(events) {
     return _normalizeVibeWidgetDisplayItems(filteredItems);
 }
 
-function _renderVibeDisclosure(kind, label, preview, meta, bodyHtml) {
+function _renderVibeDisclosure(kind, label, preview, meta, bodyHtml, disclosureKey) {
     if (!bodyHtml) return '';
-    return `<details class="chat-vibe-turn-disclosure chat-vibe-turn-disclosure-${esc(kind)}"><summary><span class="chat-vibe-turn-disclosure-kicker">${esc(label)}</span><span class="chat-vibe-turn-disclosure-title">${esc(preview || label)}</span>${meta ? `<span class="chat-vibe-turn-disclosure-meta">${esc(meta)}</span>` : ''}</summary><div class="chat-vibe-turn-disclosure-body">${bodyHtml}</div></details>`;
+    const disclosureId = disclosureKey ? ` data-vibe-disclosure-key="${esc(disclosureKey)}"` : '';
+    const isOpen = disclosureKey && _vibeWidgetState.openDisclosures.has(disclosureKey);
+    return `<details class="chat-vibe-turn-disclosure chat-vibe-turn-disclosure-${esc(kind)}"${disclosureId}${isOpen ? ' open' : ''}><summary><span class="chat-vibe-turn-disclosure-kicker">${esc(label)}</span><span class="chat-vibe-turn-disclosure-title">${esc(preview || label)}</span>${meta ? `<span class="chat-vibe-turn-disclosure-meta">${esc(meta)}</span>` : ''}</summary><div class="chat-vibe-turn-disclosure-body">${bodyHtml}</div></details>`;
 }
 
 function _renderVibeParagraphs(text, maxSegments = 3, muted = false) {
@@ -1575,13 +1588,15 @@ function _renderVibeTurnItem(turn) {
             ? _renderVibeRichText(visibleFallbackText, 2, fallbackMuted)
             : '<p class="chat-vibe-turn-paragraph is-muted">Working…</p>';
 
+    const disclosureBase = turn.key || `turn:${turn.occurredAt || turn.lastAt || Date.now()}`;
     const progressHtml = progressBlocks.length
         ? _renderVibeDisclosure(
             'progress',
             'Progress',
             _truncateVibeDisplayText(progressBlocks[progressBlocks.length - 1].text, 90),
             `${progressBlocks.length} update${progressBlocks.length === 1 ? '' : 's'}`,
-            progressBlocks.map((block) => `<p class="chat-vibe-turn-note">${esc(block.text)}</p>`).join('')
+            progressBlocks.map((block) => `<p class="chat-vibe-turn-note">${esc(block.text)}</p>`).join(''),
+            `${disclosureBase}:progress`
         )
         : '';
 
@@ -1591,7 +1606,8 @@ function _renderVibeTurnItem(turn) {
             'Thinking',
             _truncateVibeDisplayText(thinkingBlocks[thinkingBlocks.length - 1].text, 90),
             `${thinkingBlocks.length} note${thinkingBlocks.length === 1 ? '' : 's'}`,
-            thinkingBlocks.map((block) => `<p class="chat-vibe-turn-note">${esc(block.text)}</p>`).join('')
+            thinkingBlocks.map((block) => `<p class="chat-vibe-turn-note">${esc(block.text)}</p>`).join(''),
+            `${disclosureBase}:thinking`
         )
         : '';
 
@@ -1628,7 +1644,8 @@ function _renderVibeTurnItem(turn) {
                         ${tool.argumentsPreview ? `<p class="chat-vibe-turn-note chat-vibe-turn-note-mono is-command">${esc(_truncateVibeDisplayText(tool.argumentsPreview, 180))}</p>` : ''}
                         ${tool.resultPreview ? `<p class="chat-vibe-turn-note">${esc(_truncateVibeDisplayText(tool.resultPreview, 180))}</p>` : ''}
                     </div>`;
-            }).join('')
+            }).join(''),
+            `${disclosureBase}:commands`
         )
         : '';
     const toolTotal = otherToolEntries.reduce((sum, tool) => sum + (tool.count || 0), 0);
@@ -1650,7 +1667,8 @@ function _renderVibeTurnItem(turn) {
                         </div>
                         <div class="chat-vibe-turn-pill-group"><span class="chat-vibe-turn-pill is-count">${esc(tool.count > 1 ? `x${tool.count}` : '1x')}</span></div>
                     </div>`;
-            }).join('')
+            }).join(''),
+            `${disclosureBase}:tools`
         )
         : '';
 
@@ -1688,7 +1706,8 @@ function _renderVibeTurnItem(turn) {
                         </div>
                         ${file.snippet ? `<p class="chat-vibe-turn-note chat-vibe-turn-note-mono">${esc(_truncateVibeDisplayText(file.snippet, 180))}</p>` : ''}
                     </div>`;
-            }).join('')
+            }).join(''),
+            `${disclosureBase}:files`
         )
         : '';
 

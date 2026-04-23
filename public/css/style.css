@@ -585,7 +585,7 @@ body::after {
 
 .chat-vibe-turn-disclosure summary {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
     align-items: center;
     column-gap: 8px;
     row-gap: 2px;
@@ -595,6 +595,7 @@ body::after {
     font-size: 0.75rem;
     font-weight: 600;
     color: var(--text-secondary);
+    position: relative;
 }
 
 .chat-vibe-turn-disclosure summary::-webkit-details-marker {
@@ -603,14 +604,26 @@ body::after {
 
 .chat-vibe-turn-disclosure summary::before {
     content: '›';
-    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-right: 4px;
     font-size: 0.95rem;
+    line-height: 1;
     color: var(--text-muted);
     transition: transform 0.16s ease;
+    transform-origin: center;
 }
 
 .chat-vibe-turn-disclosure[open] summary::before {
     transform: rotate(90deg);
+}
+
+.chat-vibe-turn-disclosure summary:hover::before,
+.chat-vibe-turn-disclosure summary:focus-visible::before {
+    color: var(--text-primary);
 }
 
 .chat-vibe-turn-disclosure-body {
