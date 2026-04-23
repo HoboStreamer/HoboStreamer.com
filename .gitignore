@@ -47,3 +47,12 @@ Thumbs.db
 *~
 *.swp
 *.swo
+#
+# Local helper binaries and third-party binaries (don't commit these large files)
+bin/ffmpeg
+bin/ffprobe
+# Common binary extensions to ignore in bin/
+bin/*.exe
+bin/*.dll
+bin/*.so
+bin/*.dylib
