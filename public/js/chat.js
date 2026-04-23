@@ -896,7 +896,7 @@ function _ensureVibeWidgetPanel() {
     if (!panel) {
         panel = document.createElement('section');
         panel.className = 'chat-vibe-widget';
-        panel.innerHTML = '<div class="chat-vibe-widget-head"><div class="chat-vibe-widget-title"><i class="fa-solid fa-code"></i> <span>Vibe Coding</span></div><div class="chat-vibe-widget-actions"><div class="chat-vibe-widget-status">Live</div><button type="button" class="chat-vibe-widget-toggle" aria-expanded="true">Hide</button></div></div><div class="chat-vibe-widget-feed" tabindex="0" aria-label="Vibe coding event feed"></div><button type="button" class="chat-vibe-new-msgs-indicator"><i class="fa-solid fa-arrow-down"></i> New messages below</button>';
+        panel.innerHTML = '<div class="chat-vibe-widget-head"><div class="chat-vibe-widget-title"><i class="fa-solid fa-code"></i> <span>Vibe Coding</span></div><div class="chat-vibe-widget-actions"><div class="chat-vibe-widget-status">Live</div><button type="button" class="chat-vibe-widget-toggle" aria-expanded="true">Hide</button></div></div><div class="chat-vibe-widget-feed" tabindex="0" aria-label="Vibe coding event feed"></div><button type="button" class="chat-vibe-new-msgs-indicator is-hidden" aria-hidden="true"><i class="fa-solid fa-arrow-down"></i> New messages below</button>';
         const header = host.querySelector('.chat-header, .global-chat-header');
         if (header) header.after(panel);
         else host.prepend(panel);
@@ -997,12 +997,18 @@ function _showVibeWidgetNewMessagesIndicator() {
     const indicator = _vibeWidgetState.indicator;
     if (!indicator || _vibeWidgetState.collapsed || !_vibeWidgetState.unreadCount) return;
     indicator.innerHTML = `<i class="fa-solid fa-arrow-down"></i> ${_vibeWidgetState.unreadCount} new message${_vibeWidgetState.unreadCount !== 1 ? 's' : ''} below`;
-    indicator.style.display = 'flex';
+    indicator.style.display = '';
+    indicator.classList.remove('is-hidden');
+    indicator.classList.add('is-visible');
+    indicator.setAttribute('aria-hidden', 'false');
 }
 
 function _hideVibeWidgetNewMessagesIndicator() {
     if (_vibeWidgetState.indicator) {
-        _vibeWidgetState.indicator.style.display = 'none';
+        _vibeWidgetState.indicator.style.display = '';
+        _vibeWidgetState.indicator.classList.remove('is-visible');
+        _vibeWidgetState.indicator.classList.add('is-hidden');
+        _vibeWidgetState.indicator.setAttribute('aria-hidden', 'true');
     }
 }
 

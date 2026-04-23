@@ -142,16 +142,32 @@ body::after {
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.04em;
-    padding: 5px 10px;
-    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 180ms ease, box-shadow 180ms ease;
 }
 
 .chat-vibe-widget-toggle:hover,
 .chat-vibe-widget-toggle:focus-visible {
-    background: rgba(255, 255, 255, 0.09);
+    background: rgba(255, 255, 255, 0.12);
     border-color: rgba(192, 150, 92, 0.34);
     color: #fff;
     outline: none;
+    transform: scale(1.02);
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
+}
+
+.chat-vibe-widget-toggle:focus-visible {
+    outline: 2px solid rgba(192, 150, 92, 0.5);
+    outline-offset: 2px;
+}
+
+.chat-vibe-widget-head {
+    transition: background 220ms ease, border-color 220ms ease;
+}
+
+.chat-vibe-widget {
+    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background 180ms ease;
 }
 
 .chat-vibe-widget-feed {
@@ -167,10 +183,12 @@ body::after {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
     touch-action: pan-y;
+    transition: max-height 220ms ease, opacity 180ms ease, padding 180ms ease, margin 180ms ease;
+    will-change: max-height, opacity;
 }
 
 .chat-vibe-new-msgs-indicator {
-    display: none;
+    display: flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
@@ -184,6 +202,31 @@ body::after {
     font-weight: 700;
     letter-spacing: 0.03em;
     box-shadow: 0 10px 20px rgba(0, 0, 0, 0.18);
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition: opacity 180ms ease, max-height 220ms ease, margin 220ms ease, padding 220ms ease, transform 180ms ease;
+    transform: translateY(6px);
+}
+
+.chat-vibe-new-msgs-indicator.is-visible {
+    opacity: 1;
+    max-height: 88px;
+    margin: 8px 12px 10px;
+    padding: 7px 12px;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+.chat-vibe-new-msgs-indicator.is-hidden {
+    opacity: 0;
+    max-height: 0;
+    margin: 0 12px 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    pointer-events: none;
+    transform: translateY(6px);
 }
 
 .chat-vibe-new-msgs-indicator:hover,
@@ -204,11 +247,26 @@ body::after {
 }
 
 .chat-vibe-widget.is-collapsed .chat-vibe-widget-feed {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin: 0 12px 0;
+    pointer-events: none;
+    overflow: hidden;
 }
 
-.chat-vibe-widget.is-collapsed .chat-vibe-new-msgs-indicator {
-    display: none !important;
+.chat-vibe-widget.is-collapsed {
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+}
+
+.chat-vibe-widget.is-collapsed .chat-vibe-widget-head {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.chat-vibe-widget.is-collapsed .chat-vibe-widget-toggle {
+    background: rgba(255, 255, 255, 0.06);
 }
 
 .chat-vibe-widget-empty {
@@ -278,10 +336,17 @@ body::after {
     line-height: 1.45;
     word-break: break-word;
     white-space: pre-wrap;
-    padding: 8px 10px;
-    border-radius: 9px;
+    padding: 10px 12px;
+    border-radius: 11px;
     background: rgba(0, 0, 0, 0.16);
     border-left: 3px solid rgba(255, 255, 255, 0.08);
+    transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.chat-vibe-item-text:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-left-color: rgba(255, 255, 255, 0.15);
+    transform: translateY(-1px);
 }
 
 .chat-vibe-item-details {
