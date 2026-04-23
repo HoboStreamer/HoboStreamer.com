@@ -97,13 +97,31 @@ For the simplest local setup:
 6. Run `npm run init-db`.
 7. Run `npm run dev`.
 
+### Raspberry Pi / local multi-domain setup
+
+When testing on a Raspberry Pi or if you want local `raspi.*` hostnames instead of `localhost`, configure your `.env` values and local DNS/hosts accordingly.
+
+- `BASE_URL=http://raspi.hobostreamer.com`
+- `HOBO_TOOLS_URL=http://raspi.hobo.tools`
+- `HOBO_TOOLS_INTERNAL_URL=http://127.0.0.1:3100`
+- `INTERNAL_API_KEY` must still match the value used by `hobo.tools`
+
+If your Pi is the host running both services, `HOBO_TOOLS_INTERNAL_URL` can stay `http://127.0.0.1:3100`.
+If you access the Pi from another machine, point these hostnames to the Pi’s IP in `/etc/hosts` or your local DNS provider:
+
+```text
+<pi-ip> raspi.hobo.tools raspi.hobostreamer.com raspi.hobo.quest
+```
+
+This makes the local auth issuer and the streamed app resolve consistently across browsers and devices.
+
 ### Recommended local values
 
 ```env
 PORT=3000
 HOST=0.0.0.0
 NODE_ENV=development
-BASE_URL=http://localhost:3000
+BASE_URL=http://raspi.hobostreamer.com
 HOBO_TOOLS_INTERNAL_URL=http://127.0.0.1:3100
 INTERNAL_API_KEY=your-shared-secret
 HOBO_TOOLS_PUBLIC_KEY=./data/keys/hobo-tools-public.pem

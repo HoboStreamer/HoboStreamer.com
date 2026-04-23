@@ -221,8 +221,12 @@ function getHoboToolsBase() {
     return config.hoboToolsUrl || config.baseUrl || 'https://hobo.tools';
 }
 
+function getHoboToolsTokenBase() {
+    return config.hoboToolsInternalUrl || getHoboToolsBase();
+}
+
 function getHoboToolsHttpModule() {
-    const url = new URL(getHoboToolsBase());
+    const url = new URL(getHoboToolsTokenBase());
     return url.protocol === 'http:' ? require('http') : require('https');
 }
 
@@ -270,7 +274,7 @@ router.get('/callback', async (req, res) => {
                 redirect_uri: getHoboToolsRedirectUri(),
             });
 
-            const url = new URL(`${getHoboToolsBase()}/oauth/token`);
+            const url = new URL(`${getHoboToolsTokenBase()}/oauth/token`);
             const httpModule = getHoboToolsHttpModule();
             const reqOpts = {
                 hostname: url.hostname,
@@ -418,7 +422,7 @@ router.post('/refresh', async (req, res) => {
                 client_secret: HOBO_CLIENT_SECRET,
                 refresh_token: refreshToken,
             });
-            const url = new URL(`${getHoboToolsBase()}/oauth/token`);
+            const url = new URL(`${getHoboToolsTokenBase()}/oauth/token`);
             const httpModule = getHoboToolsHttpModule();
             const httpReq = httpModule.request({
                 hostname: url.hostname,
