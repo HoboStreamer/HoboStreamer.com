@@ -13,7 +13,8 @@
  *   G. Broadcast-server: ICE-state filter + stale-source path + watch-queued message
  *   H. Client: sfu-source-unavailable and watch-queued handled without P2P offer timeout
  *   I. Client: frozen-video detector starts after play, stops on transport change
- *   J. /shared serving: startup sync + explicit JS content-type
+ *   J. Broadcaster auto-publishes into SFU and legacy P2P is explicitly gated
+ *   K. Server startup logs TURN / announced-IP diagnostics for SFU viewers
  */
 
 const assert = require('assert');
@@ -23,6 +24,8 @@ const path = require('path');
 const playerSrc = fs.readFileSync(path.join(__dirname, '../public/js/stream-player.js'), 'utf8');
 const sfuSrc = fs.readFileSync(path.join(__dirname, '../server/streaming/webrtc-sfu.js'), 'utf8');
 const bcastSrc = fs.readFileSync(path.join(__dirname, '../server/streaming/broadcast-server.js'), 'utf8');
+const broadcastClientSrc = fs.readFileSync(path.join(__dirname, '../public/js/broadcast.js'), 'utf8');
+const configSrc = fs.readFileSync(path.join(__dirname, '../server/config.js'), 'utf8');
 const whipSrc = fs.readFileSync(path.join(__dirname, '../server/streaming/whip-handler.js'), 'utf8');
 const indexSrc = fs.readFileSync(path.join(__dirname, '../server/index.js'), 'utf8');
 
@@ -153,6 +156,14 @@ assert.ok(
     'broadcast-server.js must send watch-queued when viewer is added to pending queue'
 );
 assert.ok(
+    bcastSrc.includes('config.allowP2pFallback') && bcastSrc.includes('p2p.relay.attempt'),
+    'broadcast-server.js must gate legacy P2P relay behind config.allowP2pFallback and log relay attempts'
+);
+assert.ok(
+    bcastSrc.includes('viewer.queued') && bcastSrc.includes('viewer.notified'),
+    'broadcast-server.js must log queued/notified viewer metrics for the SFU warm-up flow'
+);
+assert.ok(
     bcastSrc.includes('_notifyViewersSourceLost') && bcastSrc.includes('producer_removed'),
     'broadcast-server.js must notify SFU viewers when the source producer is removed'
 );
@@ -181,6 +192,10 @@ assert.ok(
     playerSrc.includes('Stream source temporarily unavailable'),
     'stream-player.js must show a user-facing status message on source unavailable'
 );
+assert.ok(
+    playerSrc.includes('copyPlayerDiagnostics') && playerSrc.includes('player-loader-shell'),
+    'stream-player.js must expose copyable playback diagnostics and the richer loader shell'
+);
 console.log('OK H: sfu-source-unavailable and watch-queued handled without P2P offer timeout');
 
 // ── I: frozen-video detector in SFU path ───────────────────────
@@ -204,28 +219,43 @@ assert.ok(
 );
 console.log('OK I: frozen-video detector (30s post-play check) present in stream-player.js');
 
-// ── J: /shared startup sync + explicit JS content-type ──────────
+// ── J: broadcaster auto-publishes into SFU, P2P rollback gated ──
 assert.ok(
-    indexSrc.includes('syncSharedAssets') && indexSrc.includes('copyFileSync'),
-    'server/index.js must copy shared assets at startup (not rely on runtime symlink)'
+    broadcastClientSrc.includes("_ensureSfuBroadcastReady(streamId, 'signaling-open')"),
+    'broadcast.js must auto-start SFU publishing when broadcaster signaling opens'
 );
 assert.ok(
-    indexSrc.includes('public/shared') || indexSrc.includes('sharedDestDir'),
-    'server/index.js must serve /shared from a local public/shared/ directory'
+    broadcastClientSrc.includes('ss._allowP2pFallback = !!msg.allowP2pFallback'),
+    'broadcast.js must track whether legacy P2P rollback is enabled'
 );
 assert.ok(
-    indexSrc.includes("application/javascript") && indexSrc.includes('.endsWith(\'.js\')'),
-    'server/index.js must set explicit application/javascript Content-Type for .js files'
+    broadcastClientSrc.includes('SFU-only mode is active'),
+    'broadcast.js must ignore legacy P2P viewer signaling while SFU-only mode is active'
 );
 assert.ok(
-    indexSrc.includes('synced from') && indexSrc.includes('B)'),
-    'server/index.js must log resolved source path and byte size of synced files'
+    configSrc.includes('ALLOW_P2P_FALLBACK') && configSrc.includes('allowP2pFallback'),
+    'server/config.js must expose the ALLOW_P2P_FALLBACK feature flag'
+);
+console.log('OK J: broadcaster auto-publishes into SFU and P2P rollback is explicitly gated');
+
+// ── K: server startup TURN / announced-IP diagnostics ───────────
+assert.ok(
+    indexSrc.includes('TURN server:') && indexSrc.includes('not configured (STUN-only'),
+    'server/index.js must log TURN configuration status at startup'
 );
 assert.ok(
-    indexSrc.includes('failed to sync') || indexSrc.includes('could not create'),
-    'server/index.js must log clearly if shared asset sync fails'
+    indexSrc.includes('MEDIASOUP_ANNOUNCED_IP does not match WHIP_PUBLIC_URL host'),
+    'server/index.js must warn when announced IP does not match the public WHIP host'
 );
-console.log('OK J: /shared serving uses startup file copy with explicit JS content-type');
+assert.ok(
+    indexSrc.includes('WHIP_PUBLIC_URL is using http:// in production'),
+    'server/index.js must warn when WHIP_PUBLIC_URL is not using TLS in production'
+);
+assert.ok(
+    indexSrc.includes('RTMP_HOST and WHIP_PUBLIC_URL host are identical'),
+    'server/index.js must warn when RTMP and WHIP hosts would collide'
+);
+console.log('OK K: server startup logs TURN / announced-IP diagnostics for viewer connectivity');
 
 console.log('\nAll SFU viewer stability regression tests passed');
 

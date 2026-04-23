@@ -21,6 +21,7 @@ function createStreamState(streamData) {
         /** @type {Map<string, RTCPeerConnection>} peerId → PC */
         viewerConnections: new Map(),
         viewerReconnectTimers: new Map(),
+        _allowP2pFallback: false,
         signalingWs: null,
         heartbeatInterval: null,
         startedAt: streamData?.started_at || null,

@@ -3502,20 +3502,28 @@ console.log(endpoint.whip_url);  // POST SDP offer here
 <table class="doc-table">
 <thead><tr><th>Type</th><th>Dir</th><th>Key Fields</th><th>Description</th></tr></thead>
 <tbody>
-<tr><td>welcome</td><td>S→C</td><td>peerId, role, streamId, viewerCount, iceServers</td><td>Sent immediately on connect</td></tr>
+<tr><td>welcome</td><td>S→C</td><td>peerId, role, streamId, viewerCount, iceServers, allowP2pFallback</td><td>Sent immediately on connect</td></tr>
 <tr><td>watch</td><td>C→S</td><td>—</td><td>Viewer requests to start watching (triggers SFU consumer)</td></tr>
-<tr><td>broadcaster-ready</td><td>S→Viewer</td><td>—</td><td>Broadcaster is live, safe to send watch</td></tr>
+<tr><td>broadcaster-ready</td><td>S→Viewer</td><td>peerId</td><td>Broadcaster or SFU source is live, safe to send/refresh <code>watch</code></td></tr>
+<tr><td>watch-queued</td><td>S→Viewer</td><td>reason, detail</td><td>Viewer is queued while the live source warms up or reconnects</td></tr>
+<tr><td>sfu-viewer-ready</td><td>S→Viewer</td><td>rtpCapabilities, producers</td><td>Server has live SFU producers ready for consumption</td></tr>
+<tr><td>sfu-viewer-create-transport</td><td>C→S</td><td>—</td><td>Viewer asks the server to create an SFU recv transport</td></tr>
+<tr><td>sfu-viewer-transport-created</td><td>S→Viewer</td><td>id, iceParameters, iceCandidates, dtlsParameters, iceServers</td><td>Viewer recv transport parameters</td></tr>
+<tr><td>sfu-viewer-connect-transport</td><td>C→S</td><td>transportId, dtlsParameters</td><td>Connect the viewer recv transport</td></tr>
+<tr><td>sfu-viewer-transport-connected</td><td>S→Viewer</td><td>transportId</td><td>Viewer recv transport connected</td></tr>
+<tr><td>sfu-viewer-consume</td><td>C→S</td><td>transportId, producerId, rtpCapabilities</td><td>Create an SFU consumer for a live producer</td></tr>
+<tr><td>sfu-viewer-consumed</td><td>S→Viewer</td><td>id, producerId, kind, rtpParameters</td><td>Consumer parameters returned to mediasoup-client</td></tr>
+<tr><td>sfu-source-unavailable</td><td>S→Viewer</td><td>reason</td><td>Live source exists, but it is not currently healthy for viewers</td></tr>
 <tr><td>sfu-get-capabilities</td><td>C→S</td><td>—</td><td>Get Mediasoup RTP capabilities</td></tr>
 <tr><td>sfu-create-transport</td><td>C→S</td><td>direction: send|recv</td><td>Create WebRTC transport</td></tr>
 <tr><td>sfu-connect-transport</td><td>C→S</td><td>transportId, dtlsParameters</td><td>Connect DTLS</td></tr>
 <tr><td>sfu-produce</td><td>C→S</td><td>transportId, kind, rtpParameters</td><td>Start producing audio/video</td></tr>
 <tr><td>sfu-stop-produce</td><td>C→S</td><td>producerId</td><td>Stop a producer</td></tr>
-<tr><td>offer / answer</td><td>Relay</td><td>sdp, targetPeerId</td><td>P2P SDP signaling fallback</td></tr>
-<tr><td>ice-candidate</td><td>Relay</td><td>candidate, targetPeerId</td><td>P2P ICE (SFU handles ICE internally)</td></tr>
 <tr><td>viewer-count</td><td>S→All</td><td>count</td><td>Updated viewer count broadcast</td></tr>
 <tr><td>stream-ended</td><td>S→Viewers</td><td>—</td><td>Stream has ended</td></tr>
 </tbody>
 </table>
+<p class="muted" style="margin-top:10px">Legacy <code>offer</code> / <code>answer</code> / <code>ice-candidate</code> relay messages are disabled by default. They are only honored when <code>ALLOW_P2P_FALLBACK=true</code> is explicitly set for emergency rollback.</p>
 
 <h3>RTMP Ingest (OBS)</h3>
 <pre><code>Server: rtmp://hobostreamer.com/live

@@ -258,6 +258,14 @@ function sendBroadcastSignal(ss, msg) {
     return true;
 }
 
+function _ensureSfuBroadcastReady(streamId, reason = 'startup') {
+    const ss = getStreamState(streamId);
+    if (!ss?.localStream || !ss?.signalingWs || ss.signalingWs.readyState !== WebSocket.OPEN) return;
+    _handleSfuProduceRequest(streamId).catch((err) => {
+        console.warn(`[SFU Produce] Auto-start failed for stream ${streamId} during ${reason}:`, err.message);
+    });
+}
+
 function clearViewerReconnectTimer(ss, viewerPeerId) {
     const timer = ss?.viewerReconnectTimers?.get(viewerPeerId);
     if (timer) clearTimeout(timer);
@@ -266,7 +274,7 @@ function clearViewerReconnectTimer(ss, viewerPeerId) {
 
 function scheduleViewerReconnect(streamId, viewerPeerId, delay = 2000) {
     const ss = getStreamState(streamId);
-    if (!ss || !viewerPeerId) return;
+    if (!ss || !viewerPeerId || !ss._allowP2pFallback) return;
     clearViewerReconnectTimer(ss, viewerPeerId);
     ss.viewerReconnectTimers.set(viewerPeerId, setTimeout(() => {
         clearViewerReconnectTimer(ss, viewerPeerId);
@@ -392,8 +400,6 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
     const ss = getStreamState(streamId);
     if (!ss || ss.mediaRecoveryInProgress) return;
     ss.mediaRecoveryInProgress = true;
-
-    const viewerPeerIds = [...ss.viewerConnections.keys()];
     await uploadVodRecording(streamId, { finalizeStream: false });
 
     // Stop the RS restream BEFORE nulling localStream — prevents the
@@ -420,9 +426,7 @@ async function recoverStreamMedia(streamId, reason = 'media interrupted') {
     if (!ss.signalingWs || ss.signalingWs.readyState !== WebSocket.OPEN) {
         connectSignaling(streamId);
     } else {
-        for (const peerId of viewerPeerIds) {
-            await createViewerConnection(streamId, peerId);
-        }
+        _ensureSfuBroadcastReady(streamId, 'media-recovery');
     }
 
     // Full RS restart after new media is acquired — old producers are dead
@@ -3632,7 +3636,8 @@ function connectSignaling(streamId) {
             console.log('[SFU Produce] Clearing stale produce state on signaling reconnect for stream', streamId);
             _cleanupSfuProduce(streamId);
         }
-        if (broadcastState.activeStreamId === streamId) updateBroadcastStatus('connected');
+        _ensureSfuBroadcastReady(streamId, 'signaling-open');
+        if (broadcastState.activeStreamId === streamId) updateBroadcastStatus('checking');
     };
 
     ws.onmessage = async (e) => {
@@ -3681,6 +3686,10 @@ function connectSignaling(streamId) {
 async function createViewerConnection(streamId, viewerPeerId) {
     const ss = getStreamState(streamId);
     if (!ss) return;
+    if (!ss._allowP2pFallback) {
+        console.warn(`[Broadcast] Ignoring createViewerConnection(${streamId}, ${viewerPeerId}) — SFU-only mode is active`);
+        return;
+    }
     if (ss.viewerConnections.has(viewerPeerId)) closeViewerConnection(streamId, viewerPeerId);
     const s = broadcastState.settings;
     const maxBitrate = getTargetVideoBitrate();
@@ -3768,10 +3777,30 @@ function updateBroadcastStatusFromConnections(streamId) {
     const ss = getStreamState(streamId);
     if (!ss) return;
     if (broadcastState.activeStreamId !== streamId) return; // Only update UI for active stream
-    if (ss.viewerConnections.size === 0) { updateBroadcastStatus(ss.signalingWs?.readyState === WebSocket.OPEN ? 'connected' : 'disconnected'); return; }
-    let hasConnected = false;
-    for (const [, pc] of ss.viewerConnections) { const s = pc.iceConnectionState; if (s === 'connected' || s === 'completed') hasConnected = true; }
-    updateBroadcastStatus(hasConnected ? 'connected' : 'checking');
+    const signalingOpen = ss.signalingWs?.readyState === WebSocket.OPEN;
+    const sfuState = _sfuProduceStates.get(streamId);
+    const sfuConnState = sfuState?.transport?.connectionState;
+    const hasHealthySfu = !!(sfuState && (sfuConnState === 'connected' || sfuConnState === 'completed' || sfuState.videoProducer || sfuState.audioProducer));
+
+    if (hasHealthySfu) {
+        updateBroadcastStatus('connected');
+        return;
+    }
+
+    if (ss._allowP2pFallback && ss.viewerConnections.size > 0) {
+        let hasConnectedP2p = false;
+        for (const [, pc] of ss.viewerConnections) {
+            const state = pc.iceConnectionState;
+            if (state === 'connected' || state === 'completed') {
+                hasConnectedP2p = true;
+                break;
+            }
+        }
+        updateBroadcastStatus(hasConnectedP2p ? 'connected' : (signalingOpen ? 'checking' : 'disconnected'));
+        return;
+    }
+
+    updateBroadcastStatus(signalingOpen ? 'checking' : 'disconnected');
 }
 
 /* ── SFU Produce for Server-Side Restreaming ─────────────────── */
@@ -4153,6 +4182,10 @@ async function handleSignalingMessage(streamId, msg) {
     if (!ss) return;
     switch (msg.type) {
         case 'viewer-joined':
+            if (!ss._allowP2pFallback) {
+                console.warn(`[Broadcast] Ignoring legacy viewer-joined for stream ${streamId} — SFU-only mode is active`);
+                break;
+            }
             if (msg.peerId && ss.localStream) {
                 // Skip re-negotiation if the existing peer connection is still healthy
                 const existingPc = ss.viewerConnections.get(msg.peerId);
@@ -4166,9 +4199,25 @@ async function handleSignalingMessage(streamId, msg) {
                 await createViewerConnection(streamId, msg.peerId);
             }
             break;
-        case 'viewer-left': if (msg.peerId) closeViewerConnection(streamId, msg.peerId); break;
-        case 'answer': { const pc = ss.viewerConnections.get(msg.fromPeerId); if (pc && msg.sdp) await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)); break; }
-        case 'ice-candidate': { const pc = ss.viewerConnections.get(msg.fromPeerId); if (pc && msg.candidate) await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); break; }
+        case 'viewer-left':
+            if (ss._allowP2pFallback && msg.peerId) closeViewerConnection(streamId, msg.peerId);
+            break;
+        case 'answer':
+            if (ss._allowP2pFallback) {
+                const pc = ss.viewerConnections.get(msg.fromPeerId);
+                if (pc && msg.sdp) await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            } else {
+                console.warn(`[Broadcast] Ignoring legacy answer for stream ${streamId} — SFU-only mode is active`);
+            }
+            break;
+        case 'ice-candidate':
+            if (ss._allowP2pFallback) {
+                const pc = ss.viewerConnections.get(msg.fromPeerId);
+                if (pc && msg.candidate) await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            } else {
+                console.warn(`[Broadcast] Ignoring legacy ice-candidate for stream ${streamId} — SFU-only mode is active`);
+            }
+            break;
         case 'viewer-count':
             _perStreamViewerCounts.set(streamId, msg.count || 0);
             _updateTabViewerCount(streamId, msg.count || 0);
@@ -4180,6 +4229,7 @@ async function handleSignalingMessage(streamId, msg) {
             if (msg.iceServers && Array.isArray(msg.iceServers)) {
                 ss._serverIceServers = msg.iceServers;
             }
+            ss._allowP2pFallback = !!msg.allowP2pFallback;
             break;
         case 'error': toast(msg.message || 'Broadcast error', 'error'); break;
 
@@ -4725,17 +4775,19 @@ async function toggleCameraOverlay() {
     }
 }
 
-/** Replace video+audio tracks on all viewer PeerConnections, RobotStreamer, and SFU producers. */
+/** Replace live tracks across all active outputs (legacy P2P only when enabled, RobotStreamer, and SFU producers). */
 function _replaceAllViewerTracks(streamId) {
     const ss = getStreamState(streamId);
     if (!ss || !ss.localStream) return;
     const nvt = ss.localStream.getVideoTracks()[0];
     const nat = ss.localStream.getAudioTracks()[0];
-    for (const [, pc] of ss.viewerConnections) {
-        const vs = pc.getSenders().find(s => s.track?.kind === 'video' || s.track === null);
-        if (vs && nvt) vs.replaceTrack(nvt);
-        const as = pc.getSenders().find(s => s.track?.kind === 'audio');
-        if (as && nat) as.replaceTrack(nat);
+    if (ss._allowP2pFallback) {
+        for (const [, pc] of ss.viewerConnections) {
+            const vs = pc.getSenders().find(s => s.track?.kind === 'video' || s.track === null);
+            if (vs && nvt) vs.replaceTrack(nvt);
+            const as = pc.getSenders().find(s => s.track?.kind === 'audio');
+            if (as && nat) as.replaceTrack(nat);
+        }
     }
     syncRobotStreamerTracks(streamId).catch(() => {});
     // Also update the local SFU mediasoup producers so server-side consumers get the new tracks

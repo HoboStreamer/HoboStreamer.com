@@ -1,16 +1,16 @@
 /**
  * HoboStreamer — Broadcast WebSocket Server
- * 
- * Handles browser-based broadcasting via WebRTC signaling.
- * 
+ *
+ * Handles browser-based broadcasting and viewing via SFU signaling.
+ *
  * Flow:
  *   1. Broadcaster connects with JWT token + streamId
- *   2. Viewer connects with streamId
- *   3. Viewer sends 'watch' → server sends broadcaster's offer or triggers renegotiation
- *   4. WebRTC signaling: offer/answer/ice-candidate relayed between peers
- * 
+ *   2. Broadcaster auto-publishes audio/video into the Mediasoup SFU
+ *   3. Viewer connects, sends 'watch', and is either queued or attached to the SFU
+ *   4. Legacy P2P relay messages are ignored unless ALLOW_P2P_FALLBACK is enabled
+ *
  * Each stream has ONE broadcaster and MANY viewers.
- * The server acts as a signaling relay (not an SFU).
+ * The server primarily orchestrates SFU transports and viewer queueing.
  */
 const { EventEmitter } = require('events');
 const WebSocket = require('ws');
@@ -33,6 +33,14 @@ class BroadcastServer extends EventEmitter {
         this.clients = new Map();
         this.nextPeerId = 1;
         this.heartbeatInterval = null;
+    }
+
+    _logMetric(name, fields = {}) {
+        const details = Object.entries(fields)
+            .filter(([, value]) => value !== undefined && value !== null && value !== '')
+            .map(([key, value]) => `${key}=${value}`)
+            .join(' ');
+        console.log(`[BroadcastMetric] ${name}${details ? ` ${details}` : ''}`);
     }
 
     _isValidIceServerUrl(url) {
@@ -99,6 +107,38 @@ class BroadcastServer extends EventEmitter {
             }
         }
         return this._sanitizeIceServers(servers);
+    }
+
+    _queueViewerForSfu(room, ws, client, reason = 'awaiting_source', detail = '') {
+        if (!room._pendingWatchers) room._pendingWatchers = new Set();
+        room._pendingWatchers.add(client.peerId);
+        this.safeSend(ws, {
+            type: 'watch-queued',
+            reason,
+            detail,
+            allowP2pFallback: !!config.allowP2pFallback,
+        });
+        this._logMetric('viewer.queued', {
+            streamId: client.streamId,
+            peerId: client.peerId,
+            reason,
+        });
+    }
+
+    _requestSfuProduceWarmup(room, streamId) {
+        if (!room?.broadcaster || room.broadcaster.readyState !== WebSocket.OPEN) return false;
+        const now = Date.now();
+        if (room._sfuProduceRequestedAt && (now - room._sfuProduceRequestedAt) < 4000) {
+            return true;
+        }
+        room._sfuProduceRequestedAt = now;
+        const requested = this.requestSfuProduce(streamId);
+        if (requested) {
+            console.log(`[Broadcast] Requested SFU warm-up for stream ${streamId}`);
+        } else {
+            room._sfuProduceRequestedAt = 0;
+        }
+        return requested;
     }
 
     init(server) {
@@ -218,6 +258,7 @@ class BroadcastServer extends EventEmitter {
         const room = this.rooms.get(streamId);
 
         if (role === 'broadcaster') {
+            room._sfuProduceRequestedAt = 0;
             // Cancel any pending disconnect timer
             if (room._disconnectTimer) {
                 clearTimeout(room._disconnectTimer);
@@ -266,6 +307,7 @@ class BroadcastServer extends EventEmitter {
             streamId,
             viewerCount: room.viewers.size,
             iceServers: this._getIceServers(),
+            allowP2pFallback: !!config.allowP2pFallback,
         });
 
         // Broadcast viewer count
@@ -302,49 +344,73 @@ class BroadcastServer extends EventEmitter {
             case 'offer':
             case 'answer':
             case 'ice-candidate':
-                // For SFU viewers, ignore P2P signaling — mediasoup handles everything
+                if (!config.allowP2pFallback) {
+                    this._logMetric('p2p.relay.attempt', {
+                        streamId: client.streamId,
+                        peerId: client.peerId,
+                        type: msg.type,
+                        outcome: 'ignored',
+                    });
+                    console.warn(`[Broadcast] Ignoring legacy ${msg.type} for stream ${client.streamId} — SFU-only mode is active`);
+                    break;
+                }
+                // For SFU viewers, ignore direct P2P signaling — mediasoup handles everything.
                 if (client._sfuViewerTransportId) break;
-                // Relay signaling messages between broadcaster and viewers (P2P path)
                 this.relaySignaling(ws, client, room, msg);
                 break;
 
             case 'watch':
                 // Viewer requests to watch
                 if (client.role === 'viewer') {
-                    // Prefer SFU relay when producers exist — avoids burdening broadcaster
-                    // upstream with N separate P2P connections. SFU distributes to viewers
-                    // from the server, freeing broadcaster bandwidth.
                     this._tryCreateSfuViewer(ws, client).then(handled => {
                         if (handled) return; // SFU viewer signaling started
 
-                        // No SFU producers — fall back to P2P with broadcaster
                         if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
-                            console.log(`[Broadcast] Viewer ${client.peerId} requests watch on stream ${client.streamId} — notifying broadcaster (P2P)`);
-                            this.safeSend(room.broadcaster, {
-                                type: 'viewer-joined',
-                                peerId: client.peerId,
-                            });
+                            this._requestSfuProduceWarmup(room, client.streamId);
+                            this._queueViewerForSfu(
+                                room,
+                                ws,
+                                client,
+                                'warming_up',
+                                'The broadcaster is connected, but the live source is still publishing into the SFU.'
+                            );
+                            console.log(`[Broadcast] Viewer ${client.peerId} queued while SFU warm-up completes for stream ${client.streamId}`);
                         } else {
-                            if (!room._pendingWatchers) room._pendingWatchers = new Set();
-                            room._pendingWatchers.add(client.peerId);
-                            // Tell the client it is queued so it stops the watch→offer timeout.
-                            // It will receive 'broadcaster-ready' when a source becomes available.
-                            this.safeSend(ws, { type: 'watch-queued' });
-                            console.log(`[Broadcast] Viewer ${client.peerId} wants to watch stream ${client.streamId} but no broadcaster or SFU — queued as pending`);
+                            this._queueViewerForSfu(
+                                room,
+                                ws,
+                                client,
+                                'awaiting_broadcaster',
+                                'The stream exists, but no active broadcaster session is connected right now.'
+                            );
+                            console.log(`[Broadcast] Viewer ${client.peerId} wants to watch stream ${client.streamId} but no broadcaster or SFU source is ready — queued as pending`);
                         }
                     }).catch(err => {
                         console.error(`[Broadcast] SFU viewer error for ${client.peerId}:`, err.message);
-                        // Fall back to P2P on SFU error
-                        if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                        if (config.allowP2pFallback && room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                            this._logMetric('p2p.relay.attempt', {
+                                streamId: client.streamId,
+                                peerId: client.peerId,
+                                type: 'viewer-joined',
+                                outcome: 'fallback',
+                            });
                             this.safeSend(room.broadcaster, {
                                 type: 'viewer-joined',
                                 peerId: client.peerId,
                             });
-                        } else {
-                            if (!room._pendingWatchers) room._pendingWatchers = new Set();
-                            room._pendingWatchers.add(client.peerId);
-                            this.safeSend(ws, { type: 'watch-queued' });
+                            return;
                         }
+
+                        if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                            this._requestSfuProduceWarmup(room, client.streamId);
+                        }
+                        this._queueViewerForSfu(
+                            room,
+                            ws,
+                            client,
+                            'sfu_error',
+                            'The low-latency media path hit a setup error. The server will keep retrying in SFU-only mode.'
+                        );
                     });
                 }
                 break;
@@ -440,6 +506,12 @@ class BroadcastServer extends EventEmitter {
     }
 
     relaySignaling(ws, client, room, msg) {
+        this._logMetric('p2p.relay.attempt', {
+            streamId: client.streamId,
+            peerId: client.peerId,
+            type: msg.type,
+            outcome: 'relayed',
+        });
         if (client.role === 'broadcaster') {
             // Broadcaster sending to a specific viewer
             const targetPeerId = msg.targetPeerId;
@@ -481,6 +553,7 @@ class BroadcastServer extends EventEmitter {
         if (room) {
             if (client.role === 'broadcaster') {
                 room.broadcaster = null;
+                room._sfuProduceRequestedAt = 0;
                 console.log(`[Broadcast] Broadcaster disconnected: stream ${client.streamId}`);
 
                 // Start a grace timer — if broadcaster doesn't reconnect, end the stream cleanly
@@ -520,8 +593,8 @@ class BroadcastServer extends EventEmitter {
 
                 console.log(`[Broadcast] Viewer disconnected: stream ${client.streamId} (${client.peerId})`);
 
-                // Notify broadcaster
-                if (room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
+                // Notify broadcaster only when legacy P2P fallback is explicitly enabled.
+                if (config.allowP2pFallback && room.broadcaster && room.broadcaster.readyState === WebSocket.OPEN) {
                     this.safeSend(room.broadcaster, {
                         type: 'viewer-left',
                         peerId: client.peerId,
@@ -885,8 +958,10 @@ class BroadcastServer extends EventEmitter {
             const viewerWs = room.viewers.get(peerId);
             if (viewerWs?.readyState === WebSocket.OPEN) {
                 this.safeSend(viewerWs, { type: 'broadcaster-ready', peerId });
+                this._logMetric('viewer.notified', { streamId, peerId, reason: 'source_ready' });
             }
         }
+        room._sfuProduceRequestedAt = 0;
         room._pendingWatchers.clear();
         console.log(`[Broadcast] Notified pending viewers of SFU producers for stream ${streamId}`);
     }

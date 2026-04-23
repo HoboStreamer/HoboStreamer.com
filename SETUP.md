@@ -152,9 +152,11 @@ Required environment values for WebRTC:
 - `MEDIASOUP_ANNOUNCED_IP` — public address announced to clients.
 - `MEDIASOUP_MIN_PORT` / `MEDIASOUP_MAX_PORT` — UDP port range.
 - `WEBRTC_PORT` — signaling port.
-- `TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL` — strongly recommended for NAT traversal.
+- `TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL` — required in production for reliable NAT traversal.
+- `ALLOW_P2P_FALLBACK` — optional emergency rollback flag. Leave this at `false` unless you explicitly want to re-enable legacy peer-to-peer viewer relays.
 
 If TURN is missing, some viewers may fail to connect behind NAT.
+If `ALLOW_P2P_FALLBACK=true`, legacy browser-to-browser relay can expose viewer IPs and should only be used as a short-lived emergency switch.
 
 ### WHIP
 

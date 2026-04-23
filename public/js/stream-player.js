@@ -38,6 +38,511 @@ const externalScriptPromises = new Map();
 const PLAYER_SIGNALING_MAX_BUFFERED_AMOUNT = 256 * 1024;
 const PLAYER_VOLUME_KEY = 'hobo_player_volume';
 const PLAYER_MUTED_KEY = 'hobo_player_muted';
+const PLAYER_DIAGNOSTIC_EVENT_LIMIT = 80;
+const PLAYER_PHASE_SLOW_TIMEOUTS = {
+    signal: 8000,
+    source: 10000,
+    queue: 12000,
+    engine: 7000,
+    transport: 12000,
+    buffer: 18000,
+    reconnect: 15000,
+};
+const PLAYER_PHASE_SLOW_HINTS = {
+    signal: 'The player is still opening the viewer session. If this hangs, the stream service or websocket path may be unavailable.',
+    source: 'The broadcaster is live, but the source is still being attached for viewers.',
+    queue: 'The live shell exists, but usable audio/video has not reached the viewer path yet.',
+    engine: 'The playback engine is still loading. A browser extension, cached script error, or blocked dependency can stall here.',
+    transport: 'ICE / DTLS negotiation is taking longer than expected. TURN or firewall issues are common causes here.',
+    buffer: 'The player is connected but still waiting for usable frames or segments. This usually means the live source is not producing clean media yet.',
+    reconnect: 'The player is retrying automatically. If this repeats, copy the diagnostics so we can see where the stream pipeline is stalling.',
+};
+const PLAYER_PHASE_DISPLAY_LABELS = {
+    signal: 'Connecting',
+    source: 'Finding stream',
+    queue: 'Waiting for video',
+    engine: 'Starting player',
+    transport: 'Opening secure link',
+    buffer: 'Finishing up',
+    reconnect: 'Reconnecting',
+    live: 'Live',
+    error: 'Needs attention',
+    ended: 'Stream ended',
+};
+const PLAYER_PHASE_BRIEF_COPY = {
+    signal: 'Getting your viewer ready.',
+    source: 'The stream is online and warming up.',
+    queue: 'Looking for the live feed.',
+    engine: 'Starting the playback engine.',
+    transport: 'Opening a secure media path.',
+    buffer: 'Bringing in the first live moments.',
+    reconnect: 'Trying again automatically.',
+    live: 'Everything is flowing.',
+    error: 'Something interrupted playback.',
+    ended: 'Thanks for hanging out.',
+};
+const PLAYER_STEP_LABELS = {
+    signal: 'Signal',
+    source: 'Source',
+    engine: 'Engine',
+    transport: 'Transport',
+    buffer: 'Buffer',
+    live: 'Live',
+};
+const PLAYER_STEP_SETS = {
+    webrtc: ['signal', 'source', 'engine', 'transport', 'buffer', 'live'],
+    hls: ['signal', 'engine', 'buffer', 'live'],
+    rtmp: ['signal', 'engine', 'buffer', 'live'],
+    flv: ['signal', 'engine', 'buffer', 'live'],
+    jsmpeg: ['engine', 'transport', 'buffer', 'live'],
+    default: ['signal', 'buffer', 'live'],
+};
+const PLAYER_PHASE_TO_STEP = {
+    idle: 'signal',
+    signal: 'signal',
+    source: 'source',
+    queue: 'source',
+    engine: 'engine',
+    transport: 'transport',
+    buffer: 'buffer',
+    reconnect: 'signal',
+    live: 'live',
+    error: 'buffer',
+    ended: 'live',
+};
+
+let playerLoadState = null;
+let _playerSlowTimer = null;
+let _playerPlaceholderHideTimer = null;
+
+function _escapePlayerHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _getPlayerProtocolLabel(protocol) {
+    switch (protocol) {
+        case 'webrtc': return 'WebRTC SFU';
+        case 'jsmpeg': return 'JSMPEG Relay';
+        case 'flv': return 'HTTP-FLV';
+        case 'rtmp':
+        case 'hls': return 'HLS / RTMP';
+        default: return 'Live Stream';
+    }
+}
+
+function _getPlayerPhaseDisplayLabel(phase) {
+    return PLAYER_PHASE_DISPLAY_LABELS[phase] || 'Loading';
+}
+
+function _getPlayerBriefCopy(phase) {
+    return PLAYER_PHASE_BRIEF_COPY[phase] || 'Getting things ready.';
+}
+
+function _createPlayerLoadState(protocol = 'default', stream = null) {
+    return {
+        sessionId: Math.random().toString(36).slice(2, 10),
+        protocol,
+        streamId: stream?.id || null,
+        streamSlug: stream?.slug || stream?.stream_slug || stream?.endpoint?.slug || '',
+        phase: 'signal',
+        title: 'Getting the stream ready',
+        detail: 'Preparing the live player.',
+        hint: '',
+        severity: 'info',
+        showDiagnostics: false,
+        isSlow: false,
+        startedAt: Date.now(),
+        events: [],
+    };
+}
+
+function _ensurePlayerLoadState(protocol = playerType || streamRef?.protocol || 'default', stream = streamRef) {
+    const streamId = stream?.id || null;
+    if (!playerLoadState || playerLoadState.protocol !== protocol || playerLoadState.streamId !== streamId) {
+        playerLoadState = _createPlayerLoadState(protocol, stream);
+    }
+    return playerLoadState;
+}
+
+function _clearPlayerSlowTimer() {
+    if (_playerSlowTimer) {
+        clearTimeout(_playerSlowTimer);
+        _playerSlowTimer = null;
+    }
+}
+
+function _clearPlayerPlaceholderHideTimer() {
+    if (_playerPlaceholderHideTimer) {
+        clearTimeout(_playerPlaceholderHideTimer);
+        _playerPlaceholderHideTimer = null;
+    }
+}
+
+function _pushPlayerDiagnostic(event, detail = '') {
+    const state = _ensurePlayerLoadState();
+    state.events.push({ at: Date.now(), event, detail: String(detail || '') });
+    if (state.events.length > PLAYER_DIAGNOSTIC_EVENT_LIMIT) {
+        state.events.splice(0, state.events.length - PLAYER_DIAGNOSTIC_EVENT_LIMIT);
+    }
+}
+
+function _resetPlayerLoadState(protocol = playerType || streamRef?.protocol || 'default', stream = streamRef) {
+    _clearPlayerSlowTimer();
+    playerLoadState = _createPlayerLoadState(protocol, stream);
+    _pushPlayerDiagnostic('session.start', `${_getPlayerProtocolLabel(protocol)} session created`);
+}
+
+function _getPlayerStepStates(protocol, phase) {
+    const steps = PLAYER_STEP_SETS[protocol] || PLAYER_STEP_SETS.default;
+    const currentStep = PLAYER_PHASE_TO_STEP[phase] || 'signal';
+    const currentIndex = Math.max(steps.indexOf(currentStep), 0);
+    return steps.map((step, index) => ({
+        key: step,
+        label: PLAYER_STEP_LABELS[step] || step,
+        state: index < currentIndex ? 'done' : (index === currentIndex ? 'current' : 'pending'),
+    }));
+}
+
+function _getPlayerProgressMeta(protocol, phase) {
+    const steps = PLAYER_STEP_SETS[protocol] || PLAYER_STEP_SETS.default;
+    const currentStep = PLAYER_PHASE_TO_STEP[phase] || 'signal';
+    const currentIndex = Math.max(steps.indexOf(currentStep), 0);
+    const maxIndex = Math.max(steps.length - 1, 1);
+    return {
+        currentIndex,
+        totalSteps: steps.length,
+        progressPercent: phase === 'live' ? 100 : Math.round((currentIndex / maxIndex) * 100),
+        stepText: phase === 'live' ? 'Ready to watch' : `Step ${Math.min(currentIndex + 1, steps.length)} of ${steps.length}`,
+    };
+}
+
+function _collectPlayerRuntimeSnapshot() {
+    const video = document.getElementById('video-element');
+    const stream = video?.srcObject;
+    const tracks = stream?.getTracks?.() || [];
+    return {
+        page: window.location.href,
+        readyState: video?.readyState ?? 'n/a',
+        networkState: video?.networkState ?? 'n/a',
+        paused: video ? String(video.paused) : 'n/a',
+        muted: video ? String(video.muted) : 'n/a',
+        currentTime: video?.currentTime != null ? Number(video.currentTime).toFixed(2) : 'n/a',
+        videoSize: video ? `${video.videoWidth || 0}x${video.videoHeight || 0}` : 'n/a',
+        signalingWs: player?.ws ? player.ws.readyState : 'n/a',
+        sfuTransport: player?._sfuRecvTransport?.connectionState || 'n/a',
+        legacyPc: player?.pc?.iceConnectionState || 'n/a',
+        trackSummary: tracks.length
+            ? tracks.map((track) => `${track.kind}:${track.readyState}:muted=${track.muted}:enabled=${track.enabled}`).join(', ')
+            : 'none',
+        networkHint: navigator.connection?.effectiveType || 'unknown',
+    };
+}
+
+function _buildPlayerDiagnosticsText() {
+    const state = _ensurePlayerLoadState();
+    const snapshot = _collectPlayerRuntimeSnapshot();
+    const lines = [
+        'HoboStreamer playback diagnostics',
+        `session=${state.sessionId}`,
+        `stream_id=${state.streamId || 'unknown'}`,
+        `stream_slug=${state.streamSlug || 'unknown'}`,
+        `protocol=${state.protocol}`,
+        `phase=${state.phase}`,
+        `title=${state.title}`,
+        `detail=${state.detail || '-'}`,
+        `hint=${state.hint || '-'}`,
+        `page=${snapshot.page}`,
+        `ready_state=${snapshot.readyState}`,
+        `network_state=${snapshot.networkState}`,
+        `paused=${snapshot.paused}`,
+        `muted=${snapshot.muted}`,
+        `current_time=${snapshot.currentTime}`,
+        `video_size=${snapshot.videoSize}`,
+        `signaling_ws=${snapshot.signalingWs}`,
+        `sfu_transport=${snapshot.sfuTransport}`,
+        `legacy_pc=${snapshot.legacyPc}`,
+        `tracks=${snapshot.trackSummary}`,
+        `network_hint=${snapshot.networkHint}`,
+        `user_agent=${navigator.userAgent}`,
+        'events:',
+    ];
+    for (const entry of state.events) {
+        lines.push(`- ${new Date(entry.at).toISOString()} | ${entry.event}${entry.detail ? ` | ${entry.detail}` : ''}`);
+    }
+    return lines.join('\n');
+}
+
+async function copyPlayerDiagnostics() {
+    const text = _buildPlayerDiagnosticsText();
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            const el = document.createElement('textarea');
+            el.value = text;
+            el.style.position = 'fixed';
+            el.style.opacity = '0';
+            document.body.appendChild(el);
+            el.focus();
+            el.select();
+            document.execCommand('copy');
+            el.remove();
+        }
+        if (typeof toast === 'function') toast('Playback diagnostics copied', 'success');
+    } catch (err) {
+        console.warn('[Player] Failed to copy diagnostics:', err.message);
+        if (typeof toast === 'function') toast('Could not copy playback diagnostics', 'error');
+    }
+}
+
+function reloadPlayerPage() {
+    window.location.reload();
+}
+
+if (typeof window !== 'undefined') {
+    window.copyPlayerDiagnostics = copyPlayerDiagnostics;
+    window.reloadPlayerPage = reloadPlayerPage;
+}
+
+function _resetPlayerRevealState() {
+    const container = document.getElementById('video-container');
+    const placeholder = document.querySelector('.video-placeholder');
+    const video = document.getElementById('video-element');
+    const canvas = document.getElementById('video-canvas');
+
+    _clearPlayerPlaceholderHideTimer();
+    container?.classList.remove('player-handoff-active', 'player-handoff-complete');
+    placeholder?.classList.remove('is-exiting');
+    if (placeholder && placeholder.style.display === 'none' && playerLoadState?.phase !== 'live') {
+        placeholder.style.display = '';
+    }
+    video?.classList.remove('is-revealed');
+    canvas?.classList.remove('is-revealed');
+}
+
+function _revealPlayerSurface(surface = (playerType === 'jsmpeg' ? 'canvas' : 'video')) {
+    const container = document.getElementById('video-container');
+    const placeholder = document.querySelector('.video-placeholder');
+    const video = document.getElementById('video-element');
+    const canvas = document.getElementById('video-canvas');
+
+    _clearPlayerPlaceholderHideTimer();
+    container?.classList.remove('player-handoff-complete');
+    container?.classList.add('player-handoff-active');
+
+    if (surface === 'canvas') {
+        canvas?.classList.add('is-revealed');
+        video?.classList.remove('is-revealed');
+    } else {
+        video?.classList.add('is-revealed');
+        canvas?.classList.remove('is-revealed');
+    }
+
+    requestAnimationFrame(() => {
+        container?.classList.add('player-handoff-complete');
+    });
+
+    if (placeholder) {
+        placeholder.style.display = '';
+        placeholder.classList.add('is-exiting');
+        _playerPlaceholderHideTimer = setTimeout(() => {
+            placeholder.style.display = 'none';
+            placeholder.classList.remove('is-exiting');
+            _playerPlaceholderHideTimer = null;
+        }, 520);
+    }
+}
+
+function _ensurePlayerLoaderStructure(placeholder) {
+    if (placeholder._playerLoaderEls?.shell && placeholder.contains(placeholder._playerLoaderEls.shell)) {
+        return placeholder._playerLoaderEls;
+    }
+
+    placeholder.innerHTML = `
+        <div class="player-loader-shell">
+            <div class="player-loader-visual" aria-hidden="true">
+                <div class="player-loader-halo halo-a"></div>
+                <div class="player-loader-halo halo-b"></div>
+                <div class="player-loader-orb orb-a"></div>
+                <div class="player-loader-orb orb-b"></div>
+                <div class="player-loader-core">
+                    <div class="player-loader-core-ring"></div>
+                    <div class="player-loader-core-dot"></div>
+                </div>
+                <div class="player-loader-grid"></div>
+                <div class="player-loader-sheen"></div>
+            </div>
+            <div class="player-loader-copy">
+                <div class="player-loader-kicker">
+                    <span class="player-loader-badge"></span>
+                    <span class="player-loader-meta"></span>
+                </div>
+                <div class="player-loader-summary">
+                    <h3 class="player-loader-title"></h3>
+                    <p class="player-loader-brief"></p>
+                </div>
+                <div class="player-loader-progress">
+                    <div class="player-loader-progress-rail"><span class="player-loader-progress-fill"></span></div>
+                    <div class="player-loader-steps"></div>
+                </div>
+                <div class="player-loader-expanded">
+                    <p class="player-loader-detail"></p>
+                    <p class="player-loader-hint">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                        <span></span>
+                    </p>
+                    <div class="player-loader-actions">
+                        <button class="player-loader-action" type="button" onclick="copyPlayerDiagnostics()">
+                            <i class="fa-solid fa-bug"></i> Copy debug info
+                        </button>
+                        <button class="player-loader-action secondary" type="button" onclick="reloadPlayerPage()">
+                            <i class="fa-solid fa-rotate-right"></i> Refresh player
+                        </button>
+                    </div>
+                    <details class="player-loader-diagnostics">
+                        <summary>Technical details</summary>
+                        <pre></pre>
+                    </details>
+                </div>
+            </div>
+        </div>`;
+
+    placeholder._playerLoaderEls = {
+        shell: placeholder.querySelector('.player-loader-shell'),
+        badge: placeholder.querySelector('.player-loader-badge'),
+        meta: placeholder.querySelector('.player-loader-meta'),
+        title: placeholder.querySelector('.player-loader-title'),
+        brief: placeholder.querySelector('.player-loader-brief'),
+        progressFill: placeholder.querySelector('.player-loader-progress-fill'),
+        steps: placeholder.querySelector('.player-loader-steps'),
+        expanded: placeholder.querySelector('.player-loader-expanded'),
+        detail: placeholder.querySelector('.player-loader-detail'),
+        hint: placeholder.querySelector('.player-loader-hint'),
+        hintText: placeholder.querySelector('.player-loader-hint span'),
+        actions: placeholder.querySelector('.player-loader-actions'),
+        diagnostics: placeholder.querySelector('.player-loader-diagnostics'),
+        diagnosticsSummary: placeholder.querySelector('.player-loader-diagnostics summary'),
+        diagnosticsPre: placeholder.querySelector('.player-loader-diagnostics pre'),
+    };
+
+    return placeholder._playerLoaderEls;
+}
+
+function _animatePlayerLoaderStatus(shell) {
+    if (!shell) return;
+    shell.classList.remove('is-phase-changing');
+    void shell.offsetWidth;
+    shell.classList.add('is-phase-changing');
+    clearTimeout(shell._playerPhaseTimer);
+    shell._playerPhaseTimer = setTimeout(() => {
+        shell.classList.remove('is-phase-changing');
+    }, 420);
+}
+
+function _renderPlayerPlaceholder() {
+    const placeholder = document.querySelector('.video-placeholder');
+    if (!placeholder) return;
+
+    const state = _ensurePlayerLoadState();
+    const protocol = state.protocol || 'default';
+    const steps = _getPlayerStepStates(protocol, state.phase);
+    const progress = _getPlayerProgressMeta(protocol, state.phase);
+    const showExpanded = state.isSlow || state.severity === 'error';
+    const showTroubleshooting = showExpanded && (state.showDiagnostics || state.severity === 'error');
+    const briefCopy = _getPlayerBriefCopy(state.phase);
+    const renderSignature = `${state.phase}|${state.title}|${showExpanded}|${showTroubleshooting}|${state.severity}`;
+
+    _clearPlayerPlaceholderHideTimer();
+    placeholder.style.display = '';
+    placeholder.classList.add('player-placeholder-rich');
+    placeholder.classList.remove('is-exiting');
+    placeholder.dataset.protocol = protocol;
+    placeholder.dataset.phase = state.phase || 'signal';
+    placeholder.dataset.severity = state.severity || 'info';
+
+    const els = _ensurePlayerLoaderStructure(placeholder);
+    if (placeholder.dataset.renderSignature !== renderSignature) {
+        _animatePlayerLoaderStatus(els.shell);
+        placeholder.dataset.renderSignature = renderSignature;
+    }
+
+    els.shell.classList.toggle('is-slow', state.isSlow);
+    els.shell.classList.toggle('is-expanded', showExpanded);
+    els.shell.classList.toggle('is-error', state.severity === 'error');
+    els.badge.textContent = _getPlayerProtocolLabel(protocol);
+    els.meta.textContent = showExpanded ? _getPlayerPhaseDisplayLabel(state.phase) : progress.stepText;
+    els.title.textContent = state.title;
+    els.brief.textContent = briefCopy;
+    els.progressFill.style.width = `${progress.progressPercent}%`;
+    els.steps.innerHTML = steps.map((step) => `<span class="player-loader-step is-${step.state}">${step.label}</span>`).join('');
+    els.expanded.classList.toggle('is-visible', showExpanded);
+    els.detail.textContent = state.detail || briefCopy;
+    els.detail.classList.toggle('is-visible', showExpanded && !!state.detail);
+    els.hintText.textContent = state.hint || '';
+    els.hint.classList.toggle('is-visible', showExpanded && !!state.hint);
+    els.actions.classList.toggle('is-visible', showTroubleshooting);
+    els.diagnostics.classList.toggle('is-visible', showTroubleshooting);
+    els.diagnosticsSummary.textContent = state.severity === 'error' ? 'Technical details' : 'Need help? Open technical details';
+    els.diagnosticsPre.textContent = showTroubleshooting ? _buildPlayerDiagnosticsText() : '';
+    if (showTroubleshooting) {
+        els.diagnostics.open = state.severity === 'error';
+    } else {
+        els.diagnostics.open = false;
+    }
+}
+
+function _setPlayerStatus({
+    protocol = playerLoadState?.protocol || playerType || streamRef?.protocol || 'default',
+    phase = 'signal',
+    title = 'Getting the stream ready',
+    detail = '',
+    hint = '',
+    severity = 'info',
+    showDiagnostics = false,
+    slowAfterMs,
+} = {}) {
+    const state = _ensurePlayerLoadState(protocol, streamRef);
+    state.protocol = protocol;
+    state.phase = phase;
+    state.title = title;
+    state.detail = detail;
+    state.hint = hint;
+    state.severity = severity;
+    state.showDiagnostics = showDiagnostics || severity === 'error';
+    state.isSlow = false;
+
+    _pushPlayerDiagnostic(`phase.${phase}`, `${title}${detail ? ` — ${detail}` : ''}`);
+    _renderPlayerPlaceholder();
+
+    _clearPlayerSlowTimer();
+    const slowThreshold = slowAfterMs === undefined ? PLAYER_PHASE_SLOW_TIMEOUTS[phase] : slowAfterMs;
+    if (slowThreshold && severity !== 'error' && phase !== 'live' && phase !== 'ended') {
+        _playerSlowTimer = setTimeout(() => {
+            const currentState = _ensurePlayerLoadState(protocol, streamRef);
+            if (currentState.phase !== phase || currentState.severity === 'error') return;
+            currentState.isSlow = true;
+            currentState.showDiagnostics = true;
+            if (!currentState.hint) currentState.hint = PLAYER_PHASE_SLOW_HINTS[phase] || '';
+            _pushPlayerDiagnostic(`phase.${phase}.slow`, `Exceeded ${slowThreshold}ms`);
+            _renderPlayerPlaceholder();
+        }, slowThreshold);
+    }
+}
+
+function _hidePlayerPlaceholder(surface = (playerType === 'jsmpeg' ? 'canvas' : 'video')) {
+    _revealPlayerSurface(surface);
+    _clearPlayerSlowTimer();
+    if (playerLoadState) {
+        playerLoadState.phase = 'live';
+        playerLoadState.isSlow = false;
+        _pushPlayerDiagnostic('phase.live', 'Playback is rendering live media');
+    }
+}
 
 // DVR state (live stream seeking via server-side VOD recording)
 let dvrState = {
@@ -269,8 +774,17 @@ function startClipRecordingIfNeeded(stream, streamId) {
 function initPlayer(stream) {
     destroyPlayer();
     streamRef = stream; // Store for clip recording across all protocols
+    _resetPlayerRevealState();
     const proto = stream.protocol || 'jsmpeg';
     const endpoint = stream.endpoint || {};
+
+    _resetPlayerLoadState(proto, stream);
+    _setPlayerStatus({
+        protocol: proto,
+        phase: 'signal',
+        title: 'Getting the stream ready',
+        detail: 'Preparing the live player and checking which playback path to use.',
+    });
 
     switch (proto) {
         case 'jsmpeg':
@@ -306,24 +820,33 @@ function initJSMPEG(endpoint, stream) {
     const wsUrl = `${wsProtocol}://${host}:${port}`;
     const bufferProfile = getJsmpegBufferProfile();
 
+    _setPlayerStatus({
+        protocol: 'jsmpeg',
+        phase: 'engine',
+        title: 'Starting instant playback',
+        detail: 'Preparing the JSMPEG decoder and websocket video relay.',
+        hint: 'If this hangs, the relay script may be blocked or the websocket endpoint may still be starting.',
+    });
+
     // Check if JSMpeg lib is loaded (local copy preferred, CDN fallback)
     if (typeof JSMpeg === 'undefined') {
         loadExternalScriptOnce('/js/jsmpeg.min.js').then(() => {
+            _pushPlayerDiagnostic('jsmpeg.script', 'Loaded local JSMPEG bundle');
             startJSMPEG(wsUrl, canvas, placeholder, bufferProfile);
         }).catch(() => {
             // Local copy failed — try CDN fallback
             console.warn('[Player] Local jsmpeg.min.js failed, trying CDN');
+            _pushPlayerDiagnostic('jsmpeg.script.fallback', 'Local JSMPEG bundle failed, trying CDN fallback');
             loadExternalScriptOnce('https://jsmpeg.com/jsmpeg.min.js').then(() => {
+                _pushPlayerDiagnostic('jsmpeg.script', 'Loaded CDN JSMPEG bundle');
                 startJSMPEG(wsUrl, canvas, placeholder, bufferProfile);
             }).catch(() => {
                 console.error('Failed to load JSMpeg library');
-                placeholder.innerHTML = `
-                    <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
-                    <p>JSMPEG player not available</p>
-                    <p class="muted">Ensure jsmpeg.min.js is loaded</p>`;
+                showStreamError('JSMPEG player not available. The decoder script could not be loaded.');
             });
         });
     } else {
+        _pushPlayerDiagnostic('jsmpeg.script', 'Using preloaded JSMPEG bundle');
         startJSMPEG(wsUrl, canvas, placeholder, bufferProfile);
     }
 
@@ -333,7 +856,14 @@ function initJSMPEG(endpoint, stream) {
 function startJSMPEG(wsUrl, canvas, placeholder, bufferProfile = getJsmpegBufferProfile()) {
     try {
         canvas.style.display = 'block';
-        if (placeholder) placeholder.style.display = 'none';
+        if (placeholder) placeholder.style.display = '';
+        _setPlayerStatus({
+            protocol: 'jsmpeg',
+            phase: 'transport',
+            title: 'Opening the live feed',
+            detail: 'Connecting to the server-side MPEG-TS websocket relay for instant playback.',
+            hint: 'If this stalls, the relay service may be offline or blocked by a proxy/firewall.',
+        });
 
         if (_jsmpegClipSetupTimer) {
             clearTimeout(_jsmpegClipSetupTimer);
@@ -349,6 +879,14 @@ function startJSMPEG(wsUrl, canvas, placeholder, bufferProfile = getJsmpegBuffer
             preserveDrawingBuffer: true,
             onSourceEstablished: () => {
                 console.log('[JSMPEG] Source established — applying saved volume and checking audio context');
+                _setPlayerStatus({
+                    protocol: 'jsmpeg',
+                    phase: 'live',
+                    title: 'You’re live',
+                    detail: 'The decoder is receiving frames from the server relay.',
+                    slowAfterMs: 0,
+                });
+                _hidePlayerPlaceholder('canvas');
                 const audioPrefs = getSavedPlayerAudioState();
                 if (player && player.audioOut && player.audioOut.gain) {
                     player.audioOut.gain.value = audioPrefs.muted ? 0 : audioPrefs.volume;
@@ -431,12 +969,7 @@ function startJSMPEG(wsUrl, canvas, placeholder, bufferProfile = getJsmpegBuffer
     } catch (e) {
         console.error('JSMPEG init failed:', e);
         canvas.style.display = 'none';
-        if (placeholder) {
-            placeholder.style.display = '';
-            placeholder.innerHTML = `
-                <i class="fa-solid fa-exclamation-triangle fa-3x"></i>
-                <p>Failed to connect to stream</p>`;
-        }
+        showStreamError('Failed to connect to the JSMPEG live relay.');
     }
 }
 
@@ -454,15 +987,24 @@ async function initWebRTC(stream) {
         video.style.display = 'none';
         playerType = 'webrtc';
 
-        // Status phase tracking — shown in placeholder so viewer knows what's happening
-        const _updateStatus = (text) => {
-            if (placeholder && placeholder.style.display !== 'none') {
-                placeholder.innerHTML = `
-                    <i class="fa-solid fa-satellite-dish fa-3x"></i>
-                    <p>${text}</p>`;
-            }
+        // Status phase tracking — shown in the rich placeholder so the viewer can see what is happening.
+        const _updateStatus = (text, options = {}) => {
+            _setPlayerStatus({
+                protocol: 'webrtc',
+                phase: options.phase || 'signal',
+                title: text,
+                detail: options.detail || '',
+                hint: options.hint || '',
+                severity: options.severity || 'info',
+                showDiagnostics: options.showDiagnostics || false,
+                slowAfterMs: options.slowAfterMs,
+            });
         };
-        _updateStatus('Connecting to stream...');
+        _updateStatus('Joining the stream', {
+            phase: 'signal',
+            detail: 'Connecting to the stream service and preparing a low-latency viewer session.',
+            hint: 'If this hangs, the websocket path or stream service may be unavailable.',
+        });
 
         // Connect to the broadcast signaling relay as a viewer
         const host = window.location.hostname;
@@ -478,11 +1020,12 @@ async function initWebRTC(stream) {
         let _viewerReconnectDelay = 3000; // exponential backoff: 3s → 30s max
         let _viewerIntentionalClose = false;
         let _viewerRewatchTimer = null;
-        let _watchOfferTimer = null; // timeout: sent 'watch' but never got 'offer'
+        let _watchOfferTimer = null; // generic timeout: sent 'watch' but never got a usable response
         let _rewatchCount = 0;
         const MAX_REWATCH_ATTEMPTS = 12;
 
-        // Start a timer when 'watch' is sent — if no 'offer' arrives within 6s, re-watch
+        // Start a timer when 'watch' is sent — if the server never acknowledges it with a
+        // queue/source/transport response, re-request the watch session.
         const startWatchOfferTimeout = () => {
             if (_watchOfferTimer) clearTimeout(_watchOfferTimer);
             _watchOfferTimer = setTimeout(() => {
@@ -494,10 +1037,15 @@ async function initWebRTC(stream) {
                     showStreamError('Could not establish media connection. Your network may be blocking WebRTC traffic.');
                     return;
                 }
-                // No offer received — broadcaster may be unresponsive
+                // No response received — the broadcaster or SFU publish path may still be warming up.
                 if (_rewatchCount < MAX_REWATCH_ATTEMPTS) {
-                    console.warn(`[Player] No offer received within 6s (attempt ${_rewatchCount + 1}/${MAX_REWATCH_ATTEMPTS})`);
-                    _updateStatus('Waiting for broadcaster response...');
+                    console.warn(`[Player] No watch response received within 6s (attempt ${_rewatchCount + 1}/${MAX_REWATCH_ATTEMPTS})`);
+                    _updateStatus('Still warming up', {
+                        phase: 'queue',
+                        detail: 'The server has not acknowledged the viewer watch request yet. Retrying automatically.',
+                        hint: 'If this keeps repeating, the broadcaster may still be spinning up the SFU publish transport.',
+                        showDiagnostics: true,
+                    });
                     scheduleViewerRewatch(500);
                 } else {
                     console.error('[Player] Max rewatch attempts reached — stream may be unavailable');
@@ -530,7 +1078,12 @@ async function initWebRTC(stream) {
 
         ws.onopen = () => {
             console.log('[Player] Broadcast signaling connected');
-            _updateStatus('Connected — waiting for broadcaster...');
+            _updateStatus('Looking for the live feed', {
+                phase: 'queue',
+                detail: 'The viewer session is open. Waiting for a live source to be attached.',
+                hint: 'If this sits here, the broadcaster may not be publishing media into the SFU yet.',
+                showDiagnostics: true,
+            });
             _viewerReconnectDelay = 3000; // reset backoff on successful connect
             const pcState = player?.pc?.iceConnectionState;
             if (!player.watchSent || pcState === 'failed' || pcState === 'disconnected' || pcState === 'closed') {
@@ -548,14 +1101,24 @@ async function initWebRTC(stream) {
                         if (msg.iceServers && Array.isArray(msg.iceServers)) {
                             player._serverIceServers = msg.iceServers;
                         }
+                        player._allowP2pFallback = !!msg.allowP2pFallback;
                         console.log('[Player] Welcome, peerId:', msg.peerId, 'iceServers:', (player._serverIceServers || []).length);
-                        _updateStatus('Connected — waiting for broadcaster...');
+                        _updateStatus('Waiting for the live feed', {
+                            phase: 'queue',
+                            detail: 'The viewer session is ready. Waiting for the broadcaster or SFU source to become available.',
+                            hint: 'If this takes a while, the live feed may still be warming up on the server.',
+                            showDiagnostics: true,
+                        });
                         // Don't send watch here — wait for broadcaster-ready
                         break;
                     case 'broadcaster-ready':
                         // Broadcaster connected/reconnected — request to watch
                         console.log('[Player] Broadcaster ready, requesting watch');
-                        _updateStatus('Broadcaster found — negotiating...');
+                        _updateStatus('Stream found', {
+                            phase: 'source',
+                            detail: 'The broadcaster is live. Asking the server to attach this viewer to the SFU.',
+                            hint: 'If this stalls, the broadcaster may still be starting the SFU publish transport.',
+                        });
                         // Cancel any pending rewatch timer (prevents double-watch race)
                         if (_viewerRewatchTimer) { clearTimeout(_viewerRewatchTimer); _viewerRewatchTimer = null; }
                         // Cancel any pending disconnect grace timer
@@ -567,11 +1130,18 @@ async function initWebRTC(stream) {
                         _rewatchCount = 0;
                         // Hide reconnecting indicator if shown
                         _hideReconnectingIndicator();
-                        // Skip re-negotiation if peer connection is still healthy
+                        // Skip re-negotiation if the existing media path is still healthy.
                         if (player.pc) {
                             const state = player.pc.iceConnectionState;
                             if (state === 'connected' || state === 'completed') {
                                 console.log(`[Player] Peer connection still healthy (ICE: ${state}), skipping re-negotiate`);
+                                break;
+                            }
+                        }
+                        if (player._sfuRecvTransport) {
+                            const state = player._sfuRecvTransport.connectionState;
+                            if (state === 'connected') {
+                                console.log('[Player] SFU recv transport still healthy, skipping re-watch');
                                 break;
                             }
                         }
@@ -582,9 +1152,19 @@ async function initWebRTC(stream) {
                         startWatchOfferTimeout();
                         break;
                     case 'offer':
-                        // Broadcaster sent us an offer (P2P path) — create answer
+                        if (!player._allowP2pFallback) {
+                            console.warn('[Player] Ignoring legacy P2P offer — SFU-only mode is active');
+                            _pushPlayerDiagnostic('p2p.offer.ignored', 'Received unexpected offer while SFU-only mode was active');
+                            break;
+                        }
+                        // Broadcaster sent us an offer (legacy P2P rollback path) — create answer
                         console.log('[Player] Received offer from broadcaster');
-                        _updateStatus('Connecting media...');
+                        _updateStatus('Switching to the fallback path', {
+                            phase: 'transport',
+                            detail: 'Emergency P2P fallback is enabled for this session. Negotiating direct media.',
+                            hint: 'This path should normally stay disabled. Copy the log if you were not expecting it.',
+                            showDiagnostics: true,
+                        });
                         // Clear the watch-to-offer timeout — offer received successfully
                         if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
                         _rewatchCount = 0; // reset retry count on successful offer
@@ -596,7 +1176,11 @@ async function initWebRTC(stream) {
                     case 'sfu-viewer-ready':
                         // Server has SFU producers — use mediasoup-client RecvTransport
                         console.log('[Player] SFU viewer ready — starting mediasoup-client flow');
-                        _updateStatus('Connecting media...');
+                        _updateStatus('Starting playback', {
+                            phase: 'engine',
+                            detail: 'The server has a healthy live source. Preparing the low-latency viewer engine.',
+                            hint: 'If this hangs, the mediasoup viewer client may have failed to initialize.',
+                        });
                         if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
                         _rewatchCount = 0;
                         _hideReconnectingIndicator();
@@ -615,6 +1199,10 @@ async function initWebRTC(stream) {
                         }
                         break;
                     case 'ice-candidate':
+                        if (!player._allowP2pFallback) {
+                            console.warn('[Player] Ignoring legacy P2P ICE candidate — SFU-only mode is active');
+                            break;
+                        }
                         // ICE candidate from broadcaster
                         if (player.pc && msg.candidate) {
                             await player.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
@@ -622,6 +1210,7 @@ async function initWebRTC(stream) {
                         break;
                     case 'broadcaster-disconnected':
                         console.log('[Player] Broadcaster signaling disconnected — media may still be active');
+                        _pushPlayerDiagnostic('signal.disconnect', 'Broadcaster signaling disconnected while viewer session remained open');
                         // Show a subtle indicator — the WebRTC PeerConnection is independent
                         // of the signaling WS so video likely still works
                         _showReconnectingIndicator();
@@ -663,7 +1252,14 @@ async function initWebRTC(stream) {
                         if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
                         if (_viewerRewatchTimer) { clearTimeout(_viewerRewatchTimer); _viewerRewatchTimer = null; }
                         _rewatchCount = 0; // source loss does not count as a retry failure
-                        _updateStatus('Stream source temporarily unavailable — reconnecting...');
+                        _updateStatus('Hang tight — reconnecting', {
+                            phase: 'queue',
+                            detail: msg.reason === 'producer_removed'
+                                ? 'Stream source temporarily unavailable. The live source dropped out after it was already playing. Waiting for the broadcaster to publish again.'
+                                : 'Stream source temporarily unavailable. The server sees the stream, but it does not have a healthy live source for viewers yet.',
+                            hint: 'Copy the playback log if this keeps looping so we can see whether the stall is before publish, during transport setup, or after media starts.',
+                            showDiagnostics: true,
+                        });
                         _showReconnectingIndicator();
                         // Clear the SFU frozen checker — a new one will start after recovery
                         if (player._sfuFrozenInterval) { clearInterval(player._sfuFrozenInterval); player._sfuFrozenInterval = null; }
@@ -684,7 +1280,12 @@ async function initWebRTC(stream) {
                         console.log('[Player] Watch queued — waiting for stream source to become available');
                         if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
                         _rewatchCount = 0;
-                        _updateStatus('Waiting for stream source...');
+                        _updateStatus('Waiting for the stream', {
+                            phase: 'queue',
+                            detail: msg.detail || 'The stream is live, but the viewer path is still warming up and waiting for usable media.',
+                            hint: 'If this takes a while, the broadcaster may still be establishing the SFU publish transport or the ingest may be unhealthy.',
+                            showDiagnostics: true,
+                        });
                         break;
                 }
             } catch (err) {
@@ -694,13 +1295,23 @@ async function initWebRTC(stream) {
 
         ws.onerror = () => {
             console.error('[Player] Broadcast signaling error');
-            _updateStatus('Connection error — retrying...');
+            _updateStatus('Reconnecting', {
+                phase: 'reconnect',
+                detail: 'The viewer session hit a websocket error. Reconnecting automatically.',
+                hint: 'If this persists, the stream service may be restarting or blocked upstream.',
+                showDiagnostics: true,
+            });
         };
 
         ws.onclose = (ev) => {
             console.log(`[Player] Broadcast signaling closed (code=${ev.code})`);
             if (_viewerIntentionalClose) return;
-            _updateStatus('Reconnecting to server...');
+            _updateStatus('Reconnecting', {
+                phase: 'reconnect',
+                detail: 'The viewer session disconnected and is retrying automatically.',
+                hint: 'If this keeps bouncing, copy the playback log so we can inspect the disconnect pattern.',
+                showDiagnostics: true,
+            });
             // Reconnect signaling WS with exponential backoff
             // The WebRTC peer connection may still be delivering media even without signaling
             if (player && streamRef) {
@@ -893,13 +1504,7 @@ async function handleViewerOffer(msg, ws, video) {
                 video.removeEventListener('playing', onPlaying);
                 _hasVideoFrames = true;
                 if (player._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
-                const ph = document.querySelector('.video-placeholder');
-                if (ph) {
-                    ph.style.display = 'none';
-                    ph.innerHTML = `
-                        <i class="fa-solid fa-satellite-dish fa-3x"></i>
-                        <p>Connecting to stream...</p>`;
-                }
+                _hidePlayerPlaceholder();
                 // Only remove unmute overlay if video is actually playing with audio
                 if (!video.muted) {
                     document.getElementById('unmute-overlay')?.remove();
@@ -1063,7 +1668,11 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
 
     try {
         // Step 1: Load mediasoup-client
-        updateStatus('Loading media engine...');
+        updateStatus('Starting playback', {
+            phase: 'engine',
+            detail: 'Loading the mediasoup viewer client and preparing router capabilities.',
+            hint: 'If this stalls, the mediasoup client bundle may be blocked or failed to initialize.',
+        });
         const mod = await loadMediasoupClient();
         const { Device } = mod;
         if (!Device) throw new Error('mediasoup-client Device not available');
@@ -1074,7 +1683,11 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
         _mediasoupDevice = device;
 
         // Step 3: Request a recv transport from the server
-        updateStatus('Creating media transport...');
+        updateStatus('Securing the connection', {
+            phase: 'transport',
+            detail: 'Negotiating ICE and DTLS with the SFU so media can flow to this viewer.',
+            hint: 'If this takes too long, TURN / firewall / ICE connectivity is the first thing to inspect.',
+        });
         const transportParams = await _sfuViewerRequest(ws, 'sfu-viewer-create-transport', 'sfu-viewer-transport-created');
 
         // Step 4: Create the local RecvTransport
@@ -1135,6 +1748,13 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
             if (!player || player._sfuRecvTransport !== recvTransport) return;
             console.log(`[Player] SFU recv transport state: ${state}`);
             if (state === 'connected') {
+                updateStatus('Almost there', {
+                    phase: 'buffer',
+                    detail: 'ICE and DTLS are up. Waiting for the next keyframe and live media packets.',
+                    hint: 'If this keeps spinning, the broadcaster may not be producing clean frames or the next keyframe has not arrived yet.',
+                    showDiagnostics: true,
+                    slowAfterMs: 20000,
+                });
                 // ICE + DTLS succeeded — clear the connect timeout
                 if (player._sfuTransportConnectTimeout) {
                     clearTimeout(player._sfuTransportConnectTimeout);
@@ -1181,7 +1801,12 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
         });
 
         // Step 5: Consume each producer
-        updateStatus('Receiving media...');
+        updateStatus('Bringing the feed in', {
+            phase: 'buffer',
+            detail: 'Subscribing to the live audio/video tracks and waiting for usable frames.',
+            hint: 'If this stalls, the live source may exist but not be delivering healthy media yet.',
+            showDiagnostics: true,
+        });
         const mediaStream = new MediaStream();
         let _hasVideoFrames = false;
         let _playPending = false;
@@ -1285,11 +1910,7 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
             _hasVideoFrames = true;
             if (player?._stallTimer) { clearTimeout(player._stallTimer); player._stallTimer = null; }
             console.log(`[Player] SFU video playing! videoWidth=${video.videoWidth} videoHeight=${video.videoHeight}`);
-            const ph = document.querySelector('.video-placeholder');
-            if (ph) {
-                ph.style.display = 'none';
-                ph.innerHTML = `<i class="fa-solid fa-satellite-dish fa-3x"></i><p>Connecting to stream...</p>`;
-            }
+            _hidePlayerPlaceholder();
             if (!video.muted) document.getElementById('unmute-overlay')?.remove();
 
             // Post-play frozen-frame detector: check video.currentTime every 10 s.
@@ -1437,15 +2058,32 @@ function initHLS(endpoint, stream) {
         return;
     }
 
-    video.style.display = 'block';
+    video.style.display = 'none';
     video.playsInline = true;
     video.preload = 'auto';
-    if (placeholder) placeholder.style.display = 'none';
+    if (placeholder) placeholder.style.display = '';
     playerType = 'hls';
+
+    _setPlayerStatus({
+        protocol: 'hls',
+        phase: 'engine',
+        title: 'Starting playback',
+        detail: 'Loading the adaptive live player and checking which relay path is available.',
+        hint: 'If this stalls, the relay or player script may still be starting.',
+    });
 
     // Start clip recording when video begins playing (for any RTMP sub-method)
     const _startClipOnPlay = () => {
         video.removeEventListener('playing', _startClipOnPlay);
+        video.style.display = 'block';
+        _setPlayerStatus({
+            protocol: 'hls',
+            phase: 'live',
+            title: 'You’re live',
+            detail: 'Playback has enough media buffered to stay at the live edge.',
+            slowAfterMs: 0,
+        });
+        _hidePlayerPlaceholder('video');
         try {
             const capturedStream = video.captureStream ? video.captureStream() :
                                    video.mozCaptureStream ? video.mozCaptureStream() : null;
@@ -1503,6 +2141,14 @@ function initHLS(endpoint, stream) {
     if (hlsUrl) {
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
             // Native HLS (Safari)
+            _setPlayerStatus({
+                protocol: 'hls',
+                phase: 'buffer',
+                title: 'Loading the live feed',
+                detail: 'Your browser can play HLS natively. Waiting for the first live segments.',
+                hint: 'If this never starts, the HLS relay may not be producing segments yet.',
+                showDiagnostics: true,
+            });
             video.src = hlsUrl;
             video.play().catch(() => {});
             return;
@@ -1519,12 +2165,33 @@ function initHLS(endpoint, stream) {
             });
             hls.loadSource(hlsUrl);
             hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                _setPlayerStatus({
+                    protocol: 'hls',
+                    phase: 'buffer',
+                    title: 'Loading the live feed',
+                    detail: 'The live playlist loaded. Waiting for enough media to start smoothly.',
+                    hint: 'If buffering never finishes, the RTMP/HLS relay may not be producing clean segments yet.',
+                    showDiagnostics: true,
+                });
+                video.play().catch(() => {});
+            });
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
                     console.warn('[HLS] Fatal error, trying HTTP-FLV fallback');
+                    _pushPlayerDiagnostic('hls.fatal', `${data.type || 'unknown'}:${data.details || 'unknown'}`);
                     hls.destroy();
-                    if (flvUrl) tryFlvPlayer(flvUrl, video);
+                    if (flvUrl) {
+                        _setPlayerStatus({
+                            protocol: 'flv',
+                            phase: 'transport',
+                            title: 'Trying the backup feed',
+                            detail: 'The HLS path failed, so the player is trying the direct live relay instead.',
+                            hint: 'If this also fails, copy the playback log so we can compare both relay attempts.',
+                            showDiagnostics: true,
+                        });
+                        tryFlvPlayer(flvUrl, video);
+                    }
                     else showStreamError('HLS stream not available yet. Make sure your RTMP software is streaming.');
                 }
             });
@@ -1533,6 +2200,13 @@ function initHLS(endpoint, stream) {
         }
 
         // Load HLS.js dynamically
+        _setPlayerStatus({
+            protocol: 'hls',
+            phase: 'engine',
+            title: 'Loading the player',
+            detail: 'Fetching the HLS playback engine for this browser.',
+            hint: 'If this hangs, a CDN issue or browser extension may be blocking the player script.',
+        });
         loadExternalScriptOnce('https://cdn.jsdelivr.net/npm/hls.js@latest').then(() => {
             const hls = new Hls({
                 enableWorker: true,
@@ -1544,11 +2218,32 @@ function initHLS(endpoint, stream) {
             });
             hls.loadSource(hlsUrl);
             hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                _setPlayerStatus({
+                    protocol: 'hls',
+                    phase: 'buffer',
+                    title: 'Loading the live feed',
+                    detail: 'The live playlist loaded. Waiting for enough media to begin playback.',
+                    hint: 'If this never resolves, the RTMP/HLS relay may not be producing healthy live segments yet.',
+                    showDiagnostics: true,
+                });
+                video.play().catch(() => {});
+            });
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
+                    _pushPlayerDiagnostic('hls.fatal', `${data.type || 'unknown'}:${data.details || 'unknown'}`);
                     hls.destroy();
-                    if (flvUrl) tryFlvPlayer(flvUrl, video);
+                    if (flvUrl) {
+                        _setPlayerStatus({
+                            protocol: 'flv',
+                            phase: 'transport',
+                            title: 'Trying the backup feed',
+                            detail: 'The HLS path failed, so the player is trying the direct live relay instead.',
+                            hint: 'If this also fails, copy the playback log so we can compare both relay attempts.',
+                            showDiagnostics: true,
+                        });
+                        tryFlvPlayer(flvUrl, video);
+                    }
                     else showStreamError('HLS stream not ready. Make sure your RTMP software is streaming.');
                 }
             });
@@ -1563,6 +2258,15 @@ function initHLS(endpoint, stream) {
 }
 
 function tryFlvPlayer(flvUrl, video) {
+    _setPlayerStatus({
+        protocol: 'flv',
+        phase: 'transport',
+        title: 'Connecting the backup feed',
+        detail: 'Opening the backup live relay for browsers that cannot use HLS right now.',
+        hint: 'If this stalls, the backup relay may be offline or still starting.',
+        showDiagnostics: true,
+    });
+
     // Attempt to play HTTP-FLV via flv.js if available
     if (typeof flvjs !== 'undefined' && flvjs.isSupported()) {
         const flvPlayer = flvjs.createPlayer(
@@ -1577,7 +2281,19 @@ function tryFlvPlayer(flvUrl, video) {
             }
         );
         flvPlayer.attachMediaElement(video);
+        flvPlayer.on?.(flvjs.Events.ERROR, (type, detail, info) => {
+            _pushPlayerDiagnostic('flv.error', `${type || 'unknown'}:${detail || 'unknown'}:${info ? JSON.stringify(info) : ''}`);
+            showStreamError('HTTP-FLV playback failed while trying to load the live relay.');
+        });
         flvPlayer.load();
+        _setPlayerStatus({
+            protocol: 'flv',
+            phase: 'buffer',
+            title: 'Loading the backup feed',
+            detail: 'The HTTP-FLV relay is connected. Waiting for enough media to start playback.',
+            hint: 'If this never starts, the backup relay may not be producing usable frames yet.',
+            showDiagnostics: true,
+        });
         flvPlayer.play();
         player = { flv: flvPlayer, video };
     } else {
@@ -1595,7 +2311,19 @@ function tryFlvPlayer(flvUrl, video) {
                     }
                 );
                 flvPlayer.attachMediaElement(video);
+                flvPlayer.on?.(flvjs.Events.ERROR, (type, detail, info) => {
+                    _pushPlayerDiagnostic('flv.error', `${type || 'unknown'}:${detail || 'unknown'}:${info ? JSON.stringify(info) : ''}`);
+                    showStreamError('HTTP-FLV playback failed while trying to load the live relay.');
+                });
                 flvPlayer.load();
+                _setPlayerStatus({
+                    protocol: 'flv',
+                    phase: 'buffer',
+                    title: 'Loading the backup feed',
+                    detail: 'The HTTP-FLV relay is connected. Waiting for enough media to begin playback.',
+                    hint: 'If this never starts, the backup relay may not be producing usable frames yet.',
+                    showDiagnostics: true,
+                });
                 flvPlayer.play();
                 player = { flv: flvPlayer, video };
             } else {
@@ -2441,6 +3169,9 @@ function destroyPlayer() {
     stopClipRecording();
     destroyDVR();
     _hideReconnectingIndicator();
+    _clearPlayerSlowTimer();
+    _clearPlayerPlaceholderHideTimer();
+    _resetPlayerRevealState();
     if (_jsmpegClipSetupTimer) {
         clearTimeout(_jsmpegClipSetupTimer);
         _jsmpegClipSetupTimer = null;
@@ -2489,48 +3220,52 @@ function destroyPlayer() {
 
     const placeholder = document.querySelector('.video-placeholder');
     if (placeholder) {
-        placeholder.style.display = '';
-        placeholder.innerHTML = `
-            <i class="fa-solid fa-satellite-dish fa-3x"></i>
-            <p>Connecting to stream...</p>`;
+        _resetPlayerLoadState('default', null);
+        _setPlayerStatus({
+            protocol: 'default',
+            phase: 'signal',
+            title: 'Getting the stream ready',
+            detail: 'Preparing the live player.',
+        });
     }
 }
 
 function showStreamEnded() {
     _hideReconnectingIndicator();
-    const placeholder = document.querySelector('.video-placeholder');
-    if (placeholder) {
-        placeholder.style.display = '';
-        placeholder.innerHTML = `
-            <i class="fa-solid fa-campground fa-3x"></i>
-            <p>Stream has ended</p>
-            <p class="muted">Check back later!</p>`;
-    }
+    _resetPlayerRevealState();
+    _setPlayerStatus({
+        protocol: playerType || streamRef?.protocol || playerLoadState?.protocol || 'default',
+        phase: 'ended',
+        title: 'Stream has ended',
+        detail: 'Check back later for the next live session.',
+        slowAfterMs: 0,
+    });
     document.getElementById('video-canvas').style.display = 'none';
     document.getElementById('video-element').style.display = 'none';
 }
 
 function showStreamError(msg) {
-    const placeholder = document.querySelector('.video-placeholder');
-    if (placeholder) {
-        placeholder.style.display = '';
-        placeholder.innerHTML = `
-            <i class="fa-solid fa-triangle-exclamation fa-3x"></i>
-            <p>${msg}</p>
-            <button onclick="this.parentElement.style.display='none'" style="margin-top:8px;padding:6px 18px;border-radius:8px;border:1px solid var(--border);background:var(--bg-hover);color:var(--text-primary);cursor:pointer;font-size:0.85rem;">Dismiss</button>`;
-    }
+    _resetPlayerRevealState();
+    _setPlayerStatus({
+        protocol: playerType || streamRef?.protocol || playerLoadState?.protocol || 'default',
+        phase: 'error',
+        title: 'Couldn’t start playback',
+        detail: msg,
+        hint: 'Copy the playback log below and send it our way if you want help debugging it faster.',
+        severity: 'error',
+        showDiagnostics: true,
+        slowAfterMs: 0,
+    });
 }
 
 /** Clear stream error and reset placeholder to default connecting state */
 function _clearStreamError() {
-    const placeholder = document.querySelector('.video-placeholder');
-    if (!placeholder) return;
-    // Only clear if it's currently showing an error (has the warning icon)
-    if (placeholder.innerHTML.includes('fa-triangle-exclamation')) {
-        placeholder.style.display = 'none';
-        placeholder.innerHTML = `
-            <i class="fa-solid fa-satellite-dish fa-3x"></i>
-            <p>Connecting to stream...</p>`;
+    if (playerLoadState?.severity === 'error') {
+        playerLoadState.severity = 'info';
+        playerLoadState.showDiagnostics = false;
+        playerLoadState.isSlow = false;
+        const placeholder = document.querySelector('.video-placeholder');
+        if (placeholder) placeholder.style.display = 'none';
     }
 }
 
