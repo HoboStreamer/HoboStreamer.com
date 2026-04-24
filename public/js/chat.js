@@ -1536,6 +1536,20 @@ function _renderVibeDisclosure(kind, label, preview, meta, bodyHtml, disclosureK
     return `<details class="chat-vibe-turn-disclosure chat-vibe-turn-disclosure-${esc(kind)}"${disclosureId}${isOpen ? ' open' : ''}><summary><span class="chat-vibe-turn-disclosure-kicker">${esc(label)}</span><span class="chat-vibe-turn-disclosure-title">${esc(preview || label)}</span>${meta ? `<span class="chat-vibe-turn-disclosure-meta">${esc(meta)}</span>` : ''}</summary><div class="chat-vibe-turn-disclosure-body">${bodyHtml}</div></details>`;
 }
 
+function _getVibeWidgetItemDomKey(item, index) {
+    return String(item?.key || `vibe-item:${index}`);
+}
+
+function _createVibeWidgetItemNode(item, itemKey) {
+    const html = item.kind === 'system' ? _renderVibeSystemItem(item) : _renderVibeTurnItem(item);
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    const node = wrapper.firstElementChild;
+    if (!node) return null;
+    node.dataset.vibeKey = itemKey;
+    return node;
+}
+
 function _renderVibeParagraphs(text, maxSegments = 3, muted = false) {
     return _splitVibeNarrative(text, maxSegments)
         .map((part) => `<p class="chat-vibe-turn-paragraph${muted ? ' is-muted' : ''}">${esc(part)}</p>`)
@@ -1743,15 +1757,22 @@ function _renderVibeWidget() {
     if (titleEl) titleEl.textContent = settings.widget_title || 'Vibe Coding';
     const statusEl = panel.querySelector('.chat-vibe-widget-status');
     if (statusEl) {
-        const parts = [];
-        if (_vibeWidgetState.publisher?.integrationLabel) parts.push(_vibeWidgetState.publisher.integrationLabel);
-        if (settings.paused) parts.push('Paused');
-        else if (_vibeWidgetState.syncState === 'retrying') parts.push('Reconnecting');
-        else parts.push('Live');
-        if (_vibeWidgetState.userScrolledUp && _vibeWidgetState.unreadCount > 0) {
-            parts.push(`${_vibeWidgetState.unreadCount} new`);
+        const shouldShowBadge = _vibeWidgetState.collapsed && _vibeWidgetState.unreadCount > 0;
+        statusEl.classList.toggle('is-badge', shouldShowBadge);
+        statusEl.classList.toggle('is-hidden', _vibeWidgetState.collapsed && _vibeWidgetState.unreadCount === 0);
+
+        if (shouldShowBadge) {
+            statusEl.textContent = `${_vibeWidgetState.unreadCount} new`;
+        } else if (_vibeWidgetState.collapsed) {
+            statusEl.textContent = '';
+        } else {
+            let statusText = 'Live';
+            if (settings.paused) statusText = 'Paused';
+            else if (_vibeWidgetState.syncState === 'retrying') statusText = 'Reconnecting';
+            statusEl.textContent = statusText;
+            statusEl.classList.remove('is-badge');
+            statusEl.classList.remove('is-hidden');
         }
-        statusEl.textContent = parts.join(' · ');
     }
     const toggleEl = panel.querySelector('.chat-vibe-widget-toggle');
     if (toggleEl) {
@@ -1773,12 +1794,41 @@ function _renderVibeWidget() {
         return;
     }
 
-    _vibeWidgetState.feed.innerHTML = items.map((item) => {
-        if (item.kind === 'system') {
-            return _renderVibeSystemItem(item);
+    const existingChildren = Array.from(_vibeWidgetState.feed.children);
+    const existingByKey = new Map(existingChildren.map((child) => [child.dataset.vibeKey, child]));
+    const nextChildren = [];
+
+    items.forEach((item, index) => {
+        const itemKey = _getVibeWidgetItemDomKey(item, index);
+        const existing = existingByKey.get(itemKey);
+        const itemHtml = item.kind === 'system' ? _renderVibeSystemItem(item) : _renderVibeTurnItem(item);
+
+        if (existing) {
+            if (existing.innerHTML !== itemHtml) {
+                const replacement = _createVibeWidgetItemNode(item, itemKey);
+                if (replacement) {
+                    _vibeWidgetState.feed.replaceChild(replacement, existing);
+                    nextChildren.push(replacement);
+                }
+            } else {
+                nextChildren.push(existing);
+            }
+            return;
         }
-        return _renderVibeTurnItem(item);
-    }).join('');
+
+        const node = _createVibeWidgetItemNode(item, itemKey);
+        if (!node) return;
+        const insertBefore = _vibeWidgetState.feed.children[index] || null;
+        _vibeWidgetState.feed.insertBefore(node, insertBefore);
+        nextChildren.push(node);
+    });
+
+    const nextKeys = new Set(nextChildren.map((child) => child.dataset.vibeKey));
+    existingChildren.forEach((child) => {
+        if (!nextKeys.has(child.dataset.vibeKey)) {
+            child.remove();
+        }
+    });
 
     requestAnimationFrame(() => {
         if (!_vibeWidgetState.feed) return;

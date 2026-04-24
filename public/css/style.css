@@ -132,6 +132,25 @@ body::after {
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-secondary);
+    transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.chat-vibe-widget-status.is-hidden {
+    opacity: 0;
+    transform: scale(0.92);
+    pointer-events: none;
+    width: 0;
+    min-width: 0;
+}
+
+.chat-vibe-widget-status.is-badge {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(192, 150, 92, 0.16);
+    color: var(--accent-light);
+    letter-spacing: 0.02em;
+    font-size: 0.8rem;
+    text-transform: none;
 }
 
 .chat-vibe-widget-toggle {
@@ -145,6 +164,19 @@ body::after {
     padding: 6px 12px;
     cursor: pointer;
     transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 180ms ease, box-shadow 180ms ease;
+}
+
+.chat-vibe-widget.is-collapsed .chat-vibe-widget-head {
+    padding: 8px 10px;
+}
+
+.chat-vibe-widget.is-collapsed .chat-vibe-widget-actions {
+    gap: 8px;
+}
+
+.chat-vibe-widget.is-collapsed .chat-vibe-widget-toggle {
+    padding: 5px 10px;
+    font-size: 0.7rem;
 }
 
 .chat-vibe-widget-toggle:hover,
@@ -585,7 +617,7 @@ body::after {
 
 .chat-vibe-turn-disclosure summary {
     display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) auto;
+    grid-template-columns: 18px auto minmax(0, 1fr) auto;
     align-items: center;
     column-gap: 8px;
     row-gap: 2px;
@@ -596,6 +628,27 @@ body::after {
     font-weight: 600;
     color: var(--text-secondary);
     position: relative;
+}
+
+.chat-vibe-turn-disclosure-kicker {
+    grid-column: 2 / 3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chat-vibe-turn-disclosure-title {
+    grid-column: 3 / 4;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-vibe-turn-disclosure-meta {
+    grid-column: 4 / 5;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .chat-vibe-turn-disclosure summary::-webkit-details-marker {
