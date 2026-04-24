@@ -222,6 +222,16 @@ function getH264ProfileIdc(profileLevelId) {
     return profile.slice(0, 2);
 }
 
+function normalizeH264ProfileLevelId(offeredParams, routerParams) {
+    const offProfileIdc = getH264ProfileIdc(offeredParams?.['profile-level-id']);
+    const rcProfileIdc = getH264ProfileIdc(routerParams?.['profile-level-id']);
+    if (!offProfileIdc || !rcProfileIdc || offProfileIdc !== rcProfileIdc) return false;
+    if (routerParams?.['profile-level-id']) {
+        offeredParams['profile-level-id'] = routerParams['profile-level-id'];
+    }
+    return true;
+}
+
 function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
     if (!media || !media.type) return null;
 
@@ -293,6 +303,9 @@ function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
                 const rcProfileIdc = getH264ProfileIdc(rc.parameters?.['profile-level-id']);
                 const offProfileIdc = getH264ProfileIdc(offered.parameters?.['profile-level-id']);
                 if (rcProfileIdc && offProfileIdc && rcProfileIdc !== offProfileIdc) return false;
+                if (rcProfileIdc && offProfileIdc) {
+                    normalizeH264ProfileLevelId(offered.parameters, rc.parameters || {});
+                }
             }
             return true;
         });
