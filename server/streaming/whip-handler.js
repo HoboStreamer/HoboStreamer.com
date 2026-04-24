@@ -216,6 +216,12 @@ function extractDtlsParameters(sdpObj) {
  * Extract RTP parameters from an SDP media section.
  * Matches codecs against the Mediasoup router's capabilities.
  */
+function getH264ProfileIdc(profileLevelId) {
+    const profile = String(profileLevelId || '').trim().toLowerCase();
+    if (!/^[0-9a-f]+$/.test(profile) || profile.length < 2) return null;
+    return profile.slice(0, 2);
+}
+
 function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
     if (!media || !media.type) return null;
 
@@ -284,9 +290,9 @@ function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
             if (rc.clockRate !== offered.clockRate) return false;
             if (offered.channels && rc.channels && offered.channels !== rc.channels) return false;
             if (rc.mimeType.toLowerCase() === 'video/h264') {
-                const rcProfile = (rc.parameters?.['profile-level-id'] || '').toString().toLowerCase();
-                const offProfile = (offered.parameters?.['profile-level-id'] || '').toString().toLowerCase();
-                if (rcProfile && offProfile && rcProfile.slice(0, 4) !== offProfile.slice(0, 4)) return false;
+                const rcProfileIdc = getH264ProfileIdc(rc.parameters?.['profile-level-id']);
+                const offProfileIdc = getH264ProfileIdc(offered.parameters?.['profile-level-id']);
+                if (rcProfileIdc && offProfileIdc && rcProfileIdc !== offProfileIdc) return false;
             }
             return true;
         });
