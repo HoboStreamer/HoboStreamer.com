@@ -2329,6 +2329,8 @@ WantedBy=multi-user.target</code>
                         </div>
                     </div>
 
+                    <div class="bc-rs-control" id="bc-rs-control" style="display:none"></div>
+
                     <!-- Live controls (visible when streaming) -->
                     <div class="bc-controls" id="bc-live-section">
                         <!-- Quick Action Buttons -->
@@ -2569,6 +2571,47 @@ WantedBy=multi-user.target</code>
                             <p class="bc-call-explainer" id="bc-restream-live-hint">
                                 <i class="fa-solid fa-circle-info"></i> Manage restream destinations in the stream slot workspace. Destinations with Auto-Start will begin automatically when you go live.
                             </p>
+                        </div>
+
+                        <!-- RobotStreamer Integration -->
+                        <div class="bc-settings-group" id="bc-rs-settings-group">
+                            <div class="bc-settings-title"><i class="fa-solid fa-robot"></i> RobotStreamer</div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Enable RobotStreamer</span>
+                                <div class="bc-setting-control">
+                                    <label class="bc-toggle"><input type="checkbox" id="bc-rsEnabled"><span class="bc-toggle-slider"></span></label>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Robot ID</span>
+                                <div class="bc-setting-control"><input type="text" id="bc-rsRobotInput" class="form-input form-input-sm" placeholder="Paste robot ID or select a robot"></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Saved Token</span>
+                                <div class="bc-setting-control"><input type="password" id="bc-rsToken" class="form-input form-input-sm" autocomplete="new-password" placeholder="Paste your RobotStreamer token"></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Select Robot</span>
+                                <div class="bc-setting-control"><select id="bc-rsRobotSelect" class="form-input form-input-sm"><option value="">Validate to load your RobotStreamer streams</option></select></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Mirror Chat</span>
+                                <div class="bc-setting-control">
+                                    <label class="bc-toggle"><input type="checkbox" id="bc-rsMirrorChat"><span class="bc-toggle-slider"></span></label>
+                                </div>
+                            </div>
+                            <div class="bc-setting-row" style="gap:12px;flex-wrap:wrap">
+                                <button class="btn btn-small btn-outline" onclick="validateRobotStreamerIntegration()"><i class="fa-solid fa-check"></i> Validate</button>
+                                <button class="btn btn-small btn-primary" onclick="saveRobotStreamerIntegration()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Status</span>
+                                <div class="bc-setting-control"><span id="bc-rsStatus" class="muted">Paste your RobotStreamer token, validate a robot, then go live.</span></div>
+                            </div>
+                            <div class="bc-setting-row">
+                                <span class="bc-setting-label">Live Status</span>
+                                <div class="bc-setting-control"><span id="bc-rsLiveStatus" class="muted">Not configured</span></div>
+                            </div>
                         </div>
 
                         <!-- Video / Broadcast Settings -->
@@ -3446,7 +3489,7 @@ const { token, user } = await res.json();
 <tr><td>PUT</td><td>/api/streams/:id</td><td>Yes</td><td>Update title/description/category/tags/nsfw</td></tr>
 <tr><td>DELETE</td><td>/api/streams/:id</td><td>Yes</td><td>End stream</td></tr>
 <tr><td>GET</td><td>/api/streams/:id/endpoint</td><td>Yes</td><td>Get WHIP URL, RTMP key, ffmpeg commands</td></tr>
-<tr><td>POST</td><td>/api/streams/:id/heartbeat</td><td>Yes</td><td>Keep stream alive — call every 30s</td></tr>
+<tr><td>POST</td><td>/api/streams/:id/heartbeat</td><td>Yes</td><td>Fallback keepalive while ingest is starting; active feed is authoritative</td></tr>
 <tr><td>GET</td><td>/api/streams/channel/:username</td><td>No</td><td>Full channel page data (streams, VODs, clips, panels)</td></tr>
 <tr><td>GET</td><td>/api/streams/channel/:username/live</td><td>No</td><td>Lightweight live status for fast player init</td></tr>
 <tr><td>PUT</td><td>/api/streams/channel</td><td>Yes</td><td>Update own channel settings</td></tr>
@@ -3474,7 +3517,8 @@ const endpoint = await fetch(`https://hobostreamer.com/api/streams/${stream.id}/
 }).then(r => r.json());
 
 console.log(endpoint.whip_url);  // POST SDP offer here
-// Remember to call /heartbeat every 30s to keep stream alive
+// Active ingest activity is the authoritative live signal. Call /heartbeat every
+// 30s only as a fallback while the ingest path is still coming online.
 </code></pre>
 
 </div>

@@ -2348,7 +2348,9 @@ function startHeartbeat(streamId) {
                 // Server might be restarting — retry several times before giving up.
                 // During a deploy the server is briefly unavailable, and the stale-stream
                 // cleanup could end our stream before our heartbeat comes through.
-                // Give it 5 retries (2.5 minutes at 30s intervals) before cleaning up.
+                // Actual ingest activity is still authoritative; this heartbeat is a
+                // resilience fallback to keep the stream record alive during browser-side
+                // reconnects and setup delays.
                 ss._heartbeatFailCount = (ss._heartbeatFailCount || 0) + 1;
                 if (ss._heartbeatFailCount < 5) {
                     console.warn(`[Heartbeat] Stream ${streamId} returned ${res.status} — retry ${ss._heartbeatFailCount}/5`);

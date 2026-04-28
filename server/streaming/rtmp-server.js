@@ -10,6 +10,8 @@ const db = require('../db/database');
 const recorder = require('../vod/recorder');
 const { notifyDiscordGoLive } = require('../integrations/discord-webhook');
 
+const RTMP_HEARTBEAT_INTERVAL_MS = 30000; // Refresh live stream timestamp while RTMP session is active
+
 let NodeMediaServer;
 try {
     NodeMediaServer = require('node-media-server');
@@ -138,7 +140,18 @@ class RTMPServer extends EventEmitter {
             // Ensure heartbeat is always set (for stale-stream cleanup)
             db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
 
-            this.activeStreams.set(streamKey, { streamId, userId: resolvedUser.id, sessionId: id, connectedAt: new Date().toISOString() });
+            const heartbeatTimer = setInterval(() => {
+                db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
+                console.log(`[RTMP] Heartbeat refreshed for stream ${streamId}`);
+            }, RTMP_HEARTBEAT_INTERVAL_MS);
+
+            this.activeStreams.set(streamKey, {
+                streamId,
+                userId: resolvedUser.id,
+                sessionId: id,
+                connectedAt: new Date().toISOString(),
+                heartbeatTimer,
+            });
             console.log(`[RTMP] Stream started: ${resolvedUser.username} (stream ${streamId})`);
 
             // Emit event for restream auto-start
@@ -170,10 +183,17 @@ class RTMPServer extends EventEmitter {
                 // Emit event for restream cleanup
                 this.emit('unpublish', { streamId: info.streamId, userId: info.userId, streamKey });
 
+                if (info.heartbeatTimer) {
+                    clearInterval(info.heartbeatTimer);
+                    info.heartbeatTimer = null;
+                }
+
                 db.endStream(info.streamId);
                 try { db.computeAndCacheStreamAnalytics(info.streamId); } catch {}
                 this.activeStreams.delete(streamKey);
                 console.log(`[RTMP] Stream ended: ${streamKey} (stream ${info.streamId})`);
+            } else {
+                console.log(`[RTMP] donePublish received for unknown stream key: ${streamKey}`);
             }
         });
 
@@ -188,6 +208,7 @@ class RTMPServer extends EventEmitter {
         return Array.from(this.activeStreams.entries()).map(([key, info]) => ({
             streamKey: key,
             ...info,
+            heartbeatActive: !!info.heartbeatTimer,
         }));
     }
 
@@ -208,7 +229,12 @@ class RTMPServer extends EventEmitter {
     getStatus(streamKey) {
         const info = this.activeStreams.get(streamKey);
         if (!info) return { receiving: false };
-        return { receiving: true, connected_at: info.connectedAt };
+        return {
+            receiving: true,
+            streamId: info.streamId,
+            connected_at: info.connectedAt,
+            heartbeatActive: !!info.heartbeatTimer,
+        };
     }
 
     stop() {

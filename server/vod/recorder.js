@@ -464,8 +464,8 @@ class StreamRecorder {
             '-thread_queue_size', '2048',
             '-analyzeduration', '10000000',   // 10s — gives ICE time to establish before giving up
             '-probesize', '5000000',
-            '-use_wallclock_as_timestamps', '1',
             '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
+            '-avoid_negative_ts', 'make_zero',
             '-err_detect', 'ignore_err',
             '-i', sdpPath,
             '-c:v', 'libvpx',
@@ -473,7 +473,7 @@ class StreamRecorder {
             '-crf', '18',
             '-deadline', 'realtime',
             '-cpu-used', '4',
-            ...(audioConsumer ? ['-c:a', 'libvorbis', '-b:a', '128k'] : ['-an']),
+            ...(audioConsumer ? ['-c:a', 'libopus', '-b:a', '128k', '-application', 'audio'] : ['-an']),
             '-f', 'webm',
             filePath,
         ];

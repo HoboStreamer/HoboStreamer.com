@@ -373,10 +373,11 @@ router.get('/global/history', optionalAuth, (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit || '500'), 500);
         const before = req.query.before;
+        const channelUsername = String(req.query.username || '').trim();
 
         let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
                           u.username AS core_username,
-                          s.id AS sid, su.username AS stream_username
+                          su.username AS stream_channel
                    FROM chat_messages cm
                    LEFT JOIN users u ON cm.user_id = u.id
                    LEFT JOIN streams s ON cm.stream_id = s.id
@@ -384,6 +385,11 @@ router.get('/global/history', optionalAuth, (req, res) => {
                    WHERE cm.is_deleted = 0 AND cm.message_type IN ('chat', 'system')
                      AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
         const params = [];
+
+        if (channelUsername) {
+            sql += ` AND cm.stream_id IS NOT NULL AND LOWER(su.username) = LOWER(?)`;
+            params.push(channelUsername);
+        }
 
         if (before) {
             sql += ` AND cm.timestamp < ?`;

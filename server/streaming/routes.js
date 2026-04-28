@@ -1597,7 +1597,11 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
     }
 });
 
-// ── Stream Heartbeat ─────────────────────────────────────────
+// ── Stream Heartbeat (fallback keepalive) ───────────────────────
+// Most live streams are kept alive by actual ingest activity (RTMP session,
+// active WHIP session, or connected WebRTC producer). This route is a
+// fallback for cases where the browser must keep the stream record fresh
+// while the ingest path is still coming online.
 router.post('/:id/heartbeat', requireAuth, (req, res) => {
     try {
         const stream = db.getStreamById(req.params.id);

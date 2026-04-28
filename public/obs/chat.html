@@ -317,6 +317,9 @@ html, body {
     } else if (pathParts[0] === 'obs' && pathParts[1] === 'chat') {
         username = decodeURIComponent(pathParts[2] || '');
     }
+    username = username.trim();
+    const lookupUsername = username.toLowerCase();
+    const isGlobalOverlay = pathParts[0] === 'overlay' && pathParts[1] === 'chat' && !slotParam;
     if (!username) {
         document.getElementById('chat-container').innerHTML =
             '<div class="msg system">No username specified. Use /overlay/chat/yourusername</div>';
@@ -444,6 +447,14 @@ html, body {
 
     // ── Render message ─────────────────────────────────────────
     function addMessage(msg) {
+        if (isGlobalOverlay && msg.type === 'system') {
+            return;
+        }
+        if (msg.type === 'chat' && isGlobalOverlay) {
+            if (!msg.stream_channel || msg.stream_channel.toLowerCase() !== lookupUsername) {
+                return;
+            }
+        }
         if (msg.type === 'system') {
             const el = document.createElement('div');
             el.className = 'msg system';
@@ -537,7 +548,7 @@ html, body {
     async function resolveStream() {
         setStatus('Looking up channel...');
         try {
-            const resp = await fetch(`/api/streams/channel/${encodeURIComponent(username)}`);
+            const resp = await fetch(`/api/streams/channel/${encodeURIComponent(lookupUsername)}`);
             if (!resp.ok) {
                 setStatus(resp.status === 404 ? 'Channel not found' : 'Error loading channel');
                 return false;
@@ -549,6 +560,12 @@ html, body {
             const allStreams = [];
             if (data.stream && data.stream.id) allStreams.push(data.stream);
             if (data.streams) allStreams.push(...data.streams);
+
+            if (isGlobalOverlay) {
+                setStatus('Channel found — loading chat...');
+                streamId = null;
+                return true;
+            }
 
             if (allStreams.length > 0) {
                 if (slotParam) {
@@ -600,7 +617,7 @@ html, body {
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         const host = location.hostname;
         const port = location.port || (proto === 'wss' ? '443' : '80');
-        const wsUrl = `${proto}://${host}:${port}/ws/chat?stream=${streamId}`;
+        const wsUrl = `${proto}://${host}:${port}/ws/chat${streamId ? `?stream=${streamId}` : ''}`;
 
         ws = new WebSocket(wsUrl);
         intentionalClose = false;
@@ -649,9 +666,12 @@ html, body {
 
     // ── Load chat history ──────────────────────────────────────
     async function loadHistory() {
-        if (!streamId) return;
+        const url = isGlobalOverlay
+            ? `/api/chat/global/history?username=${encodeURIComponent(lookupUsername)}&limit=${maxMsgs}`
+            : `/api/chat/${streamId}/history?limit=30`;
+        if (!isGlobalOverlay && !streamId) return;
         try {
-            const resp = await fetch(`/api/chat/${streamId}/history?limit=30`);
+            const resp = await fetch(url);
             if (!resp.ok) return;
             const data = await resp.json();
             const messages = data.messages || data || [];

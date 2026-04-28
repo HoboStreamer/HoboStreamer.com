@@ -1697,7 +1697,7 @@
 }
 
 /* ── Responsive: Intermediate — stack before chat squeezes out main ─ */
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
     .broadcast-layout {
         flex-direction: column;
         height: auto;
@@ -1763,6 +1763,32 @@
         gap: 10px;
         padding: 10px max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left));
     }
+
+    #bc-chat-sidebar {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        width: 100%; height: 55vh;
+        max-height: 55vh;
+        max-height: 55dvh;
+        border-top: 1px solid rgba(255,255,255,0.06);
+        border-left: none;
+        background: var(--bg-secondary);
+        z-index: 1002;
+        transform: translateY(100%);
+        transition: transform 0.3s ease;
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -8px 32px rgba(0,0,0,0.15);
+    }
+    #bc-chat-sidebar.mobile-chat-open {
+        transform: translateY(0);
+    }
+    #bc-chat-sidebar .chat-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: var(--bg-secondary);
+    }
+    body.mobile-chat-visible .bc-mobile-chat-fab { display: none !important; }
 
     .bc-controls {
         padding: 12px max(12px, env(safe-area-inset-right)) calc(22px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));

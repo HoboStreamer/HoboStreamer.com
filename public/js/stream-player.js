@@ -2149,8 +2149,13 @@ function initHLS(endpoint, stream) {
                 hint: 'If this never starts, the HLS relay may not be producing segments yet.',
                 showDiagnostics: true,
             });
+            video.playsInline = true;
+            video.autoplay = true;
+            video.muted = true;
             video.src = hlsUrl;
-            video.play().catch(() => {});
+            video.play().catch(() => {
+                showUnmuteOverlay(video);
+            });
             return;
         }
 
@@ -2174,7 +2179,12 @@ function initHLS(endpoint, stream) {
                     hint: 'If buffering never finishes, the RTMP/HLS relay may not be producing clean segments yet.',
                     showDiagnostics: true,
                 });
-                video.play().catch(() => {});
+                video.playsInline = true;
+                video.autoplay = true;
+                video.muted = true;
+                video.play().catch(() => {
+                    showUnmuteOverlay(video);
+                });
             });
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
@@ -2227,7 +2237,12 @@ function initHLS(endpoint, stream) {
                     hint: 'If this never resolves, the RTMP/HLS relay may not be producing healthy live segments yet.',
                     showDiagnostics: true,
                 });
-                video.play().catch(() => {});
+                video.playsInline = true;
+                video.autoplay = true;
+                video.muted = true;
+                video.play().catch(() => {
+                    showUnmuteOverlay(video);
+                });
             });
             hls.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
@@ -2294,7 +2309,12 @@ function tryFlvPlayer(flvUrl, video) {
             hint: 'If this never starts, the backup relay may not be producing usable frames yet.',
             showDiagnostics: true,
         });
-        flvPlayer.play();
+        video.playsInline = true;
+        video.autoplay = true;
+        video.muted = true;
+        flvPlayer.play().catch(() => {
+            showUnmuteOverlay(video);
+        });
         player = { flv: flvPlayer, video };
     } else {
         loadExternalScriptOnce('https://cdn.jsdelivr.net/npm/flv.js@latest').then(() => {
@@ -2324,7 +2344,12 @@ function tryFlvPlayer(flvUrl, video) {
                     hint: 'If this never starts, the backup relay may not be producing usable frames yet.',
                     showDiagnostics: true,
                 });
-                flvPlayer.play();
+                video.playsInline = true;
+                video.autoplay = true;
+                video.muted = true;
+                flvPlayer.play().catch(() => {
+                    showUnmuteOverlay(video);
+                });
                 player = { flv: flvPlayer, video };
             } else {
                 showStreamError('Your browser does not support FLV playback');

@@ -5269,7 +5269,7 @@ let _mobileChatOpen = false;
 let _mobileChatUnread = 0;
 
 function isMobileChatLayout() {
-    return window.matchMedia('(max-width: 768px)').matches;
+    return window.matchMedia('(max-width: 1180px)').matches;
 }
 
 function toggleMobileChat() {

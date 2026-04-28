@@ -152,6 +152,34 @@ function getAllowedOrigins() {
 
 let allowedOrigins = getAllowedOrigins();
 
+function getStreamKey(stream) {
+    return stream.managed_stream_key || db.getUserById(stream.user_id)?.stream_key;
+}
+
+function webrtcStreamHasActiveProducer(streamId) {
+    const roomId = `stream-${streamId}`;
+    const producers = webrtcSFU.getProducers(roomId);
+    return producers.some((producer) => {
+        const isConnected = ['connected', 'completed'].includes(producer.dtlsState) && ['connected', 'completed'].includes(producer.iceState);
+        return !producer.paused && isConnected;
+    });
+}
+
+function hasActiveLiveFeed(stream) {
+    if (!stream) return false;
+    const streamKey = getStreamKey(stream);
+    if (stream.protocol === 'rtmp') {
+        return !!streamKey && rtmpServer.isReceiving(streamKey);
+    }
+    if (stream.protocol === 'whip') {
+        return whipHandler.hasActiveSessionsForStream(stream.id);
+    }
+    if (['webrtc', 'browser', 'screen'].includes(stream.protocol)) {
+        return broadcastServer.isBroadcasterConnected(stream.id) || webrtcStreamHasActiveProducer(stream.id);
+    }
+    return false;
+}
+
 // ── Middleware ────────────────────────────────────────────────
 app.set('trust proxy', 2); // Two hops: Cloudflare → nginx → Node
 
@@ -936,8 +964,8 @@ async function start() {
                  )`
             );
             for (const stream of staleStreams) {
-                if (stream.protocol === 'webrtc' && whipHandler.hasActiveSessionsForStream(stream.id)) {
-                    console.log(`[Heartbeat] Skipping stale cleanup for WHIP stream ${stream.id} because active WHIP session exists`);
+                if (hasActiveLiveFeed(stream)) {
+                    console.log(`[Heartbeat] Skipping stale cleanup for stream ${stream.id} because active ingest feed exists (${stream.protocol})`);
                     continue;
                 }
                 console.log(`[Heartbeat] Ending stale stream ${stream.id} (no heartbeat for 5+ minutes)`);
