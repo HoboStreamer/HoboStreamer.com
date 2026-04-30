@@ -169,10 +169,14 @@ async function remuxExistingFiles() {
 // Run once at startup (non-blocking) — skips files already remuxed
 const REMUX_FLAG = path.resolve(config.vod.path, '.remux-done');
 if (!fs.existsSync(REMUX_FLAG)) {
-    remuxExistingFiles().then(() => {
-        try { fs.writeFileSync(REMUX_FLAG, new Date().toISOString()); } catch {}
-    }).catch(() => {});
+    remuxExistingFiles()
+        .then(() => {
+            try { fs.writeFileSync(REMUX_FLAG, new Date().toISOString()); } catch {}
+        })
+        .catch(() => {});
 }
+
+repairZeroDurationVods().catch(() => {});
 
 /**
  * Remux a WebM file with ffmpeg to add proper seek metadata (Cues element).
@@ -244,6 +248,83 @@ function probeStartTime(filePath) {
         probe.on('error', () => resolve(0));
         setTimeout(() => { try { probe.kill(); } catch {} resolve(0); }, 5000);
     });
+}
+
+function probeVodDuration(filePath) {
+    return new Promise((resolve) => {
+        const probe = spawn('ffprobe', [
+            '-v', 'quiet', '-print_format', 'json',
+            '-show_format', filePath,
+        ]);
+        let out = '';
+        probe.stdout.on('data', d => out += d);
+        probe.on('close', () => {
+            try {
+                const info = JSON.parse(out);
+                const duration = Math.round(parseFloat(info.format?.duration || '0'));
+                resolve(duration > 0 ? duration : 0);
+            } catch { resolve(0); }
+        });
+        probe.on('error', () => resolve(0));
+        setTimeout(() => { try { probe.kill(); } catch {} resolve(0); }, 10000);
+    });
+}
+
+function probeVodInfo(filePath) {
+    return new Promise((resolve) => {
+        const probe = spawn('ffprobe', [
+            '-v', 'quiet', '-print_format', 'json',
+            '-show_format', '-show_streams',
+            filePath,
+        ]);
+        let out = '';
+        probe.stdout.on('data', d => out += d);
+        probe.on('close', () => {
+            try {
+                const info = JSON.parse(out);
+                const duration = Math.round(parseFloat(info.format?.duration || '0'));
+                resolve({
+                    duration: duration > 0 ? duration : 0,
+                    format: info.format || null,
+                    streams: info.streams || [],
+                });
+            } catch { resolve({ duration: 0, format: null, streams: [] }); }
+        });
+        probe.on('error', () => resolve({ duration: 0, format: null, streams: [] }));
+        setTimeout(() => { try { probe.kill(); } catch {} resolve({ duration: 0, format: null, streams: [] }); }, 10000);
+    });
+}
+
+function getFileSizeSafe(filePath) {
+    try { return filePath && fs.existsSync(filePath) ? fs.statSync(filePath).size : 0; } catch { return 0; }
+}
+
+async function repairZeroDurationVods() {
+    const vods = db.all(
+        `SELECT id, file_path FROM vods WHERE COALESCE(is_recording, 0) = 0 AND duration_seconds <= 0`
+    );
+    for (const vod of vods) {
+        if (!vod.file_path || !fs.existsSync(vod.file_path)) {
+            console.log(`[VOD] Removing stale zero-duration vod ${vod.id}: missing file`);
+            db.run('DELETE FROM vods WHERE id = ?', [vod.id]);
+            continue;
+        }
+
+        const duration = await probeVodDuration(vod.file_path);
+        if (duration > 0) {
+            const fileSize = getFileSizeSafe(vod.file_path);
+            db.run('UPDATE vods SET duration_seconds = ?, file_size = ?, health_status = ?, probe_duration_seconds = ? WHERE id = ?', [duration, fileSize, 'duration_repaired', duration, vod.id]);
+            await remuxForSeeking(vod.file_path).catch(() => {});
+            console.log(`[VOD] Repaired zero-duration vod ${vod.id}: duration ${duration}s`);
+            continue;
+        }
+
+        console.log(`[VOD] Marking corrupted zero-duration vod ${vod.id} as corrupt: ${path.basename(vod.file_path)}`);
+        db.run(
+            `UPDATE vods SET health_status = ?, health_issues_json = ?, last_health_scan_at = datetime('now'), quarantined_at = datetime('now'), is_public = 0 WHERE id = ?`,
+            ['corrupt', JSON.stringify(['zero-duration-probe-failed']), vod.id]
+        );
+    }
 }
 
 /**
@@ -414,10 +495,6 @@ const activeRecordings = new Map();
 function makeSegmentPath(filePath, segmentId) {
     const base = filePath.replace(/\.webm$/, '');
     return `${base}.seg-${segmentId}-${Date.now()}.webm`;
-}
-
-function getFileSizeSafe(filePath) {
-    try { return filePath && fs.existsSync(filePath) ? fs.statSync(filePath).size : 0; } catch { return 0; }
 }
 
 function getPendingSegmentFiles(filePath) {
@@ -741,32 +818,29 @@ async function _doFinalize(streamId) {
 
     // Probe actual duration with ffprobe
     let durationSeconds = Math.round((Date.now() - startTime) / 1000);
+    let probeFormatJson = JSON.stringify({});
     try {
-        durationSeconds = await new Promise((resolve) => {
-            const probe = spawn('ffprobe', [
-                '-v', 'quiet', '-print_format', 'json', '-show_format', filePath,
-            ]);
-            let out = '';
-            probe.stdout.on('data', d => out += d);
-            probe.on('close', () => {
-                try {
-                    const info = JSON.parse(out);
-                    const dur = Math.round(parseFloat(info.format?.duration || '0'));
-                    resolve(dur > 0 ? dur : durationSeconds);
-                } catch { resolve(durationSeconds); }
-            });
-            probe.on('error', () => resolve(durationSeconds));
-            setTimeout(() => { try { probe.kill(); } catch {} resolve(durationSeconds); }, 10000);
-        });
-    } catch { /* keep estimate */ }
+        const probeInfo = await probeVodInfo(filePath);
+        if (probeInfo.duration > 0) durationSeconds = probeInfo.duration;
+        probeFormatJson = JSON.stringify(probeInfo.format || {});
+    } catch (probeErr) {
+        console.warn(`[VOD] ffprobe failed for vod ${vodId}:`, probeErr.message);
+    }
 
-    // Auto-delete VODs that are too short to be useful (accidental go-lives, test streams, etc.)
+    if (rec?._ffmpegCorrupted) {
+        console.warn(`[VOD] Finalized VOD ${vodId} (stream ${streamId}) marked corrupt by FFmpeg diagnostics; quarantining without deletion`);
+        db.run(`UPDATE vods SET is_recording = 0, health_status = ?, health_issues_json = ?, probe_duration_seconds = ?, probe_format_json = ?, last_health_scan_at = datetime('now'), quarantined_at = datetime('now'), is_public = 0 WHERE id = ?`,
+            ['corrupt', JSON.stringify(['ffmpeg-corruption-detected']), durationSeconds > 0 ? durationSeconds : 0, JSON.stringify({ format: 'unknown' }), vodId]);
+        return db.getVodById(vodId);
+    }
+
+    // Short recordings should be quarantined for review instead of deleted.
     const MIN_VOD_SECONDS = 10;
     if (durationSeconds < MIN_VOD_SECONDS) {
-        console.log(`[VOD] Auto-deleting vod ${vodId} (stream ${streamId}): duration ${durationSeconds}s is under ${MIN_VOD_SECONDS}s minimum`);
-        try { fs.unlinkSync(filePath); } catch { /* already gone */ }
-        db.run('DELETE FROM vods WHERE id = ?', [vodId]);
-        return null;
+        console.log(`[VOD] Quarantining short vod ${vodId} (stream ${streamId}): duration ${durationSeconds}s`);
+        db.run(`UPDATE vods SET is_recording = 0, health_status = ?, health_issues_json = ?, probe_duration_seconds = ?, probe_format_json = ?, last_health_scan_at = datetime('now'), quarantined_at = datetime('now'), is_public = 0 WHERE id = ?`,
+            ['needs_review', JSON.stringify(['short_duration']), durationSeconds > 0 ? durationSeconds : 0, JSON.stringify({ format: 'unknown' }), vodId]);
+        return db.getVodById(vodId);
     }
 
     let stat;
@@ -777,8 +851,8 @@ async function _doFinalize(streamId) {
         db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
         return null;
     }
-    db.run('UPDATE vods SET is_recording = 0, duration_seconds = ?, file_size = ? WHERE id = ?',
-        [durationSeconds, stat.size, vodId]);
+    db.run('UPDATE vods SET is_recording = 0, duration_seconds = ?, file_size = ?, probe_duration_seconds = ?, probe_format_json = ?, health_status = ? WHERE id = ?',
+        [durationSeconds, stat.size, durationSeconds, probeFormatJson, 'ok', vodId]);
 
     console.log(`[VOD] Finalized: vod ${vodId} (stream ${streamId}), ${durationSeconds}s, ${(stat.size / 1024 / 1024).toFixed(1)}MB`);
 
@@ -972,13 +1046,23 @@ router.post('/bulk-delete-old', requireAuth, (req, res) => {
 });
 
 // ── Get VOD Details ──────────────────────────────────────────
-router.get('/:id', optionalAuth, (req, res) => {
+router.get('/:id', optionalAuth, async (req, res) => {
     try {
         // Skip non-numeric IDs (avoid matching 'mine', 'file', etc.)
         if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ error: 'VOD not found' });
 
-        const vod = db.getVodById(req.params.id);
+        let vod = db.getVodById(req.params.id);
         if (!vod) return res.status(404).json({ error: 'VOD not found' });
+
+        if (!vod.is_recording && (!vod.duration_seconds || vod.duration_seconds <= 0) && vod.file_path && fs.existsSync(vod.file_path)) {
+            const duration = await probeVodDuration(vod.file_path);
+            if (duration > 0) {
+                const fileSize = getFileSizeSafe(vod.file_path);
+                db.run('UPDATE vods SET duration_seconds = ?, file_size = ? WHERE id = ?', [duration, fileSize, vod.id]);
+                vod.duration_seconds = duration;
+                vod.file_size = fileSize;
+            }
+        }
 
         // Enrich with stream details for chat replay
         if (vod.stream_id) {

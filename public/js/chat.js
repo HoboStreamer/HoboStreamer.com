@@ -180,10 +180,10 @@ let chatSlurPolicy = {
 //   nigga, niggas, niggaz, nigger, niggers, niggaz
 // The second pattern catches the "nicker/knicker" alternate-root family.
 const CHAT_CORE_SLUR_CATEGORIES = [
-    { key: 'n_word',      label: 'N-word and variants',        patterns: ['\\bn+i+g+g+(?:a+[sz]?|e+r+[sz]?)\\b', '\\b[kn]*n+h?i+c?k+e+r+s?\\b'] },
-    { key: 'antisemitic', label: 'Antisemitic slurs',          patterns: ['\\bk+\\s*y+\\s*k+\\s*e+\\b', '\\bj+\\s*e+\\s*w+\\s*s?\\s+w+\\s*i+\\s*l+\\s*l+\\s+n+\\s*o+\\s*t+\\s+r+\\s*e+\\s*p+\\s*l+\\s*a+\\s*c+\\s*e+\\b'] },
-    { key: 'homophobic',  label: 'Homophobic slurs',           patterns: ['\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?[sz]?\\b'] },
-    { key: 'racial',      label: 'Racial slurs (spic, chink)', patterns: ['\\bs+\\s*p+\\s*i+\\s*c+[sz]?\\b', '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+[sz]?\\b'] },
+    { key: 'n_word', label: 'N-word and variants', patterns: ['\\bn+i+g+g+(?:a+[sz]?|e+r+[sz]?)\\b', '\\b[kn]*n+h?i+c?k+e+r+s?\\b'] },
+    { key: 'antisemitic', label: 'Antisemitic slurs', patterns: ['\\bk+\\s*y+\\s*k+\\s*e+\\b', '\\bj+\\s*e+\\s*w+\\s*s?\\s+w+\\s*i+\\s*l+\\s*l+\\s+n+\\s*o+\\s*t+\\s+r+\\s*e+\\s*p+\\s*l+\\s*a+\\s*c+\\s*e+\\b'] },
+    { key: 'homophobic', label: 'Homophobic slurs', patterns: ['\\bf+\\s*a+\\s*g+(?:o+\\s*t+)?[sz]?\\b'] },
+    { key: 'racial', label: 'Racial slurs (spic, chink)', patterns: ['\\bs+\\s*p+\\s*i+\\s*c+[sz]?\\b', '\\bc+\\s*h+\\s*i+\\s*n+\\s*k+[sz]?\\b'] },
 ];
 for (const cat of CHAT_CORE_SLUR_CATEGORIES) {
     cat.compiled = cat.patterns.map((src) => { try { return new RegExp(src, 'i'); } catch { return null; } }).filter(Boolean);
@@ -221,7 +221,7 @@ function loadChatSettings() {
 }
 function saveChatSettings() {
     chatSettings.autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
-    try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch {}
+    try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch { }
     applyChatSettings();
     // Debounced push to server
     _debounceSyncSettingsToServer();
@@ -237,7 +237,7 @@ function _syncSettingsFromServer() {
                 // Server wins on conflicts
                 chatSettings = { ...CHAT_SETTINGS_DEFAULTS, ...chatSettings, ...data.chatSettings };
                 chatSettings.autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
-                try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch {}
+                try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch { }
                 applyChatSettings();
                 syncSettingsPanelUI();
                 syncTTSToggleButtons();
@@ -266,7 +266,7 @@ function _vcEnsureAudioContext() {
         try { _vcAudioCtx = new Ctx(); } catch { return null; }
     }
     if (_vcAudioCtx.state === 'suspended') {
-        _vcAudioCtx.resume().catch(() => {});
+        _vcAudioCtx.resume().catch(() => { });
     }
     return _vcAudioCtx;
 }
@@ -1046,7 +1046,7 @@ function _ensureVibeWidgetRefreshTimer() {
     if (_vibeWidgetState.refreshTimer) return;
     _vibeWidgetState.refreshTimer = setInterval(() => {
         if (!_vibeWidgetState.key || document.hidden) return;
-        refreshVibeWidgetFeed().catch(() => {});
+        refreshVibeWidgetFeed().catch(() => { });
     }, VIBE_WIDGET_REFRESH_MS);
 }
 
@@ -1064,9 +1064,9 @@ function _normalizeVibeDisplayText(value) {
     return String(value || '')
         .replace(/\r/g, ' ')
         .replace(/`+/g, '')
-    .replace(/\binlineReference\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, 'reference')
+        .replace(/\binlineReference\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, 'reference')
         .replace(/\s*#{1,6}\s*/g, ' ')
-    .replace(/\s+([.,;:!?])/g, '$1')
+        .replace(/\s+([.,;:!?])/g, '$1')
         .replace(/\s+/g, ' ')
         .trim();
 }
@@ -2121,9 +2121,9 @@ function initChat(streamId) {
             const needsHydrate = chatWs.readyState === WebSocket.OPEN && (!messages || !messages.children.length);
             chatRenderTargetId = nextTargetId;
             if (targetChanged || needsHydrate) {
-                hydrateActiveChatHistory(streamId, { clear: true }).catch(() => {});
+                hydrateActiveChatHistory(streamId, { clear: true }).catch(() => { });
             }
-            refreshVibeWidgetFeed().catch(() => {});
+            refreshVibeWidgetFeed().catch(() => { });
             applyChatSettings();
             return;
         }
@@ -2131,7 +2131,7 @@ function initChat(streamId) {
 
     // Reclaim background broadcast WS if it's connected to the same stream
     if (_bgBroadcastWs && _bgBroadcastWs.readyState === WebSocket.OPEN && _bgBroadcastStreamId === streamId) {
-        refreshVibeWidgetFeed().catch(() => {});
+        refreshVibeWidgetFeed().catch(() => { });
         destroyChat(); // close any existing foreground chat
         chatWs = _bgBroadcastWs;
         chatStreamId = _bgBroadcastStreamId;
@@ -2155,7 +2155,7 @@ function initChat(streamId) {
         };
         chatWs.onerror = () => { addSystemMessage('Chat connection error'); };
         // Load history and apply settings
-        hydrateActiveChatHistory(streamId, { clear: true }).catch(() => {});
+        hydrateActiveChatHistory(streamId, { clear: true }).catch(() => { });
         applyChatSettings();
         return;
     }
@@ -2163,7 +2163,7 @@ function initChat(streamId) {
     destroyChat();
     chatStreamId = streamId;
     chatRenderTargetId = nextTargetId;
-    refreshVibeWidgetFeed().catch(() => {});
+    refreshVibeWidgetFeed().catch(() => { });
 
     const host = window.location.hostname;
     const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
@@ -2230,7 +2230,7 @@ function initChat(streamId) {
     };
 
     // Load history
-    hydrateActiveChatHistory(streamId).catch(() => {});
+    hydrateActiveChatHistory(streamId).catch(() => { });
 
     // Apply persisted settings to DOM
     applyChatSettings();
@@ -2250,7 +2250,7 @@ function initChat(streamId) {
                 _hideChatNewMessagesIndicator();
             } else {
                 _chatUserScrolledUp = true;
-    }
+            }
         }, { passive: true });
     }
 }
@@ -2283,7 +2283,7 @@ function _reconnectChatWs(streamId) {
     _chatIsReconnecting = true;
     // Close stale WS if any
     if (chatWs) {
-        try { chatWs.onclose = null; chatWs.onerror = null; chatWs.close(); } catch {}
+        try { chatWs.onclose = null; chatWs.onerror = null; chatWs.close(); } catch { }
         chatWs = null;
     }
     chatStreamId = streamId;
@@ -2321,7 +2321,7 @@ function _reconnectChatWs(streamId) {
                 ws._hobotoolsAuthenticated = !!msg.authenticated;
             }
             handleChatMessage(msg);
-        } catch {}
+        } catch { }
     };
 
     ws.onerror = () => {
@@ -2367,7 +2367,7 @@ function destroyChat(forceClose = false) {
             _bgBroadcastWs = null;
             _bgBroadcastStreamId = null;
         };
-        _bgBroadcastWs.onerror = () => {};
+        _bgBroadcastWs.onerror = () => { };
         chatWs = null;
         chatStreamId = null;
     } else {
@@ -2382,7 +2382,7 @@ function destroyChat(forceClose = false) {
     _fullscreenChatRecent = [];
     // Clean up stale background WS (disconnected while in bg)
     if (_bgBroadcastWs && _bgBroadcastWs.readyState !== WebSocket.OPEN) {
-        try { _bgBroadcastWs.close(); } catch {}
+        try { _bgBroadcastWs.close(); } catch { }
         _bgBroadcastWs = null;
         _bgBroadcastStreamId = null;
     }
@@ -2427,7 +2427,7 @@ function _handleBgBroadcastMessage(msg) {
  */
 function destroyBgBroadcastChat() {
     if (_bgBroadcastWs) {
-        try { _bgBroadcastWs.close(); } catch {}
+        try { _bgBroadcastWs.close(); } catch { }
         _bgBroadcastWs = null;
         _bgBroadcastStreamId = null;
     }
@@ -2492,7 +2492,7 @@ function handleChatMessage(msg) {
                                 addSystemMessage('Session expired. Please log in again.');
                                 if (typeof onAuthChange === 'function') onAuthChange();
                             }
-                        }).catch(() => {});
+                        }).catch(() => { });
                     }
                 } else {
                     addSystemMessage(`Chatting as ${msg.username}`);
@@ -2824,7 +2824,7 @@ function addChatMessage(msg) {
     // Avatar (respects showAvatars setting via CSS class on root, but still render for toggle)
     const avatarHtml = msg.avatar_url
         ? `<img class="chat-avatar" src="${esc(msg.avatar_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
-          + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`
+        + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`
         : `<span class="chat-avatar-letter" style="background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`;
 
     const userId = esc(String(msg.user_id || ''));
@@ -2958,7 +2958,7 @@ function getChatAvatarHTML(msg) {
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
     return msg.avatar_url
         ? `<img class="chat-avatar" src="${esc(msg.avatar_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
-          + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`
+        + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`
         : `<span class="chat-avatar-letter" style="background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`;
 }
 
@@ -3199,19 +3199,28 @@ function compileRegexRules(rules, { forceInsensitive = true } = {}) {
     return compiled;
 }
 
-function messageHitsCoreSlurPolicy(text, disabledCategories = []) {
+function getSlurPatternCandidates(text) {
     const normalized = normalizeSlurPatternText(text);
-    if (!normalized) return false;
+    if (!normalized) return [];
+    return [normalized, normalized.replace(/\s+/g, '')];
+}
+
+function messageHitsCoreSlurPolicy(text, disabledCategories = []) {
+    const candidates = getSlurPatternCandidates(text);
+    if (!candidates.length) return false;
     const disabled = new Set(disabledCategories);
-    return CHAT_CORE_SLUR_CATEGORIES.some((cat) => !disabled.has(cat.key) && cat.compiled.some((pat) => pat.test(normalized)));
+    return CHAT_CORE_SLUR_CATEGORIES.some((cat) => {
+        if (disabled.has(cat.key)) return false;
+        return candidates.some((candidate) => cat.compiled.some((pat) => pat.test(candidate)));
+    });
 }
 
 function messageHitsCustomRegexPolicy(text) {
     if (!chatSlurPolicy.regexes?.length) return false;
-    const normalized = normalizeSlurPatternText(text);
-    if (!normalized) return false;
+    const candidates = getSlurPatternCandidates(text);
+    if (!candidates.length) return false;
     const patterns = compileRegexRules(chatSlurPolicy.regexes, { forceInsensitive: true });
-    return patterns.some((pattern) => pattern.test(normalized));
+    return patterns.some((pattern) => candidates.some((candidate) => pattern.test(candidate)));
 }
 
 function messageHitsSlurPolicy(text) {
@@ -3777,7 +3786,7 @@ function renderAnonContextMenu(menu, username, userId) {
 function renderContextMenu(menu, profile, username) {
     const avatarHtml = profile.avatar_url
         ? `<img class="ctx-avatar" src="${esc(profile.avatar_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
-          + `<span class="ctx-avatar-letter" style="display:none;background:${esc(profile.profile_color || '#999')}">${esc(username)[0].toUpperCase()}</span>`
+        + `<span class="ctx-avatar-letter" style="display:none;background:${esc(profile.profile_color || '#999')}">${esc(username)[0].toUpperCase()}</span>`
         : `<span class="ctx-avatar-letter" style="background:${esc(profile.profile_color || '#999')}">${esc(username)[0].toUpperCase()}</span>`;
 
     const badge = getBadgeHTML(profile.role);
@@ -4686,7 +4695,7 @@ function _closeGlobalFeed() {
     if (_globalFeedWs) {
         const ws = _globalFeedWs;
         _globalFeedWs = null;
-        try { ws.close(); } catch {}
+        try { ws.close(); } catch { }
     }
 }
 
@@ -4720,7 +4729,7 @@ function _handleGlobalFeedMessage(msg) {
 
     // Render into the stream chat container with a source badge
     const container = document.getElementById('chat-messages')
-                   || document.getElementById('bc-chat-messages');
+        || document.getElementById('bc-chat-messages');
     if (!container) return;
 
     const el = document.createElement('div');
@@ -4882,7 +4891,7 @@ function _processTTSAudioQueue() {
             const gain = ctx.createGain();
             gain.gain.value = volume;
             source.connect(gain).connect(ctx.destination);
-            const cleanup = () => { URL.revokeObjectURL(url); try { ctx.close(); } catch {} _ttsAudioPlaying = false; _processTTSAudioQueue(); };
+            const cleanup = () => { URL.revokeObjectURL(url); try { ctx.close(); } catch { } _ttsAudioPlaying = false; _processTTSAudioQueue(); };
             audio.onended = cleanup;
             audio.onerror = cleanup;
             audio.play().catch(cleanup);
@@ -5225,7 +5234,7 @@ function playMentionSound() {
         osc.start();
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
         osc.stop(ctx.currentTime + 0.3);
-    } catch {}
+    } catch { }
 }
 
 function ensureReadableColor(hex) {
@@ -5320,7 +5329,7 @@ function incrementMobileChatUnread() {
 // Hook into addChatMessage to count unread on mobile
 const _origAddChatMessage = typeof addChatMessage === 'function' ? addChatMessage : null;
 // We can't easily wrap addChatMessage since it's already defined, so we use MutationObserver
-(function() {
+(function () {
     const observer = new MutationObserver((mutations) => {
         for (const m of mutations) {
             if (m.addedNodes.length > 0) {
@@ -5659,7 +5668,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 acceptVcInvite(pending.channelId, pending.channelName || 'Voice Channel');
             }, 450);
         }
-    } catch {}
+    } catch { }
 });
 
 // ── Re-authenticate chat WebSocket on login/logout ───────────
@@ -5806,8 +5815,8 @@ function renderChatUsersList(users) {
                 : `<div class="chat-users-avatar chat-users-avatar-default"><i class="fa-solid fa-user"></i></div>`;
             const badge = u.role === 'admin' ? '<span class="chat-users-badge admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>'
                 : u.role === 'global_mod' ? '<span class="chat-users-badge mod" title="Moderator"><i class="fa-solid fa-shield"></i></span>'
-                : u.role === 'streamer' ? '<span class="chat-users-badge streamer" title="Streamer"><i class="fa-solid fa-video"></i></span>'
-                : '';
+                    : u.role === 'streamer' ? '<span class="chat-users-badge streamer" title="Streamer"><i class="fa-solid fa-video"></i></span>'
+                        : '';
             html += `<div class="chat-users-row"><a href="/${esc(u.username)}" class="chat-users-link" onclick="event.preventDefault(); if(typeof showPage==='function') showPage('/${esc(u.username)}')">${avatar}<span class="chat-users-name">${esc(u.display_name)}</span>${badge}</a></div>`;
         }
         if (anonCount > 0) {
@@ -5936,7 +5945,7 @@ function _copyLinkUrl(btn) {
     navigator.clipboard.writeText(code.textContent).then(() => {
         const icon = btn.querySelector('i');
         if (icon) { icon.className = 'fa-solid fa-check'; setTimeout(() => { icon.className = 'fa-regular fa-copy'; }, 1500); }
-    }).catch(() => {});
+    }).catch(() => { });
 }
 
 function _openLinkOnce(url) {
@@ -6021,7 +6030,7 @@ function _linkCtxOpenTab(url) {
 
 function _linkCtxCopy(url, btn) {
     _dismissLinkMenu();
-    navigator.clipboard.writeText(url).catch(() => {});
+    navigator.clipboard.writeText(url).catch(() => { });
 }
 
 function _linkCtxPreview(url) {

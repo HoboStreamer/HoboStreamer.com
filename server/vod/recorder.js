@@ -43,10 +43,66 @@ function _isControlledFfmpegError(line, expectedShutdown) {
     return /demux.*timeout|timeout|broken pipe|connection.*reset|closed|end of file|sigterm|sigint|error while reading/i.test(normalized);
 }
 
+function _isFfmpegCorruptionLine(line) {
+    if (!line) return false;
+    const normalized = line.toLowerCase();
+    return /error while decoding|concealing|non[- ]monotonically increasing dts|missing picture in access unit|invalid .* header|invalid .* nal unit|could not find codec parameters|moov atom|invalid packet/i.test(normalized);
+}
+
+function _trackFfmpegDiagnostics(line, recording) {
+    if (!recording || !_isFfmpegCorruptionLine(line)) return;
+    recording.ffmpegCorruptionWarnings = (recording.ffmpegCorruptionWarnings || 0) + 1;
+    if (recording.ffmpegCorruptionWarnings >= 5) {
+        recording._ffmpegCorrupted = true;
+    }
+}
+
+function _isVodDiagnosticsEnabled() {
+    return process.env.VOD_DEBUG === '1' || process.env.VOD_DIAGNOSTICS === '1';
+}
+
+function _getVodDiagnosticsDir() {
+    const diagnosticsDir = path.resolve(config.vod.path, 'diagnostics');
+    if (!fs.existsSync(diagnosticsDir)) {
+        fs.mkdirSync(diagnosticsDir, { recursive: true });
+    }
+    return diagnosticsDir;
+}
+
+function _writeVodDiagnosticsFile(vodId, streamId, name, content) {
+    try {
+        const diagnosticsDir = _getVodDiagnosticsDir();
+        const filename = `vod-${vodId}-stream-${streamId}.${name}`;
+        const filePath = path.join(diagnosticsDir, filename);
+        fs.writeFileSync(filePath, content, 'utf8');
+        return filePath;
+    } catch {
+        return null;
+    }
+}
+
+function _sanitizeDiagnosticJson(obj) {
+    const clone = JSON.parse(JSON.stringify(obj));
+    if (clone.streamKey) delete clone.streamKey;
+    if (clone.token) delete clone.token;
+    return clone;
+}
+
+function _isH264MasterRecordingSupported(videoConsumer, audioConsumer) {
+    if (!videoConsumer || !videoConsumer.mimeType) return false;
+    if (!audioConsumer || !audioConsumer.mimeType) return false;
+    return videoConsumer.mimeType.toLowerCase().includes('h264')
+        && audioConsumer.mimeType.toLowerCase().includes('opus');
+}
+
+function _formatFmtpParameters(params) {
+    return Object.entries(params || {}).map(([k, v]) => `${k}=${v}`).join(';');
+}
+
 /**
  * Build an SDP string for FFmpeg to receive RTP from mediasoup PlainRTP consumers.
  */
-function _buildRtpRecordSdp(videoConsumer, audioConsumer, videoPort, audioPort) {
+function _buildRtpRecordSdp(videoConsumer, audioConsumer, videoPort, videoRtcpPort, audioPort, audioRtcpPort) {
     const lines = [
         'v=0',
         'o=- 0 0 IN IP4 127.0.0.1',
@@ -54,26 +110,60 @@ function _buildRtpRecordSdp(videoConsumer, audioConsumer, videoPort, audioPort) 
         'c=IN IP4 127.0.0.1',
         't=0 0',
     ];
+
     const vPT = videoConsumer.payloadType;
+    const vCodec = videoConsumer.rtpParameters.codecs?.[0] || {};
     const vCodecName = (videoConsumer.mimeType || 'video/VP8').split('/')[1];
-    lines.push(`m=video ${videoPort} RTP/AVP ${vPT}`);
+    const videoProtocol = Array.isArray(vCodec.rtcpFeedback) && vCodec.rtcpFeedback.length > 0 ? 'RTP/AVPF' : 'RTP/AVP';
+    lines.push(`m=video ${videoPort} ${videoProtocol} ${vPT}`);
     lines.push(`a=rtpmap:${vPT} ${vCodecName}/${videoConsumer.clockRate}`);
+    if (videoRtcpPort) lines.push(`a=rtcp:${videoRtcpPort} IN IP4 127.0.0.1`);
     if (videoConsumer.ssrc) lines.push(`a=ssrc:${videoConsumer.ssrc} cname:record-video`);
     if (videoConsumer.codecParameters) {
-        const fmtp = Object.entries(videoConsumer.codecParameters).map(([k, v]) => `${k}=${v}`).join(';');
+        const fmtp = _formatFmtpParameters(videoConsumer.codecParameters);
         if (fmtp) lines.push(`a=fmtp:${vPT} ${fmtp}`);
     }
+    if (Array.isArray(vCodec.rtcpFeedback)) {
+        for (const fb of vCodec.rtcpFeedback) {
+            if (!fb || !fb.type) continue;
+            lines.push(`a=rtcp-fb:${vPT} ${fb.type}${fb.parameter ? ` ${fb.parameter}` : ''}`);
+        }
+    }
+    if (Array.isArray(videoConsumer.rtpParameters.headerExtensions)) {
+        for (const ext of videoConsumer.rtpParameters.headerExtensions) {
+            if (ext && ext.uri && ext.id) {
+                lines.push(`a=extmap:${ext.id} ${ext.uri}`);
+            }
+        }
+    }
     lines.push('a=recvonly');
+
     if (audioConsumer && audioPort) {
         const aPT = audioConsumer.payloadType;
+        const aCodec = audioConsumer.rtpParameters.codecs?.[0] || {};
         const aCodecName = (audioConsumer.mimeType || 'audio/opus').split('/')[1];
         const channels = audioConsumer.channels || 2;
-        lines.push(`m=audio ${audioPort} RTP/AVP ${aPT}`);
+        const audioProtocol = Array.isArray(aCodec.rtcpFeedback) && aCodec.rtcpFeedback.length > 0 ? 'RTP/AVPF' : 'RTP/AVP';
+        lines.push(`m=audio ${audioPort} ${audioProtocol} ${aPT}`);
         lines.push(`a=rtpmap:${aPT} ${aCodecName}/${audioConsumer.clockRate}/${channels}`);
+        if (audioRtcpPort) lines.push(`a=rtcp:${audioRtcpPort} IN IP4 127.0.0.1`);
         if (audioConsumer.ssrc) lines.push(`a=ssrc:${audioConsumer.ssrc} cname:record-audio`);
         if (audioConsumer.codecParameters) {
-            const fmtp = Object.entries(audioConsumer.codecParameters).map(([k, v]) => `${k}=${v}`).join(';');
+            const fmtp = _formatFmtpParameters(audioConsumer.codecParameters);
             if (fmtp) lines.push(`a=fmtp:${aPT} ${fmtp}`);
+        }
+        if (Array.isArray(aCodec.rtcpFeedback)) {
+            for (const fb of aCodec.rtcpFeedback) {
+                if (!fb || !fb.type) continue;
+                lines.push(`a=rtcp-fb:${aPT} ${fb.type}${fb.parameter ? ` ${fb.parameter}` : ''}`);
+            }
+        }
+        if (Array.isArray(audioConsumer.rtpParameters.headerExtensions)) {
+            for (const ext of audioConsumer.rtpParameters.headerExtensions) {
+                if (ext && ext.uri && ext.id) {
+                    lines.push(`a=extmap:${ext.id} ${ext.uri}`);
+                }
+            }
         }
         lines.push('a=recvonly');
     }
@@ -92,6 +182,28 @@ class StreamRecorder {
         const vodDir = path.resolve(config.vod.path);
         if (!fs.existsSync(vodDir)) {
             fs.mkdirSync(vodDir, { recursive: true });
+        }
+    }
+
+    _cleanupFailedVod(vodId, filePath) {
+        if (!filePath || !fs.existsSync(filePath)) {
+            try {
+                db.run('DELETE FROM vods WHERE id = ?', [vodId]);
+                console.log(`[VOD] Deleted stale failed VOD ${vodId}`);
+            } catch (err) {
+                console.warn(`[VOD] Failed to delete stale VOD ${vodId}:`, err.message);
+            }
+            return;
+        }
+
+        try {
+            db.run(
+                'UPDATE vods SET is_recording = 0, health_status = ?, health_issues_json = ?, quarantined_at = datetime(\'now\'), is_public = 0 WHERE id = ?',
+                ['corrupt', JSON.stringify(['failed_recording_start']), vodId]
+            );
+            console.log(`[VOD] Marked failed VOD ${vodId} as corrupt`);
+        } catch (err) {
+            console.warn(`[VOD] Failed to mark VOD ${vodId} as corrupt:`, err.message);
         }
     }
 
@@ -214,6 +326,7 @@ class StreamRecorder {
             proc.stderr.on('data', (data) => {
                 const line = data.toString();
                 const recording = this.activeRecordings.get(streamId);
+                _trackFfmpegDiagnostics(line, recording);
                 if (line.includes('Error') || line.includes('error')) {
                     if (_isControlledFfmpegError(line, recording?._expectedShutdown)) return;
                     console.error(`[VOD] FFmpeg error (stream ${streamId}):`, line.trim());
@@ -263,6 +376,8 @@ class StreamRecorder {
                 ws: null,
                 remuxTimer: null,
                 _expectedShutdown: false,
+                ffmpegCorruptionWarnings: 0,
+                _ffmpegCorrupted: false,
             };
 
             // For JSMPEG: connect to the relay WebSocket and pipe data to FFmpeg stdin
@@ -360,8 +475,9 @@ class StreamRecorder {
         }
 
         if (!recording.process) {
-            // WebRTC recording startup was still pending — just delete and finalize
+            // WebRTC recording startup was still pending — clean up the stale VOD record.
             this.activeRecordings.delete(streamId);
+            this._cleanupFailedVod(recording.vodId, recording.filePath);
             return;
         }
 
@@ -423,7 +539,10 @@ class StreamRecorder {
         // Create PlainRTP consumers so mediasoup forwards media to local UDP ports
         const videoRtpPort = _allocateRecordRtpPort();
         const videoRtcpPort = videoRtpPort + 1;
-        let audioRtpPort, audioConsumer, videoConsumer;
+        let audioRtpPort = null;
+        let audioRtcpPort = null;
+        let audioConsumer = null;
+        let videoConsumer = null;
 
         try {
             videoConsumer = await webrtcSFU.createPlainConsumer(
@@ -433,7 +552,7 @@ class StreamRecorder {
 
             if (audioProducer) {
                 audioRtpPort = _allocateRecordRtpPort();
-                const audioRtcpPort = audioRtpPort + 1;
+                audioRtcpPort = audioRtpPort + 1;
                 audioConsumer = await webrtcSFU.createPlainConsumer(
                     roomId, audioProducer.id, '127.0.0.1', audioRtpPort, audioRtcpPort
                 );
@@ -441,59 +560,166 @@ class StreamRecorder {
             }
         } catch (err) {
             console.error(`[VOD] WebRTC recording: PlainRTP consumer failed for stream ${streamId}:`, err.message);
-            if (videoConsumer) webrtcSFU.closePlainConsumer(roomId, videoConsumer.transportId);
+            if (videoConsumer) {
+                try { webrtcSFU.closePlainConsumer(roomId, videoConsumer.transportId); } catch {}
+            }
+            if (audioConsumer) {
+                try { webrtcSFU.closePlainConsumer(roomId, audioConsumer.transportId); } catch {}
+            }
             this.activeRecordings.delete(streamId);
-            db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
+            this._cleanupFailedVod(vodId, filePath);
             return;
         }
 
-        const sdpContent = _buildRtpRecordSdp(videoConsumer, audioConsumer, videoRtpPort, audioRtpPort);
+        const sdpContent = _buildRtpRecordSdp(videoConsumer, audioConsumer, videoRtpPort, videoRtcpPort, audioRtpPort, audioRtcpPort);
         const sdpPath = path.join(os.tmpdir(), `hobo-vod-${streamId}-${Date.now()}.sdp`);
         fs.writeFileSync(sdpPath, sdpContent, 'utf8');
 
-        const webrtcState = {
+        const diagnostics = {
             roomId,
-            sdpPath,
+            streamId,
+            vodId,
+            protocol,
+            videoProducerId: videoProducer.id,
+            audioProducerId: audioProducer?.id || null,
+            videoConsumerId: videoConsumer.id,
+            audioConsumerId: audioConsumer?.id || null,
             videoTransportId: videoConsumer.transportId,
             audioTransportId: audioConsumer?.transportId || null,
+            videoPayloadType: videoConsumer.payloadType,
+            audioPayloadType: audioConsumer?.payloadType || null,
+            videoMimeType: videoConsumer.mimeType,
+            audioMimeType: audioConsumer?.mimeType || null,
+            videoClockRate: videoConsumer.clockRate,
+            audioClockRate: audioConsumer?.clockRate || null,
+            videoSsrc: videoConsumer.ssrc,
+            audioSsrc: audioConsumer?.ssrc || null,
+            videoChannels: videoConsumer.channels || null,
+            audioChannels: audioConsumer?.channels || null,
+            videoCodecParameters: videoConsumer.codecParameters || {},
+            audioCodecParameters: audioConsumer?.codecParameters || {},
+            videoRtcpFeedback: videoConsumer.rtcpFeedback || [],
+            audioRtcpFeedback: audioConsumer?.rtcpFeedback || [],
+            videoHeaderExtensions: videoConsumer.headerExtensions || [],
+            audioHeaderExtensions: audioConsumer?.headerExtensions || [],
+            ffmpegArgs: [],
         };
 
+        const debugMode = _isVodDiagnosticsEnabled();
+        const writeDiagnostics = (name, content) => {
+            if (!debugMode) return;
+            _writeVodDiagnosticsFile(vodId, streamId, name, content);
+        };
+        writeDiagnostics('rtp.json', JSON.stringify(_sanitizeDiagnosticJson(diagnostics), null, 2));
+        writeDiagnostics('sdp', sdpContent);
+
+        const isMasterRecording = _isH264MasterRecordingSupported(videoConsumer, audioConsumer);
+        const webrtcState = {
+            videoTransportId: videoConsumer.transportId,
+            audioTransportId: audioConsumer?.transportId || null,
+            videoConsumerId: videoConsumer.id,
+            audioConsumerId: audioConsumer?.id || null,
+        };
         const ffmpegArgs = [
             '-y',
+            '-use_wallclock_as_timestamps', '1',
             '-protocol_whitelist', 'file,rtp,udp',
             '-thread_queue_size', '2048',
-            '-analyzeduration', '10000000',   // 10s — gives ICE time to establish before giving up
+            '-analyzeduration', '10000000',
             '-probesize', '5000000',
-            '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
             '-avoid_negative_ts', 'make_zero',
-            '-err_detect', 'ignore_err',
             '-i', sdpPath,
-            '-c:v', 'libvpx',
-            '-b:v', '2000k',
-            '-crf', '18',
-            '-deadline', 'realtime',
-            '-cpu-used', '4',
-            ...(audioConsumer ? ['-c:a', 'libopus', '-b:a', '128k', '-application', 'audio'] : ['-an']),
-            '-f', 'webm',
-            filePath,
         ];
 
+        if (debugMode) {
+            // In diagnostics mode, surface corruption instead of silently discarding it.
+        } else {
+            ffmpegArgs.push('-fflags', '+genpts+discardcorrupt+nobuffer+igndts');
+            ffmpegArgs.push('-err_detect', 'ignore_err');
+        }
+
+        if (isMasterRecording) {
+            const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
+            ffmpegArgs.push(
+                '-map', '0',
+                '-c:v', 'copy',
+                '-c:a', 'copy',
+                '-f', 'matroska',
+                masterPath,
+                '-map', '0',
+                '-c:v', 'libvpx',
+                '-b:v', '2000k',
+                '-crf', '18',
+                '-deadline', 'realtime',
+                '-cpu-used', '4'
+            );
+            if (audioConsumer) {
+                ffmpegArgs.push('-c:a', 'libopus', '-b:a', '128k', '-application', 'audio');
+            } else {
+                ffmpegArgs.push('-an');
+            }
+            ffmpegArgs.push('-f', 'webm', filePath);
+            diagnostics.masterFilePath = path.basename(masterPath);
+            diagnostics.filePath = path.basename(filePath);
+        } else {
+            ffmpegArgs.push(
+                '-c:v', 'libvpx',
+                '-b:v', '2000k',
+                '-crf', '18',
+                '-deadline', 'realtime',
+                '-cpu-used', '4'
+            );
+            if (audioConsumer) {
+                ffmpegArgs.push('-c:a', 'libopus', '-b:a', '128k', '-application', 'audio');
+            } else {
+                ffmpegArgs.push('-an');
+            }
+            ffmpegArgs.push('-f', 'webm', filePath);
+            diagnostics.filePath = path.basename(filePath);
+        }
+        diagnostics.ffmpegArgs = ffmpegArgs.slice();
+        writeDiagnostics('ffmpeg-args.json', JSON.stringify(_sanitizeDiagnosticJson(diagnostics), null, 2));
+
         let proc;
+        let ffmpegLogPath = null;
+        let ffmpegLogStream = null;
+        if (debugMode) {
+            ffmpegLogPath = _writeVodDiagnosticsFile(vodId, streamId, 'ffmpeg.log', '');
+            if (ffmpegLogPath) {
+                ffmpegLogStream = fs.createWriteStream(ffmpegLogPath, { flags: 'a' });
+            }
+        }
+
         try {
             proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
         } catch (err) {
             console.error(`[VOD] WebRTC recording: FFmpeg spawn failed for stream ${streamId}:`, err.message);
-            webrtcSFU.closePlainConsumer(roomId, webrtcState.videoTransportId);
-            if (webrtcState.audioTransportId) webrtcSFU.closePlainConsumer(roomId, webrtcState.audioTransportId);
+            if (webrtcState.videoTransportId) {
+                try { webrtcSFU.closePlainConsumer(roomId, webrtcState.videoTransportId); } catch {};
+            }
+            if (webrtcState.audioTransportId) {
+                try { webrtcSFU.closePlainConsumer(roomId, webrtcState.audioTransportId); } catch {};
+            }
             try { fs.unlinkSync(sdpPath); } catch {}
             this.activeRecordings.delete(streamId);
-            db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
+            this._cleanupFailedVod(vodId, filePath);
+            if (ffmpegLogStream) ffmpegLogStream.end();
             return;
         }
 
         proc.stderr.on('data', (data) => {
             const line = data.toString();
+            if (ffmpegLogStream) {
+                ffmpegLogStream.write(line);
+            }
             const recording = this.activeRecordings.get(streamId);
+            _trackFfmpegDiagnostics(line, recording);
+            if (debugMode) {
+                if (/non-existing PPS|decode_slice_header error|concealing|RTP|max delay reached|Non-monotonous DTS|invalid|corrupt|error|timestamp/i.test(line)) {
+                    console.warn(`[VOD] FFmpeg diagnostic (webrtc stream ${streamId}):`, line.trim());
+                }
+                return;
+            }
             if (line.includes('Error') || line.includes('error')) {
                 if (_isControlledFfmpegError(line, recording?._expectedShutdown)) return;
                 console.error(`[VOD] FFmpeg error (webrtc stream ${streamId}):`, line.trim());
@@ -507,11 +733,16 @@ class StreamRecorder {
                 if (activeRec.remuxTimer) clearInterval(activeRec.remuxTimer);
             }
             // Clean up PlainRTP consumers and SDP file
-            try { webrtcSFU.closePlainConsumer(roomId, webrtcState.videoTransportId); } catch {}
+            if (webrtcState.videoTransportId) {
+                try { webrtcSFU.closePlainConsumer(roomId, webrtcState.videoTransportId); } catch {}
+            }
             if (webrtcState.audioTransportId) {
                 try { webrtcSFU.closePlainConsumer(roomId, webrtcState.audioTransportId); } catch {}
             }
             try { fs.unlinkSync(sdpPath); } catch {}
+            if (ffmpegLogStream) {
+                try { ffmpegLogStream.end(); } catch {}
+            }
             this.activeRecordings.delete(streamId);
             setTimeout(() => {
                 const vodRoutes = require('./routes');
@@ -528,8 +759,11 @@ class StreamRecorder {
                 try { webrtcSFU.closePlainConsumer(roomId, webrtcState.audioTransportId); } catch {}
             }
             try { fs.unlinkSync(sdpPath); } catch {}
+            if (ffmpegLogStream) {
+                try { ffmpegLogStream.end(); } catch {}
+            }
             this.activeRecordings.delete(streamId);
-            db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
+            this._cleanupFailedVod(vodId, filePath);
         });
 
         // Update the recording entry with the live process and webrtcState
@@ -537,6 +771,9 @@ class StreamRecorder {
         if (activeRec) {
             activeRec.process = proc;
             activeRec.webrtcState = webrtcState;
+            if (isMasterRecording) {
+                activeRec.masterFilePath = masterPath;
+            }
             activeRec.remuxTimer = setInterval(() => this._periodicRemux(streamId), 60000);
             setTimeout(() => {
                 if (this.activeRecordings.has(streamId)) this._periodicRemux(streamId);

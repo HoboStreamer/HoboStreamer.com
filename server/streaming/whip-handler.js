@@ -864,7 +864,12 @@ async function handleWhipPost(req, res) {
 
         if (session.producerIds.length === 0) {
             cleanupSession(resourceId);
-            return sendWhipError(res, 406, 'no_compatible_codecs', 'No compatible codecs — router supports VP8, H264, Opus');
+            return sendWhipError(
+                res,
+                406,
+                'no_compatible_codecs',
+                'No compatible codecs — router supports VP8, H264, Opus. H265/HEVC is not supported for browser playback on this platform.'
+            );
         }
 
         // Promote user to streamer role on first real feed ingest

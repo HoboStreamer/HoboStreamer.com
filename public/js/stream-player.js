@@ -397,10 +397,10 @@ function _ensurePlayerLoaderStructure(placeholder) {
                         <span></span>
                     </p>
                     <div class="player-loader-actions">
-                        <button class="player-loader-action" type="button" onclick="copyPlayerDiagnostics()">
+                        <button class="player-loader-action" type="button" data-action="copy-diagnostics">
                             <i class="fa-solid fa-bug"></i> Copy debug info
                         </button>
-                        <button class="player-loader-action secondary" type="button" onclick="reloadPlayerPage()">
+                        <button class="player-loader-action secondary" type="button" data-action="reload-player">
                             <i class="fa-solid fa-rotate-right"></i> Refresh player
                         </button>
                     </div>
@@ -429,6 +429,23 @@ function _ensurePlayerLoaderStructure(placeholder) {
         diagnosticsSummary: placeholder.querySelector('.player-loader-diagnostics summary'),
         diagnosticsPre: placeholder.querySelector('.player-loader-diagnostics pre'),
     };
+
+    if (!placeholder._playerLoaderEls?.actionsListenerAttached) {
+        const actionsEl = placeholder._playerLoaderEls.actions;
+        if (actionsEl) {
+            actionsEl.addEventListener('click', (event) => {
+                const button = event.target.closest('button[data-action]');
+                if (!button) return;
+                const action = button.dataset.action;
+                if (action === 'copy-diagnostics') {
+                    copyPlayerDiagnostics();
+                } else if (action === 'reload-player') {
+                    reloadPlayerPage();
+                }
+            });
+            placeholder._playerLoaderEls.actionsListenerAttached = true;
+        }
+    }
 
     return placeholder._playerLoaderEls;
 }

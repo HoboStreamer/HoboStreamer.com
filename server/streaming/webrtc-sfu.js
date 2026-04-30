@@ -80,6 +80,8 @@ class WebRTCSFU extends EventEmitter {
             producers: new Map(),
             consumers: new Map(),
             transports: new Map(),
+            plainRecordingTimers: new Map(),
+            plainRecordingTransportConsumers: new Map(),
         };
 
         this.rooms.set(roomId, room);
@@ -229,14 +231,22 @@ class WebRTCSFU extends EventEmitter {
         const producerTransport = producerTransportKey ? room.transports.get(producerTransportKey) : null;
         console.log(`[WebRTC] Consumer ${consumer.id} (${consumer.kind}) for ${peerId} in room ${roomId} — paused=${consumer.paused} producer transport state: ${producerTransport?.connectionState || 'unknown'}`);
 
-        // For video consumers, immediately request a keyframe so late-joining viewers
-        // do not have to wait up to a full GOP (OBS default keyint=250 @ 30fps ≈ 8.33s).
+        // For video consumers, request a keyframe multiple times so late-joining viewers
+        // do not have to wait for an OBS GOP boundary or missed single keyframe request.
         if (consumer.kind === 'video') {
-            consumer.requestKeyFrame().then(() => {
-                console.log(`[WebRTC] Keyframe requested for video consumer ${consumer.id} (${peerId})`);
-            }).catch((kfErr) => {
-                console.warn(`[WebRTC] Keyframe request failed for consumer ${consumer.id} (${peerId}):`, kfErr.message);
-            });
+            const scheduleKeyframe = (delayMs, attempt) => {
+                setTimeout(async () => {
+                    try {
+                        await consumer.requestKeyFrame();
+                        console.log(`[WebRTC] Keyframe request #${attempt} sent for video consumer ${consumer.id} (${peerId})`);
+                    } catch (err) {
+                        console.warn(`[WebRTC] Keyframe request #${attempt} failed for consumer ${consumer.id} (${peerId}):`, err.message);
+                    }
+                }, delayMs);
+            };
+            scheduleKeyframe(0, 1);
+            scheduleKeyframe(400, 2);
+            scheduleKeyframe(1200, 3);
         }
 
         return {
@@ -305,19 +315,52 @@ class WebRTCSFU extends EventEmitter {
         room.transports.set(key, transport);
         room.consumers.set(consumer.id, { consumer, peerId: '__restream__' });
 
+        const clearPlainRecordingTimers = () => {
+            const timers = room.plainRecordingTimers.get(consumer.id) || [];
+            for (const timer of timers) {
+                try { clearTimeout(timer); } catch {}
+            }
+            room.plainRecordingTimers.delete(consumer.id);
+            room.plainRecordingTransportConsumers.delete(transport.id);
+        };
+
         consumer.on('transportclose', () => {
             room.consumers.delete(consumer.id);
+            clearPlainRecordingTimers();
         });
 
         consumer.on('producerclose', () => {
             // Producer died (broadcaster disconnected) — close transport to free the RTP port
             room.consumers.delete(consumer.id);
+            clearPlainRecordingTimers();
             room.transports.delete(key);
             try { transport.close(); } catch {}
         });
 
         const codec = consumer.rtpParameters.codecs[0];
         const encoding = consumer.rtpParameters.encodings?.[0];
+
+        if (consumer.kind === 'video' && typeof consumer.requestKeyFrame === 'function') {
+            const scheduleKeyframe = (delayMs, attempt) => {
+                const timer = setTimeout(async () => {
+                    try {
+                        await consumer.requestKeyFrame();
+                        console.log(`[WebRTC] Recording keyframe request #${attempt} sent for consumer ${consumer.id} in room ${roomId}`);
+                    } catch (err) {
+                        console.warn(`[WebRTC] Recording keyframe request #${attempt} failed for consumer ${consumer.id} in room ${roomId}:`, err.message);
+                    }
+                }, delayMs);
+                const timers = room.plainRecordingTimers.get(consumer.id) || [];
+                timers.push(timer);
+                room.plainRecordingTimers.set(consumer.id, timers);
+            };
+
+            room.plainRecordingTransportConsumers.set(transport.id, consumer.id);
+            scheduleKeyframe(0, 1);
+            scheduleKeyframe(500, 2);
+            scheduleKeyframe(1500, 3);
+            scheduleKeyframe(3000, 4);
+        }
 
         return {
             transportId: transport.id,
@@ -330,6 +373,8 @@ class WebRTCSFU extends EventEmitter {
             channels: codec?.channels,
             ssrc: encoding?.ssrc,
             codecParameters: codec?.parameters,
+            rtcpFeedback: codec?.rtcpFeedback || [],
+            headerExtensions: consumer.rtpParameters.headerExtensions || [],
         };
     }
 
@@ -345,6 +390,13 @@ class WebRTCSFU extends EventEmitter {
         const key = `plain-${transportId}`;
         const transport = room.transports.get(key);
         if (transport) {
+            const consumerId = room.plainRecordingTransportConsumers.get(transportId);
+            const timers = room.plainRecordingTimers.get(consumerId) || [];
+            for (const timer of timers) {
+                try { clearTimeout(timer); } catch {}
+            }
+            room.plainRecordingTimers.delete(consumerId);
+            room.plainRecordingTransportConsumers.delete(transportId);
             try { transport.close(); } catch {}
             room.transports.delete(key);
         }

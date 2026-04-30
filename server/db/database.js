@@ -252,6 +252,51 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] Channel weather migration:', e.message); }
 
+    // Migrate: add VOD health and recording metadata columns
+    try {
+        const vodCols = database.prepare("PRAGMA table_info('vods')").all().map(c => c.name);
+        if (!vodCols.includes('thumbnail_url')) {
+            database.exec('ALTER TABLE vods ADD COLUMN thumbnail_url TEXT');
+            console.log('[DB] Added thumbnail_url column to vods');
+        }
+        if (!vodCols.includes('master_file_path')) {
+            database.exec('ALTER TABLE vods ADD COLUMN master_file_path TEXT');
+            console.log('[DB] Added master_file_path column to vods');
+        }
+        if (!vodCols.includes('probe_duration_seconds')) {
+            database.exec('ALTER TABLE vods ADD COLUMN probe_duration_seconds REAL DEFAULT 0');
+            console.log('[DB] Added probe_duration_seconds column to vods');
+        }
+        if (!vodCols.includes('probe_format_json')) {
+            database.exec("ALTER TABLE vods ADD COLUMN probe_format_json TEXT DEFAULT ''");
+            console.log('[DB] Added probe_format_json column to vods');
+        }
+        if (!vodCols.includes('health_status')) {
+            database.exec("ALTER TABLE vods ADD COLUMN health_status TEXT DEFAULT 'unknown'");
+            console.log('[DB] Added health_status column to vods');
+        }
+        if (!vodCols.includes('health_score')) {
+            database.exec('ALTER TABLE vods ADD COLUMN health_score INTEGER DEFAULT 0');
+            console.log('[DB] Added health_score column to vods');
+        }
+        if (!vodCols.includes('health_issues_json')) {
+            database.exec("ALTER TABLE vods ADD COLUMN health_issues_json TEXT DEFAULT '[]'");
+            console.log('[DB] Added health_issues_json column to vods');
+        }
+        if (!vodCols.includes('last_health_scan_at')) {
+            database.exec('ALTER TABLE vods ADD COLUMN last_health_scan_at DATETIME');
+            console.log('[DB] Added last_health_scan_at column to vods');
+        }
+        if (!vodCols.includes('quarantined_at')) {
+            database.exec('ALTER TABLE vods ADD COLUMN quarantined_at DATETIME');
+            console.log('[DB] Added quarantined_at column to vods');
+        }
+        if (!vodCols.includes('is_recording')) {
+            database.exec('ALTER TABLE vods ADD COLUMN is_recording INTEGER DEFAULT 0');
+            console.log('[DB] Added is_recording column to vods');
+        }
+    } catch (e) { console.warn('[DB] VOD metadata migration:', e.message); }
+
     // Migrate: create RobotStreamer integration table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS robotstreamer_integrations (
@@ -2008,17 +2053,83 @@ function deductHoboBucks(userId, amount) {
 
 // ── VOD helpers ──────────────────────────────────────────────
 
-function createVod({ stream_id, user_id, title, description, file_path, file_size, duration_seconds, thumbnail_url }) {
+function createVod({ stream_id, user_id, title, description, file_path, file_size, duration_seconds, thumbnail_url, master_file_path }) {
     return run(
-        `INSERT INTO vods (stream_id, user_id, title, description, file_path, file_size, duration_seconds, thumbnail_url, is_public)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-        [stream_id || null, user_id, title, description || '', file_path, file_size || 0, duration_seconds || 0, thumbnail_url || null]
+        `INSERT INTO vods (stream_id, user_id, title, description, file_path, master_file_path, file_size, duration_seconds, thumbnail_url, is_public)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [stream_id || null, user_id, title, description || '', file_path, master_file_path || null, file_size || 0, duration_seconds || 0, thumbnail_url || null]
     );
+}
+
+function updateVodHealth(vodId, { status, score, issues = [], probeDuration, probeFormat, quarantine = false, keepPublic = false }) {
+    const updates = [];
+    const params = [];
+    if (status) {
+        updates.push('health_status = ?');
+        params.push(status);
+    }
+    if (typeof score === 'number') {
+        updates.push('health_score = ?');
+        params.push(score);
+    }
+    if (issues) {
+        updates.push('health_issues_json = ?');
+        params.push(JSON.stringify(issues));
+    }
+    if (typeof probeDuration === 'number') {
+        updates.push('probe_duration_seconds = ?');
+        params.push(probeDuration);
+    }
+    if (probeFormat !== undefined) {
+        updates.push('probe_format_json = ?');
+        params.push(JSON.stringify(probeFormat || {}));
+    }
+    if (quarantine) {
+        updates.push('quarantined_at = datetime(\'now\')');
+        if (!keepPublic) {
+            updates.push('is_public = 0');
+        }
+    }
+    updates.push('last_health_scan_at = datetime(\'now\')');
+    params.push(vodId);
+    if (!updates.length) return null;
+    return run(`UPDATE vods SET ${updates.join(', ')} WHERE id = ?`, params);
+}
+
+function repairVodDuration(vodId, duration, fileSize) {
+    return run(
+        `UPDATE vods SET duration_seconds = ?, file_size = ?, probe_duration_seconds = ?, last_health_scan_at = datetime('now') WHERE id = ?`,
+        [duration, fileSize, duration, vodId]
+    );
+}
+
+function getVodHealthById(id) {
+    return get(`SELECT * FROM vods WHERE id = ?`, [id]);
+}
+
+function getVodScanCandidates({ userId, since, limit }) {
+    const conditions = ['COALESCE(is_recording, 0) = 0'];
+    const params = [];
+    if (userId) {
+        conditions.push('user_id = ?');
+        params.push(userId);
+    }
+    if (since) {
+        conditions.push('created_at >= datetime(?, ?)');
+        params.push(since, 'localtime');
+    }
+    let sql = `SELECT * FROM vods WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`;
+    if (limit) {
+        sql += ' LIMIT ?';
+        params.push(limit);
+    }
+    return all(sql, params);
 }
 
 function getVodById(id) {
     return get(`
-        SELECT v.*, u.username, u.display_name, u.avatar_url,
+        SELECT v.*, COALESCE(v.duration_seconds, v.probe_duration_seconds, 0) AS duration_seconds,
+               u.username, u.display_name, u.avatar_url,
                s.title AS stream_title, s.protocol AS stream_protocol
         FROM vods v
         JOIN users u ON v.user_id = u.id
@@ -2034,7 +2145,8 @@ function getVodsByUser(userId, includePrivate = false, limit = null, offset = 0)
     const params = [userId];
     if (usePaging) params.push(limit, offset);
     return all(`
-        SELECT v.*, u.username, u.display_name, u.avatar_url,
+        SELECT v.*, COALESCE(v.duration_seconds, v.probe_duration_seconds, 0) AS duration_seconds,
+               u.username, u.display_name, u.avatar_url,
                s.protocol AS stream_protocol
         FROM vods v JOIN users u ON v.user_id = u.id
         LEFT JOIN streams s ON v.stream_id = s.id
@@ -2063,7 +2175,8 @@ function getPublicVods(limit = 50, offset = 0, { username = null } = {}) {
 
     params.push(limit, offset);
     return all(`
-        SELECT v.*, u.username, u.display_name, u.avatar_url,
+        SELECT v.*, COALESCE(v.duration_seconds, v.probe_duration_seconds, 0) AS duration_seconds,
+               u.username, u.display_name, u.avatar_url,
                s.protocol AS stream_protocol
         FROM vods v JOIN users u ON v.user_id = u.id
         LEFT JOIN streams s ON v.stream_id = s.id
@@ -4227,6 +4340,7 @@ module.exports = {
     renormalizePendingMediaRequestPositions,
     // VODs
     createVod, getVodById, getVodsByUser, countVodsByUser, getPublicVods, countPublicVods, listVodStreamers, getActiveVodByStream, getOrphanedRecordingVods,
+    updateVodHealth, repairVodDuration, getVodHealthById, getVodScanCandidates,
     // Clips
     createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, listClipStreamers, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
     // Controls
