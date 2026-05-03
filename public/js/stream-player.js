@@ -403,6 +403,9 @@ function _ensurePlayerLoaderStructure(placeholder) {
                         <button class="player-loader-action secondary" type="button" data-action="reload-player">
                             <i class="fa-solid fa-rotate-right"></i> Refresh player
                         </button>
+                        <button class="player-loader-action secondary" type="button" data-action="dismiss-player">
+                            <i class="fa-solid fa-xmark"></i> Close notice
+                        </button>
                     </div>
                     <details class="player-loader-diagnostics">
                         <summary>Technical details</summary>
@@ -441,6 +444,8 @@ function _ensurePlayerLoaderStructure(placeholder) {
                     copyPlayerDiagnostics();
                 } else if (action === 'reload-player') {
                     reloadPlayerPage();
+                } else if (action === 'dismiss-player') {
+                    _hidePlayerPlaceholder();
                 }
             });
             placeholder._playerLoaderEls.actionsListenerAttached = true;
@@ -467,6 +472,14 @@ function _renderPlayerPlaceholder() {
 
     const state = _ensurePlayerLoadState();
     const protocol = state.protocol || 'default';
+    const video = document.getElementById('video-element');
+    if (_isVideoPlaybackLive(video) && state.phase !== 'ended') {
+        state.phase = 'live';
+        state.isSlow = false;
+        state.showDiagnostics = false;
+        _hidePlayerPlaceholder();
+        return;
+    }
     const steps = _getPlayerStepStates(protocol, state.phase);
     const progress = _getPlayerProgressMeta(protocol, state.phase);
     const showExpanded = state.isSlow || state.severity === 'error';
@@ -554,11 +567,28 @@ function _setPlayerStatus({
 function _hidePlayerPlaceholder(surface = (playerType === 'jsmpeg' ? 'canvas' : 'video')) {
     _revealPlayerSurface(surface);
     _clearPlayerSlowTimer();
+    const placeholder = document.querySelector('.video-placeholder');
+    if (placeholder) {
+        placeholder.style.display = 'none';
+        placeholder.classList.remove('is-exiting');
+    }
     if (playerLoadState) {
         playerLoadState.phase = 'live';
         playerLoadState.isSlow = false;
         _pushPlayerDiagnostic('phase.live', 'Playback is rendering live media');
     }
+}
+
+function _isVideoPlaybackLive(video) {
+    return !!video && !video.paused && !video.ended && video.readyState >= 3 && (video.currentTime > 0 || video.readyState >= 4);
+}
+
+function _maybeHidePlayerPlaceholderForLiveVideo(video) {
+    if (_isVideoPlaybackLive(video)) {
+        _hidePlayerPlaceholder();
+        return true;
+    }
+    return false;
 }
 
 // DVR state (live stream seeking via server-side VOD recording)
@@ -1854,6 +1884,7 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                     video.volume = 0;
                     document.getElementById('unmute-overlay')?.remove();
                 }
+                _maybeHidePlayerPlaceholderForLiveVideo(video);
             }).catch((err) => {
                 _playPending = false;
                 console.warn(`[Player] play() failed: ${err.name}: ${err.message} — readyState=${video.readyState} videoWidth=${video.videoWidth} networkState=${video.networkState}`);
@@ -1916,6 +1947,16 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
         video.srcObject = mediaStream;
         video.style.display = 'block';
         startClipRecordingIfNeeded(mediaStream, streamRef?.id);
+
+        const _onVideoPlaybackProgress = () => {
+            if (_maybeHidePlayerPlaceholderForLiveVideo(video)) {
+                video.removeEventListener('timeupdate', _onVideoPlaybackProgress);
+                video.removeEventListener('loadeddata', _onVideoPlaybackProgress);
+            }
+        };
+        video.addEventListener('timeupdate', _onVideoPlaybackProgress);
+        video.addEventListener('loadeddata', _onVideoPlaybackProgress);
+        _maybeHidePlayerPlaceholderForLiveVideo(video);
 
         // Log MediaStream state
         const tracks = mediaStream.getTracks();
