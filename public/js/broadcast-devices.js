@@ -77,18 +77,24 @@ async function populateDeviceLists() {
     try {
         // Try to get a temp stream for permission/label enumeration.
         // On Android, combined audio+video can fail — fall back to separate requests.
+        // Skip getUserMedia if we already have labels (permissions already granted) to
+        // avoid racing with startMediaCapture() which is called right after this.
         let tempStream = null;
-        try {
-            tempStream = await _getUserMediaWithTimeout({ audio: true, video: true }, 8000);
-        } catch {
-            // Separate fallback for Android
+        const preDevices = await navigator.mediaDevices.enumerateDevices();
+        const alreadyHaveLabels = preDevices.some(d => d.label);
+        if (!alreadyHaveLabels) {
             try {
-                tempStream = new MediaStream();
-                const vs = await _getUserMediaWithTimeout({ video: true }, 6000).catch(() => null);
-                const as = await _getUserMediaWithTimeout({ audio: true }, 6000).catch(() => null);
-                if (vs) vs.getTracks().forEach(t => tempStream.addTrack(t));
-                if (as) as.getTracks().forEach(t => tempStream.addTrack(t));
-            } catch {}
+                tempStream = await _getUserMediaWithTimeout({ audio: true, video: true }, 8000);
+            } catch {
+                // Separate fallback for Android
+                try {
+                    tempStream = new MediaStream();
+                    const vs = await _getUserMediaWithTimeout({ video: true }, 6000).catch(() => null);
+                    const as = await _getUserMediaWithTimeout({ audio: true }, 6000).catch(() => null);
+                    if (vs) vs.getTracks().forEach(t => tempStream.addTrack(t));
+                    if (as) as.getTracks().forEach(t => tempStream.addTrack(t));
+                } catch {}
+            }
         }
         const devices = await navigator.mediaDevices.enumerateDevices();
         const camSelect = document.getElementById('bc-forceCamera');

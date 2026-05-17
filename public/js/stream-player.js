@@ -1334,6 +1334,14 @@ async function initWebRTC(stream) {
                             showDiagnostics: true,
                         });
                         break;
+                    case 'sfu-keyframe-requested':
+                        // Server acknowledged the re-watch by requesting a keyframe from the producer.
+                        // Clear the offer timeout so we don't loop into "Still warming up".
+                        // The playing event or frozen-frame detector will dismiss the overlay once frames arrive.
+                        console.log('[Player] SFU keyframe requested by server — clearing watch timeout, waiting for first frame');
+                        if (_watchOfferTimer) { clearTimeout(_watchOfferTimer); _watchOfferTimer = null; }
+                        _rewatchCount = 0;
+                        break;
                 }
             } catch (err) {
                 console.error('[Player] Message error:', err);
@@ -2027,7 +2035,13 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
 
     } catch (err) {
         console.error('[Player] SFU viewer setup failed:', err);
-        // Fall back to re-watch (will try SFU again or P2P)
+        // Close the transport explicitly so the server sees it as dead on the next
+        // watch — otherwise the server's re-watch guard keeps the old transport alive
+        // and never sends a fresh sfu-viewer-ready (root cause of the Firefox retry loop).
+        if (player._sfuRecvTransport === recvTransport) {
+            player._sfuRecvTransport = null;
+        }
+        try { recvTransport.close(); } catch (_) {}
         _totalIceFailures++;
         if (_totalIceFailures < MAX_ICE_FAILURES) {
             scheduleRewatch(2000);

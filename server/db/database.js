@@ -1007,7 +1007,11 @@ function initDb() {
                     FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE,
                     FOREIGN KEY (camera_id) REFERENCES camera_profiles(id) ON DELETE SET NULL
                 );
-                INSERT INTO stream_controls_new SELECT * FROM stream_controls;
+                INSERT INTO stream_controls_new
+                    SELECT id, stream_id, label, command, icon, control_type, key_binding,
+                           cooldown_ms, is_enabled, sort_order, NULL, NULL,
+                           btn_color, btn_bg, btn_border_color, created_at
+                    FROM stream_controls;
                 DROP TABLE stream_controls;
                 ALTER TABLE stream_controls_new RENAME TO stream_controls;
             `);

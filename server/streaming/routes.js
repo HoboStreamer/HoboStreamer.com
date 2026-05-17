@@ -1353,11 +1353,18 @@ router.post('/', requireAuth, (req, res) => {
             }
         }
 
+        // Effective config: explicit non-null override > managed stream's saved default > null
+        // Note: null sent by client means "no explicit choice" (async select not yet populated),
+        // so fall back to the managed stream's configured profile rather than stripping controls.
+        const effectiveConfigId = (requestedControlConfigId != null)
+            ? requestedControlConfigId
+            : (managedStream.control_config_id || null);
+
         const result = db.createStream({
             user_id: req.user.id,
             channel_id: channel.id,
             managed_stream_id: managedStream.id,
-            control_config_id: requestedControlConfigId !== undefined ? requestedControlConfigId : (managedStream.control_config_id || null),
+            control_config_id: effectiveConfigId,
             title: title || cleanText(managedStream.title, { maxLength: MAX_TITLE_LENGTH }) || `${req.user.display_name}'s Stream`,
             description: description ?? cleanText(managedStream.description, { maxLength: MAX_DESCRIPTION_LENGTH, allowEmpty: true }) ?? '',
             category: streamCategory,
@@ -1392,18 +1399,16 @@ router.post('/', requireAuth, (req, res) => {
             [streamId, streamProtocol]
         );
 
-        // Apply the selected per-stream control config if provided.
-        if (requestedControlConfigId !== undefined) {
-            if (requestedControlConfigId !== null) {
-                try {
-                    const applied = db.applyConfigToStream(requestedControlConfigId, streamId);
-                    console.log(`[Streams] Applied explicit control config ${requestedControlConfigId} to stream ${streamId} (${applied} buttons)`);
-                } catch (cfgErr) {
-                    console.warn(`[Streams] Failed to apply explicit control config:`, cfgErr.message);
-                }
+        // Apply the control config to populate stream_controls for viewers.
+        if (effectiveConfigId !== null) {
+            try {
+                const applied = db.applyConfigToStream(effectiveConfigId, streamId);
+                console.log(`[Streams] Applied control config ${effectiveConfigId} to stream ${streamId} (${applied} buttons)`);
+            } catch (cfgErr) {
+                console.warn(`[Streams] Failed to apply control config:`, cfgErr.message);
             }
         } else if (channel.active_control_config_id) {
-            // No explicit per-stream selection: use the channel default for this new stream
+            // No slot-level config at all: fall back to channel default
             try {
                 const applied = db.applyConfigToStream(channel.active_control_config_id, streamId);
                 console.log(`[Streams] Auto-applied channel default control config ${channel.active_control_config_id} to stream ${streamId} (${applied} buttons)`);
@@ -1602,6 +1607,17 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
 // active WHIP session, or connected WebRTC producer). This route is a
 // fallback for cases where the browser must keep the stream record fresh
 // while the ingest path is still coming online.
+
+// ── Client diagnostic log ────────────────────────────────────
+// Records browser-side errors that occur during stream creation so we can
+// see them in server logs without needing access to the user's console.
+router.post('/diag-log', optionalAuth, (req, res) => {
+    const { stream_id, error_name, error_message, method, sub, browser_source, ua } = req.body || {};
+    const user = req.user ? `user=${req.user.id}` : 'anon';
+    console.warn(`[BroadcastDiag] ${user} stream=${stream_id} err="${error_name}: ${error_message}" method=${method}/${sub}/${browser_source} ua=${String(ua).slice(0, 80)}`);
+    res.json({ ok: true });
+});
+
 router.post('/:id/heartbeat', requireAuth, (req, res) => {
     try {
         const stream = db.getStreamById(req.params.id);

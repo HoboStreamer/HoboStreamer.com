@@ -214,6 +214,10 @@ class BroadcastServer extends EventEmitter {
         const streamId = parseInt(url.searchParams.get('streamId'));
         const role = url.searchParams.get('role') || 'viewer'; // 'broadcaster' or 'viewer'
 
+        if (role === 'broadcaster') {
+            console.log(`[Broadcast] Broadcaster WS arrived: streamId=${streamId} token=${token ? 'present' : 'missing'}`);
+        }
+
         if (role !== 'broadcaster' && role !== 'viewer') {
             ws.close(4004, 'Invalid role');
             return;
@@ -236,11 +240,13 @@ class BroadcastServer extends EventEmitter {
         // Broadcaster must be authenticated and own the stream
         if (role === 'broadcaster') {
             if (!user) {
+                console.warn(`[Broadcast] Broadcaster auth failed for stream ${streamId}: no valid token (token present=${!!token})`);
                 ws.close(4002, 'Authentication required for broadcasting');
                 return;
             }
             const stream = db.getStreamById(streamId);
             if (!stream || stream.user_id !== user.id) {
+                console.warn(`[Broadcast] Broadcaster ownership check failed for stream ${streamId}: user=${user.username} (${user.id}), stream.user_id=${stream?.user_id}`);
                 ws.close(4003, 'Not your stream');
                 return;
             }
@@ -772,16 +778,32 @@ class BroadcastServer extends EventEmitter {
                 const tKey = `${client.peerId}-${client._sfuViewerTransportId}`;
                 const existingTransport = existingRoom.transports.get(tKey);
                 if (existingTransport && !existingTransport.closed && existingTransport.dtlsState === 'connected') {
-                    console.log(`[Broadcast] Viewer ${client.peerId} re-watch with connected SFU transport ${client._sfuViewerTransportId} — requesting keyframe instead of recreating transport`);
-                    for (const cid of (client._sfuViewerConsumerIds || [])) {
+                    const activeConsumerIds = (client._sfuViewerConsumerIds || []).filter(cid => {
                         const entry = existingRoom.consumers.get(cid);
-                        if (entry?.consumer && entry.consumer.kind === 'video' && !entry.consumer.closed) {
-                            entry.consumer.requestKeyFrame().catch(err => {
-                                console.warn(`[Broadcast] Keyframe re-request failed for consumer ${cid}:`, err.message);
-                            });
+                        return entry?.consumer && !entry.consumer.closed;
+                    });
+
+                    if (activeConsumerIds.length > 0) {
+                        // Consumers are alive — nudge with keyframe and ack the client so
+                        // startWatchOfferTimeout doesn't fire and loop.
+                        console.log(`[Broadcast] Viewer ${client.peerId} re-watch with connected SFU transport ${client._sfuViewerTransportId} (${activeConsumerIds.length} consumers) — requesting keyframe`);
+                        for (const cid of activeConsumerIds) {
+                            const entry = existingRoom.consumers.get(cid);
+                            if (entry?.consumer && entry.consumer.kind === 'video') {
+                                entry.consumer.requestKeyFrame().catch(err => {
+                                    console.warn(`[Broadcast] Keyframe re-request failed for consumer ${cid}:`, err.message);
+                                });
+                            }
                         }
+                        this.safeSend(ws, { type: 'sfu-keyframe-requested' });
+                        return true; // handled — viewer session is still alive
                     }
-                    return true; // handled — viewer session is still alive
+
+                    // Transport is connected but no consumers — the client's consume setup
+                    // failed (e.g. Firefox codec negotiation). Reset so a fresh transport
+                    // and sfu-viewer-ready are sent on the fall-through path below.
+                    console.log(`[Broadcast] Viewer ${client.peerId} re-watch: connected transport but no active consumers — resetting for fresh consume`);
+                    this._cleanupSfuViewerTransport(client);
                 }
             }
         }

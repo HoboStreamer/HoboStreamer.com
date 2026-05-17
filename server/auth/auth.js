@@ -58,6 +58,23 @@ function verifyToken(token) {
 }
 
 /**
+ * Like verifyToken but returns the error name for diagnostics.
+ * For WS auth logging only.
+ */
+function verifyTokenWithReason(token) {
+    if (!hoboToolsPublicKey) return { ok: false, reason: 'no_public_key' };
+    try {
+        const decoded = jwt.verify(token, hoboToolsPublicKey, {
+            algorithms: ['RS256'],
+            issuer: getHoboToolsIssuer(),
+        });
+        return { ok: true, decoded };
+    } catch (err) {
+        return { ok: false, reason: err.name, message: err.message };
+    }
+}
+
+/**
  * Resolve a hobo.tools user to a local HoboStreamer user.
  * Checks linked_accounts first, falls back to username match,
  * auto-creates a local account if none found.
@@ -279,15 +296,21 @@ function extractToken(req) {
  * Extract JWT from query parameter (WebSocket upgrade requests)
  */
 function extractWsToken(req) {
+    // Prefer explicit ?token= query param — clients (e.g. broadcast signaling)
+    // put the freshest localStorage token in the URL, which may be newer than
+    // a stale httpOnly cookie from an earlier session.
+    try {
+        const url = new URL(req.url || '/', 'http://localhost');
+        const queryToken = url.searchParams.get('token');
+        if (queryToken && queryToken !== 'null' && queryToken !== 'undefined') return queryToken;
+    } catch { /* fall through */ }
+
+    // Fall back to cookie / Authorization header
     const direct = extractToken(req);
     if (direct) return direct;
 
-    try {
-        const url = new URL(req.url || '/', 'http://localhost');
-        return url.searchParams.get('token') || null;
-    } catch {
-        return (req.query && req.query.token) || null;
-    }
+    // Legacy: req.query fallback for non-URL parse environments
+    return (req.query && req.query.token) || null;
 }
 
 /**
@@ -303,9 +326,16 @@ function authenticateWs(token) {
         apiUser._authSource = 'api_token';
         return apiUser;
     }
-    const decoded = verifyToken(token);
-    if (!decoded) return null;
-    return resolveHoboToolsUser(decoded);
+    const result = verifyTokenWithReason(token);
+    if (!result.ok) {
+        console.warn(`[Auth] WS JWT verify failed: ${result.reason} \u2014 ${result.message || ''}`);
+        return null;
+    }
+    const user = resolveHoboToolsUser(result.decoded);
+    if (!user) {
+        console.warn(`[Auth] WS resolveHoboToolsUser failed for sub=${result.decoded.sub} username=${result.decoded.username}`);
+    }
+    return user;
 }
 
 /**

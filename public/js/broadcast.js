@@ -1408,6 +1408,7 @@ async function createNewStream() {
     const screenAudio = document.getElementById('bc-screen-audio')?.value || 'default';
     const screenCamera = document.getElementById('bc-screen-camera')?.value || 'default';
 
+    let _diagStreamId = null; // captured in catch for diagnostic logging
     try {
         const selectedConfig = document.getElementById('bc-control-config')?.value;
         const controlConfigId = selectedConfig ? parseInt(selectedConfig) : null;
@@ -1426,6 +1427,7 @@ async function createNewStream() {
             }
         });
         const streamData = data.stream || data;
+        _diagStreamId = streamData?.id;
 
         // Create per-stream state
         const ss = createStreamState(streamData);
@@ -1501,6 +1503,25 @@ async function createNewStream() {
         }
     } catch (e) {
         toast(e.message || 'Failed to create stream', 'error');
+        // Diagnostic: log the error to server so we can see it in logs
+        fetch('/api/streams/diag-log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+            body: JSON.stringify({
+                stream_id: _diagStreamId,
+                error_name: e?.name,
+                error_message: e?.message,
+                method: broadcastState?.selectedMethod,
+                sub: broadcastState?.selectedWebRTCSub,
+                browser_source: broadcastState?.selectedBrowserSource,
+                ua: navigator.userAgent,
+            }),
+        }).catch(() => {});
+        // Clean up the orphaned stream state and server record if stream was created
+        if (_diagStreamId) {
+            cleanupStream(_diagStreamId);
+            api(`/streams/${_diagStreamId}`, { method: 'DELETE' }).catch(() => {});
+        }
     }
 }
 
