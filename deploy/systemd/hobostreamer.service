@@ -1,11 +1,11 @@
 [Unit]
 Description=HoboStreamer
-After=network.target
+After=network.target rclone-hobocold.service
 
 [Service]
 Type=simple
-User=jackewl
-Group=jackewl
+User=ubuntu
+Group=ubuntu
 WorkingDirectory=/opt/hobostreamer
 Environment=NODE_ENV=production
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
@@ -17,6 +17,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/hobostreamer/data
+ReadWritePaths=-/mnt/hobo-cold
 
 [Install]
 WantedBy=multi-user.target
