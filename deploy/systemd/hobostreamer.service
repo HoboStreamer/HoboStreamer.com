@@ -1,6 +1,6 @@
 [Unit]
 Description=HoboStreamer
-After=network.target rclone-hobocold.service
+After=network.target
 
 [Service]
 Type=simple
@@ -17,7 +17,6 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/hobostreamer/data
-ReadWritePaths=-/mnt/hobo-cold
 
 [Install]
 WantedBy=multi-user.target
