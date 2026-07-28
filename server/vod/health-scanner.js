@@ -138,6 +138,14 @@ async function scanVod(vod, options = {}) {
     };
 
     if (!filePath || !fs.existsSync(filePath)) {
+        // Offloaded to object storage (B2/R2) — the upload was size-verified,
+        // so skip local file checks instead of flagging it missing.
+        try {
+            if (require('./vod-storage').isRemote(vod)) {
+                result.status = 'offloaded';
+                return result;
+            }
+        } catch { /* fall through to missing_file */ }
         result.status = 'missing_file';
         result.issues.push('missing_file');
         return result;

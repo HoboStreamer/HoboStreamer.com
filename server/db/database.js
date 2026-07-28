@@ -319,6 +319,20 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] RobotStreamer integration migration:', e.message); }
 
+    // Migrate: native object-storage columns for the VOD storage engine
+    // (storage_provider: local|b2|r2, storage_key: object key in the bucket)
+    try {
+        const vodCols = database.prepare('PRAGMA table_info(vods)').all().map(c => c.name);
+        if (!vodCols.includes('storage_provider')) {
+            database.exec("ALTER TABLE vods ADD COLUMN storage_provider TEXT DEFAULT 'local'");
+            console.log('[DB] Added storage_provider column to vods');
+        }
+        if (!vodCols.includes('storage_key')) {
+            database.exec('ALTER TABLE vods ADD COLUMN storage_key TEXT');
+            console.log('[DB] Added storage_key column to vods');
+        }
+    } catch (e) { console.warn('[DB] VOD storage engine migration:', e.message); }
+
     // Migrate: per-slot RobotStreamer integrations — drop the UNIQUE(user_id)
     // constraint (requires a table rebuild in SQLite) and add managed_stream_id
     // so each stream slot can carry its own token + robot.

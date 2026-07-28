@@ -794,10 +794,12 @@ async function start() {
     // 6e. Start periodic viewer count polling for restream destinations
     restreamManager.startViewerCountPolling();
 
-    // 6f. Start storage tier manager (auto-migrate cold VODs)
-    const storageTier = require('./vod/storage-tier');
-    storageTier.syncTiers();
-    storageTier.start();
+    // 6f. Start the VOD storage engine (local / Backblaze B2 / Cloudflare R2)
+    const vodStorage = require('./vod/vod-storage');
+    vodStorage.checkProviders()
+        .then(() => vodStorage.migrateLegacy())
+        .catch(err => console.warn('[VodStorage] Init warning:', err.message))
+        .finally(() => vodStorage.start());
 
     // 7. Start HTTP server
     server.listen(config.port, config.host, () => {
@@ -1104,7 +1106,7 @@ function shutdown() {
     setTimeout(() => {
         restreamManager.stopViewerCountPolling();
         restreamManager.stopAll();
-        try { require('./vod/storage-tier').stop(); } catch {}
+        try { require('./vod/vod-storage').stop(); } catch {}
         // canvasServer + gameServer migrated to hobo.quest
         callServer.close();
         chatServer.close();
