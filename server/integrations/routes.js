@@ -110,14 +110,19 @@ router.put('/integration', requireAuth, async (req, res) => {
         const result = await robotStreamerService.upsertIntegration(req.user.id, req.body || {}, slotId);
         const affected = liveStreamsForConfig(req.user.id, slotId);
 
-        if (!result.row?.enabled || result.row?.mirror_chat === 0) {
+        if (!result.row?.enabled) {
             for (const stream of affected) {
                 robotStreamerService.stopForStream(stream.id);
             }
         } else {
             for (const stream of affected) {
+                if (result.row?.mirror_chat === 0) {
+                    robotStreamerService.stopChatBridge(stream.id);
+                }
+                // startForStream handles both the native video publish and
+                // (when mirror_chat is on) the chat bridge.
                 robotStreamerService.startForStream(stream).catch((err) => {
-                    console.warn(`[RS] Failed to start chat bridge for stream ${stream.id}:`, err.message);
+                    console.warn(`[RS] Failed to start RS integration for stream ${stream.id}:`, err.message);
                 });
             }
         }

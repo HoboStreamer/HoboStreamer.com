@@ -19,6 +19,9 @@ const { notifyDiscordGoLive } = require('../integrations/discord-webhook');
 let chatRelayService;
 try { chatRelayService = require('../integrations/chat-relay-service'); } catch {}
 
+let robotStreamerService;
+try { robotStreamerService = require('../integrations/robotstreamer-service'); } catch {}
+
 let sdpTransform;
 try {
     sdpTransform = require('sdp-transform');
@@ -142,7 +145,7 @@ function endActiveWhipStream(streamId, reason = 'whip_cleanup') {
         restreamManager.stopAllForStream(streamId);
     } catch (err) { /* ignore */ }
 
-    try { robotStreamerService.stopForStream(streamId); } catch (err) { /* ignore */ }
+    try { if (robotStreamerService) robotStreamerService.stopForStream(streamId); } catch (err) { /* ignore */ }
     try { if (chatRelayService) chatRelayService.stopForStream(streamId); } catch (err) { /* ignore */ }
     try { require('./broadcast-server').endStream(streamId); } catch (err) { /* ignore */ }
     try { webrtcSFU.closeRoom(`stream-${streamId}`); } catch (err) { /* ignore */ }
@@ -928,6 +931,30 @@ async function handleWhipPost(req, res) {
                     ensureWhipHeartbeatTimer(session);
                     webrtcSFU.emit('whip-ice-connected', { streamId, roomId, resourceId });
                     console.log(`[WHIP] ICE connected for stream ${streamId} — notifying broadcast server`);
+
+                    // Media is flowing — start the RS integration (chat mirror +
+                    // native video publish) and ALL enabled restream destinations.
+                    // WHIP broadcasters have no browser session to start these
+                    // manually, so an enabled destination means "run it when live".
+                    const liveStream = db.getStreamById(streamId);
+                    if (liveStream?.is_live) {
+                        if (robotStreamerService) {
+                            robotStreamerService.startForStream(liveStream).catch((err) => {
+                                console.warn(`[WHIP] RS start failed for stream ${streamId}:`, err.message);
+                            });
+                        }
+                        try {
+                            const restreamManager = require('./restream-manager');
+                            restreamManager.resumeForStream(streamId, liveStream.user_id, {
+                                protocol: 'webrtc',
+                                streamKey: liveStream.managed_stream_key,
+                            }).catch((err) => {
+                                console.warn(`[WHIP] Restream resume failed for stream ${streamId}:`, err.message);
+                            });
+                        } catch (err) {
+                            console.warn(`[WHIP] Restream resume error for stream ${streamId}:`, err.message);
+                        }
+                    }
                 }
             }
         });

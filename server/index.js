@@ -728,6 +728,17 @@ async function start() {
         console.warn('[Server] WebRTC SFU not available:', err.message);
     }
 
+    // 5b. Resume enabled restreams for streams that survived the restart.
+    // WHIP/RTMP broadcasters have no browser session to re-start them manually.
+    for (const stream of db.getLiveStreams()) {
+        restreamManager.resumeForStream(stream.id, stream.user_id, {
+            protocol: stream.protocol,
+            streamKey: stream.managed_stream_key,
+        }).catch((err) => {
+            console.warn(`[Restream] Boot resume failed for stream ${stream.id}:`, err.message);
+        });
+    }
+
     // 6. Start RTMP server (may fail if node-media-server not installed)
     try {
         // node-media-server registers process.on('uncaughtException') that calls process.exit()

@@ -283,7 +283,8 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         const rsViewerCount = robotStreamerService.getRsViewerCount(channel.user_id);
         for (const ls of liveStreams) {
             const hasBridge = robotStreamerService.chatBridges.has(ls.id);
-            const hasPublish = robotStreamerService._activePublish?.has(ls.id);
+            let hasPublish = robotStreamerService._activePublish?.has(ls.id);
+            try { hasPublish = hasPublish || require('../integrations/rs-native-publisher').isActive(ls.id); } catch { /* ignore */ }
             if (hasBridge || hasPublish) {
                 const integration = db.getRobotStreamerIntegrationForStream(ls.user_id, ls.managed_stream_id || null);
                 rsInfo[ls.id] = {

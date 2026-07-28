@@ -304,16 +304,44 @@ class RobotStreamerService {
         }, slotId);
     }
 
+    /**
+     * Start the native (server-side) RS video publisher for streams whose
+     * ingest has no browser publisher: WHIP/OBS and RTMP. Browser broadcasts
+     * publish to RS from the client via /ws/robotstreamer-publish instead.
+     */
+    _maybeStartNativePublish(stream, integration) {
+        try {
+            if (!integration?.enabled || !integration.token || !integration.robot_id) return;
+            if (this._activePublish.has(stream.id)) return; // browser publisher already connected
+            const rsNativePublisher = require('./rs-native-publisher');
+            if (rsNativePublisher.isActive(stream.id)) return;
+
+            const db2 = require('../db/database');
+            const ms = stream.managed_stream_id ? db2.getManagedStreamById(stream.managed_stream_id) : null;
+            const method = ms?.streaming_method || 'browser';
+            if (method !== 'whip' && method !== 'rtmp') return;
+
+            rsNativePublisher.start(stream, integration);
+        } catch (err) {
+            console.warn(`[RS] Native publish start failed for stream ${stream.id}:`, err.message);
+        }
+    }
+
     async startForStream(stream) {
         if (!stream?.id || !stream?.user_id) return;
 
-        const existingBridge = this.chatBridges.get(stream.id);
-        if (existingBridge) return existingBridge;
-
         let integration = this.getIntegrationForStream(stream);
-        if (!integration?.enabled || integration.mirror_chat === 0 || !integration.token || !integration.robot_id) {
+        if (!integration?.enabled || !integration.token || !integration.robot_id) {
             return null;
         }
+
+        // Server-side video publish for WHIP/RTMP ingest (independent of chat mirror)
+        this._maybeStartNativePublish(stream, integration);
+
+        if (integration.mirror_chat === 0) return null;
+
+        const existingBridge = this.chatBridges.get(stream.id);
+        if (existingBridge) return existingBridge;
 
         if (!integration.chat_url) {
             try {
@@ -462,12 +490,17 @@ class RobotStreamerService {
         return bridge;
     }
 
-    stopForStream(streamId) {
+    stopChatBridge(streamId) {
         const bridge = this.chatBridges.get(streamId);
         if (bridge) {
             bridge.disconnect();
             this.chatBridges.delete(streamId);
         }
+    }
+
+    stopForStream(streamId) {
+        this.stopChatBridge(streamId);
+        try { require('./rs-native-publisher').stop(streamId); } catch { /* ignore */ }
     }
 
     stopForUserLiveStreams(userId) {
