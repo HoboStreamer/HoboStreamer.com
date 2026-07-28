@@ -319,6 +319,46 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] RobotStreamer integration migration:', e.message); }
 
+    // Migrate: per-slot RobotStreamer integrations — drop the UNIQUE(user_id)
+    // constraint (requires a table rebuild in SQLite) and add managed_stream_id
+    // so each stream slot can carry its own token + robot.
+    try {
+        const rsCols = database.prepare('PRAGMA table_info(robotstreamer_integrations)').all().map(c => c.name);
+        if (!rsCols.includes('managed_stream_id')) {
+            database.exec(`
+                CREATE TABLE robotstreamer_integrations_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    managed_stream_id INTEGER,
+                    enabled INTEGER DEFAULT 0,
+                    mirror_chat INTEGER DEFAULT 1,
+                    token TEXT,
+                    robot_id TEXT,
+                    owner_id TEXT,
+                    chat_url TEXT,
+                    control_url TEXT,
+                    rtc_sfu_url TEXT,
+                    stream_name TEXT,
+                    owner_name TEXT,
+                    last_validated_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (managed_stream_id) REFERENCES managed_streams(id) ON DELETE CASCADE
+                );
+                INSERT INTO robotstreamer_integrations_new
+                    (id, user_id, enabled, mirror_chat, token, robot_id, owner_id, chat_url, control_url, rtc_sfu_url, stream_name, owner_name, last_validated_at, created_at, updated_at)
+                SELECT id, user_id, enabled, mirror_chat, token, robot_id, owner_id, chat_url, control_url, rtc_sfu_url, stream_name, owner_name, last_validated_at, created_at, updated_at
+                FROM robotstreamer_integrations;
+                DROP TABLE robotstreamer_integrations;
+                ALTER TABLE robotstreamer_integrations_new RENAME TO robotstreamer_integrations;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_rs_integrations_user_slot
+                    ON robotstreamer_integrations(user_id, IFNULL(managed_stream_id, 0));
+            `);
+            console.log('[DB] Migrated robotstreamer_integrations to per-slot schema');
+        }
+    } catch (e) { console.warn('[DB] RobotStreamer per-slot migration:', e.message); }
+
     // Migrate: create restream_destinations table if missing
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS restream_destinations (
@@ -1824,10 +1864,27 @@ function getChannelVodRecordingPolicyByUserId(userId) {
 // ── RobotStreamer integration helpers ───────────────────────
 
 function getRobotStreamerIntegrationByUserId(userId) {
-    return get('SELECT * FROM robotstreamer_integrations WHERE user_id = ?', [userId]);
+    // Account-level default row (no slot binding)
+    return get('SELECT * FROM robotstreamer_integrations WHERE user_id = ? AND managed_stream_id IS NULL', [userId]);
 }
 
-function upsertRobotStreamerIntegration(userId, fields) {
+function getRobotStreamerIntegrationBySlot(userId, managedStreamId) {
+    if (!managedStreamId) return null;
+    return get('SELECT * FROM robotstreamer_integrations WHERE user_id = ? AND managed_stream_id = ?', [userId, managedStreamId]);
+}
+
+function getRobotStreamerIntegrationForStream(userId, managedStreamId) {
+    // Slot-specific config wins; fall back to the account-level default row
+    return (managedStreamId ? getRobotStreamerIntegrationBySlot(userId, managedStreamId) : null)
+        || getRobotStreamerIntegrationByUserId(userId);
+}
+
+function deleteRobotStreamerIntegrationForSlot(userId, managedStreamId) {
+    if (!managedStreamId) return;
+    run('DELETE FROM robotstreamer_integrations WHERE user_id = ? AND managed_stream_id = ?', [userId, managedStreamId]);
+}
+
+function upsertRobotStreamerIntegration(userId, fields, managedStreamId = null) {
     const allowed = new Set([
         'enabled',
         'mirror_chat',
@@ -1841,7 +1898,10 @@ function upsertRobotStreamerIntegration(userId, fields) {
         'owner_name',
         'last_validated_at',
     ]);
-    const existing = getRobotStreamerIntegrationByUserId(userId);
+    const slotId = managedStreamId || null;
+    const existing = slotId
+        ? getRobotStreamerIntegrationBySlot(userId, slotId)
+        : getRobotStreamerIntegrationByUserId(userId);
     const filtered = Object.entries(fields || {}).filter(([key, val]) => allowed.has(key) && val !== undefined);
 
     if (!filtered.length) return existing;
@@ -1854,19 +1914,21 @@ function upsertRobotStreamerIntegration(userId, fields) {
             params.push(val);
         }
         updates.push('updated_at = CURRENT_TIMESTAMP');
-        params.push(userId);
-        run(`UPDATE robotstreamer_integrations SET ${updates.join(', ')} WHERE user_id = ?`, params);
+        params.push(userId, slotId);
+        run(`UPDATE robotstreamer_integrations SET ${updates.join(', ')} WHERE user_id = ? AND managed_stream_id IS ?`, params);
     } else {
-        const keys = ['user_id', ...filtered.map(([key]) => key), 'updated_at'];
+        const keys = ['user_id', 'managed_stream_id', ...filtered.map(([key]) => key), 'updated_at'];
         const placeholders = keys.map(() => '?').join(', ');
-        const params = [userId, ...filtered.map(([, val]) => val), new Date().toISOString()];
+        const params = [userId, slotId, ...filtered.map(([, val]) => val), new Date().toISOString()];
         run(
             `INSERT INTO robotstreamer_integrations (${keys.join(', ')}) VALUES (${placeholders})`,
             params,
         );
     }
 
-    return getRobotStreamerIntegrationByUserId(userId);
+    return slotId
+        ? getRobotStreamerIntegrationBySlot(userId, slotId)
+        : getRobotStreamerIntegrationByUserId(userId);
 }
 
 // ── Restream Destination helpers ─────────────────────────────
@@ -4314,6 +4376,8 @@ module.exports = {
     getChannelVodRecordingPolicyByUserId,
     // RobotStreamer integration
     getRobotStreamerIntegrationByUserId, upsertRobotStreamerIntegration,
+    getRobotStreamerIntegrationBySlot, getRobotStreamerIntegrationForStream,
+    deleteRobotStreamerIntegrationForSlot,
     // Restream destinations
     getRestreamDestinationsByUserId, getRestreamDestinationById,
     createRestreamDestination, updateRestreamDestination, deleteRestreamDestination,

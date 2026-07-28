@@ -73,6 +73,7 @@ class RobotStreamerService {
                 stream_name: '',
                 owner_name: '',
                 last_validated_at: null,
+                managed_stream_id: null,
                 available_robots: [],
                 ...extras,
             };
@@ -82,6 +83,7 @@ class RobotStreamerService {
             enabled: !!row.enabled,
             mirror_chat: row.mirror_chat !== 0,
             has_token: !!row.token,
+            managed_stream_id: row.managed_stream_id || null,
             robot_id: row.robot_id || '',
             owner_id: row.owner_id || '',
             chat_url: row.chat_url || '',
@@ -96,6 +98,16 @@ class RobotStreamerService {
 
     getClientIntegration(userId) {
         return this.sanitizeIntegration(db.getRobotStreamerIntegrationByUserId(userId));
+    }
+
+    /**
+     * Resolve the effective integration for a stream: the slot-specific row
+     * (matching the stream's managed_stream_id) wins, otherwise the
+     * account-level default row is used.
+     */
+    getIntegrationForStream(stream) {
+        if (!stream?.user_id) return null;
+        return db.getRobotStreamerIntegrationForStream(stream.user_id, stream.managed_stream_id || null);
     }
 
     normalizeRobotInput(input) {
@@ -229,8 +241,15 @@ class RobotStreamerService {
         };
     }
 
-    async upsertIntegration(userId, payload = {}) {
-        const existing = db.getRobotStreamerIntegrationByUserId(userId);
+    async upsertIntegration(userId, payload = {}, managedStreamId = null) {
+        const slotId = managedStreamId || null;
+        const existing = slotId
+            ? db.getRobotStreamerIntegrationBySlot(userId, slotId)
+            : db.getRobotStreamerIntegrationByUserId(userId);
+        // When creating a slot-specific config, allow token/robot to fall back to
+        // the account-level default row so users don't have to re-paste the token
+        // for every slot.
+        const fallback = existing || (slotId ? db.getRobotStreamerIntegrationByUserId(userId) : null);
         const updates = {
             enabled: normalizeBoolean(payload.enabled, existing ? !!existing.enabled : false) ? 1 : 0,
             mirror_chat: normalizeBoolean(payload.mirror_chat, existing ? existing.mirror_chat !== 0 : true) ? 1 : 0,
@@ -246,29 +265,43 @@ class RobotStreamerService {
         let availableRobots = [];
         if (needsValidation) {
             const validated = await this.validateConfiguration({
-                token: providedToken || existing?.token,
-                robotInput: providedRobot || existing?.robot_id,
+                token: providedToken || fallback?.token,
+                robotInput: providedRobot || fallback?.robot_id,
             });
             Object.assign(updates, validated.fields);
             availableRobots = validated.availableRobots;
+        } else if (!existing && fallback) {
+            // Creating a slot row without re-validating — copy config from the default row
+            updates.token = fallback.token;
+            updates.robot_id = fallback.robot_id;
+            updates.owner_id = fallback.owner_id;
+            updates.chat_url = fallback.chat_url;
+            updates.control_url = fallback.control_url;
+            updates.rtc_sfu_url = fallback.rtc_sfu_url;
+            updates.stream_name = fallback.stream_name;
+            updates.owner_name = fallback.owner_name;
+            updates.last_validated_at = fallback.last_validated_at;
         }
 
-        const row = db.upsertRobotStreamerIntegration(userId, updates);
+        const row = db.upsertRobotStreamerIntegration(userId, updates, slotId);
         return {
             row,
             integration: this.sanitizeIntegration(row, { available_robots: availableRobots }),
         };
     }
 
-    async refreshIntegration(userId) {
-        const existing = db.getRobotStreamerIntegrationByUserId(userId);
+    async refreshIntegration(userId, managedStreamId = null) {
+        const slotId = managedStreamId || null;
+        const existing = slotId
+            ? db.getRobotStreamerIntegrationBySlot(userId, slotId)
+            : db.getRobotStreamerIntegrationByUserId(userId);
         if (!existing?.token || !existing?.robot_id) return existing;
         const validated = await this.validateConfiguration({ token: existing.token, robotInput: existing.robot_id });
         return db.upsertRobotStreamerIntegration(userId, {
             ...validated.fields,
             enabled: existing.enabled,
             mirror_chat: existing.mirror_chat,
-        });
+        }, slotId);
     }
 
     async startForStream(stream) {
@@ -277,14 +310,14 @@ class RobotStreamerService {
         const existingBridge = this.chatBridges.get(stream.id);
         if (existingBridge) return existingBridge;
 
-        let integration = db.getRobotStreamerIntegrationByUserId(stream.user_id);
+        let integration = this.getIntegrationForStream(stream);
         if (!integration?.enabled || integration.mirror_chat === 0 || !integration.token || !integration.robot_id) {
             return null;
         }
 
         if (!integration.chat_url) {
             try {
-                integration = await this.refreshIntegration(stream.user_id);
+                integration = await this.refreshIntegration(stream.user_id, integration.managed_stream_id || null);
             } catch (err) {
                 console.warn(`[RS] Failed refreshing integration for stream ${stream.id}:`, err.message);
                 return null;
@@ -460,7 +493,7 @@ class RobotStreamerService {
             return true;
         }
 
-        const integration = db.getRobotStreamerIntegrationByUserId(user.id);
+        const integration = this.getIntegrationForStream(stream);
         if (!integration?.enabled || !integration?.token || !integration?.robot_id) {
             socket.destroy();
             return true;
@@ -576,9 +609,9 @@ class RobotStreamerService {
         const needsRefresh = !lastValidated || (Date.now() - lastValidated) > RS_REFRESH_CACHE_MS;
 
         if (needsRefresh) {
-            console.log('[RS Publish] Refreshing integration for user', ctx.user.id, '(last validated:', integration.last_validated_at || 'never', ')');
+            console.log('[RS Publish] Refreshing integration for user', ctx.user.id, '(last validated:', integration.last_validated_at || 'never', ', slot:', integration.managed_stream_id || 'default', ')');
             try {
-                integration = await this.refreshIntegration(ctx.user.id);
+                integration = await this.refreshIntegration(ctx.user.id, integration.managed_stream_id || null);
                 console.log('[RS Publish] Refreshed integration:', {
                     robot_id: integration.robot_id,
                     rtc_sfu_url: integration.rtc_sfu_url,

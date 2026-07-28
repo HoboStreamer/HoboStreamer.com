@@ -9,6 +9,31 @@
    ═══════════════════════════════════════════════════════════════ */
 
 
+/* ── Per-slot RobotStreamer config ───────────────────────────── */
+// Each stream slot (managed stream) can carry its own RobotStreamer
+// token + robot, configured in the slot's Restream Destinations panel.
+// Slots with their own config auto-restream independently; slots without
+// fall back to the account-level config + legacy single-slot reservation.
+const _rsSlotIntegrationCache = new Map(); // managed_stream_id → { fetchedAt, integration|null }
+
+async function fetchSlotRsIntegration(managedStreamId, { force = false } = {}) {
+    if (!managedStreamId) return null;
+    const cached = _rsSlotIntegrationCache.get(managedStreamId);
+    if (!force && cached && Date.now() - cached.fetchedAt < 60000) return cached.integration;
+    try {
+        const data = await api(`/robotstreamer/integration?managed_stream_id=${managedStreamId}`);
+        const integration = data.exists ? data.integration : null;
+        _rsSlotIntegrationCache.set(managedStreamId, { fetchedAt: Date.now(), integration });
+        return integration;
+    } catch {
+        return cached?.integration ?? null;
+    }
+}
+
+function rsSlotIntegrationUsable(slotRs) {
+    return !!(slotRs?.enabled && slotRs?.has_token && slotRs?.robot_id);
+}
+
 /* ── RS Restream Slot ────────────────────────────────────────── */
 // Only one stream at a time can restream to RobotStreamer.
 // Slot is stored as 'm:<managed_stream_id>' only.
@@ -176,8 +201,9 @@ function updateRsRestreamSlotUI() {
     const panel = document.getElementById('bc-rs-control');
     if (!panel) return;
 
-    // If RS not configured, completely hide the panel
-    if (!canUseRobotStreamerRestream()) {
+    // If RS not configured (neither account-level nor any live slot config), hide the panel
+    const hasSlotRs = [...broadcastState.streams.values()].some(s => rsSlotIntegrationUsable(s._rsSlotIntegration));
+    if (!canUseRobotStreamerRestream() && !hasSlotRs) {
         panel.style.display = 'none';
         return;
     }
@@ -241,8 +267,22 @@ function updateRsRestreamSlotUI() {
 
     panel.innerHTML = html;
 }
-/** Conditionally start RS restream only if this stream has the slot */
-function maybeStartRsRestream(streamId) {
+/** Conditionally start RS restream — slot-specific config first, legacy account slot second */
+async function maybeStartRsRestream(streamId) {
+    const ss = getStreamState(streamId);
+    const msId = ss?.streamData?.managed_stream_id || null;
+    const slotRs = await fetchSlotRsIntegration(msId);
+    if (slotRs) {
+        // This slot has its own RS config — it restreams independently of the
+        // legacy single-slot reservation and of other slots.
+        if (ss) ss._rsSlotIntegration = slotRs;
+        if (rsSlotIntegrationUsable(slotRs)) {
+            startRobotStreamerRestream(streamId).catch(() => {});
+            updateRsRestreamSlotUI();
+        }
+        return;
+    }
+    // Legacy account-level behavior
     if (!isRsRestreamAssigned(streamId)) return;
     // Auto-assign the slot on first live stream
     const currentSlot = getRsRestreamSlotStreamId();
@@ -3275,7 +3315,18 @@ async function startRobotStreamerRestream(streamId) {
     // Wait for integration settings to load first (fixes race condition on page load)
     await ensureRobotStreamerLoaded();
 
-    if (!canUseRobotStreamerRestream()) {
+    // Slot-specific config wins over the account-level integration
+    const slotRs = ss._rsSlotIntegration
+        || await fetchSlotRsIntegration(ss.streamData?.managed_stream_id || null);
+    if (slotRs) ss._rsSlotIntegration = slotRs;
+
+    if (slotRs) {
+        if (!rsSlotIntegrationUsable(slotRs)) {
+            console.log('[RS Restream] Slot config not usable — enabled:', slotRs.enabled, 'hasToken:', slotRs.has_token, 'robotId:', slotRs.robot_id);
+            if (!slotRs.enabled) setRobotStreamerStatus('RobotStreamer restream is disabled for this stream slot.', 'info', 'bc-rsLiveStatus');
+            return null;
+        }
+    } else if (!canUseRobotStreamerRestream()) {
         const rs = broadcastState.robotStreamer;
         console.log('[RS Restream] Cannot start — enabled:', rs.enabled, 'hasToken:', rs.hasToken, 'robotId:', rs.robotId);
         if (!rs.enabled) setRobotStreamerStatus('RobotStreamer restream is disabled.', 'info', 'bc-rsLiveStatus');

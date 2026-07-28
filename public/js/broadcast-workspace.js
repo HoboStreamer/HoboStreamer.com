@@ -2309,29 +2309,67 @@ const _wsRestreamPlatforms = {
 };
 
 let _wsRestreamDests = []; // cached for current slot
+let _wsSlotRsIntegration = null; // slot-specific RobotStreamer config (null = none for this slot)
 
 async function _wsLoadRestreamDests(managedStreamId) {
     const container = document.getElementById('bc-ws-restream-list');
     if (!container) return;
     try {
-        const data = await api(`/restream/destinations?managed_stream_id=${managedStreamId}`);
+        const [data, rsData] = await Promise.all([
+            api(`/restream/destinations?managed_stream_id=${managedStreamId}`),
+            api(`/robotstreamer/integration?managed_stream_id=${managedStreamId}`).catch(() => null),
+        ]);
         _wsRestreamDests = data.destinations || [];
+        _wsSlotRsIntegration = (rsData && rsData.exists) ? rsData.integration : null;
         _wsRenderRestreamList(container);
     } catch (err) {
         container.innerHTML = '<p class="muted" style="font-size:0.82rem"><i class="fa-solid fa-triangle-exclamation"></i> Failed to load restream destinations</p>';
     }
 }
 
+function _wsRenderSlotRsCard() {
+    const rs = _wsSlotRsIntegration;
+    if (!rs) return '';
+    const plat = _wsRestreamPlatforms.robotstreamer;
+    const label = rs.stream_name || (rs.robot_id ? `Robot ${rs.robot_id}` : 'RobotStreamer');
+    return `
+    <div class="bc-ws-restream-card${rs.enabled ? '' : ' disabled'}" data-restreamid="rs">
+        <div class="bc-ws-restream-card-hd">
+            <span class="bc-ws-restream-platform" style="color:${plat.color}">
+                <i class="${plat.icon}"></i> ${esc(label)}
+            </span>
+            <span class="bc-ws-restream-badges">
+                ${rs.mirror_chat ? '<span class="bc-ws-restream-badge" title="Chat mirror enabled"><i class="fa-solid fa-comments"></i></span>' : ''}
+                ${rs.enabled ? '<span class="bc-ws-restream-badge" title="Auto-start when live"><i class="fa-solid fa-bolt"></i></span>' : '<span class="bc-ws-restream-badge muted" title="Disabled"><i class="fa-solid fa-pause"></i></span>'}
+            </span>
+            <div class="bc-ws-restream-actions">
+                <button class="btn btn-small btn-outline" onclick="_wsEditSlotRs()" title="Edit">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="btn btn-small btn-outline" style="color:var(--danger)" onclick="_wsDeleteSlotRs()" title="Delete">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        </div>
+        <div class="bc-ws-restream-card-info">
+            <span class="muted" style="font-size:0.78rem">RobotStreamer WebSocket · Robot ${esc(rs.robot_id || '?')}${rs.owner_name ? ` · ${esc(rs.owner_name)}` : ''}</span>
+            <span class="muted" style="font-size:0.78rem">${rs.has_token ? 'Token saved for this slot' : 'No token — will inherit account default'}</span>
+        </div>
+    </div>`;
+}
+
 function _wsRenderRestreamList(container) {
     if (!container) container = document.getElementById('bc-ws-restream-list');
     if (!container) return;
 
-    if (_wsRestreamDests.length === 0) {
+    const rsCard = _wsRenderSlotRsCard();
+
+    if (_wsRestreamDests.length === 0 && !rsCard) {
         container.innerHTML = '<p class="muted" style="font-size:0.82rem">No restream destinations configured for this stream slot.</p>';
         return;
     }
 
-    container.innerHTML = _wsRestreamDests.map(d => {
+    container.innerHTML = rsCard + _wsRestreamDests.map(d => {
         const plat = _wsRestreamPlatforms[d.platform] || _wsRestreamPlatforms.custom;
         const statusClass = d.enabled ? '' : ' disabled';
         return `
@@ -2366,6 +2404,93 @@ function _wsAddRestreamDest() {
     _wsShowRestreamForm(null);
 }
 
+function _wsEditSlotRs() {
+    _wsShowRestreamForm({ __rs: true });
+}
+
+async function _wsDeleteSlotRs() {
+    const confirmed = await _wsConfirmAction('The RobotStreamer config for this stream slot will be removed. The slot falls back to your account-level RobotStreamer settings (if any).', {
+        title: 'Remove RobotStreamer from this slot?', okLabel: 'Remove', okClass: 'btn-danger'
+    });
+    if (!confirmed) return;
+    try {
+        await api(`/robotstreamer/integration?managed_stream_id=${_wsState.selectedId}`, { method: 'DELETE' });
+        _wsSlotRsIntegration = null;
+        _wsApplySlotRsToLiveStreams(_wsState.selectedId, null);
+        _wsRenderRestreamList();
+        toast('RobotStreamer removed from this slot', 'success');
+    } catch (err) {
+        toast(err?.message || 'Failed to remove', 'error');
+    }
+}
+
+/** Push an updated slot RS config into broadcast.js live-stream state and restart/stop the restream */
+function _wsApplySlotRsToLiveStreams(managedStreamId, integration) {
+    if (typeof broadcastState === 'undefined' || !managedStreamId) return;
+    if (typeof _rsSlotIntegrationCache !== 'undefined') {
+        _rsSlotIntegrationCache.set(managedStreamId, { fetchedAt: Date.now(), integration });
+    }
+    for (const [sid, sstate] of broadcastState.streams) {
+        if (sstate.streamData?.managed_stream_id !== managedStreamId) continue;
+        sstate._rsSlotIntegration = integration;
+        if (!sstate.localStream) continue;
+        if (typeof stopRobotStreamerRestream !== 'function') continue;
+        stopRobotStreamerRestream(sid, { quiet: true }).catch(() => {}).finally(() => {
+            if (integration && typeof rsSlotIntegrationUsable === 'function' && rsSlotIntegrationUsable(integration)) {
+                startRobotStreamerRestream(sid).catch(() => {});
+            }
+        });
+    }
+    if (typeof updateRsRestreamSlotUI === 'function') updateRsRestreamSlotUI();
+}
+
+function _wsPopulateSlotRsRobotSelect(robots = [], selectedRobotId = '') {
+    const select = document.getElementById('ws-rs-rs-robot-select');
+    if (!select) return;
+    select.innerHTML = '<option value="">Validate to load your robots</option>';
+    (Array.isArray(robots) ? robots : []).forEach((robot) => {
+        const option = document.createElement('option');
+        option.value = robot.robot_id;
+        const viewers = Number(robot.viewers || 0);
+        option.textContent = `${robot.robot_name || `Robot ${robot.robot_id}`} (${robot.robot_id}) • ${robot.status || 'offline'} • ${viewers} viewer${viewers === 1 ? '' : 's'}`;
+        select.appendChild(option);
+    });
+    if (selectedRobotId) select.value = String(selectedRobotId);
+}
+
+function _wsSetSlotRsStatus(message, tone = 'info') {
+    const el = document.getElementById('ws-rs-rs-status');
+    if (!el) return;
+    const colors = { success: 'var(--success, #22c55e)', error: 'var(--danger, #ef4444)', info: 'var(--text-secondary, #9ca3af)' };
+    el.textContent = message;
+    el.style.color = colors[tone] || colors.info;
+}
+
+function _wsGetSlotRsFormData() {
+    const selectRobot = document.getElementById('ws-rs-rs-robot-select')?.value || '';
+    const inputRobot = document.getElementById('ws-rs-rs-robot-input')?.value.trim() || '';
+    return {
+        token: document.getElementById('ws-rs-rs-token')?.value.trim() || '',
+        robot_input: selectRobot || inputRobot,
+        enabled: !!document.getElementById('ws-rs-rs-enabled')?.checked,
+        mirror_chat: !!document.getElementById('ws-rs-rs-mirror-chat')?.checked,
+        managed_stream_id: _wsState.selectedId,
+    };
+}
+
+async function _wsValidateSlotRs() {
+    const payload = _wsGetSlotRsFormData();
+    _wsSetSlotRsStatus('Validating RobotStreamer settings…', 'info');
+    try {
+        const data = await api('/robotstreamer/integration/validate', { method: 'POST', body: payload });
+        const integration = data.integration || {};
+        _wsPopulateSlotRsRobotSelect(integration.available_robots, integration.robot_id);
+        _wsSetSlotRsStatus(`Validated ${integration.stream_name || `robot ${integration.robot_id}`} as ${integration.owner_name || integration.owner_id || 'unknown owner'}.`, 'success');
+    } catch (err) {
+        _wsSetSlotRsStatus(err?.message || 'RobotStreamer validation failed', 'error');
+    }
+}
+
 function _wsEditRestreamDest(destId) {
     const dest = _wsRestreamDests.find(d => d.id === destId);
     if (!dest) return;
@@ -2388,12 +2513,15 @@ async function _wsDeleteRestreamDest(destId) {
 }
 
 function _wsShowRestreamForm(existing) {
+    const isRsEdit = !!existing?.__rs;
+    if (isRsEdit) existing = null; // RS config comes from _wsSlotRsIntegration, not a destination row
     const isEdit = !!existing;
     const overlay = document.createElement('div');
     overlay.className = 'bc-ws-confirm-overlay';
 
+    const selPlatform = isRsEdit ? 'robotstreamer' : (existing?.platform || '');
     const plats = Object.entries(_wsRestreamPlatforms).map(([id, p]) =>
-        `<option value="${id}" ${(existing?.platform || '') === id ? 'selected' : ''}>${esc(p.name)}</option>`
+        `<option value="${id}" ${selPlatform === id ? 'selected' : ''}>${esc(p.name)}</option>`
     ).join('');
 
     const qualityOpts = ['auto', 'low', 'medium', 'high', 'ultra', 'source'].map(q =>
@@ -2409,9 +2537,37 @@ function _wsShowRestreamForm(existing) {
                 ${plats}
             </select>
         </div>
-        <div id="ws-rs-robotstreamer-notice" style="display:none;background:rgba(74,158,255,0.1);border:1px solid rgba(74,158,255,0.3);border-radius:8px;padding:12px;margin:8px 0">
-            <p style="margin:0 0 8px;font-size:0.9rem"><i class="fa-solid fa-robot" style="color:#4a9eff"></i> <strong>RobotStreamer</strong> uses a dedicated WebSocket connection.</p>
-            <p style="margin:0;font-size:0.82rem;color:var(--text-secondary)">It is not an RTMP destination. Paste your RobotStreamer token and select a robot in the <strong>RobotStreamer</strong> section of the Broadcast Settings panel, then enable the toggle to start restreaming automatically when you go live.</p>
+        <div id="ws-rs-robotstreamer-fields" style="display:none">
+            <div style="background:rgba(74,158,255,0.1);border:1px solid rgba(74,158,255,0.3);border-radius:8px;padding:12px;margin:8px 0">
+                <p style="margin:0;font-size:0.82rem;color:var(--text-secondary)"><i class="fa-solid fa-robot" style="color:#4a9eff"></i> <strong>RobotStreamer</strong> uses a dedicated WebSocket connection (not RTMP). The token and robot below apply to <strong>this stream slot only</strong> — each slot can restream to a different robot.</p>
+            </div>
+            <div class="form-group">
+                <label>RobotStreamer Token</label>
+                <input type="password" id="ws-rs-rs-token" class="form-input form-input-sm" placeholder="Paste your robotstreamer-token cookie or JWT" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Robot</label>
+                <input type="text" id="ws-rs-rs-robot-input" class="form-input form-input-sm" placeholder="Robot ID or robotstreamer.com/robot/1234 URL">
+                <div style="display:flex;gap:8px;margin-top:6px">
+                    <select id="ws-rs-rs-robot-select" class="form-input" style="flex:1">
+                        <option value="">Validate to load your robots</option>
+                    </select>
+                    <button class="btn btn-small btn-outline" type="button" onclick="_wsValidateSlotRs()">
+                        <i class="fa-solid fa-circle-check"></i> Validate
+                    </button>
+                </div>
+            </div>
+            <div class="bc-ws-row" style="gap:16px">
+                <label class="bc-toggle-label" style="flex:1">
+                    <input type="checkbox" id="ws-rs-rs-enabled" checked>
+                    Auto-restream when live
+                </label>
+                <label class="bc-toggle-label" style="flex:1">
+                    <input type="checkbox" id="ws-rs-rs-mirror-chat" checked>
+                    <i class="fa-solid fa-comments"></i> Mirror RS chat
+                </label>
+            </div>
+            <p id="ws-rs-rs-status" class="muted" style="font-size:0.8rem;margin:8px 0 0"></p>
         </div>
         <div id="ws-rs-rtmp-fields">
             <div class="form-group">
@@ -2486,10 +2642,28 @@ function _wsShowRestreamForm(existing) {
         const platform = document.getElementById('ws-rs-platform').value;
         const plat = _wsRestreamPlatforms[platform];
 
-        // RobotStreamer is not an RTMP destination — block save and close
+        // RobotStreamer — saved as a per-slot integration, not an RTMP destination row
         if (plat && plat.isRobotStreamer) {
-            overlay.remove();
-            toast('Configure RobotStreamer in the Broadcast Settings panel, not as an RTMP destination.', 'info');
+            const payload = _wsGetSlotRsFormData();
+            if (!payload.token && !_wsSlotRsIntegration?.has_token && !broadcastState?.robotStreamer?.hasToken) {
+                toast('Paste your RobotStreamer token first', 'error');
+                return;
+            }
+            if (!payload.robot_input && !_wsSlotRsIntegration?.robot_id) {
+                toast('Enter or select a robot', 'error');
+                return;
+            }
+            try {
+                const data = await api('/robotstreamer/integration', { method: 'PUT', body: payload });
+                _wsSlotRsIntegration = data.integration || null;
+                _wsApplySlotRsToLiveStreams(_wsState.selectedId, _wsSlotRsIntegration);
+                _wsRenderRestreamList();
+                overlay.remove();
+                toast('RobotStreamer configured for this stream slot', 'success');
+            } catch (err) {
+                _wsSetSlotRsStatus(err?.message || 'Failed to save RobotStreamer settings', 'error');
+                toast(err?.message || 'Failed to save RobotStreamer settings', 'error');
+            }
             return;
         }
 
@@ -2537,16 +2711,37 @@ function _wsRestreamPlatformChanged() {
     const urlInput = document.getElementById('ws-rs-server-url');
     const nameInput = document.getElementById('ws-rs-name');
     const rtmpFields = document.getElementById('ws-rs-rtmp-fields');
-    const rsNotice = document.getElementById('ws-rs-robotstreamer-notice');
+    const rsFields = document.getElementById('ws-rs-robotstreamer-fields');
     if (!platform) return;
     const plat = _wsRestreamPlatforms[platform];
 
     // Toggle RTMP vs RS view
     const isRs = !!(plat && plat.isRobotStreamer);
     if (rtmpFields) rtmpFields.style.display = isRs ? 'none' : '';
-    if (rsNotice) rsNotice.style.display = isRs ? '' : 'none';
+    if (rsFields) rsFields.style.display = isRs ? '' : 'none';
 
-    if (!isRs) {
+    if (isRs) {
+        // Prefill from the slot's existing RS config (if any)
+        const rs = _wsSlotRsIntegration;
+        const tokenEl = document.getElementById('ws-rs-rs-token');
+        const robotEl = document.getElementById('ws-rs-rs-robot-input');
+        const enabledEl = document.getElementById('ws-rs-rs-enabled');
+        const mirrorEl = document.getElementById('ws-rs-rs-mirror-chat');
+        if (tokenEl) {
+            tokenEl.placeholder = rs?.has_token
+                ? 'Token saved for this slot — paste a new one only to replace it'
+                : (broadcastState?.robotStreamer?.hasToken
+                    ? 'Leave empty to reuse your account token, or paste a slot-specific one'
+                    : 'Paste your robotstreamer-token cookie or JWT');
+        }
+        if (robotEl && rs?.robot_id && !robotEl.value) robotEl.value = rs.robot_id;
+        if (enabledEl && rs) enabledEl.checked = !!rs.enabled;
+        if (mirrorEl && rs) mirrorEl.checked = rs.mirror_chat !== false;
+        _wsPopulateSlotRsRobotSelect(rs?.available_robots || [], rs?.robot_id || '');
+        _wsSetSlotRsStatus(rs
+            ? `Configured for ${rs.stream_name || `robot ${rs.robot_id}`} on this slot.`
+            : 'This config applies only to the current stream slot.', 'info');
+    } else {
         if (plat && urlInput && !urlInput.value) {
             urlInput.value = plat.defaultUrl || '';
         }

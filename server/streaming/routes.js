@@ -285,7 +285,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             const hasBridge = robotStreamerService.chatBridges.has(ls.id);
             const hasPublish = robotStreamerService._activePublish?.has(ls.id);
             if (hasBridge || hasPublish) {
-                const integration = db.getRobotStreamerIntegrationByUserId(ls.user_id);
+                const integration = db.getRobotStreamerIntegrationForStream(ls.user_id, ls.managed_stream_id || null);
                 rsInfo[ls.id] = {
                     active: true,
                     robot_id: integration?.robot_id || null,
