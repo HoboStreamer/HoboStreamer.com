@@ -54,10 +54,14 @@ if (!global.MediaStream) {
     };
 }
 
-global.navigator = {
-    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36',
-    mediaDevices: {},
-};
+// Node 22 exposes globalThis.navigator via a getter-only property —
+// assignment throws, so use defineProperty instead.
+const FAKE_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36';
+Object.defineProperty(global, 'navigator', {
+    value: { userAgent: FAKE_UA, mediaDevices: {} },
+    configurable: true,
+    writable: true,
+});
 
 const {
     RS_TOKEN,
