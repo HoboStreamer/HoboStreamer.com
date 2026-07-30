@@ -115,6 +115,12 @@
             flex-shrink: 0; white-space: nowrap;
         }
         .pc-input-area button:hover { opacity: 0.85; }
+        /* TTS toggle mirrors the streamer-page chat button */
+        .pc-input-area .chat-tts-toggle {
+            background: var(--bg-tertiary, #252540); color: var(--text-muted, #888);
+            padding: 5px 9px;
+        }
+        .pc-input-area .chat-tts-toggle.tts-active { background: var(--accent, #c0965c); color: #fff; }
 
         /* Connection badge */
         .pc-conn-dot {
@@ -145,6 +151,9 @@
         <div class="pc-chat-col">
             <div class="pc-messages" id="pc-msgs"></div>
             <div class="pc-input-area">
+                <button class="chat-tts-toggle tts-active pc-tts-btn" id="pc-tts-btn" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
+                    <i class="fa-solid fa-volume-high"></i>
+                </button>
                 <input type="text" id="pc-input" placeholder="Send a message…" maxlength="500" autocomplete="off">
                 <button id="pc-send">Send</button>
             </div>
@@ -184,11 +193,22 @@
                         <div class="pc-toggle" id="pc-toggle-compact" onclick="toggleSetting('compact')"></div>
                     </div>
                 </div>
+                <div class="pc-setting-row">
+                    <span class="pc-setting-label">Read chat aloud (TTS)</span>
+                    <div class="pc-toggle-wrap">
+                        <div class="pc-toggle" id="pc-toggle-tts" onclick="toggleSetting('ttsEnabled')"></div>
+                    </div>
+                </div>
+                <div class="pc-setting-row" style="flex-direction:column;align-items:stretch;gap:4px">
+                    <span class="pc-setting-label">TTS volume</span>
+                    <input type="range" id="pc-tts-volume" min="0" max="100" step="5" style="width:100%">
+                </div>
             </div>
         </div>
     </div>
 
-        <script src="/js/chat.js"></script>
+        <script src="/js/chat.js?v=13"></script>
+    <script src="/js/chat-autocomplete.js?v=1"></script>
     <script>
     'use strict';
 
@@ -213,11 +233,16 @@
             { toggleId: 'pc-toggle-ts',      key: 'showTimestamps' },
             { toggleId: 'pc-toggle-sound',   key: 'soundOnMention' },
             { toggleId: 'pc-toggle-compact', key: 'compactMode' },
+            { toggleId: 'pc-toggle-tts',     key: 'ttsEnabled' },
         ];
         for (const { toggleId, key } of mapping) {
             const el = document.getElementById(toggleId);
             if (el) el.classList.toggle('on', !!chatSettings[key]);
         }
+        const vol = document.getElementById('pc-tts-volume');
+        if (vol) vol.value = chatSettings.ttsVolume ?? 80;
+        // Keep the input-area TTS button in sync (shared styling helper)
+        if (typeof syncTTSToggleButtons === 'function') syncTTSToggleButtons();
     }
 
     // Popout toggle handler: changes the shared chatSettings and saves/applies them.
@@ -227,6 +252,7 @@
         const settingKey = keyMap[key] || key;
         chatSettings[settingKey] = !chatSettings[settingKey];
         syncPopoutSettingsUI();
+        if (typeof applyChatSettings === 'function') applyChatSettings();
         if (typeof saveChatSettings === 'function') saveChatSettings();
     };
 
@@ -247,6 +273,15 @@
     function initPopoutChat() {
         // Sync the popout toggle UI from the shared settings (already loaded by chat.js)
         syncPopoutSettingsUI();
+
+        // TTS volume slider → shared chatSettings.ttsVolume
+        const vol = document.getElementById('pc-tts-volume');
+        if (vol) {
+            vol.addEventListener('input', () => {
+                chatSettings.ttsVolume = parseInt(vol.value, 10) || 0;
+                if (typeof saveChatSettings === 'function') saveChatSettings();
+            });
+        }
 
         if (typeof initChat === 'function') {
             initChat(mode === 'stream' && streamId ? streamId : null);

@@ -1394,7 +1394,7 @@ class ChatServer {
      * Synthesize TTS audio for a chat message and broadcast to stream.
      * Runs asynchronously — does not block message delivery.
      */
-    async synthesizeAndBroadcastTTS(streamId, username, text, voiceFX) {
+    async synthesizeAndBroadcastTTS(streamId, username, text, voiceFX, sourcePlatform = null) {
         try {
             const settings = ttsEngine.getTTSSettings();
             if (!settings.enabled) return;
@@ -1435,6 +1435,7 @@ class ChatServer {
                 voiceName: result.voiceName,
                 voiceId: result.voiceId,
                 fallback: result.fallback || false,
+                source_platform: sourcePlatform || undefined,
                 timestamp: new Date().toISOString(),
             });
         } catch (err) {

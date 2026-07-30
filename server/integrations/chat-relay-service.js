@@ -406,6 +406,11 @@ class ChatRelayService {
 
         chatServer.broadcastToStream(bridge.streamId, chatMsg);
 
+        // Feed relayed platform chat (Kick/Twitch/YouTube) into server-side TTS
+        try {
+            chatServer.synthesizeAndBroadcastTTS(bridge.streamId, prefixedUsername, chatMsg.message, null, bridge.platform);
+        } catch { /* non-critical */ }
+
         // Welcome first-time external chatters in this streamer's channel
         try {
             const stream = db.getStreamById(bridge.streamId);

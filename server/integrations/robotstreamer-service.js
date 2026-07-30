@@ -457,6 +457,11 @@ class RobotStreamerService {
                 } catch {}
 
                 chatServer.broadcastToStream(stream.id, mirrored);
+
+                // Feed relayed RS chat into server-side TTS (same path as native chat)
+                try {
+                    chatServer.synthesizeAndBroadcastTTS(stream.id, username, mirrored.message, null, 'rs');
+                } catch { /* non-critical */ }
             });
 
             bridge.ws.on('close', () => {
