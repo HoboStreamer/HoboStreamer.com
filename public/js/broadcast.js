@@ -2828,6 +2828,7 @@ async function startMediaCapture(streamId, opts = {}) {
         // which inner branch ran (micOnly / cameraOnly / standard).
         let hasExplicitCamera = forceCamera && forceCamera !== 'default';
         let hasExplicitAudio  = forceAudio  && forceAudio  !== 'default' && forceAudio !== null;
+        let _captureFellBack = false;
 
         // ── Mic-only mode: audio only, generate a placeholder video canvas ──
         if (s.micOnly) {
@@ -2887,7 +2888,6 @@ async function startMediaCapture(streamId, opts = {}) {
         // On exact failure (OverconstrainedError / NotFoundError) we fall back and warn.
         if (hasExplicitCamera) videoConstraints.deviceId = { exact: forceCamera };
         audioConstraints = buildAudioConstraints(s, forceAudio); // uses exact internally
-        let _captureFellBack = false;
         try {
             ss.localStream = await _getUserMediaWithTimeout({ video: videoConstraints, audio: audioConstraints });
         } catch (firstErr) {
