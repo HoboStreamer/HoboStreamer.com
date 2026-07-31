@@ -419,6 +419,7 @@ app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
 app.use('/api/sounds', require('./chat/sounds-routes'));
+app.use('/api/ai-chatbot', require('./integrations/ai-chatbot-routes'));
 // Game & Canvas — migrated to hobo.quest
 app.get('/game', (req, res) => res.redirect(301, 'https://hobo.quest/game'));
 app.get('/canvas', (req, res) => res.redirect(301, 'https://hobo.quest/canvas'));
@@ -709,6 +710,7 @@ async function start() {
         chatRelayService.startForStream(stream).catch((err) => {
             console.warn(`[ChatRelay] Restore failed for stream ${stream.id}:`, err.message);
         });
+        try { require('./integrations/ai-chatbot-service').startForStream(stream); } catch (err) { console.warn(`[AI-Bots] Restore failed for stream ${stream.id}:`, err.message); }
     }
 
     // 4e. Refresh heartbeats for streams surviving a server restart
@@ -995,6 +997,8 @@ async function start() {
                 robotStreamerService.stopForStream(stream.id);
                 // Stop chat relay bridges for this stream
                 chatRelayService.stopForStream(stream.id);
+                // Stop AI chatbots for this stream
+                try { require('./integrations/ai-chatbot-service').stopForStream(stream.id); } catch { /* non-critical */ }
                 // Stop any active restreams for this stream
                 restreamManager.stopAllForStream(stream.id);
                 // Close signaling room and notify viewers

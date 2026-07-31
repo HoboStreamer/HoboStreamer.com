@@ -693,6 +693,26 @@ function initDb() {
         database.exec('CREATE INDEX IF NOT EXISTS idx_channel_sounds_owner ON channel_sounds(channel_owner_id)');
     } catch (e) { console.warn('[DB] channel_sounds migration:', e.message); }
 
+    // Migrate: AI chatbot ("fake viewers") config, one row per streamer (user)
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS ai_chatbot_configs (
+            user_id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 0,
+            base_url TEXT DEFAULT 'https://api.openai.com/v1',
+            api_token TEXT DEFAULT '',
+            model TEXT DEFAULT 'gpt-4o-mini',
+            transcribe_enabled INTEGER DEFAULT 0,
+            transcribe_model TEXT DEFAULT 'whisper-1',
+            num_bots INTEGER DEFAULT 3,
+            post_interval_seconds INTEGER DEFAULT 45,
+            persona TEXT DEFAULT '',
+            last_validated_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+    } catch (e) { console.warn('[DB] ai_chatbot_configs migration:', e.message); }
+
     // Migrate: create moderation_actions table for audit logging
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS moderation_actions (
@@ -2924,6 +2944,66 @@ function deleteChannelSound(id) {
     return run('DELETE FROM channel_sounds WHERE id = ?', [id]);
 }
 
+// ── AI chatbot config (per streamer) ─────────────────────────
+const AI_CHATBOT_DEFAULTS = {
+    enabled: 0,
+    base_url: 'https://api.openai.com/v1',
+    api_token: '',
+    model: 'gpt-4o-mini',
+    transcribe_enabled: 0,
+    transcribe_model: 'whisper-1',
+    num_bots: 3,
+    post_interval_seconds: 45,
+    persona: '',
+};
+
+function getAiChatbotConfig(userId) {
+    const row = get('SELECT * FROM ai_chatbot_configs WHERE user_id = ?', [userId]);
+    return row || { user_id: userId, ...AI_CHATBOT_DEFAULTS, last_validated_at: null };
+}
+
+function upsertAiChatbotConfig(userId, fields) {
+    const allowed = {
+        enabled: (v) => (v ? 1 : 0),
+        base_url: (v) => String(v || '').trim().slice(0, 500) || 'https://api.openai.com/v1',
+        api_token: (v) => String(v || '').trim().slice(0, 400),
+        model: (v) => String(v || '').trim().slice(0, 120) || 'gpt-4o-mini',
+        transcribe_enabled: (v) => (v ? 1 : 0),
+        transcribe_model: (v) => String(v || '').trim().slice(0, 120) || 'whisper-1',
+        num_bots: (v) => Math.min(12, Math.max(1, parseInt(v, 10) || 3)),
+        post_interval_seconds: (v) => Math.min(600, Math.max(10, parseInt(v, 10) || 45)),
+        persona: (v) => String(v || '').slice(0, 4000),
+        last_validated_at: (v) => v,
+    };
+    const existing = get('SELECT 1 FROM ai_chatbot_configs WHERE user_id = ?', [userId]);
+    if (existing) {
+        const sets = [];
+        const params = [];
+        for (const [col, coerce] of Object.entries(allowed)) {
+            if (fields[col] !== undefined) { sets.push(`${col} = ?`); params.push(coerce(fields[col])); }
+        }
+        if (sets.length) {
+            sets.push('updated_at = CURRENT_TIMESTAMP');
+            params.push(userId);
+            run(`UPDATE ai_chatbot_configs SET ${sets.join(', ')} WHERE user_id = ?`, params);
+        }
+    } else {
+        const merged = { ...AI_CHATBOT_DEFAULTS };
+        for (const [col, coerce] of Object.entries(allowed)) {
+            if (fields[col] !== undefined) merged[col] = coerce(fields[col]);
+        }
+        run(
+            `INSERT INTO ai_chatbot_configs
+                (user_id, enabled, base_url, api_token, model, transcribe_enabled, transcribe_model, num_bots, post_interval_seconds, persona)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [userId, merged.enabled ? 1 : 0, merged.base_url, merged.api_token, merged.model,
+             merged.transcribe_enabled ? 1 : 0, merged.transcribe_model, merged.num_bots,
+             merged.post_interval_seconds, merged.persona]
+        );
+    }
+    return getAiChatbotConfig(userId);
+}
+
 // ── Hobo Coins helpers ───────────────────────────────────────
 
 function addHoboCoins(userId, amount) {
@@ -4560,6 +4640,7 @@ module.exports = {
     deleteEmote, getEmoteByCode, countUserEmotes, countChannelEmotes, getChannelEmoteByCode,
     createChannelSound, getChannelSounds, getChannelSoundByCommand, getChannelSoundById,
     countChannelSounds, countChannelSoundsByUploader, deleteChannelSound,
+    getAiChatbotConfig, upsertAiChatbotConfig,
     // Site Settings
     getSetting, getSettingRow, getAllSettings, setSetting, deleteSetting,
     // Verification Keys

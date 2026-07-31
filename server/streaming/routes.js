@@ -1425,6 +1425,7 @@ router.post('/', requireAuth, (req, res) => {
         chatRelayService.startForStream(stream).catch((relayErr) => {
             console.warn(`[ChatRelay] Failed to start relay for stream ${streamId}:`, relayErr.message);
         });
+        try { require('../integrations/ai-chatbot-service').startForStream(stream); } catch (aiErr) { console.warn('[AI-Bots] start failed:', aiErr.message); }
 
         // Notify followers that this streamer went live (fire-and-forget)
         notifyFollowersGoLive(req.user, stream);
@@ -1522,6 +1523,7 @@ router.delete('/:id', requireAuth, (req, res) => {
 
         robotStreamerService.stopForStream(stream.id);
         chatRelayService.stopForStream(stream.id);
+        try { require('../integrations/ai-chatbot-service').stopForStream(stream.id); } catch { /* non-critical */ }
 
         // Close signaling room and notify viewers
         const broadcastServer = require('./broadcast-server');

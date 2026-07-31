@@ -147,6 +147,7 @@ function endActiveWhipStream(streamId, reason = 'whip_cleanup') {
 
     try { if (robotStreamerService) robotStreamerService.stopForStream(streamId); } catch (err) { /* ignore */ }
     try { if (chatRelayService) chatRelayService.stopForStream(streamId); } catch (err) { /* ignore */ }
+    try { require('../integrations/ai-chatbot-service').stopForStream(streamId); } catch (err) { /* ignore */ }
     try { require('./broadcast-server').endStream(streamId); } catch (err) { /* ignore */ }
     try { webrtcSFU.closeRoom(`stream-${streamId}`); } catch (err) { /* ignore */ }
     try { require('./call-server').removeStreamChannel(streamId); } catch (err) { /* ignore */ }
@@ -542,6 +543,7 @@ function autoCreateWhipSession(managedStream, user) {
         if (chatRelayService) {
             chatRelayService.startForStream(stream).catch(() => {});
         }
+        try { require('../integrations/ai-chatbot-service').startForStream(stream); } catch { /* non-critical */ }
         setTimeout(() => {
             const vodPolicy = db.getChannelVodRecordingPolicyByUserId(user.id);
             if (vodPolicy.recordingEnabled) {

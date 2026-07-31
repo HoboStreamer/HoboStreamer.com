@@ -37,7 +37,7 @@
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=16">
+    <link rel="stylesheet" href="/css/style.css?v=17">
     <link rel="stylesheet" href="/css/broadcast.css?v=6">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -1491,6 +1491,55 @@
                     <button class="btn btn-outline" onclick="showModal('add-goal')">
                         <i class="fa-solid fa-plus"></i> Add Goal
                     </button>
+                </div>
+
+                <!-- AI Chat Bots -->
+                <div class="dash-card dash-card-wide" id="dash-aibot-card">
+                    <h3><i class="fa-solid fa-robot"></i> AI Chat Viewers <span class="muted">keep chat alive</span></h3>
+                    <p class="muted">Spin up AI-driven "viewers" that troll and argue in your chat so there's always something to react to — even when the stream is dead. Bring your own AI API key (OpenAI-compatible). Optionally let them hear your stream (transcription) so they react to what you're actually doing. Your key is stored securely and never shown again.</p>
+                    <div class="ai-bot-grid">
+                        <label class="staff-inline-toggle"><input type="checkbox" id="aibot-enabled"> <b>Enable AI chat viewers</b></label>
+                        <label>
+                            <span>AI API base URL</span>
+                            <input type="text" id="aibot-base-url" class="form-input" placeholder="https://api.openai.com/v1" autocomplete="off">
+                            <span class="ai-bot-hint">OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, a local model, etc.)</span>
+                        </label>
+                        <label>
+                            <span>API token</span>
+                            <input type="password" id="aibot-token" class="form-input" placeholder="sk-..." autocomplete="off">
+                            <span class="ai-bot-hint" id="aibot-token-status"></span>
+                        </label>
+                        <label>
+                            <span>Chat model</span>
+                            <input type="text" id="aibot-model" class="form-input" placeholder="gpt-4o-mini" autocomplete="off">
+                        </label>
+                        <div class="ai-bot-row">
+                            <label>
+                                <span>Number of bots</span>
+                                <input type="number" id="aibot-num" class="form-input" min="1" max="12" value="3" style="max-width:100px;">
+                            </label>
+                            <label>
+                                <span>Post every ~N seconds</span>
+                                <input type="number" id="aibot-interval" class="form-input" min="10" max="600" value="45" style="max-width:120px;">
+                                <span class="ai-bot-hint">Spread across all bots (lower = chattier).</span>
+                            </label>
+                        </div>
+                        <label>
+                            <span>How the bots behave (persona / instructions)</span>
+                            <textarea id="aibot-persona" class="form-input" rows="3" placeholder="e.g. Be sarcastic gamers who backseat and start dumb arguments about my gameplay. Roast me lightly but keep it funny, not mean."></textarea>
+                        </label>
+                        <label class="staff-inline-toggle"><input type="checkbox" id="aibot-transcribe"> <span>Let bots hear the stream (live transcription) so they react to what I say/do <i class="fa-solid fa-microphone" title="Uses your API key's Whisper-compatible transcription endpoint"></i></span></label>
+                        <label>
+                            <span>Transcription model</span>
+                            <input type="text" id="aibot-transcribe-model" class="form-input" placeholder="whisper-1" autocomplete="off" style="max-width:200px;">
+                        </label>
+                        <div class="ai-bot-actions">
+                            <button class="btn btn-outline btn-small" onclick="testAiChatbot(this)"><i class="fa-solid fa-plug"></i> Test connection</button>
+                            <button class="btn btn-outline btn-small" onclick="previewAiChatbot(this)"><i class="fa-solid fa-wand-magic-sparkles"></i> Preview a line</button>
+                            <button class="btn btn-primary btn-small" onclick="saveAiChatbot(this)"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                        </div>
+                        <div id="aibot-preview" class="ai-bot-preview" style="display:none;"></div>
+                    </div>
                 </div>
 
                 <!-- Emotes -->
@@ -4512,6 +4561,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/settings.js?v=2"></script>
 <script src="/js/staff-console.js?v=1"></script>
 <script src="/js/dashboard-moderation.js?v=1"></script>
+<script src="/js/ai-chatbot-settings.js?v=1"></script>
 <script src="/js/pastes.js?v=1"></script>
 <script src="/js/messenger.js?v=1"></script>
 

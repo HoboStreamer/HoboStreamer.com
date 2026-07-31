@@ -4691,6 +4691,20 @@ main#app { position: relative; z-index: 1; }
 }
 .chat-emote-animated { image-rendering: auto; }
 
+/* AI chat viewers dashboard card */
+.ai-bot-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.ai-bot-grid > label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }
+.ai-bot-grid > label > span:first-child { font-weight: 600; }
+.ai-bot-hint { font-size: 0.75rem; opacity: 0.6; font-weight: 400; }
+.ai-bot-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.ai-bot-row > label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }
+.ai-bot-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.ai-bot-preview {
+    margin-top: 6px; padding: 10px 12px; border-radius: 8px;
+    background: rgba(192,150,92,0.12); border: 1px solid rgba(192,150,92,0.3);
+    font-size: 0.9rem; font-style: italic;
+}
+
 /* Chat input area needs relative position for picker */
 .chat-input-area { position: relative; }
 
