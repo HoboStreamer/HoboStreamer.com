@@ -19,11 +19,15 @@ const streamVision = require('../ai/stream-vision');
 const ttsEngine = require('../chat/tts-engine');
 
 const MAX_MSG_LEN = 200;
-const MAX_TRANSCRIPT_CHARS = 1600;
-const TRANSCRIBE_INTERVAL_MS = 20000;   // capture cadence when transcription is on
+const TRANSCRIBE_INTERVAL_MS = 18000;   // capture cadence when transcription is on
 const AUDIO_CHUNK_SECONDS = 14;
-const VISION_INTERVAL_MS = 35000;       // screenshot cadence when vision is on
+const VISION_INTERVAL_MS = 25000;       // screenshot cadence when vision is on
 const MAX_CONSECUTIVE_ERRORS = 5;       // disable a worker after this many API failures
+// Context freshness — old speech/screens decay so bots don't harp on a topic
+// after the streamer has moved on.
+const TRANSCRIPT_WINDOW_MS = 75000;     // only feed speech from the last ~75s
+const TRANSCRIPT_MAX_CHARS = 900;       // hard cap on fed transcript
+const VISION_STALE_MS = 65000;          // ignore a screenshot description older than this
 
 // Distinct bot characters so a pool of N feels like different people.
 const BOT_CHARACTERS = [
@@ -109,8 +113,8 @@ class AiChatbotService {
                 stream,
                 config,
                 bots: this._buildBots(numBots),
-                transcript: '',
-                visualContext: '',
+                transcriptChunks: [],   // [{ text, ts }] — decays over time
+                visual: null,           // { text, ts }
                 recentBotLines: [],
                 errorCount: 0,
                 stopped: false,
@@ -232,42 +236,64 @@ class AiChatbotService {
         let tags = [];
         try { tags = Array.isArray(s.tags) ? s.tags : JSON.parse(s.tags || '[]'); } catch { tags = []; }
 
+        const visual = this._currentVisual(worker);
+        const transcript = this._currentTranscript(worker);
+
         const system = [
             `You are "${bot.username}", a live viewer typing in ${streamer}'s Twitch-style stream chat.`,
             `Your character: you are ${bot.character}.`,
             persona ? `The streamer's requested vibe for chat viewers like you: ${persona}` : '',
             `Write ONE short chat message (max ~20 words) as this viewer would actually type it.`,
-            `React to what is happening RIGHT NOW — reference what the streamer just said/did (from the transcript) or reply to something in recent chat when it fits. Stay on-topic with the stream, don't be generic.`,
-            `Be casual, lowercase-ish, like real chat. You can be a troll, argumentative, provocative, or start dumb arguments, but keep it PG-13: no slurs, no hate, no real threats, nothing sexual about real people, no doxxing.`,
-            `Do NOT repeat things already said in chat. Do NOT use quotation marks. Do NOT prefix your name. Do NOT explain yourself. Output ONLY the chat message text.`,
+            `React to the MOST RECENT thing happening — the current screen and the latest thing the streamer said. The stream changes constantly: if the screen or topic has moved on, move on with it. Do NOT keep bringing up something that is no longer on screen or was said a while ago.`,
+            `Crucially: pick a DIFFERENT angle/topic than the recent chat lines shown below — chat should feel varied, not everyone piling on the same bit. Never reuse a joke or premise that already appeared.`,
+            `Be casual, lowercase-ish, like real chat. You can troll, argue, be provocative, or start dumb arguments, but keep it PG-13: no slurs, no hate, no real threats, nothing sexual about real people, no doxxing.`,
+            `Do NOT use quotation marks. Do NOT prefix your name. Do NOT explain yourself. Output ONLY the chat message text.`,
         ].filter(Boolean).join('\n');
 
-        const contextParts = [
-            `STREAM INFO:\n- Streamer: ${streamer}\n- Title: ${title}\n- Category/game: ${category}${tags.length ? `\n- Tags: ${tags.join(', ')}` : ''}${s.viewer_count != null ? `\n- Viewers: ${s.viewer_count}` : ''}`,
-        ];
-        if (worker.visualContext && worker.visualContext.trim()) {
-            contextParts.push(`WHAT'S ON SCREEN RIGHT NOW (from a live screenshot): ${worker.visualContext}`);
+        const contextParts = [];
+        // Freshest signal first, prominently labeled.
+        if (visual) {
+            contextParts.push(`ON SCREEN RIGHT NOW (latest screenshot — react to THIS, not older screens): ${visual}`);
         }
-        if (worker.transcript && worker.transcript.trim()) {
-            contextParts.push(`WHAT THE STREAMER HAS BEEN SAYING (live transcribed audio, most recent last):\n"${worker.transcript.slice(-1400)}"`);
-        } else if (!worker.visualContext) {
-            contextParts.push(`(No audio/screen context yet — infer what's happening from the title, category, and chat.)`);
+        if (transcript) {
+            contextParts.push(`WHAT THE STREAMER JUST SAID (last ~1 min of audio, newest last): "${transcript}"`);
         }
-        const recent = this._recentChatLines(worker.streamId);
+        if (!visual && !transcript) {
+            contextParts.push(`(No live audio/screen context right now — react to the title/category and chat.)`);
+        }
+        contextParts.push(`STREAM: ${streamer} — "${title}" — ${category}${tags.length ? ` [${tags.join(', ')}]` : ''}${s.viewer_count != null ? ` — ${s.viewer_count} viewers` : ''}`);
+        const recent = this._recentChatLines(worker.streamId, 12);
         if (recent.length) {
-            contextParts.push(`RECENT CHAT (oldest first):\n${recent.join('\n')}`);
+            contextParts.push(`RECENT CHAT (don't echo these):\n${recent.join('\n')}`);
         } else {
             contextParts.push(`RECENT CHAT: (chat is dead — nobody is talking, get something started)`);
         }
         if (worker.recentBotLines && worker.recentBotLines.length) {
-            contextParts.push(`Do NOT repeat or paraphrase these recent lines:\n- ${worker.recentBotLines.slice(-6).join('\n- ')}`);
+            contextParts.push(`ALREADY SAID by fake viewers — do NOT repeat, paraphrase, or reuse the same topic/joke as any of these:\n- ${worker.recentBotLines.slice(-8).join('\n- ')}`);
         }
-        contextParts.push(`Now type ${bot.username}'s single chat message reacting to what's happening on stream right now:`);
+        contextParts.push(`Type ${bot.username}'s single fresh chat message about what's happening on stream RIGHT NOW:`);
 
         return [
             { role: 'system', content: system },
             { role: 'user', content: contextParts.join('\n\n') },
         ];
+    }
+
+    /** Speech from the last TRANSCRIPT_WINDOW_MS, joined newest-last, length-capped. */
+    _currentTranscript(worker) {
+        const cutoff = Date.now() - TRANSCRIPT_WINDOW_MS;
+        const chunks = (worker.transcriptChunks || []).filter((c) => c.ts >= cutoff);
+        if (!chunks.length) return '';
+        let joined = chunks.map((c) => c.text).join(' ').replace(/\s+/g, ' ').trim();
+        if (joined.length > TRANSCRIPT_MAX_CHARS) joined = joined.slice(-TRANSCRIPT_MAX_CHARS);
+        return joined;
+    }
+
+    /** Latest screenshot description, only if fresh enough. */
+    _currentVisual(worker) {
+        const v = worker.visual;
+        if (v && v.text && (Date.now() - v.ts) <= VISION_STALE_MS) return v.text;
+        return '';
     }
 
     _sanitizeMessage(text) {
@@ -365,7 +391,10 @@ class AiChatbotService {
             });
             const clean = this._cleanTranscript(text);
             if (clean && clean.length > 1) {
-                worker.transcript = (worker.transcript + ' ' + clean).slice(-MAX_TRANSCRIPT_CHARS);
+                worker.transcriptChunks.push({ text: clean, ts: Date.now() });
+                // Prune anything older than the window (keep a couple extra as backstop)
+                const cutoff = Date.now() - TRANSCRIPT_WINDOW_MS;
+                worker.transcriptChunks = worker.transcriptChunks.filter((c) => c.ts >= cutoff).slice(-12);
                 console.log(`[AI-Hear] stream ${worker.streamId}: +${clean.length} chars ("${clean.slice(0, 80)}...")`);
             } else {
                 console.log(`[AI-Hear] stream ${worker.streamId}: transcript empty this cycle (quiet/no speech)`);
@@ -410,8 +439,8 @@ class AiChatbotService {
             });
             const clean = String(desc || '').replace(/\s+/g, ' ').trim();
             if (clean && clean.length > 3) {
-                worker.visualContext = clean.slice(0, 400);
-                console.log(`[AI-See] stream ${worker.streamId}: "${worker.visualContext.slice(0, 90)}"`);
+                worker.visual = { text: clean.slice(0, 400), ts: Date.now() };
+                console.log(`[AI-See] stream ${worker.streamId}: "${clean.slice(0, 90)}"`);
             }
         } catch (err) {
             console.warn(`[AI-See] describe failed (stream ${worker.streamId}):`, err.message);
