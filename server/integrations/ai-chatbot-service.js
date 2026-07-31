@@ -16,6 +16,7 @@ const db = require('../db/database');
 const aiProvider = require('../ai/ai-provider');
 const streamAudio = require('../ai/stream-audio');
 const streamVision = require('../ai/stream-vision');
+const ttsEngine = require('../chat/tts-engine');
 
 const MAX_MSG_LEN = 200;
 const MAX_TRANSCRIPT_CHARS = 1600;
@@ -65,10 +66,21 @@ class AiChatbotService {
         const chars = [...BOT_CHARACTERS].sort(() => Math.random() - 0.5);
         const bots = [];
         const usedNames = new Set();
+        const usedVoices = new Set(); // base-voice variants already taken, so the pool sounds distinct
         for (let i = 0; i < count; i++) {
             let name = makeUsername();
             let guard = 0;
-            while (usedNames.has(name.toLowerCase()) && guard++ < 8) name = makeUsername();
+            // Regenerate to avoid duplicate names AND (where possible) duplicate
+            // base TTS voices, so each bot in the pool is recognizable by voice.
+            while (guard++ < 24) {
+                const lname = name.toLowerCase();
+                if (usedNames.has(lname)) { name = makeUsername(); continue; }
+                let voice;
+                try { voice = ttsEngine.deriveUserVoiceParams(this._voiceKey(name)).voice; } catch { voice = null; }
+                if (voice && usedVoices.has(voice) && usedVoices.size < 13) { name = makeUsername(); continue; }
+                if (voice) usedVoices.add(voice);
+                break;
+            }
             usedNames.add(name.toLowerCase());
             bots.push({
                 username: name,
@@ -78,6 +90,9 @@ class AiChatbotService {
         }
         return bots;
     }
+
+    /** Stable identity string used to derive a bot's TTS voice. */
+    _voiceKey(username) { return `aibot:${String(username).toLowerCase()}`; }
 
     async startForStream(stream) {
         try {
@@ -325,6 +340,11 @@ class AiChatbotService {
             const chatServer = require('../chat/chat-server');
             chatServer.broadcastToStream(streamId, chatMsg);
             chatServer.forwardToGlobal(streamId, chatMsg);
+            // Give the bot a TTS voice like any viewer. No cosmetic voice → the
+            // per-user derived voice keyed on the bot's stable voice id, so each
+            // bot in the pool sounds distinct. Non-blocking; respects the global
+            // TTS setting and each viewer's TTS toggle.
+            chatServer.synthesizeAndBroadcastTTS(streamId, bot.username, message, null, null, this._voiceKey(bot.username));
         } catch (err) {
             console.warn('[AI-Bots] broadcast failed:', err.message);
         }
