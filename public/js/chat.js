@@ -745,6 +745,17 @@ function isChatSoundsEnabled() {
     return chatSettings.soundsEnabled !== false;
 }
 
+/**
+ * Apply the streamer's per-channel emote display size. `percent` is 50–300
+ * (100 = default). Sets a CSS variable read by the .chat-emote height rules.
+ */
+function applyChannelEmoteScale(percent) {
+    let pct = parseInt(percent, 10);
+    if (!Number.isFinite(pct)) pct = 100;
+    pct = Math.min(300, Math.max(50, pct));
+    try { document.documentElement.style.setProperty('--chat-emote-scale', String(pct / 100)); } catch { /* no-op */ }
+}
+
 /** Returns true if TTS should fire for a message with the given source_platform string */
 function _isTTSEnabledForSource(sourcePlatform) {
     const src = (sourcePlatform || '').toLowerCase();
@@ -2513,6 +2524,8 @@ function handleChatMessage(msg) {
             if (typeof setGifsEnabled === 'function') {
                 setGifsEnabled(msg.gifs_enabled !== false);
             }
+            // Streamer-controlled emote display size for this channel (percent → CSS scale)
+            applyChannelEmoteScale(msg.emote_scale);
             chatSelfDeletePolicy = {
                 allowAutoDelete: msg.allow_auto_delete !== false,
                 allowDeleteAll: msg.allow_self_delete_all !== false,

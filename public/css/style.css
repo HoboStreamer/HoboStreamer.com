@@ -3871,8 +3871,8 @@ main#app { position: relative; z-index: 1; }
 /* Disable animated emotes — freeze GIFs by converting to static first frame */
 .chat-no-animated-emotes .chat-emote-animated { animation: none !important; animation-play-state: paused !important; }
 /* Emote scale */
-.chat-emote-small .chat-emote { height: 1.1em; }
-.chat-emote-large .chat-emote { height: 2.2em; }
+.chat-emote-small .chat-emote { height: calc(1.1em * var(--chat-emote-scale, 1)); }
+.chat-emote-large .chat-emote { height: calc(2.2em * var(--chat-emote-scale, 1)); }
 /* Mention highlight */
 .chat-msg-mention {
     background: rgba(255, 200, 50, 0.12); border-left: 2px solid var(--accent);
@@ -4686,7 +4686,7 @@ main#app { position: relative; z-index: 1; }
 /* In-line chat emotes */
 .chat-emote {
     display: inline-block; vertical-align: middle;
-    height: 1.6em; width: auto; margin: -2px 1px;
+    height: calc(1.6em * var(--chat-emote-scale, 1)); width: auto; margin: -2px 1px;
     object-fit: contain;
 }
 .chat-emote-animated { image-rendering: auto; }

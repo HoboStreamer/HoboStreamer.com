@@ -535,6 +535,7 @@ CREATE TABLE IF NOT EXISTS channel_moderation_settings (
     custom_sounds_enabled INTEGER DEFAULT 1,   -- viewers may upload !sound commands for this channel
     max_sound_seconds INTEGER DEFAULT 10,      -- max duration of an uploaded channel sound
     uploads_mods_only INTEGER DEFAULT 0,       -- restrict emote/sound uploads to channel mods
+    emote_scale INTEGER DEFAULT 100,           -- emote display size in chat, percent (50-300)
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );

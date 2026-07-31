@@ -663,6 +663,7 @@ function initDb() {
         if (!cols.includes('custom_sounds_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN custom_sounds_enabled INTEGER DEFAULT 1');
         if (!cols.includes('max_sound_seconds')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN max_sound_seconds INTEGER DEFAULT 10');
         if (!cols.includes('uploads_mods_only')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN uploads_mods_only INTEGER DEFAULT 0');
+        if (!cols.includes('emote_scale')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN emote_scale INTEGER DEFAULT 100');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
 
     // Migrate: add channel_owner_id to emotes (viewer uploads targeting a channel) + channel_sounds table
@@ -3311,6 +3312,7 @@ function getChannelModerationSettings(channelId) {
             custom_sounds_enabled: 1,
             max_sound_seconds: 10,
             uploads_mods_only: 0,
+            emote_scale: 100,
         };
 }
 
@@ -3346,6 +3348,7 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.custom_sounds_enabled !== undefined) { updates.push('custom_sounds_enabled = ?'); params.push(fields.custom_sounds_enabled ? 1 : 0); }
         if (fields.max_sound_seconds !== undefined) { updates.push('max_sound_seconds = ?'); params.push(Math.min(30, Math.max(1, Number(fields.max_sound_seconds) || 10))); }
         if (fields.uploads_mods_only !== undefined) { updates.push('uploads_mods_only = ?'); params.push(fields.uploads_mods_only ? 1 : 0); }
+        if (fields.emote_scale !== undefined) { updates.push('emote_scale = ?'); params.push(Math.min(300, Math.max(50, Number(fields.emote_scale) || 100))); }
         if (updates.length > 0) {
             updates.push('updated_at = CURRENT_TIMESTAMP');
             params.push(channelId);
@@ -3360,8 +3363,8 @@ function upsertChannelModerationSettings(channelId, fields) {
                 slur_filter_enabled, slur_filter_use_builtin, slur_filter_terms, slur_filter_regexes, slur_filter_nudge_message, slur_filter_disabled_categories,
                 ip_approval_mode, soundboard_enabled, soundboard_allow_pitch, soundboard_allow_speed, soundboard_banned_ids,
                 viewer_auto_delete_enabled, viewer_delete_all_enabled,
-                custom_emotes_enabled, custom_sounds_enabled, max_sound_seconds, uploads_mods_only
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+                custom_emotes_enabled, custom_sounds_enabled, max_sound_seconds, uploads_mods_only, emote_scale
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
             [
                 channelId,
                 fields.slow_mode_seconds || 0,
@@ -3391,6 +3394,7 @@ function upsertChannelModerationSettings(channelId, fields) {
                 fields.custom_sounds_enabled !== undefined ? (fields.custom_sounds_enabled ? 1 : 0) : 1,
                 Math.min(30, Math.max(1, Number(fields.max_sound_seconds) || 10)),
                 fields.uploads_mods_only ? 1 : 0,
+                Math.min(300, Math.max(50, Number(fields.emote_scale) || 100)),
             ]
         );
     }

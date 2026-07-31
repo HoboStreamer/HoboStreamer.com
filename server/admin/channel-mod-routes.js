@@ -241,6 +241,8 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? parseBoolean(req.body.uploads_mods_only, false) : undefined,
             max_sound_seconds: req.body.max_sound_seconds !== undefined
                 ? Math.min(30, Math.max(1, parseInt(req.body.max_sound_seconds) || 10)) : undefined,
+            emote_scale: req.body.emote_scale !== undefined
+                ? Math.min(300, Math.max(50, parseInt(req.body.emote_scale) || 100)) : undefined,
         });
 
         db.logModerationAction({

@@ -421,6 +421,7 @@ class ChatServer {
                     custom_sounds_enabled: !client.streamId || streamSettings.custom_sounds_enabled !== 0,
                     uploads_mods_only: !!(client.streamId && streamSettings.uploads_mods_only),
                     max_sound_seconds: client.streamId ? (streamSettings.max_sound_seconds || 10) : 10,
+                    emote_scale: client.streamId ? (streamSettings.emote_scale || 100) : 100,
                     soundboard_enabled: !client.streamId || streamSettings.soundboard_enabled !== 0,
                     soundboard_allow_pitch: !client.streamId || streamSettings.soundboard_allow_pitch !== 0,
                     soundboard_allow_speed: !client.streamId || streamSettings.soundboard_allow_speed !== 0,
@@ -2005,6 +2006,7 @@ class ChatServer {
             custom_sounds_enabled: 1,
             max_sound_seconds: 10,
             uploads_mods_only: 0,
+            emote_scale: 100,
         };
         if (!streamId) return defaults;
         try {

@@ -142,6 +142,12 @@ function renderDashModerationChannels(channels) {
                                 <span>Max sound length (seconds)</span>
                                 <input type="number" id="dash-mod-max-sound-${channel.id}" class="form-input" min="1" max="30" value="${Number(settings.max_sound_seconds || 10)}" style="max-width:110px;">
                             </label>
+                            <label>
+                                <span>Emote size in chat: <b id="dash-mod-emote-scale-val-${channel.id}">${Number(settings.emote_scale || 100)}</b>%</span>
+                                <input type="range" id="dash-mod-emote-scale-${channel.id}" min="50" max="300" step="10" value="${Number(settings.emote_scale || 100)}"
+                                    oninput="document.getElementById('dash-mod-emote-scale-val-${channel.id}').textContent = this.value" style="width:100%;">
+                                <span class="cu-hint" style="opacity:.6;font-size:12px;">Controls how big gif/png emotes appear for everyone in your chat (100% = default).</span>
+                            </label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-viewer-autodel-${channel.id}" ${Number(settings.viewer_auto_delete_enabled ?? 1) ? 'checked' : ''}> Allow viewers to auto-delete their own messages</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-viewer-deleteall-${channel.id}" ${Number(settings.viewer_delete_all_enabled ?? 1) ? 'checked' : ''}> Allow viewers to delete all their own messages</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-ipapproval-${channel.id}" ${Number(settings.ip_approval_mode || 0) ? 'checked' : ''}> <span>IP Approval Mode <i class="fa-solid fa-shield-halved" title="New IPs must be approved before messages are visible"></i></span></label>
@@ -295,6 +301,7 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 custom_sounds_enabled: !!document.getElementById(`dash-mod-custom-sounds-${channelId}`)?.checked,
                 uploads_mods_only: !!document.getElementById(`dash-mod-uploads-modsonly-${channelId}`)?.checked,
                 max_sound_seconds: Number(document.getElementById(`dash-mod-max-sound-${channelId}`)?.value || 10),
+                emote_scale: Number(document.getElementById(`dash-mod-emote-scale-${channelId}`)?.value || 100),
             },
         });
         toast('Channel moderation settings saved', 'success');
