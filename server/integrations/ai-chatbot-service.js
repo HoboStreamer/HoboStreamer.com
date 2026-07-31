@@ -265,6 +265,7 @@ class AiChatbotService {
                 lastRealInput: null,     // { username, text, isStreamer, ts }
                 convo: null,             // { bot, ts } — bot currently in a back-and-forth w/ streamer
                 lastActiveBot: null,     // username of the bot that most recently posted
+                recentPosters: [],       // last few posters, to stop one bot dominating
                 lastPostAt: 0,           // when the last message actually went out (pacing floor)
                 hypeUntil: 0,            // pace stays elevated until this time
                 errorCount: 0,
@@ -448,12 +449,20 @@ class AiChatbotService {
         return Math.max(GLOBAL_MIN_GAP_MS, this._isActive(worker) ? perBot * 0.8 : perBot * 1.6);
     }
 
-    /** Pop the highest-priority pending intent whose bot isn't rate-limited. */
+    /** Has this bot been posting too much lately (2+ of the last 3 messages)? */
+    _overexposed(worker, username) {
+        const last3 = worker.recentPosters.slice(-3);
+        return last3.filter((u) => u === username).length >= 2;
+    }
+
+    /** Pop the highest-priority pending intent, preferring a bot that isn't
+     * dominating chat (so an argument doesn't become one bot's monologue). */
     _takeIntent(worker) {
         if (!worker.intents.length) return null;
         worker.intents.sort((a, b) => (b.prio - a.prio) || (a.ts - b.ts));
-        // Don't let the same bot answer twice back-to-back if another is waiting.
-        let idx = worker.intents.findIndex((i) => i.bot.username !== worker.lastActiveBot);
+        // Prefer a fresh voice: not the last poster, not over-exposed.
+        let idx = worker.intents.findIndex((i) => i.bot.username !== worker.lastActiveBot && !this._overexposed(worker, i.bot.username));
+        if (idx < 0) idx = worker.intents.findIndex((i) => i.bot.username !== worker.lastActiveBot);
         if (idx < 0) idx = 0;
         return worker.intents.splice(idx, 1)[0];
     }
@@ -645,8 +654,8 @@ class AiChatbotService {
         // 2) Streamer asked chat something / is clearly addressing chat → a bot ANSWERS it.
         //    This is the "streamer says 'who is max' and a viewer actually replies" case.
         if (this._looksDirectedAtChat(text)) {
-            const bot = this._conversationPartner(worker) || this._pickResponder(worker);
-            if (this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic', answering: true })) {
+            const bot = this._pickReplyBot(worker, this._conversationPartner(worker));
+            if (bot && this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic', answering: true })) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: streamer addressing chat — ${bot.username} answers`);
             }
             return;
@@ -673,10 +682,23 @@ class AiChatbotService {
         return /( who is | what is | whats | what's | wheres | where's | you guys | y'?all | anyone | does anyone | do you | what do you | how do you | should i | you think | you think\? | right\? | am i | are we | chat | vote | tell me | explain | which one | wdyt | thoughts | chat what )/.test(t);
     }
 
-    /** Pick a bot to respond to a spontaneous prompt — prefer variety. */
+    /** Pick a bot to respond to a spontaneous prompt — prefer a fresh, non-dominating voice. */
     _pickResponder(worker) {
-        const candidates = worker.bots.filter((b) => b.username !== worker.lastActiveBot);
+        let candidates = worker.bots.filter((b) => b.username !== worker.lastActiveBot && !this._overexposed(worker, b.username));
+        if (!candidates.length) candidates = worker.bots.filter((b) => b.username !== worker.lastActiveBot);
         return pick(candidates.length ? candidates : worker.bots);
+    }
+
+    /** Pick a bot to REPLY with. Prefers `preferred` (e.g. the convo partner) but
+     * only if it's off cooldown and not dominating; otherwise rotates to another
+     * available bot so replies keep flowing and no single bot monologues. */
+    _pickReplyBot(worker, preferred) {
+        const off = (b) => (Date.now() - (worker.replyCooldown.get(b.username) || 0)) >= MENTION_COOLDOWN_MS;
+        if (preferred && off(preferred) && !this._overexposed(worker, preferred.username)) return preferred;
+        let pool = worker.bots.filter((b) => off(b) && !this._overexposed(worker, b.username) && b.username !== worker.lastActiveBot);
+        if (!pool.length) pool = worker.bots.filter((b) => off(b) && b.username !== worker.lastActiveBot);
+        if (!pool.length) pool = worker.bots.filter((b) => off(b));
+        return pool.length ? pick(pool) : null;
     }
 
     /** Does a message address the streamer directly (2nd person)? */
@@ -693,7 +715,9 @@ class AiChatbotService {
         const c = worker.convo;
         if (c && (Date.now() - c.ts) < CONVO_WINDOW_MS) {
             const bot = worker.bots.find((b) => b.username === c.bot);
-            if (bot) return bot;
+            // If the partner has been dominating, let someone else jump into the
+            // argument (~60% of the time) so it doesn't become a monologue.
+            if (bot && !(this._overexposed(worker, bot.username) && Math.random() < 0.6)) return bot;
         }
         for (const line of [...(worker.recentBotLines || [])].reverse()) {
             const m = String(line).match(/^([^:]+):\s*(.*)$/);
@@ -727,9 +751,9 @@ class AiChatbotService {
             // Route the reply to whoever they're actually arguing with, so the
             // back-and-forth stays coherent (not a random bot).
             const named = this._detectAddressedBots(worker, text);
-            const bot = named[0] || this._conversationPartner(worker) || this._pickResponder(worker);
-            if (this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'chat', direct: !!named[0], answering: this._looksDirectedAtChat(text) })) {
-                console.log(`[AI-Bots] stream ${streamId}: streamer typed → ${bot.username} (${named[0] ? 'named' : (worker.convo ? 'convo partner' : 'picked')})`);
+            const bot = named[0] || this._pickReplyBot(worker, this._conversationPartner(worker));
+            if (bot && this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'chat', direct: !!named[0], answering: this._looksDirectedAtChat(text) })) {
+                console.log(`[AI-Bots] stream ${streamId}: streamer typed → ${bot.username} (${named[0] ? 'named' : (worker.convo ? 'convo' : 'picked')})`);
             }
             return;
         }
@@ -743,9 +767,8 @@ class AiChatbotService {
         if (Math.random() > chance) return;
         worker.lastViewerReplyAt = now;
         const named = this._detectAddressedBots(worker, text);
-        const bot = named[0] || this._pickResponder(worker);
-        if (this._queueReply(worker, bot, text, { fromViewer: username, channel: 'chat', direct: !!named[0] })) {
-        }
+        const bot = named[0] || this._pickReplyBot(worker, null);
+        if (bot) this._queueReply(worker, bot, text, { fromViewer: username, channel: 'chat', direct: !!named[0] });
     }
 
     /** Words chat has beaten to death (appear across many recent lines) — bots are told to drop them. */
@@ -791,13 +814,10 @@ class AiChatbotService {
         try {
             const decision = await this._directorDecide(worker, text);
             if (!decision || !decision.engage) return;
-            let bot = worker.bots.find((b) => b.username.toLowerCase() === String(decision.username || '').toLowerCase());
-            if (!bot) {
-                // Director wants a reply but didn't pick a valid bot → prefer the last
-                // active bot (continues that thread), else a random one.
-                bot = worker.bots.find((b) => b.username === worker.lastActiveBot) || pick(worker.bots);
-            }
-            if (this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic' })) {
+            const picked = worker.bots.find((b) => b.username.toLowerCase() === String(decision.username || '').toLowerCase());
+            // Prefer the director's pick, but fall back / rotate if it's busy or dominating.
+            const bot = this._pickReplyBot(worker, picked || this._conversationPartner(worker));
+            if (bot && this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic' })) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: streamer engaging chat (${decision.why || ''}) — ${bot.username} replies`);
             }
         } catch (err) {
@@ -902,6 +922,8 @@ class AiChatbotService {
         bot.ownLines.push(message);
         if (bot.ownLines.length > 8) bot.ownLines.shift();
         worker.lastActiveBot = bot.username;
+        worker.recentPosters.push(bot.username);
+        if (worker.recentPosters.length > 5) worker.recentPosters.shift();
         // Keep the back-and-forth on this bot if it's now engaging the streamer.
         if (opts.fromStreamer || opts.direct || this._msgAddressesStreamer(message)) {
             this._touchConvo(worker, bot.username);
