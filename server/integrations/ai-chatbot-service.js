@@ -30,6 +30,7 @@ const TRANSCRIPT_MAX_CHARS = 900;       // hard cap on fed transcript
 const VISION_STALE_MS = 65000;          // ignore a screenshot description older than this
 const MENTION_COOLDOWN_MS = 9000;       // min gap between direct replies from the same bot
 const DIRECTOR_MIN_GAP_MS = 11000;      // throttle for the "is the streamer engaging chat?" call
+const HYPE_BURST_COOLDOWN_MS = 16000;   // min gap between reaction bursts
 const LIVENESS_CHECK_MS = 12000;        // each worker self-checks the stream is still live
 const ORPHAN_SWEEP_MS = 30000;          // service-wide sweep to kill workers for dead streams
 const LIVE_CACHE_MS = 4000;             // cache is_live lookups briefly
@@ -52,6 +53,24 @@ const NAME_ADJ = ['xX', 'lil', 'big', 'the', 'dark', 'toxic', 'based', 'grim', '
 const NAME_NOUN = ['gamer', 'goblin', 'wizard', 'shark', 'ninja', 'raptor', 'trucker', 'wolf', 'ghost', 'baron', 'hobo', 'yapper', 'menace', 'clown', 'oracle'];
 const NAME_SUFFIX = ['', '', '69', '420', '_tv', 'XD', '99', '_ttv', '2k', '_irl', '88', 'xd'];
 const COLORS = ['#e06c75', '#98c379', '#61afef', '#c678dd', '#e5c07b', '#56b6c2', '#d19a66', '#ff7ac6', '#7dd3fc', '#f6c177', '#9ece6a', '#bb9af7'];
+
+// How each bot TYPES — a persistent quirk so each one has a recognizable voice.
+const TYPING_STYLES = [
+    'types in all lowercase, no punctuation, super casual',
+    'GOES ALL CAPS when hyped, otherwise short',
+    'spams emotes and 1-2 word reactions, barely uses full sentences',
+    'dry deadpan one-liners, never more than a few words',
+    'overuses "lol" "lmao" "bruh" and trails off with ...',
+    'zoomer slang: "fr" "ngl" "ong" "lowkey" "it\'s giving" "cooked"',
+    'the "erm actually" corrector, smug and nitpicky but brief',
+    'hypebeast, spams "W" "L" "LETS GOOO" "no shot"',
+    'types fast with typos and no caps, run-on but short',
+    'ironic and detached, quotes the streamer back at them',
+];
+
+// Common chat emotes that render on HoboStreamer (7TV/BTTV/FFZ globals) — bots
+// sprinkle these in like real chat. Channel-specific emotes get added at runtime.
+const COMMON_EMOTES = ['LUL', 'LULW', 'KEKW', 'OMEGALUL', 'Pog', 'PogChamp', 'Sadge', 'Copium', 'EZ', 'Clap', 'monkaS', 'PepeLaugh', 'catJAM', 'peepoHappy', 'WeirdChamp', 'Pepega', '5Head', 'Bruh', 'FeelsBadMan', 'Prayge', 'Aware', 'ratJAM', 'D:', 'yikes', 'GIGACHAD'];
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function rint(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -123,6 +142,7 @@ class AiChatbotService {
 
     _buildBots(count) {
         const chars = [...BOT_CHARACTERS].sort(() => Math.random() - 0.5);
+        const styles = [...TYPING_STYLES].sort(() => Math.random() - 0.5);
         const bots = [];
         const usedNames = new Set();
         const usedVoices = new Set(); // base-voice variants already taken, so the pool sounds distinct
@@ -149,6 +169,7 @@ class AiChatbotService {
                 username: gen.username,
                 color: pick(COLORS),
                 character: chars[i % chars.length],
+                style: styles[i % styles.length],   // persistent typing quirk
                 // Distinctive words (len>=4) the streamer might say to address this
                 // bot. Anon-style handles aren't voice-addressable (bare "anon" is
                 // ambiguous), so leave their matchWords empty.
@@ -186,6 +207,14 @@ class AiChatbotService {
     /** Stable identity string used to derive a bot's TTS voice. */
     _voiceKey(username) { return `aibot:${String(username).toLowerCase()}`; }
 
+    /** Emote codes the bots can use — this channel's custom emotes first, then commons. */
+    _loadEmotes(userId) {
+        const codes = [];
+        try { for (const e of db.getChannelEmotes(userId)) if (e.code) codes.push(e.code); } catch { /* ignore */ }
+        try { for (const e of db.getGlobalEmotes()) if (e.code) codes.push(e.code); } catch { /* ignore */ }
+        return [...new Set([...codes.slice(0, 14), ...COMMON_EMOTES])].slice(0, 30);
+    }
+
     async startForStream(stream) {
         try {
             if (!stream || !stream.id || !stream.user_id) return;
@@ -201,6 +230,7 @@ class AiChatbotService {
                 stream,
                 config,
                 bots: this._buildBots(numBots),
+                emotes: this._loadEmotes(stream.user_id),
                 transcriptChunks: [],   // [{ text, ts }] — decays over time
                 visual: null,           // { text, ts }
                 recentBotLines: [],
@@ -208,6 +238,7 @@ class AiChatbotService {
                 replyCooldown: new Map(), // bot.username → last reactive-reply ts
                 lastSpeechSig: '',       // dedupe repeated detection of the same sentence
                 lastDirectorAt: 0,       // throttle the director call
+                lastBurstAt: 0,          // throttle hype reaction bursts
                 lastActiveBot: null,     // username of the bot that most recently posted
                 errorCount: 0,
                 stopped: false,
@@ -343,6 +374,22 @@ class AiChatbotService {
         } catch { return []; }
     }
 
+    /** Pick a length + occasional intent for an ambient message, biased to SHORT. */
+    _pickBeat() {
+        const r = Math.random();
+        let len;
+        if (r < 0.5) len = 'VERY short — 1 to 4 words, a quick reaction (e.g. "lol", "no shot", "he\'s cooked", "clip that", "actual W", "nah"). It can be just an emote.';
+        else if (r < 0.8) len = 'short — under 10 words, one casual line';
+        else if (r < 0.95) len = 'a normal chat message, under 18 words';
+        else len = 'a slightly longer take, under 30 words but still casual chat';
+        let intent = '';
+        const ir = Math.random();
+        if (ir < 0.22) intent = 'reply to or clown on something another chatter just said (see recent chat), not the streamer';
+        else if (ir < 0.32) intent = 'ask the streamer or chat a dumb or loaded question';
+        else if (ir < 0.40) intent = 'pick a petty fight with another viewer in chat';
+        return { len, intent };
+    }
+
     _buildMessages(worker, bot, opts = {}) {
         const s = worker.stream;
         const title = s.title || 'Untitled Stream';
@@ -358,52 +405,62 @@ class AiChatbotService {
         const addressed = opts && opts.addressedText ? String(opts.addressedText).trim() : '';
         const direct = addressed && opts.direct;   // streamer literally said this bot's name
 
+        // Length/intent "beat" — real chat is mostly ultra-short; vary it hard.
+        const beat = opts.beat || (addressed
+            ? { len: (Math.random() < 0.65 ? 'VERY short, 1-6 words' : 'short, under 12 words'), intent: '' }
+            : this._pickBeat());
+
+        // A rotating handful of real emotes this bot can sprinkle in.
+        const emoteSample = [...(worker.emotes || [])].sort(() => Math.random() - 0.5).slice(0, 10);
+
         const replyInstruction = direct
-            ? `IMPORTANT: the streamer just said YOUR name out loud and is talking directly TO YOU on the mic. Reply straight to them like they're speaking to you — answer their question, fire back, or engage with exactly what they said. Stay in character.`
-            : `IMPORTANT: the streamer just spoke to chat / reacted to what viewers are saying. Reply to them like you're mid-conversation — respond to what they actually said, keep the back-and-forth going. Do NOT claim they said your name. Stay in character.`;
+            ? `The streamer just said YOUR name out loud and is talking directly TO YOU on the mic. Fire back / answer them, in character.`
+            : `The streamer just spoke to chat or reacted to viewers. Reply like you're mid-conversation with them. Do NOT claim they said your name.`;
 
         const system = [
-            `You are "${bot.username}", a live viewer typing in ${streamer}'s Twitch-style stream chat.`,
-            `Your character: you are ${bot.character}.`,
-            persona ? `The streamer's requested vibe for chat viewers like you: ${persona}` : '',
-            addressed
-                ? replyInstruction
-                : `Write ONE short chat message (max ~20 words) as this viewer would actually type it.`,
-            `React to the MOST RECENT thing happening — the current screen and the latest thing the streamer said. The stream changes constantly: if the screen or topic has moved on, move on with it. Do NOT keep bringing up something that is no longer on screen or was said a while ago.`,
-            `Crucially: pick a DIFFERENT angle/topic than the recent chat lines shown below — chat should feel varied, not everyone piling on the same bit. Never reuse a joke or premise that already appeared.`,
-            `Be casual, lowercase-ish, like real chat. You can troll, argue, be provocative, or start dumb arguments, but keep it PG-13: no slurs, no hate, no real threats, nothing sexual about real people, no doxxing.`,
-            `Do NOT use quotation marks. Do NOT prefix your name. Do NOT explain yourself. Output ONLY the chat message text.`,
+            `You are "${bot.username}", ONE real-feeling viewer in ${streamer}'s live Twitch-style chat. You are watching the stream right now.`,
+            `Your personality: ${bot.character}.`,
+            `How you type: ${bot.style}. Keep this voice consistent.`,
+            persona ? `The streamer wants viewers like you to lean into this: ${persona}` : '',
+            addressed ? replyInstruction : `Post a spontaneous chat message reacting to the stream.`,
+            `LENGTH: make this message ${beat.len}. Real chat is mostly tiny reactions — do NOT write a neat full sentence every time. No proper capitalization/punctuation unless your style calls for it.`,
+            beat.intent ? `THIS MESSAGE: ${beat.intent}` : '',
+            emoteSample.length ? `You may use these chat emotes when they fit (a message can be JUST an emote): ${emoteSample.join(' ')}. Don't force them.` : '',
+            `You are WATCHING — react like a viewer, never describe the screen or say "the screen shows". Don't narrate; react.`,
+            `Don't reuse a joke/premise already in chat. It's fine to reply to, agree with, or argue with another chatter.`,
+            `PG-13: no slurs, hate, real threats, nothing sexual about real people, no doxxing. Trolling/arguing/roasting is fine.`,
+            `Output ONLY the raw chat message text — no quotes, no name prefix, no explanation.`,
         ].filter(Boolean).join('\n');
 
         const contextParts = [];
         if (direct) {
-            contextParts.push(`THE STREAMER (${streamer}) IS TALKING TO YOU (${bot.username}) RIGHT NOW over the mic. They just said:\n"${addressed}"\nReply directly to them.`);
+            contextParts.push(`>>> ${streamer} IS TALKING TO YOU (${bot.username}) on mic RIGHT NOW: "${addressed}" — reply straight to them.`);
         } else if (addressed) {
-            contextParts.push(`THE STREAMER (${streamer}) JUST SAID THIS OUT LOUD, talking to chat / reacting to viewers:\n"${addressed}"\nReply to them naturally, continuing the conversation.`);
+            contextParts.push(`>>> ${streamer} just said this out loud to chat: "${addressed}" — reply naturally, keep the back-and-forth going.`);
         }
-        // Freshest signal first, prominently labeled.
+        // Freshest signal first.
         if (visual) {
-            contextParts.push(`ON SCREEN RIGHT NOW (latest screenshot — react to THIS, not older screens): ${visual}`);
+            contextParts.push(`HAPPENING ON STREAM NOW (you can see it): ${visual}\n(React to it like a viewer — do not describe it.)`);
         }
         if (transcript) {
-            contextParts.push(`WHAT THE STREAMER JUST SAID (last ~1 min of audio, newest last): "${transcript}"`);
+            contextParts.push(`STREAMER'S MIC just now (auto-transcribed, may be misheard — react to the gist, don't quote it): "${transcript}"`);
         }
         if (!visual && !transcript) {
-            contextParts.push(`(No live audio/screen context right now — react to the title/category and chat.)`);
+            contextParts.push(`(No live audio/screen right now — go off the recent chat and the category.)`);
         }
-        contextParts.push(`STREAM: ${streamer} — "${title}" — ${category}${tags.length ? ` [${tags.join(', ')}]` : ''}${s.viewer_count != null ? ` — ${s.viewer_count} viewers` : ''}`);
+        contextParts.push(`(context) ${streamer} is streaming "${title}" — ${category}${tags.length ? ` [${tags.join(', ')}]` : ''}${s.viewer_count != null ? `, ${s.viewer_count} watching` : ''}. Don't keep commenting on the title.`);
         const recent = this._recentChatLines(worker.streamId, 12);
         if (recent.length) {
-            contextParts.push(`RECENT CHAT (don't echo these):\n${recent.join('\n')}`);
+            contextParts.push(`RECENT CHAT (newest last — you can play off these but don't copy them):\n${recent.join('\n')}`);
         } else {
-            contextParts.push(`RECENT CHAT: (chat is dead — nobody is talking, get something started)`);
+            contextParts.push(`RECENT CHAT: dead silent — get something going.`);
         }
         if (worker.recentBotLines && worker.recentBotLines.length) {
-            contextParts.push(`ALREADY SAID by fake viewers — do NOT repeat, paraphrase, or reuse the same topic/joke as any of these:\n- ${worker.recentBotLines.slice(-8).join('\n- ')}`);
+            contextParts.push(`Don't repeat the vibe/topic of these very recent lines:\n- ${worker.recentBotLines.slice(-6).join('\n- ')}`);
         }
         contextParts.push(addressed
-            ? `Type ${bot.username}'s single chat message replying to what ${streamer} just said:`
-            : `Type ${bot.username}'s single fresh chat message about what's happening on stream RIGHT NOW:`);
+            ? `Now type ${bot.username}'s reply:`
+            : `Now type ${bot.username}'s message:`);
 
         return [
             { role: 'system', content: system },
@@ -456,11 +513,31 @@ class AiChatbotService {
             return;
         }
 
-        // 2) No name — is the streamer talking to/reacting to chat? Ask the director.
-        //    Only bother if there's something conversational to react to.
+        // 2) Streamer sounds hyped/reacting → spike chat with a quick burst.
+        if (this._looksHype(text) && (Date.now() - worker.lastBurstAt) > HYPE_BURST_COOLDOWN_MS) {
+            console.log(`[AI-Bots] stream ${worker.streamId}: hype moment — reaction burst`);
+            this._hypeBurst(worker);
+            return;
+        }
+
+        // 3) No name, not obviously hype — is the streamer talking to chat? Ask the director.
         const cleaned = String(text).trim();
         if (cleaned.length < 12) return;
         this._maybeDirect(worker, cleaned);
+    }
+
+    /** Heuristic: does the streamer's speech sound like an exciting/reacting moment? */
+    _looksHype(text) {
+        const raw = String(text || '');
+        const t = ' ' + raw.toLowerCase() + ' ';
+        let score = 0;
+        const excl = (raw.match(/!/g) || []).length;
+        if (excl >= 2) score += 2; else if (excl === 1) score += 1;
+        const capsWords = (raw.match(/\b[A-Z]{3,}\b/g) || []).length;
+        score += Math.min(2, capsWords);
+        if (/(haha|hehe|lmao|lmfao|jaja|\blol\b)/.test(t)) score += 1;
+        if (/( no way | no shot | oh my | let'?s go | lets go | what the | holy | oh no | oh god | gg | clutch | insane | are you serious | wait what | he'?s cooked | actual | bruh | dude | yooo| woah | whoa )/.test(t)) score += 1;
+        return score >= 2;
     }
 
     async _maybeDirect(worker, text) {
@@ -566,25 +643,55 @@ class AiChatbotService {
     async _generateAndPost(worker, bot, opts = {}) {
         if (worker.stopped || worker.generating) return;
         worker.generating = true;
+        try { await this._generateOnce(worker, bot, opts); }
+        finally { worker.generating = false; }
+    }
+
+    /** Generate + post one message. Does NOT touch the `generating` guard, so a
+     * burst can drive several of these in quick sequence. */
+    async _generateOnce(worker, bot, opts = {}) {
+        if (worker.stopped) return;
+        const messages = this._buildMessages(worker, bot, opts);
+        const raw = await aiProvider.chatCompletion({
+            baseUrl: worker.config.base_url,
+            apiKey: worker.config.api_token,
+            model: worker.config.model,
+            messages,
+            temperature: opts.addressedText ? 0.95 : 1.1,
+            maxTokens: 60,
+        });
+        worker.errorCount = 0;
+        const message = this._sanitizeMessage(raw);
+        if (!message) return;
+        if (worker.stopped || !this.workers.has(worker.streamId)) return;
+        if (this._stopIfOffline(worker)) return; // stream ended mid-generation — don't post
+        worker.recentBotLines.push(`${bot.username}: ${message}`);
+        if (worker.recentBotLines.length > 12) worker.recentBotLines.shift();
+        worker.lastActiveBot = bot.username;
+        this._inject(worker, bot, message);
+    }
+
+    /**
+     * A cluster of quick short reactions from a few different bots — mimics the
+     * way real chat spikes when something notable/hype happens on stream.
+     */
+    async _hypeBurst(worker) {
+        if (worker.stopped || worker.generating) return;
+        worker.lastBurstAt = Date.now();
+        worker.generating = true;
         try {
-            const messages = this._buildMessages(worker, bot, opts);
-            const raw = await aiProvider.chatCompletion({
-                baseUrl: worker.config.base_url,
-                apiKey: worker.config.api_token,
-                model: worker.config.model,
-                messages,
-                temperature: opts.addressedText ? 0.9 : 1.05,
-                maxTokens: 70,
-            });
-            worker.errorCount = 0;
-            const message = this._sanitizeMessage(raw);
-            if (!message) return;
-            if (worker.stopped || !this.workers.has(worker.streamId)) return;
-            if (this._stopIfOffline(worker)) return; // stream ended mid-generation — don't post
-            worker.recentBotLines.push(`${bot.username}: ${message}`);
-            if (worker.recentBotLines.length > 12) worker.recentBotLines.shift();
-            worker.lastActiveBot = bot.username;
-            this._inject(worker, bot, message);
+            const chosen = [...worker.bots].sort(() => Math.random() - 0.5).slice(0, rint(2, 3));
+            for (const bot of chosen) {
+                if (worker.stopped || this._stopIfOffline(worker)) break;
+                try {
+                    await this._generateOnce(worker, bot, {
+                        beat: { len: 'VERY short, 1-4 words — a pure hype/spam reaction to what just happened (like "LMAOO", "NO WAY", "he cooked", "OMG", "clip it", "actual W")', intent: '' },
+                    });
+                } catch (err) {
+                    worker.errorCount++;
+                }
+                await new Promise((r) => setTimeout(r, rint(500, 1500)));
+            }
         } finally {
             worker.generating = false;
         }
@@ -692,7 +799,7 @@ class AiChatbotService {
                     {
                         role: 'user',
                         content: [
-                            { type: 'text', text: 'This is a still frame from a live stream. In one short sentence, describe what is happening on screen (game being played, app/desktop, what the person is doing, notable on-screen text). Be concrete and specific. If it is just a webcam, describe the person/scene briefly.' },
+                            { type: 'text', text: 'This is a live stream frame. In 8-16 words, say what is actually HAPPENING right now — the action, the moment, anything funny/surprising/notable, plus the game or app if relevant. Like telling a friend who just walked in. Do NOT start with "the screen shows/displays"; just say what\'s going on.' },
                             { type: 'image_url', image_url: { url: dataUrl } },
                         ],
                     },
