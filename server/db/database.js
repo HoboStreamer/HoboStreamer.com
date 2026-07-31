@@ -706,11 +706,14 @@ function initDb() {
             num_bots INTEGER DEFAULT 3,
             post_interval_seconds INTEGER DEFAULT 45,
             persona TEXT DEFAULT '',
+            vision_enabled INTEGER DEFAULT 0,
             last_validated_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
+        const aiCols = database.prepare('PRAGMA table_info(ai_chatbot_configs)').all().map((c) => c.name);
+        if (!aiCols.includes('vision_enabled')) database.exec('ALTER TABLE ai_chatbot_configs ADD COLUMN vision_enabled INTEGER DEFAULT 0');
     } catch (e) { console.warn('[DB] ai_chatbot_configs migration:', e.message); }
 
     // Migrate: create moderation_actions table for audit logging
@@ -2955,6 +2958,7 @@ const AI_CHATBOT_DEFAULTS = {
     num_bots: 3,
     post_interval_seconds: 45,
     persona: '',
+    vision_enabled: 0,
 };
 
 function getAiChatbotConfig(userId) {
@@ -2973,6 +2977,7 @@ function upsertAiChatbotConfig(userId, fields) {
         num_bots: (v) => Math.min(12, Math.max(1, parseInt(v, 10) || 3)),
         post_interval_seconds: (v) => Math.min(600, Math.max(10, parseInt(v, 10) || 45)),
         persona: (v) => String(v || '').slice(0, 4000),
+        vision_enabled: (v) => (v ? 1 : 0),
         last_validated_at: (v) => v,
     };
     const existing = get('SELECT 1 FROM ai_chatbot_configs WHERE user_id = ?', [userId]);
@@ -2994,11 +2999,11 @@ function upsertAiChatbotConfig(userId, fields) {
         }
         run(
             `INSERT INTO ai_chatbot_configs
-                (user_id, enabled, base_url, api_token, model, transcribe_enabled, transcribe_model, num_bots, post_interval_seconds, persona)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                (user_id, enabled, base_url, api_token, model, transcribe_enabled, transcribe_model, num_bots, post_interval_seconds, persona, vision_enabled)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [userId, merged.enabled ? 1 : 0, merged.base_url, merged.api_token, merged.model,
              merged.transcribe_enabled ? 1 : 0, merged.transcribe_model, merged.num_bots,
-             merged.post_interval_seconds, merged.persona]
+             merged.post_interval_seconds, merged.persona, merged.vision_enabled ? 1 : 0]
         );
     }
     return getAiChatbotConfig(userId);

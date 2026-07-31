@@ -15,11 +15,13 @@ const fs = require('fs');
 const db = require('../db/database');
 const aiProvider = require('../ai/ai-provider');
 const streamAudio = require('../ai/stream-audio');
+const streamVision = require('../ai/stream-vision');
 
 const MAX_MSG_LEN = 200;
 const MAX_TRANSCRIPT_CHARS = 1600;
-const TRANSCRIBE_INTERVAL_MS = 22000;   // capture cadence when transcription is on
-const AUDIO_CHUNK_SECONDS = 12;
+const TRANSCRIBE_INTERVAL_MS = 20000;   // capture cadence when transcription is on
+const AUDIO_CHUNK_SECONDS = 14;
+const VISION_INTERVAL_MS = 35000;       // screenshot cadence when vision is on
 const MAX_CONSECUTIVE_ERRORS = 5;       // disable a worker after this many API failures
 
 // Distinct bot characters so a pool of N feels like different people.
@@ -93,24 +95,30 @@ class AiChatbotService {
                 config,
                 bots: this._buildBots(numBots),
                 transcript: '',
+                visualContext: '',
                 recentBotLines: [],
                 errorCount: 0,
                 stopped: false,
                 postTimer: null,
                 transcribeTimer: null,
+                visionTimer: null,
                 capturing: false,
+                describing: false,
                 generating: false,
             };
             this.workers.set(stream.id, worker);
-            console.log(`[AI-Bots] Started for stream ${stream.id} (${numBots} bots, transcription=${config.transcribe_enabled ? 'on' : 'off'})`);
+            console.log(`[AI-Bots] Started for stream ${stream.id} (${numBots} bots, transcription=${config.transcribe_enabled ? 'on' : 'off'}, vision=${config.vision_enabled ? 'on' : 'off'})`);
 
             // First posts staggered so they don't all fire at once
             this._scheduleNextPost(worker, rint(6000, 16000));
 
             if (config.transcribe_enabled) {
-                // Kick off an initial capture soon, then on an interval
                 worker.transcribeTimer = setInterval(() => this._captureAndTranscribe(worker), TRANSCRIBE_INTERVAL_MS);
                 setTimeout(() => this._captureAndTranscribe(worker), 3000);
+            }
+            if (config.vision_enabled) {
+                worker.visionTimer = setInterval(() => this._captureAndDescribe(worker), VISION_INTERVAL_MS);
+                setTimeout(() => this._captureAndDescribe(worker), 5000);
             }
         } catch (err) {
             console.error('[AI-Bots] startForStream error:', err.message);
@@ -123,6 +131,7 @@ class AiChatbotService {
         worker.stopped = true;
         if (worker.postTimer) clearTimeout(worker.postTimer);
         if (worker.transcribeTimer) clearInterval(worker.transcribeTimer);
+        if (worker.visionTimer) clearInterval(worker.visionTimer);
         this.workers.delete(streamId);
         console.log(`[AI-Bots] Stopped for stream ${streamId}`);
     }
@@ -221,10 +230,13 @@ class AiChatbotService {
         const contextParts = [
             `STREAM INFO:\n- Streamer: ${streamer}\n- Title: ${title}\n- Category/game: ${category}${tags.length ? `\n- Tags: ${tags.join(', ')}` : ''}${s.viewer_count != null ? `\n- Viewers: ${s.viewer_count}` : ''}`,
         ];
+        if (worker.visualContext && worker.visualContext.trim()) {
+            contextParts.push(`WHAT'S ON SCREEN RIGHT NOW (from a live screenshot): ${worker.visualContext}`);
+        }
         if (worker.transcript && worker.transcript.trim()) {
             contextParts.push(`WHAT THE STREAMER HAS BEEN SAYING (live transcribed audio, most recent last):\n"${worker.transcript.slice(-1400)}"`);
-        } else {
-            contextParts.push(`(No audio transcript available — infer what's happening from the title, category, and chat.)`);
+        } else if (!worker.visualContext) {
+            contextParts.push(`(No audio/screen context yet — infer what's happening from the title, category, and chat.)`);
         }
         const recent = this._recentChatLines(worker.streamId);
         if (recent.length) {
@@ -331,15 +343,60 @@ class AiChatbotService {
                 model: worker.config.transcribe_model || 'whisper-1',
                 filePath: wavPath,
             });
-            const clean = String(text || '').replace(/\s+/g, ' ').trim();
+            const clean = this._cleanTranscript(text);
             if (clean && clean.length > 1) {
                 worker.transcript = (worker.transcript + ' ' + clean).slice(-MAX_TRANSCRIPT_CHARS);
+                console.log(`[AI-Hear] stream ${worker.streamId}: +${clean.length} chars ("${clean.slice(0, 80)}...")`);
+            } else {
+                console.log(`[AI-Hear] stream ${worker.streamId}: transcript empty this cycle (quiet/no speech)`);
             }
         } catch (err) {
-            console.warn(`[AI-Bots] transcription failed (stream ${worker.streamId}):`, err.message);
+            console.warn(`[AI-Hear] transcription failed (stream ${worker.streamId}):`, err.message);
         } finally {
             if (wavPath) { try { fs.unlinkSync(wavPath); } catch {} }
             worker.capturing = false;
+        }
+    }
+
+    /** Strip common Whisper hallucinations on silence (e.g. "you", "thank you", "."). */
+    _cleanTranscript(text) {
+        let t = String(text || '').replace(/\s+/g, ' ').trim();
+        const junk = new Set(['you', '.', 'thank you', 'thanks for watching', 'thank you.', 'you.', 'bye', 'okay', '...', 'thanks for watching!']);
+        if (junk.has(t.toLowerCase())) return '';
+        return t;
+    }
+
+    async _captureAndDescribe(worker) {
+        if (worker.stopped || worker.describing) return;
+        worker.describing = true;
+        try {
+            const dataUrl = await streamVision.captureFrame(worker.stream);
+            if (!dataUrl) return;
+            const desc = await aiProvider.chatCompletion({
+                baseUrl: worker.config.base_url,
+                apiKey: worker.config.api_token,
+                model: worker.config.model,
+                temperature: 0.4,
+                maxTokens: 90,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: 'This is a still frame from a live stream. In one short sentence, describe what is happening on screen (game being played, app/desktop, what the person is doing, notable on-screen text). Be concrete and specific. If it is just a webcam, describe the person/scene briefly.' },
+                            { type: 'image_url', image_url: { url: dataUrl } },
+                        ],
+                    },
+                ],
+            });
+            const clean = String(desc || '').replace(/\s+/g, ' ').trim();
+            if (clean && clean.length > 3) {
+                worker.visualContext = clean.slice(0, 400);
+                console.log(`[AI-See] stream ${worker.streamId}: "${worker.visualContext.slice(0, 90)}"`);
+            }
+        } catch (err) {
+            console.warn(`[AI-See] describe failed (stream ${worker.streamId}):`, err.message);
+        } finally {
+            worker.describing = false;
         }
     }
 }

@@ -26,6 +26,7 @@ function sanitize(cfg) {
         num_bots: cfg.num_bots ?? 3,
         post_interval_seconds: cfg.post_interval_seconds ?? 45,
         persona: cfg.persona || '',
+        vision_enabled: !!cfg.vision_enabled,
         has_token: !!token,
         api_token_masked: token ? `****${token.slice(-4)}` : '',
         last_validated_at: cfg.last_validated_at || null,
@@ -49,6 +50,7 @@ router.put('/', requireAuth, (req, res) => {
         if (b.model !== undefined) fields.model = b.model;
         if (b.transcribe_enabled !== undefined) fields.transcribe_enabled = !!b.transcribe_enabled;
         if (b.transcribe_model !== undefined) fields.transcribe_model = b.transcribe_model;
+        if (b.vision_enabled !== undefined) fields.vision_enabled = !!b.vision_enabled;
         if (b.num_bots !== undefined) fields.num_bots = b.num_bots;
         if (b.post_interval_seconds !== undefined) fields.post_interval_seconds = b.post_interval_seconds;
         if (b.persona !== undefined) fields.persona = b.persona;

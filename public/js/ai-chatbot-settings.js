@@ -18,6 +18,7 @@
             persona: $('aibot-persona')?.value || '',
             transcribe_enabled: !!$('aibot-transcribe')?.checked,
             transcribe_model: $('aibot-transcribe-model')?.value.trim() || '',
+            vision_enabled: !!$('aibot-vision')?.checked,
         };
         const token = $('aibot-token')?.value.trim();
         if (token) body.api_token = token;   // only send when non-blank
@@ -37,6 +38,7 @@
             if ($('aibot-persona')) $('aibot-persona').value = c.persona || '';
             if ($('aibot-transcribe')) $('aibot-transcribe').checked = !!c.transcribe_enabled;
             if ($('aibot-transcribe-model')) $('aibot-transcribe-model').value = c.transcribe_model || 'whisper-1';
+            if ($('aibot-vision')) $('aibot-vision').checked = !!c.vision_enabled;
             const status = $('aibot-token-status');
             if (status) {
                 status.textContent = c.has_token

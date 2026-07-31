@@ -56,41 +56,63 @@ async function captureRtmp(stream, seconds) {
     return null;
 }
 
+function formatFmtp(params) {
+    if (!params || typeof params !== 'object') return '';
+    return Object.entries(params)
+        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .map(([k, v]) => `${k}=${v}`)
+        .join(';');
+}
+
 async function captureWebrtc(stream, seconds) {
     let webrtcSFU;
     try { webrtcSFU = require('../streaming/webrtc-sfu'); } catch { return null; }
     const roomId = `stream-${stream.id}`;
 
     let audioProducer;
-    try { audioProducer = await webrtcSFU.waitForProducer(roomId, 'audio', 5000); }
-    catch { return null; }
-    if (!audioProducer) return null;
+    try { audioProducer = await webrtcSFU.waitForProducer(roomId, 'audio', 6000); }
+    catch { console.warn(`[AI-Hear] stream ${stream.id}: no audio producer (waitForProducer timeout)`); return null; }
+    if (!audioProducer) { console.warn(`[AI-Hear] stream ${stream.id}: no audio producer`); return null; }
 
-    // RTP port range distinct from recorder (25100) and thumbnail (26100)
-    const rtpPort = 26300 + (stream.id % 100) * 2;
+    // RTP port range distinct from recorder (25100) and thumbnail (26100). Jitter
+    // by a few ports so overlapping captures don't collide on the same UDP port.
+    const rtpPort = 26300 + ((stream.id * 2 + Math.floor(Math.random() * 20) * 2) % 300);
     const rtcpPort = rtpPort + 1;
 
     let consumer;
     try {
         consumer = await webrtcSFU.createPlainConsumer(roomId, audioProducer.id, '127.0.0.1', rtpPort, rtcpPort);
-    } catch { return null; }
+    } catch (e) { console.warn(`[AI-Hear] stream ${stream.id}: plain consumer failed:`, e.message); return null; }
 
     const pt = consumer.payloadType;
     const codecName = (consumer.mimeType || 'audio/opus').split('/')[1] || 'opus';
     const clockRate = consumer.clockRate || 48000;
     const channels = consumer.channels || 2;
+    const aCodec = consumer.rtpParameters?.codecs?.[0] || {};
+    const audioProtocol = Array.isArray(aCodec.rtcpFeedback) && aCodec.rtcpFeedback.length > 0 ? 'RTP/AVPF' : 'RTP/AVP';
+
+    // Build the SDP the SAME way the (working) VOD recorder does — including the
+    // opus fmtp params and the rtcp line, which ffmpeg needs to decode cleanly.
     const sdpLines = [
         'v=0',
         'o=- 0 0 IN IP4 127.0.0.1',
         's=HoboStreamer AI Hear',
         'c=IN IP4 127.0.0.1',
         't=0 0',
-        `m=audio ${rtpPort} RTP/AVP ${pt}`,
+        `m=audio ${rtpPort} ${audioProtocol} ${pt}`,
         `a=rtpmap:${pt} ${codecName}/${clockRate}/${channels}`,
-        'a=recvonly',
-        '',
+        `a=rtcp:${rtcpPort} IN IP4 127.0.0.1`,
     ];
-    if (consumer.ssrc) sdpLines.splice(-1, 0, `a=ssrc:${consumer.ssrc} cname:aihear-audio`);
+    if (consumer.ssrc) sdpLines.push(`a=ssrc:${consumer.ssrc} cname:aihear-audio`);
+    const fmtp = formatFmtp(consumer.codecParameters);
+    if (fmtp) sdpLines.push(`a=fmtp:${pt} ${fmtp}`);
+    if (Array.isArray(consumer.headerExtensions)) {
+        for (const ext of consumer.headerExtensions) {
+            if (ext && ext.uri && ext.id) sdpLines.push(`a=extmap:${ext.id} ${ext.uri}`);
+        }
+    }
+    sdpLines.push('a=recvonly');
+    sdpLines.push('');
     const sdpContent = sdpLines.join('\r\n');
     const sdpPath = path.join(os.tmpdir(), `hobo-aihear-${stream.id}-${Date.now()}.sdp`);
     const out = tmpWav(stream.id);
@@ -106,19 +128,23 @@ async function captureWebrtc(stream, seconds) {
     const ok = await runFfmpeg([
         '-y',
         '-protocol_whitelist', 'file,rtp,udp',
-        '-thread_queue_size', '512',
-        '-analyzeduration', '3000000', '-probesize', '1000000',
+        '-thread_queue_size', '2048',
+        '-analyzeduration', '5000000', '-probesize', '5000000',
         '-use_wallclock_as_timestamps', '1',
-        '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
+        '-fflags', '+genpts+discardcorrupt+igndts',
         '-err_detect', 'ignore_err',
         '-i', sdpPath,
         '-t', String(seconds),
         '-vn', '-ac', '1', '-ar', '16000',
         '-f', 'wav', out,
-    ], (seconds + 10) * 1000);
+    ], (seconds + 12) * 1000);
 
     cleanup();
-    if (ok && fs.existsSync(out) && fs.statSync(out).size > 1024) return out;
+    const size = (ok && fs.existsSync(out)) ? fs.statSync(out).size : 0;
+    if (size > 8000) { // >~0.25s of 16k mono; smaller = effectively empty
+        return out;
+    }
+    console.warn(`[AI-Hear] stream ${stream.id}: capture produced ${size} bytes (ffmpeg ok=${ok}) — treating as empty`);
     try { fs.existsSync(out) && fs.unlinkSync(out); } catch {}
     return null;
 }
