@@ -57,8 +57,9 @@ router.put('/', requireAuth, (req, res) => {
 
         const config = db.upsertAiChatbotConfig(req.user.id, fields);
 
-        // Apply changes to any live stream this user is currently running.
-        try { aiChatbotService.reloadForUser(req.user.id); } catch { /* non-critical */ }
+        // Apply changes to any live stream this user is currently running
+        // (starts bots if enabling mid-stream, stops them if disabling).
+        try { aiChatbotService.applyConfigForUser(req.user.id); } catch { /* non-critical */ }
 
         res.json({ config: sanitize(config) });
     } catch (err) {

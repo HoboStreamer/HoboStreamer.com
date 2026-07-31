@@ -93,6 +93,7 @@ class AiChatbotService {
                 config,
                 bots: this._buildBots(numBots),
                 transcript: '',
+                recentBotLines: [],
                 errorCount: 0,
                 stopped: false,
                 postTimer: null,
@@ -132,16 +133,30 @@ class AiChatbotService {
         }
     }
 
-    /** Called when a streamer saves/changes config while live. */
-    reloadForUser(userId) {
-        for (const [id, w] of [...this.workers]) {
-            if (w.userId === userId) {
-                const stream = w.stream;
-                this.stopForStream(id);
+    /**
+     * Called when a streamer saves/changes config. Starts, restarts, or stops
+     * bots for ALL of the user's currently-live streams to match the new config
+     * (so enabling bots mid-stream starts them without a server restart).
+     */
+    applyConfigForUser(userId) {
+        let liveStreams = [];
+        try { liveStreams = db.getLiveStreamsByUserId(userId) || []; } catch { liveStreams = []; }
+        const config = db.getAiChatbotConfig(userId);
+        const wantEnabled = !!(config && config.enabled && String(config.api_token || '').trim());
+        for (const stream of liveStreams) {
+            const running = this.workers.has(stream.id);
+            if (wantEnabled) {
+                // Restart to pick up new settings (bot count, persona, interval, transcription)
+                if (running) this.stopForStream(stream.id);
                 this.startForStream(stream);
+            } else if (running) {
+                this.stopForStream(stream.id);
             }
         }
     }
+
+    /** Back-compat alias. */
+    reloadForUser(userId) { this.applyConfigForUser(userId); }
 
     hasWorker(streamId) { return this.workers.has(streamId); }
 
@@ -172,7 +187,7 @@ class AiChatbotService {
         this._scheduleNextPost(worker);
     }
 
-    _recentChatLines(streamId, limit = 8) {
+    _recentChatLines(streamId, limit = 15) {
         try {
             const rows = db.all(
                 `SELECT username, message FROM chat_messages
@@ -188,29 +203,39 @@ class AiChatbotService {
         const s = worker.stream;
         const title = s.title || 'Untitled Stream';
         const category = s.category || 'IRL';
+        const streamer = s.display_name || s.username || 'the streamer';
         const persona = String(worker.config.persona || '').trim();
+        let tags = [];
+        try { tags = Array.isArray(s.tags) ? s.tags : JSON.parse(s.tags || '[]'); } catch { tags = []; }
 
         const system = [
-            `You are "${bot.username}", a live viewer typing in a Twitch-style stream chat.`,
+            `You are "${bot.username}", a live viewer typing in ${streamer}'s Twitch-style stream chat.`,
             `Your character: you are ${bot.character}.`,
-            persona ? `The streamer wants chat viewers like you to behave like this: ${persona}` : '',
-            `Write ONE short chat message (max ~20 words) as this viewer would type it.`,
-            `Be casual, lowercase-ish, like real chat. You can be a troll, argumentative, or provocative, but keep it PG-13: no slurs, no hate, no threats, nothing sexual about real people, no doxxing.`,
-            `Do NOT use quotation marks. Do NOT prefix your name. Do NOT explain. Output only the chat message text.`,
+            persona ? `The streamer's requested vibe for chat viewers like you: ${persona}` : '',
+            `Write ONE short chat message (max ~20 words) as this viewer would actually type it.`,
+            `React to what is happening RIGHT NOW — reference what the streamer just said/did (from the transcript) or reply to something in recent chat when it fits. Stay on-topic with the stream, don't be generic.`,
+            `Be casual, lowercase-ish, like real chat. You can be a troll, argumentative, provocative, or start dumb arguments, but keep it PG-13: no slurs, no hate, no real threats, nothing sexual about real people, no doxxing.`,
+            `Do NOT repeat things already said in chat. Do NOT use quotation marks. Do NOT prefix your name. Do NOT explain yourself. Output ONLY the chat message text.`,
         ].filter(Boolean).join('\n');
 
         const contextParts = [
-            `Stream title: ${title}`,
-            `Category: ${category}`,
+            `STREAM INFO:\n- Streamer: ${streamer}\n- Title: ${title}\n- Category/game: ${category}${tags.length ? `\n- Tags: ${tags.join(', ')}` : ''}${s.viewer_count != null ? `\n- Viewers: ${s.viewer_count}` : ''}`,
         ];
-        if (worker.transcript) {
-            contextParts.push(`Recent things the streamer said (transcribed audio): "${worker.transcript.slice(-900)}"`);
+        if (worker.transcript && worker.transcript.trim()) {
+            contextParts.push(`WHAT THE STREAMER HAS BEEN SAYING (live transcribed audio, most recent last):\n"${worker.transcript.slice(-1400)}"`);
+        } else {
+            contextParts.push(`(No audio transcript available — infer what's happening from the title, category, and chat.)`);
         }
         const recent = this._recentChatLines(worker.streamId);
         if (recent.length) {
-            contextParts.push(`Recent chat:\n${recent.join('\n')}`);
+            contextParts.push(`RECENT CHAT (oldest first):\n${recent.join('\n')}`);
+        } else {
+            contextParts.push(`RECENT CHAT: (chat is dead — nobody is talking, get something started)`);
         }
-        contextParts.push(`Now type your one chat message reacting to the stream${worker.transcript ? ' and what the streamer just said' : ''}:`);
+        if (worker.recentBotLines && worker.recentBotLines.length) {
+            contextParts.push(`Do NOT repeat or paraphrase these recent lines:\n- ${worker.recentBotLines.slice(-6).join('\n- ')}`);
+        }
+        contextParts.push(`Now type ${bot.username}'s single chat message reacting to what's happening on stream right now:`);
 
         return [
             { role: 'system', content: system },
@@ -246,6 +271,8 @@ class AiChatbotService {
             const message = this._sanitizeMessage(raw);
             if (!message) return;
             if (worker.stopped || !this.workers.has(worker.streamId)) return;
+            worker.recentBotLines.push(message);
+            if (worker.recentBotLines.length > 10) worker.recentBotLines.shift();
             this._inject(worker, bot, message);
         } finally {
             worker.generating = false;
