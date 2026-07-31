@@ -19,8 +19,8 @@ const streamVision = require('../ai/stream-vision');
 const ttsEngine = require('../chat/tts-engine');
 
 const MAX_MSG_LEN = 200;
-const TRANSCRIBE_INTERVAL_MS = 18000;   // capture cadence when transcription is on
-const AUDIO_CHUNK_SECONDS = 14;
+const TRANSCRIBE_INTERVAL_MS = 15000;   // capture cadence when transcription is on
+const AUDIO_CHUNK_SECONDS = 13;
 const VISION_INTERVAL_MS = 25000;       // screenshot cadence when vision is on
 const MAX_CONSECUTIVE_ERRORS = 5;       // disable a worker after this many API failures
 // Context freshness — old speech/screens decay so bots don't harp on a topic
@@ -28,7 +28,11 @@ const MAX_CONSECUTIVE_ERRORS = 5;       // disable a worker after this many API 
 const TRANSCRIPT_WINDOW_MS = 75000;     // only feed speech from the last ~75s
 const TRANSCRIPT_MAX_CHARS = 900;       // hard cap on fed transcript
 const VISION_STALE_MS = 65000;          // ignore a screenshot description older than this
-const MENTION_COOLDOWN_MS = 12000;      // min gap between direct replies from the same bot
+const MENTION_COOLDOWN_MS = 9000;       // min gap between direct replies from the same bot
+const DIRECTOR_MIN_GAP_MS = 11000;      // throttle for the "is the streamer engaging chat?" call
+const LIVENESS_CHECK_MS = 12000;        // each worker self-checks the stream is still live
+const ORPHAN_SWEEP_MS = 30000;          // service-wide sweep to kill workers for dead streams
+const LIVE_CACHE_MS = 4000;             // cache is_live lookups briefly
 
 // Distinct bot characters so a pool of N feels like different people.
 const BOT_CHARACTERS = [
@@ -72,6 +76,49 @@ class AiChatbotService {
     constructor() {
         /** @type {Map<number, object>} streamId → worker */
         this.workers = new Map();
+        /** @type {Map<number, {isLive:boolean, ts:number}>} short is_live cache */
+        this._liveCache = new Map();
+        // Service-wide safety net: kill any worker whose stream is no longer live,
+        // no matter which teardown path (or none) fired. Prevents bots from
+        // posting to an offline channel forever.
+        this._sweepTimer = setInterval(() => this._sweepOrphans(), ORPHAN_SWEEP_MS);
+        if (this._sweepTimer.unref) this._sweepTimer.unref();
+    }
+
+    _sweepOrphans() {
+        for (const [id, w] of [...this.workers]) {
+            try {
+                const s = db.getStreamById(id);
+                if (!s || !s.is_live) {
+                    console.log(`[AI-Bots] Sweep: stream ${id} is offline — stopping orphaned bots`);
+                    this.stopForStream(id);
+                }
+            } catch { /* ignore */ }
+        }
+    }
+
+    /** Is this worker's stream still live? Briefly cached to avoid hammering the DB. */
+    _isLive(streamId) {
+        const cached = this._liveCache.get(streamId);
+        const now = Date.now();
+        if (cached && (now - cached.ts) < LIVE_CACHE_MS) return cached.isLive;
+        let isLive = false;
+        let row = null;
+        try { row = db.getStreamById(streamId); isLive = !!(row && row.is_live); } catch { isLive = false; }
+        this._liveCache.set(streamId, { isLive, ts: now, row });
+        return isLive;
+    }
+
+    /** Stop the worker if its stream has gone offline. Returns true if stopped.
+     * Always reads fresh (this is the safety gate that must never post to a dead stream). */
+    _stopIfOffline(worker) {
+        if (worker.stopped) return true;
+        this._liveCache.delete(worker.streamId);
+        if (!this._isLive(worker.streamId)) {
+            this.stopForStream(worker.streamId);
+            return true;
+        }
+        return false;
     }
 
     _buildBots(count) {
@@ -157,17 +204,21 @@ class AiChatbotService {
                 transcriptChunks: [],   // [{ text, ts }] — decays over time
                 visual: null,           // { text, ts }
                 recentBotLines: [],
-                mentionQueue: [],        // [{ bot, text, ts }] — streamer addressed a bot by voice
-                mentionCooldown: new Map(), // bot.username → last-responded ts
-                lastMentionSig: '',      // dedupe repeated detection of the same sentence
+                replyQueue: [],          // [{ bot, text, ts, mode }] — reactive replies to speech
+                replyCooldown: new Map(), // bot.username → last reactive-reply ts
+                lastSpeechSig: '',       // dedupe repeated detection of the same sentence
+                lastDirectorAt: 0,       // throttle the director call
+                lastActiveBot: null,     // username of the bot that most recently posted
                 errorCount: 0,
                 stopped: false,
                 postTimer: null,
                 transcribeTimer: null,
                 visionTimer: null,
+                livenessTimer: null,
                 capturing: false,
                 describing: false,
                 generating: false,
+                directing: false,
             };
             this.workers.set(stream.id, worker);
             console.log(`[AI-Bots] Started for stream ${stream.id} (${numBots} bots, transcription=${config.transcribe_enabled ? 'on' : 'off'}, vision=${config.vision_enabled ? 'on' : 'off'})`);
@@ -183,9 +234,25 @@ class AiChatbotService {
                 worker.visionTimer = setInterval(() => this._captureAndDescribe(worker), VISION_INTERVAL_MS);
                 setTimeout(() => this._captureAndDescribe(worker), 5000);
             }
+            // Self-terminate if the stream goes offline (belt-and-suspenders vs the
+            // external stop paths) and refresh the stream row for fresh context.
+            worker.livenessTimer = setInterval(() => this._checkLiveness(worker), LIVENESS_CHECK_MS);
         } catch (err) {
             console.error('[AI-Bots] startForStream error:', err.message);
         }
+    }
+
+    _checkLiveness(worker) {
+        if (worker.stopped) return;
+        this._liveCache.delete(worker.streamId); // force a fresh DB read
+        let row = null;
+        try { row = db.getStreamById(worker.streamId); } catch { /* ignore */ }
+        if (!row || !row.is_live) {
+            console.log(`[AI-Bots] stream ${worker.streamId} no longer live — stopping bots`);
+            this.stopForStream(worker.streamId);
+            return;
+        }
+        worker.stream = row; // keep title/category/viewer_count current
     }
 
     stopForStream(streamId) {
@@ -195,7 +262,9 @@ class AiChatbotService {
         if (worker.postTimer) clearTimeout(worker.postTimer);
         if (worker.transcribeTimer) clearInterval(worker.transcribeTimer);
         if (worker.visionTimer) clearInterval(worker.visionTimer);
+        if (worker.livenessTimer) clearInterval(worker.livenessTimer);
         this.workers.delete(streamId);
+        this._liveCache.delete(streamId);
         console.log(`[AI-Bots] Stopped for stream ${streamId}`);
     }
 
@@ -244,8 +313,11 @@ class AiChatbotService {
 
     async _tick(worker) {
         if (worker.stopped) return;
+        if (this._stopIfOffline(worker)) return;   // stream ended — don't post to a dead channel
         try {
-            const bot = pick(worker.bots);
+            // Prefer a bot that hasn't spoken most recently, so it's not always the same voice.
+            const candidates = worker.bots.filter((b) => b.username !== worker.lastActiveBot);
+            const bot = pick(candidates.length ? candidates : worker.bots);
             await this._generateAndPost(worker, bot);
         } catch (err) {
             worker.errorCount++;
@@ -284,13 +356,18 @@ class AiChatbotService {
         const transcript = this._currentTranscript(worker);
 
         const addressed = opts && opts.addressedText ? String(opts.addressedText).trim() : '';
+        const direct = addressed && opts.direct;   // streamer literally said this bot's name
+
+        const replyInstruction = direct
+            ? `IMPORTANT: the streamer just said YOUR name out loud and is talking directly TO YOU on the mic. Reply straight to them like they're speaking to you — answer their question, fire back, or engage with exactly what they said. Stay in character.`
+            : `IMPORTANT: the streamer just spoke to chat / reacted to what viewers are saying. Reply to them like you're mid-conversation — respond to what they actually said, keep the back-and-forth going. Do NOT claim they said your name. Stay in character.`;
 
         const system = [
             `You are "${bot.username}", a live viewer typing in ${streamer}'s Twitch-style stream chat.`,
             `Your character: you are ${bot.character}.`,
             persona ? `The streamer's requested vibe for chat viewers like you: ${persona}` : '',
             addressed
-                ? `IMPORTANT: the streamer just said YOUR name out loud and is talking directly TO YOU on the mic. Reply straight to them like they're speaking to you — answer their question, fire back, or engage with exactly what they said. Stay in character.`
+                ? replyInstruction
                 : `Write ONE short chat message (max ~20 words) as this viewer would actually type it.`,
             `React to the MOST RECENT thing happening — the current screen and the latest thing the streamer said. The stream changes constantly: if the screen or topic has moved on, move on with it. Do NOT keep bringing up something that is no longer on screen or was said a while ago.`,
             `Crucially: pick a DIFFERENT angle/topic than the recent chat lines shown below — chat should feel varied, not everyone piling on the same bit. Never reuse a joke or premise that already appeared.`,
@@ -299,8 +376,10 @@ class AiChatbotService {
         ].filter(Boolean).join('\n');
 
         const contextParts = [];
-        if (addressed) {
+        if (direct) {
             contextParts.push(`THE STREAMER (${streamer}) IS TALKING TO YOU (${bot.username}) RIGHT NOW over the mic. They just said:\n"${addressed}"\nReply directly to them.`);
+        } else if (addressed) {
+            contextParts.push(`THE STREAMER (${streamer}) JUST SAID THIS OUT LOUD, talking to chat / reacting to viewers:\n"${addressed}"\nReply to them naturally, continuing the conversation.`);
         }
         // Freshest signal first, prominently labeled.
         if (visual) {
@@ -323,7 +402,7 @@ class AiChatbotService {
             contextParts.push(`ALREADY SAID by fake viewers — do NOT repeat, paraphrase, or reuse the same topic/joke as any of these:\n- ${worker.recentBotLines.slice(-8).join('\n- ')}`);
         }
         contextParts.push(addressed
-            ? `Type ${bot.username}'s single chat message replying directly to what ${streamer} just said to you:`
+            ? `Type ${bot.username}'s single chat message replying to what ${streamer} just said:`
             : `Type ${bot.username}'s single fresh chat message about what's happening on stream RIGHT NOW:`);
 
         return [
@@ -349,47 +428,128 @@ class AiChatbotService {
         return '';
     }
 
-    /** If the streamer addressed a bot by name over the mic, queue a prompt reply. */
-    _maybeQueueMentions(worker, text) {
+    /**
+     * Entry point when the streamer says something (fresh transcript). Decides
+     * whether — and which — bot should reply, so it feels like a real back-and-forth:
+     *  1) If the streamer said a bot's name → that bot replies directly (fast path).
+     *  2) Otherwise ask a cheap "director" if the streamer is engaging chat/reacting
+     *     to a viewer, and if so have the right bot reply. This is what makes the
+     *     bots respond when you talk back to them without naming anyone.
+     */
+    _onFreshSpeech(worker, text) {
         if (worker.stopped) return;
-        const sig = String(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(-120);
-        if (sig && sig === worker.lastMentionSig) return; // same sentence already handled
-        const hits = this._detectAddressedBots(worker, text);
-        if (!hits.length) return;
-        worker.lastMentionSig = sig;
-        const now = Date.now();
-        let queued = 0;
-        for (const bot of hits) {
-            const last = worker.mentionCooldown.get(bot.username) || 0;
-            if (now - last < MENTION_COOLDOWN_MS) continue; // don't spam replies at one bot
-            if (worker.mentionQueue.some((m) => m.bot.username === bot.username)) continue;
-            worker.mentionQueue.push({ bot, text: String(text).slice(-300), ts: now });
-            queued++;
+        const sig = String(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(-140);
+        if (sig && sig === worker.lastSpeechSig) return;
+        worker.lastSpeechSig = sig;
+
+        // 1) Direct name callout → highest priority.
+        const named = this._detectAddressedBots(worker, text);
+        if (named.length) {
+            let queued = 0;
+            for (const bot of named) {
+                if (this._queueReply(worker, bot, text, 'direct')) queued++;
+            }
+            if (queued) {
+                console.log(`[AI-Bots] stream ${worker.streamId}: streamer named ${named.map((b) => b.username).join(', ')} — direct reply`);
+                setTimeout(() => this._flushReplies(worker), rint(1000, 2800));
+            }
+            return;
         }
-        if (queued) {
-            console.log(`[AI-Bots] stream ${worker.streamId}: streamer addressed ${hits.map((b) => b.username).join(', ')} — queuing direct reply`);
-            // Reply promptly with a short, human-like delay.
-            setTimeout(() => this._respondToMention(worker), rint(1200, 3500));
+
+        // 2) No name — is the streamer talking to/reacting to chat? Ask the director.
+        //    Only bother if there's something conversational to react to.
+        const cleaned = String(text).trim();
+        if (cleaned.length < 12) return;
+        this._maybeDirect(worker, cleaned);
+    }
+
+    async _maybeDirect(worker, text) {
+        if (worker.stopped || worker.directing) return;
+        const now = Date.now();
+        if (now - worker.lastDirectorAt < DIRECTOR_MIN_GAP_MS) return;
+        worker.lastDirectorAt = now;
+        worker.directing = true;
+        try {
+            const decision = await this._directorDecide(worker, text);
+            if (!decision || !decision.engage) return;
+            let bot = worker.bots.find((b) => b.username.toLowerCase() === String(decision.username || '').toLowerCase());
+            if (!bot) {
+                // Director wants a reply but didn't pick a valid bot → prefer the last
+                // active bot (continues that thread), else a random one.
+                bot = worker.bots.find((b) => b.username === worker.lastActiveBot) || pick(worker.bots);
+            }
+            if (this._queueReply(worker, bot, text, 'reply')) {
+                console.log(`[AI-Bots] stream ${worker.streamId}: streamer engaging chat (${decision.why || ''}) — ${bot.username} replies`);
+                setTimeout(() => this._flushReplies(worker), rint(1200, 3200));
+            }
+        } catch (err) {
+            console.warn(`[AI-Bots] director failed (stream ${worker.streamId}):`, err.message);
+        } finally {
+            worker.directing = false;
         }
     }
 
-    async _respondToMention(worker, attempt = 0) {
+    /** Ask the model whether the streamer is engaging chat and who should reply. */
+    async _directorDecide(worker, speech) {
+        const recent = this._recentChatLines(worker.streamId, 8);
+        const names = worker.bots.map((b) => b.username).join(', ');
+        const sys = 'You direct fake troll "viewers" in a livestream chat. Decide if one should reply to the streamer RIGHT NOW. Only engage when the streamer is talking TO chat, answering/reacting to a viewer, asking chat something, or clearly playing off chat — NOT when just narrating gameplay or talking to themselves. Reply with ONLY compact JSON.';
+        const user = [
+            `Streamer "${worker.stream.display_name || worker.stream.username || 'streamer'}" just said out loud (transcribed, may be rough): "${String(speech).slice(-400)}"`,
+            recent.length ? `Recent chat (newest last):\n${recent.join('\n')}` : 'Chat is quiet.',
+            `Fake viewers who could reply: ${names}`,
+            `JSON: {"engage": true|false, "username": "<viewer who should reply — prefer whoever the streamer is reacting to; else empty>", "why": "<=6 words"}`,
+        ].join('\n\n');
+        const raw = await aiProvider.chatCompletion({
+            baseUrl: worker.config.base_url,
+            apiKey: worker.config.api_token,
+            model: worker.config.model,
+            temperature: 0.2,
+            maxTokens: 60,
+            messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        });
+        return this._parseDirectorJson(raw);
+    }
+
+    _parseDirectorJson(raw) {
+        if (!raw) return null;
+        let s = String(raw).trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+        const m = s.match(/\{[\s\S]*\}/);
+        if (m) s = m[0];
+        try {
+            const o = JSON.parse(s);
+            return { engage: !!o.engage, username: String(o.username || '').trim(), why: String(o.why || '').slice(0, 40) };
+        } catch { return null; }
+    }
+
+    /** Queue a reactive reply from a bot (respecting per-bot cooldown + dedupe). */
+    _queueReply(worker, bot, text, mode) {
+        if (!bot) return false;
+        const now = Date.now();
+        const last = worker.replyCooldown.get(bot.username) || 0;
+        if (now - last < MENTION_COOLDOWN_MS) return false;
+        if (worker.replyQueue.some((m) => m.bot.username === bot.username)) return false;
+        worker.replyCooldown.set(bot.username, now);
+        worker.replyQueue.push({ bot, text: String(text).slice(-300), ts: now, mode });
+        return true;
+    }
+
+    async _flushReplies(worker, attempt = 0) {
         if (worker.stopped || !this.workers.has(worker.streamId)) return;
-        if (!worker.mentionQueue.length) return;
+        if (this._stopIfOffline(worker)) return;
+        if (!worker.replyQueue.length) return;
         if (worker.generating) {
-            if (attempt < 6) setTimeout(() => this._respondToMention(worker, attempt + 1), 1500);
+            if (attempt < 6) setTimeout(() => this._flushReplies(worker, attempt + 1), 1400);
             return;
         }
-        const mention = worker.mentionQueue.shift();
-        if (!mention) return;
-        worker.mentionCooldown.set(mention.bot.username, Date.now());
+        const item = worker.replyQueue.shift();
+        if (!item) return;
         try {
-            await this._generateAndPost(worker, mention.bot, { addressedText: mention.text });
+            await this._generateAndPost(worker, item.bot, { addressedText: item.text, direct: item.mode === 'direct' });
         } catch (err) {
-            console.warn(`[AI-Bots] mention reply failed (stream ${worker.streamId}):`, err.message);
+            console.warn(`[AI-Bots] reactive reply failed (stream ${worker.streamId}):`, err.message);
         }
-        // If more bots were addressed, stagger their replies too.
-        if (worker.mentionQueue.length) setTimeout(() => this._respondToMention(worker), rint(1500, 4000));
+        if (worker.replyQueue.length) setTimeout(() => this._flushReplies(worker), rint(1500, 4000));
     }
 
     _sanitizeMessage(text) {
@@ -420,8 +580,10 @@ class AiChatbotService {
             const message = this._sanitizeMessage(raw);
             if (!message) return;
             if (worker.stopped || !this.workers.has(worker.streamId)) return;
-            worker.recentBotLines.push(message);
-            if (worker.recentBotLines.length > 10) worker.recentBotLines.shift();
+            if (this._stopIfOffline(worker)) return; // stream ended mid-generation — don't post
+            worker.recentBotLines.push(`${bot.username}: ${message}`);
+            if (worker.recentBotLines.length > 12) worker.recentBotLines.shift();
+            worker.lastActiveBot = bot.username;
             this._inject(worker, bot, message);
         } finally {
             worker.generating = false;
@@ -474,6 +636,7 @@ class AiChatbotService {
 
     async _captureAndTranscribe(worker) {
         if (worker.stopped || worker.capturing) return;
+        if (this._stopIfOffline(worker)) return;
         worker.capturing = true;
         let wavPath = null;
         try {
@@ -492,7 +655,7 @@ class AiChatbotService {
                 const cutoff = Date.now() - TRANSCRIPT_WINDOW_MS;
                 worker.transcriptChunks = worker.transcriptChunks.filter((c) => c.ts >= cutoff).slice(-12);
                 console.log(`[AI-Hear] stream ${worker.streamId}: +${clean.length} chars ("${clean.slice(0, 80)}...")`);
-                this._maybeQueueMentions(worker, clean);
+                this._onFreshSpeech(worker, clean);
             } else {
                 console.log(`[AI-Hear] stream ${worker.streamId}: transcript empty this cycle (quiet/no speech)`);
             }
@@ -514,6 +677,7 @@ class AiChatbotService {
 
     async _captureAndDescribe(worker) {
         if (worker.stopped || worker.describing) return;
+        if (this._stopIfOffline(worker)) return;
         worker.describing = true;
         try {
             const dataUrl = await streamVision.captureFrame(worker.stream);
