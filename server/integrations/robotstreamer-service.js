@@ -309,25 +309,34 @@ class RobotStreamerService {
      * ingest has no browser publisher: WHIP/OBS and RTMP. Browser broadcasts
      * publish to RS from the client via /ws/robotstreamer-publish instead.
      */
-    _maybeStartNativePublish(stream, integration) {
+    _maybeStartNativePublish(stream, integration, opts = {}) {
         try {
             if (!integration?.enabled || !integration.token || !integration.robot_id) return;
             if (this._activePublish.has(stream.id)) return; // browser publisher already connected
             const rsNativePublisher = require('./rs-native-publisher');
             if (rsNativePublisher.isActive(stream.id)) return;
 
+            // Determine the real ingest. When the caller KNOWS the ingest (e.g. we
+            // were triggered from the WHIP ICE-connected handler), trust that over
+            // the configured managed_stream.streaming_method — which can be stale
+            // or misconfigured ('browser') even though OBS is pushing via WHIP.
             const db2 = require('../db/database');
             const ms = stream.managed_stream_id ? db2.getManagedStreamById(stream.managed_stream_id) : null;
-            const method = ms?.streaming_method || 'browser';
-            if (method !== 'whip' && method !== 'rtmp') return;
+            let method = ms?.streaming_method || 'browser';
+            if (opts.ingest === 'whip' || opts.ingest === 'rtmp') method = opts.ingest;
+            if (method !== 'whip' && method !== 'rtmp') {
+                console.log(`[RS] Native publish skipped for stream ${stream.id}: method='${method}' (no browserless ingest)`);
+                return;
+            }
 
+            console.log(`[RS] Starting native video publish for stream ${stream.id} (ingest=${method}, robot=${integration.robot_id})`);
             rsNativePublisher.start(stream, integration);
         } catch (err) {
             console.warn(`[RS] Native publish start failed for stream ${stream.id}:`, err.message);
         }
     }
 
-    async startForStream(stream) {
+    async startForStream(stream, opts = {}) {
         if (!stream?.id || !stream?.user_id) return;
 
         let integration = this.getIntegrationForStream(stream);
@@ -336,7 +345,7 @@ class RobotStreamerService {
         }
 
         // Server-side video publish for WHIP/RTMP ingest (independent of chat mirror)
-        this._maybeStartNativePublish(stream, integration);
+        this._maybeStartNativePublish(stream, integration, opts);
 
         if (integration.mirror_chat === 0) return null;
 

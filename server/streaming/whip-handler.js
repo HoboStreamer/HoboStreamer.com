@@ -941,7 +941,10 @@ async function handleWhipPost(req, res) {
                     const liveStream = db.getStreamById(streamId);
                     if (liveStream?.is_live) {
                         if (robotStreamerService) {
-                            robotStreamerService.startForStream(liveStream).catch((err) => {
+                            // We're in the WHIP ICE-connected handler → this is a browserless
+                            // WHIP ingest. Tell RS to publish natively regardless of the
+                            // stored streaming_method (which can be stale/misconfigured).
+                            robotStreamerService.startForStream(liveStream, { ingest: 'whip' }).catch((err) => {
                                 console.warn(`[WHIP] RS start failed for stream ${streamId}:`, err.message);
                             });
                         }
