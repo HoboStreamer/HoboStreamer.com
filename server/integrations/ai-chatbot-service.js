@@ -28,6 +28,7 @@ const MAX_CONSECUTIVE_ERRORS = 5;       // disable a worker after this many API 
 const TRANSCRIPT_WINDOW_MS = 75000;     // only feed speech from the last ~75s
 const TRANSCRIPT_MAX_CHARS = 900;       // hard cap on fed transcript
 const VISION_STALE_MS = 65000;          // ignore a screenshot description older than this
+const MENTION_COOLDOWN_MS = 12000;      // min gap between direct replies from the same bot
 
 // Distinct bot characters so a pool of N feels like different people.
 const BOT_CHARACTERS = [
@@ -52,12 +53,19 @@ function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function rint(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 
 function makeUsername() {
-    // Mixed styles: gamertag, or plain lowercase anon-ish handle
-    if (Math.random() < 0.25) return `anon${rint(10, 990)}`;
+    // Mixed styles: gamertag, or plain lowercase anon-ish handle.
+    // Returns { username, words } where words are the real component words used
+    // to build it — used later to detect when the streamer says the name aloud
+    // (Whisper mangles concatenated gamertags, but hears the underlying words).
+    if (Math.random() < 0.25) {
+        const num = rint(10, 990);
+        return { username: `anon${num}`, words: ['anon', String(num)] };
+    }
     const cap = Math.random() < 0.5;
-    let adj = pick(NAME_ADJ), noun = pick(NAME_NOUN);
-    if (cap) { adj = adj.charAt(0).toUpperCase() + adj.slice(1); noun = noun.charAt(0).toUpperCase() + noun.slice(1); }
-    return `${adj}${noun}${pick(NAME_SUFFIX)}`;
+    const adj = pick(NAME_ADJ), noun = pick(NAME_NOUN);
+    const dispAdj = cap ? adj.charAt(0).toUpperCase() + adj.slice(1) : adj;
+    const dispNoun = cap ? noun.charAt(0).toUpperCase() + noun.slice(1) : noun;
+    return { username: `${dispAdj}${dispNoun}${pick(NAME_SUFFIX)}`, words: [adj, noun] };
 }
 
 class AiChatbotService {
@@ -72,27 +80,52 @@ class AiChatbotService {
         const usedNames = new Set();
         const usedVoices = new Set(); // base-voice variants already taken, so the pool sounds distinct
         for (let i = 0; i < count; i++) {
-            let name = makeUsername();
+            let gen = makeUsername();
             let guard = 0;
             // Regenerate to avoid duplicate names AND (where possible) duplicate
             // base TTS voices, so each bot in the pool is recognizable by voice.
             while (guard++ < 24) {
-                const lname = name.toLowerCase();
-                if (usedNames.has(lname)) { name = makeUsername(); continue; }
+                const lname = gen.username.toLowerCase();
+                if (usedNames.has(lname)) { gen = makeUsername(); continue; }
                 let voice;
-                try { voice = ttsEngine.deriveUserVoiceParams(this._voiceKey(name)).voice; } catch { voice = null; }
-                if (voice && usedVoices.has(voice) && usedVoices.size < 13) { name = makeUsername(); continue; }
+                try { voice = ttsEngine.deriveUserVoiceParams(this._voiceKey(gen.username)).voice; } catch { voice = null; }
+                if (voice && usedVoices.has(voice) && usedVoices.size < 13) { gen = makeUsername(); continue; }
                 if (voice) usedVoices.add(voice);
                 break;
             }
-            usedNames.add(name.toLowerCase());
+            usedNames.add(gen.username.toLowerCase());
             bots.push({
-                username: name,
+                username: gen.username,
                 color: pick(COLORS),
                 character: chars[i % chars.length],
+                // Distinctive words (len>=4) the streamer might say to address this bot.
+                matchWords: (gen.words || []).map((w) => String(w).toLowerCase()).filter((w) => w.length >= 4),
             });
         }
         return bots;
+    }
+
+    /**
+     * Detect which bots the streamer just addressed by name in a transcript
+     * snippet. Whisper won't reproduce "BasedMenace69", but it will hear the
+     * underlying words ("based", "menace"), so match on those. Returns an array
+     * of bots (usually 0 or 1).
+     */
+    _detectAddressedBots(worker, text) {
+        const norm = ' ' + String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+        if (norm.length < 3) return [];
+        const hits = [];
+        for (const bot of worker.bots) {
+            const words = bot.matchWords || [];
+            if (!words.length) continue;
+            // The distinctive noun (2nd word) alone is enough; for the adjective
+            // require the noun too (adjectives like "big"/"the" are too common).
+            const noun = words[words.length - 1];
+            if (noun && norm.includes(` ${noun} `)) { hits.push(bot); continue; }
+            // Full de-camelCased name spoken ("based menace")
+            if (words.length >= 2 && norm.includes(` ${words.join(' ')} `)) hits.push(bot);
+        }
+        return hits;
     }
 
     /** Stable identity string used to derive a bot's TTS voice. */
@@ -116,6 +149,9 @@ class AiChatbotService {
                 transcriptChunks: [],   // [{ text, ts }] — decays over time
                 visual: null,           // { text, ts }
                 recentBotLines: [],
+                mentionQueue: [],        // [{ bot, text, ts }] — streamer addressed a bot by voice
+                mentionCooldown: new Map(), // bot.username → last-responded ts
+                lastMentionSig: '',      // dedupe repeated detection of the same sentence
                 errorCount: 0,
                 stopped: false,
                 postTimer: null,
@@ -227,7 +263,7 @@ class AiChatbotService {
         } catch { return []; }
     }
 
-    _buildMessages(worker, bot) {
+    _buildMessages(worker, bot, opts = {}) {
         const s = worker.stream;
         const title = s.title || 'Untitled Stream';
         const category = s.category || 'IRL';
@@ -239,11 +275,15 @@ class AiChatbotService {
         const visual = this._currentVisual(worker);
         const transcript = this._currentTranscript(worker);
 
+        const addressed = opts && opts.addressedText ? String(opts.addressedText).trim() : '';
+
         const system = [
             `You are "${bot.username}", a live viewer typing in ${streamer}'s Twitch-style stream chat.`,
             `Your character: you are ${bot.character}.`,
             persona ? `The streamer's requested vibe for chat viewers like you: ${persona}` : '',
-            `Write ONE short chat message (max ~20 words) as this viewer would actually type it.`,
+            addressed
+                ? `IMPORTANT: the streamer just said YOUR name out loud and is talking directly TO YOU on the mic. Reply straight to them like they're speaking to you — answer their question, fire back, or engage with exactly what they said. Stay in character.`
+                : `Write ONE short chat message (max ~20 words) as this viewer would actually type it.`,
             `React to the MOST RECENT thing happening — the current screen and the latest thing the streamer said. The stream changes constantly: if the screen or topic has moved on, move on with it. Do NOT keep bringing up something that is no longer on screen or was said a while ago.`,
             `Crucially: pick a DIFFERENT angle/topic than the recent chat lines shown below — chat should feel varied, not everyone piling on the same bit. Never reuse a joke or premise that already appeared.`,
             `Be casual, lowercase-ish, like real chat. You can troll, argue, be provocative, or start dumb arguments, but keep it PG-13: no slurs, no hate, no real threats, nothing sexual about real people, no doxxing.`,
@@ -251,6 +291,9 @@ class AiChatbotService {
         ].filter(Boolean).join('\n');
 
         const contextParts = [];
+        if (addressed) {
+            contextParts.push(`THE STREAMER (${streamer}) IS TALKING TO YOU (${bot.username}) RIGHT NOW over the mic. They just said:\n"${addressed}"\nReply directly to them.`);
+        }
         // Freshest signal first, prominently labeled.
         if (visual) {
             contextParts.push(`ON SCREEN RIGHT NOW (latest screenshot — react to THIS, not older screens): ${visual}`);
@@ -271,7 +314,9 @@ class AiChatbotService {
         if (worker.recentBotLines && worker.recentBotLines.length) {
             contextParts.push(`ALREADY SAID by fake viewers — do NOT repeat, paraphrase, or reuse the same topic/joke as any of these:\n- ${worker.recentBotLines.slice(-8).join('\n- ')}`);
         }
-        contextParts.push(`Type ${bot.username}'s single fresh chat message about what's happening on stream RIGHT NOW:`);
+        contextParts.push(addressed
+            ? `Type ${bot.username}'s single chat message replying directly to what ${streamer} just said to you:`
+            : `Type ${bot.username}'s single fresh chat message about what's happening on stream RIGHT NOW:`);
 
         return [
             { role: 'system', content: system },
@@ -296,6 +341,49 @@ class AiChatbotService {
         return '';
     }
 
+    /** If the streamer addressed a bot by name over the mic, queue a prompt reply. */
+    _maybeQueueMentions(worker, text) {
+        if (worker.stopped) return;
+        const sig = String(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(-120);
+        if (sig && sig === worker.lastMentionSig) return; // same sentence already handled
+        const hits = this._detectAddressedBots(worker, text);
+        if (!hits.length) return;
+        worker.lastMentionSig = sig;
+        const now = Date.now();
+        let queued = 0;
+        for (const bot of hits) {
+            const last = worker.mentionCooldown.get(bot.username) || 0;
+            if (now - last < MENTION_COOLDOWN_MS) continue; // don't spam replies at one bot
+            if (worker.mentionQueue.some((m) => m.bot.username === bot.username)) continue;
+            worker.mentionQueue.push({ bot, text: String(text).slice(-300), ts: now });
+            queued++;
+        }
+        if (queued) {
+            console.log(`[AI-Bots] stream ${worker.streamId}: streamer addressed ${hits.map((b) => b.username).join(', ')} — queuing direct reply`);
+            // Reply promptly with a short, human-like delay.
+            setTimeout(() => this._respondToMention(worker), rint(1200, 3500));
+        }
+    }
+
+    async _respondToMention(worker, attempt = 0) {
+        if (worker.stopped || !this.workers.has(worker.streamId)) return;
+        if (!worker.mentionQueue.length) return;
+        if (worker.generating) {
+            if (attempt < 6) setTimeout(() => this._respondToMention(worker, attempt + 1), 1500);
+            return;
+        }
+        const mention = worker.mentionQueue.shift();
+        if (!mention) return;
+        worker.mentionCooldown.set(mention.bot.username, Date.now());
+        try {
+            await this._generateAndPost(worker, mention.bot, { addressedText: mention.text });
+        } catch (err) {
+            console.warn(`[AI-Bots] mention reply failed (stream ${worker.streamId}):`, err.message);
+        }
+        // If more bots were addressed, stagger their replies too.
+        if (worker.mentionQueue.length) setTimeout(() => this._respondToMention(worker), rint(1500, 4000));
+    }
+
     _sanitizeMessage(text) {
         let t = String(text || '').replace(/\s+/g, ' ').trim();
         // Strip wrapping quotes, then a leading "name:" the model may have added,
@@ -307,18 +395,18 @@ class AiChatbotService {
         return t;
     }
 
-    async _generateAndPost(worker, bot) {
+    async _generateAndPost(worker, bot, opts = {}) {
         if (worker.stopped || worker.generating) return;
         worker.generating = true;
         try {
-            const messages = this._buildMessages(worker, bot);
+            const messages = this._buildMessages(worker, bot, opts);
             const raw = await aiProvider.chatCompletion({
                 baseUrl: worker.config.base_url,
                 apiKey: worker.config.api_token,
                 model: worker.config.model,
                 messages,
-                temperature: 1.05,
-                maxTokens: 60,
+                temperature: opts.addressedText ? 0.9 : 1.05,
+                maxTokens: 70,
             });
             worker.errorCount = 0;
             const message = this._sanitizeMessage(raw);
@@ -396,6 +484,7 @@ class AiChatbotService {
                 const cutoff = Date.now() - TRANSCRIPT_WINDOW_MS;
                 worker.transcriptChunks = worker.transcriptChunks.filter((c) => c.ts >= cutoff).slice(-12);
                 console.log(`[AI-Hear] stream ${worker.streamId}: +${clean.length} chars ("${clean.slice(0, 80)}...")`);
+                this._maybeQueueMentions(worker, clean);
             } else {
                 console.log(`[AI-Hear] stream ${worker.streamId}: transcript empty this cycle (quiet/no speech)`);
             }
