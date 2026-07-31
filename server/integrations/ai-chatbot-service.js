@@ -79,18 +79,22 @@ class AiChatbotService {
         const bots = [];
         const usedNames = new Set();
         const usedVoices = new Set(); // base-voice variants already taken, so the pool sounds distinct
+        const usedNouns = new Set();  // so each bot is uniquely addressable by name-word
         for (let i = 0; i < count; i++) {
             let gen = makeUsername();
             let guard = 0;
-            // Regenerate to avoid duplicate names AND (where possible) duplicate
-            // base TTS voices, so each bot in the pool is recognizable by voice.
-            while (guard++ < 24) {
+            // Regenerate to avoid duplicate names, duplicate addressable name-words,
+            // AND (where possible) duplicate base TTS voices.
+            while (guard++ < 30) {
                 const lname = gen.username.toLowerCase();
+                const noun = (gen.words[gen.words.length - 1] || '').toLowerCase();
                 if (usedNames.has(lname)) { gen = makeUsername(); continue; }
+                if (noun && usedNouns.has(noun) && usedNouns.size < NAME_NOUN.length) { gen = makeUsername(); continue; }
                 let voice;
                 try { voice = ttsEngine.deriveUserVoiceParams(this._voiceKey(gen.username)).voice; } catch { voice = null; }
                 if (voice && usedVoices.has(voice) && usedVoices.size < 13) { gen = makeUsername(); continue; }
                 if (voice) usedVoices.add(voice);
+                if (noun) usedNouns.add(noun);
                 break;
             }
             usedNames.add(gen.username.toLowerCase());
@@ -98,8 +102,12 @@ class AiChatbotService {
                 username: gen.username,
                 color: pick(COLORS),
                 character: chars[i % chars.length],
-                // Distinctive words (len>=4) the streamer might say to address this bot.
-                matchWords: (gen.words || []).map((w) => String(w).toLowerCase()).filter((w) => w.length >= 4),
+                // Distinctive words (len>=4) the streamer might say to address this
+                // bot. Anon-style handles aren't voice-addressable (bare "anon" is
+                // ambiguous), so leave their matchWords empty.
+                matchWords: (gen.words[0] === 'anon')
+                    ? []
+                    : (gen.words || []).map((w) => String(w).toLowerCase()).filter((w) => w.length >= 4),
             });
         }
         return bots;
