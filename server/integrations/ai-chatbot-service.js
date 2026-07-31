@@ -36,6 +36,19 @@ const PERSONALITY_EVOLVE_MS = 140000;   // how often each bot's personality note
 const CONVO_WINDOW_MS = 55000;          // how long a back-and-forth "sticks" to one bot
 const LIVENESS_CHECK_MS = 12000;        // each worker self-checks the stream is still live
 const ORPHAN_SWEEP_MS = 30000;          // service-wide sweep to kill workers for dead streams
+
+// ── Output pacing ──────────────────────────────────────────────────────────
+// ALL messages funnel through one pacer so chat comes out one-at-a-time with
+// natural gaps — never a clump of bot messages at once.
+const GLOBAL_MIN_GAP_MS = 3400;         // hard floor between ANY two bot messages
+const HYPE_MIN_GAP_MS = 1800;           // tighter floor during a hype moment
+const ACTIVE_GAP_MS = [3800, 8500];     // target gap range when chat is engaged
+const IDLE_GAP_MS = [12000, 26000];     // target gap range when it's quiet
+const REPLY_TYPING_MS = [1100, 3200];   // human "typing" delay before a reply appears
+const HYPE_WINDOW_MS = 8000;            // how long a hype moment elevates the pace
+const ACTIVE_INPUT_MS = 22000;          // "engaged" if real input arrived within this
+const AMBIENT_PROB_ACTIVE = 0.7;        // chance an ambient filler actually fires when due (engaged)
+const AMBIENT_PROB_IDLE = 0.45;         // ...when quiet (leaves natural silences)
 const LIVE_CACHE_MS = 4000;             // cache is_live lookups briefly
 
 // Distinct bot characters so a pool of N feels like different people.
@@ -244,18 +257,19 @@ class AiChatbotService {
                 transcriptChunks: [],   // [{ text, ts }] — decays over time
                 visual: null,           // { text, ts }
                 recentBotLines: [],
-                replyQueue: [],          // [{ bot, text, ts, mode }] — reactive replies to speech
+                intents: [],             // pending message requests: [{ kind:'reply'|'hype', bot, opts, prio, ts }]
                 replyCooldown: new Map(), // bot.username → last reactive-reply ts
                 lastSpeechSig: '',       // dedupe repeated detection of the same sentence
                 lastDirectorAt: 0,       // throttle the director call
-                lastBurstAt: 0,          // throttle hype reaction bursts
                 lastViewerReplyAt: 0,    // throttle replies to non-streamer viewers
                 lastRealInput: null,     // { username, text, isStreamer, ts }
                 convo: null,             // { bot, ts } — bot currently in a back-and-forth w/ streamer
                 lastActiveBot: null,     // username of the bot that most recently posted
+                lastPostAt: 0,           // when the last message actually went out (pacing floor)
+                hypeUntil: 0,            // pace stays elevated until this time
                 errorCount: 0,
                 stopped: false,
-                postTimer: null,
+                paceTimer: null,
                 transcribeTimer: null,
                 visionTimer: null,
                 livenessTimer: null,
@@ -269,8 +283,8 @@ class AiChatbotService {
             this.workers.set(stream.id, worker);
             console.log(`[AI-Bots] Started for stream ${stream.id} (${numBots} bots, transcription=${config.transcribe_enabled ? 'on' : 'off'}, vision=${config.vision_enabled ? 'on' : 'off'})`);
 
-            // First posts staggered so they don't all fire at once
-            this._scheduleNextPost(worker, rint(6000, 16000));
+            // Single output pacer — everything emits through here, one at a time.
+            this._scheduleTick(worker, rint(5000, 12000));
 
             if (config.transcribe_enabled) {
                 worker.transcribeTimer = setInterval(() => this._captureAndTranscribe(worker), TRANSCRIBE_INTERVAL_MS);
@@ -307,7 +321,7 @@ class AiChatbotService {
         const worker = this.workers.get(streamId);
         if (!worker) return;
         worker.stopped = true;
-        if (worker.postTimer) clearTimeout(worker.postTimer);
+        if (worker.paceTimer) clearTimeout(worker.paceTimer);
         if (worker.transcribeTimer) clearInterval(worker.transcribeTimer);
         if (worker.visionTimer) clearInterval(worker.visionTimer);
         if (worker.livenessTimer) clearInterval(worker.livenessTimer);
@@ -350,41 +364,113 @@ class AiChatbotService {
 
     hasWorker(streamId) { return this.workers.has(streamId); }
 
-    _scheduleNextPost(worker, delayMs) {
+    // ── Output pacer ─────────────────────────────────────────────────────────
+    // The ONLY place messages are emitted. Everything else just enqueues intents
+    // or elevates the pace; this loop emits at most one message per tick and
+    // enforces a global minimum gap, so chat never dumps several at once.
+
+    _scheduleTick(worker, delayMs) {
         if (worker.stopped) return;
-        const base = (worker.config.post_interval_seconds || 45) * 1000;
-        // Divide the base cadence across the pool so total chatter ≈ base per bot,
-        // then jitter ±40% so it feels organic.
-        const perTick = Math.max(6000, base / Math.max(1, worker.bots.length));
-        const jittered = delayMs != null ? delayMs : Math.round(perTick * (0.6 + Math.random() * 0.8));
-        worker.postTimer = setTimeout(() => this._tick(worker), jittered);
+        if (worker.paceTimer) clearTimeout(worker.paceTimer);
+        worker.paceTimer = setTimeout(() => this._paceTick(worker), Math.max(250, delayMs));
     }
 
-    async _tick(worker) {
+    /** Nudge the pacer to fire sooner (e.g. a reply just got queued), but never
+     * closer than the global gap allows. */
+    _wakePacer(worker, delayMs) {
         if (worker.stopped) return;
-        if (this._stopIfOffline(worker)) return;   // stream ended — don't post to a dead channel
-        // Let real conversation take priority — if a reply is pending or the
-        // streamer just gave input, skip this ambient filler post.
-        const sinceInput = Date.now() - (worker.lastRealInput?.ts || 0);
-        if (worker.replyQueue.length || sinceInput < 6000) {
-            this._scheduleNextPost(worker);
-            return;
-        }
+        const sinceLast = Date.now() - worker.lastPostAt;
+        const floor = (worker.hypeUntil > Date.now() ? HYPE_MIN_GAP_MS : GLOBAL_MIN_GAP_MS) - sinceLast;
+        this._scheduleTick(worker, Math.max(delayMs, floor, 250));
+    }
+
+    _isActive(worker) {
+        return worker.hypeUntil > Date.now()
+            || (Date.now() - (worker.lastRealInput?.ts || 0)) < ACTIVE_INPUT_MS
+            || worker.intents.length > 0;
+    }
+
+    /** Delay until the next pacer tick — short when there's pending work, longer when idle. */
+    _nextTickDelay(worker) {
+        if (worker.intents.length || worker.hypeUntil > Date.now()) return rint(700, 1800);
+        return this._isActive(worker) ? rint(...ACTIVE_GAP_MS) : rint(...IDLE_GAP_MS);
+    }
+
+    async _paceTick(worker) {
+        if (worker.stopped) return;
+        if (this._stopIfOffline(worker)) return;
         try {
-            // Prefer a bot that hasn't spoken most recently, so it's not always the same voice.
-            const candidates = worker.bots.filter((b) => b.username !== worker.lastActiveBot);
-            const bot = pick(candidates.length ? candidates : worker.bots);
-            await this._generateAndPost(worker, bot);
+            await this._emitIfDue(worker);
         } catch (err) {
             worker.errorCount++;
-            console.warn(`[AI-Bots] generate error (stream ${worker.streamId}, ${worker.errorCount}/${MAX_CONSECUTIVE_ERRORS}):`, err.message);
+            console.warn(`[AI-Bots] emit error (stream ${worker.streamId}, ${worker.errorCount}/${MAX_CONSECUTIVE_ERRORS}):`, err.message);
             if (worker.errorCount >= MAX_CONSECUTIVE_ERRORS) {
                 console.warn(`[AI-Bots] Disabling stream ${worker.streamId} after repeated errors.`);
                 this.stopForStream(worker.streamId);
                 return;
             }
         }
-        this._scheduleNextPost(worker);
+        this._scheduleTick(worker, this._nextTickDelay(worker));
+    }
+
+    /** Emit at most ONE message, if the global gap allows and something's due. */
+    async _emitIfDue(worker) {
+        if (worker.generating) return;
+        const now = Date.now();
+        const minGap = worker.hypeUntil > now ? HYPE_MIN_GAP_MS : GLOBAL_MIN_GAP_MS;
+        if (now - worker.lastPostAt < minGap) return;   // hold the line — no clumping
+
+        // Priority: queued replies (reply/hype intents) → then maybe an ambient filler.
+        let bot, opts;
+        const intent = this._takeIntent(worker);
+        if (intent) {
+            bot = intent.bot;
+            opts = intent.opts || {};
+        } else {
+            // Ambient filler — only sometimes, so there are natural silences.
+            const due = (now - worker.lastPostAt) >= this._ambientTarget(worker);
+            const prob = this._isActive(worker) ? AMBIENT_PROB_ACTIVE : AMBIENT_PROB_IDLE;
+            if (!due || Math.random() > prob) return;
+            bot = this._pickResponder(worker);
+            opts = {};
+        }
+        if (!bot) return;
+        await this._generateAndPost(worker, bot, opts);
+        worker.errorCount = 0;
+        worker.lastPostAt = Date.now();
+    }
+
+    _ambientTarget(worker) {
+        // Roughly honor the streamer's post_interval, spread across the pool, but
+        // never so tight that a small pool feels spammy.
+        const base = (worker.config.post_interval_seconds || 45) * 1000;
+        const perBot = base / Math.max(1, worker.bots.length);
+        return Math.max(GLOBAL_MIN_GAP_MS, this._isActive(worker) ? perBot * 0.8 : perBot * 1.6);
+    }
+
+    /** Pop the highest-priority pending intent whose bot isn't rate-limited. */
+    _takeIntent(worker) {
+        if (!worker.intents.length) return null;
+        worker.intents.sort((a, b) => (b.prio - a.prio) || (a.ts - b.ts));
+        // Don't let the same bot answer twice back-to-back if another is waiting.
+        let idx = worker.intents.findIndex((i) => i.bot.username !== worker.lastActiveBot);
+        if (idx < 0) idx = 0;
+        return worker.intents.splice(idx, 1)[0];
+    }
+
+    /** Enqueue a message request. One pending intent per bot — a higher-priority
+     * request (e.g. a reply) replaces a lower one (e.g. a hype). Wakes the pacer. */
+    _enqueueIntent(worker, kind, bot, opts, prio, wakeMs) {
+        if (!bot || worker.stopped) return false;
+        const existingIdx = worker.intents.findIndex((i) => i.bot.username === bot.username);
+        if (existingIdx >= 0) {
+            if (worker.intents[existingIdx].prio >= prio) return false; // keep the higher one
+            worker.intents.splice(existingIdx, 1);                       // replace with this higher one
+        }
+        if (worker.intents.length > 6) worker.intents.shift(); // never let a backlog build
+        worker.intents.push({ kind, bot, opts: opts || {}, prio, ts: Date.now() });
+        this._wakePacer(worker, wakeMs != null ? wakeMs : rint(...REPLY_TYPING_MS));
+        return true;
     }
 
     _recentChatLines(streamId, limit = 15) {
@@ -552,7 +638,6 @@ class AiChatbotService {
             }
             if (queued) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: streamer named ${named.map((b) => b.username).join(', ')} — direct reply`);
-                setTimeout(() => this._flushReplies(worker), rint(900, 2400));
             }
             return;
         }
@@ -563,15 +648,15 @@ class AiChatbotService {
             const bot = this._conversationPartner(worker) || this._pickResponder(worker);
             if (this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic', answering: true })) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: streamer addressing chat — ${bot.username} answers`);
-                setTimeout(() => this._flushReplies(worker), rint(900, 2400));
             }
             return;
         }
 
-        // 3) Streamer sounds hyped/reacting → spike chat with a quick burst.
-        if (this._looksHype(text) && (Date.now() - worker.lastBurstAt) > HYPE_BURST_COOLDOWN_MS) {
-            console.log(`[AI-Bots] stream ${worker.streamId}: hype moment — reaction burst`);
-            this._hypeBurst(worker);
+        // 3) Streamer sounds hyped/reacting → elevate the pace and drop a couple
+        //    quick reactions (still spaced out by the pacer, not dumped at once).
+        if (this._looksHype(text) && (Date.now() - worker.hypeUntil) > HYPE_BURST_COOLDOWN_MS) {
+            console.log(`[AI-Bots] stream ${worker.streamId}: hype moment — quick reactions`);
+            this._triggerHype(worker);
             return;
         }
 
@@ -645,7 +730,6 @@ class AiChatbotService {
             const bot = named[0] || this._conversationPartner(worker) || this._pickResponder(worker);
             if (this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'chat', direct: !!named[0], answering: this._looksDirectedAtChat(text) })) {
                 console.log(`[AI-Bots] stream ${streamId}: streamer typed → ${bot.username} (${named[0] ? 'named' : (worker.convo ? 'convo partner' : 'picked')})`);
-                setTimeout(() => this._flushReplies(worker), rint(900, 2600));
             }
             return;
         }
@@ -661,7 +745,6 @@ class AiChatbotService {
         const named = this._detectAddressedBots(worker, text);
         const bot = named[0] || this._pickResponder(worker);
         if (this._queueReply(worker, bot, text, { fromViewer: username, channel: 'chat', direct: !!named[0] })) {
-            setTimeout(() => this._flushReplies(worker), rint(1400, 4200));
         }
     }
 
@@ -716,7 +799,6 @@ class AiChatbotService {
             }
             if (this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic' })) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: streamer engaging chat (${decision.why || ''}) — ${bot.username} replies`);
-                setTimeout(() => this._flushReplies(worker), rint(1200, 3200));
             }
         } catch (err) {
             console.warn(`[AI-Bots] director failed (stream ${worker.streamId}):`, err.message);
@@ -758,42 +840,24 @@ class AiChatbotService {
         } catch { return null; }
     }
 
-    /** Queue a reactive reply from a bot (respecting per-bot cooldown + dedupe). */
+    /** Request a reactive reply from a bot — enqueues an intent for the pacer to
+     * emit (respecting the per-bot cooldown + global pacing). Never posts directly. */
     _queueReply(worker, bot, text, meta = {}) {
         if (!bot) return false;
         const now = Date.now();
         const last = worker.replyCooldown.get(bot.username) || 0;
         if (now - last < MENTION_COOLDOWN_MS) return false;
-        if (worker.replyQueue.some((m) => m.bot.username === bot.username)) return false;
         worker.replyCooldown.set(bot.username, now);
-        worker.replyQueue.push({ bot, text: String(text).slice(-300), ts: now, meta });
-        return true;
-    }
-
-    async _flushReplies(worker, attempt = 0) {
-        if (worker.stopped || !this.workers.has(worker.streamId)) return;
-        if (this._stopIfOffline(worker)) return;
-        if (!worker.replyQueue.length) return;
-        if (worker.generating) {
-            if (attempt < 6) setTimeout(() => this._flushReplies(worker, attempt + 1), 1400);
-            return;
-        }
-        const item = worker.replyQueue.shift();
-        if (!item) return;
-        const m = item.meta || {};
-        try {
-            await this._generateAndPost(worker, item.bot, {
-                addressedText: item.text,
-                direct: !!m.direct,
-                fromStreamer: !!m.fromStreamer,
-                fromViewer: m.fromViewer || null,
-                channel: m.channel || 'mic',
-                answering: !!m.answering,
-            });
-        } catch (err) {
-            console.warn(`[AI-Bots] reactive reply failed (stream ${worker.streamId}):`, err.message);
-        }
-        if (worker.replyQueue.length) setTimeout(() => this._flushReplies(worker), rint(1500, 4000));
+        const opts = {
+            addressedText: String(text).slice(-300),
+            direct: !!meta.direct,
+            fromStreamer: !!meta.fromStreamer,
+            fromViewer: meta.fromViewer || null,
+            channel: meta.channel || 'mic',
+            answering: !!meta.answering,
+        };
+        const prio = meta.fromStreamer ? 3 : 2;   // streamer replies beat viewer replies
+        return this._enqueueIntent(worker, 'reply', bot, opts, prio);
     }
 
     _sanitizeMessage(text) {
@@ -895,28 +959,18 @@ class AiChatbotService {
     }
 
     /**
-     * A cluster of quick short reactions from a few different bots — mimics the
-     * way real chat spikes when something notable/hype happens on stream.
+     * A hype moment: elevate the pace for a few seconds and enqueue 1-2 quick
+     * short reactions from different bots. The pacer still emits them one at a
+     * time (spaced by HYPE_MIN_GAP), so it reads like a real chat spike, not a
+     * simultaneous dump.
      */
-    async _hypeBurst(worker) {
-        if (worker.stopped || worker.generating) return;
-        worker.lastBurstAt = Date.now();
-        worker.generating = true;
-        try {
-            const chosen = [...worker.bots].sort(() => Math.random() - 0.5).slice(0, rint(2, 3));
-            for (const bot of chosen) {
-                if (worker.stopped || this._stopIfOffline(worker)) break;
-                try {
-                    await this._generateOnce(worker, bot, {
-                        beat: { len: 'VERY short, 1-4 words — a pure hype/spam reaction to what just happened (like "LMAOO", "NO WAY", "he cooked", "OMG", "clip it", "actual W")', intent: '' },
-                    });
-                } catch (err) {
-                    worker.errorCount++;
-                }
-                await new Promise((r) => setTimeout(r, rint(500, 1500)));
-            }
-        } finally {
-            worker.generating = false;
+    _triggerHype(worker) {
+        if (worker.stopped) return;
+        worker.hypeUntil = Date.now() + HYPE_WINDOW_MS;
+        const hypeBeat = { len: 'VERY short, 1-4 words — a pure hype/spam reaction to what just happened (like "LMAOO", "NO WAY", "he cooked", "OMG", "clip it", "actual W")', intent: '' };
+        const chosen = [...worker.bots].sort(() => Math.random() - 0.5).slice(0, rint(1, 2));
+        for (const bot of chosen) {
+            this._enqueueIntent(worker, 'hype', bot, { beat: hypeBeat }, 2, rint(500, 1600));
         }
     }
 
