@@ -531,6 +531,10 @@ CREATE TABLE IF NOT EXISTS channel_moderation_settings (
     soundboard_banned_ids TEXT DEFAULT '',
     viewer_auto_delete_enabled INTEGER DEFAULT 1,
     viewer_delete_all_enabled INTEGER DEFAULT 1,
+    custom_emotes_enabled INTEGER DEFAULT 1,   -- viewers may upload gif/png emotes for this channel
+    custom_sounds_enabled INTEGER DEFAULT 1,   -- viewers may upload !sound commands for this channel
+    max_sound_seconds INTEGER DEFAULT 10,      -- max duration of an uploaded channel sound
+    uploads_mods_only INTEGER DEFAULT 0,       -- restrict emote/sound uploads to channel mods
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );
@@ -595,6 +599,7 @@ CREATE TABLE IF NOT EXISTS emotes (
     height INTEGER DEFAULT 28,
     is_global INTEGER DEFAULT 0,            -- admin-uploaded global emotes
     is_approved INTEGER DEFAULT 1,
+    channel_owner_id INTEGER,               -- streamer whose channel this emote belongs to (NULL = uploader's own channel)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, code),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -602,6 +607,25 @@ CREATE TABLE IF NOT EXISTS emotes (
 CREATE INDEX IF NOT EXISTS idx_emotes_user ON emotes(user_id);
 CREATE INDEX IF NOT EXISTS idx_emotes_global ON emotes(is_global);
 CREATE INDEX IF NOT EXISTS idx_emotes_code ON emotes(code);
+-- NOTE: idx_emotes_channel_owner is created by the runtime migration in database.js,
+-- after the channel_owner_id column is ALTER-added on pre-existing databases.
+
+-- Per-channel viewer-uploadable sound commands (triggered by !name in chat)
+CREATE TABLE IF NOT EXISTS channel_sounds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_owner_id INTEGER NOT NULL,      -- streamer whose channel this sound belongs to
+    command TEXT NOT NULL,                   -- trigger word (without leading '!'), lowercased
+    url TEXT NOT NULL,                       -- served path of the audio file on disk
+    mime TEXT DEFAULT 'audio/mpeg',
+    duration_seconds REAL DEFAULT 0,
+    created_by INTEGER,                      -- uploader user id (NULL if removed user)
+    created_by_name TEXT DEFAULT '',
+    is_approved INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(channel_owner_id, command),
+    FOREIGN KEY (channel_owner_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_channel_sounds_owner ON channel_sounds(channel_owner_id);
 
 -- ═══════════════════════════════════════════════════════════════
 -- Hobo Coins (Channel Points — free loyalty currency)

@@ -418,6 +418,7 @@ app.use('/api/restream', restreamRoutes);
 app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
+app.use('/api/sounds', require('./chat/sounds-routes'));
 // Game & Canvas — migrated to hobo.quest
 app.get('/game', (req, res) => res.redirect(301, 'https://hobo.quest/game'));
 app.get('/canvas', (req, res) => res.redirect(301, 'https://hobo.quest/canvas'));

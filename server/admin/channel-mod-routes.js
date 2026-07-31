@@ -233,6 +233,14 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? parseBoolean(req.body.viewer_auto_delete_enabled, true) : undefined,
             viewer_delete_all_enabled: req.body.viewer_delete_all_enabled !== undefined
                 ? parseBoolean(req.body.viewer_delete_all_enabled, true) : undefined,
+            custom_emotes_enabled: req.body.custom_emotes_enabled !== undefined
+                ? parseBoolean(req.body.custom_emotes_enabled, true) : undefined,
+            custom_sounds_enabled: req.body.custom_sounds_enabled !== undefined
+                ? parseBoolean(req.body.custom_sounds_enabled, true) : undefined,
+            uploads_mods_only: req.body.uploads_mods_only !== undefined
+                ? parseBoolean(req.body.uploads_mods_only, false) : undefined,
+            max_sound_seconds: req.body.max_sound_seconds !== undefined
+                ? Math.min(30, Math.max(1, parseInt(req.body.max_sound_seconds) || 10)) : undefined,
         });
 
         db.logModerationAction({

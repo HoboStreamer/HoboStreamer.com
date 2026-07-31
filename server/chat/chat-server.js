@@ -11,6 +11,8 @@
  * - Rate limiting
  */
 const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 const { extractWsToken, authenticateWs } = require('../auth/auth');
@@ -415,6 +417,10 @@ class ChatServer {
                     allow_auto_delete: !client.streamId || streamSettings.viewer_auto_delete_enabled !== 0,
                     allow_self_delete_all: !client.streamId || streamSettings.viewer_delete_all_enabled !== 0,
                     gifs_enabled: !client.streamId || streamSettings.gifs_enabled !== 0,
+                    custom_emotes_enabled: !client.streamId || streamSettings.custom_emotes_enabled !== 0,
+                    custom_sounds_enabled: !client.streamId || streamSettings.custom_sounds_enabled !== 0,
+                    uploads_mods_only: !!(client.streamId && streamSettings.uploads_mods_only),
+                    max_sound_seconds: client.streamId ? (streamSettings.max_sound_seconds || 10) : 10,
                     soundboard_enabled: !client.streamId || streamSettings.soundboard_enabled !== 0,
                     soundboard_allow_pitch: !client.streamId || streamSettings.soundboard_allow_pitch !== 0,
                     soundboard_allow_speed: !client.streamId || streamSettings.soundboard_allow_speed !== 0,
@@ -840,12 +846,16 @@ class ChatServer {
             // Also forward to global chat clients so the global feed sees all activity
             this.forwardToGlobal(client.streamId, chatMsg);
 
-            // Trigger server-side TTS synthesis (async, non-blocking)
+            // Trigger server-side TTS synthesis (async, non-blocking).
+            // identityKey uses the immutable login handle (or anon id) so the
+            // per-user voice is stable even if the display name changes.
             this.synthesizeAndBroadcastTTS(
                 client.streamId,
                 username,
                 text,
-                chatMsg.voiceFX
+                chatMsg.voiceFX,
+                null,
+                client.user ? `user:${client.user.username}` : `anon:${client.anonId}`
             );
 
             // Check for 101soundboards links in the message (async, non-blocking)
@@ -1083,10 +1093,88 @@ class ChatServer {
                 }
 
                 default:
+                    // Unknown !command → try a per-channel viewer-uploaded sound clip.
+                    this.triggerChannelSound(ws, client, stream, cmd.slice(1));
                     return;
             }
         } catch (err) {
             this.sendTo(ws, { type: 'system', message: err.message || 'Media command failed.' });
+        }
+    }
+
+    /**
+     * Play a per-channel viewer-uploaded sound clip (triggered by !command).
+     * Silent no-op when the command is not a registered sound so unknown
+     * commands don't spam the chat.
+     */
+    triggerChannelSound(ws, client, stream, command) {
+        try {
+            if (!stream?.user_id || !command) return;
+            const cmd = String(command).toLowerCase();
+            const sound = db.getChannelSoundByCommand(stream.user_id, cmd);
+            if (!sound) return; // not a sound command — stay silent
+
+            const chatSettings = this._getChannelChatSettings(client.streamId);
+            if (chatSettings.custom_sounds_enabled === 0) {
+                this.sendTo(ws, { type: 'system', message: 'This streamer has disabled chat sound commands.' });
+                return;
+            }
+
+            // Banned users can't trigger sounds
+            if (client.user && db.isUserBanned(client.user.id, client.streamId)) return;
+            if (db.isIpBanned(client.ip, client.streamId)) return;
+
+            // Rate limits — reuse the soundboard limiter (per-user + per-stream window)
+            const now = Date.now();
+            const rateKey = `${client.streamId}:${client.user ? `u${client.user.id}` : `a${client.anonId}`}`;
+            const lastUsedAt = this.soundboardRateLimits.get(rateKey) || 0;
+            if ((now - lastUsedAt) < SOUNDBOARD_RATE_LIMIT_MS) {
+                const remaining = Math.ceil((SOUNDBOARD_RATE_LIMIT_MS - (now - lastUsedAt)) / 1000);
+                this.sendTo(ws, { type: 'system', message: `Wait ${remaining}s before triggering another sound.` });
+                return;
+            }
+            const streamWindow = this.soundboardStreamLimits.get(client.streamId) || { count: 0, windowStart: now };
+            if ((now - streamWindow.windowStart) >= SOUNDBOARD_STREAM_WINDOW_MS) {
+                streamWindow.count = 0;
+                streamWindow.windowStart = now;
+            }
+            if (streamWindow.count >= SOUNDBOARD_STREAM_MAX_PER_WINDOW) {
+                this.sendTo(ws, { type: 'system', message: 'Too many sounds are playing right now — try again shortly.' });
+                return;
+            }
+
+            // Read + encode the clip
+            if (!sound.url || !fs.existsSync(sound.url)) return;
+            let audioB64;
+            try {
+                audioB64 = fs.readFileSync(sound.url).toString('base64');
+            } catch { return; }
+
+            this.soundboardRateLimits.set(rateKey, now);
+            streamWindow.count += 1;
+            this.soundboardStreamLimits.set(client.streamId, streamWindow);
+
+            const username = client.user ? (client.user.display_name || client.user.username) : (client.anonId || 'someone');
+
+            // Announce in chat + broadcast the audio (reuses the soundboard-audio client path)
+            this.broadcastToStream(client.streamId, {
+                type: 'system',
+                message: `${username} played !${cmd}`,
+                timestamp: new Date().toISOString(),
+            });
+            this.broadcastToStream(client.streamId, {
+                type: 'soundboard-audio',
+                username,
+                title: `!${cmd}`,
+                audio: audioB64,
+                mimeType: sound.mime || 'audio/mpeg',
+                pitch: 1,
+                speed: 1,
+                source: 'channel-sound',
+                timestamp: new Date().toISOString(),
+            });
+        } catch (err) {
+            console.error('[ChannelSound] trigger error:', err.message);
         }
     }
 
@@ -1142,7 +1230,9 @@ class ChatServer {
                         client.streamId,
                         ttsMsg.username,
                         args,
-                        voiceFX
+                        voiceFX,
+                        null,
+                        client.user ? `user:${client.user.username}` : `anon:${client.anonId}`
                     );
                 }
                 break;
@@ -1394,7 +1484,7 @@ class ChatServer {
      * Synthesize TTS audio for a chat message and broadcast to stream.
      * Runs asynchronously — does not block message delivery.
      */
-    async synthesizeAndBroadcastTTS(streamId, username, text, voiceFX, sourcePlatform = null) {
+    async synthesizeAndBroadcastTTS(streamId, username, text, voiceFX, sourcePlatform = null, identityKey = null) {
         try {
             const settings = ttsEngine.getTTSSettings();
             if (!settings.enabled) return;
@@ -1405,18 +1495,22 @@ class ChatServer {
             if (globalCount >= limits.maxGlobal) return;
 
             // Determine voice ID from equipped cosmetic
-            let voiceId = settings.defaultVoice;
-            if (voiceFX?.itemId) {
-                // Check if this cosmetic voice exists in the TTS engine catalog
-                if (ttsEngine.VOICE_CATALOG[voiceFX.itemId]) {
-                    voiceId = voiceFX.itemId;
-                }
+            let voiceId = null;
+            if (voiceFX?.itemId && ttsEngine.VOICE_CATALOG[voiceFX.itemId]) {
+                voiceId = voiceFX.itemId;
             }
 
             // Increment queue counter
             this.ttsQueueSize.set(streamId, globalCount + 1);
 
-            const result = await ttsEngine.synthesize(text, voiceId, username);
+            let result;
+            if (!voiceId && settings.perUserVoices) {
+                // No equipped cosmetic voice → give this chatter a stable per-username voice.
+                const idKey = identityKey || username || 'anon';
+                result = await ttsEngine.synthesizeUserVoice(text, idKey, username);
+            } else {
+                result = await ttsEngine.synthesize(text, voiceId || settings.defaultVoice, username);
+            }
 
             // Decrement queue counter
             const current = this.ttsQueueSize.get(streamId) || 1;
@@ -1907,6 +2001,10 @@ class ChatServer {
             soundboard_banned_ids: '',
             viewer_auto_delete_enabled: 1,
             viewer_delete_all_enabled: 1,
+            custom_emotes_enabled: 1,
+            custom_sounds_enabled: 1,
+            max_sound_seconds: 10,
+            uploads_mods_only: 0,
         };
         if (!streamId) return defaults;
         try {

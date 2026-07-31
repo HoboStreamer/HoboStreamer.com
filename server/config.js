@@ -232,9 +232,18 @@ function buildConfig(registryValues) {
             path: process.env.EMOTES_PATH || './data/emotes',
             maxSizeKb: parseInt(process.env.MAX_EMOTE_SIZE_KB || '256', 10),
             maxPerUser: parseInt(process.env.MAX_EMOTES_PER_USER || '50', 10),
+            maxPerChannel: parseInt(process.env.MAX_EMOTES_PER_CHANNEL || '300', 10),
+            maxPerUploaderPerChannel: parseInt(process.env.MAX_EMOTES_PER_UPLOADER_PER_CHANNEL || '10', 10),
             ffzCacheTtl: parseInt(process.env.FFZ_CACHE_TTL || '3600', 10),
             bttvCacheTtl: parseInt(process.env.BTTV_CACHE_TTL || '3600', 10),
             sevenTvCacheTtl: parseInt(process.env.SEVENTV_CACHE_TTL || '3600', 10),
+        },
+        sounds: {
+            path: process.env.SOUNDS_PATH || './data/sounds',
+            maxSizeKb: parseInt(process.env.MAX_SOUND_SIZE_KB || '2048', 10),   // 2MB per clip
+            defaultMaxSeconds: parseInt(process.env.SOUND_DEFAULT_MAX_SECONDS || '10', 10),
+            maxPerChannel: parseInt(process.env.MAX_SOUNDS_PER_CHANNEL || '150', 10),
+            maxPerUploaderPerChannel: parseInt(process.env.MAX_SOUNDS_PER_UPLOADER_PER_CHANNEL || '10', 10),
         },
         paypal: {
             clientId: process.env.PAYPAL_CLIENT_ID || '',

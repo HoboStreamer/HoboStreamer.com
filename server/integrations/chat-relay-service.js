@@ -408,7 +408,7 @@ class ChatRelayService {
 
         // Feed relayed platform chat (Kick/Twitch/YouTube) into server-side TTS
         try {
-            chatServer.synthesizeAndBroadcastTTS(bridge.streamId, prefixedUsername, chatMsg.message, null, bridge.platform);
+            chatServer.synthesizeAndBroadcastTTS(bridge.streamId, prefixedUsername, chatMsg.message, null, bridge.platform, `${bridge.platform}:${prefixedUsername}`);
         } catch { /* non-critical */ }
 
         // Welcome first-time external chatters in this streamer's channel

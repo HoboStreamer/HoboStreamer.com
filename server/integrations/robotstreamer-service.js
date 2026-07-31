@@ -460,7 +460,7 @@ class RobotStreamerService {
 
                 // Feed relayed RS chat into server-side TTS (same path as native chat)
                 try {
-                    chatServer.synthesizeAndBroadcastTTS(stream.id, username, mirrored.message, null, 'rs');
+                    chatServer.synthesizeAndBroadcastTTS(stream.id, username, mirrored.message, null, 'rs', `rs:${username}`);
                 } catch { /* non-critical */ }
             });
 

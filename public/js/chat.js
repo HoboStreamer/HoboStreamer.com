@@ -149,6 +149,8 @@ const CHAT_SETTINGS_DEFAULTS = {
     ttsEnabled: false,            // TTS toggle for regular pages (off by default)
     streamingTtsEnabled: true,    // Separate TTS toggle while broadcasting live
     ttsVolume: 80,                // TTS volume (0–100)
+    // Chat sounds (soundboard + channel !sound commands) — independent of TTS
+    soundsEnabled: true,          // Play chat sound clips (default on)
     // Per-source TTS — which relay platforms contribute to TTS
     ttsSrcNative: true,           // Native HoboStreamer chat
     ttsSrcRS: true,               // RobotStreamer relay
@@ -736,6 +738,11 @@ function getChatTTSSettingKey(options = {}) {
 function isChatTTSEnabled(options = {}) {
     const key = getChatTTSSettingKey(options);
     return !!chatSettings[key];
+}
+
+/** Chat sound clips (soundboard + channel !sound commands) — independent of TTS. */
+function isChatSoundsEnabled() {
+    return chatSettings.soundsEnabled !== false;
 }
 
 /** Returns true if TTS should fire for a message with the given source_platform string */
@@ -2614,11 +2621,11 @@ function handleChatMessage(msg) {
             }
             break;
         case 'soundboard-audio':
-            // 101soundboards audio — play through TTS audio queue with pitch/speed modifiers
-            // Only route through broadcast audio when on own channel
+            // Chat sound clips (101soundboards + channel !sound commands) — play through the
+            // audio queue with pitch/speed modifiers. Gated on the sounds toggle, NOT TTS.
             if (_isViewingOwnBroadcastChat() && typeof playBroadcastTTSAudio === 'function') {
-                if (isChatTTSEnabled({ streaming: true })) playBroadcastTTSAudio(msg);
-            } else if (isChatTTSEnabled()) {
+                if (isChatSoundsEnabled()) playBroadcastTTSAudio(msg);
+            } else if (isChatSoundsEnabled()) {
                 playTTSAudio(msg);
             }
             break;
@@ -5141,6 +5148,10 @@ function buildSettingsPanelHTML() {
             <label class="csp-row">
                 <span>TTS Volume</span>
                 <input type="range" min="0" max="100" step="5" data-setting="ttsVolume" onchange="onChatSettingChange(this)" oninput="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row" title="Play soundboard clips and channel !sound commands (separate from TTS).">
+                <span>Chat Sounds</span>
+                <input type="checkbox" data-setting="soundsEnabled" onchange="onChatSettingChange(this)">
             </label>
             <div class="csp-sub-title" style="margin-top:8px;font-size:0.8rem;color:var(--text-muted)">TTS Sources</div>
             <label class="csp-row">

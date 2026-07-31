@@ -18,6 +18,7 @@ const fs = require('fs');
 const multer = require('multer');
 const db = require('../db/database');
 const { requireAuth, optionalAuth } = require('../auth/auth');
+const permissions = require('../auth/permissions');
 const config = require('../config');
 
 const router = express.Router();
@@ -220,6 +221,7 @@ router.get('/channel/:userId', (req, res) => {
         const userId = parseInt(req.params.userId);
         const emotes = db.getChannelEmotes(userId).map(e => ({
             id: `custom-${e.id}`,
+            emote_id: e.id,
             code: e.code,
             url: `/api/emotes/file/${path.basename(e.url)}`,
             animated: !!e.animated,
@@ -227,6 +229,8 @@ router.get('/channel/:userId', (req, res) => {
             height: e.height,
             source: 'channel',
             owner: e.username,
+            uploader: e.uploader_display_name || e.uploader_username || e.username,
+            uploader_id: e.user_id,
         }));
         res.json({ emotes });
     } catch (err) {
@@ -270,18 +274,62 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
             return res.status(400).json({ error: 'Emote code can only contain letters, numbers, and underscores' });
         }
 
-        // Check per-user limit
-        const count = db.countUserEmotes(req.user.id);
-        if (count >= config.emotes.maxPerUser) {
-            fs.unlinkSync(req.file.path);
-            return res.status(400).json({ error: `Emote limit reached (${config.emotes.maxPerUser} max)` });
+        // Optional target channel: a viewer uploading an emote FOR a streamer's channel.
+        // channel_id is the streamer's user id; stream_id is resolved to its owner.
+        let channelOwnerId = parseInt(req.body.channel_id) || null;
+        if (!channelOwnerId && req.body.stream_id) {
+            channelOwnerId = db.getStreamById(parseInt(req.body.stream_id))?.user_id || null;
         }
+        const isChannelUpload = channelOwnerId && channelOwnerId !== req.user.id;
 
-        // Check for duplicate code for this user
-        const existing = db.get('SELECT id FROM emotes WHERE user_id = ? AND code = ?', [req.user.id, code]);
-        if (existing) {
-            fs.unlinkSync(req.file.path);
-            return res.status(409).json({ error: `You already have an emote named "${code}"` });
+        if (isChannelUpload) {
+            const channel = db.getChannelByUserId(channelOwnerId);
+            if (!channel) {
+                fs.unlinkSync(req.file.path);
+                return res.status(404).json({ error: 'Channel not found' });
+            }
+            const settings = db.getChannelModerationSettings(channel.id);
+            const isMod = permissions.canModerateChannel(req.user, channel.id);
+            if (!settings.custom_emotes_enabled && !isMod) {
+                fs.unlinkSync(req.file.path);
+                return res.status(403).json({ error: 'This streamer has disabled viewer emote uploads.' });
+            }
+            if (settings.uploads_mods_only && !isMod) {
+                fs.unlinkSync(req.file.path);
+                return res.status(403).json({ error: 'Only channel mods can upload emotes here.' });
+            }
+            // Per-channel caps
+            if (db.countChannelEmotes(channelOwnerId) >= config.emotes.maxPerChannel) {
+                fs.unlinkSync(req.file.path);
+                return res.status(400).json({ error: `This channel has reached its emote limit (${config.emotes.maxPerChannel}).` });
+            }
+            if (!isMod) {
+                const mine = db.get(
+                    'SELECT COUNT(*) AS c FROM emotes WHERE channel_owner_id = ? AND user_id = ?',
+                    [channelOwnerId, req.user.id]
+                );
+                if (mine && mine.c >= config.emotes.maxPerUploaderPerChannel) {
+                    fs.unlinkSync(req.file.path);
+                    return res.status(400).json({ error: `You've reached your upload limit for this channel (${config.emotes.maxPerUploaderPerChannel}).` });
+                }
+            }
+            // Unique code within the channel (any uploader)
+            if (db.getChannelEmoteByCode(channelOwnerId, code)) {
+                fs.unlinkSync(req.file.path);
+                return res.status(409).json({ error: `This channel already has an emote named "${code}".` });
+            }
+        } else {
+            // Uploading to your own channel — original per-user rules.
+            const count = db.countUserEmotes(req.user.id);
+            if (count >= config.emotes.maxPerUser) {
+                fs.unlinkSync(req.file.path);
+                return res.status(400).json({ error: `Emote limit reached (${config.emotes.maxPerUser} max)` });
+            }
+            const existing = db.get('SELECT id FROM emotes WHERE user_id = ? AND code = ?', [req.user.id, code]);
+            if (existing) {
+                fs.unlinkSync(req.file.path);
+                return res.status(409).json({ error: `You already have an emote named "${code}"` });
+            }
         }
 
         const animated = req.file.mimetype === 'image/gif' || req.file.mimetype === 'image/webp';
@@ -295,6 +343,7 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
             width: parseInt(req.body.width) || 28,
             height: parseInt(req.body.height) || 28,
             is_global: isGlobal,
+            channel_owner_id: isChannelUpload ? channelOwnerId : null,
         });
 
         res.json({
@@ -303,11 +352,15 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
                 code,
                 url: `/api/emotes/file/${path.basename(req.file.path)}`,
                 animated,
+                channel_id: isChannelUpload ? channelOwnerId : undefined,
             },
         });
     } catch (err) {
         console.error('[Emotes] Upload error:', err);
-        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) { try { fs.unlinkSync(req.file.path); } catch {} }
+        if (err && /UNIQUE constraint/i.test(err.message || '')) {
+            return res.status(409).json({ error: 'You already uploaded an emote with that code. Pick a different code for this channel.' });
+        }
         res.status(500).json({ error: 'Failed to upload emote' });
     }
 });
@@ -329,7 +382,14 @@ router.delete('/:id', requireAuth, (req, res) => {
     try {
         const emote = db.getEmoteById(req.params.id);
         if (!emote) return res.status(404).json({ error: 'Emote not found' });
-        if (emote.user_id !== req.user.id && req.user.role !== 'admin') {
+        // Allowed: the uploader, an admin, or a mod/owner of the channel the emote belongs to.
+        let allowed = emote.user_id === req.user.id || req.user.role === 'admin';
+        if (!allowed) {
+            const ownerId = emote.channel_owner_id || emote.user_id;
+            const channel = db.getChannelByUserId(ownerId);
+            if (channel && permissions.canModerateChannel(req.user, channel.id)) allowed = true;
+        }
+        if (!allowed) {
             return res.status(403).json({ error: 'Not your emote' });
         }
 
@@ -537,6 +597,7 @@ router.get('/all/:streamId', optionalAuth, async (req, res) => {
             if (streamUserId) {
                 channelEmotes = db.getChannelEmotes(streamUserId).filter(e => !e.is_global).map(e => ({
                     id: `custom-${e.id}`,
+                    emote_id: e.id,
                     code: e.code,
                     url: `/api/emotes/file/${path.basename(e.url)}`,
                     animated: !!e.animated,
@@ -544,6 +605,8 @@ router.get('/all/:streamId', optionalAuth, async (req, res) => {
                     height: e.height,
                     source: 'channel',
                     owner: e.username,
+                    uploader: e.uploader_display_name || e.uploader_username || e.username,
+                    uploader_id: e.user_id,
                 }));
             }
         }

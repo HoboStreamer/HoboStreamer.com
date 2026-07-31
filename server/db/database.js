@@ -659,7 +659,38 @@ function initDb() {
         if (!cols.includes('soundboard_banned_ids')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN soundboard_banned_ids TEXT DEFAULT ''");
         if (!cols.includes('viewer_auto_delete_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_auto_delete_enabled INTEGER DEFAULT 1');
         if (!cols.includes('viewer_delete_all_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN viewer_delete_all_enabled INTEGER DEFAULT 1');
+        if (!cols.includes('custom_emotes_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN custom_emotes_enabled INTEGER DEFAULT 1');
+        if (!cols.includes('custom_sounds_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN custom_sounds_enabled INTEGER DEFAULT 1');
+        if (!cols.includes('max_sound_seconds')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN max_sound_seconds INTEGER DEFAULT 10');
+        if (!cols.includes('uploads_mods_only')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN uploads_mods_only INTEGER DEFAULT 0');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
+
+    // Migrate: add channel_owner_id to emotes (viewer uploads targeting a channel) + channel_sounds table
+    try {
+        const emoteCols = database.prepare('PRAGMA table_info(emotes)').all().map((c) => c.name);
+        if (!emoteCols.includes('channel_owner_id')) {
+            database.exec('ALTER TABLE emotes ADD COLUMN channel_owner_id INTEGER');
+            database.exec('CREATE INDEX IF NOT EXISTS idx_emotes_channel_owner ON emotes(channel_owner_id)');
+        }
+    } catch (e) { console.warn('[DB] emotes channel_owner_id migration:', e.message); }
+
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS channel_sounds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_owner_id INTEGER NOT NULL,
+            command TEXT NOT NULL,
+            url TEXT NOT NULL,
+            mime TEXT DEFAULT 'audio/mpeg',
+            duration_seconds REAL DEFAULT 0,
+            created_by INTEGER,
+            created_by_name TEXT DEFAULT '',
+            is_approved INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(channel_owner_id, command),
+            FOREIGN KEY (channel_owner_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_channel_sounds_owner ON channel_sounds(channel_owner_id)');
+    } catch (e) { console.warn('[DB] channel_sounds migration:', e.message); }
 
     // Migrate: create moderation_actions table for audit logging
     try {
@@ -2782,11 +2813,11 @@ function isUsernameReserved(username) {
 
 // ── Emote helpers ────────────────────────────────────────────
 
-function createEmote({ user_id, code, url, animated = false, width = 28, height = 28, is_global = false }) {
+function createEmote({ user_id, code, url, animated = false, width = 28, height = 28, is_global = false, channel_owner_id = null }) {
     return run(
-        `INSERT INTO emotes (user_id, code, url, animated, width, height, is_global)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [user_id, code, url, animated ? 1 : 0, width, height, is_global ? 1 : 0]
+        `INSERT INTO emotes (user_id, code, url, animated, width, height, is_global, channel_owner_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [user_id, code, url, animated ? 1 : 0, width, height, is_global ? 1 : 0, channel_owner_id || null]
     );
 }
 
@@ -2803,7 +2834,35 @@ function getGlobalEmotes() {
 }
 
 function getChannelEmotes(userId) {
-    return all('SELECT e.*, u.username FROM emotes e JOIN users u ON e.user_id = u.id WHERE e.user_id = ? AND e.is_approved = 1 ORDER BY code', [userId]);
+    // A channel's emotes are those explicitly targeted at this owner (viewer uploads),
+    // plus legacy emotes the owner uploaded to their own channel (channel_owner_id NULL).
+    return all(
+        `SELECT e.*, u.username, up.username AS uploader_username, up.display_name AS uploader_display_name
+           FROM emotes e
+           JOIN users u ON e.user_id = u.id
+           LEFT JOIN users up ON e.user_id = up.id
+          WHERE ((e.channel_owner_id = ?) OR (e.channel_owner_id IS NULL AND e.user_id = ?))
+            AND e.is_approved = 1
+          ORDER BY code`,
+        [userId, userId]
+    );
+}
+
+function countChannelEmotes(ownerId) {
+    const row = get(
+        'SELECT COUNT(*) as count FROM emotes WHERE (channel_owner_id = ?) OR (channel_owner_id IS NULL AND user_id = ?)',
+        [ownerId, ownerId]
+    );
+    return row ? row.count : 0;
+}
+
+function getChannelEmoteByCode(ownerId, code) {
+    return get(
+        `SELECT * FROM emotes
+          WHERE code = ? AND ((channel_owner_id = ?) OR (channel_owner_id IS NULL AND user_id = ?))
+          LIMIT 1`,
+        [code, ownerId, ownerId]
+    );
 }
 
 function deleteEmote(id) {
@@ -2821,6 +2880,47 @@ function getEmoteByCode(code, userId) {
 function countUserEmotes(userId) {
     const row = get('SELECT COUNT(*) as count FROM emotes WHERE user_id = ?', [userId]);
     return row ? row.count : 0;
+}
+
+// ── Channel sound commands (viewer-uploadable) ───────────────
+function createChannelSound({ channel_owner_id, command, url, mime = 'audio/mpeg', duration_seconds = 0, created_by = null, created_by_name = '' }) {
+    return run(
+        `INSERT INTO channel_sounds (channel_owner_id, command, url, mime, duration_seconds, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [channel_owner_id, command, url, mime, duration_seconds, created_by, created_by_name]
+    );
+}
+
+function getChannelSounds(ownerId) {
+    return all(
+        'SELECT * FROM channel_sounds WHERE channel_owner_id = ? AND is_approved = 1 ORDER BY command',
+        [ownerId]
+    );
+}
+
+function getChannelSoundByCommand(ownerId, command) {
+    return get(
+        'SELECT * FROM channel_sounds WHERE channel_owner_id = ? AND command = ? AND is_approved = 1 LIMIT 1',
+        [ownerId, String(command || '').toLowerCase()]
+    );
+}
+
+function getChannelSoundById(id) {
+    return get('SELECT * FROM channel_sounds WHERE id = ?', [id]);
+}
+
+function countChannelSounds(ownerId) {
+    const row = get('SELECT COUNT(*) as count FROM channel_sounds WHERE channel_owner_id = ?', [ownerId]);
+    return row ? row.count : 0;
+}
+
+function countChannelSoundsByUploader(ownerId, uploaderId) {
+    const row = get('SELECT COUNT(*) as count FROM channel_sounds WHERE channel_owner_id = ? AND created_by = ?', [ownerId, uploaderId]);
+    return row ? row.count : 0;
+}
+
+function deleteChannelSound(id) {
+    return run('DELETE FROM channel_sounds WHERE id = ?', [id]);
 }
 
 // ── Hobo Coins helpers ───────────────────────────────────────
@@ -3207,6 +3307,10 @@ function getChannelModerationSettings(channelId) {
             soundboard_banned_ids: '',
             viewer_auto_delete_enabled: 1,
             viewer_delete_all_enabled: 1,
+            custom_emotes_enabled: 1,
+            custom_sounds_enabled: 1,
+            max_sound_seconds: 10,
+            uploads_mods_only: 0,
         };
 }
 
@@ -3238,6 +3342,10 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.soundboard_banned_ids !== undefined) { updates.push('soundboard_banned_ids = ?'); params.push(String(fields.soundboard_banned_ids || '').slice(0, 4000)); }
         if (fields.viewer_auto_delete_enabled !== undefined) { updates.push('viewer_auto_delete_enabled = ?'); params.push(fields.viewer_auto_delete_enabled ? 1 : 0); }
         if (fields.viewer_delete_all_enabled !== undefined) { updates.push('viewer_delete_all_enabled = ?'); params.push(fields.viewer_delete_all_enabled ? 1 : 0); }
+        if (fields.custom_emotes_enabled !== undefined) { updates.push('custom_emotes_enabled = ?'); params.push(fields.custom_emotes_enabled ? 1 : 0); }
+        if (fields.custom_sounds_enabled !== undefined) { updates.push('custom_sounds_enabled = ?'); params.push(fields.custom_sounds_enabled ? 1 : 0); }
+        if (fields.max_sound_seconds !== undefined) { updates.push('max_sound_seconds = ?'); params.push(Math.min(30, Math.max(1, Number(fields.max_sound_seconds) || 10))); }
+        if (fields.uploads_mods_only !== undefined) { updates.push('uploads_mods_only = ?'); params.push(fields.uploads_mods_only ? 1 : 0); }
         if (updates.length > 0) {
             updates.push('updated_at = CURRENT_TIMESTAMP');
             params.push(channelId);
@@ -3251,8 +3359,9 @@ function upsertChannelModerationSettings(channelId, fields) {
                 caps_percentage_limit, aggressive_filter, max_message_length,
                 slur_filter_enabled, slur_filter_use_builtin, slur_filter_terms, slur_filter_regexes, slur_filter_nudge_message, slur_filter_disabled_categories,
                 ip_approval_mode, soundboard_enabled, soundboard_allow_pitch, soundboard_allow_speed, soundboard_banned_ids,
-                viewer_auto_delete_enabled, viewer_delete_all_enabled
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+                viewer_auto_delete_enabled, viewer_delete_all_enabled,
+                custom_emotes_enabled, custom_sounds_enabled, max_sound_seconds, uploads_mods_only
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
             [
                 channelId,
                 fields.slow_mode_seconds || 0,
@@ -3278,6 +3387,10 @@ function upsertChannelModerationSettings(channelId, fields) {
                 String(fields.soundboard_banned_ids || '').slice(0, 4000),
                 fields.viewer_auto_delete_enabled !== undefined ? (fields.viewer_auto_delete_enabled ? 1 : 0) : 1,
                 fields.viewer_delete_all_enabled !== undefined ? (fields.viewer_delete_all_enabled ? 1 : 0) : 1,
+                fields.custom_emotes_enabled !== undefined ? (fields.custom_emotes_enabled ? 1 : 0) : 1,
+                fields.custom_sounds_enabled !== undefined ? (fields.custom_sounds_enabled ? 1 : 0) : 1,
+                Math.min(30, Math.max(1, Number(fields.max_sound_seconds) || 10)),
+                fields.uploads_mods_only ? 1 : 0,
             ]
         );
     }
@@ -4440,7 +4553,9 @@ module.exports = {
     isUserBanned, isIpBanned,
     // Emotes
     createEmote, getEmoteById, getEmotesByUser, getGlobalEmotes, getChannelEmotes,
-    deleteEmote, getEmoteByCode, countUserEmotes,
+    deleteEmote, getEmoteByCode, countUserEmotes, countChannelEmotes, getChannelEmoteByCode,
+    createChannelSound, getChannelSounds, getChannelSoundByCommand, getChannelSoundById,
+    countChannelSounds, countChannelSoundsByUploader, deleteChannelSound,
     // Site Settings
     getSetting, getSettingRow, getAllSettings, setSetting, deleteSetting,
     // Verification Keys

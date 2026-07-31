@@ -1,0 +1,267 @@
+/**
+ * HoboStreamer — Channel Sound Commands API
+ *
+ * Per-channel, viewer-uploadable sound clips triggered by !command in chat.
+ *
+ * GET    /api/sounds/channel/:userId - Sounds for a streamer's channel
+ * GET    /api/sounds/all/:streamId   - Sounds available in a stream context
+ * POST   /api/sounds                 - Upload a channel sound (auth required)
+ * DELETE /api/sounds/:id             - Delete a sound (uploader / mod / owner)
+ * GET    /api/sounds/file/:filename  - Serve a sound file
+ */
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const { spawn } = require('child_process');
+const multer = require('multer');
+const db = require('../db/database');
+const { requireAuth } = require('../auth/auth');
+const permissions = require('../auth/permissions');
+const config = require('../config');
+
+const router = express.Router();
+
+// Commands already handled elsewhere in chat — cannot be overridden by a sound.
+const RESERVED_COMMANDS = new Set([
+    'sb', 'gotti', 'sr', 'yt', 'youtube', 'req', 'request', 'queue', 'np',
+    'nowplaying', 'watching', 'skip', 'mediahelp', 'say',
+    'forward', 'backward', 'left', 'right', 'liftup', 'liftdown', 'headup', 'headdown',
+]);
+
+const MIME_TO_EXT = {
+    'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav',
+    'audio/ogg': '.ogg', 'audio/webm': '.webm', 'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a',
+    'audio/aac': '.aac', 'audio/flac': '.flac',
+};
+
+function soundsDir() {
+    const dir = path.resolve(config.sounds.path);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+const soundStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, soundsDir()),
+    filename: (req, file, cb) => {
+        const ext = MIME_TO_EXT[file.mimetype] || '.mp3';
+        cb(null, `snd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+});
+const soundUpload = multer({
+    storage: soundStorage,
+    limits: { fileSize: config.sounds.maxSizeKb * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (MIME_TO_EXT[file.mimetype]) cb(null, true);
+        else cb(new Error('Only MP3, WAV, OGG, WebM, M4A, AAC, or FLAC audio is allowed'));
+    },
+});
+
+/** Probe an audio file's duration in seconds (0 on failure). */
+function probeDuration(filePath) {
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => { if (!done) { done = true; resolve(v); } };
+        let out = '';
+        let probe;
+        try {
+            probe = spawn('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_format', filePath]);
+        } catch { return finish(0); }
+        probe.stdout.on('data', (d) => { out += d; });
+        probe.on('close', () => {
+            try {
+                const info = JSON.parse(out);
+                const dur = parseFloat(info.format?.duration || '0');
+                finish(Number.isFinite(dur) && dur > 0 ? dur : 0);
+            } catch { finish(0); }
+        });
+        probe.on('error', () => finish(0));
+        setTimeout(() => { try { probe.kill(); } catch {} finish(0); }, 10000);
+    });
+}
+
+function serializeSound(s) {
+    return {
+        id: s.id,
+        command: s.command,
+        url: `/api/sounds/file/${path.basename(s.url)}`,
+        duration_seconds: Math.round((s.duration_seconds || 0) * 10) / 10,
+        uploader: s.created_by_name || 'someone',
+        uploader_id: s.created_by,
+        created_at: s.created_at,
+    };
+}
+
+// ── List a channel's sounds ──────────────────────────────────
+router.get('/channel/:userId', (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        if (!userId) return res.json({ sounds: [] });
+        res.json({ sounds: db.getChannelSounds(userId).map(serializeSound) });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load channel sounds' });
+    }
+});
+
+// ── List sounds available in a stream context ────────────────
+router.get('/all/:streamId', (req, res) => {
+    try {
+        const stream = db.getStreamById(parseInt(req.params.streamId));
+        if (!stream?.user_id) return res.json({ sounds: [] });
+        res.json({ sounds: db.getChannelSounds(stream.user_id).map(serializeSound) });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load sounds' });
+    }
+});
+
+// ── Upload a channel sound ───────────────────────────────────
+router.post('/', requireAuth, soundUpload.single('sound'), async (req, res) => {
+    const cleanup = () => { if (req.file && fs.existsSync(req.file.path)) { try { fs.unlinkSync(req.file.path); } catch {} } };
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No audio file uploaded' });
+
+        const command = String(req.body.command || '').trim().toLowerCase().replace(/^!+/, '');
+        if (!/^[a-z0-9_]{2,24}$/.test(command)) {
+            cleanup();
+            return res.status(400).json({ error: 'Command must be 2-24 letters, numbers, or underscores' });
+        }
+        if (RESERVED_COMMANDS.has(command)) {
+            cleanup();
+            return res.status(400).json({ error: `"!${command}" is a reserved command — pick another name` });
+        }
+
+        // Resolve target channel: channel_id = streamer's user id; stream_id resolves to its owner.
+        let channelOwnerId = parseInt(req.body.channel_id) || null;
+        if (!channelOwnerId && req.body.stream_id) {
+            channelOwnerId = db.getStreamById(parseInt(req.body.stream_id))?.user_id || null;
+        }
+        if (!channelOwnerId) channelOwnerId = req.user.id;
+        const channel = db.getChannelByUserId(channelOwnerId) || (channelOwnerId === req.user.id ? db.ensureChannel(req.user.id) : null);
+        if (!channel) {
+            cleanup();
+            return res.status(404).json({ error: 'Channel not found' });
+        }
+
+        const settings = db.getChannelModerationSettings(channel.id);
+        const isMod = permissions.canModerateChannel(req.user, channel.id);
+        const isOwnChannel = channelOwnerId === req.user.id;
+
+        if (!isMod && !settings.custom_sounds_enabled) {
+            cleanup();
+            return res.status(403).json({ error: 'This streamer has disabled viewer sound uploads.' });
+        }
+        if (!isMod && !isOwnChannel && settings.uploads_mods_only) {
+            cleanup();
+            return res.status(403).json({ error: 'Only channel mods can upload sounds here.' });
+        }
+
+        // Per-channel + per-uploader caps
+        if (db.countChannelSounds(channelOwnerId) >= config.sounds.maxPerChannel) {
+            cleanup();
+            return res.status(400).json({ error: `This channel has reached its sound limit (${config.sounds.maxPerChannel}).` });
+        }
+        if (!isMod && db.countChannelSoundsByUploader(channelOwnerId, req.user.id) >= config.sounds.maxPerUploaderPerChannel) {
+            cleanup();
+            return res.status(400).json({ error: `You've reached your upload limit for this channel (${config.sounds.maxPerUploaderPerChannel}).` });
+        }
+
+        // Unique command within the channel
+        if (db.getChannelSoundByCommand(channelOwnerId, command)) {
+            cleanup();
+            return res.status(409).json({ error: `This channel already has a "!${command}" sound.` });
+        }
+
+        // Duration gate
+        const maxSeconds = Math.min(30, Math.max(1, settings.max_sound_seconds || config.sounds.defaultMaxSeconds));
+        const duration = await probeDuration(req.file.path);
+        if (!duration) {
+            cleanup();
+            return res.status(400).json({ error: 'Could not read that audio file — try a standard MP3 or WAV.' });
+        }
+        if (duration > maxSeconds + 0.25) {
+            cleanup();
+            return res.status(400).json({ error: `Sound is too long (${duration.toFixed(1)}s). Max is ${maxSeconds}s for this channel.` });
+        }
+
+        const result = db.createChannelSound({
+            channel_owner_id: channelOwnerId,
+            command,
+            url: req.file.path,
+            mime: req.file.mimetype,
+            duration_seconds: duration,
+            created_by: req.user.id,
+            created_by_name: req.user.display_name || req.user.username,
+        });
+
+        res.json({
+            sound: {
+                id: result.lastInsertRowid,
+                command,
+                url: `/api/sounds/file/${path.basename(req.file.path)}`,
+                duration_seconds: Math.round(duration * 10) / 10,
+                channel_id: channelOwnerId,
+            },
+        });
+    } catch (err) {
+        console.error('[Sounds] Upload error:', err);
+        cleanup();
+        if (err && /UNIQUE constraint/i.test(err.message || '')) {
+            return res.status(409).json({ error: 'That command already exists on this channel.' });
+        }
+        res.status(500).json({ error: 'Failed to upload sound' });
+    }
+});
+
+// ── Multer error handler ─────────────────────────────────────
+router.use((err, req, res, next) => {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: `File too large (max ${Math.round(config.sounds.maxSizeKb / 1024 * 10) / 10}MB)` });
+    }
+    if (err.message && err.message.includes('Only')) {
+        return res.status(400).json({ error: err.message });
+    }
+    console.error('[Sounds] Middleware error:', err);
+    res.status(500).json({ error: 'Sound upload failed' });
+});
+
+// ── Delete a sound ───────────────────────────────────────────
+router.delete('/:id', requireAuth, (req, res) => {
+    try {
+        const sound = db.getChannelSoundById(parseInt(req.params.id));
+        if (!sound) return res.status(404).json({ error: 'Sound not found' });
+        let allowed = sound.created_by === req.user.id || req.user.role === 'admin';
+        if (!allowed) {
+            const channel = db.getChannelByUserId(sound.channel_owner_id);
+            if (channel && permissions.canModerateChannel(req.user, channel.id)) allowed = true;
+        }
+        if (!allowed) return res.status(403).json({ error: 'Not your sound' });
+
+        if (sound.url && fs.existsSync(sound.url)) { try { fs.unlinkSync(sound.url); } catch {} }
+        db.deleteChannelSound(sound.id);
+        res.json({ message: 'Sound deleted' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to delete sound' });
+    }
+});
+
+// ── Serve a sound file ───────────────────────────────────────
+const EXT_TO_MIME = {
+    '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+    '.webm': 'audio/webm', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac',
+};
+router.get('/file/:filename', (req, res) => {
+    try {
+        const filename = path.basename(req.params.filename);
+        const filePath = path.resolve(soundsDir(), filename);
+        if (!filePath.startsWith(soundsDir()) || !fs.existsSync(filePath)) {
+            return res.status(404).json({ error: 'Sound not found' });
+        }
+        const ext = path.extname(filename).toLowerCase();
+        res.setHeader('Content-Type', EXT_TO_MIME[ext] || 'application/octet-stream');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        fs.createReadStream(filePath).pipe(res);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to serve sound' });
+    }
+});
+
+module.exports = router;

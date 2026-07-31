@@ -159,9 +159,52 @@ function getTTSSettings() {
         maxQueuePerUser:       db.getSetting('tts_max_queue_per_user') || 3,
         maxQueueGlobal:        db.getSetting('tts_max_queue_global') || 20,
         defaultVoice:          db.getSetting('tts_default_voice') || 'gary',
+        // When true (default), chatters without an equipped voice cosmetic get a
+        // stable per-username espeak voice so the streamer can tell who is who.
+        perUserVoices:         db.getSetting('tts_per_user_voices') !== false,
     };
     _settingsCacheTime = now;
     return _settingsCache;
+}
+
+// ── Per-user deterministic voice derivation ───────────────────
+// Subtle base espeak voices that stay natural/intelligible (no croak/whisper).
+const PER_USER_BASE_VOICES = [
+    'en', 'en+m1', 'en+m2', 'en+m3', 'en+m4', 'en+m5', 'en+m6', 'en+m7',
+    'en+f1', 'en+f2', 'en+f3', 'en+f4', 'en+f5',
+];
+
+/**
+ * Derive a stable, subtly-randomized espeak voice from an identity key
+ * (username / anon id / relay handle). Same key → same voice everywhere on the
+ * site, so viewers are recognizable by voice. Params stay in intelligible bands.
+ * @param {string} identityKey
+ * @returns {{ voice: string, pitch: number, speed: number, gap: number }}
+ */
+function deriveUserVoiceParams(identityKey) {
+    const key = String(identityKey || 'anon').trim().toLowerCase() || 'anon';
+    const h = crypto.createHash('sha256').update(key).digest();
+    // Distinct byte slices → weakly independent axes.
+    const voice = PER_USER_BASE_VOICES[h[0] % PER_USER_BASE_VOICES.length];
+    const pitch = 30 + (h[1] % 46);   // 30..75  (default 50)
+    const speed = 150 + (h[2] % 41);  // 150..190 wpm (natural range)
+    const gap = h[3] % 4;             // 0..3    (subtle cadence variation)
+    return { voice, pitch, speed, gap };
+}
+
+/**
+ * Synthesize a chat line using a per-user derived espeak voice.
+ * @returns Promise resolving to the same shape as synthesize(), or null.
+ */
+async function synthesizeUserVoice(text, identityKey, username) {
+    const settings = getTTSSettings();
+    if (!settings.enabled) return null;
+    const cleanText = sanitize(text, settings.maxLength, username);
+    if (!cleanText) return null;
+    const params = deriveUserVoiceParams(identityKey);
+    const voiceDef = { engine: 'espeak-ng', params, name: `Voice-${params.voice}` };
+    // Use a synthetic voiceId so the client can distinguish auto voices if needed.
+    return _synthesizeWithDef(cleanText, voiceDef, `auto:${params.voice}`);
 }
 
 /** Invalidate settings cache (call after admin updates) */
@@ -524,6 +567,8 @@ module.exports = {
     VOICE_CATALOG,
     RARITY_COLORS,
     synthesize,
+    synthesizeUserVoice,
+    deriveUserVoiceParams,
     sanitize,
     getTTSSettings,
     invalidateSettingsCache,

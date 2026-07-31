@@ -135,6 +135,13 @@ function renderDashModerationChannels(channels) {
                                 <span>Banned 101soundboards IDs (comma or newline separated)</span>
                                 <textarea id="dash-mod-soundboard-banned-${channel.id}" class="form-input" rows="2" placeholder="42695124, 35460558">${esc(String(settings.soundboard_banned_ids || ''))}</textarea>
                             </label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-custom-emotes-${channel.id}" ${Number(settings.custom_emotes_enabled ?? 1) ? 'checked' : ''}> <span>Allow viewers to upload channel emotes (gif/png) <i class="fa-solid fa-face-grin-stars" title="Viewers can add custom :emotes: to your channel"></i></span></label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-custom-sounds-${channel.id}" ${Number(settings.custom_sounds_enabled ?? 1) ? 'checked' : ''}> <span>Allow viewers to upload channel sound commands (!name) <i class="fa-solid fa-volume-high" title="Viewers can add !sound clips to your channel"></i></span></label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-uploads-modsonly-${channel.id}" ${Number(settings.uploads_mods_only || 0) ? 'checked' : ''}> Restrict emote/sound uploads to channel mods only</label>
+                            <label>
+                                <span>Max sound length (seconds)</span>
+                                <input type="number" id="dash-mod-max-sound-${channel.id}" class="form-input" min="1" max="30" value="${Number(settings.max_sound_seconds || 10)}" style="max-width:110px;">
+                            </label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-viewer-autodel-${channel.id}" ${Number(settings.viewer_auto_delete_enabled ?? 1) ? 'checked' : ''}> Allow viewers to auto-delete their own messages</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-viewer-deleteall-${channel.id}" ${Number(settings.viewer_delete_all_enabled ?? 1) ? 'checked' : ''}> Allow viewers to delete all their own messages</label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-ipapproval-${channel.id}" ${Number(settings.ip_approval_mode || 0) ? 'checked' : ''}> <span>IP Approval Mode <i class="fa-solid fa-shield-halved" title="New IPs must be approved before messages are visible"></i></span></label>
@@ -284,6 +291,10 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 viewer_auto_delete_enabled: !!document.getElementById(`dash-mod-viewer-autodel-${channelId}`)?.checked,
                 viewer_delete_all_enabled: !!document.getElementById(`dash-mod-viewer-deleteall-${channelId}`)?.checked,
                 ip_approval_mode: !!document.getElementById(`dash-mod-ipapproval-${channelId}`)?.checked,
+                custom_emotes_enabled: !!document.getElementById(`dash-mod-custom-emotes-${channelId}`)?.checked,
+                custom_sounds_enabled: !!document.getElementById(`dash-mod-custom-sounds-${channelId}`)?.checked,
+                uploads_mods_only: !!document.getElementById(`dash-mod-uploads-modsonly-${channelId}`)?.checked,
+                max_sound_seconds: Number(document.getElementById(`dash-mod-max-sound-${channelId}`)?.value || 10),
             },
         });
         toast('Channel moderation settings saved', 'success');
