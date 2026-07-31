@@ -33,6 +33,7 @@ const DIRECTOR_MIN_GAP_MS = 11000;      // throttle for the "is the streamer eng
 const HYPE_BURST_COOLDOWN_MS = 16000;   // min gap between reaction bursts
 const VIEWER_REPLY_COOLDOWN_MS = 9000;  // min gap between bots replying to viewer chat
 const PERSONALITY_EVOLVE_MS = 140000;   // how often each bot's personality note updates
+const CONVO_WINDOW_MS = 55000;          // how long a back-and-forth "sticks" to one bot
 const LIVENESS_CHECK_MS = 12000;        // each worker self-checks the stream is still live
 const ORPHAN_SWEEP_MS = 30000;          // service-wide sweep to kill workers for dead streams
 const LIVE_CACHE_MS = 4000;             // cache is_live lookups briefly
@@ -250,6 +251,7 @@ class AiChatbotService {
                 lastBurstAt: 0,          // throttle hype reaction bursts
                 lastViewerReplyAt: 0,    // throttle replies to non-streamer viewers
                 lastRealInput: null,     // { username, text, isStreamer, ts }
+                convo: null,             // { bot, ts } — bot currently in a back-and-forth w/ streamer
                 lastActiveBot: null,     // username of the bot that most recently posted
                 errorCount: 0,
                 stopped: false,
@@ -440,18 +442,23 @@ class AiChatbotService {
         const emoteSample = [...(worker.emotes || [])].sort(() => Math.random() - 0.5).slice(0, 10);
         const dead = this._dominantTopics(worker);
 
+        // The bot's OWN recent line — so when the streamer replies to it, it can
+        // defend/continue its specific point instead of firing a random roast.
+        const myLastLine = (bot.ownLines && bot.ownLines.length) ? bot.ownLines[bot.ownLines.length - 1] : '';
+
         // Who/what this reply is answering (so the bot actually engages it).
         let replyInstruction = '';
         if (direct) {
-            replyInstruction = `${streamer} (the STREAMER) just said YOUR name and is talking to YOU. Answer/react to exactly what they said.`;
+            replyInstruction = `${streamer} (the STREAMER) just said YOUR name and is talking to YOU. Answer exactly what they said.`;
         } else if (fromStreamer) {
-            replyInstruction = `The STREAMER just ${channel === 'chat' ? 'typed this in chat' : 'said this on mic'} to chat${opts.answering ? ' — they asked/addressed chat' : ''}. REPLY to what THEY actually said — answer their question or engage their point directly. This matters more than any running chat bit.`;
+            replyInstruction = `The STREAMER just ${channel === 'chat' ? 'typed this in chat' : 'said this on mic'} — and they're replying to YOU (${bot.username})${myLastLine ? `, specifically to your line "${myLastLine}"` : ''}. Engage their EXACT words: answer their question, defend your take, or clap back at their specific point with a NEW angle. Do not just fire a generic insult, and do not repeat what you already said.`;
         } else if (fromViewer) {
             replyInstruction = `Another viewer "${fromViewer}" just ${channel === 'chat' ? 'typed this in chat' : 'said this'}. React to or clap back at THEM specifically.`;
         }
 
         const system = [
-            `You are "${bot.username}", ONE real-feeling viewer in ${streamer}'s live Twitch-style chat. You're watching the stream right now.`,
+            `You are "${bot.username}", ONE real viewer in ${streamer}'s live Twitch-style chat. You are WATCHING ${streamer}'s stream.`,
+            `ROLE (critical): ${streamer} is the STREAMER — they are broadcasting/performing, they are NOT watching anything. YOU are the viewer watching THEM. Never tell ${streamer} they're "watching" something, never call them a viewer, never accuse them of a bad view/eyeballs — if you're gonna complain, complain about THEIR stream, gameplay, audio, or takes.`,
             `Your personality: ${bot.character}.`,
             `How you type: ${bot.style}. Keep this voice consistent.`,
             bot.arc ? `Your vibe so far this stream (stay consistent, let it grow): ${bot.arc}` : '',
@@ -553,7 +560,7 @@ class AiChatbotService {
         // 2) Streamer asked chat something / is clearly addressing chat → a bot ANSWERS it.
         //    This is the "streamer says 'who is max' and a viewer actually replies" case.
         if (this._looksDirectedAtChat(text)) {
-            const bot = this._pickResponder(worker);
+            const bot = this._conversationPartner(worker) || this._pickResponder(worker);
             if (this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic', answering: true })) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: streamer addressing chat — ${bot.username} answers`);
                 setTimeout(() => this._flushReplies(worker), rint(900, 2400));
@@ -581,10 +588,40 @@ class AiChatbotService {
         return /( who is | what is | whats | what's | wheres | where's | you guys | y'?all | anyone | does anyone | do you | what do you | how do you | should i | you think | you think\? | right\? | am i | are we | chat | vote | tell me | explain | which one | wdyt | thoughts | chat what )/.test(t);
     }
 
-    /** Pick a bot to respond — prefer one that isn't the one who just spoke. */
+    /** Pick a bot to respond to a spontaneous prompt — prefer variety. */
     _pickResponder(worker) {
         const candidates = worker.bots.filter((b) => b.username !== worker.lastActiveBot);
         return pick(candidates.length ? candidates : worker.bots);
+    }
+
+    /** Does a message address the streamer directly (2nd person)? */
+    _msgAddressesStreamer(text) {
+        return /\b(you|your|youre|you're|ur|u|urself|yourself|ya|bro|dude|man)\b/i.test(String(text || ''));
+    }
+
+    /**
+     * Who is the streamer replying to? For a coherent back-and-forth, the bot the
+     * streamer is arguing with should be the one to answer — not a random bot.
+     * Uses the sticky convo partner, else the last bot who talked AT the streamer.
+     */
+    _conversationPartner(worker) {
+        const c = worker.convo;
+        if (c && (Date.now() - c.ts) < CONVO_WINDOW_MS) {
+            const bot = worker.bots.find((b) => b.username === c.bot);
+            if (bot) return bot;
+        }
+        for (const line of [...(worker.recentBotLines || [])].reverse()) {
+            const m = String(line).match(/^([^:]+):\s*(.*)$/);
+            if (!m) continue;
+            const bot = worker.bots.find((b) => b.username.toLowerCase() === m[1].trim().toLowerCase());
+            if (bot && this._msgAddressesStreamer(m[2])) return bot;
+        }
+        return null;
+    }
+
+    /** Remember which bot is trading barbs with the streamer, for thread continuity. */
+    _touchConvo(worker, botUsername) {
+        worker.convo = { bot: botUsername, ts: Date.now() };
     }
 
     /** A real human typed in chat — react like real chat would (esp. to the streamer). */
@@ -602,10 +639,12 @@ class AiChatbotService {
 
         if (isStreamer) {
             // The streamer typed — always engage them, promptly, and interrupt filler.
+            // Route the reply to whoever they're actually arguing with, so the
+            // back-and-forth stays coherent (not a random bot).
             const named = this._detectAddressedBots(worker, text);
-            const bot = named[0] || this._pickResponder(worker);
+            const bot = named[0] || this._conversationPartner(worker) || this._pickResponder(worker);
             if (this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'chat', direct: !!named[0], answering: this._looksDirectedAtChat(text) })) {
-                console.log(`[AI-Bots] stream ${streamId}: streamer typed — ${bot.username} replies`);
+                console.log(`[AI-Bots] stream ${streamId}: streamer typed → ${bot.username} (${named[0] ? 'named' : (worker.convo ? 'convo partner' : 'picked')})`);
                 setTimeout(() => this._flushReplies(worker), rint(900, 2600));
             }
             return;
@@ -799,6 +838,10 @@ class AiChatbotService {
         bot.ownLines.push(message);
         if (bot.ownLines.length > 8) bot.ownLines.shift();
         worker.lastActiveBot = bot.username;
+        // Keep the back-and-forth on this bot if it's now engaging the streamer.
+        if (opts.fromStreamer || opts.direct || this._msgAddressesStreamer(message)) {
+            this._touchConvo(worker, bot.username);
+        }
         this._inject(worker, bot, message);
     }
 
