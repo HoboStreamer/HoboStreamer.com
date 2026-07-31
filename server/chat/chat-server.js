@@ -861,6 +861,17 @@ class ChatServer {
 
             // Check for 101soundboards links in the message (async, non-blocking)
             this.processSoundboard(ws, client, text);
+
+            // Let AI chat viewers react to REAL typed chat (streamer or viewers).
+            // Bots inject via broadcastToStream directly, so this path only sees
+            // genuine human messages.
+            try {
+                require('../integrations/ai-chatbot-service').onRealChatMessage(client.streamId, {
+                    username,
+                    message: text,
+                    userId: client.user?.id || null,
+                });
+            } catch { /* non-critical */ }
         } else {
             // Global chat
             this.broadcastGlobal(chatMsg);
