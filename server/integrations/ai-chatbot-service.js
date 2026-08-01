@@ -1056,6 +1056,14 @@ class AiChatbotService {
             });
             const clean = this._cleanTranscript(text);
             if (clean && clean.length > 1) {
+                // Guard against the TTS feedback loop: if the bots' spoken messages
+                // bleed into the stream audio (desktop capture / mic picking up
+                // speakers), transcription hears the bots and they'd "reply" to
+                // themselves. Drop any chunk that matches what a bot just said.
+                if (this._looksLikeBotEcho(worker, clean)) {
+                    console.log(`[AI-Hear] stream ${worker.streamId}: ignored TTS echo ("${clean.slice(0, 60)}")`);
+                    return;
+                }
                 worker.transcriptChunks.push({ text: clean, ts: Date.now() });
                 // Prune anything older than the window (keep a couple extra as backstop)
                 const cutoff = Date.now() - TRANSCRIPT_WINDOW_MS;
@@ -1073,12 +1081,44 @@ class AiChatbotService {
         }
     }
 
-    /** Strip common Whisper hallucinations on silence (e.g. "you", "thank you", "."). */
+    /** Strip common Whisper hallucinations on silence (e.g. "you", "thank you", ".")
+     * and noise transcripts that have no real words (e.g. "! ! ! !"). */
     _cleanTranscript(text) {
         let t = String(text || '').replace(/\s+/g, ' ').trim();
         const junk = new Set(['you', '.', 'thank you', 'thanks for watching', 'thank you.', 'you.', 'bye', 'okay', '...', 'thanks for watching!']);
         if (junk.has(t.toLowerCase())) return '';
+        // No real words (mostly punctuation/symbols) → noise, not speech.
+        const letters = t.replace(/[^a-z]/gi, '');
+        const hasWord = /[a-z]{3,}/i.test(t);
+        if (letters.length < 3 || !hasWord) return '';
         return t;
+    }
+
+    /** Content words of a string (lowercased, ≥3 chars, non-stopword). */
+    _contentTokens(s) {
+        return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
+            .filter((w) => w.length >= 3 && !TOPIC_STOPWORDS.has(w));
+    }
+
+    /**
+     * True if a transcript chunk is really the bots' own TTS bleeding back into the
+     * stream audio — i.e. it heavily overlaps something a bot said recently. Whisper
+     * mangles words, so we match on content-word overlap, not exact text.
+     */
+    _looksLikeBotEcho(worker, text) {
+        const tTokens = this._contentTokens(text);
+        if (tTokens.length < 2) return false;
+        const tSet = new Set(tTokens);
+        for (const line of (worker.recentBotLines || []).slice(-8)) {
+            const body = String(line).replace(/^[^:]+:\s*/, '');
+            const bSet = new Set(this._contentTokens(body));
+            if (bSet.size < 1) continue;
+            let matched = 0;
+            for (const w of tSet) if (bSet.has(w)) matched++;
+            // Most of the transcript's content words came from a recent bot line.
+            if (matched >= 2 && (matched / tSet.size) >= 0.55) return true;
+        }
+        return false;
     }
 
     async _captureAndDescribe(worker) {
