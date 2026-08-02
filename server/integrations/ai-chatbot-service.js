@@ -35,6 +35,7 @@ const VIEWER_REPLY_COOLDOWN_MS = 9000;  // min gap between bots replying to view
 const PERSONALITY_EVOLVE_MS = 140000;   // how often each bot's personality note updates
 const CONVO_WINDOW_MS = 55000;          // how long a back-and-forth "sticks" to one bot
 const SITUATION_MIN_GAP_MS = 6000;      // throttle the audio/visual "what's the streamer doing" digest
+const SCENE_REACT_MIN_GAP_MS = 20000;   // min gap between bots reacting to on-screen game action
 const LIVENESS_CHECK_MS = 12000;        // each worker self-checks the stream is still live
 const ORPHAN_SWEEP_MS = 30000;          // service-wide sweep to kill workers for dead streams
 
@@ -263,6 +264,8 @@ class AiChatbotService {
                 digestSeenTs: 0,         // ts of last transcript chunk fed to the digest
                 lastStreamerSaid: '',    // last streamer utterance acted on (fuzzy dedup)
                 lastStreamerSig: '',     // last streamer utterance acted on (exact dedup)
+                lastSceneReacted: '',    // last scene a bot reacted to (dedup game reactions)
+                lastSceneReactAt: 0,     // throttle scene reactions
                 recentBotLines: [],
                 intents: [],             // pending message requests: [{ kind:'reply'|'hype', bot, opts, prio, ts }]
                 replyCooldown: new Map(), // bot.username → last reactive-reply ts
@@ -561,6 +564,8 @@ class AiChatbotService {
         } else if (fromStreamer) {
             // Proactive: goosely is just talking; chat clowns on THEM.
             replyInstruction = `${streamer} (the STREAMER) just said/did the thing below. React to ${streamer} SPECIFICALLY — clown on them for it, quote them back, roast their take, or hype/agree with a twist. Make it obviously about what ${streamer} just said. Do NOT pretend they were talking to you, and do NOT just comment on the general topic.`;
+        } else if (opts.fromScene) {
+            replyInstruction = `React to what's HAPPENING ON SCREEN in ${streamer}'s game right now (below) — like a viewer backseating or clowning on their gameplay. Be specific to the moment, not generic.`;
         } else if (fromViewer) {
             replyInstruction = `Another viewer "${fromViewer}" just ${channel === 'chat' ? 'typed this in chat' : 'said this'}. React to or clap back at THEM specifically.`;
         }
@@ -585,7 +590,9 @@ class AiChatbotService {
         ].filter(Boolean).join('\n');
 
         const contextParts = [];
-        if (addressed) {
+        // Scene reactions get their target from the WHAT'S HAPPENING line below, not
+        // a "reply to X" block. Only show the reply block for person-directed replies.
+        if (addressed && !opts.fromScene) {
             const label = direct ? `${streamer} (STREAMER) → YOU`
                 : fromStreamer ? `${streamer} (STREAMER)${channel === 'chat' ? ' typed' : ' on mic'}`
                 : `viewer ${fromViewer || ''}`.trim();
@@ -707,6 +714,9 @@ class AiChatbotService {
             } else if (worker.situation.scene) {
                 console.log(`[AI-Situation] stream ${worker.streamId}: scene="${worker.situation.scene.slice(0, 70)}" (streamer quiet)`);
             }
+            // Whether or not the streamer talked, keep chat alive during gameplay by
+            // occasionally reacting to what's happening ON SCREEN (the game itself).
+            this._maybeReactToScene(worker);
         } catch (err) {
             console.warn(`[AI-Situation] digest failed (stream ${worker.streamId}):`, err.message);
         } finally {
@@ -777,6 +787,33 @@ class AiChatbotService {
             if (bot && this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic' })) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: engaging streamer — ${bot.username}`);
             }
+        }
+    }
+
+    /**
+     * Keep chat alive during gameplay: when the on-screen scene is fresh/changed,
+     * occasionally have a bot react to what's HAPPENING in the game — not just when
+     * the streamer talks. Throttled + deduped so it's lively, not spammy.
+     */
+    _maybeReactToScene(worker) {
+        if (worker.stopped) return;
+        const scene = worker.situation?.scene;
+        if (!scene || scene.length < 8) return;
+        const now = Date.now();
+        if (now - worker.lastSceneReactAt < SCENE_REACT_MIN_GAP_MS) return;
+        // Don't react to essentially the same scene twice.
+        if (worker.lastSceneReacted && this._overlapRatio(scene, worker.lastSceneReacted) >= 0.6) return;
+        // Skip if the streamer just talked (a reply is already handling this beat)
+        // or a reply is already queued.
+        if (worker.intents.length) return;
+        if ((now - (worker.lastRealInput?.ts || 0)) < 5000) return;
+        // React ~65% of the time so there are still natural lulls.
+        if (Math.random() > 0.65) return;
+        worker.lastSceneReactAt = now;
+        worker.lastSceneReacted = scene;
+        const bot = this._pickReplyBot(worker, null);
+        if (bot && this._queueReply(worker, bot, scene, { fromScene: true, channel: 'scene' })) {
+            console.log(`[AI-Bots] stream ${worker.streamId}: reacting to gameplay — ${bot.username}`);
         }
     }
 
@@ -988,11 +1025,13 @@ class AiChatbotService {
             direct: !!meta.direct,
             fromStreamer: !!meta.fromStreamer,
             fromViewer: meta.fromViewer || null,
+            fromScene: !!meta.fromScene,
             channel: meta.channel || 'mic',
             answering: !!meta.answering,
         };
-        const prio = meta.fromStreamer ? 3 : 2;   // streamer replies beat viewer replies
-        return this._enqueueIntent(worker, 'reply', bot, opts, prio);
+        // streamer replies (3) > viewer replies (2) > scene reactions (1)
+        const prio = meta.fromStreamer ? 3 : (meta.fromScene ? 1 : 2);
+        return this._enqueueIntent(worker, meta.fromScene ? 'scene' : 'reply', bot, opts, prio);
     }
 
     _sanitizeMessage(text) {
