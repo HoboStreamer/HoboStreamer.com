@@ -34,6 +34,7 @@ const HYPE_BURST_COOLDOWN_MS = 16000;   // min gap between reaction bursts
 const VIEWER_REPLY_COOLDOWN_MS = 9000;  // min gap between bots replying to viewer chat
 const PERSONALITY_EVOLVE_MS = 140000;   // how often each bot's personality note updates
 const CONVO_WINDOW_MS = 55000;          // how long a back-and-forth "sticks" to one bot
+const SITUATION_MIN_GAP_MS = 6000;      // throttle the audio/visual "what's the streamer doing" digest
 const LIVENESS_CHECK_MS = 12000;        // each worker self-checks the stream is still live
 const ORPHAN_SWEEP_MS = 30000;          // service-wide sweep to kill workers for dead streams
 
@@ -254,8 +255,12 @@ class AiChatbotService {
                 config,
                 bots: this._buildBots(numBots),
                 emotes: this._loadEmotes(stream.user_id),
-                transcriptChunks: [],   // [{ text, ts }] — decays over time
+                transcriptChunks: [],   // [{ text, ts }] — RAW (echo+streamer+media), decays
                 visual: null,           // { text, ts }
+                situation: null,         // digest: { streamerSaid, watching, scene, addressingChat, ts }
+                lastSituationAt: 0,      // throttle the digest LLM call
+                situating: false,
+                lastStreamerSig: '',     // dedupe acting on the same streamer utterance
                 recentBotLines: [],
                 intents: [],             // pending message requests: [{ kind:'reply'|'hype', bot, opts, prio, ts }]
                 replyCooldown: new Map(), // bot.username → last reactive-reply ts
@@ -519,8 +524,12 @@ class AiChatbotService {
         let tags = [];
         try { tags = Array.isArray(s.tags) ? s.tags : JSON.parse(s.tags || '[]'); } catch { tags = []; }
 
-        const visual = this._currentVisual(worker);
-        const transcript = this._currentTranscript(worker);
+        // Prefer the fused situation digest (streamer's own words + scene, echo &
+        // watched-media already separated). Fall back to raw signals if no digest yet.
+        const sit = (worker.situation && (Date.now() - worker.situation.ts) <= VISION_STALE_MS) ? worker.situation : null;
+        const scene = sit?.scene || this._currentVisual(worker);
+        const streamerSaid = sit?.streamerSaid || '';
+        const watching = sit?.watching || '';
 
         const addressed = opts && opts.addressedText ? String(opts.addressedText).trim() : '';
         const direct = addressed && opts.direct;   // streamer literally said this bot's name
@@ -576,15 +585,18 @@ class AiChatbotService {
                 : `viewer ${fromViewer || ''}`.trim();
             contextParts.push(`>>> REPLY TO THIS — ${label}: "${addressed}"`);
         }
-        // Freshest signal.
-        if (visual) {
-            contextParts.push(`HAPPENING ON STREAM NOW (you can see it): ${visual}\n(React like a viewer — don't describe it.)`);
+        // Fused situation (echo + watched-media already separated from the streamer).
+        if (scene) {
+            contextParts.push(`WHAT'S HAPPENING ON STREAM NOW: ${scene}\n(React like a viewer — don't describe it, riff on it.)`);
         }
-        if (transcript) {
-            contextParts.push(`STREAMER'S MIC lately (auto-transcribed, may be misheard — react to the gist, don't quote it): "${transcript}"`);
+        if (streamerSaid && !addressed) {
+            contextParts.push(`${streamer} (the STREAMER) just said/did: "${streamerSaid}" — this is THEM, not chat. React to it.`);
         }
-        if (!visual && !transcript && !addressed) {
-            contextParts.push(`(No live audio/screen right now — go off the recent chat and the category.)`);
+        if (watching) {
+            contextParts.push(`(${streamer} is reacting to: ${watching} — you can clown on their reaction, not narrate the video.)`);
+        }
+        if (!scene && !streamerSaid && !addressed) {
+            contextParts.push(`(No live audio/screen read yet — go off the recent chat and the category.)`);
         }
         contextParts.push(`(context) ${streamer} is streaming "${title}" — ${category}${tags.length ? ` [${tags.join(', ')}]` : ''}${s.viewer_count != null ? `, ${s.viewer_count} watching` : ''}. Don't keep commenting on the title.`);
         const recent = this._recentChatLines(worker.streamId, 12);
@@ -624,18 +636,92 @@ class AiChatbotService {
     }
 
     /**
-     * Entry point when the streamer says something (fresh transcript). Decides
-     * whether — and which — bot should reply, so it feels like a real back-and-forth:
-     *  1) If the streamer said a bot's name → that bot replies directly (fast path).
-     *  2) Otherwise ask a cheap "director" if the streamer is engaging chat/reacting
-     *     to a viewer, and if so have the right bot reply. This is what makes the
-     *     bots respond when you talk back to them without naming anyone.
+     * The heart of "actually understanding the stream". The raw transcript is a
+     * mess: it mixes (a) the streamer's own voice, (b) the chat bots' TTS read
+     * aloud on the streamer's system (echo of our OWN messages), and (c) audio
+     * from videos/games the streamer is watching. This runs a cheap LLM pass that
+     * separates those sources and fuses them with the on-screen visual into one
+     * coherent picture — so the bots react to what the STREAMER is actually doing
+     * and saying, not to their own echo or a YouTube video's narrator.
      */
-    _onFreshSpeech(worker, text) {
+    async _updateSituation(worker) {
+        if (worker.stopped || worker.situating) return;
+        const now = Date.now();
+        if (now - worker.lastSituationAt < SITUATION_MIN_GAP_MS) return;
+        worker.lastSituationAt = now;
+        worker.situating = true;
+        try {
+            const raw = this._currentTranscript(worker);
+            const visual = this._currentVisual(worker);
+            if (!raw && !visual) return;
+            const streamer = worker.stream.display_name || worker.stream.username || 'the streamer';
+            const botLines = (worker.recentBotLines || []).slice(-10).map((l) => String(l).replace(/^[^:]+:\s*/, ''));
+
+            const sys = [
+                `You are the "ears and eyes" for chat bots on ${streamer}'s livestream. Turn messy live signals into a clean picture of what the STREAMER is doing right now.`,
+                `The AUDIO TRANSCRIPT is unreliable and mixes THREE sources you must separate:`,
+                `  1) ${streamer}'s OWN voice (what they say to chat / while playing) — THIS is what matters.`,
+                `  2) The chat bots' text-to-speech being read aloud on ${streamer}'s system — this is an ECHO of messages chat just posted; IGNORE it. The list of "recent chat lines" below is exactly that echo — anything in the transcript that matches those lines is NOT the streamer.`,
+                `  3) Audio from a video/game ${streamer} is watching/playing (ads, YouTube narrators, game dialogue) — attribute to "watching", not to the streamer.`,
+                `Fuse the streamer's voice with what's ON SCREEN into one coherent read. Reply ONLY with compact JSON.`,
+            ].join('\n');
+            const user = [
+                raw ? `AUDIO TRANSCRIPT (last ~1 min, mixed sources):\n"${raw}"` : `AUDIO: (silent)`,
+                visual ? `ON SCREEN NOW: ${visual}` : `ON SCREEN: (unknown)`,
+                botLines.length ? `RECENT CHAT LINES (these are the bot-TTS echo to ignore in the audio):\n- ${botLines.join('\n- ')}` : `RECENT CHAT: (none)`,
+                `Stream: "${worker.stream.title || ''}" — ${worker.stream.category || 'IRL'}.`,
+                `JSON: {"streamer_said":"<${streamer}'s OWN words/actions right now, excluding bot-echo and watched-media; empty string if they were silent>","watching":"<video/game/content they're reacting to, if any; else empty>","addressing_chat":<true if they're talking to chat/asking chat something//reacting to a viewer, else false>,"scene":"<ONE vivid line: what's actually happening for a viewer to react to & troll>"}`,
+            ].join('\n\n');
+
+            const rawOut = await aiProvider.chatCompletion({
+                baseUrl: worker.config.base_url, apiKey: worker.config.api_token, model: worker.config.model,
+                temperature: 0.2, maxTokens: 200,
+                messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
+            });
+            const d = this._parseSituationJson(rawOut);
+            if (!d) return;
+            worker.situation = {
+                streamerSaid: String(d.streamer_said || '').trim(),
+                watching: String(d.watching || '').trim(),
+                scene: String(d.scene || '').trim(),
+                addressingChat: !!d.addressing_chat,
+                ts: Date.now(),
+            };
+            const said = worker.situation.streamerSaid;
+            if (said) {
+                console.log(`[AI-Situation] stream ${worker.streamId}: streamer="${said.slice(0, 70)}"${worker.situation.watching ? ` | watching="${worker.situation.watching.slice(0, 40)}"` : ''}`);
+                this._onStreamerInput(worker, said, { addressingChat: worker.situation.addressingChat });
+            } else if (worker.situation.scene) {
+                console.log(`[AI-Situation] stream ${worker.streamId}: scene="${worker.situation.scene.slice(0, 70)}" (streamer quiet)`);
+            }
+        } catch (err) {
+            console.warn(`[AI-Situation] digest failed (stream ${worker.streamId}):`, err.message);
+        } finally {
+            worker.situating = false;
+        }
+    }
+
+    _parseSituationJson(raw) {
+        if (!raw) return null;
+        let s = String(raw).trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+        const m = s.match(/\{[\s\S]*\}/);
+        if (m) s = m[0];
+        try { return JSON.parse(s); } catch { return null; }
+    }
+
+    /**
+     * Called with the streamer's CLEAN speech (from the situation digest — bot echo
+     * and watched-media already separated out). Decides whether/which bot replies:
+     *  1) named a bot → that bot replies directly
+     *  2) addressing chat / asking → a bot answers
+     *  3) hyped → quick reactions
+     *  4) else → director decides if it's worth engaging
+     */
+    _onStreamerInput(worker, text, opts = {}) {
         if (worker.stopped) return;
         const sig = String(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(-140);
-        if (sig && sig === worker.lastSpeechSig) return;
-        worker.lastSpeechSig = sig;
+        if (sig && sig === worker.lastStreamerSig) return;
+        worker.lastStreamerSig = sig;
         worker.lastRealInput = { username: worker.stream.display_name || worker.stream.username || 'streamer', text: String(text).slice(-300), isStreamer: true, ts: Date.now() };
 
         // 1) Direct name callout → highest priority.
@@ -645,15 +731,12 @@ class AiChatbotService {
             for (const bot of named) {
                 if (this._queueReply(worker, bot, text, { direct: true, fromStreamer: true, channel: 'mic' })) queued++;
             }
-            if (queued) {
-                console.log(`[AI-Bots] stream ${worker.streamId}: streamer named ${named.map((b) => b.username).join(', ')} — direct reply`);
-            }
+            if (queued) console.log(`[AI-Bots] stream ${worker.streamId}: streamer named ${named.map((b) => b.username).join(', ')} — direct reply`);
             return;
         }
 
-        // 2) Streamer asked chat something / is clearly addressing chat → a bot ANSWERS it.
-        //    This is the "streamer says 'who is max' and a viewer actually replies" case.
-        if (this._looksDirectedAtChat(text)) {
+        // 2) Addressing chat / asking → a bot ANSWERS it (digest hint OR heuristic).
+        if (opts.addressingChat || this._looksDirectedAtChat(text)) {
             const bot = this._pickReplyBot(worker, this._conversationPartner(worker));
             if (bot && this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic', answering: true })) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: streamer addressing chat — ${bot.username} answers`);
@@ -661,18 +744,22 @@ class AiChatbotService {
             return;
         }
 
-        // 3) Streamer sounds hyped/reacting → elevate the pace and drop a couple
-        //    quick reactions (still spaced out by the pacer, not dumped at once).
+        // 3) Hyped/reacting → quick reactions (paced, not dumped).
         if (this._looksHype(text) && (Date.now() - worker.hypeUntil) > HYPE_BURST_COOLDOWN_MS) {
             console.log(`[AI-Bots] stream ${worker.streamId}: hype moment — quick reactions`);
             this._triggerHype(worker);
             return;
         }
 
-        // 4) Otherwise let the director decide if it's worth engaging.
-        const cleaned = String(text).trim();
-        if (cleaned.length < 12) return;
-        this._maybeDirect(worker, cleaned);
+        // 4) Otherwise let a bot engage what the streamer's doing (~55% of the time
+        //    so not every utterance gets a reply — but they clearly ARE listening).
+        if (String(text).trim().length < 8) return;
+        if (Math.random() < 0.55) {
+            const bot = this._pickReplyBot(worker, this._conversationPartner(worker));
+            if (bot && this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic' })) {
+                console.log(`[AI-Bots] stream ${worker.streamId}: engaging streamer — ${bot.username}`);
+            }
+        }
     }
 
     /** Heuristic: is the streamer talking TO chat / asking a question (vs narrating)? */
@@ -1033,7 +1120,8 @@ class AiChatbotService {
             // Give the bot a TTS voice like any viewer. No cosmetic voice → the
             // per-user derived voice keyed on the bot's stable voice id, so each
             // bot in the pool sounds distinct. Non-blocking; respects the global
-            // TTS setting and each viewer's TTS toggle.
+            // TTS setting and each viewer's TTS toggle. (Emotes read aloud is fine —
+            // the situation digest separates that echo from the streamer's own voice.)
             chatServer.synthesizeAndBroadcastTTS(streamId, bot.username, message, null, null, this._voiceKey(bot.username));
         } catch (err) {
             console.warn('[AI-Bots] broadcast failed:', err.message);
@@ -1056,20 +1144,13 @@ class AiChatbotService {
             });
             const clean = this._cleanTranscript(text);
             if (clean && clean.length > 1) {
-                // Guard against the TTS feedback loop: if the bots' spoken messages
-                // bleed into the stream audio (desktop capture / mic picking up
-                // speakers), transcription hears the bots and they'd "reply" to
-                // themselves. Drop any chunk that matches what a bot just said.
-                if (this._looksLikeBotEcho(worker, clean)) {
-                    console.log(`[AI-Hear] stream ${worker.streamId}: ignored TTS echo ("${clean.slice(0, 60)}")`);
-                    return;
-                }
+                // Keep the RAW chunk (may contain bot-TTS echo + streamer + watched
+                // media all mixed). The situation digest untangles the sources.
                 worker.transcriptChunks.push({ text: clean, ts: Date.now() });
-                // Prune anything older than the window (keep a couple extra as backstop)
                 const cutoff = Date.now() - TRANSCRIPT_WINDOW_MS;
-                worker.transcriptChunks = worker.transcriptChunks.filter((c) => c.ts >= cutoff).slice(-12);
+                worker.transcriptChunks = worker.transcriptChunks.filter((c) => c.ts >= cutoff).slice(-14);
                 console.log(`[AI-Hear] stream ${worker.streamId}: +${clean.length} chars ("${clean.slice(0, 80)}...")`);
-                this._onFreshSpeech(worker, clean);
+                this._updateSituation(worker);
             } else {
                 console.log(`[AI-Hear] stream ${worker.streamId}: transcript empty this cycle (quiet/no speech)`);
             }
@@ -1081,44 +1162,17 @@ class AiChatbotService {
         }
     }
 
-    /** Strip common Whisper hallucinations on silence (e.g. "you", "thank you", ".")
-     * and noise transcripts that have no real words (e.g. "! ! ! !"). */
+    /** Strip common Whisper hallucinations on silence and wordless noise. Keeps the
+     * text otherwise RAW (echo + streamer + watched-media) — the situation digest
+     * is what separates those sources. */
     _cleanTranscript(text) {
         let t = String(text || '').replace(/\s+/g, ' ').trim();
         const junk = new Set(['you', '.', 'thank you', 'thanks for watching', 'thank you.', 'you.', 'bye', 'okay', '...', 'thanks for watching!']);
         if (junk.has(t.toLowerCase())) return '';
-        // No real words (mostly punctuation/symbols) → noise, not speech.
         const letters = t.replace(/[^a-z]/gi, '');
         const hasWord = /[a-z]{3,}/i.test(t);
         if (letters.length < 3 || !hasWord) return '';
         return t;
-    }
-
-    /** Content words of a string (lowercased, ≥3 chars, non-stopword). */
-    _contentTokens(s) {
-        return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
-            .filter((w) => w.length >= 3 && !TOPIC_STOPWORDS.has(w));
-    }
-
-    /**
-     * True if a transcript chunk is really the bots' own TTS bleeding back into the
-     * stream audio — i.e. it heavily overlaps something a bot said recently. Whisper
-     * mangles words, so we match on content-word overlap, not exact text.
-     */
-    _looksLikeBotEcho(worker, text) {
-        const tTokens = this._contentTokens(text);
-        if (tTokens.length < 2) return false;
-        const tSet = new Set(tTokens);
-        for (const line of (worker.recentBotLines || []).slice(-8)) {
-            const body = String(line).replace(/^[^:]+:\s*/, '');
-            const bSet = new Set(this._contentTokens(body));
-            if (bSet.size < 1) continue;
-            let matched = 0;
-            for (const w of tSet) if (bSet.has(w)) matched++;
-            // Most of the transcript's content words came from a recent bot line.
-            if (matched >= 2 && (matched / tSet.size) >= 0.55) return true;
-        }
-        return false;
     }
 
     async _captureAndDescribe(worker) {
