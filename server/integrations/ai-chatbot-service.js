@@ -443,11 +443,12 @@ class AiChatbotService {
         if (now - worker.lastPostAt < minGap) return;   // hold the line — no clumping
 
         // Priority: queued replies (reply/hype intents) → then maybe an ambient filler.
-        let bot, opts;
+        let bot, opts, fromIntent = false;
         const intent = this._takeIntent(worker);
         if (intent) {
             bot = intent.bot;
             opts = intent.opts || {};
+            fromIntent = true;
         } else {
             // Ambient filler — only sometimes, so there are natural silences.
             const due = (now - worker.lastPostAt) >= this._ambientTarget(worker);
@@ -457,13 +458,13 @@ class AiChatbotService {
             opts = {};
         }
         if (!bot) return;
-        // Hard anti-domination: never let the same bot post twice in a row, UNLESS
-        // the streamer named it directly. If it's a repeat, try to swap to another
-        // available bot; if none, skip this tick so a different bot goes next time.
+        // Hard anti-domination: never let the same bot post twice in a row (unless
+        // named directly). Swap to another bot if possible. Only SKIP for ambient
+        // filler — a queued reply must still go out, so it posts even if it can't swap.
         if (bot.username === worker.lastActiveBot && !opts.direct) {
             const alt = this._pickReplyBot(worker, null);
             if (alt && alt.username !== worker.lastActiveBot) { bot = alt; }
-            else return;
+            else if (!fromIntent) return;
         }
         await this._generateAndPost(worker, bot, opts);
         worker.errorCount = 0;
@@ -866,6 +867,14 @@ class AiChatbotService {
         return /( who is | what is | whats | what's | wheres | where's | you guys | y'?all | anyone | does anyone | do you | what do you | how do you | should i | you think | you think\? | right\? | am i | are we | chat | vote | tell me | explain | which one | wdyt | thoughts | chat what )/.test(t);
     }
 
+    /** A message clearly aimed at the bots/chat collectively (a viewer engaging chat). */
+    _addressesChat(text) {
+        const t = ' ' + String(text || '').toLowerCase().replace(/[^a-z0-9'? ]+/g, ' ').replace(/\s+/g, ' ') + ' ';
+        if (/( ai bots? | ai chat | the bots? | you bots? | robots? | hey ai | ai | bots )/.test(t)) return true;
+        if (/( chat | you guys | y'?all | everyone | anyone | you all )/.test(t) && t.includes('?')) return true;
+        return t.includes('?') && / (you|your|youre|u|ur|yall|guys|everyone|anyone) /.test(t);
+    }
+
     /** Pick a bot to respond to a spontaneous prompt — prefer a fresh, non-dominating voice. */
     _pickResponder(worker) {
         let candidates = worker.bots.filter((b) => b.username !== worker.lastActiveBot && !this._overexposed(worker, b.username));
@@ -950,14 +959,16 @@ class AiChatbotService {
         for (const [k, ts] of worker.realViewers) if (now - ts > 300000) worker.realViewers.delete(k);
 
         const named = this._detectAddressedBots(worker, text);
-        // A viewer naming a bot always gets a reply; otherwise throttle a bit.
-        if (!named[0] && now - worker.lastViewerReplyAt < VIEWER_REPLY_COOLDOWN_MS) return;
-        const engaging = this._looksDirectedAtChat(text) || text.length > 30;
-        const chance = named[0] ? 1 : (engaging ? 0.85 : 0.5);
+        // A viewer naming a bot, OR addressing the bots/chat collectively ("hey AI
+        // bots...", "chat, ...", "you guys...", a question to chat) ALWAYS gets an
+        // answer — bypass the throttle. Otherwise reply sometimes.
+        const forced = !!named[0] || this._addressesChat(text);
+        if (!forced && now - worker.lastViewerReplyAt < VIEWER_REPLY_COOLDOWN_MS) return;
+        const chance = forced ? 1 : (text.length > 30 ? 0.6 : 0.4);
         if (Math.random() > chance) return;
         worker.lastViewerReplyAt = now;
         const bot = named[0] || this._pickReplyBot(worker, null);
-        if (bot) this._queueReply(worker, bot, text, { fromViewer: username, channel: 'chat', direct: !!named[0] });
+        if (bot) this._queueReply(worker, bot, text, { fromViewer: username, channel: 'chat', direct: !!named[0], answering: forced, force: forced });
     }
 
     /** Words chat has beaten to death (appear across many recent lines) — bots are told to drop them. */
@@ -1055,8 +1066,9 @@ class AiChatbotService {
         if (!bot) return false;
         const now = Date.now();
         const last = worker.replyCooldown.get(bot.username) || 0;
-        // A direct name-callout always gets a response, even if the bot just spoke.
-        if (!meta.direct && now - last < MENTION_COOLDOWN_MS) return false;
+        // A direct name-callout or a forced answer (someone addressed the bots)
+        // always gets a response, even if the bot just spoke.
+        if (!meta.direct && !meta.force && now - last < MENTION_COOLDOWN_MS) return false;
         worker.replyCooldown.set(bot.username, now);
         const opts = {
             addressedText: String(text).slice(-300),
