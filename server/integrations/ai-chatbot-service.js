@@ -276,6 +276,7 @@ class AiChatbotService {
                 lastStreamerSig: '',     // last streamer utterance acted on (exact dedup)
                 lastSceneReacted: '',    // last scene a bot reacted to (dedup game reactions)
                 lastSceneReactAt: 0,     // throttle scene reactions
+                realViewers: new Map(),  // lowercased real-human username → last-seen ts
                 recentBotLines: [],
                 intents: [],             // pending message requests: [{ kind:'reply'|'hype', bot, opts, prio, ts }]
                 replyCooldown: new Map(), // bot.username → last reactive-reply ts
@@ -524,9 +525,9 @@ class AiChatbotService {
         else len = 'a slightly longer take, under 30 words but still casual chat';
         let intent = '';
         const ir = Math.random();
-        if (ir < 0.22) intent = 'reply to or clown on something another chatter just said (see recent chat), not the streamer';
-        else if (ir < 0.32) intent = 'ask the streamer or chat a dumb or loaded question';
-        else if (ir < 0.40) intent = 'pick a petty fight with another viewer in chat';
+        if (ir < 0.25) intent = 'ask the streamer a dumb or loaded question about what they\'re doing';
+        else if (ir < 0.40) intent = 'roast or backseat the streamer\'s gameplay/decision';
+        // (No "reply to another chatter" intent — that made bots talk to each other.)
         return { len, intent };
     }
 
@@ -592,6 +593,7 @@ class AiChatbotService {
             beat.intent && !addressed ? `THIS MESSAGE: ${beat.intent}` : '',
             emoteSample.length ? `You may use these chat emotes when they fit (a message can be JUST an emote): ${emoteSample.join(' ')}. Don't force them.` : '',
             `GROUND YOURSELF IN REALITY: react to the actual streamer, the real screen, and real viewers. Do NOT invent fake people, fake backstories, or a running meme and obsess over it. If chat started a dumb bit, don't beat it into the ground.`,
+            `Your focus is the STREAMER (${streamer}) and the stream. Do NOT talk ABOUT other chatters or single them out by name, and NEVER narrate what another chatter is "doing" (e.g. "look what BigTrucker is doing") — chatters are just typing, they aren't doing anything you can see. Only reply to another person if they clearly said something TO chat/you.`,
             `Do NOT reuse your own catchphrase/sign-off every message (e.g. don't end everything with "LET'S GOOO"). Vary how you talk.`,
             dead.length ? `Chat has BEATEN THESE TO DEATH — do NOT mention them again, move on: ${dead.join(', ')}.` : '',
             `You are WATCHING — react like a viewer, never describe the screen or say "the screen shows".`,
@@ -622,9 +624,21 @@ class AiChatbotService {
             contextParts.push(`(No live audio/screen read yet — go off the recent chat and the category.)`);
         }
         contextParts.push(`(context) ${streamer} is streaming "${title}" — ${category}${tags.length ? ` [${tags.join(', ')}]` : ''}${s.viewer_count != null ? `, ${s.viewer_count} watching` : ''}. Don't keep commenting on the title.`);
-        const recent = this._recentChatLines(worker.streamId, 12);
+        // Recent chat, with the bot pool anonymized to generic "someone" so bots
+        // don't single each other out by name; REAL viewers keep their name (★).
+        const botNames = new Set(worker.bots.map((b) => b.username.toLowerCase()));
+        const realSet = worker.realViewers || new Map();
+        const recent = this._recentChatLines(worker.streamId, 12).map((line) => {
+            const m = String(line).match(/^([^:]+):\s*(.*)$/);
+            if (!m) return line;
+            const name = m[1].trim();
+            const low = name.toLowerCase().replace(/^\[[^\]]+\]\s*/, '');
+            if (realSet.has(low)) return `★${name}: ${m[2]}`;   // real viewer — you CAN reply to them
+            if (botNames.has(low)) return `someone: ${m[2]}`;    // fellow bot — crowd noise, don't name them
+            return `${name}: ${m[2]}`;
+        });
         if (recent.length) {
-            contextParts.push(`RECENT CHAT (newest last — play off it, don't copy it, and don't dogpile one topic):\n${recent.join('\n')}`);
+            contextParts.push(`RECENT CHAT (newest last; ★ = a REAL viewer you can reply to by name; "someone" = background crowd, do NOT address them by name):\n${recent.join('\n')}`);
         } else {
             contextParts.push(`RECENT CHAT: dead silent — get something going off what's on stream.`);
         }
@@ -920,15 +934,20 @@ class AiChatbotService {
             return;
         }
 
-        // A regular viewer typed — reply sometimes (more often if it's a question or
-        // aimed at chat), throttled so bots don't dogpile every message.
+        // A REAL viewer typed — remember them (so bots engage humans, not each other)
+        // and reply readily. Real viewers should get engaged MORE than bots engage
+        // each other.
         const now = Date.now();
-        if (now - worker.lastViewerReplyAt < VIEWER_REPLY_COOLDOWN_MS) return;
-        const engaging = this._looksDirectedAtChat(text) || text.length > 40;
-        const chance = engaging ? 0.7 : 0.28;
+        worker.realViewers.set(uname, now);
+        for (const [k, ts] of worker.realViewers) if (now - ts > 300000) worker.realViewers.delete(k);
+
+        const named = this._detectAddressedBots(worker, text);
+        // A viewer naming a bot always gets a reply; otherwise throttle a bit.
+        if (!named[0] && now - worker.lastViewerReplyAt < VIEWER_REPLY_COOLDOWN_MS) return;
+        const engaging = this._looksDirectedAtChat(text) || text.length > 30;
+        const chance = named[0] ? 1 : (engaging ? 0.85 : 0.5);
         if (Math.random() > chance) return;
         worker.lastViewerReplyAt = now;
-        const named = this._detectAddressedBots(worker, text);
         const bot = named[0] || this._pickReplyBot(worker, null);
         if (bot) this._queueReply(worker, bot, text, { fromViewer: username, channel: 'chat', direct: !!named[0] });
     }
