@@ -570,6 +570,7 @@ class AiChatbotService {
         // A rotating handful of real emotes this bot can sprinkle in.
         const emoteSample = [...(worker.emotes || [])].sort(() => Math.random() - 0.5).slice(0, 10);
         const dead = this._dominantTopics(worker);
+        const bannedOpener = this._bannedOpener(worker);
 
         // The bot's OWN recent line — so when the streamer replies to it, it can
         // defend/continue its specific point instead of firing a random roast.
@@ -603,8 +604,10 @@ class AiChatbotService {
             emoteSample.length ? `You may use these chat emotes when they fit (a message can be JUST an emote): ${emoteSample.join(' ')}. Don't force them.` : '',
             `GROUND YOURSELF IN REALITY: react to the actual streamer, the real screen, and real viewers. Do NOT invent fake people, fake backstories, or a running meme and obsess over it. If chat started a dumb bit, don't beat it into the ground.`,
             `Your focus is the STREAMER (${streamer}) and the stream. Do NOT talk ABOUT other chatters or single them out by name, and NEVER narrate what another chatter is "doing" (e.g. "look what BigTrucker is doing") — chatters are just typing, they aren't doing anything you can see. Only reply to another person if they clearly said something TO chat/you.`,
+            `VARIETY IS EVERYTHING. Do NOT copy the opener, sentence structure, or joke format of the recent chat lines below. If everyone is making the same kind of joke or riffing on one thing, say something COMPLETELY different about what's happening now.`,
+            bannedOpener ? `Do NOT start your message with "${bannedOpener}" — the last several messages all opened that way. Start differently.` : '',
             `Do NOT reuse your own catchphrase/sign-off every message (e.g. don't end everything with "LET'S GOOO"). Vary how you talk.`,
-            dead.length ? `Chat has BEATEN THESE TO DEATH — do NOT mention them again, move on: ${dead.join(', ')}.` : '',
+            dead.length ? `Chat has BEATEN THIS TO DEATH — do NOT mention it AT ALL, hard pivot to a totally different subject: ${dead.join(', ')}.` : '',
             `You are WATCHING — react like a viewer, never describe the screen or say "the screen shows".`,
             `PG-13: no slurs, hate, real threats, nothing sexual about real people, no doxxing. Trolling/arguing/roasting is fine.`,
             `Output ONLY the raw chat message text — no quotes, no name prefix, no explanation.`,
@@ -987,8 +990,21 @@ class AiChatbotService {
                 docCount.set(word, (docCount.get(word) || 0) + 1);
             }
         }
-        const threshold = Math.max(3, Math.ceil(lines.length * 0.35));
-        return [...docCount.entries()].filter(([, c]) => c >= threshold).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w);
+        // Lower threshold so a theme spread across a few repeated words gets caught.
+        const threshold = Math.max(3, Math.ceil(lines.length * 0.22));
+        return [...docCount.entries()].filter(([, c]) => c >= threshold).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+    }
+
+    /** The opener word most recent bot lines share (e.g. "lmao"), if it's a rut. */
+    _bannedOpener(worker) {
+        const openers = (worker.recentBotLines || []).slice(-6)
+            .map((l) => String(l).replace(/^[^:]+:\s*/, '').toLowerCase().replace(/[^a-z ]/g, '').trim().split(/\s+/)[0])
+            .filter(Boolean);
+        if (openers.length < 3) return '';
+        const counts = {};
+        for (const o of openers) counts[o] = (counts[o] || 0) + 1;
+        const [top, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] || [];
+        return (n >= 3) ? top : '';   // 3+ of the last 6 opened the same way
     }
 
     /** Heuristic: does the streamer's speech sound like an exciting/reacting moment? */
@@ -1267,6 +1283,18 @@ class AiChatbotService {
                 const cutoff = Date.now() - TRANSCRIPT_WINDOW_MS;
                 worker.transcriptChunks = worker.transcriptChunks.filter((c) => c.ts >= cutoff).slice(-14);
                 console.log(`[AI-Hear] stream ${worker.streamId}: +${clean.length} chars ("${clean.slice(0, 80)}...")`);
+                // FAST PATH: if the streamer said a bot's NAME on mic, reply right
+                // away off the raw transcript — don't wait ~15s for the digest, which
+                // may paraphrase the name away. The raw text preserves "anon600" etc.
+                const namedNow = this._detectAddressedBots(worker, clean);
+                if (namedNow.length) {
+                    const sig = clean.toLowerCase().slice(-80);
+                    if (sig !== worker._lastNameCalloutSig) {
+                        worker._lastNameCalloutSig = sig;
+                        for (const b of namedNow) this._queueReply(worker, b, clean, { direct: true, fromStreamer: true, channel: 'mic' });
+                        console.log(`[AI-Bots] stream ${worker.streamId}: streamer named ${namedNow.map((b) => b.username).join(',')} on mic — replying`);
+                    }
+                }
                 this._updateSituation(worker);
             } else {
                 console.log(`[AI-Hear] stream ${worker.streamId}: transcript empty this cycle (quiet/no speech)`);
