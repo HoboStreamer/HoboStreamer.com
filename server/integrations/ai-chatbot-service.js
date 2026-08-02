@@ -457,6 +457,14 @@ class AiChatbotService {
             opts = {};
         }
         if (!bot) return;
+        // Hard anti-domination: never let the same bot post twice in a row, UNLESS
+        // the streamer named it directly. If it's a repeat, try to swap to another
+        // available bot; if none, skip this tick so a different bot goes next time.
+        if (bot.username === worker.lastActiveBot && !opts.direct) {
+            const alt = this._pickReplyBot(worker, null);
+            if (alt && alt.username !== worker.lastActiveBot) { bot = alt; }
+            else return;
+        }
         await this._generateAndPost(worker, bot, opts);
         worker.errorCount = 0;
         worker.lastPostAt = Date.now();
