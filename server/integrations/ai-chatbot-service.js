@@ -201,30 +201,40 @@ class AiChatbotService {
                 matchWords: (gen.words[0] === 'anon')
                     ? []
                     : (gen.words || []).map((w) => String(w).toLowerCase()).filter((w) => w.length >= 4),
+                // For TYPED addressing (chat): the full username and the core
+                // adj+noun, both glued & lowercased — so "toxicwizard_ttv",
+                // "@ToxicWizard", or "toxicwizard" all match.
+                nameNorm: gen.username.toLowerCase().replace(/[^a-z0-9]/g, ''),
+                coreNorm: (gen.words || []).join('').toLowerCase().replace(/[^a-z0-9]/g, ''),
             });
         }
         return bots;
     }
 
     /**
-     * Detect which bots the streamer just addressed by name in a transcript
-     * snippet. Whisper won't reproduce "BasedMenace69", but it will hear the
-     * underlying words ("based", "menace"), so match on those. Returns an array
-     * of bots (usually 0 or 1).
+     * Detect which bots were addressed by name. Handles BOTH:
+     *  - TYPED chat: the streamer types the actual username, glued together
+     *    ("toxicwizard_ttv", "@ToxicWizard", "toxicwizard") — match the glued
+     *    username / core name as a substring.
+     *  - VOICE: Whisper won't reproduce "ToxicWizard", but hears the words
+     *    ("toxic wizard") — match the spaced words.
+     * Returns an array of bots (usually 0 or 1).
      */
     _detectAddressedBots(worker, text) {
-        const norm = ' ' + String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
-        if (norm.length < 3) return [];
+        const spaced = ' ' + String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+        const glued = String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+        if (spaced.length < 3 && glued.length < 3) return [];
         const hits = [];
         for (const bot of worker.bots) {
+            // TYPED: full username or core adj+noun appears glued in the text.
+            if (bot.nameNorm && bot.nameNorm.length >= 4 && glued.includes(bot.nameNorm)) { hits.push(bot); continue; }
+            if (bot.coreNorm && bot.coreNorm.length >= 6 && glued.includes(bot.coreNorm)) { hits.push(bot); continue; }
+            // VOICE: distinctive noun word, or the full spaced name.
             const words = bot.matchWords || [];
             if (!words.length) continue;
-            // The distinctive noun (2nd word) alone is enough; for the adjective
-            // require the noun too (adjectives like "big"/"the" are too common).
             const noun = words[words.length - 1];
-            if (noun && norm.includes(` ${noun} `)) { hits.push(bot); continue; }
-            // Full de-camelCased name spoken ("based menace")
-            if (words.length >= 2 && norm.includes(` ${words.join(' ')} `)) hits.push(bot);
+            if (noun && spaced.includes(` ${noun} `)) { hits.push(bot); continue; }
+            if (words.length >= 2 && spaced.includes(` ${words.join(' ')} `)) hits.push(bot);
         }
         return hits;
     }
@@ -1018,7 +1028,8 @@ class AiChatbotService {
         if (!bot) return false;
         const now = Date.now();
         const last = worker.replyCooldown.get(bot.username) || 0;
-        if (now - last < MENTION_COOLDOWN_MS) return false;
+        // A direct name-callout always gets a response, even if the bot just spoke.
+        if (!meta.direct && now - last < MENTION_COOLDOWN_MS) return false;
         worker.replyCooldown.set(bot.username, now);
         const opts = {
             addressedText: String(text).slice(-300),
