@@ -260,7 +260,9 @@ class AiChatbotService {
                 situation: null,         // digest: { streamerSaid, watching, scene, addressingChat, ts }
                 lastSituationAt: 0,      // throttle the digest LLM call
                 situating: false,
-                lastStreamerSig: '',     // dedupe acting on the same streamer utterance
+                digestSeenTs: 0,         // ts of last transcript chunk fed to the digest
+                lastStreamerSaid: '',    // last streamer utterance acted on (fuzzy dedup)
+                lastStreamerSig: '',     // last streamer utterance acted on (exact dedup)
                 recentBotLines: [],
                 intents: [],             // pending message requests: [{ kind:'reply'|'hype', bot, opts, prio, ts }]
                 replyCooldown: new Map(), // bot.username → last reactive-reply ts
@@ -553,9 +555,12 @@ class AiChatbotService {
         // Who/what this reply is answering (so the bot actually engages it).
         let replyInstruction = '';
         if (direct) {
-            replyInstruction = `${streamer} (the STREAMER) just said YOUR name and is talking to YOU. Answer exactly what they said.`;
+            replyInstruction = `${streamer} (the STREAMER) just said YOUR name and is talking to YOU (${bot.username})${myLastLine ? `, replying to your line "${myLastLine}"` : ''}. Answer/clap back at exactly what they said, in your voice.`;
+        } else if (fromStreamer && opts.answering) {
+            replyInstruction = `${streamer} (the STREAMER) just ${channel === 'chat' ? 'typed to chat' : 'asked/told chat'}: react to it directly and answer them — like a viewer replying to the streamer.`;
         } else if (fromStreamer) {
-            replyInstruction = `The STREAMER just ${channel === 'chat' ? 'typed this in chat' : 'said this on mic'} — and they're replying to YOU (${bot.username})${myLastLine ? `, specifically to your line "${myLastLine}"` : ''}. Engage their EXACT words: answer their question, defend your take, or clap back at their specific point with a NEW angle. Do not just fire a generic insult, and do not repeat what you already said.`;
+            // Proactive: goosely is just talking; chat clowns on THEM.
+            replyInstruction = `${streamer} (the STREAMER) just said/did the thing below. React to ${streamer} SPECIFICALLY — clown on them for it, quote them back, roast their take, or hype/agree with a twist. Make it obviously about what ${streamer} just said. Do NOT pretend they were talking to you, and do NOT just comment on the general topic.`;
         } else if (fromViewer) {
             replyInstruction = `Another viewer "${fromViewer}" just ${channel === 'chat' ? 'typed this in chat' : 'said this'}. React to or clap back at THEM specifically.`;
         }
@@ -572,6 +577,7 @@ class AiChatbotService {
             beat.intent && !addressed ? `THIS MESSAGE: ${beat.intent}` : '',
             emoteSample.length ? `You may use these chat emotes when they fit (a message can be JUST an emote): ${emoteSample.join(' ')}. Don't force them.` : '',
             `GROUND YOURSELF IN REALITY: react to the actual streamer, the real screen, and real viewers. Do NOT invent fake people, fake backstories, or a running meme and obsess over it. If chat started a dumb bit, don't beat it into the ground.`,
+            `Do NOT reuse your own catchphrase/sign-off every message (e.g. don't end everything with "LET'S GOOO"). Vary how you talk.`,
             dead.length ? `Chat has BEATEN THESE TO DEATH — do NOT mention them again, move on: ${dead.join(', ')}.` : '',
             `You are WATCHING — react like a viewer, never describe the screen or say "the screen shows".`,
             `PG-13: no slurs, hate, real threats, nothing sexual about real people, no doxxing. Trolling/arguing/roasting is fine.`,
@@ -651,27 +657,34 @@ class AiChatbotService {
         worker.lastSituationAt = now;
         worker.situating = true;
         try {
-            const raw = this._currentTranscript(worker);
+            // Feed only the NEW audio since the last digest (usually the last ~15s
+            // chunk) so streamer_said is the streamer's LATEST utterance, not an
+            // ever-growing summary that makes bots re-react to the same line.
+            const fresh = (worker.transcriptChunks || []).filter((c) => c.ts > (worker.digestSeenTs || 0));
+            const rawNew = fresh.map((c) => c.text).join(' ').replace(/\s+/g, ' ').trim().slice(-500);
+            const priorText = this._currentTranscript(worker).slice(-300); // brief context only
             const visual = this._currentVisual(worker);
-            if (!raw && !visual) return;
+            if (!rawNew && !visual) return;
+            if (fresh.length) worker.digestSeenTs = fresh[fresh.length - 1].ts;
             const streamer = worker.stream.display_name || worker.stream.username || 'the streamer';
             const botLines = (worker.recentBotLines || []).slice(-10).map((l) => String(l).replace(/^[^:]+:\s*/, ''));
 
             const sys = [
-                `You are the "ears and eyes" for chat bots on ${streamer}'s livestream. Turn messy live signals into a clean picture of what the STREAMER is doing right now.`,
-                `The AUDIO TRANSCRIPT is unreliable and mixes THREE sources you must separate:`,
-                `  1) ${streamer}'s OWN voice (what they say to chat / while playing) — THIS is what matters.`,
-                `  2) The chat bots' text-to-speech being read aloud on ${streamer}'s system — this is an ECHO of messages chat just posted; IGNORE it. The list of "recent chat lines" below is exactly that echo — anything in the transcript that matches those lines is NOT the streamer.`,
-                `  3) Audio from a video/game ${streamer} is watching/playing (ads, YouTube narrators, game dialogue) — attribute to "watching", not to the streamer.`,
-                `Fuse the streamer's voice with what's ON SCREEN into one coherent read. Reply ONLY with compact JSON.`,
+                `You are the "ears and eyes" for chat bots on ${streamer}'s livestream. Turn messy live signals into a clean picture of what the STREAMER is doing RIGHT NOW.`,
+                `The AUDIO is unreliable and mixes THREE sources you must separate:`,
+                `  1) ${streamer}'s OWN voice — THIS is what matters. Report only their MOST RECENT thought, verbatim-ish, not a summary of the last minute.`,
+                `  2) The chat bots' text-to-speech read aloud on ${streamer}'s system — an ECHO of messages chat just posted; IGNORE it. The "recent chat lines" below ARE that echo; anything in the audio matching them is NOT the streamer.`,
+                `  3) Audio from a video/game ${streamer} is watching/playing (ads, YouTube narrators, game dialogue) — attribute to "watching", NOT to the streamer. If unsure whether a line is the streamer or the video, prefer "watching".`,
+                `Fuse the streamer's voice with what's ON SCREEN. Reply ONLY with compact JSON.`,
             ].join('\n');
             const user = [
-                raw ? `AUDIO TRANSCRIPT (last ~1 min, mixed sources):\n"${raw}"` : `AUDIO: (silent)`,
+                rawNew ? `NEWEST AUDIO (~15s, what to focus on):\n"${rawNew}"` : `NEWEST AUDIO: (silent)`,
+                priorText ? `(slightly earlier audio, context only): "${priorText}"` : '',
                 visual ? `ON SCREEN NOW: ${visual}` : `ON SCREEN: (unknown)`,
-                botLines.length ? `RECENT CHAT LINES (these are the bot-TTS echo to ignore in the audio):\n- ${botLines.join('\n- ')}` : `RECENT CHAT: (none)`,
+                botLines.length ? `RECENT CHAT LINES (bot-TTS echo to ignore in the audio):\n- ${botLines.join('\n- ')}` : `RECENT CHAT: (none)`,
                 `Stream: "${worker.stream.title || ''}" — ${worker.stream.category || 'IRL'}.`,
-                `JSON: {"streamer_said":"<${streamer}'s OWN words/actions right now, excluding bot-echo and watched-media; empty string if they were silent>","watching":"<video/game/content they're reacting to, if any; else empty>","addressing_chat":<true if they're talking to chat/asking chat something//reacting to a viewer, else false>,"scene":"<ONE vivid line: what's actually happening for a viewer to react to & troll>"}`,
-            ].join('\n\n');
+                `JSON: {"streamer_said":"<${streamer}'s LATEST own words/action only (from the newest audio), excluding echo and watched-media; empty if they were silent or only the video was talking>","watching":"<video/game/content they're reacting to, if any; else empty>","addressing_chat":<true ONLY if they directly ask chat something or talk to chat/a viewer; false for narrating/reacting to their video>,"scene":"<ONE vivid line a viewer would react to & troll>"}`,
+            ].filter(Boolean).join('\n\n');
 
             const rawOut = await aiProvider.chatCompletion({
                 baseUrl: worker.config.base_url, apiKey: worker.config.api_token, model: worker.config.model,
@@ -721,7 +734,11 @@ class AiChatbotService {
         if (worker.stopped) return;
         const sig = String(text).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(-140);
         if (sig && sig === worker.lastStreamerSig) return;
+        // Fuzzy dedup: if this utterance mostly overlaps the last one we acted on,
+        // it's the same rambling re-extracted — don't re-trigger a reply.
+        if (worker.lastStreamerSaid && this._overlapRatio(text, worker.lastStreamerSaid) >= 0.6) return;
         worker.lastStreamerSig = sig;
+        worker.lastStreamerSaid = String(text);
         worker.lastRealInput = { username: worker.stream.display_name || worker.stream.username || 'streamer', text: String(text).slice(-300), isStreamer: true, ts: Date.now() };
 
         // 1) Direct name callout → highest priority.
@@ -751,15 +768,26 @@ class AiChatbotService {
             return;
         }
 
-        // 4) Otherwise let a bot engage what the streamer's doing (~55% of the time
-        //    so not every utterance gets a reply — but they clearly ARE listening).
+        // 4) Otherwise a bot proactively clowns on what the streamer's doing (~60%
+        //    so not every utterance gets a reply). Rotate a FRESH bot (not the sticky
+        //    convo partner) so one bot doesn't monologue with its catchphrase.
         if (String(text).trim().length < 8) return;
-        if (Math.random() < 0.55) {
-            const bot = this._pickReplyBot(worker, this._conversationPartner(worker));
+        if (Math.random() < 0.6) {
+            const bot = this._pickReplyBot(worker, null);
             if (bot && this._queueReply(worker, bot, text, { fromStreamer: true, channel: 'mic' })) {
                 console.log(`[AI-Bots] stream ${worker.streamId}: engaging streamer — ${bot.username}`);
             }
         }
+    }
+
+    /** Fraction of `a`'s content words that also appear in `b` (0..1). */
+    _overlapRatio(a, b) {
+        const toks = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
+            .filter((w) => w.length >= 3 && !TOPIC_STOPWORDS.has(w));
+        const A = toks(a); if (!A.length) return 0;
+        const B = new Set(toks(b));
+        let m = 0; for (const w of A) if (B.has(w)) m++;
+        return m / A.length;
     }
 
     /** Heuristic: is the streamer talking TO chat / asking a question (vs narrating)? */
