@@ -195,7 +195,10 @@ app.use(helmet({
             fontSrc: ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
             imgSrc: ["'self'", "data:", "blob:", "image.tmdb.org", "https://hobo.tools", "cdn.frankerfacez.com", "cdn.betterttv.net", "cdn.7tv.app"],
             connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest", "https://cdn.jsdelivr.net", "https://esm.sh", "https://static.cloudflareinsights.com"],
-            mediaSrc: ["'self'", "blob:"],
+            // Offloaded VODs/clips play from presigned B2/R2 object-store URLs (the
+            // playback route 302-redirects there), so those hosts must be allowed or the
+            // browser blocks the media element. Specific host + wildcard for region/account moves.
+            mediaSrc: ["'self'", "blob:", "https://s3.us-west-004.backblazeb2.com", "https://*.backblazeb2.com", "https://*.r2.cloudflarestorage.com"],
             frameSrc: ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://player.vimeo.com"],
             workerSrc: ["'self'", "blob:"],
             scriptSrcAttr: ["'unsafe-inline'"],
