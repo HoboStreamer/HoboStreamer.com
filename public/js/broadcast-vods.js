@@ -19,14 +19,11 @@ async function loadBroadcastVODs() {
     if (!grid) return;
 
     try {
-        // Fetch VODs from API
-        const response = await fetch('/api/vods');
-        const vods = await response.json();
-
-        if (!Array.isArray(vods)) {
-            grid.innerHTML = '<p class="muted" style="grid-column: 1/-1; text-align: center; padding: 40px">No VODs found</p>';
-            return;
-        }
+        // Fetch the current creator's own VODs (includes private/recording ones).
+        // The endpoint returns { vods, total, ... }, NOT a bare array.
+        const response = await fetch('/api/vods/mine', { credentials: 'same-origin' });
+        const data = await response.json();
+        const vods = Array.isArray(data) ? data : (data.vods || []);
 
         _vodArchive = vods;
         renderBroadcastVODGrid(vods);
@@ -82,12 +79,18 @@ function openBroadcastVODModal(vodIndex) {
     document.getElementById('bc-vod-modal-date').textContent = new Date(vod.created_at).toLocaleDateString();
     document.getElementById('bc-vod-modal-duration').textContent = formatDuration(vod.duration_seconds || 0);
     document.getElementById('bc-vod-modal-views').textContent = (vod.view_count || 0).toLocaleString();
-    document.getElementById('bc-vod-is-public').checked = vod.is_public === true;
+    document.getElementById('bc-vod-is-public').checked = !!vod.is_public;
 
-    // Set video source
+    // Set video source — VODs are served by filename via /api/vods/file/:filename
+    // (there is no `stream_url` field on a VOD; the real path is `file_path`).
     const player = document.getElementById('bc-vod-player');
-    if (player && vod.stream_url) {
-        player.src = vod.stream_url;
+    if (player) {
+        if (vod.file_path) {
+            const filename = vod.file_path.split('/').pop();
+            player.src = `/api/vods/file/${filename}?t=${Date.now()}`;
+        } else {
+            player.removeAttribute('src');
+        }
     }
 
     // Load chat replay
@@ -195,9 +198,9 @@ function filterBroadcastVODs(filterValue, filterType) {
     let filtered = _vodArchive;
 
     if (filterValue === 'public') {
-        filtered = filtered.filter(v => v.is_public === true);
+        filtered = filtered.filter(v => !!v.is_public);
     } else if (filterValue === 'private') {
-        filtered = filtered.filter(v => v.is_public !== true);
+        filtered = filtered.filter(v => !v.is_public);
     }
 
     renderBroadcastVODGrid(filtered);
@@ -230,10 +233,12 @@ async function updateBroadcastVODVisibility(isPublic) {
  * Download VOD
  */
 function downloadBroadcastVOD() {
-    if (!_vodCurrentModal || !_vodCurrentModal.stream_url) return;
+    if (!_vodCurrentModal || !_vodCurrentModal.file_path) return;
+    const filename = _vodCurrentModal.file_path.split('/').pop();
+    const ext = (filename.split('.').pop() || 'webm').toLowerCase();
     const link = document.createElement('a');
-    link.href = _vodCurrentModal.stream_url;
-    link.download = `${_vodCurrentModal.title || 'stream'}.mp4`;
+    link.href = `/api/vods/file/${filename}`;
+    link.download = `${_vodCurrentModal.title || 'stream'}.${ext}`;
     link.click();
 }
 

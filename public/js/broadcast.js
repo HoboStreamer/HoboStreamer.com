@@ -2273,32 +2273,35 @@ function startGlobalDisplayTimers() {
                 return bytes;
             };
 
-            if (ss.viewerConnections.size > 0) {
-                // Direct peer connections — sample the first connected one
+            // Primary source: the SFU produce transport — this IS the broadcaster's
+            // real ingest uplink, so its byte counter and connection state are the
+            // authoritative numbers to show. (Viewer PCs are only P2P-fallback downlinks.)
+            const sfuState = _sfuProduceStates.get(ss.streamData?.id);
+            if (sfuState?.transport) {
+                try {
+                    connState = sfuState.transport.connectionState || connState;
+                    totalBytesSent = extractStats(await sfuState.transport.getStats());
+                    hasStats = totalBytesSent > 0;
+                } catch {}
+            }
+
+            // Fallback: direct P2P viewer connections. Pick the healthiest one
+            // (most bytes sent) rather than blindly sampling the first — the first
+            // entry may be a still-negotiating or failed peer.
+            if (!hasStats && ss.viewerConnections.size > 0) {
                 for (const [, pc] of ss.viewerConnections) {
                     try {
-                        connState = pc.iceConnectionState;
-                        totalBytesSent = extractStats(await pc.getStats());
-                        hasStats = totalBytesSent > 0;
-                        break;
+                        const s = pc.iceConnectionState;
+                        const bytes = extractStats(await pc.getStats());
+                        if (bytes > totalBytesSent) { totalBytesSent = bytes; connState = s; }
                     } catch {}
                 }
+                hasStats = totalBytesSent > 0;
             }
 
-            // Fallback: SFU produce transport (for restreaming scenarios)
-            if (!hasStats) {
-                const sfuState = _sfuProduceStates.get(ss.streamData?.id);
-                if (sfuState?.transport) {
-                    try {
-                        const sfuStats = await sfuState.transport.getStats();
-                        totalBytesSent = extractStats(sfuStats);
-                        hasStats = totalBytesSent > 0;
-                        if (hasStats) connState = 'connected';
-                    } catch {}
-                }
-            }
-
-            // Fallback: local stream settings (when no WebRTC stats available)
+            // Fallback: local stream settings (when no WebRTC stats available yet).
+            // Don't claim "connected" here — report the true transport/signaling state
+            // so the overlay never shows a fake healthy status.
             if (!hasStats && ss.localStream) {
                 const vt = ss.localStream.getVideoTracks()[0];
                 if (vt) {
@@ -2306,7 +2309,8 @@ function startGlobalDisplayTimers() {
                     resolution = `${st.width || '?'}x${st.height || '?'}`;
                     frameRate = st.frameRate || 0;
                 }
-                connState = ss.signalingWs?.readyState === WebSocket.OPEN ? 'connected' : 'disconnected';
+                connState = sfuState?.transport?.connectionState
+                    || (ss.signalingWs?.readyState === WebSocket.OPEN ? 'checking' : 'disconnected');
             }
 
             // Compute bitrate from byte deltas
@@ -3728,10 +3732,10 @@ function connectSignaling(streamId) {
         console.log(`[Broadcast] Signaling closed for stream ${streamId} (code=${ev.code}, intentional=${ss.signalingIntentionalClose})`);
         // Only reconnect if this was NOT an intentional close and the stream is still active
         if (ss.signalingIntentionalClose) return;
-        if (broadcastState.activeStreamId === streamId) updateBroadcastStatus('disconnected');
 
         // If server reconnect is disabled, clean up the stream on signaling disconnect
         if (broadcastState.settings.serverReconnect === false) {
+            if (broadcastState.activeStreamId === streamId) updateBroadcastStatus('disconnected');
             console.log(`[Broadcast] Server reconnect disabled — stopping stream ${streamId}`);
             toast('Server disconnected — stream stopped (auto-reconnect is off)', 'warning');
             cleanupStream(streamId);
@@ -3747,6 +3751,9 @@ function connectSignaling(streamId) {
             ss.signalingReconnectDelay = Math.min(ss.signalingReconnectDelay * 1.5, 30000);
             console.log(`[Broadcast] Reconnecting signaling for stream ${streamId} in ${Math.round(delay)}ms`);
             if (broadcastState.activeStreamId === streamId) {
+                // Reconnecting, not dead — the server keeps the stream live during a grace
+                // window, so show "Connecting…" rather than a scary "Disconnected".
+                updateBroadcastStatus('checking');
                 toast('Server disconnected — reconnecting...', 'warning');
             }
             ss.signalingReconnectTimer = setTimeout(() => {
@@ -4025,6 +4032,9 @@ async function _handleSfuProduceRequest(streamId) {
             if (connState === 'connected') {
                 console.log('[SFU Produce] Transport connected — RTP data flowing to SFU');
             }
+            // Drive the broadcaster status label off the REAL ingest transport state,
+            // not just the signaling socket — otherwise it stays stuck on "Connecting…".
+            updateBroadcastStatusFromConnections(streamId);
             if (connState === 'failed' || connState === 'closed') {
                 // Log ICE/DTLS stats before cleanup for debugging
                 try {
@@ -4054,6 +4064,10 @@ async function _handleSfuProduceRequest(streamId) {
         }
 
         console.log('[SFU Produce] Producing into local SFU for stream', streamId);
+
+        // Producers now exist — reflect "live" in the status label immediately,
+        // even if the transport 'connected' event already fired before this point.
+        updateBroadcastStatusFromConnections(streamId);
 
         // Log internal PC state after producing (PC is now fully set up)
         try {
