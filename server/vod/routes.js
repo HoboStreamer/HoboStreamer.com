@@ -1250,33 +1250,39 @@ router.get('/file/:filename', optionalAuth, async (req, res) => {
         let mediaRecord = null;
         let mediaType = null;
 
-        if (fs.existsSync(vodPath)) {
-            filePath = vodPath;
+        // Resolve the DB record by basename, NOT by exact file_path: legacy rows carry
+        // absolute paths from the old server, so an exact match would miss even files that
+        // are present locally. `%/filename` matches any directory prefix.
+        const likeName = `%/${filename}`;
+        const vodRow = db.get(
+            'SELECT id, user_id, is_public, is_recording, file_path, storage_provider, storage_key FROM vods WHERE file_path = ? OR file_path LIKE ?',
+            [vodPath, likeName]
+        );
+        const clipRow = vodRow ? null : db.get(
+            `SELECT c.id, c.user_id, c.is_public, c.file_path, c.storage_provider, c.storage_key,
+                    s.user_id AS stream_owner_id, v.user_id AS vod_owner_id
+             FROM clips c
+             LEFT JOIN streams s ON c.stream_id = s.id
+             LEFT JOIN vods v ON c.vod_id = v.id
+             WHERE c.file_path = ? OR c.file_path LIKE ?`,
+            [clipPath, likeName]
+        );
+
+        if (vodRow) {
             mediaType = 'vod';
-            mediaRecord = db.get('SELECT id, user_id, is_public, is_recording, file_path, storage_provider, storage_key FROM vods WHERE file_path = ?', [vodPath]);
-        } else if (fs.existsSync(clipPath)) {
-            filePath = clipPath;
+            mediaRecord = vodRow;
+            if (fs.existsSync(vodPath)) filePath = vodPath;
+        } else if (clipRow) {
             mediaType = 'clip';
-            mediaRecord = db.get(
-                `SELECT c.id, c.user_id, c.is_public, c.file_path, s.user_id AS stream_owner_id, v.user_id AS vod_owner_id
-                 FROM clips c
-                 LEFT JOIN streams s ON c.stream_id = s.id
-                 LEFT JOIN vods v ON c.vod_id = v.id
-                 WHERE c.file_path = ?`,
-                [clipPath]
-            );
+            mediaRecord = clipRow;
+            if (fs.existsSync(clipPath)) filePath = clipPath;
         } else {
-            // Not on local disk — maybe an offloaded VOD (B2/R2)
-            mediaType = 'vod';
-            mediaRecord = db.get('SELECT id, user_id, is_public, is_recording, file_path, storage_provider, storage_key FROM vods WHERE file_path = ?', [vodPath])
-                || db.get("SELECT id, user_id, is_public, is_recording, file_path, storage_provider, storage_key FROM vods WHERE file_path LIKE ?", [`%${filename}`]);
-            if (!mediaRecord || !vodStorage.isRemote(mediaRecord)) {
-                return res.status(404).json({ error: 'File not found' });
-            }
+            return res.status(404).json({ error: 'File not found' });
         }
 
-        if (!mediaRecord) {
-            return res.status(404).json({ error: 'Media record not found' });
+        // No local file and not on remote storage → genuinely gone.
+        if (!filePath && !vodStorage.isRemote(mediaRecord)) {
+            return res.status(404).json({ error: 'File not found' });
         }
 
         const isAdmin = req.user?.role === 'admin';
@@ -1297,10 +1303,11 @@ router.get('/file/:filename', optionalAuth, async (req, res) => {
             try { db.run("UPDATE vods SET last_accessed_at = datetime('now') WHERE id = ?", [mediaRecord.id]); } catch {}
         }
 
-        // Offloaded VOD (B2/R2) — redirect to a presigned object-store URL.
+        // Offloaded VOD or clip (B2/R2) — redirect to a presigned object-store URL.
+        // resolvePlayback presigns storage_key generically, so clips tier exactly like VODs.
         // Range requests are handled natively by the object store.
-        if (mediaType === 'vod' && require('./vod-storage').isRemote(mediaRecord) && !filePath) {
-            const plan = await require('./vod-storage').resolvePlayback(mediaRecord);
+        if (!filePath && vodStorage.isRemote(mediaRecord)) {
+            const plan = await vodStorage.resolvePlayback(mediaRecord);
             if (plan?.kind === 'redirect') {
                 res.set('Cache-Control', 'private, max-age=0');
                 return res.redirect(302, plan.url);
@@ -1308,7 +1315,7 @@ router.get('/file/:filename', optionalAuth, async (req, res) => {
             if (plan?.kind === 'file') {
                 filePath = plan.path;
             } else {
-                return res.status(404).json({ error: 'VOD file unavailable' });
+                return res.status(404).json({ error: 'Media file unavailable' });
             }
         }
 

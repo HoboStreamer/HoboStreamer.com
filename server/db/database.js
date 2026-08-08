@@ -331,6 +331,16 @@ function initDb() {
             database.exec('ALTER TABLE vods ADD COLUMN storage_key TEXT');
             console.log('[DB] Added storage_key column to vods');
         }
+        // Clips use the same local/B2/R2 tiering as VODs.
+        const clipCols = database.prepare('PRAGMA table_info(clips)').all().map(c => c.name);
+        if (!clipCols.includes('storage_provider')) {
+            database.exec("ALTER TABLE clips ADD COLUMN storage_provider TEXT DEFAULT 'local'");
+            console.log('[DB] Added storage_provider column to clips');
+        }
+        if (!clipCols.includes('storage_key')) {
+            database.exec('ALTER TABLE clips ADD COLUMN storage_key TEXT');
+            console.log('[DB] Added storage_key column to clips');
+        }
     } catch (e) { console.warn('[DB] VOD storage engine migration:', e.message); }
 
     // Migrate: per-slot RobotStreamer integrations — drop the UNIQUE(user_id)
