@@ -2478,6 +2478,38 @@ function _wsGetSlotRsFormData() {
     };
 }
 
+async function _wsRsLogin() {
+    const user_name = document.getElementById('ws-rs-rs-username')?.value.trim() || '';
+    const password = document.getElementById('ws-rs-rs-password')?.value || '';
+    if (!user_name || !password) {
+        _wsSetSlotRsStatus('Enter your RobotStreamer username and password.', 'error');
+        return;
+    }
+    _wsSetSlotRsStatus('Logging in to RobotStreamer…', 'info');
+    try {
+        const data = await api('/robotstreamer/integration/login', {
+            method: 'POST',
+            body: { user_name, password, managed_stream_id: _wsState.selectedId },
+        });
+        const integration = data.integration || {};
+        _wsPopulateSlotRsRobotSelect(data.available_robots || integration.available_robots || [], integration.robot_id || '');
+        // Token is now stored server-side — clear the password and reflect it in the token field.
+        const pw = document.getElementById('ws-rs-rs-password'); if (pw) pw.value = '';
+        const tokenField = document.getElementById('ws-rs-rs-token');
+        if (tokenField) { tokenField.value = ''; tokenField.placeholder = '✓ Token fetched & stored — leave blank'; }
+        const n = data.robot_count ?? (data.available_robots || []).length;
+        if (n === 1 && integration.robot_id) {
+            _wsSetSlotRsStatus(`Logged in as ${data.user_name}. Selected robot ${integration.stream_name || integration.robot_id} — just click Save.`, 'success');
+        } else if (n > 1) {
+            _wsSetSlotRsStatus(`Logged in as ${data.user_name}. Pick your robot below, then Save.`, 'success');
+        } else {
+            _wsSetSlotRsStatus(`Logged in as ${data.user_name}, but no robots were found — create one on RobotStreamer first.`, 'error');
+        }
+    } catch (err) {
+        _wsSetSlotRsStatus(err?.message || 'RobotStreamer login failed', 'error');
+    }
+}
+
 async function _wsValidateSlotRs() {
     const payload = _wsGetSlotRsFormData();
     _wsSetSlotRsStatus('Validating RobotStreamer settings…', 'info');
@@ -2541,6 +2573,18 @@ function _wsShowRestreamForm(existing) {
             <div style="background:rgba(74,158,255,0.1);border:1px solid rgba(74,158,255,0.3);border-radius:8px;padding:12px;margin:8px 0">
                 <p style="margin:0;font-size:0.82rem;color:var(--text-secondary)"><i class="fa-solid fa-robot" style="color:#4a9eff"></i> <strong>RobotStreamer</strong> uses a dedicated WebSocket connection (not RTMP). The token and robot below apply to <strong>this stream slot only</strong> — each slot can restream to a different robot.</p>
             </div>
+            <div class="form-group">
+                <label><i class="fa-solid fa-wand-magic-sparkles" style="color:#4a9eff"></i> Easiest: log in with RobotStreamer</label>
+                <div style="display:flex;gap:8px">
+                    <input type="text" id="ws-rs-rs-username" class="form-input form-input-sm" style="flex:1" placeholder="RobotStreamer username" autocomplete="off">
+                    <input type="password" id="ws-rs-rs-password" class="form-input form-input-sm" style="flex:1" placeholder="Password" autocomplete="off">
+                </div>
+                <button class="btn btn-small btn-primary" type="button" style="margin-top:6px" onclick="_wsRsLogin()">
+                    <i class="fa-solid fa-right-to-bracket"></i> Log in &amp; fetch robots
+                </button>
+                <p class="muted" style="font-size:0.75rem;margin:6px 0 0">We log in to RobotStreamer to grab your token &amp; robots automatically. Your password is used once and never stored.</p>
+            </div>
+            <div style="text-align:center;color:var(--text-secondary);font-size:0.75rem;margin:2px 0 8px">— or paste your token manually —</div>
             <div class="form-group">
                 <label>RobotStreamer Token</label>
                 <input type="password" id="ws-rs-rs-token" class="form-input form-input-sm" placeholder="Paste your robotstreamer-token cookie or JWT" autocomplete="off">

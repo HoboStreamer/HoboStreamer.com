@@ -214,6 +214,91 @@ class RobotStreamerService {
         });
     }
 
+    /**
+     * Minimal JSON POST to the RobotStreamer API. RobotStreamer's auth model passes
+     * the token inside the JSON body (no Authorization header), so this is reused by
+     * login/get_user_settings the same way robotPageLoad works.
+     */
+    async _rsApiPost(apiPath, payload) {
+        const body = JSON.stringify(payload);
+        return new Promise((resolve, reject) => {
+            const req = https.request({
+                hostname: API_HOST,
+                port: API_PORT,
+                path: apiPath,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(body),
+                    'Origin': RS_ORIGIN,
+                    'Referer': `${RS_ORIGIN}/`,
+                },
+                timeout: 15000,
+            }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    if (res.statusCode && res.statusCode >= 400) {
+                        return reject(new Error(`RobotStreamer API returned ${res.statusCode}`));
+                    }
+                    try { resolve(JSON.parse(data)); }
+                    catch (err) { reject(new Error(`RobotStreamer API parse error: ${err.message}`)); }
+                });
+            });
+            req.on('error', reject);
+            req.on('timeout', () => req.destroy(new Error('RobotStreamer API timed out')));
+            req.write(body);
+            req.end();
+        });
+    }
+
+    /**
+     * Log in to RobotStreamer with username + password and return the account token
+     * plus the user's robots. The password is used ONLY for this request and is never
+     * stored. (Each robot's OBS RTMP key is `<robot_id>?key=<stream_key>`.)
+     */
+    async loginWithCredentials(userName, password) {
+        const name = String(userName || '').trim();
+        const pass = String(password || '');
+        if (!name || !pass) throw new Error('RobotStreamer username and password are required');
+
+        const login = await this._rsApiPost('/v1/login', { user_name: name, password: pass });
+        if (!login || login.status !== 'ok' || !login.token) {
+            throw new Error('RobotStreamer login failed — check your username and password (RobotStreamer requires a verified email).');
+        }
+        const token = String(login.token);
+        const resolvedName = login.user_name || name;
+
+        let streamKey = '';
+        const robots = [];
+        try {
+            const settings = await this._rsApiPost('/v1/get_user_settings', { user_name: resolvedName, token });
+            streamKey = String(settings?.stream_key || '');
+            for (const raw of (settings?.robots || [])) {
+                const robot = typeof raw === 'string' ? safeJsonParse(raw, null) : raw;
+                if (!robot || robot.robot_id === undefined || robot.robot_id === null) continue;
+                robots.push({
+                    robot_id: String(robot.robot_id),
+                    robot_name: robot.robot_name || `Robot ${robot.robot_id}`,
+                    video_type: robot.video_type || '',
+                    status: 'offline',
+                    viewers: 0,
+                });
+            }
+        } catch (err) {
+            // Non-fatal: the token is still valid even if the settings lookup hiccups.
+            console.warn('[RobotStreamer] get_user_settings failed:', err.message);
+        }
+
+        return {
+            token,
+            user_name: resolvedName,
+            user_id: login.user_id != null ? String(login.user_id) : '',
+            stream_key: streamKey,
+            robots,
+        };
+    }
+
     async validateConfiguration({ token, robotInput }) {
         const resolvedToken = String(token || '').trim();
         const robotId = this.normalizeRobotInput(robotInput);

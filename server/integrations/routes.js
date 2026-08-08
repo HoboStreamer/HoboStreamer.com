@@ -102,6 +102,53 @@ router.post('/integration/validate', requireAuth, async (req, res) => {
     }
 });
 
+// Log in with RobotStreamer username + password to auto-fetch the token + robots,
+// as an easier alternative to pasting the token manually. The password is never stored.
+router.post('/integration/login', requireAuth, async (req, res) => {
+    try {
+        const slotId = resolveSlotId(req, res);
+        if (slotId === false) return;
+
+        const login = await robotStreamerService.loginWithCredentials(req.body?.user_name, req.body?.password);
+
+        // Persist the fetched token (write-only) so the user never has to paste it.
+        db.upsertRobotStreamerIntegration(req.user.id, {
+            token: login.token,
+            owner_id: login.user_id || undefined,
+            owner_name: login.user_name || undefined,
+        }, slotId);
+
+        // If the account has exactly one robot, fully configure + validate it now so
+        // the user only has to hit Save (or nothing, if they enable it).
+        let integration = null;
+        if (login.robots.length === 1) {
+            try {
+                const result = await robotStreamerService.upsertIntegration(
+                    req.user.id, { robot_input: login.robots[0].robot_id }, slotId);
+                integration = result.integration;
+            } catch (err) {
+                console.warn('[RS] Auto-select single robot failed:', err.message);
+            }
+        }
+        if (!integration) {
+            const row = slotId
+                ? db.getRobotStreamerIntegrationBySlot(req.user.id, slotId)
+                : db.getRobotStreamerIntegrationByUserId(req.user.id);
+            integration = robotStreamerService.sanitizeIntegration(row, { available_robots: login.robots });
+        }
+
+        res.json({
+            success: true,
+            user_name: login.user_name,
+            robot_count: login.robots.length,
+            available_robots: login.robots,
+            integration,
+        });
+    } catch (err) {
+        res.status(400).json({ error: err.message || 'RobotStreamer login failed' });
+    }
+});
+
 router.put('/integration', requireAuth, async (req, res) => {
     try {
         const slotId = resolveSlotId(req, res);
