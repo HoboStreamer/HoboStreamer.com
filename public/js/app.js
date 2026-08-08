@@ -2950,6 +2950,12 @@ async function loadVodPlayer(vodId) {
             clearInterval(window._liveVodPollTimer);
             window._liveVodPollTimer = null;
         }
+        // Reset live-DVR globals so a previously-viewed live stream's inflated
+        // duration can't leak into a completed VOD's timeline (which would let the
+        // scrubber seek past the real footage → permanent black screen).
+        window._liveVodIsLive = false;
+        window._liveVodDuration = 0;
+        window._liveVodFilename = null;
         // Clean up chat replay
         if (window._chatReplayTimer) {
             cancelAnimationFrame(window._chatReplayTimer);
@@ -3025,6 +3031,10 @@ async function loadVodPlayer(vodId) {
             }
 
             const filename = v.file_path.split('/').pop();
+            // Record the server-probed duration (ffprobe truth). The player clamps
+            // to this when the browser mis-reports the WebM container duration.
+            const serverDur = Number(v.duration_seconds || v.duration || 0);
+            video.dataset.serverDuration = (serverDur > 0 && !v.is_recording) ? String(serverDur) : '';
             video.src = `/api/vods/file/${filename}?t=${Date.now()}`;
             video.style.display = 'block';
 
@@ -4540,11 +4550,21 @@ function setupCustomVideoControls(prefix) {
             : `${m}:${String(sec).padStart(2, '0')}`;
     }
 
-    /** Get effective duration — uses server-reported duration as fallback for live VODs */
+    /**
+     * Get effective duration.
+     * - Live VODs: use the largest known duration (video vs. server live-info).
+     * - Completed VODs: trust the browser's container duration UNLESS it is missing
+     *   or absurdly larger than the server's ffprobe'd duration. Some WHIP recordings
+     *   carry a bogus inflated container duration; trusting it lets the scrubber seek
+     *   into a region that has no frames, leaving a permanent black screen. In that
+     *   case we clamp to the ffprobe'd truth so the timeline matches the real footage.
+     */
     function getEffectiveDuration() {
-        if (video.duration && isFinite(video.duration) && video.duration > 0) return video.duration;
-        if (window._liveVodIsLive && window._liveVodDuration > 0) return window._liveVodDuration;
-        return 0;
+        const vd = (video.duration && isFinite(video.duration) && video.duration > 0) ? video.duration : 0;
+        if (window._liveVodIsLive && window._liveVodDuration > 0) return Math.max(vd, window._liveVodDuration);
+        const sd = parseFloat(video.dataset.serverDuration || '') || 0;
+        if (vd > 0 && sd > 0) return (vd > sd * 1.5) ? sd : vd;
+        return vd || sd || 0;
     }
 
     function updateProgress() {
@@ -4586,6 +4606,18 @@ function setupCustomVideoControls(prefix) {
     video.addEventListener('ended', () => {
         btnPlay.innerHTML = '<i class="fa-solid fa-rotate-right"></i>';
         container.classList.add('paused');
+    });
+    // When the container over-reports its duration, the browser never fires 'ended'
+    // at the real end — it keeps "playing" black past the last frame. Detect the
+    // clamped case and stop at the true end so the VOD doesn't appear frozen/black.
+    video.addEventListener('timeupdate', () => {
+        if (window._liveVodIsLive) return;
+        const eff = getEffectiveDuration();
+        if (eff > 0 && isFinite(video.duration) && video.duration > eff * 1.5 && video.currentTime >= eff - 0.25) {
+            video.pause();
+            btnPlay.innerHTML = '<i class="fa-solid fa-rotate-right"></i>';
+            container.classList.add('paused');
+        }
     });
 
     // Click on video to toggle play
