@@ -238,9 +238,14 @@ async function presignGet(provider, key, expiresInSeconds = 900) {
     const client = clientFor(provider);
     if (!client) return null;
     loadSdk();
+    // Force the response MIME so the browser plays the media even when the stored
+    // object metadata is generic (legacy clips were uploaded as octet-stream).
+    const ext = path.extname(key || '').toLowerCase();
+    const mime = { '.webm': 'video/webm', '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }[ext];
     return Presigner.getSignedUrl(client, new S3.GetObjectCommand({
         Bucket: PROVIDER_ENV[provider].bucket,
         Key: key,
+        ...(mime ? { ResponseContentType: mime } : {}),
     }), { expiresIn: expiresInSeconds });
 }
 
