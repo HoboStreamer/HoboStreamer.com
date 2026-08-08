@@ -312,6 +312,10 @@ class StreamRecorder {
             '-crf', '20',
             '-deadline', 'realtime',
             '-cpu-used', '4',
+            // Force a keyframe every 2s so seeking always lands on one (no black scrub).
+            // Time-based so it's correct regardless of the source framerate.
+            '-force_key_frames', 'expr:gte(t,n_forced*2)',
+            '-g', '240',
             '-c:a', 'libvorbis',
             '-b:a', '128k',
             '-f', 'webm',
@@ -651,7 +655,10 @@ class StreamRecorder {
                 '-b:v', '2000k',
                 '-crf', '18',
                 '-deadline', 'realtime',
-                '-cpu-used', '4'
+                '-cpu-used', '4',
+                // Keyframe every 2s → seekable WebM (see RTMP path for rationale)
+                '-force_key_frames', 'expr:gte(t,n_forced*2)',
+                '-g', '240'
             );
             if (audioConsumer) {
                 ffmpegArgs.push('-c:a', 'libopus', '-b:a', '128k', '-application', 'audio');
@@ -667,7 +674,10 @@ class StreamRecorder {
                 '-b:v', '2000k',
                 '-crf', '18',
                 '-deadline', 'realtime',
-                '-cpu-used', '4'
+                '-cpu-used', '4',
+                // Keyframe every 2s → seekable WebM (see RTMP path for rationale)
+                '-force_key_frames', 'expr:gte(t,n_forced*2)',
+                '-g', '240'
             );
             if (audioConsumer) {
                 ffmpegArgs.push('-c:a', 'libopus', '-b:a', '128k', '-application', 'audio');

@@ -2377,11 +2377,14 @@ function getOrphanedRecordingVods() {
 
 // ── Clip helpers ─────────────────────────────────────────────
 
-function createClip({ vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds }) {
+function createClip({ vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds, is_public }) {
+    // is_public defaults to 1 (public) for backward-compatibility when the caller
+    // doesn't resolve the streamer's default_clip_visibility.
+    const pub = (is_public === 0 || is_public === false) ? 0 : 1;
     return run(
         `INSERT INTO clips (vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds, is_public)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-        [vod_id || null, stream_id || null, user_id, title || 'Untitled Clip', description || '', file_path || '', thumbnail_url || null, start_time || 0, end_time || 0, duration_seconds || 0]
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [vod_id || null, stream_id || null, user_id, title || 'Untitled Clip', description || '', file_path || '', thumbnail_url || null, start_time || 0, end_time || 0, duration_seconds || 0, pub]
     );
 }
 

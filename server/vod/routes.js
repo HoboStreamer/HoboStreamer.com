@@ -109,6 +109,16 @@ function sanitizeClipTitle(title) {
     return title.replace(/<[^>]*>/g, '').replace(/&[a-z]+;/gi, '').trim().slice(0, 200) || 'Untitled Clip';
 }
 
+/**
+ * Build a sensible default clip title from the source stream/VOD when the user
+ * didn't provide one — a grid full of "Untitled Clip" is hard to browse.
+ */
+function defaultClipTitle(sanitizedTitle, sourceTitle) {
+    if (sanitizedTitle && sanitizedTitle !== 'Untitled Clip') return sanitizedTitle;
+    const src = (sourceTitle || '').toString().replace(/<[^>]*>/g, '').trim();
+    return (src ? `Clip: ${src}` : 'Untitled Clip').slice(0, 200);
+}
+
 /** Check if user has exceeded hourly clip creation limit */
 function isUserOverHourlyClipLimit(userId) {
     if (!userId) return true;
@@ -297,6 +307,22 @@ function probeVodInfo(filePath) {
 
 function getFileSizeSafe(filePath) {
     try { return filePath && fs.existsSync(filePath) ? fs.statSync(filePath).size : 0; } catch { return 0; }
+}
+
+/**
+ * Resolve whether a new clip should be public, honoring the streamer's
+ * default_clip_visibility channel setting. Only 'public' → public; 'unlisted'
+ * and 'private' → not public. Defaults to public when the setting is unknown.
+ */
+function resolveClipIsPublic(streamOwnerId) {
+    try {
+        if (!streamOwnerId) return 1;
+        const channel = db.getChannelByUserId(streamOwnerId);
+        if (channel && channel.default_clip_visibility && channel.default_clip_visibility !== 'public') {
+            return 0;
+        }
+    } catch { /* fall through to public */ }
+    return 1;
 }
 
 async function repairZeroDurationVods() {
@@ -817,11 +843,25 @@ async function _doFinalize(streamId) {
     cleanupSeekableFile(filePath);
 
     // Probe actual duration with ffprobe
-    let durationSeconds = Math.round((Date.now() - startTime) / 1000);
+    const wallClockSeconds = Math.round((Date.now() - startTime) / 1000);
+    let durationSeconds = wallClockSeconds;
     let probeFormatJson = JSON.stringify({});
     try {
         const probeInfo = await probeVodInfo(filePath);
-        if (probeInfo.duration > 0) durationSeconds = probeInfo.duration;
+        if (probeInfo.duration > 0) {
+            // Guard against a corrupt/inflated container duration. The real footage can
+            // never be meaningfully longer than the wall-clock time spent recording, so a
+            // probe far beyond that means a broken header (e.g. a wall-clock gap or an
+            // aborted muxer). Store the wall-clock value instead so the DB duration — which
+            // the player clamps to — reflects actual playable length, not a phantom timeline
+            // that would let the scrubber seek into a permanent black screen.
+            if (wallClockSeconds > 0 && probeInfo.duration > wallClockSeconds * 1.5 + 30) {
+                console.warn(`[VOD] vod ${vodId}: probed duration ${probeInfo.duration}s >> wall-clock ${wallClockSeconds}s — using wall-clock (inflated/corrupt container)`);
+                durationSeconds = wallClockSeconds;
+            } else {
+                durationSeconds = probeInfo.duration;
+            }
+        }
         probeFormatJson = JSON.stringify(probeInfo.format || {});
     } catch (probeErr) {
         console.warn(`[VOD] ffprobe failed for vod ${vodId}:`, probeErr.message);
@@ -1537,29 +1577,22 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             const stat = fs.statSync(clipPath);
 
             const duration = endTime - startTime;
+            // Honor the streamer's default clip visibility (streamer = stream owner).
+            const liveStream = parsedStreamId ? db.getStreamById(parsedStreamId) : null;
+            const liveStreamOwnerId = liveStream?.user_id || null;
             const result = db.createClip({
                 stream_id: parsedStreamId,
                 user_id: req.user.id,
-                title: sanitizedTitle,
+                title: defaultClipTitle(sanitizedTitle, liveStream?.title),
                 file_path: clipPath,
                 start_time: startTime,
                 end_time: endTime,
                 duration_seconds: duration > 0 ? duration : 0,
                 description: '',
+                is_public: resolveClipIsPublic(liveStreamOwnerId),
             });
 
-            // Apply streamer's default clip visibility (streamer = stream owner)
             const clipId = result.lastInsertRowid;
-            if (parsedStreamId) {
-                const clipStream = db.getStreamById(parsedStreamId);
-                if (clipStream) {
-                    const streamerChannel = db.getChannelByUserId(clipStream.user_id);
-                    if (streamerChannel && streamerChannel.default_clip_visibility === 'public') {
-                        db.setClipPublic(clipId, 1);
-                    }
-                }
-            }
-
             const clip = db.getClipById(clipId);
             console.log(`[Clips] Direct upload: ${req.file.filename} for user ${req.user.username} (${stat.size} bytes)`);
 
@@ -1655,21 +1688,34 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
         _activeFFmpegJobs++;
         let ffStderr = '';
         let ffTimedOut = false;
+        // Re-encode the (short) clip instead of stream-copying. `-ss` before `-i` is a
+        // fast seek to the nearest keyframe, and because we re-encode, ffmpeg then decodes
+        // to the EXACT requested start — so the clip begins precisely where the user asked
+        // with a fresh keyframe at t=0. A `-c copy` cut can only start on a source keyframe,
+        // which on these sparsely-keyframed live recordings means an opening of black/frozen
+        // frames or a start seconds off from the request.
         const ffmpeg = spawn('ffmpeg', [
             '-y',
             '-ss', String(startTime),
             '-i', vod.file_path,
             '-t', String(duration),
-            '-c', 'copy',
+            '-c:v', 'libvpx', '-b:v', '2000k', '-crf', '18',
+            '-deadline', 'realtime', '-cpu-used', '4',
+            '-force_key_frames', 'expr:gte(t,n_forced*2)',
+            '-c:a', 'libopus', '-b:a', '128k',
+            '-avoid_negative_ts', 'make_zero',
+            '-f', 'webm',
             clipPath,
         ]);
         ffmpeg.stderr?.on('data', d => { ffStderr += d; if (ffStderr.length > 10000) ffStderr = ffStderr.slice(-5000); });
 
+        // Re-encoding needs more headroom than a copy — scale the timeout with clip length.
+        const clipTimeoutMs = Math.max(CLIP_FFMPEG_TIMEOUT_MS, Math.round(duration) * 2000 + 15000);
         const ffTimeout = setTimeout(() => {
             ffTimedOut = true;
             try { ffmpeg.kill('SIGKILL'); } catch {}
-            console.warn(`[Clips] FFmpeg timed out after ${CLIP_FFMPEG_TIMEOUT_MS}ms for VOD ${parsedVodId}`);
-        }, CLIP_FFMPEG_TIMEOUT_MS);
+            console.warn(`[Clips] FFmpeg timed out after ${clipTimeoutMs}ms for VOD ${parsedVodId}`);
+        }, clipTimeoutMs);
 
         ffmpeg.on('error', (err) => {
             _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1);
@@ -1716,16 +1762,20 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
                 return;
             }
 
+            const effStreamId = parsedStreamId || vod.stream_id;
+            const effStream = effStreamId ? db.getStreamById(effStreamId) : null;
+            const streamOwnerId = effStream?.user_id || vod.user_id;
             const result = db.createClip({
                 vod_id: parsedVodId,
-                stream_id: parsedStreamId || vod.stream_id,
+                stream_id: effStreamId,
                 user_id: req.user.id,
-                title: sanitizedTitle,
+                title: defaultClipTitle(sanitizedTitle, effStream?.title || vod.title),
                 file_path: clipPath,
                 start_time: startTime,
                 end_time: endTime,
                 duration_seconds: duration,
                 description: '',
+                is_public: resolveClipIsPublic(streamOwnerId),
             });
 
             const clip = db.getClipById(result.lastInsertRowid);
