@@ -1411,6 +1411,16 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] users max_managed_streams migration:', e.message); }
 
+    // Track which paste (if any) a user's active avatar is sourced from, so that
+    // deleting that paste resets the avatar. Avatars are now backed by pastes.
+    try {
+        const userCols3 = database.pragma('table_info(users)').map(c => c.name);
+        if (!userCols3.includes('avatar_paste_id')) {
+            database.exec('ALTER TABLE users ADD COLUMN avatar_paste_id INTEGER DEFAULT NULL');
+            console.log('[DB] Added avatar_paste_id column to users');
+        }
+    } catch (e) { console.warn('[DB] users avatar_paste_id migration:', e.message); }
+
     // Backfill: Create a default managed stream for each streamer who has session history
     // but no managed streams yet. This preserves all existing data.
     try {
@@ -2468,8 +2478,27 @@ function getUserProfile(userId) {
     return user;
 }
 
-function updateUserAvatar(userId, avatarUrl) {
-    return run('UPDATE users SET avatar_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [avatarUrl, userId]);
+function updateUserAvatar(userId, avatarUrl, pasteId = null) {
+    return run('UPDATE users SET avatar_url = ?, avatar_paste_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [avatarUrl, pasteId, userId]);
+}
+
+// When a paste that is someone's active avatar is deleted, clear/reset that avatar.
+// Returns the number of users whose avatar was reset.
+function resetAvatarsForPaste(pasteId) {
+    if (!pasteId) return 0;
+    const res = run('UPDATE users SET avatar_url = NULL, avatar_paste_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE avatar_paste_id = ?', [pasteId]);
+    return res?.changes || 0;
+}
+
+// A user's avatar-upload history: the screenshot pastes tagged as avatar uploads.
+function getUserAvatarPastes(userId, limit = 60) {
+    return all(
+        `SELECT id, slug, screenshot_path, title, created_at
+         FROM pastes
+         WHERE user_id = ? AND type = 'screenshot' AND json_extract(metadata, '$.kind') = 'avatar'
+         ORDER BY created_at DESC LIMIT ?`,
+        [userId, limit]
+    );
 }
 
 // ── Follow helpers ───────────────────────────────────────────
@@ -5068,7 +5097,7 @@ module.exports = {
     // Chat
     saveChatMessage, searchChatMessages, getUserChatHistory,
     // Profiles
-    getUserProfile, updateUserAvatar,
+    getUserProfile, updateUserAvatar, resetAvatarsForPaste, getUserAvatarPastes,
     // Follows
     followUser, unfollowUser, getFollowerCount, isFollowing, getFollowerIds,
     // Transactions (Hobo Bucks)

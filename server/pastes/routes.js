@@ -325,6 +325,7 @@ router.get('/:slug', optionalAuth, (req, res) => {
         if (paste.burn_after_read && !isOwner && paste.views > 1) {
             removePasteScreenshot(paste);   // don't leave the screenshot behind on burn
             db.run('DELETE FROM pastes WHERE id = ?', [paste.id]);
+            db.resetAvatarsForPaste(paste.id);
             return res.json({ paste: { slug: paste.slug, burn_after_read: 1, burned: true, views: paste.views } });
         }
 
@@ -514,6 +515,67 @@ async function _handleScreenshotUpload(req, res) {
     }
 }
 
+// ── Avatar-as-paste ─────────────────────────────────────────
+// Avatars are backed by the pastes system: every avatar upload becomes a
+// screenshot paste tagged {kind:'avatar'}, so users get an upload history and
+// staff can moderate avatar images with the normal paste tooling.
+const AVATAR_MIME_EXT = {
+    'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg',
+    'image/webp': '.webp', 'image/gif': '.gif', 'image/avif': '.avif',
+};
+
+// Move an already-validated image file into the paste screenshots dir and create
+// an avatar-tagged screenshot paste for it. Returns { pasteId, slug, screenshotUrl }.
+// Preserves the original format (so animated GIF avatars keep animating).
+function createAvatarPaste(userId, srcPath, mime, originalName) {
+    const ext = AVATAR_MIME_EXT[mime] || (path.extname(srcPath) || '.png');
+    const destName = `avatar-${userId || 'anon'}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
+    const destPath = path.join(SCREENSHOTS_DIR, destName);
+    try {
+        fs.renameSync(srcPath, destPath);
+    } catch {
+        // Cross-device or busy — fall back to copy + unlink.
+        fs.copyFileSync(srcPath, destPath);
+        try { fs.unlinkSync(srcPath); } catch { /* ignore */ }
+    }
+
+    const metadata = JSON.stringify({
+        kind: 'avatar',
+        original_name: originalName || null,
+        mime_type: mime || null,
+    });
+    const slug = generateSlug();
+    // Unlisted: avatars are viewable by direct link (profile/history) and fully
+    // moderatable by staff, but shouldn't flood the public paste feed.
+    db.run(
+        `INSERT INTO pastes (slug, user_id, type, title, content, language, visibility, screenshot_path, metadata)
+         VALUES (?, ?, 'screenshot', 'Avatar upload', '', 'text', 'unlisted', ?, ?)`,
+        [slug, userId || null, destPath, metadata]
+    );
+    const paste = db.get('SELECT id FROM pastes WHERE slug = ?', [slug]);
+    return { pasteId: paste.id, slug, screenshotUrl: `/data/pastes/screenshots/${destName}` };
+}
+router.createAvatarPaste = createAvatarPaste;
+
+// Set an existing image paste as the requesting user's avatar ("Set As Avatar").
+// Works on ANY user's public image paste; if that paste is later deleted, the
+// avatar is reset (see resetAvatarsForPaste on delete).
+router.post('/:slug/set-avatar', requireAuth, (req, res) => {
+    try {
+        const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [req.params.slug]);
+        if (!paste) return res.status(404).json({ error: 'Paste not found' });
+        if (paste.type !== 'screenshot' || !paste.screenshot_path) {
+            return res.status(400).json({ error: 'That paste is not an image' });
+        }
+        const avatarUrl = `/data/pastes/screenshots/${path.basename(paste.screenshot_path)}`;
+        db.updateUserAvatar(req.user.id, avatarUrl, paste.id);
+        res.json({ success: true, avatar_url: avatarUrl });
+    } catch (err) {
+        console.error('[Pastes] Set-avatar error:', err);
+        res.status(500).json({ error: 'Failed to set avatar' });
+    }
+});
+
 // ── Update paste ────────────────────────────────────────────
 router.put('/:slug', requireAuth, (req, res) => {
     try {
@@ -583,6 +645,8 @@ router.delete('/:slug', requireAuth, (req, res) => {
         removePasteScreenshot(paste);
 
         db.run('DELETE FROM pastes WHERE id = ?', [paste.id]);
+        // If this paste backed anyone's avatar (their own or another user's), reset it.
+        db.resetAvatarsForPaste(paste.id);
         res.json({ success: true });
     } catch (err) {
         console.error('[Pastes] Delete error:', err);

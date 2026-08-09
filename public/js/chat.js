@@ -5580,6 +5580,9 @@ function toggleMobileChat() {
     }
     if (!sidebar) return;
 
+    // The FAB can always reopen the on-page chat, even if a popout hid it.
+    sidebar.classList.remove('chat-popped-out');
+
     const fab = document.getElementById('mobile-chat-toggle');
 
     _mobileChatOpen = !_mobileChatOpen;
@@ -6013,6 +6016,21 @@ window.addEventListener('hobo-auth-changed', (e) => {
    ═══════════════════════════════════════════════════════════════ */
 let _popoutChatWindows = new Map(); // key → Window reference
 
+/**
+ * Return the on-page chat container(s) that should be hidden while a popout
+ * of the given mode is open (and re-shown when it closes).
+ */
+function _getChatPopoutContainers(mode) {
+    if (mode === 'global') {
+        return [document.querySelector('.global-chat-main')].filter(Boolean);
+    }
+    // Stream mode — hide whichever on-page stream chat sidebar is present.
+    return [
+        document.getElementById('chat-sidebar'),
+        document.getElementById('bc-chat-sidebar'),
+    ].filter(Boolean);
+}
+
 function popoutChat(mode = 'global', streamId = null) {
     const key = mode === 'stream' ? `stream-${streamId}` : 'global';
 
@@ -6043,11 +6061,15 @@ function popoutChat(mode = 'global', streamId = null) {
 
     _popoutChatWindows.set(key, popup);
 
-    // Clean up on popup close
+    // Hide the on-page chat surface while it's popped out.
+    _getChatPopoutContainers(mode).forEach(el => el.classList.add('chat-popped-out'));
+
+    // Clean up on popup close — and re-show the on-page chat.
     const checkClosed = setInterval(() => {
         if (popup.closed) {
             clearInterval(checkClosed);
             _popoutChatWindows.delete(key);
+            _getChatPopoutContainers(mode).forEach(el => el.classList.remove('chat-popped-out'));
         }
     }, 1000);
 }
@@ -6090,37 +6112,44 @@ function toggleChatUsers(btn) {
 }
 
 /**
- * Render the users list into all open panels.
+ * Render the users list into all open panels (and the popout users panel).
  */
 function renderChatUsersList(users) {
     if (!users) return;
     _chatUsersData = users;
+    const { logged = [], anonCount = 0 } = users;
+    const total = logged.length + anonCount;
+
+    // Build the shared list markup once, reused by on-page panels and the popout.
+    let listHtml = '<div class="chat-users-list">';
+    for (const u of logged) {
+        const avatar = u.avatar_url
+            ? `<img src="${esc(u.avatar_url)}" class="chat-users-avatar" alt="" loading="lazy">`
+            : `<div class="chat-users-avatar chat-users-avatar-default"><i class="fa-solid fa-user"></i></div>`;
+        const badge = u.role === 'admin' ? '<span class="chat-users-badge admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>'
+            : u.role === 'global_mod' ? '<span class="chat-users-badge mod" title="Moderator"><i class="fa-solid fa-shield"></i></span>'
+                : u.role === 'streamer' ? '<span class="chat-users-badge streamer" title="Streamer"><i class="fa-solid fa-video"></i></span>'
+                    : '';
+        listHtml += `<div class="chat-users-row"><a href="/${esc(u.username)}" class="chat-users-link" onclick="event.preventDefault(); if(typeof showPage==='function') showPage('/${esc(u.username)}')">${avatar}<span class="chat-users-name">${esc(u.display_name)}</span>${badge}</a></div>`;
+    }
+    if (anonCount > 0) {
+        listHtml += `<div class="chat-users-row chat-users-anon"><div class="chat-users-avatar chat-users-avatar-default"><i class="fa-solid fa-user-secret"></i></div><span class="chat-users-name">${anonCount} anonymous viewer${anonCount !== 1 ? 's' : ''}</span></div>`;
+    }
+    if (total === 0) {
+        listHtml += '<div class="chat-users-empty">No one here yet</div>';
+    }
+    listHtml += '</div>';
+
+    // On-page panels (channel / broadcast / global) — only the open ones.
     const panels = document.querySelectorAll('.chat-users-panel');
     for (const panel of panels) {
         if (!panel.classList.contains('open')) continue;
-        const { logged = [], anonCount = 0 } = users;
-        const total = logged.length + anonCount;
-        let html = `<div class="chat-users-header"><span>Users — ${total}</span><button class="chat-users-close" onclick="closeChatUsersPanel(this)" title="Close"><i class="fa-solid fa-xmark"></i></button></div>`;
-        html += '<div class="chat-users-list">';
-        for (const u of logged) {
-            const avatar = u.avatar_url
-                ? `<img src="${esc(u.avatar_url)}" class="chat-users-avatar" alt="" loading="lazy">`
-                : `<div class="chat-users-avatar chat-users-avatar-default"><i class="fa-solid fa-user"></i></div>`;
-            const badge = u.role === 'admin' ? '<span class="chat-users-badge admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>'
-                : u.role === 'global_mod' ? '<span class="chat-users-badge mod" title="Moderator"><i class="fa-solid fa-shield"></i></span>'
-                    : u.role === 'streamer' ? '<span class="chat-users-badge streamer" title="Streamer"><i class="fa-solid fa-video"></i></span>'
-                        : '';
-            html += `<div class="chat-users-row"><a href="/${esc(u.username)}" class="chat-users-link" onclick="event.preventDefault(); if(typeof showPage==='function') showPage('/${esc(u.username)}')">${avatar}<span class="chat-users-name">${esc(u.display_name)}</span>${badge}</a></div>`;
-        }
-        if (anonCount > 0) {
-            html += `<div class="chat-users-row chat-users-anon"><div class="chat-users-avatar chat-users-avatar-default"><i class="fa-solid fa-user-secret"></i></div><span class="chat-users-name">${anonCount} anonymous viewer${anonCount !== 1 ? 's' : ''}</span></div>`;
-        }
-        if (total === 0) {
-            html += '<div class="chat-users-empty">No one here yet</div>';
-        }
-        html += '</div>';
-        panel.innerHTML = html;
+        panel.innerHTML = `<div class="chat-users-header"><span>Users — ${total}</span><button class="chat-users-close" onclick="closeChatUsersPanel(this)" title="Close"><i class="fa-solid fa-xmark"></i></button></div>` + listHtml;
     }
+
+    // Popout users panel (its own header already lives in the popout markup).
+    const pcBody = document.getElementById('pc-users-body');
+    if (pcBody) pcBody.innerHTML = listHtml;
 }
 
 function closeChatUsersPanel(btn) {

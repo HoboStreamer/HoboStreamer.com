@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat — HoboStreamer</title>
-    <link rel="stylesheet" href="/css/style.css?v=17">
+    <link rel="stylesheet" href="/css/style.css?v=28">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         html, body { height: 100%; margin: 0; overflow: hidden; }
@@ -98,29 +98,39 @@
 
         /* ── Input ── */
         .pc-input-area {
-            display: flex; gap: 5px; padding: 7px 8px;
+            padding: 7px 8px;
             border-top: 1px solid var(--border, #2a2a3e);
             background: var(--bg-secondary, #1a1a2e); flex-shrink: 0;
+            position: relative; /* anchor for the emote / GIF pickers */
         }
-        .pc-input-area input {
+        .pc-input-row { display: flex; gap: 5px; align-items: center; }
+        .pc-tools-row {
+            display: flex; gap: 4px; align-items: center; flex-wrap: wrap;
+            padding-top: 5px;
+        }
+        .pc-input-area #pc-input {
             flex: 1; background: var(--bg-primary, #0d0d1a);
             border: 1px solid var(--border, #2a2a3e);
             border-radius: 4px; color: var(--text-primary, #e0e0e0);
             padding: 5px 9px; font-size: 0.82rem; outline: none; min-width: 0;
         }
-        .pc-input-area input:focus { border-color: var(--accent, #c0965c); }
-        .pc-input-area button {
+        .pc-input-area #pc-input:focus { border-color: var(--accent, #c0965c); }
+        .pc-input-area #pc-send {
             background: var(--accent, #c0965c); color: #fff; border: none;
             border-radius: 4px; padding: 5px 11px; cursor: pointer; font-size: 0.82rem;
             flex-shrink: 0; white-space: nowrap;
         }
-        .pc-input-area button:hover { opacity: 0.85; }
+        .pc-input-area #pc-send:hover { opacity: 0.85; }
         /* TTS toggle mirrors the streamer-page chat button */
         .pc-input-area .chat-tts-toggle {
             background: var(--bg-tertiary, #252540); color: var(--text-muted, #888);
-            padding: 5px 9px;
+            padding: 5px 9px; border: none; border-radius: 4px; cursor: pointer;
+            flex-shrink: 0;
         }
         .pc-input-area .chat-tts-toggle.tts-active { background: var(--accent, #c0965c); color: #fff; }
+
+        /* The popout is already popped out — never offer to pop out again. */
+        [onclick*="popout"], [onclick*="Popout"], [onclick*="popOut"] { display: none !important; }
 
         /* Connection badge */
         .pc-conn-dot {
@@ -150,12 +160,49 @@
     <div class="pc-body">
         <div class="pc-chat-col">
             <div class="pc-messages" id="pc-msgs"></div>
-            <div class="pc-input-area">
-                <button class="chat-tts-toggle tts-active pc-tts-btn" id="pc-tts-btn" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
-                    <i class="fa-solid fa-volume-high"></i>
-                </button>
-                <input type="text" id="pc-input" placeholder="Send a message…" maxlength="500" autocomplete="off">
-                <button id="pc-send">Send</button>
+            <div class="pc-input-area chat-input-area">
+                <!-- Emote / GIF Picker (unprefixed ids → wired to pc-input via getPickerEls) -->
+                <div id="emote-picker" class="emote-picker" style="display:none">
+                    <div class="emote-picker-header">
+                        <input type="text" id="emote-search" class="emote-search" placeholder="Search emotes..." oninput="onEmoteSearch(this.value)">
+                    </div>
+                    <div class="emote-picker-tabs"></div>
+                    <div class="emote-picker-grid" id="emote-picker-grid"></div>
+                </div>
+                <div class="pc-input-row">
+                    <button class="chat-tts-toggle tts-active pc-tts-btn" id="pc-tts-btn" onclick="toggleChatTTS(this)" title="TTS On (click to mute)">
+                        <i class="fa-solid fa-volume-high"></i>
+                    </button>
+                    <input type="text" id="pc-input" placeholder="Send a message…" maxlength="500" autocomplete="off">
+                    <button id="pc-send">Send</button>
+                </div>
+                <div class="pc-tools-row">
+                    <button class="emote-picker-btn" onclick="toggleEmotePicker('pc-input')" title="Emotes">
+                        <i class="fa-solid fa-face-smile"></i>
+                    </button>
+                    <button class="emote-picker-btn gif-btn" onclick="toggleGifPicker('pc-input')" title="GIFs">
+                        <span class="gif-btn-text">GIF</span>
+                    </button>
+                    <button class="emote-picker-btn" onclick="if(typeof openChannelUploadModal==='function')openChannelUploadModal()" title="Add channel emote / sound">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                    <button class="btn btn-hobo-coins-mini" onclick="if(typeof toggleRewardsPanel==='function')toggleRewardsPanel()" title="Redeem Hobo Nickels">
+                        <i class="fa-solid fa-gem"></i>
+                    </button>
+                    <button class="btn btn-hobo-bucks-mini" onclick="if(typeof showModal==='function')showModal('donate')" title="Send Hobo Bucks">
+                        <i class="fa-solid fa-dollar-sign"></i>
+                    </button>
+                </div>
+                <!-- Rewards Panel (Hobo Coins) -->
+                <div class="rewards-panel" id="ch-rewards-panel" style="display:none">
+                    <div class="rewards-panel-header">
+                        <span><i class="fa-solid fa-gem"></i> Hobo Nickels Rewards</span>
+                        <span class="rewards-coin-bal"><i class="fa-solid fa-coins"></i> <span class="rewards-coin-balance">0</span></span>
+                    </div>
+                    <div class="rewards-grid ch-rewards-grid">
+                        <p class="muted">No rewards configured for this channel</p>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -213,7 +260,16 @@
         </div>
     </div>
 
-        <script src="/js/chat.js?v=15"></script>
+    <!-- Chat feature scripts — mirror index.html so the popout has full parity.
+         Order: dependencies (app/emotes/gif/uploads/coins/bucks/cosmetics) before chat.js. -->
+    <script src="/js/app.js?v=20"></script>
+    <script src="/js/emotes.js?v=7"></script>
+    <script src="/js/gif-picker.js?v=1"></script>
+    <script src="/js/channel-uploads.js?v=4"></script>
+    <script src="/js/hobo-bucks.js?v=3"></script>
+    <script src="/js/hobo-coins.js?v=2"></script>
+    <script src="/js/cosmetics-ui.js?v=2"></script>
+    <script src="/js/chat.js?v=26"></script>
     <script src="/js/chat-autocomplete.js?v=1"></script>
     <script>
     'use strict';
@@ -263,6 +319,16 @@
         if (typeof saveChatSettings === 'function') saveChatSettings();
     };
 
+    // Request the viewer list over the shared chat WebSocket. The reply is
+    // handled by chat.js → renderChatUsersList(), which now also fills #pc-users-body.
+    window.requestUserList = function() {
+        try {
+            if (typeof chatWs !== 'undefined' && chatWs && chatWs.readyState === WebSocket.OPEN) {
+                chatWs.send(JSON.stringify({ type: 'get-users' }));
+            }
+        } catch {}
+    };
+
     window.togglePanel = function(name) {
         const panelEl = document.getElementById('pc-panel-' + name);
         const btnEl = document.getElementById('pc-btn-' + name);
@@ -276,6 +342,16 @@
             if (name === 'users' && typeof requestUserList === 'function') requestUserList();
         }
     };
+
+    // Re-show the on-page chat immediately when this popout is closed
+    // (the opener's setInterval poll is the fallback for this).
+    window.addEventListener('beforeunload', function() {
+        if (!window.opener) return;
+        try {
+            window.opener.document.querySelectorAll('.chat-popped-out')
+                .forEach(function(el) { el.classList.remove('chat-popped-out'); });
+        } catch {}
+    });
 
     function initPopoutChat() {
         // Sync the popout toggle UI from the shared settings (already loaded by chat.js)

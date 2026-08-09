@@ -509,23 +509,31 @@ function onAuthChange() {
     const broadcast = document.getElementById('nav-broadcast');
     const admin = document.getElementById('nav-admin');
 
-    if (currentUser) {
-        anon.style.display = 'none';
-        user.style.display = 'flex';
-        dash.style.display = '';
-        broadcast.style.display = '';
-        admin.style.display = (currentUser.capabilities?.admin_panel || hasCapability('can_access_staff_console')) ? '' : 'none';
-        document.getElementById('nav-avatar').innerHTML = _avatarInner(currentUser.avatar_url, currentUser.username);
-        document.getElementById('nav-username').textContent = currentUser.username;
+    // The nav chrome doesn't exist in every document that loads app.js (e.g. the
+    // popout chat window), so guard it — the auth-changed event below must still fire.
+    if (anon && user && dash && broadcast && admin) {
+        if (currentUser) {
+            anon.style.display = 'none';
+            user.style.display = 'flex';
+            dash.style.display = '';
+            broadcast.style.display = '';
+            admin.style.display = (currentUser.capabilities?.admin_panel || hasCapability('can_access_staff_console')) ? '' : 'none';
+            const navAv = document.getElementById('nav-avatar');
+            if (navAv) navAv.innerHTML = _avatarInner(currentUser.avatar_url, currentUser.username);
+            const navUn = document.getElementById('nav-username');
+            if (navUn) navUn.textContent = currentUser.username;
+            loadBalance();
+        } else {
+            anon.style.display = '';
+            user.style.display = 'none';
+            dash.style.display = 'none';
+            broadcast.style.display = 'none';
+            admin.style.display = 'none';
+        }
+    } else if (currentUser) {
         loadBalance();
-    } else {
-        anon.style.display = '';
-        user.style.display = 'none';
-        dash.style.display = 'none';
-        broadcast.style.display = 'none';
-        admin.style.display = 'none';
     }
-    document.getElementById('user-dropdown').classList.remove('show');
+    document.getElementById('user-dropdown')?.classList.remove('show');
 
     // Sync canvas auth state if canvas page is loaded
     if (typeof syncCanvasAuthState === 'function') syncCanvasAuthState();
@@ -545,12 +553,14 @@ async function loadBalance() {
     try {
         const data = await api('/funds/balance');
         const bal = data.balance || 0;
-        document.getElementById('nav-balance-amount').textContent = parseFloat(bal).toFixed(2);
+        const balEl = document.getElementById('nav-balance-amount');
+        if (balEl) balEl.textContent = parseFloat(bal).toFixed(2);
     } catch { /* silent */ }
     try {
         const coinData = await api('/coins/balance');
         const coins = coinData.balance || 0;
-        document.getElementById('nav-coins-amount').textContent = coins.toLocaleString();
+        const coinEl = document.getElementById('nav-coins-amount');
+        if (coinEl) coinEl.textContent = coins.toLocaleString();
         // Also update rewards panels if visible
         document.querySelectorAll('.rewards-coin-balance').forEach(el => {
             el.textContent = coins.toLocaleString();
@@ -5029,8 +5039,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadThemeFromServer();
     }
 
-    // Route from current URL instead of always going home
-    routeFromURL();
+    // Route from current URL instead of always going home — but not in the popout
+    // chat window, which drives its own chat UI and has no SPA pages to route to.
+    if (!location.pathname.startsWith('/popout-chat')) {
+        routeFromURL();
+    }
 });
 
 // Handle browser back/forward — wait for auth to be resolved first

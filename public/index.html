@@ -37,7 +37,7 @@
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=27">
+    <link rel="stylesheet" href="/css/style.css?v=28">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -2960,6 +2960,11 @@ WantedBy=multi-user.target</code>
 
                 <!-- Profile Panel -->
                 <div class="settings-panel active" id="settings-profile">
+                    <div class="settings-card" id="settings-avatar-history-card" style="display:none">
+                        <h3><i class="fa-solid fa-clock-rotate-left"></i> Avatar History</h3>
+                        <div class="settings-row-hint" style="margin-bottom:10px">Every avatar you upload is saved here. Click one to use it again.</div>
+                        <div id="settings-avatar-history" class="settings-avatar-history"></div>
+                    </div>
                     <div class="settings-card">
                         <h3><i class="fa-solid fa-id-card"></i> Account Info</h3>
                         <div class="settings-row">
@@ -4526,11 +4531,11 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=2"></script>
-<script src="/js/app.js?v=19"></script>
+<script src="/js/app.js?v=20"></script>
 <script src="/js/stream-player.js?v=8"></script>
 <script src="/js/emotes.js?v=7"></script>
 <script src="/js/gif-picker.js?v=1"></script>
-<script src="/js/chat.js?v=25"></script>
+<script src="/js/chat.js?v=26"></script>
 <script src="/js/chat-autocomplete.js?v=1"></script>
 <script src="/js/channel-uploads.js?v=4"></script>
 <script src="/js/controls.js?v=3"></script>
@@ -4591,11 +4596,11 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/broadcast.js?v=21"></script>
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
-<script src="/js/settings.js?v=3"></script>
+<script src="/js/settings.js?v=4"></script>
 <script src="/js/staff-console.js?v=1"></script>
 <script src="/js/dashboard-moderation.js?v=2"></script>
-<script src="/js/ai-chatbot-settings.js?v=3"></script>
-<script src="/js/pastes.js?v=3"></script>
+<script src="/js/ai-chatbot-settings.js?v=4"></script>
+<script src="/js/pastes.js?v=4"></script>
 <script src="/js/messenger.js?v=1"></script>
 
 <!-- ── Hobo Network shared libs (notifications, account sync, themes) ── -->

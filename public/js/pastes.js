@@ -229,6 +229,7 @@ async function loadPasteViewer(slug) {
                          onclick="window.open(this.src, '_blank')">
                     ${p.content ? `<div class="paste-screenshot-desc">${escapeHtml(p.content)}</div>` : ''}
                     ${meta.page_url && /^https?:\/\//i.test(meta.page_url) ? `<div class="paste-screenshot-url"><i class="fa-solid fa-link"></i> <a href="${escapeHtml(meta.page_url)}" target="_blank" rel="noopener">${escapeHtml(meta.page_url)}</a></div>` : ''}
+                    ${isLoggedIn ? `<div class="paste-screenshot-actions"><button class="btn btn-outline btn-sm" onclick="setPasteAsAvatar('${p.slug}')" title="Use this image as your avatar"><i class="fa-solid fa-user-circle"></i> Set As Avatar</button></div>` : ''}
                 </div>`;
         } else {
             const lines = (p.content || '').split('\n');
@@ -372,6 +373,19 @@ async function forkPaste(slug) {
         navigate(`/p/${data.paste.slug}`);
     } catch (err) {
         toast(err.message || 'Failed to fork', 'error');
+    }
+}
+
+// Use an existing image paste as the current user's avatar.
+async function setPasteAsAvatar(slug) {
+    if (typeof currentUser === 'undefined' || !currentUser) { toast('Log in to set an avatar', 'error'); return; }
+    try {
+        const data = await api(`/pastes/${slug}/set-avatar`, { method: 'POST' });
+        if (data.avatar_url) currentUser.avatar_url = data.avatar_url;
+        toast('Avatar updated', 'success');
+        if (typeof onAuthChange === 'function') onAuthChange();
+    } catch (err) {
+        toast(err.message || 'Failed to set avatar', 'error');
     }
 }
 

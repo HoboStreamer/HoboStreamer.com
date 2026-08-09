@@ -57,6 +57,7 @@ function isValidEmail(value) {
 function isAllowedAvatarUrl(value) {
     if (!value) return true;
     if (value.startsWith('/data/avatars/')) return true;
+    if (value.startsWith('/data/pastes/screenshots/')) return true;
     try {
         const url = new URL(value);
         return url.protocol === 'http:' || url.protocol === 'https:';
@@ -206,24 +207,41 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), async (req, r
             return res.status(400).json({ error: 'That file is not a valid or is a corrupt image.' });
         }
 
-        // Delete old avatar file if it exists
-        const oldUser = db.getUserById(req.user.id);
-        if (oldUser?.avatar_url) {
-            const oldPath = path.resolve('./data/avatars', path.basename(oldUser.avatar_url));
-            if (fs.existsSync(oldPath)) {
-                try { fs.unlinkSync(oldPath); } catch { /* ignore */ }
-            }
-        }
-
-        const avatarUrl = `/data/avatars/${req.file.filename}`;
-        db.updateUserAvatar(req.user.id, avatarUrl);
+        // Back the avatar with a paste: every upload becomes an avatar-tagged
+        // screenshot paste, giving users an upload history and letting staff
+        // moderate avatar images via the normal paste tooling. This also moves
+        // the uploaded file out of ./data/avatars into the paste screenshots dir.
+        const { createAvatarPaste } = require('../pastes/routes');
+        const { pasteId, screenshotUrl } = createAvatarPaste(
+            req.user.id, req.file.path, req.file.mimetype, req.file.originalname
+        );
+        db.updateUserAvatar(req.user.id, screenshotUrl, pasteId);
 
         const updated = db.getUserById(req.user.id);
-        res.json({ user: sanitizeUser(updated), avatar_url: avatarUrl });
+        res.json({ user: sanitizeUser(updated), avatar_url: screenshotUrl });
     } catch (err) {
         if (req.file) try { fs.unlinkSync(req.file.path); } catch { }
         console.error('[Auth] Avatar upload error:', err.message);
         res.status(500).json({ error: 'Avatar upload failed' });
+    }
+});
+
+// The user's avatar upload history (avatar-tagged screenshot pastes).
+router.get('/avatar/history', requireAuth, (req, res) => {
+    try {
+        const me = db.getUserById(req.user.id);
+        const activePasteId = me?.avatar_paste_id || null;
+        const rows = db.getUserAvatarPastes(req.user.id).map(r => ({
+            slug: r.slug,
+            title: r.title,
+            created_at: r.created_at,
+            url: r.screenshot_path ? `/data/pastes/screenshots/${path.basename(r.screenshot_path)}` : null,
+            active: r.id === activePasteId,
+        })).filter(r => r.url);
+        res.json({ avatars: rows });
+    } catch (err) {
+        console.error('[Auth] Avatar history error:', err.message);
+        res.status(500).json({ error: 'Failed to load avatar history' });
     }
 });
 

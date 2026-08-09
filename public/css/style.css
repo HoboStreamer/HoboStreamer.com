@@ -3770,6 +3770,8 @@ main#app { position: relative; z-index: 1; }
     flex-shrink: 0;
     overscroll-behavior: contain;
 }
+/* Hidden while the chat is popped out into its own window. */
+.chat-popped-out { display: none !important; }
 .chat-header {
     padding: 10px 14px; border-bottom: 1px solid var(--border);
     display: flex; align-items: center; justify-content: space-between;
@@ -8194,6 +8196,52 @@ body.theme-light .user-dropdown {
 }
 .paste-screenshot-url a:hover {
     text-decoration: underline;
+}
+.paste-screenshot-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* Avatar upload history (settings) */
+.settings-avatar-history {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+    gap: 10px;
+}
+.settings-avatar-hist-item {
+    position: relative;
+    padding: 0;
+    border: 2px solid var(--border, #33333d);
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 1 / 1;
+    background: var(--bg-card, #1c1c22);
+    cursor: pointer;
+    transition: border-color .15s;
+}
+.settings-avatar-hist-item:hover { border-color: var(--accent, #c0965c); }
+.settings-avatar-hist-item.active { border-color: var(--accent, #c0965c); }
+.settings-avatar-hist-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.settings-avatar-hist-active {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    background: var(--accent, #c0965c);
+    color: #111;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
 }
 
 /* ── Paste Burned ─────────────────────────────────────────── */

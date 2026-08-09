@@ -455,11 +455,12 @@ body.no-shadow .msg { text-shadow: none; }
 
     // ── Platform detection ─────────────────────────────────────
     const PLATFORM_RE = /^\[(Twitch|Kick|YouTube|RS)\]\s*/;
+    // Match the on-page chat's relay name colors (PLATFORM_NAME_COLORS in chat.js).
     const PLATFORM_COLORS = {
         Twitch:  '#9146ff',
         Kick:    '#53fc18',
         YouTube: '#ff0000',
-        RS:      '#ff6600',
+        RS:      '#7dd3fc',
     };
 
     function detectPlatform(name) {
