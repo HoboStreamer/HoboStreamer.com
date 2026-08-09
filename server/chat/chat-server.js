@@ -1194,7 +1194,7 @@ class ChatServer {
                 role: relay ? (relay.role || 'external') : (client.user ? client.user.role : 'anon'),
                 message: `played !${cmd}`,
                 message_type: 'channel-sound',
-                sound: { command: cmd, pitch: mods.pitch, speed: mods.speed, pitchShift: mods.pitchShift, args: (args || []).join(' ') },
+                sound: { command: cmd, pitch: mods.pitch, speed: mods.speed, pitchShift: mods.pitchShift, args: (args || []).join(' '), emoteCode: sound.emote_code || '' },
                 stream_id: client.streamId,
                 is_global: !client.streamId,
                 avatar_url: (relay ? relay.avatar_url : client.user?.avatar_url) || null,

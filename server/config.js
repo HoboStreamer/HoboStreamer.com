@@ -230,7 +230,7 @@ function buildConfig(registryValues) {
         },
         emotes: {
             path: process.env.EMOTES_PATH || './data/emotes',
-            maxSizeKb: parseInt(process.env.MAX_EMOTE_SIZE_KB || '256', 10),
+            maxSizeKb: parseInt(process.env.MAX_EMOTE_SIZE_KB || '2048', 10),
             maxPerUser: parseInt(process.env.MAX_EMOTES_PER_USER || '50', 10),
             maxPerChannel: parseInt(process.env.MAX_EMOTES_PER_CHANNEL || '300', 10),
             maxPerUploaderPerChannel: parseInt(process.env.MAX_EMOTES_PER_UPLOADER_PER_CHANNEL || '10', 10),

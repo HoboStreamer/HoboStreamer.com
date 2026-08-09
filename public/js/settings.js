@@ -31,7 +31,7 @@ async function loadSettingsProfile() {
         const data = await api('/auth/me');
         const u = data.user || data;
 
-        document.getElementById('settings-banner-initial').textContent = (u.username || '?')[0].toUpperCase();
+        _renderSettingsAvatar(u);
         document.getElementById('settings-banner-name').textContent = u.display_name || u.username;
 
         document.getElementById('set-username').value = u.username || '';
@@ -44,9 +44,47 @@ async function loadSettingsProfile() {
     }
 }
 
+// Show the current avatar (image or letter) + the camera edit chip in the banner.
+function _renderSettingsAvatar(u) {
+    const el = document.getElementById('settings-banner-initial');
+    if (!el) return;
+    const letter = (u.username || '?')[0].toUpperCase();
+    const chip = '<span class="settings-avatar-edit"><i class="fa-solid fa-camera"></i></span>';
+    el.innerHTML = (u.avatar_url
+        ? `<img src="${u.avatar_url}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block" onerror="this.remove();this.parentNode.insertAdjacentText('afterbegin','${letter}')">`
+        : letter) + chip;
+}
+
+async function uploadSettingsAvatar(input) {
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) { toast('Image too large (max 20MB)', 'error'); return; }
+    if (!/^image\//.test(file.type)) { toast('Please choose an image file', 'error'); return; }
+    try {
+        const fd = new FormData();
+        fd.append('avatar', file);
+        const token = localStorage.getItem('token');
+        const r = await fetch('/api/auth/avatar', { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: fd });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Upload failed');
+        toast('Avatar updated', 'success');
+        currentUser = data.user || currentUser;
+        _renderSettingsAvatar(currentUser);
+        if (typeof onAuthChange === 'function') onAuthChange();
+    } catch (e) { toast(e.message || 'Avatar upload failed', 'error'); }
+}
+
 async function saveSettingsProfile() {
+    const uname = (document.getElementById('set-username').value || '').trim();
+    const dname = document.getElementById('set-display-name').value.trim();
+    // Display name may only re-case the username (matches the server rule).
+    if (uname && dname && dname.toLowerCase() !== uname.toLowerCase()) {
+        toast(`Display name can only change the capitalization of "${uname}"`, 'error');
+        return;
+    }
     const data = {
-        display_name: document.getElementById('set-display-name').value.trim(),
+        display_name: dname,
         email: document.getElementById('set-email').value.trim() || null,
         bio: document.getElementById('set-bio').value.trim(),
         profile_color: document.getElementById('set-profile-color').value,

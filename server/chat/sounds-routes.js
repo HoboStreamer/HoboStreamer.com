@@ -116,6 +116,7 @@ function serializeSound(s) {
         duration_seconds: Math.round((s.duration_seconds || 0) * 10) / 10,
         uploader: s.created_by_name || 'someone',
         uploader_id: s.created_by,
+        emote_code: s.emote_code || '',
         created_at: s.created_at,
     };
 }
@@ -178,9 +179,17 @@ router.post('/', requireAuth, soundUpload.single('sound'), async (req, res) => {
             cleanup();
             return res.status(403).json({ error: 'This streamer has disabled viewer sound uploads.' });
         }
-        if (!isMod && !isOwnChannel && settings.uploads_mods_only) {
+        if (!isMod && !isOwnChannel && (settings.uploads_mods_only || settings.sounds_mods_only)) {
             cleanup();
             return res.status(403).json({ error: 'Only channel mods can upload sounds here.' });
+        }
+
+        // Adding a NEW file to an EXISTING command is restricted to that command's
+        // creator (or channel mods/owner), so viewers can't hijack someone's command.
+        const existingForCmd = db.getChannelSoundByCommand(channelOwnerId, command);
+        if (existingForCmd && !isMod && !isOwnChannel && existingForCmd.created_by !== req.user.id) {
+            cleanup();
+            return res.status(403).json({ error: `Only the creator of !${command} (or a mod) can add more sounds to it.` });
         }
 
         // Per-channel + per-uploader caps
@@ -224,6 +233,8 @@ router.post('/', requireAuth, soundUpload.single('sound'), async (req, res) => {
             }
         }
 
+        // Emote attached to the command (per-command; new files inherit the existing one).
+        const emoteCode = String(req.body.emote_code || (existingForCmd && existingForCmd.emote_code) || '').trim().slice(0, 32);
         const result = db.createChannelSound({
             channel_owner_id: channelOwnerId,
             command,
@@ -232,7 +243,10 @@ router.post('/', requireAuth, soundUpload.single('sound'), async (req, res) => {
             duration_seconds: duration,
             created_by: req.user.id,
             created_by_name: req.user.display_name || req.user.username,
+            emote_code: emoteCode,
         });
+        // If an emote was (re)specified, apply it to every sound under this command.
+        if (req.body.emote_code !== undefined) { try { db.setChannelSoundEmote(channelOwnerId, command, emoteCode); } catch { /* */ } }
 
         res.json({
             sound: {

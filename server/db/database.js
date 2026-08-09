@@ -853,6 +853,8 @@ function initDb() {
         // Per-channel emote size limits (percent of the base emote height, 100 = default).
         if (!cols.includes('emote_size_min')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN emote_size_min INTEGER DEFAULT 50');
         if (!cols.includes('emote_size_max')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN emote_size_max INTEGER DEFAULT 200');
+        // Sounds-only "mods can upload" flag (independent of the emote uploads_mods_only).
+        if (!cols.includes('sounds_mods_only')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sounds_mods_only INTEGER DEFAULT 0');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
 
     // Migrate: add channel_owner_id to emotes (viewer uploads targeting a channel) + channel_sounds table
@@ -920,6 +922,12 @@ function initDb() {
             database.exec('CREATE INDEX IF NOT EXISTS idx_channel_sounds_cmd ON channel_sounds(channel_owner_id, command)');
         }
     } catch (e) { console.warn('[DB] channel_sounds multi-sound migration:', e.message); }
+
+    // Migrate: optional emote attached to a sound command (shows the emote + "!" in chat).
+    try {
+        const cols = database.prepare('PRAGMA table_info(channel_sounds)').all().map(c => c.name);
+        if (!cols.includes('emote_code')) database.exec("ALTER TABLE channel_sounds ADD COLUMN emote_code TEXT DEFAULT ''");
+    } catch (e) { console.warn('[DB] channel_sounds emote_code migration:', e.message); }
 
     // Migrate: AI chatbot ("fake viewers") config, one row per streamer (user)
     try {
@@ -3331,12 +3339,17 @@ function countUserEmotes(userId) {
 }
 
 // ── Channel sound commands (viewer-uploadable) ───────────────
-function createChannelSound({ channel_owner_id, command, url, mime = 'audio/mpeg', duration_seconds = 0, created_by = null, created_by_name = '' }) {
+function createChannelSound({ channel_owner_id, command, url, mime = 'audio/mpeg', duration_seconds = 0, created_by = null, created_by_name = '', emote_code = '' }) {
     return run(
-        `INSERT INTO channel_sounds (channel_owner_id, command, url, mime, duration_seconds, created_by, created_by_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [channel_owner_id, command, url, mime, duration_seconds, created_by, created_by_name]
+        `INSERT INTO channel_sounds (channel_owner_id, command, url, mime, duration_seconds, created_by, created_by_name, emote_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [channel_owner_id, command, url, mime, duration_seconds, created_by, created_by_name, emote_code || '']
     );
+}
+// Update the shared emote_code for all sounds under a command (an emote is per-command).
+function setChannelSoundEmote(ownerId, command, emoteCode) {
+    return run('UPDATE channel_sounds SET emote_code = ? WHERE channel_owner_id = ? AND command = ?',
+        [emoteCode || '', ownerId, String(command || '').toLowerCase()]);
 }
 
 function getChannelSounds(ownerId) {
@@ -3825,6 +3838,7 @@ function getChannelModerationSettings(channelId) {
             emote_scale: 100,
             emote_size_min: 50,
             emote_size_max: 200,
+            sounds_mods_only: 0,
             sound_min_speed: 0.5,
             sound_max_speed: 3.0,
             sound_min_pitch_cents: -1200,
@@ -3867,6 +3881,7 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.emote_scale !== undefined) { updates.push('emote_scale = ?'); params.push(Math.min(300, Math.max(50, Number(fields.emote_scale) || 100))); }
         if (fields.emote_size_min !== undefined) { updates.push('emote_size_min = ?'); params.push(Math.min(200, Math.max(25, Number(fields.emote_size_min) || 50))); }
         if (fields.emote_size_max !== undefined) { updates.push('emote_size_max = ?'); params.push(Math.min(400, Math.max(50, Number(fields.emote_size_max) || 200))); }
+        if (fields.sounds_mods_only !== undefined) { updates.push('sounds_mods_only = ?'); params.push(fields.sounds_mods_only ? 1 : 0); }
         if (fields.sound_min_speed !== undefined) { updates.push('sound_min_speed = ?'); params.push(Math.min(1, Math.max(0.1, Number(fields.sound_min_speed) || 0.5))); }
         if (fields.sound_max_speed !== undefined) { updates.push('sound_max_speed = ?'); params.push(Math.min(5, Math.max(1, Number(fields.sound_max_speed) || 3.0))); }
         if (fields.sound_min_pitch_cents !== undefined) { updates.push('sound_min_pitch_cents = ?'); params.push(Math.min(0, Math.max(-2400, Math.round(Number(fields.sound_min_pitch_cents) || -1200)))); }
@@ -3886,8 +3901,8 @@ function upsertChannelModerationSettings(channelId, fields) {
                 ip_approval_mode, soundboard_enabled, soundboard_allow_pitch, soundboard_allow_speed, soundboard_banned_ids,
                 viewer_auto_delete_enabled, viewer_delete_all_enabled,
                 custom_emotes_enabled, custom_sounds_enabled, max_sound_seconds, uploads_mods_only, emote_scale,
-                emote_size_min, emote_size_max
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+                emote_size_min, emote_size_max, sounds_mods_only
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
             [
                 channelId,
                 fields.slow_mode_seconds || 0,
@@ -3920,6 +3935,7 @@ function upsertChannelModerationSettings(channelId, fields) {
                 Math.min(300, Math.max(50, Number(fields.emote_scale) || 100)),
                 Math.min(200, Math.max(25, Number(fields.emote_size_min) || 50)),
                 Math.min(400, Math.max(50, Number(fields.emote_size_max) || 200)),
+                fields.sounds_mods_only ? 1 : 0,
             ]
         );
     }
@@ -5094,7 +5110,7 @@ module.exports = {
     // Emotes
     createEmote, getEmoteById, getEmotesByUser, getGlobalEmotes, getChannelEmotes,
     deleteEmote, getEmoteByCode, countUserEmotes, countChannelEmotes, getChannelEmoteByCode,
-    createChannelSound, getChannelSounds, getChannelSoundByCommand, getChannelSoundById,
+    createChannelSound, setChannelSoundEmote, getChannelSounds, getChannelSoundByCommand, getChannelSoundById,
     countChannelSounds, countChannelSoundsByUploader, deleteChannelSound,
     getAiChatbotConfig, upsertAiChatbotConfig,
     // Site Settings

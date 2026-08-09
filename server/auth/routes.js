@@ -79,7 +79,7 @@ const avatarStorage = multer.diskStorage({
 });
 const avatarUpload = multer({
     storage: avatarStorage,
-    limits: { fileSize: 512 * 1024 }, // 512KB
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
     fileFilter: (req, file, cb) => {
         const allowed = ['image/png', 'image/gif', 'image/webp', 'image/jpeg', 'image/avif'];
         cb(null, allowed.includes(file.mimetype));
@@ -122,6 +122,12 @@ router.put('/profile', requireAuth, (req, res) => {
         if (display_name !== undefined && (display_name.length < 1 || display_name.length > 60)) {
             return res.status(400).json({ error: 'Display name must be 1-60 characters' });
         }
+        // Display name may only re-case the actual username (e.g. "goosely" → "Goosely"),
+        // not be an arbitrary different name.
+        if (display_name !== undefined && req.user.username
+            && display_name.toLowerCase() !== String(req.user.username).toLowerCase()) {
+            return res.status(400).json({ error: `Display name can only change the capitalization of your username (${req.user.username}).` });
+        }
         if (bio !== undefined && bio.length > 500) {
             return res.status(400).json({ error: 'Bio must be 500 characters or fewer' });
         }
@@ -131,13 +137,10 @@ router.put('/profile', requireAuth, (req, res) => {
         if (profile_color !== undefined && profile_color !== '' && !/^#[0-9a-fA-F]{6}$/.test(profile_color)) {
             return res.status(400).json({ error: 'Profile color must be a 6-digit hex color' });
         }
-        if (avatar_url !== undefined && !isAllowedAvatarUrl(avatar_url)) {
-            return res.status(400).json({ error: 'Avatar URL must be http(s) or a local /data/avatars path' });
-        }
-
         if (display_name !== undefined) { updates.push('display_name = ?'); params.push(display_name); }
         if (bio !== undefined) { updates.push('bio = ?'); params.push(bio); }
-        if (avatar_url !== undefined) { updates.push('avatar_url = ?'); params.push(avatar_url); }
+        // avatar_url is intentionally NOT settable here — avatars change only via the
+        // /api/auth/avatar image upload (from /settings), which validates the file.
         if (email !== undefined) { updates.push('email = ?'); params.push(email); }
         if (profile_color !== undefined) { updates.push('profile_color = ?'); params.push(profile_color); }
 
@@ -184,9 +187,24 @@ router.get('/user/:username', (req, res) => {
 });
 
 // ── Upload Avatar ────────────────────────────────────────────
-router.post('/avatar', requireAuth, avatarUpload.single('avatar'), (req, res) => {
+router.post('/avatar', requireAuth, avatarUpload.single('avatar'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No image file uploaded' });
+
+        // Validate it's a REAL, decodable image of an allowed type (not just a
+        // trusted mimetype / renamed file).
+        try {
+            const sharp = require('sharp');
+            const meta = await sharp(req.file.path, { failOn: 'error' }).metadata();
+            const okFormats = ['png', 'jpeg', 'gif', 'webp', 'avif'];
+            if (!meta || !okFormats.includes(meta.format) || !meta.width || !meta.height) {
+                try { fs.unlinkSync(req.file.path); } catch { /* */ }
+                return res.status(400).json({ error: 'That file is not a valid image.' });
+            }
+        } catch (imgErr) {
+            try { fs.unlinkSync(req.file.path); } catch { /* */ }
+            return res.status(400).json({ error: 'That file is not a valid or is a corrupt image.' });
+        }
 
         // Delete old avatar file if it exists
         const oldUser = db.getUserById(req.user.id);

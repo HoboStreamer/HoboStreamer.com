@@ -31,6 +31,7 @@
     let overlay = null;
     let curStreamId = null;
     let _soundPreviewUrl = null;   // object URL for the attached-sound preview
+    let _emotePreviewUrl = null;   // object URL for the emote upload preview
     let curTab = 'emote';
 
     function ensureStyles() {
@@ -71,6 +72,7 @@
         .cu-count{background:var(--accent,#c0965c);color:#111;border-radius:10px;padding:0 7px;font-size:11px;font-weight:700;margin-left:2px;}
         .cu-sound-group{width:100%;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:6px;}
         .cu-sound-cmd-hd{display:flex;align-items:center;gap:6px;margin-bottom:2px;}
+        .cu-emote-preview{padding:6px 0}.cu-emote-preview-row{display:flex;align-items:center;gap:4px;font-size:13px}
         `;
         const el = document.createElement('style');
         el.id = 'cu-styles';
@@ -104,42 +106,80 @@
             <form class="cu-form" id="cu-emote-form">
                 <input type="text" id="cu-emote-code" maxlength="32" placeholder="Emote code (letters/numbers/_)" autocomplete="off">
                 <input type="file" id="cu-emote-file" accept="image/png,image/gif,image/webp,image/jpeg,image/avif">
+                <div id="cu-emote-preview" class="cu-emote-preview" style="display:none"></div>
                 <div class="cu-size-row">
                     <span>Size <b id="cu-emote-size-val">100%</b></span>
-                    <input type="range" id="cu-emote-size" min="25" max="400" step="5" value="100"
-                        oninput="document.getElementById('cu-emote-size-val').textContent=this.value+'%'">
+                    <input type="range" id="cu-emote-size" min="25" max="400" step="5" value="100">
                 </div>
                 <button class="cu-btn" type="submit">Upload emote to this channel</button>
-                <div class="cu-hint">Type the code in chat to use it. PNG/GIF/WebP/JPEG, up to 256&nbsp;KB. Size is clamped to the streamer's allowed range.</div>
+                <div class="cu-hint">Type the code in chat to use it. PNG/GIF/WebP/JPEG, up to 2&nbsp;MB. Size is clamped to the streamer's allowed range.</div>
             </form>
             <div id="cu-emote-list" class="cu-list"><span class="cu-empty">Loading…</span></div>`;
         overlay.querySelector('#cu-emote-form').addEventListener('submit', submitEmote);
+        const codeEl = overlay.querySelector('#cu-emote-code');
+        const fileEl = overlay.querySelector('#cu-emote-file');
+        const sizeEl = overlay.querySelector('#cu-emote-size');
+        let _codeTouched = false;
+        codeEl.addEventListener('input', () => { _codeTouched = true; });
+        const renderPreview = () => {
+            const box = overlay.querySelector('#cu-emote-preview');
+            const f = fileEl.files[0];
+            if (!f) { box.style.display = 'none'; box.innerHTML = ''; return; }
+            if (_emotePreviewUrl) { try { URL.revokeObjectURL(_emotePreviewUrl); } catch {} }
+            _emotePreviewUrl = URL.createObjectURL(f);
+            const pct = Math.max(25, Math.min(400, parseInt(sizeEl.value) || 100)) / 100;
+            const h = Math.round(28 * pct); // matches chat's base emote height
+            box.style.display = '';
+            box.innerHTML = `<div class="cu-emote-preview-row"><span class="muted" style="font-size:12px">Chat preview:</span> word <img src="${_emotePreviewUrl}" style="height:${h}px;vertical-align:middle;margin:0 3px" alt=""> word</div>`;
+        };
+        fileEl.addEventListener('change', () => {
+            const f = fileEl.files[0];
+            // Autofill the code from the filename (strip extension) unless the user typed one.
+            if (f && (!_codeTouched || !codeEl.value.trim())) {
+                codeEl.value = _codeFromFilename(f.name);
+            }
+            renderPreview();
+        });
+        sizeEl.addEventListener('input', () => { overlay.querySelector('#cu-emote-size-val').textContent = sizeEl.value + '%'; renderPreview(); });
         loadEmoteList();
+    }
+
+    // "emote.png" → "Emote"; ("example-Sound.mp3", lowerFirst) → "exampleSound"
+    function _codeFromFilename(name, lowerFirst) {
+        let base = String(name || '').replace(/\.[^.]+$/, '');
+        base = base.replace(/[^A-Za-z0-9]+(.)?/g, (_, c) => (c ? c.toUpperCase() : ''));
+        base = lowerFirst ? base.replace(/^(.)/, (m) => m.toLowerCase()) : base.replace(/^(.)/, (m) => m.toUpperCase());
+        return base.slice(0, 32);
     }
 
     function renderSoundTab(body) {
         body.innerHTML = `
             <form class="cu-form" id="cu-sound-form">
                 <input type="text" id="cu-sound-cmd" maxlength="24" placeholder="Command name (e.g. airhorn) → !airhorn" autocomplete="off">
-                <input type="file" id="cu-sound-file" accept="audio/*">
+                <input type="file" id="cu-sound-file" accept="audio/*" multiple>
+                <input type="text" id="cu-sound-emote" maxlength="32" placeholder="Attach an emote code (optional) — shows the emote instead of “played !cmd”" autocomplete="off">
                 <div id="cu-sound-preview" style="display:none;margin:2px 0"></div>
-                <button class="cu-btn" type="submit">Upload sound to this channel</button>
-                <div class="cu-hint">Trigger it by typing <b>!command</b> in chat. MP3/WAV/OGG, within the streamer's max length. Upload several under the <b>same command</b> and one plays at random each time.</div>
+                <button class="cu-btn" type="submit">Upload sound(s) to this channel</button>
+                <div class="cu-hint">Trigger it by typing <b>!command</b> in chat. MP3/WAV/OGG, within the streamer's max length. Select <b>multiple files</b> under the same command and one plays at random each time.</div>
             </form>
             <div id="cu-sound-list" class="cu-list" style="flex-direction:column;"><span class="cu-empty">Loading…</span></div>`;
         overlay.querySelector('#cu-sound-form').addEventListener('submit', submitSound);
-        // Preview the attached file before uploading.
         const fileInput = overlay.querySelector('#cu-sound-file');
+        const cmdInput = overlay.querySelector('#cu-sound-cmd');
+        let _cmdTouched = false;
+        cmdInput.addEventListener('input', () => { _cmdTouched = true; });
         fileInput.addEventListener('change', () => {
             const preview = overlay.querySelector('#cu-sound-preview');
             if (_soundPreviewUrl) { try { URL.revokeObjectURL(_soundPreviewUrl); } catch {} _soundPreviewUrl = null; }
-            const f = fileInput.files[0];
-            if (!f) { preview.style.display = 'none'; preview.innerHTML = ''; return; }
-            _soundPreviewUrl = URL.createObjectURL(f);
-            const sizeKb = (f.size / 1024).toFixed(0);
+            const files = fileInput.files;
+            if (!files.length) { preview.style.display = 'none'; preview.innerHTML = ''; return; }
+            // Autofill the command from the first filename (lower camelCase) unless typed.
+            if ((!_cmdTouched || !cmdInput.value.trim())) cmdInput.value = _codeFromFilename(files[0].name, true);
+            _soundPreviewUrl = URL.createObjectURL(files[0]);
+            const extra = files.length > 1 ? ` <b>+${files.length - 1} more</b> (random on play)` : '';
             preview.style.display = '';
             preview.innerHTML = `<audio controls preload="metadata" src="${_soundPreviewUrl}" style="width:100%;height:34px"></audio>
-                <div class="cu-hint" style="margin-top:2px">Preview: <b>${esc(f.name)}</b> · ${sizeKb} KB</div>`;
+                <div class="cu-hint" style="margin-top:2px">Preview: <b>${esc(files[0].name)}</b>${extra}</div>`;
         });
         loadSoundList();
     }
@@ -172,6 +212,7 @@
                 <div class="cu-set-group">
                     <div class="cu-set-group-title">Sounds</div>
                     <label class="cu-set-row"><span>Custom sounds enabled</span><input type="checkbox" id="cu-set-sounds" ${chk(s.custom_sounds_enabled, 1)}></label>
+                    <label class="cu-set-row"><span>Only mods can upload sounds</span><input type="checkbox" id="cu-set-sounds-modsonly" ${chk(s.sounds_mods_only, 0)}></label>
                     <label class="cu-set-row"><span>Max sound length (s)</span><input type="number" id="cu-set-maxsec" min="1" max="30" value="${num(s.max_sound_seconds, 10)}"></label>
                 </div>
                 <button class="cu-btn" id="cu-set-save" type="button">Save channel settings</button>
@@ -189,6 +230,7 @@
             emote_size_min: parseInt(g('#cu-set-emin').value) || 50,
             emote_size_max: parseInt(g('#cu-set-emax').value) || 200,
             custom_sounds_enabled: g('#cu-set-sounds').checked,
+            sounds_mods_only: g('#cu-set-sounds-modsonly').checked,
             max_sound_seconds: parseInt(g('#cu-set-maxsec').value) || 10,
         };
         const btn = g('#cu-set-save');
@@ -234,8 +276,14 @@
             list.forEach((s) => { (groups[s.command] = groups[s.command] || []).push(s); });
             box.innerHTML = Object.keys(groups).sort().map((cmd) => {
                 const arr = groups[cmd];
+                const emoteCode = (arr.find((s) => s.emote_code) || {}).emote_code || '';
                 return `<div class="cu-sound-group">
-                    <div class="cu-sound-cmd-hd"><span class="cu-cmd">!${esc(cmd)}</span>${arr.length > 1 ? `<span class="cu-count">×${arr.length}</span> <span class="cu-hint" style="opacity:.55">random</span>` : ''}</div>
+                    <div class="cu-sound-cmd-hd">
+                        <span class="cu-cmd">!${esc(cmd)}</span>
+                        ${arr.length > 1 ? `<span class="cu-count">×${arr.length}</span> <span class="cu-hint" style="opacity:.55">random</span>` : ''}
+                        ${emoteCode ? `<span class="cu-hint" style="opacity:.7"><i class="fa-solid fa-face-grin-stars"></i> :${esc(emoteCode)}:</span>` : ''}
+                        <button class="cu-btn" style="margin-left:auto;padding:2px 8px;font-size:12px" onclick="__cuAddToSound('${esc(cmd)}')" title="Add another sound to this command"><i class="fa-solid fa-plus"></i> Add</button>
+                    </div>
                     ${arr.map((s) => `<div class="cu-sound" style="margin-left:10px">
                         <button class="cu-btn" style="padding:3px 8px;font-size:12px;" onclick="__cuPreviewSound('${esc(s.url)}')">▶</button>
                         <span class="cu-meta">${(s.duration_seconds || 0).toFixed ? s.duration_seconds.toFixed(1) : s.duration_seconds}s · ${esc(s.uploader || '')}</span>
@@ -277,21 +325,29 @@
         ev.preventDefault();
         if (!token()) { notify('Log in to upload sounds.', 'error'); return; }
         const cmd = overlay.querySelector('#cu-sound-cmd').value.trim();
-        const file = overlay.querySelector('#cu-sound-file').files[0];
-        if (!cmd || !file) { notify('Enter a command and pick an audio file.', 'error'); return; }
+        const files = Array.from(overlay.querySelector('#cu-sound-file').files || []);
+        const emoteCode = (overlay.querySelector('#cu-sound-emote')?.value || '').trim();
+        if (!cmd || !files.length) { notify('Enter a command and pick at least one audio file.', 'error'); return; }
         const btn = ev.target.querySelector('button[type=submit]');
         btn.disabled = true;
+        let ok = 0; let firstErr = null;
         try {
-            const fd = new FormData();
-            fd.append('command', cmd);
-            fd.append('stream_id', curStreamId);
-            fd.append('sound', file);
-            const r = await fetch('/api/sounds', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: fd });
-            const data = await r.json();
-            if (!r.ok) throw new Error(data.error || 'Upload failed');
-            notify(`Sound !${cmd} added — type it in chat to play it!`, 'success');
+            // Upload each selected file under the same command (server picks one at random on play).
+            for (let i = 0; i < files.length; i++) {
+                const fd = new FormData();
+                fd.append('command', cmd);
+                fd.append('stream_id', curStreamId);
+                fd.append('sound', files[i]);
+                if (emoteCode) fd.append('emote_code', emoteCode); // apply the emote to the command
+                const r = await fetch('/api/sounds', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: fd });
+                const data = await r.json();
+                if (r.ok) ok++; else if (!firstErr) firstErr = data.error || 'Upload failed';
+            }
+            if (ok) notify(`Added ${ok} sound${ok === 1 ? '' : 's'} to !${cmd}${firstErr ? ` (${files.length - ok} failed: ${firstErr})` : ''}`, ok === files.length ? 'success' : 'info');
+            else notify(firstErr || 'Upload failed', 'error');
             overlay.querySelector('#cu-sound-cmd').value = '';
             overlay.querySelector('#cu-sound-file').value = '';
+            if (overlay.querySelector('#cu-sound-emote')) overlay.querySelector('#cu-sound-emote').value = '';
             const preview = overlay.querySelector('#cu-sound-preview');
             if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
             if (_soundPreviewUrl) { try { URL.revokeObjectURL(_soundPreviewUrl); } catch {} _soundPreviewUrl = null; }
@@ -299,6 +355,16 @@
         } catch (e) { notify(e.message, 'error'); }
         finally { btn.disabled = false; }
     }
+
+    // Add more files to an existing command (opens a picker prefilled with that command).
+    window.__cuAddToSound = function (command) {
+        const cmdEl = overlay.querySelector('#cu-sound-cmd');
+        const fileEl = overlay.querySelector('#cu-sound-file');
+        if (!cmdEl || !fileEl) return;
+        cmdEl.value = command;
+        cmdEl.dispatchEvent(new Event('input'));
+        fileEl.click();
+    };
 
     window.__cuDeleteEmote = async function (id) {
         if (!token()) return notify('Log in first.', 'error');

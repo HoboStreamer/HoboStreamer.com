@@ -188,6 +188,30 @@ function _getPickerEls(inputId) {
     };
 }
 
+let _emoteMenuMode = 'emotes'; // 'emotes' | 'gif'
+let _gifProviderCache = null;
+
+// Slack-style category order — channel (the stream's own) emotes pinned at top.
+const EMOTE_CATEGORY_ORDER = [
+    { key: 'channel', label: 'Channel Emotes', icon: 'fa-star' },
+    { key: 'global', label: 'Custom', icon: 'fa-face-grin-stars' },
+    { key: 'defaults', label: 'Popular', icon: 'fa-fire' },
+    { key: 'ffz', label: 'FrankerFaceZ', icon: '' },
+    { key: '7tv', label: '7TV', icon: '' },
+    { key: 'bttv', label: 'BetterTTV', icon: '' },
+];
+
+// Rebuild the top tab bar into two tabs: Emotes | GIF.
+function _buildEmoteMenuTabs(picker) {
+    const tabs = picker.querySelector('.emote-picker-tabs');
+    if (!tabs) return;
+    tabs.innerHTML = `
+        <button class="emote-tab-btn ${_emoteMenuMode === 'emotes' ? 'active' : ''}" data-tab="emotes" onclick="renderEmotePicker('emotes')"><i class="fa-solid fa-face-smile"></i> Emotes</button>
+        <button class="emote-tab-btn ${_emoteMenuMode === 'gif' ? 'active' : ''}" data-tab="gif" onclick="renderEmotePicker('gif')"><i class="fa-solid fa-film"></i> GIF</button>`;
+    const searchEl = picker.querySelector('.emote-search');
+    if (searchEl) searchEl.placeholder = 'Search emotes or GIFs…';
+}
+
 function toggleEmotePicker(inputId) {
     const { picker } = _getPickerEls(inputId);
     if (!picker) return;
@@ -203,61 +227,78 @@ function toggleEmotePicker(inputId) {
     picker.style.display = _emotePickerOpen ? 'flex' : 'none';
     picker.dataset.targetInput = inputId || 'chat-input';
 
-    if (_emotePickerOpen && emotesLoaded) {
-        renderEmotePicker('all');
+    if (_emotePickerOpen) {
+        _emoteMenuMode = 'emotes';
+        _buildEmoteMenuTabs(picker);
+        renderEmotePicker('emotes');
     }
 }
 
-function renderEmotePicker(tab) {
-    const { grid, search } = _getPickerEls(_emotePickerTarget);
+function renderEmotePicker(mode) {
+    // Accept legacy tab names ('all'/'channel'/…) → treat as the emotes list.
+    if (mode !== 'gif') mode = 'emotes';
+    _emoteMenuMode = mode;
+    const { grid, search, picker } = _getPickerEls(_emotePickerTarget);
     if (!grid) return;
+    if (picker) picker.querySelectorAll('.emote-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === mode));
+    grid.classList.toggle('emote-grid-list', mode === 'emotes');
 
-    // Update ALL tab buttons in the active picker's parent
-    const pickerEl = grid.closest('.emote-picker');
-    if (pickerEl) {
-        pickerEl.querySelectorAll('.emote-tab-btn').forEach(b => {
-            b.classList.toggle('active', b.dataset.tab === tab);
-        });
-    }
+    if (mode === 'gif') { _renderGifTab(grid, search); return; }
 
-    let emotes = [];
     const query = (search?.value || '').toLowerCase().trim();
-
-    switch (tab) {
-        case 'all':
-            emotes = [
-                ...emoteCategories.defaults,
-                ...emoteCategories.channel,
-                ...emoteCategories.global,
-                ...emoteCategories.ffz,
-                ...emoteCategories.bttv,
-                ...emoteCategories['7tv'],
-            ];
-            break;
-        case 'defaults': emotes = emoteCategories.defaults; break;
-        case 'channel':  emotes = emoteCategories.channel;  break;
-        case 'global':   emotes = emoteCategories.global;   break;
-        case 'ffz':      emotes = emoteCategories.ffz;      break;
-        case 'bttv':     emotes = emoteCategories.bttv;     break;
-        case '7tv':      emotes = emoteCategories['7tv'];   break;
-        default:         emotes = [];
+    let html = '';
+    for (const cat of EMOTE_CATEGORY_ORDER) {
+        let list = emoteCategories[cat.key] || [];
+        if (query) list = list.filter(e => e.code.toLowerCase().includes(query));
+        if (!list.length) continue;
+        html += `<div class="emote-cat-header">${cat.icon ? `<i class="fa-solid ${cat.icon}"></i> ` : ''}${cat.label}<span class="emote-cat-count">${list.length}</span></div>`;
+        html += '<div class="emote-cat-grid">' + list.slice(0, 200).map(e => {
+            const cls = e.animated ? 'emote-picker-item emote-animated' : 'emote-picker-item';
+            return `<div class="${cls}" title="${_escEmote(e.code)}" onclick="insertEmote('${_escEmote(e.code).replace(/'/g, "\\'")}')"><img src="${e.url}" alt="${_escEmote(e.code)}" loading="lazy" draggable="false"></div>`;
+        }).join('') + '</div>';
     }
+    grid.innerHTML = html || '<div class="emote-picker-empty">No emotes found</div>';
+}
 
-    if (query) {
-        emotes = emotes.filter(e => e.code.toLowerCase().includes(query));
-    }
+// ── GIF tab (folded into the emote menu) ──────────────────────
+async function _gifDefaultProvider() {
+    if (_gifProviderCache !== null) return _gifProviderCache;
+    try {
+        const r = await fetch('/api/chat/gif/providers');
+        const d = await r.json();
+        _gifProviderCache = d.defaultProvider || null;
+    } catch { _gifProviderCache = null; }
+    return _gifProviderCache;
+}
 
-    if (!emotes.length) {
-        grid.innerHTML = '<div class="emote-picker-empty">No emotes found</div>';
-        return;
-    }
+async function _renderGifTab(grid, search) {
+    grid.innerHTML = '<div class="emote-picker-empty">Loading GIFs…</div>';
+    const provider = await _gifDefaultProvider();
+    if (!provider) { grid.innerHTML = '<div class="emote-picker-empty">GIF search isn’t configured.</div>'; return; }
+    const q = (search?.value || '').trim();
+    const url = (q.length >= 2)
+        ? `/api/chat/gif/search?provider=${provider}&q=${encodeURIComponent(q)}`
+        : `/api/chat/gif/trending?provider=${provider}`;
+    try {
+        const r = await fetch(url);
+        const d = await r.json();
+        const gifs = d.results || [];
+        if (!gifs.length) { grid.innerHTML = '<div class="emote-picker-empty">No GIFs found</div>'; return; }
+        grid.innerHTML = '<div class="emote-gif-grid">' + gifs.map(g =>
+            `<div class="emote-gif-item" title="${_escEmote(g.title || 'GIF')}" onclick="_insertGifFromMenu('${_escEmote(g.full_url).replace(/'/g, "\\'")}')"><img src="${_escEmote(g.preview_url)}" loading="lazy" alt="GIF"></div>`
+        ).join('') + '</div>';
+    } catch { grid.innerHTML = '<div class="emote-picker-empty">GIFs unavailable</div>'; }
+}
 
-    grid.innerHTML = emotes.slice(0, 300).map(e => {
-        const cls = e.animated ? 'emote-picker-item emote-animated' : 'emote-picker-item';
-        return `<div class="${cls}" title="${_escEmote(e.code)}" onclick="insertEmote('${_escEmote(e.code).replace(/'/g, "\\'")}')">
-            <img src="${e.url}" alt="${_escEmote(e.code)}" loading="lazy" draggable="false">
-        </div>`;
-    }).join('');
+function _insertGifFromMenu(url) {
+    const picker = _getPickerEls(_emotePickerTarget).picker;
+    const inputId = picker?.dataset.targetInput || _emotePickerTarget || 'chat-input';
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.value = `[gif:${url}]`;
+    if (picker) picker.style.display = 'none';
+    _emotePickerOpen = false;
+    if (typeof sendChat === 'function') sendChat(input);
 }
 
 function insertEmote(code) {
@@ -280,10 +321,8 @@ function insertEmote(code) {
 function onEmoteSearch(value) {
     clearTimeout(_emoteSearchTimeout);
     _emoteSearchTimeout = setTimeout(() => {
-        const pickerEl = _getPickerEls(_emotePickerTarget).picker;
-        if (!pickerEl) return;
-        const activeTab = pickerEl.querySelector('.emote-tab-btn.active');
-        renderEmotePicker(activeTab?.dataset.tab || 'all');
+        if (!_getPickerEls(_emotePickerTarget).picker) return;
+        renderEmotePicker(_emoteMenuMode);
     }, 150);
 }
 
@@ -425,9 +464,9 @@ document.addEventListener('click', (e) => {
     if (!_emotePickerOpen) return;
     if (e.target.closest('.emote-picker') || e.target.closest('.emote-picker-btn')) return;
     _emotePickerOpen = false;
-    // Close both pickers
-    const p1 = document.getElementById('emote-picker');
-    const p2 = document.getElementById('bc-emote-picker');
-    if (p1) p1.style.display = 'none';
-    if (p2) p2.style.display = 'none';
+    // Close all four pickers (main / broadcast / offline / global).
+    ['emote-picker', 'bc-emote-picker', 'oc-emote-picker', 'gc-emote-picker'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
 });

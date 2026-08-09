@@ -11352,3 +11352,37 @@ body.theme-light .user-dropdown {
     font-size: 0.74rem; padding: 2px 9px; border-radius: 12px;
     background: rgba(255,255,255,0.08); color: var(--text-secondary, #bbb);
 }
+
+/* ═══ Stream header polish (avatar image, larger title/desc, link) ═══ */
+.ch-info-bar .ch-avatar { width: 52px; height: 52px; overflow: hidden; cursor: pointer; }
+.ch-info-bar .ch-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+.ch-info-bar-top h2 { font-size: 1.3rem; }
+.ch-info-bar-top h2 a:hover { text-decoration: underline !important; }
+.ch-stream-title { font-size: 1.02rem; color: var(--text); white-space: normal; margin-top: 4px; }
+.ch-stream-description { font-size: 0.9rem; }
+@media (max-width: 768px) {
+    .ch-info-bar-top h2 { font-size: 1.12rem; }
+    .ch-stream-title { font-size: 0.95rem; white-space: normal; display: block; }
+}
+.stream-card-avatar { overflow: hidden; }
+.stream-card-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+.settings-banner-avatar img { position:absolute; inset:0; }
+.settings-avatar-edit { position:absolute; right:0; bottom:0; background:var(--accent,#c0965c); color:#111; width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; border:2px solid var(--bg-card,#1c1c22); }
+
+/* ═══ Emote menu redesign (Slack-style categorized list + GIF tab) ═══ */
+.emote-picker-grid.emote-grid-list { display: block; overflow-y: auto; }
+.emote-cat-header {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--bg-elevated, #1c1c22);
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.4px;
+    color: var(--text-secondary, #aaa); font-weight: 700;
+    padding: 7px 8px 4px; display: flex; align-items: center; gap: 6px;
+}
+.emote-cat-count { margin-left: auto; opacity: 0.5; font-weight: 600; }
+.emote-cat-grid { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 6px 8px; }
+.emote-gif-grid { column-count: 2; column-gap: 6px; padding: 6px; }
+.emote-gif-item { break-inside: avoid; margin-bottom: 6px; cursor: pointer; border-radius: 6px; overflow: hidden; }
+.emote-gif-item img { width: 100%; display: block; }
+.emote-gif-item:hover { outline: 2px solid var(--accent, #c0965c); }
+/* GIF now lives in the emote-menu tab — hide the old separate toolbar GIF button */
+.emote-picker-btn.gif-btn { display: none !important; }

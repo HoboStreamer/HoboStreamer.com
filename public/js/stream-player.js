@@ -3453,7 +3453,8 @@ function showUnmuteOverlay(video) {
    bitrate, resolution, fps and loss — measured live from the video element
    and (for WebRTC/SFU) RTCPeerConnection/Transport getStats(). */
 let _statsPoll = null;
-let _statsPrev = null; // { ts, bytes, frames }
+let _statsPrev = null;        // { id, ts, bytes } for the chosen video inbound-rtp
+let _statsPrevFrames = null;  // totalVideoFrames for the HLS/JSMPEG fps fallback
 
 function toggleStreamStats(force) {
     const panel = document.getElementById('stream-stats-panel');
@@ -3495,29 +3496,36 @@ async function _updateStreamStats() {
     if (src) {
         try {
             const report = await src.getStats();
-            let inbound = null, codecId = null;
-            report.forEach(st => { if (st.type === 'inbound-rtp' && (st.kind === 'video' || st.mediaType === 'video')) inbound = st; });
+            // Pick the VIDEO inbound-rtp (kind/mediaType, or one that's decoding frames).
+            // On the SFU path kind isn't always tagged, so fall back to the inbound
+            // with the most bytes — never audio, which caused 0 kbps / odd loss.
+            let inbound = null, bestBytes = -1;
+            report.forEach(st => {
+                if (st.type !== 'inbound-rtp') return;
+                const isVideo = st.kind === 'video' || st.mediaType === 'video' || st.frameWidth > 0 || st.framesDecoded > 0;
+                if (isVideo && (st.bytesReceived || 0) > bestBytes) { inbound = st; bestBytes = st.bytesReceived || 0; }
+            });
+            if (!inbound) report.forEach(st => { if (st.type === 'inbound-rtp' && (st.bytesReceived || 0) > bestBytes) { inbound = st; bestBytes = st.bytesReceived || 0; } });
             if (inbound) {
-                codecId = inbound.codecId || null;
                 if (inbound.framesPerSecond) fps = Math.round(inbound.framesPerSecond);
                 if (!haveRes && inbound.frameWidth) { rows.push(['Resolution', `${inbound.frameWidth}×${inbound.frameHeight}`]); haveRes = true; }
-                if (typeof inbound.packetsLost === 'number') loss = inbound.packetsLost;
+                if (typeof inbound.packetsLost === 'number') loss = Math.max(0, inbound.packetsLost);
                 if (typeof inbound.jitter === 'number') jitter = Math.round(inbound.jitter * 1000);
-                const now = inbound.timestamp, bytes = inbound.bytesReceived || 0;
-                if (_statsPrev && _statsPrev.bytes != null && now > _statsPrev.ts) {
+                const now = inbound.timestamp, bytes = inbound.bytesReceived || 0, id = inbound.id;
+                if (_statsPrev && _statsPrev.id === id && bytes >= _statsPrev.bytes && now > _statsPrev.ts) {
                     kbps = Math.max(0, Math.round(((bytes - _statsPrev.bytes) * 8) / (now - _statsPrev.ts))); // bits/ms = kbit/s
                 }
-                _statsPrev = { ts: now, bytes };
+                _statsPrev = { id, ts: now, bytes };
+                if (inbound.codecId && report.get) { const c = report.get(inbound.codecId); if (c && c.mimeType) codec = c.mimeType.replace(/^(video|audio)\//, '').toUpperCase(); }
             }
-            if (codecId && report.get) { const c = report.get(codecId); if (c && c.mimeType) codec = c.mimeType.replace('video/', '').toUpperCase(); }
         } catch { /* getStats unavailable */ }
     }
     // FPS fallback for HLS/JSMPEG (no peer connection)
     if (fps == null && vid && vid.getVideoPlaybackQuality) {
         try {
             const q = vid.getVideoPlaybackQuality();
-            if (_statsPrev && _statsPrev.frames != null) fps = Math.max(0, q.totalVideoFrames - _statsPrev.frames);
-            _statsPrev = Object.assign(_statsPrev || {}, { frames: q.totalVideoFrames });
+            if (_statsPrevFrames != null) fps = Math.max(0, q.totalVideoFrames - _statsPrevFrames);
+            _statsPrevFrames = q.totalVideoFrames;
         } catch { /* */ }
     }
     if (codec) rows.push(['Codec', codec]);

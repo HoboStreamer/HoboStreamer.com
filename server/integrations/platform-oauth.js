@@ -50,11 +50,11 @@ const PLATFORMS = {
         name: 'Kick',
         authorizeUrl: 'https://id.kick.com/oauth/authorize',
         tokenUrl: 'https://id.kick.com/oauth/token',
-        scopes: ['user:read', 'channel:read'],
+        scopes: ['user:read', 'channel:read', 'streamkey:read'],
         pkce: true, // Kick OAuth 2.1 requires PKCE
         clientIdKey: 'kick_client_id',
         clientSecretKey: 'kick_client_secret',
-        providesKey: false, // Kick API does not expose the RTMP stream key
+        providesKey: true, // with streamkey:read, /channels returns stream.url + stream.key
     },
 };
 
@@ -292,11 +292,19 @@ async function createYouTubeStream(headers) {
 
 async function fetchKick(accessToken) {
     const headers = { Authorization: `Bearer ${accessToken}` };
-    let slug = null, name = null, userId = null;
+    let slug = null, name = null, userId = null, serverUrl = null, streamKey = null;
     try {
         const ch = await getJson('https://api.kick.com/public/v1/channels', headers);
         const c = ch.data && ch.data[0];
-        if (c) { slug = c.slug; userId = c.broadcaster_user_id != null ? String(c.broadcaster_user_id) : null; }
+        if (c) {
+            slug = c.slug;
+            userId = c.broadcaster_user_id != null ? String(c.broadcaster_user_id) : null;
+            // With the streamkey:read scope, /channels includes the RTMP ingest + key.
+            if (c.stream) {
+                if (c.stream.url) serverUrl = c.stream.url;
+                if (c.stream.key) streamKey = c.stream.key;
+            }
+        }
     } catch (e) {
         console.warn('[PlatformOAuth] Kick channel fetch failed:', e.message);
     }
@@ -313,9 +321,9 @@ async function fetchKick(accessToken) {
         platform_user_id: userId,
         platform_username: name || slug || 'Kick',
         channel_url: slug ? `https://kick.com/${slug}` : null,
-        server_url: null,      // Kick ingest URL is not exposed via API
-        stream_key: null,      // Kick stream key is not exposed via API
-        needsManualKey: true,  // user must paste server URL + key from the Kick dashboard
+        server_url: serverUrl,
+        stream_key: streamKey,
+        needsManualKey: !streamKey, // only if the key wasn't returned (e.g. scope not granted)
     };
 }
 
@@ -364,7 +372,15 @@ async function resolveIngestForConnection(connection, { title } = {}) {
     if (connection.platform === 'youtube') {
         return youtubeGoLive(token, title);
     }
-    return null; // kick — no API key
+    if (connection.platform === 'kick') {
+        // With streamkey:read, /channels returns the current RTMP ingest + key.
+        const ch = await getJson('https://api.kick.com/public/v1/channels', { Authorization: `Bearer ${token}` });
+        const c = ch.data && ch.data[0];
+        const url = c && c.stream && c.stream.url;
+        const key = c && c.stream && c.stream.key;
+        return (url && key) ? { server_url: url, stream_key: key } : null;
+    }
+    return null;
 }
 
 /** Get the reusable YouTube ingest and create+bind an auto-start broadcast. */

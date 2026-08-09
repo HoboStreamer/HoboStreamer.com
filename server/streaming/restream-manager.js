@@ -1567,7 +1567,7 @@ class RestreamManager extends EventEmitter {
      * unlinked destinations or Kick (no API key). Failures fall back to stored values.
      */
     async _refreshDestFromConnection(destination, streamId) {
-        if (!destination || (destination.platform !== 'twitch' && destination.platform !== 'youtube')) return destination;
+        if (!destination || !['twitch', 'youtube', 'kick'].includes(destination.platform)) return destination;
         const db = require('../db/database');
         const conn = db.getPlatformConnection(destination.user_id, destination.platform);
         if (!conn) return destination;

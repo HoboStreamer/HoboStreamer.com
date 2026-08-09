@@ -2886,8 +2886,19 @@ function addChatMessage(msg) {
             const sign = sPitchShift > 0 ? '+' : '';
             modBadges += `<span class="channel-sound-mod" style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:10px;background:rgba(0,0,0,0.25);font-size:0.82em"><i class="fa-solid fa-music"></i> ${sign}${Math.round(sPitchShift)}</span>`;
         }
-        const label = argStr ? `played !${cmd} ${argStr}` : `played !${cmd}`;
-        text = `<span class="channel-sound-pill" style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:12px;background:color-mix(in srgb,var(--accent,#e0a44a) 18%,transparent);color:var(--accent,#e0a44a);font-weight:600;font-size:0.92em"><i class="fa-solid fa-volume-high"></i> ${label}${modBadges}</span>`;
+        // If the command has an emote attached, show the emote + "!" (emote+sound combo)
+        // instead of the "played !cmd" pill.
+        const emoteCode = (msg.sound && msg.sound.emoteCode) || '';
+        const emote = emoteCode && typeof emoteMap !== 'undefined' && emoteMap.get ? emoteMap.get(emoteCode) : null;
+        if (emote) {
+            const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
+            const sz = Number(emote.size);
+            const sizeStyle = (sz && sz !== 100) ? ` style="height:calc(1.6em * var(--chat-emote-scale,1) * ${Math.max(0.25, Math.min(4, sz / 100))})"` : '';
+            text = `<span class="channel-sound-emote" style="display:inline-flex;align-items:center;gap:2px" title="!${cmd}"><span style="font-weight:700;color:var(--accent,#e0a44a)">!</span><img class="${cls}"${sizeStyle} src="${esc(emote.url)}" alt="!${cmd}" draggable="false">${modBadges}</span>`;
+        } else {
+            const label = argStr ? `played !${cmd} ${argStr}` : `played !${cmd}`;
+            text = `<span class="channel-sound-pill" style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:12px;background:color-mix(in srgb,var(--accent,#e0a44a) 18%,transparent);color:var(--accent,#e0a44a);font-weight:600;font-size:0.92em"><i class="fa-solid fa-volume-high"></i> ${label}${modBadges}</span>`;
+        }
     }
     const isAnon = displayName.startsWith('anon');
 

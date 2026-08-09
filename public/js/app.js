@@ -73,6 +73,24 @@ function channelPath(username, managedStreamIdOrSlug = null) {
     return `${base}/${encodeURIComponent(String(managedStreamIdOrSlug))}`;
 }
 
+/** Inner img-or-letter for an element that is itself the avatar circle. */
+function _avatarInner(url, name) {
+    const letter = ((String(name || '?'))[0] || '?').toUpperCase();
+    return url
+        ? `<img src="${esc(url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block" onerror="this.remove();this.parentNode.textContent='${letter}'">`
+        : letter;
+}
+
+/** Render a card avatar as the user's uploaded image (letter fallback on error/none). */
+function _avatarSpan(url, name, color, extraCls) {
+    const letter = ((String(name || '?'))[0] || '?').toUpperCase();
+    const cls = extraCls ? ` ${extraCls}` : '';
+    const bg = color ? ` style="background:${esc(color)}"` : '';
+    return url
+        ? `<span class="stream-card-avatar${cls}"${bg}><img src="${esc(url)}" alt="" onerror="this.remove();this.parentNode.textContent='${letter}'"></span>`
+        : `<span class="stream-card-avatar${cls}"${bg}>${letter}</span>`;
+}
+
 /* ── API helpers ──────────────────────────────────────────────── */
 function parseJwtExp(token) {
     if (!token) return null;
@@ -497,7 +515,7 @@ function onAuthChange() {
         dash.style.display = '';
         broadcast.style.display = '';
         admin.style.display = (currentUser.capabilities?.admin_panel || hasCapability('can_access_staff_console')) ? '' : 'none';
-        document.getElementById('nav-avatar').textContent = currentUser.username[0].toUpperCase();
+        document.getElementById('nav-avatar').innerHTML = _avatarInner(currentUser.avatar_url, currentUser.username);
         document.getElementById('nav-username').textContent = currentUser.username;
         loadBalance();
     } else {
@@ -903,9 +921,7 @@ function renderRecentlyOnline(containerId, streamers) {
     }
     container.innerHTML = streamers.map(s => {
         const msList = (s.managed_streams || []);
-        const avatar = s.profile_color
-            ? `<span class="stream-card-avatar" style="background:${s.profile_color}">${(s.username || '?')[0].toUpperCase()}</span>`
-            : `<span class="stream-card-avatar">${(s.username || '?')[0].toUpperCase()}</span>`;
+        const avatar = _avatarSpan(s.avatar_url, s.username, s.profile_color);
         const channelHref = `/@${s.username}`;
         const streamsHtml = msList.length ? msList.map(ms => {
             const href = channelPath(s.username, ms.slug || ms.managed_stream_id);
@@ -961,7 +977,7 @@ async function loadHomeRecentVods(page) {
                     <div class="stream-card-info">
                         <div class="stream-card-title">${esc(v.title || 'VOD')}</div>
                         <div class="stream-card-streamer">
-                            <span class="stream-card-avatar" ${v.profile_color ? `style="background:${v.profile_color}"` : ''}>${(v.username || '?')[0].toUpperCase()}</span>
+                            ${_avatarSpan(v.avatar_url, v.username, v.profile_color)}
                             ${esc(v.display_name || v.username)}
                             <span class="muted" style="margin-left:auto;font-size:0.75rem">${timeAgo(v.created_at)}</span>
                         </div>
@@ -993,7 +1009,7 @@ async function loadHomeClips(page) {
                 <div class="stream-card-info">
                     <div class="stream-card-title">${esc(c.title || 'Untitled Clip')}</div>
                     <div class="stream-card-streamer">
-                        <span class="stream-card-avatar">${(c.username || '?')[0].toUpperCase()}</span>
+                        ${_avatarSpan(c.avatar_url, c.username, c.profile_color)}
                         ${esc(c.username || 'Anonymous')}
                         <span class="muted" style="margin-left:auto;font-size:0.75rem">${timeAgo(c.created_at)}</span>
                     </div>
@@ -1157,7 +1173,7 @@ function renderStreamGrid(containerId, streams, isLive) {
             <div class="stream-card-info">
                 <div class="stream-card-title">${esc(s.title || 'Untitled Stream')}</div>
                 <div class="stream-card-streamer">
-                    <span class="stream-card-avatar">${(s.username || '?')[0].toUpperCase()}</span>
+                    ${_avatarSpan(s.avatar_url, s.username, s.profile_color)}
                     ${esc(s.username || 'Anonymous')}
                     ${endedAgo}
                 </div>
@@ -1694,10 +1710,23 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             document.getElementById('ch-live-area').style.display = '';
             document.getElementById('ch-offline-area').style.display = 'none';
 
-            // Populate streamer info bar (below video)
-            document.getElementById('ch-avatar').textContent = (ch.username || '?')[0].toUpperCase();
-            document.getElementById('ch-display-name').textContent = ch.display_name || ch.username;
-            document.getElementById('ch-username').textContent = '@' + ch.username;
+            // Populate streamer info bar (below video). Avatar image (letter fallback)
+            // + display name both link to the channel; the @handle is dropped.
+            const _chPath = channelPath(ch.username);
+            const _chAvatar = document.getElementById('ch-avatar');
+            if (_chAvatar) {
+                _chAvatar.innerHTML = ch.avatar_url
+                    ? `<img src="${esc(ch.avatar_url)}" alt="" onerror="this.style.display='none';this.parentNode.textContent='${((ch.username || '?')[0] || '?').toUpperCase()}'">`
+                    : ((ch.username || '?')[0] || '?').toUpperCase();
+                _chAvatar.style.cursor = 'pointer';
+                _chAvatar.onclick = () => navigate(_chPath);
+            }
+            const _chName = document.getElementById('ch-display-name');
+            if (_chName) {
+                _chName.innerHTML = `<a href="${esc(_chPath)}" onclick="event.preventDefault();navigate('${esc(_chPath)}')" style="color:inherit;text-decoration:none">${esc(ch.display_name || ch.username)}</a>`;
+            }
+            const _chUser = document.getElementById('ch-username');
+            if (_chUser) _chUser.style.display = 'none';
             document.getElementById('ch-category-badge').textContent = ch.category || 'irl';
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
@@ -2487,7 +2516,12 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
             // Show viewer count: real count when available, 0 when live but no data, hidden when offline
             const vc = link.viewer_count != null ? link.viewer_count : (link.is_live ? 0 : null);
             const viewerStr = vc != null ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${vc}` : '';
-            html += `<a href="${esc(link.channel_url)}" target="_blank" rel="noopener" class="ch-restream-badge" style="color:${color}" title="${link.is_live ? 'Live on' : 'Also on'} ${name}${vc != null ? ' (' + vc + ' viewers)' : ''}">${liveDot}<i class="${icon}"></i> ${name}${viewerStr}</a>`;
+            // YouTube: link straight to the live stream (channel/@handle + /live).
+            let href = link.channel_url || '';
+            if (link.platform === 'youtube' && href && !/\/live\/?$/.test(href) && !/[?&]v=/.test(href)) {
+                href = href.replace(/\/+$/, '') + '/live';
+            }
+            html += `<a href="${esc(href)}" target="_blank" rel="noopener" class="ch-restream-badge" style="color:${color}" title="${link.is_live ? 'Live on' : 'Also on'} ${name}${vc != null ? ' (' + vc + ' viewers)' : ''}">${liveDot}<i class="${icon}"></i> ${name}${viewerStr}</a>`;
         }
     }
 
@@ -2989,7 +3023,7 @@ async function loadVodsPage() {
                 <div class="stream-card-info">
                     <div class="stream-card-title">${esc(v.title || 'VOD')}</div>
                     <div class="stream-card-streamer">
-                        <span class="stream-card-avatar">${(v.username || '?')[0].toUpperCase()}</span>
+                        ${_avatarSpan(v.avatar_url, v.username, v.profile_color)}
                         ${esc(v.username || 'Unknown')}
                         <span class="stream-card-date">${timeAgo(v.created_at)}</span>
                     </div>
@@ -3050,7 +3084,7 @@ async function loadClipsPage() {
                 <div class="stream-card-info">
                     <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
                     <div class="stream-card-streamer">
-                        <span class="stream-card-avatar">${(cl.username || '?')[0].toUpperCase()}</span>
+                        ${_avatarSpan(cl.avatar_url, cl.username, cl.profile_color)}
                         Clipped by ${esc(cl.display_name || cl.username || 'Unknown')}
                         <span class="stream-card-date">${timeAgo(cl.created_at)}</span>
                     </div>
@@ -3102,7 +3136,7 @@ async function loadVodPlayer(vodId) {
         setPageTitle(v.title || 'Video');
         loadVodAiTimeline(v.id);
         document.getElementById('vp-streamer').textContent = v.display_name || v.username || 'Unknown';
-        document.getElementById('vp-avatar').textContent = (v.username || '?')[0].toUpperCase();
+        { const _a = document.getElementById('vp-avatar'); if (_a) _a.innerHTML = _avatarInner(v.avatar_url, v.username); }
         document.getElementById('vp-date').textContent = formatDateTime(v.created_at);
         document.getElementById('vp-duration').textContent = formatDuration(v.duration_seconds || v.duration);
         document.getElementById('vp-views').textContent = `${v.view_count || 0} views`;
@@ -3730,7 +3764,7 @@ async function loadClipPlayer(clipId) {
         const unlistedBadge = document.getElementById('clp-unlisted-badge');
         if (unlistedBadge) unlistedBadge.style.display = 'none';
         document.getElementById('clp-streamer').textContent = cl.display_name || cl.username || 'Unknown';
-        document.getElementById('clp-avatar').textContent = (cl.username || '?')[0].toUpperCase();
+        { const _a = document.getElementById('clp-avatar'); if (_a) _a.innerHTML = _avatarInner(cl.avatar_url, cl.username); }
         document.getElementById('clp-date').textContent = formatDateTime(cl.created_at);
         document.getElementById('clp-duration').textContent = formatDuration(cl.duration_seconds);
         document.getElementById('clp-description').textContent = cl.description || '';
