@@ -735,10 +735,17 @@ class ChatRelayService {
             } catch { /* try next */ }
         }
         if (!liveChatId) {
-            // Linked but no live chat yet — retry the API path shortly (own it, don't scrape).
-            if (!bridge.stopped) bridge.reconnectTimer = setTimeout(() => this._connectYouTubeApi(bridge).catch(() => {}), 15000);
+            // Linked but no live chat yet — retry, but BACK OFF. Each attempt spends 2
+            // liveBroadcasts.list calls; a flat 15s retry runs forever (≈480 units/hr)
+            // when a broadcast never gets a live chat — e.g. while the YouTube Data API
+            // quota is exhausted — which silently keeps the quota drained. Back off
+            // 15s→30s→1m→2m→5m (cap) so a stuck channel can't burn the daily quota.
+            bridge._ytDiscoveryAttempts = (bridge._ytDiscoveryAttempts || 0) + 1;
+            const delay = Math.min(15000 * Math.pow(2, bridge._ytDiscoveryAttempts - 1), 300000);
+            if (!bridge.stopped) bridge.reconnectTimer = setTimeout(() => this._connectYouTubeApi(bridge).catch(() => {}), delay);
             return true;
         }
+        bridge._ytDiscoveryAttempts = 0; // found a live chat — reset backoff
 
         console.log(`[ChatRelay] YouTube: using official liveChat API for stream ${bridge.streamId}`);
         bridge._ytPageToken = undefined;
