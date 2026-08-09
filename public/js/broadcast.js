@@ -5285,10 +5285,16 @@ function _processBcTtsAudioQueue() {
         const audio = new Audio(url);
         const s = broadcastState.settings;
         const volume = (s.ttsVolume || 800) / 1000;
-        // Soundboard pitch/speed modifiers (default 1.0 = normal)
-        const pitchMod = msg.pitch || 1.0;
-        const speedMod = msg.speed || 1.0;
-        audio.playbackRate = Math.max(0.5, Math.min(4.0, speedMod * pitchMod));
+        // Soundboard pitch/speed modifiers (default 1.0 = normal).
+        // Speed alone = tempo-stretch (natural); a pitch mod disables pitch
+        // preservation so the rate audibly shifts pitch and combines with speed.
+        const pitchMod = Number(msg.pitch) || 1.0;
+        const speedMod = Number(msg.speed) || 1.0;
+        audio.playbackRate = Math.max(0.25, Math.min(4.0, speedMod * pitchMod));
+        const _hasPitch = Math.abs(pitchMod - 1) > 0.001;
+        audio.preservesPitch = !_hasPitch;
+        audio.mozPreservesPitch = !_hasPitch;
+        audio.webkitPreservesPitch = !_hasPitch;
         console.log('[TTS] Broadcast audio volume:', volume, '(raw setting:', s.ttsVolume, ')');
         // Use Web Audio API GainNode for volume — Audio.volume is unreliable on PipeWire/Steam Deck
         try {

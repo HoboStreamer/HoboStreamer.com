@@ -741,11 +741,48 @@ function initDb() {
             created_by_name TEXT DEFAULT '',
             is_approved INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(channel_owner_id, command),
             FOREIGN KEY (channel_owner_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
         database.exec('CREATE INDEX IF NOT EXISTS idx_channel_sounds_owner ON channel_sounds(channel_owner_id)');
     } catch (e) { console.warn('[DB] channel_sounds migration:', e.message); }
+
+    // Migrate: allow MULTIPLE sounds per command (random pick on playback).
+    // Older DBs created channel_sounds with UNIQUE(channel_owner_id, command);
+    // rebuild the table without it. Idempotent — only fires while the constraint exists.
+    try {
+        const row = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='channel_sounds'").get();
+        if (row && /UNIQUE\s*\(\s*channel_owner_id\s*,\s*command\s*\)/i.test(row.sql)) {
+            database.exec('PRAGMA foreign_keys=OFF');
+            const tx = database.transaction(() => {
+                database.exec(`CREATE TABLE channel_sounds_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_owner_id INTEGER NOT NULL,
+                    command TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    mime TEXT DEFAULT 'audio/mpeg',
+                    duration_seconds REAL DEFAULT 0,
+                    created_by INTEGER,
+                    created_by_name TEXT DEFAULT '',
+                    is_approved INTEGER DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (channel_owner_id) REFERENCES users(id) ON DELETE CASCADE
+                )`);
+                database.exec(`INSERT INTO channel_sounds_new
+                    (id, channel_owner_id, command, url, mime, duration_seconds, created_by, created_by_name, is_approved, created_at)
+                    SELECT id, channel_owner_id, command, url, mime, duration_seconds, created_by, created_by_name, is_approved, created_at
+                    FROM channel_sounds`);
+                database.exec('DROP TABLE channel_sounds');
+                database.exec('ALTER TABLE channel_sounds_new RENAME TO channel_sounds');
+                database.exec('CREATE INDEX IF NOT EXISTS idx_channel_sounds_owner ON channel_sounds(channel_owner_id)');
+                database.exec('CREATE INDEX IF NOT EXISTS idx_channel_sounds_cmd ON channel_sounds(channel_owner_id, command)');
+            });
+            tx();
+            database.exec('PRAGMA foreign_keys=ON');
+            console.log('[DB] Rebuilt channel_sounds without UNIQUE(command) — multiple sounds per command enabled');
+        } else {
+            database.exec('CREATE INDEX IF NOT EXISTS idx_channel_sounds_cmd ON channel_sounds(channel_owner_id, command)');
+        }
+    } catch (e) { console.warn('[DB] channel_sounds multi-sound migration:', e.message); }
 
     // Migrate: AI chatbot ("fake viewers") config, one row per streamer (user)
     try {
@@ -3030,8 +3067,9 @@ function getChannelSounds(ownerId) {
 }
 
 function getChannelSoundByCommand(ownerId, command) {
+    // A command may have multiple uploaded sounds — pick one at random each play.
     return get(
-        'SELECT * FROM channel_sounds WHERE channel_owner_id = ? AND command = ? AND is_approved = 1 LIMIT 1',
+        'SELECT * FROM channel_sounds WHERE channel_owner_id = ? AND command = ? AND is_approved = 1 ORDER BY RANDOM() LIMIT 1',
         [ownerId, String(command || '').toLowerCase()]
     );
 }

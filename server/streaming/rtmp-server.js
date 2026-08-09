@@ -124,17 +124,24 @@ class RTMPServer extends EventEmitter {
                     protocol: 'rtmp',
                 });
                 streamId = result.lastInsertRowid;
+            }
 
-                // Auto-apply active control config
+            // Apply the per-slot control config, mirroring WHIP: the slot's own
+            // control_config_id wins, falling back to the channel default. This
+            // fixes viewers seeing the wrong (channel-default) controls when a
+            // streamer set different controls per stream slot.
+            try {
+                const streamRow = db.getStreamById(streamId);
+                const slot = managedStream
+                    || (streamRow && streamRow.managed_stream_id ? db.getManagedStreamById(streamRow.managed_stream_id) : null);
                 const channel = db.getChannelByUserId(resolvedUser.id);
-                if (channel && channel.active_control_config_id) {
-                    try {
-                        const applied = db.applyConfigToStream(channel.active_control_config_id, streamId);
-                        console.log(`[RTMP] Auto-applied control config ${channel.active_control_config_id} to stream ${streamId} (${applied} buttons)`);
-                    } catch (cfgErr) {
-                        console.warn(`[RTMP] Failed to auto-apply control config:`, cfgErr.message);
-                    }
+                const configId = (slot && slot.control_config_id) || (channel && channel.active_control_config_id);
+                if (configId) {
+                    const applied = db.applyConfigToStream(configId, streamId);
+                    console.log(`[RTMP] Applied control config ${configId} to stream ${streamId} (${applied} buttons)${slot && slot.control_config_id ? ' [per-slot]' : ' [channel default]'}`);
                 }
+            } catch (cfgErr) {
+                console.warn('[RTMP] Failed to apply control config:', cfgErr.message);
             }
 
             // Ensure heartbeat is always set (for stale-stream cleanup)

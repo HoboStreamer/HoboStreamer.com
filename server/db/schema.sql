@@ -623,10 +623,11 @@ CREATE TABLE IF NOT EXISTS channel_sounds (
     created_by_name TEXT DEFAULT '',
     is_approved INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(channel_owner_id, command),
+    -- Multiple sounds may share a command; playback picks one at random.
     FOREIGN KEY (channel_owner_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_channel_sounds_owner ON channel_sounds(channel_owner_id);
+CREATE INDEX IF NOT EXISTS idx_channel_sounds_cmd ON channel_sounds(channel_owner_id, command);
 
 -- ═══════════════════════════════════════════════════════════════
 -- Hobo Coins (Channel Points — free loyalty currency)

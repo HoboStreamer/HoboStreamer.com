@@ -193,11 +193,8 @@ router.post('/', requireAuth, soundUpload.single('sound'), async (req, res) => {
             return res.status(400).json({ error: `You've reached your upload limit for this channel (${config.sounds.maxPerUploaderPerChannel}).` });
         }
 
-        // Unique command within the channel
-        if (db.getChannelSoundByCommand(channelOwnerId, command)) {
-            cleanup();
-            return res.status(409).json({ error: `This channel already has a "!${command}" sound.` });
-        }
+        // A command may hold multiple sounds (one is chosen at random on playback),
+        // so duplicates are allowed. Per-channel / per-uploader count caps below still apply.
 
         // Duration gate
         const maxSeconds = Math.min(30, Math.max(1, settings.max_sound_seconds || config.sounds.defaultMaxSeconds));

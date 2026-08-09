@@ -747,8 +747,8 @@ function _wsRenderPanel() {
                         <details style="margin-top:6px">
                             <summary style="font-size:0.82rem;color:var(--text-secondary);cursor:pointer"><i class="fa-solid fa-sliders"></i> Customize</summary>
                             <p class="muted" style="font-size:0.78rem;margin-top:6px">
-                                Add query params: <code>?fade=10</code> (seconds), <code>&amp;max=30</code> (max messages),
-                                <code>&amp;fontsize=18</code> (px), <code>&amp;bg=1</code> (dark background).
+                                Add query params: <code>?fade=30</code> (seconds, 0 = never), <code>&amp;max=40</code> (max messages),
+                                <code>&amp;fontsize=32</code> (px), <code>&amp;bg=1</code> (dark background), <code>&amp;shadow=0</code> (turn off text outline).
                             </p>
                         </details>
                     </div>

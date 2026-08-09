@@ -476,7 +476,10 @@ router.get('/oauth/:platform/callback', async (req, res) => {
 
     try {
         const { code, state, error: oauthErr, error_description } = req.query;
-        if (oauthErr) return send({ ok: false, platform, error: error_description || oauthErr });
+        if (oauthErr) {
+            console.warn(`[Restream OAuth] ${platform} provider error: ${oauthErr} — ${error_description || ''} | our redirect_uri=${platformOAuth.redirectUri(platform)}`);
+            return send({ ok: false, platform, error: error_description || oauthErr });
+        }
         if (!code || !state) return send({ ok: false, platform, error: 'Missing authorization code' });
 
         const stateData = platformOAuth.verifyState(req.cookies?.[OAUTH_STATE_COOKIE]);

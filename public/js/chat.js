@@ -2794,6 +2794,20 @@ function addChatMessage(msg) {
         streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_username)}'s stream" data-channel="${esc(msg.stream_username)}" onclick="navigate('/' + this.dataset.channel)">${esc(msg.stream_username)}</span> `;
     }
 
+    // Cross-stream origin badge: when viewing one stream but history spans all of
+    // the streamer's streams, tag messages that came from a different session/slot.
+    if (!isGlobal && msg.stream_id && chatStreamId && Number(msg.stream_id) !== Number(chatStreamId)
+        && (msg.source_stream_title || msg.source_slug)) {
+        const srcTitle = esc(msg.source_stream_title || msg.source_slug || 'other stream');
+        const ch = esc(msg.source_channel || chatChannel || '');
+        const ref = esc(String(msg.source_slug || msg.source_managed_id || ''));
+        if (msg.source_is_live && ch && ref) {
+            streamBadge += `<span class="chat-stream-badge chat-origin-badge" title="From this streamer's other live stream — click to watch" data-channel="${ch}" data-ref="${ref}" onclick="hopToStreamSlot(this)"><i class="fa-solid fa-tower-broadcast"></i> ${srcTitle}</span> `;
+        } else {
+            streamBadge += `<span class="chat-stream-badge chat-origin-badge chat-origin-offline" title="Earlier, from this streamer's stream: ${srcTitle}">${srcTitle}</span> `;
+        }
+    }
+
     // Voice call badge (shown in global mode for voice-tagged messages)
     let voiceBadge = '';
     if (isGlobal && isVoiceMsg && chatMode === 'global') {
@@ -2813,6 +2827,10 @@ function addChatMessage(msg) {
 
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
     const coreUsername = esc(msg.core_username || '');
+    // Avatar initial: strip any "[Twitch]/[Kick]/[RS]" relay prefix so external
+    // users show their real first letter instead of "[".
+    const _rawName = (msg.username || msg.displayName || `anon${msg.anonId || ''}`).replace(/^\[[^\]]+\]\s*/, '');
+    const avatarInitial = esc((_rawName.charAt(0) || '?').toUpperCase());
     const rawText = msg.message || msg.text || '';
     let text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
     // Append clickable source link for news headlines
@@ -2838,7 +2856,18 @@ function addChatMessage(msg) {
     }
     if (msg.message_type === 'channel-sound') {
         const cmd = esc((msg.sound && msg.sound.command) || '');
-        text = `<span class="channel-sound-pill" style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:12px;background:color-mix(in srgb,var(--accent,#e0a44a) 18%,transparent);color:var(--accent,#e0a44a);font-weight:600;font-size:0.92em"><i class="fa-solid fa-volume-high"></i> played !${cmd}</span>`;
+        const sPitch = Number((msg.sound && msg.sound.pitch) || 1);
+        const sSpeed = Number((msg.sound && msg.sound.speed) || 1);
+        const argStr = esc((msg.sound && msg.sound.args) || '');
+        let modBadges = '';
+        if (Math.abs(sSpeed - 1) > 0.001) {
+            modBadges += `<span class="channel-sound-mod" style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:10px;background:rgba(0,0,0,0.25);font-size:0.82em"><i class="fa-solid fa-gauge-high"></i> ${sSpeed.toFixed(2)}x</span>`;
+        }
+        if (Math.abs(sPitch - 1) > 0.001) {
+            modBadges += `<span class="channel-sound-mod" style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:10px;background:rgba(0,0,0,0.25);font-size:0.82em"><i class="fa-solid fa-music"></i> ${sPitch.toFixed(2)}x</span>`;
+        }
+        const label = argStr ? `played !${cmd} ${argStr}` : `played !${cmd}`;
+        text = `<span class="channel-sound-pill" style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:12px;background:color-mix(in srgb,var(--accent,#e0a44a) 18%,transparent);color:var(--accent,#e0a44a);font-weight:600;font-size:0.92em"><i class="fa-solid fa-volume-high"></i> ${label}${modBadges}</span>`;
     }
     const isAnon = displayName.startsWith('anon');
 
@@ -2854,8 +2883,8 @@ function addChatMessage(msg) {
     // Avatar (respects showAvatars setting via CSS class on root, but still render for toggle)
     const avatarHtml = msg.avatar_url
         ? `<img class="chat-avatar" src="${esc(msg.avatar_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
-        + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`
-        : `<span class="chat-avatar-letter" style="background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`;
+        + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${avatarInitial}</span>`
+        : `<span class="chat-avatar-letter" style="background:${esc(nameColor)}">${avatarInitial}</span>`;
 
     const userId = esc(String(msg.user_id || ''));
 
@@ -2983,13 +3012,15 @@ function addSystemMessage(text, isError = false) {
  * Returns an <img> with letter fallback, or just a letter span for anon users.
  */
 function getChatAvatarHTML(msg) {
-    const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
     let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
+    // Strip any "[Twitch]/[Kick]/[RS]" relay prefix so the initial is the real letter.
+    const raw = (msg.username || msg.displayName || `anon${msg.anonId || ''}`).replace(/^\[[^\]]+\]\s*/, '');
+    const initial = esc((raw.charAt(0) || '?').toUpperCase());
     return msg.avatar_url
         ? `<img class="chat-avatar" src="${esc(msg.avatar_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
-        + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`
-        : `<span class="chat-avatar-letter" style="background:${esc(nameColor)}">${displayName[0].toUpperCase()}</span>`;
+        + `<span class="chat-avatar-letter" style="display:none;background:${esc(nameColor)}">${initial}</span>`
+        : `<span class="chat-avatar-letter" style="background:${esc(nameColor)}">${initial}</span>`;
 }
 
 function addGottiMessage(msg) {
@@ -3550,11 +3581,18 @@ document.addEventListener('input', (e) => {
 }, true);
 
 /* ── History ──────────────────────────────────────────────────── */
+// Cross-stream context populated from the history response.
+let chatLiveSlots = [];   // [{managed_stream_id, slug, title, live_session_id}]
+let chatChannel = null;   // broadcaster username (for building hop links)
+
 async function loadChatHistory(streamId) {
     if (!streamId) return; // Use loadGlobalChatHistory() for global
     try {
         const data = await api(`/chat/${streamId}/history?limit=500`);
         const msgs = data.messages || [];
+        chatLiveSlots = data.liveSlots || [];
+        chatChannel = data.channel || null;
+        renderChatStreamHops();
         // Clear any loading skeleton / stale messages before inserting history
         const { messages } = getChatEl();
         if (messages) messages.innerHTML = '';
@@ -3564,6 +3602,8 @@ async function loadChatHistory(streamId) {
                 username: m.username || m.display_name || `anon${m.user_id || ''}`,
                 core_username: m.core_username || null,
                 message: m.message,
+                message_type: m.message_type,
+                sound: m.sound,
                 role: m.role || 'user',
                 color: m.color,
                 avatar_url: m.avatar_url,
@@ -3571,12 +3611,55 @@ async function loadChatHistory(streamId) {
                 user_id: m.user_id,
                 timestamp: m.timestamp,
                 reply_to: m.reply_to || null,
+                source_platform: m.source_platform || undefined,
+                // Source-stream context (for the per-message origin badge)
+                stream_id: m.stream_id,
+                source_stream_title: m.source_stream_title,
+                source_managed_id: m.source_managed_id,
+                source_is_live: m.source_is_live,
+                source_slug: m.source_slug,
+                source_channel: m.source_channel,
             });
         });
     } catch { /* silent */ }
 }
 
+// Navigate to another of the streamer's live slots (from an origin badge or hop bar).
+function hopToStreamSlot(el) {
+    const ch = el && el.dataset ? el.dataset.channel : '';
+    const ref = el && el.dataset ? el.dataset.ref : '';
+    if (!ch || typeof navigate !== 'function' || typeof channelPath !== 'function') return;
+    navigate(channelPath(ch, ref || null));
+}
+
+// Render a "Also live:" hop bar above the chat when the streamer has other live slots.
+function renderChatStreamHops() {
+    const { messages } = getChatEl();
+    if (!messages || !messages.parentNode) return;
+    let bar = document.getElementById('chat-stream-hops');
+    const others = (chatLiveSlots || []).filter(s => Number(s.live_session_id) !== Number(chatStreamId));
+    if (!chatChannel || others.length === 0) {
+        if (bar) bar.remove();
+        return;
+    }
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'chat-stream-hops';
+        bar.className = 'chat-stream-hops';
+        messages.parentNode.insertBefore(bar, messages);
+    }
+    bar.innerHTML = `<span class="chat-stream-hops-label"><i class="fa-solid fa-tower-broadcast"></i> Also live:</span> ` +
+        others.map(s => {
+            const ref = s.slug || s.managed_stream_id;
+            return `<button class="chat-stream-hop" data-channel="${esc(chatChannel)}" data-ref="${esc(String(ref))}" onclick="hopToStreamSlot(this)">${esc(s.title || 'Stream')}</button>`;
+        }).join('');
+}
+
 async function loadGlobalChatHistory() {
+    // No single-streamer context in global mode — clear any hop bar.
+    chatLiveSlots = [];
+    chatChannel = null;
+    renderChatStreamHops();
     try {
         const data = await api('/chat/global/history?limit=500');
         const msgs = data.messages || [];
@@ -4890,6 +4973,27 @@ function speakTTS(text, voiceFX, username) {
 let _ttsAudioQueue = [];
 let _ttsAudioPlaying = false;
 
+/**
+ * Apply pitch + speed to an <audio> element.
+ * Speed alone (no pitch mod) uses tempo-stretch (preservesPitch=true) so it
+ * sounds natural — this preserves the existing "!sound 0.5" behavior. As soon
+ * as a pitch modifier is present we disable pitch preservation so the combined
+ * rate audibly shifts pitch (chipmunk / deep-voice), which is what pitch tokens
+ * like "300p" / "-100p" are for. Both mods multiply into playbackRate so they
+ * combine (e.g. "!sound 0.5 300p").
+ */
+function applyPitchSpeed(audio, pitchMod, speedMod) {
+    const p = Number(pitchMod) || 1.0;
+    const s = Number(speedMod) || 1.0;
+    const rate = Math.max(0.25, Math.min(4.0, s * p));
+    audio.playbackRate = rate;
+    const hasPitch = Math.abs(p - 1) > 0.001;
+    // When a pitch mod is set, let playbackRate move the pitch; otherwise keep tempo-only.
+    audio.preservesPitch = !hasPitch;
+    audio.mozPreservesPitch = !hasPitch;
+    audio.webkitPreservesPitch = !hasPitch;
+}
+
 function playTTSAudio(msg) {
     if (!msg.audio || !msg.mimeType) return;
     _ttsAudioQueue.push(msg);
@@ -4911,8 +5015,7 @@ function _processTTSAudioQueue() {
         // Soundboard pitch/speed modifiers (default 1.0 = normal)
         const pitchMod = msg.pitch || 1.0;
         const speedMod = msg.speed || 1.0;
-        // playbackRate handles speed; combined with pitch for a "chipmunk/slow" effect
-        audio.playbackRate = speedMod * pitchMod;
+        applyPitchSpeed(audio, pitchMod, speedMod);
         console.log('[TTS] Chat audio volume:', volume, '(raw setting:', chatSettings.ttsVolume, ')');
         // Use Web Audio API GainNode for volume — Audio.volume is unreliable on PipeWire/Steam Deck
         try {

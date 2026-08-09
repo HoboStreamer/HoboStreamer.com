@@ -13,7 +13,26 @@ let _controlReconnectTimer = null;
 let _controlReconnectDelay = 1000;
 let _controlStreamId = null;    // Stream ID for reconnect
 let _hardwareConnected = false; // Whether hardware bridge is online
+let _hardwareStatusKnown = false; // Have we received a hardware_status yet?
+let _controlsHaveContent = false; // Panel has button controls to show
+let _controlsHaveOnvif = false;   // Panel has ONVIF camera controls (work without the hardware bridge)
 // currentStreamId is declared in app.js (global scope)
+
+/**
+ * Show/hide the controls panel. Viewers only see controls when the hardware
+ * bridge is online (buttons do nothing otherwise) — but ONVIF camera controls
+ * don't need the bridge, so a panel with cameras stays visible.
+ */
+function _applyControlsVisibility() {
+    const panel = document.getElementById('controls-panel');
+    if (!panel) return;
+    if (!_controlsHaveContent) { panel.style.display = 'none'; return; }
+    if (_hardwareStatusKnown && !_hardwareConnected && !_controlsHaveOnvif) {
+        panel.style.display = 'none';
+    } else {
+        panel.style.display = '';
+    }
+}
 
 /**
  * Load and display interactive controls for a stream.
@@ -32,16 +51,19 @@ async function loadStreamControls(streamId) {
         const hasVideoClick = !!controlSettings.video_click_enabled;
 
         if (!hasControls && !hasVideoClick) {
+            _controlsHaveContent = false;
             panel.style.display = 'none';
             destroyVideoClickOverlay();
             return;
         }
 
-        // Show panel if there are button controls
-        panel.style.display = hasControls ? '' : 'none';
-
         // Separate ONVIF controls from regular controls
         const onvifControls = controls.filter(c => c.control_type === 'onvif' && c.camera_id);
+        // Track content for hardware-aware visibility
+        _controlsHaveContent = hasControls;
+        _controlsHaveOnvif = onvifControls.length > 0;
+        // Show panel if there are button controls (gated on hardware presence)
+        _applyControlsVisibility();
         const regularControls = controls.filter(c => c.control_type !== 'onvif' || !c.camera_id);
 
         let html = '';
@@ -572,7 +594,9 @@ function handleControlMessage(msg) {
             break;
         case 'hardware_status':
             _hardwareConnected = !!msg.connected;
+            _hardwareStatusKnown = true;
             _updateControlConnectionUI(true);
+            _applyControlsVisibility();
             break;
         case 'key_held':
             highlightHeldButton(msg.command, true);
@@ -644,9 +668,22 @@ function showOnvifActivity(cameraName, movement, username) {
 /* (hardware status handled by _updateControlConnectionUI) */
 
 /* ── Keyboard controls ────────────────────────────────────────── */
+// True when a keypress must NOT be captured as a hardware control: modifier
+// combos (copy/paste/cut/select-all/devtools) and any editable focus (chat
+// input, a selected message, contenteditable). Fixes Ctrl/Cmd+C on a chat
+// message triggering a control + the "Hardware not connected" toast.
+function _controlKeyShouldIgnore(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return true;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return true;
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable)) return true;
+    return false;
+}
+
 document.addEventListener('keydown', (e) => {
     if (!currentStreamId) return;
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (_controlKeyShouldIgnore(e)) return;
     if (e.repeat) return; // Ignore OS key repeat for hold detection
 
     // Check keyboard-bound controls first
@@ -694,7 +731,7 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
     if (!currentStreamId) return;
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (_controlKeyShouldIgnore(e)) return;
 
     const key = e.key.toLowerCase();
     const btn = document.querySelector(`.control-btn-keyboard[data-keybind="${key}"]`);

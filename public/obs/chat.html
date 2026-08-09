@@ -12,7 +12,7 @@ html, body {
     background: transparent;
     overflow: hidden;
     font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-    font-size: 16px;
+    font-size: 32px;
     color: #fff;
     height: 100%;
     width: 100%;
@@ -42,6 +42,9 @@ html, body {
          1px  1px 1px rgba(0,0,0,0.8),
          0    0   4px rgba(0,0,0,0.6);
 }
+/* Text shadow toggle (?shadow=0 disables). Default ON for legibility on
+   transparent/busy backgrounds. */
+body.no-shadow .msg { text-shadow: none; }
 
 @keyframes msg-in {
     from { opacity: 0; transform: translateY(8px); }
@@ -311,8 +314,8 @@ html, body {
     'use strict';
 
     // ── Config ─────────────────────────────────────────────────
-    const MAX_MESSAGES = 50;
-    const FADE_AFTER_MS = 60000;      // Fade messages after 60s (0 = never)
+    const MAX_MESSAGES = 40;
+    const FADE_AFTER_MS = 30000;      // Fade messages after 30s (0 = never)
     const RECONNECT_BASE = 2000;
     const RECONNECT_MAX = 30000;
     const EMOTE_LOAD_INTERVAL = 300000; // Refresh emotes every 5 min
@@ -350,12 +353,16 @@ html, body {
     let fadeTimers = [];
 
     // ── URL params for customization ───────────────────────────
-    // ?fade=0        — disable message fading
-    // ?max=100       — max visible messages
-    // ?fontsize=20   — font size in px
+    // ?fade=30       — seconds before a message fades (0 = never fade)
+    // ?max=40        — max visible messages
+    // ?fontsize=32   — font size in px
     // ?bg=000000cc   — background color (hex with optional alpha)
+    // ?shadow=0      — disable text shadow/outline (default on)
     const params = new URLSearchParams(window.location.search);
-    const fadeAfter = params.has('fade') ? parseInt(params.get('fade'), 10) : FADE_AFTER_MS;
+    // fade is documented in SECONDS; convert to ms (0 = never fade)
+    const fadeAfter = params.has('fade')
+        ? Math.max(0, parseInt(params.get('fade'), 10) || 0) * 1000
+        : FADE_AFTER_MS;
     const maxMsgs = params.has('max') ? parseInt(params.get('max'), 10) : MAX_MESSAGES;
     if (params.has('fontsize')) {
         document.body.style.fontSize = params.get('fontsize') + 'px';
@@ -363,6 +370,13 @@ html, body {
     if (params.has('bg')) {
         const bg = params.get('bg');
         document.body.style.background = bg.startsWith('#') ? bg : '#' + bg;
+    }
+    // Text shadow on by default; ?shadow=0 / false / off disables it
+    if (params.has('shadow')) {
+        const s = String(params.get('shadow')).toLowerCase();
+        if (s === '0' || s === 'false' || s === 'off' || s === 'no') {
+            document.body.classList.add('no-shadow');
+        }
     }
 
     // ── Utility ────────────────────────────────────────────────

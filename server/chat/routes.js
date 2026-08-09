@@ -423,18 +423,51 @@ router.get('/:streamId/replay', optionalAuth, (req, res) => {
 });
 
 // ── Chat History ─────────────────────────────────────────────
+// Loads history for a streamer's chat. By default this spans ALL of that
+// broadcaster's stream sessions (not just the one slot/session being viewed),
+// so viewers keep context when a stream restarts or the streamer runs multiple
+// slots. Each message carries its source stream (title/slug/live) so the client
+// can label it and let viewers hop between the streamer's live slots.
+// Pass ?scope=stream to restrict to the single session (legacy behavior).
 router.get('/:streamId/history', optionalAuth, (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit || '500'), 500);
         const before = req.query.before; // ISO timestamp for pagination
+        const scope = req.query.scope || 'streamer';
 
-        let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
-                          u.username AS core_username
+        // Resolve which broadcaster this stream belongs to.
+        const stream = db.getStreamById(req.params.streamId);
+        const broadcasterId = stream ? stream.user_id : null;
+        const spanStreamer = scope !== 'stream' && broadcasterId;
+
+        const select = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
+                          u.username AS core_username,
+                          s.title AS source_stream_title, s.managed_stream_id AS source_managed_id,
+                          s.is_live AS source_is_live, ms.slug AS source_slug,
+                          bu.username AS source_channel`;
+        let sql;
+        const params = [];
+        if (spanStreamer) {
+            sql = `${select}
                    FROM chat_messages cm
                    LEFT JOIN users u ON cm.user_id = u.id
+                   JOIN streams s ON cm.stream_id = s.id
+                   LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
+                   LEFT JOIN users bu ON s.user_id = bu.id
+                   WHERE s.user_id = ? AND cm.is_deleted = 0
+                     AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
+            params.push(broadcasterId);
+        } else {
+            sql = `${select}
+                   FROM chat_messages cm
+                   LEFT JOIN users u ON cm.user_id = u.id
+                   LEFT JOIN streams s ON cm.stream_id = s.id
+                   LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
+                   LEFT JOIN users bu ON s.user_id = bu.id
                    WHERE cm.stream_id = ? AND cm.is_deleted = 0
                      AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
-        const params = [req.params.streamId];
+            params.push(req.params.streamId);
+        }
 
         if (before) {
             sql += ` AND cm.timestamp < ?`;
@@ -445,7 +478,26 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
         params.push(limit);
 
         const messages = hydrateReplies(db.all(sql, params).reverse());
-        res.json({ messages });
+
+        // Currently-live slots for this broadcaster — lets the client render a
+        // "hop between live streams" affordance.
+        let liveSlots = [];
+        let channel = null;
+        if (broadcasterId) {
+            try {
+                const owner = db.getUserById(broadcasterId);
+                channel = owner ? owner.username : null;
+                liveSlots = (db.getManagedStreamsByUserId(broadcasterId) || [])
+                    .filter(ms => ms.is_currently_live)
+                    .map(ms => ({
+                        managed_stream_id: ms.id,
+                        slug: ms.slug,
+                        title: ms.title,
+                        live_session_id: ms.live_session_id,
+                    }));
+            } catch { /* non-critical */ }
+        }
+        res.json({ messages, liveSlots, channel, activeStreamId: parseInt(req.params.streamId) || null });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get chat history' });
     }
