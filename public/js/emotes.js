@@ -67,10 +67,11 @@ async function _doLoadEmotes(streamId) {
 /* ── URL detection regex ───────────────────────────────────────── */
 const _URL_RE = /^(https?:\/\/[^\s<>"'`]+|www\.[^\s<>"'`]+\.[^\s<>"'`]+)$/i;
 
-/* ── Kick inline emote format: [emote:name:id] → img tag ─────── */
-const _KICK_EMOTE_RE = /\[emote:([^\]:]+):(\d+)\]/g;
+/* ── Kick inline emote format: [emote:<id>:<name>] → img tag ─────── */
+/* Kick sends the NUMERIC id first, then the name, e.g. [emote:5747992:collectiblespepega]. */
+const _KICK_EMOTE_RE = /\[emote:(\d+):([^\]:]+)\]/g;
 
-/** Replace Kick inline [emote:name:id] tokens with <img> tags, return segments */
+/** Replace Kick inline [emote:id:name] tokens with <img> tags, return segments */
 function _substituteKickEmotes(text) {
     // Returns an array of strings (plain text or img HTML) for eventual joining
     const parts = [];
@@ -79,8 +80,8 @@ function _substituteKickEmotes(text) {
     _KICK_EMOTE_RE.lastIndex = 0;
     while ((m = _KICK_EMOTE_RE.exec(text)) !== null) {
         if (m.index > last) parts.push({ type: 'text', value: text.slice(last, m.index) });
-        const name = m[1];
-        const id   = m[2];
+        const id   = m[1];
+        const name = m[2];
         // Validate: id must be purely numeric (already matched \d+), name must be short
         if (id.length <= 12 && name.length <= 64) {
             const url = `https://files.kick.com/emotes/${id}/fullsize`;

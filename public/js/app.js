@@ -2373,6 +2373,13 @@ function switchWeatherTab(btn, panel) {
 }
 
 function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = null, externalViewers = null) {
+    // Cache stream-id → slot title so the floating chat widget can label each message
+    // with which stream slot it came from.
+    window._fcwStreamLabels = window._fcwStreamLabels || {};
+    for (const s of (liveStreams || [])) {
+        if (s && s.id) window._fcwStreamLabels[s.id] = s.title || `Stream #${s.id}`;
+    }
+
     const el = document.getElementById('ch-cumulative-viewers');
     if (!el) return;
 

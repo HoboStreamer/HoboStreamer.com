@@ -9466,17 +9466,49 @@ body.theme-light .user-dropdown {
     border-top: 1px solid var(--border, #333);
     background: var(--bg-secondary, #1a1a2e);
 }
-.fcw-input-area input {
+/* The markup uses a .chat-input-row wrapper with a <textarea> (not an <input>),
+   so make the row fill the width and the textarea flex to fill the row. */
+.fcw-input-area .chat-input-row {
+    display: flex;
     flex: 1;
+    gap: 6px;
+    align-items: flex-end;
+    min-width: 0;
+}
+.fcw-input-area .chat-textarea {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
     background: var(--bg-tertiary, #252540);
     border: 1px solid var(--border, #333);
     color: var(--text, #e0e0e0);
     padding: 6px 10px;
     border-radius: var(--radius, 8px);
     font-size: 0.85rem;
+    font-family: inherit;
+    resize: none;
+    max-height: 90px;
 }
 .fcw-input-area .chat-send-btn {
     padding: 6px 10px;
+    flex-shrink: 0;
+}
+/* Per-message source badge (which stream slot / global the message came from) */
+.fcw-msg-source {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0 5px;
+    margin-right: 5px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--accent, #e0a44a) 22%, transparent);
+    color: var(--accent, #e0a44a);
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.fcw-msg-source.fcw-src-global {
+    background: rgba(120, 130, 150, 0.22);
+    color: #9aa4b8;
 }
 
 /* ── Chat Anti-Slur Nudge Modal ─────────────────────────────── */

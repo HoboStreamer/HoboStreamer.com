@@ -5566,6 +5566,14 @@ function _fcwScrollToBottom() {
 }
 
 /** Mirror a chat message to the floating widget */
+/** Resolve a short "where did this come from" label for a widget message. */
+function _fcwSourceLabel(msg) {
+    const sid = msg.stream_id || msg.streamId || null;
+    if (msg.scope === 'global' || msg.is_global || !sid) return { text: 'Global', cls: 'fcw-src-global' };
+    const label = msg.stream_title || (window._fcwStreamLabels && window._fcwStreamLabels[sid]) || `Stream #${sid}`;
+    return { text: label, cls: '' };
+}
+
 function _fcwAddMessage(msg) {
     const container = document.getElementById('fcw-messages');
     if (!container) return;
@@ -5573,10 +5581,12 @@ function _fcwAddMessage(msg) {
     const username = msg.username || msg.displayName || 'anon';
     const text = msg.message || msg.text || '';
     const color = msg.color || msg.profile_color || '#999';
+    const src = _fcwSourceLabel(msg);
+    const srcBadge = `<span class="fcw-msg-source ${src.cls}" title="Sent from ${esc(src.text)}">${esc(src.text)}</span>`;
 
     const el = document.createElement('div');
     el.className = 'chat-msg';
-    el.innerHTML = `<span class="chat-user" style="color:${esc(color)}">${esc(username)}</span>: ${(typeof parseEmotes === 'function') ? parseEmotes(text) : esc(text)}`;
+    el.innerHTML = `${srcBadge}<span class="chat-user" style="color:${esc(color)}">${esc(username)}</span>: ${(typeof parseEmotes === 'function') ? parseEmotes(text) : esc(text)}`;
     container.appendChild(el);
 
     // Trim old messages
