@@ -1211,6 +1211,8 @@ class ChatServer {
                 } catch { /* non-critical */ }
             }
             this.broadcastToStream(client.streamId, soundMsg);
+            // Also surface it on the global chat feed / global overlay (with stream_channel).
+            this.forwardToGlobal(client.streamId, soundMsg);
             this.broadcastToStream(client.streamId, {
                 type: 'soundboard-audio',
                 username,
