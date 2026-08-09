@@ -896,6 +896,21 @@ async function _doFinalize(streamId) {
 
     console.log(`[VOD] Finalized: vod ${vodId} (stream ${streamId}), ${durationSeconds}s, ${(stat.size / 1024 / 1024).toFixed(1)}MB`);
 
+    // The lossless .master.mkv archive is never served or offloaded — it's only a fallback
+    // if the webm finalize fails. Now that the webm finalized OK, delete the master so these
+    // multi-GB files don't accumulate and fill the disk. (Kept when the webm is bad/short,
+    // since those paths return earlier.)
+    try {
+        const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
+        if (fs.existsSync(masterPath)) {
+            fs.unlinkSync(masterPath);
+            console.log(`[VOD] Removed master archive for vod ${vodId} (${path.basename(masterPath)})`);
+        }
+        db.run('UPDATE vods SET master_file_path = NULL WHERE id = ?', [vodId]);
+    } catch (e) {
+        console.warn(`[VOD] Master cleanup failed for vod ${vodId}:`, e.message);
+    }
+
     // Generate thumbnail in background
     const thumbService = require('../thumbnails/thumbnail-service');
     thumbService.generateVodThumbnail(vodId, filePath).catch(err => {
