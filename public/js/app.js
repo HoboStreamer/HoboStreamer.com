@@ -8,6 +8,7 @@ let currentUser = null;
 let currentPage = 'home';
 let currentStreamId = null;
 let currentStreamData = null;
+let _streamSwitchToken = 0; // increments each stream switch; guards against fast-switch races
 let hoboAppMetaData = null;
 let hoboAppMetaPromise = null;
 
@@ -605,7 +606,15 @@ function navigate(urlPath, replace = false) {
     routeFromURL();
 }
 
+const DEFAULT_PAGE_TITLE = 'HoboStreamer — Free Open Source Live Streaming Platform';
+/** Set the browser tab title to the content being viewed (stream/VOD/clip/paste). */
+function setPageTitle(name) {
+    document.title = name ? `${String(name).slice(0, 90)} · HoboStreamer` : DEFAULT_PAGE_TITLE;
+}
+window.setPageTitle = setPageTitle;
+
 function routeFromURL() {
+    setPageTitle(null); // reset to default; per-route loaders set it once content loads
     const path = window.location.pathname;
     const segments = path.split('/').filter(Boolean);
 
@@ -2094,27 +2103,26 @@ function loadLiveStreamTabs(currentUsername, activeStreamId, channelStreams = []
     tabsContainer.style.display = '';
     if (pageEl) pageEl.classList.add('has-live-tabs');
 
-    // Calculate total viewers for the summary
-    const totalViewers = filtered.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
+    // Per-slot count includes external (Twitch/Kick/RS) viewers when the server
+    // provides it; the summary sums those so tabs + total agree.
+    const tabViewers = (s) => (s.total_viewer_count != null ? s.total_viewer_count : (s.viewer_count || 0));
+    const totalViewers = filtered.reduce((sum, s) => sum + tabViewers(s), 0);
 
     tabsScroll.innerHTML = filtered.map((s, idx) => {
         const isActive = s.id === activeStreamId;
         const title = s.title || `Stream ${idx + 1}`;
-        const viewers = s.viewer_count || 0;
+        const viewers = tabViewers(s);
         const uptime = formatUptime(s.started_at);
-        const proto = s.protocol ? s.protocol.toUpperCase() : '';
         const hasRs = !!rsRestream[s.id];
         const uptimeTag = uptime ? `<span class="live-tab-uptime"><i class="fa-solid fa-clock"></i> ${uptime}</span>` : '';
         const sep = idx > 0 ? '<span class="live-tab-separator" aria-hidden="true"></span>' : '';
-        // Compact badge line: protocol + RS icon inline
-        const badges = [proto, hasRs ? '<i class="fa-solid fa-robot" style="color:#4fc3f7;font-size:0.62rem" title="RobotStreamer"></i>' : ''].filter(Boolean).join(' ');
-        const badgeSpan = badges ? `<span class="live-tab-badges">${badges}</span>` : '';
+        // RS icon only (the WEBRTC/RTMP protocol tag lives in the player's stats overlay now)
+        const badgeSpan = hasRs ? `<span class="live-tab-badges"><i class="fa-solid fa-robot" style="color:#4fc3f7;font-size:0.62rem" title="RobotStreamer"></i></span>` : '';
         return `${sep}<button class="live-tab ${isActive ? 'active' : ''}"
                     onclick="switchToLiveStream('${esc(currentUsername)}', ${s.id}, this)"
                     data-stream-id="${s.id}" data-username="${esc(currentUsername)}"
                     role="tab" aria-selected="${isActive}" tabindex="${isActive ? '0' : '-1'}"
-                    title="${esc(title)} — ${viewers} viewer${viewers !== 1 ? 's' : ''}${uptime ? ' — Live for ' + uptime : ''} (${s.protocol || 'unknown'})">
-            <span class="live-tab-num">${idx + 1}</span>
+                    title="${esc(title)} — ${viewers} viewer${viewers !== 1 ? 's' : ''}${uptime ? ' — Live for ' + uptime : ''}">
             <span class="live-tab-dot"></span>
             <span class="live-tab-title">${esc(title)}</span>
             ${badgeSpan}
@@ -2487,6 +2495,10 @@ function switchToLiveStream(username, streamId, btn) {
     // Don't re-switch to the already active stream
     if (streamId === currentStreamId) return;
 
+    // Guard against overlapping fast switches: only the latest one may apply its
+    // result, so a slow fetch from an earlier click can't clobber the new player.
+    const myToken = ++_streamSwitchToken;
+
     // Update tab UI immediately — highlight the target tab
     const tabsScroll = document.getElementById('live-tabs-scroll');
     if (tabsScroll) {
@@ -2507,13 +2519,15 @@ function switchToLiveStream(username, streamId, btn) {
 
     // Fetch the full stream data (with endpoint info) from the /channel API
     api(`/streams/channel/${username}`).then(data => {
+        // A newer switch superseded this one — drop the stale result.
+        if (myToken !== _streamSwitchToken) return;
         const streams = data.streams || [];
         const target = streams.find(s => s.id === streamId && s.is_live);
         if (target) {
             activateChannelStream(target);
-            // Update URL to reflect stream selection (without full nav)
+            // Push a history entry so Back returns to the previous slot.
             const msRef = target.managed_stream_slug || target.managed_stream_id || null;
-            history.replaceState(null, '', channelPath(username, msRef));
+            history.pushState({ streamHop: true, streamId }, '', channelPath(username, msRef));
             // Remember for return visits
             rememberLastStream(username, streamId);
             // Update cumulative viewers with fresh data
@@ -2524,8 +2538,8 @@ function switchToLiveStream(username, streamId, btn) {
         } else {
             toast('Stream is no longer live', 'error');
         }
-    }).catch(() => toast('Failed to load stream', 'error'))
-      .finally(() => showStreamSwitchOverlay(false));
+    }).catch(() => { if (myToken === _streamSwitchToken) toast('Failed to load stream', 'error'); })
+      .finally(() => { if (myToken === _streamSwitchToken) showStreamSwitchOverlay(false); });
 }
 
 function activateChannelStream(stream) {
@@ -2588,6 +2602,7 @@ function activateChannelStream(stream) {
     currentStreamId = stream.id;
     currentStreamData = stream;
     document.getElementById('ch-stream-title').textContent = stream.title || 'Untitled Stream';
+    setPageTitle(`${stream.title || 'Live'} — ${stream.display_name || stream.username || ''}`.trim());
     // Stream-type badge only (Screen Share / Audio Only / Camera). The WEBRTC/RTMP
     // protocol tag was removed from the header — that info now lives in the player's
     // stats overlay, which is more useful than the raw transport for viewers.
@@ -3059,6 +3074,7 @@ async function loadVodPlayer(vodId) {
         window._vpVodId = v.id;
 
         document.getElementById('vp-title').textContent = v.title || 'Video';
+        setPageTitle(v.title || 'Video');
         document.getElementById('vp-streamer').textContent = v.display_name || v.username || 'Unknown';
         document.getElementById('vp-avatar').textContent = (v.username || '?')[0].toUpperCase();
         document.getElementById('vp-date').textContent = formatDateTime(v.created_at);
@@ -3512,11 +3528,13 @@ function _setupClipDragHandlers() {
             if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipStart = Math.max(0, _vpClipEnd - CLIP_MAX_DURATION);
         }
         _updateClipCreatorUI();
+        // Live-scrub: show the frame of whichever handle you're dragging (esp. the end).
+        _seekClipPreview(_clipDragging === 'end' ? _vpClipEnd : _vpClipStart);
     };
 
     const onMouseUp = () => {
         if (_clipDragging) {
-            _seekClipPreview(_vpClipStart);
+            _seekClipPreview(_clipDragging === 'end' ? _vpClipEnd : _vpClipStart);
             _clipDragging = null;
         }
     };
@@ -3544,12 +3562,13 @@ function _setupClipDragHandlers() {
             if (_vpClipEnd - _vpClipStart > CLIP_MAX_DURATION) _vpClipStart = Math.max(0, _vpClipEnd - CLIP_MAX_DURATION);
         }
         _updateClipCreatorUI();
+        _seekClipPreview(_clipDragging === 'end' ? _vpClipEnd : _vpClipStart);
         e.preventDefault();
     };
 
     const onTouchEnd = () => {
         if (_clipDragging) {
-            _seekClipPreview(_vpClipStart);
+            _seekClipPreview(_clipDragging === 'end' ? _vpClipEnd : _vpClipStart);
             _clipDragging = null;
         }
     };
@@ -3680,6 +3699,7 @@ async function loadClipPlayer(clipId) {
         window._clpClipId = cl.id;
 
         document.getElementById('clp-title').textContent = cl.title || 'Clip';
+        setPageTitle(cl.title || 'Clip');
         // Reset unlisted badge
         const unlistedBadge = document.getElementById('clp-unlisted-badge');
         if (unlistedBadge) unlistedBadge.style.display = 'none';
@@ -4760,6 +4780,16 @@ function setupCustomVideoControls(prefix) {
         }
     });
     document.addEventListener('mouseup', () => { _seeking = false; });
+    // Touch seek — scoped to the bar (touch events keep firing on the origin element).
+    const _touchSeek = (clientX) => {
+        const rect = progressWrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const dur = getEffectiveDuration();
+        if (dur > 0) { video.currentTime = pct * dur; if (progressFill) progressFill.style.width = pct * 100 + '%'; }
+    };
+    progressWrap.addEventListener('touchstart', (e) => { _seeking = true; if (e.touches[0]) _touchSeek(e.touches[0].clientX); e.preventDefault(); }, { passive: false });
+    progressWrap.addEventListener('touchmove', (e) => { if (_seeking && e.touches[0]) { _touchSeek(e.touches[0].clientX); e.preventDefault(); } }, { passive: false });
+    progressWrap.addEventListener('touchend', () => { _seeking = false; });
 
     // Speed
     btnSpeed.onclick = () => {

@@ -144,6 +144,19 @@ class RTMPServer extends EventEmitter {
                 console.warn('[RTMP] Failed to apply control config:', cfgErr.message);
             }
 
+            // Dedup: end any other stale live session on this slot (keep this one).
+            try {
+                const streamRow2 = db.getStreamById(streamId);
+                const slotId2 = (managedStream && managedStream.id) || (streamRow2 && streamRow2.managed_stream_id) || null;
+                if (slotId2) {
+                    const ended = db.endOtherLiveStreamsForSlot(slotId2, streamId);
+                    if (ended.length) {
+                        console.log(`[RTMP] Ended ${ended.length} stale duplicate session(s) on slot ${slotId2}: ${ended.join(',')}`);
+                        for (const sid of ended) { try { require('./broadcast-server').endStream(sid); } catch { /* */ } }
+                    }
+                }
+            } catch { /* non-critical */ }
+
             // Ensure heartbeat is always set (for stale-stream cleanup)
             db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ?', [streamId]);
 

@@ -4,6 +4,10 @@
 
 let player = null;
 let playerType = null;
+// Bumped on every destroyPlayer(); WebRTC session closures capture the value at
+// setup and bail if it changes, so a torn-down stream can't reconnect/clobber the
+// player that replaced it (fixes "stuck loading" on fast stream switches).
+let _playerGen = 0;
 
 // mediasoup-client for SFU viewer consumption
 let _mediasoupModulePromise = null;
@@ -1062,6 +1066,7 @@ async function initWebRTC(stream) {
 
         const ws = new WebSocket(wsUrl);
         player = { ws, video, pc: null, myPeerId: null, watchSent: false, _wsUrl: wsUrl, _serverIceServers: null };
+        const _myGen = _playerGen; // this session's generation; stale once destroyPlayer bumps it
         let _broadcasterDisconnectTimer = null;
         let _viewerReconnectTimer = null;
         let _viewerReconnectDelay = 3000; // exponential backoff: 3s → 30s max
@@ -1077,7 +1082,7 @@ async function initWebRTC(stream) {
             if (_watchOfferTimer) clearTimeout(_watchOfferTimer);
             _watchOfferTimer = setTimeout(() => {
                 _watchOfferTimer = null;
-                if (!player || _viewerIntentionalClose) return;
+                if (!player || _viewerIntentionalClose || _myGen !== _playerGen) return;
                 // Check total ICE failure cap first
                 if (_totalIceFailures >= MAX_ICE_FAILURES) {
                     console.error('[Player] Too many total ICE failures — stream may require a TURN server');
@@ -1102,7 +1107,7 @@ async function initWebRTC(stream) {
         };
 
         const scheduleViewerRewatch = (delay = 1500) => {
-            if (_viewerIntentionalClose || !player) return;
+            if (_viewerIntentionalClose || !player || _myGen !== _playerGen) return;
             if (_rewatchCount >= MAX_REWATCH_ATTEMPTS) {
                 console.error('[Player] Max rewatch attempts reached, giving up');
                 showStreamError('Could not connect to stream. Try refreshing the page.');
@@ -1360,7 +1365,8 @@ async function initWebRTC(stream) {
 
         ws.onclose = (ev) => {
             console.log(`[Player] Broadcast signaling closed (code=${ev.code})`);
-            if (_viewerIntentionalClose) return;
+            // Stale session (player was torn down / replaced) — never reconnect.
+            if (_viewerIntentionalClose || _myGen !== _playerGen) return;
             _updateStatus('Reconnecting', {
                 phase: 'reconnect',
                 detail: 'The viewer session disconnected and is retrying automatically.',
@@ -1375,7 +1381,7 @@ async function initWebRTC(stream) {
                 console.log(`[Player] Reconnecting signaling in ${Math.round(delay)}ms`);
                 _viewerReconnectTimer = setTimeout(() => {
                     _viewerReconnectTimer = null;
-                    if (!player || _viewerIntentionalClose) return;
+                    if (!player || _viewerIntentionalClose || _myGen !== _playerGen) return;
                     try {
                         const newWs = new WebSocket(wsUrl);
                         player.ws = newWs;
@@ -2600,6 +2606,31 @@ function setupDVRSeek() {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
 
+    // Touch seek (scoped to the bar so it works on mobile without a hover).
+    wrap.addEventListener('touchstart', (e) => {
+        if (!dvrState.active || !dvrState.seekable || !e.touches[0]) return;
+        dvrState.seeking = true;
+        const rect = wrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.touches[0].clientX - rect.left) / rect.width));
+        if (fill) fill.style.width = pct * 100 + '%';
+        e.preventDefault();
+    }, { passive: false });
+    wrap.addEventListener('touchmove', (e) => {
+        if (!dvrState.seeking || !e.touches[0]) return;
+        const rect = wrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.touches[0].clientX - rect.left) / rect.width));
+        if (fill) fill.style.width = pct * 100 + '%';
+        e.preventDefault();
+    }, { passive: false });
+    wrap.addEventListener('touchend', (e) => {
+        if (!dvrState.seeking) return;
+        dvrState.seeking = false;
+        const rect = wrap.getBoundingClientRect();
+        const t = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientX : rect.left;
+        const pct = Math.max(0, Math.min(1, (t - rect.left) / rect.width));
+        seekToPercent(pct);
+    });
+
     // Live button — jump back to real-time stream
     if (liveBtn) {
         liveBtn.onclick = () => jumpToLive();
@@ -3269,6 +3300,7 @@ function getSavedPlayerAudioState() {
 
 /* ── Cleanup ──────────────────────────────────────────────────── */
 function destroyPlayer() {
+    _playerGen++; // invalidate any in-flight WebRTC reconnect/rewatch closures from the old session
     stopClipRecording();
     destroyDVR();
     _hideReconnectingIndicator();

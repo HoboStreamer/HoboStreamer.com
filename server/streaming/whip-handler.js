@@ -630,6 +630,15 @@ async function handleWhipPost(req, res) {
                     return sendWhipError(res, 500, 'session_create_failed', 'Failed to auto-create stream session');
                 }
             }
+            // Dedup: end any other stale live session on this slot (keep this one) so
+            // "going live twice" doesn't leave a broken duplicate tab.
+            try {
+                const ended = db.endOtherLiveStreamsForSlot(managedStream.id, stream.id);
+                if (ended.length) {
+                    console.log(`[WHIP] Ended ${ended.length} stale duplicate session(s) on slot ${managedStream.id}: ${ended.join(',')}`);
+                    for (const sid of ended) { try { require('./broadcast-server').endStream(sid); } catch { /* */ } }
+                }
+            } catch { /* non-critical */ }
             if (stream.protocol !== 'webrtc') {
                 logWhipStage('auth_key_fail', pathParam, { reason: 'wrong_protocol', protocol: stream.protocol });
                 return sendWhipError(res, 409, 'wrong_protocol',

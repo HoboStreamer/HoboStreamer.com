@@ -135,7 +135,13 @@ async function initBroadcastWorkspace() {
     await _wsLoadManagedStreams();
     _wsRenderSidebar();
     if (_wsState.managedStreams.length > 0) {
-        await _wsSelectStream(_wsState.managedStreams[0].id);
+        // Reopen the slot this device last had open, if it still exists.
+        let openId = _wsState.managedStreams[0].id;
+        try {
+            const lastId = parseInt(localStorage.getItem('hobo-ws-last-slot'), 10);
+            if (lastId && _wsState.managedStreams.some(ms => ms.id === lastId)) openId = lastId;
+        } catch { /* */ }
+        await _wsSelectStream(openId);
     } else {
         _wsShowEmpty();
     }
@@ -221,6 +227,8 @@ async function _wsSelectStream(managedStreamId) {
     _wsState.selectedId = managedStreamId;
     _wsState.selectedMs = _wsState.managedStreams.find(ms => ms.id === managedStreamId) || null;
     _wsState.dirty = false;
+    // Remember the last-opened slot for this device so it reopens next visit.
+    try { localStorage.setItem('hobo-ws-last-slot', String(managedStreamId)); } catch { /* */ }
     _wsRenderSidebar();
 
     const panel = document.getElementById('bc-ws-panel');

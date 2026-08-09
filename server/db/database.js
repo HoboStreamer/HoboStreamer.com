@@ -1735,6 +1735,19 @@ function endStream(streamId) {
     );
 }
 
+/**
+ * End any OTHER live session on the same managed-stream slot (keep the newest).
+ * Prevents "going live twice" from leaving a stale/broken duplicate tab.
+ * Returns the list of ended stream ids.
+ */
+function endOtherLiveStreamsForSlot(managedStreamId, keepStreamId) {
+    if (!managedStreamId) return [];
+    const rows = all('SELECT id FROM streams WHERE managed_stream_id = ? AND is_live = 1 AND id != ?',
+        [managedStreamId, keepStreamId || 0]);
+    for (const r of rows) endStream(r.id);
+    return rows.map(r => r.id);
+}
+
 function updateViewerCount(streamId, count) {
     run(`UPDATE streams SET viewer_count = ?, peak_viewers = MAX(peak_viewers, ?) WHERE id = ?`,
         [count, count, streamId]);
@@ -4916,7 +4929,7 @@ module.exports = {
     ensureStreamerRoleOnFeed,
     // Streams (sessions)
     getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId, getStreamHistoryByManagedStream,
-    createStream, endStream, updateViewerCount,
+    createStream, endStream, endOtherLiveStreamsForSlot, updateViewerCount,
     // Homepage helpers
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
     getRecentVods, countRecentVods,

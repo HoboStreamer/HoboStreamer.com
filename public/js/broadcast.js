@@ -915,6 +915,11 @@ async function loadBroadcastManagedStreams() {
  * @param {number|null} excludeStreamId - Stream ID to exclude (just-ended, DELETE pending)
  */
 async function buildBroadcastTabs(activeStreamId, excludeStreamId = null) {
+    // The top per-stream tab bar is redundant with the dedicated "Active Streams"
+    // tab, so it's disabled. Kept as a no-op so existing call sites don't break.
+    hideBroadcastTabs();
+    return;
+    /* eslint-disable no-unreachable */
     const bar = document.getElementById('bc-tabs-bar');
     const scroll = document.getElementById('bc-tabs-scroll');
     if (!bar || !scroll) return;
@@ -1200,7 +1205,7 @@ async function loadExistingStreams(excludeStreamId) {
         // Only show ACTIVE streams in the top section
         const live = all.filter(s => s.is_live);
         activeListEl.innerHTML = live.map(s => renderStreamItem(s)).join('');
-        _updateBroadcastTopTabs(live.length);
+        _updateBroadcastTopTabs(live.length, live);
     } catch (err) {
         console.error('[Broadcast] Failed to load active streams:', err);
         _updateBroadcastTopTabs(0);
@@ -1219,7 +1224,7 @@ function switchBroadcastTopTab(tab) {
  * With no live streams the tab bar hides and only "My Streams" shows; the page
  * defaults to "My Streams" so slot config is front-and-center.
  */
-function _updateBroadcastTopTabs(activeCount) {
+function _updateBroadcastTopTabs(activeCount, liveStreams = []) {
     const count = Number(activeCount) || 0;
     const hasActive = count > 0;
     const bar = document.getElementById('bc-top-tabs');
@@ -1233,8 +1238,18 @@ function _updateBroadcastTopTabs(activeCount) {
     }
     if (!hasActive) {
         switchBroadcastTopTab('mine');       // no active streams → always My Streams
+        try { localStorage.removeItem('hobo-device-active-stream'); } catch { /* */ }
     } else if (!window._bcTopTab) {
-        switchBroadcastTopTab('mine');       // default to My Streams the first time streams go live
+        // If THIS device started one of the currently-live streams, open Active
+        // Streams so they can resume it (e.g. after a refresh/reboot). Otherwise My Streams.
+        let deviceStarted = false;
+        try {
+            const tok = JSON.parse(localStorage.getItem('hobo-device-active-stream') || 'null');
+            const liveIds = new Set((liveStreams || []).map(s => s.id));
+            deviceStarted = !!(tok && liveIds.has(tok.stream_id));
+            if (tok && !deviceStarted) localStorage.removeItem('hobo-device-active-stream'); // stale token
+        } catch { /* */ }
+        switchBroadcastTopTab(deviceStarted ? 'active' : 'mine');
     }
 }
 
@@ -1490,6 +1505,13 @@ async function createNewStream() {
         ss.startedAt = new Date().toISOString();
         broadcastState.streams.set(streamData.id, ss);
         broadcastState.activeStreamId = streamData.id;
+        // Remember that THIS device started this session, so after a refresh/reboot
+        // the broadcast page can open the Active Streams tab to resume it.
+        try {
+            localStorage.setItem('hobo-device-active-stream', JSON.stringify({
+                stream_id: streamData.id, managed_stream_id: streamData.managed_stream_id || null, ts: Date.now(),
+            }));
+        } catch { /* */ }
         setNavLiveIndicator(true);
         updateWorkspaceLiveStatus();
 

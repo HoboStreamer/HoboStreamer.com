@@ -175,6 +175,7 @@ async function loadPasteViewer(slug) {
         const data = await api(`/pastes/${slug}`);
         const p = data.paste;
         if (!p) throw new Error('Not found');
+        if (typeof setPageTitle === 'function' && p.title) setPageTitle(p.title);
 
         // Check burn after read
         if (p.burned || (p.burn_after_read && p.views > 1)) {
