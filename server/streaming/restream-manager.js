@@ -1140,12 +1140,20 @@ class RestreamManager extends EventEmitter {
                         platformLive = result.platformLive;
                     }
                 } else if (dest.platform === 'youtube') {
+                    // YouTube API quota is precious (10k units/day). Poll at most every
+                    // 5 min per destination; between polls the cached count persists.
                     if (this.getViewerPollingConfig().youtube.serverFetchEnabled) {
-                        const result = await this._fetchYouTubeViewerCount(dest.channel_url);
-                        if (result != null) {
-                            count = result.count;
-                            platformLive = result.platformLive;
+                        this._ytLastPoll = this._ytLastPoll || new Map();
+                        const YT_POLL_MS = 5 * 60 * 1000;
+                        if (Date.now() - (this._ytLastPoll.get(destId) || 0) >= YT_POLL_MS) {
+                            this._ytLastPoll.set(destId, Date.now());
+                            const result = await this._fetchYouTubeViewerCount(dest.channel_url);
+                            if (result != null) {
+                                count = result.count;
+                                platformLive = result.platformLive;
+                            }
                         }
+                        // else: throttled — leave count/platformLive null so cache persists
                     }
                 }
 
@@ -1396,7 +1404,6 @@ class RestreamManager extends EventEmitter {
      * and reads concurrentViewers from liveStreamingDetails.
      */
     async _fetchYouTubeViewerCount(channelUrl) {
-        const https = require('https');
         const db = require('../db/database');
         try {
             const apiKey = db.getSetting('youtube_api_key');
@@ -1411,58 +1418,93 @@ class RestreamManager extends EventEmitter {
             if (parts[0] === 'channel' && parts[1]) {
                 channelId = parts[1];
             } else {
-                // youtube.com/@handle or youtube.com/c/name → resolve to channel ID via search
+                // youtube.com/@handle or youtube.com/c/name → resolve to channel ID (cached)
                 const handle = parts[0]?.startsWith('@') ? parts[0] : parts[1] || parts[0];
                 if (!handle) return null;
                 channelId = await this._resolveYouTubeChannelId(apiKey, handle);
                 if (!channelId) return null;
             }
 
-            // Search for active live broadcast on this channel
-            return new Promise((resolve) => {
-                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&type=video&eventType=live&key=${encodeURIComponent(apiKey)}`;
-                const req = https.get(searchUrl, { timeout: 8000 }, (res) => {
-                    let data = '';
-                    res.on('data', (chunk) => data += chunk);
-                    res.on('end', () => {
-                        if (res.statusCode >= 400) return resolve(null);
-                        try {
-                            const parsed = JSON.parse(data);
-                            const videoId = parsed?.items?.[0]?.id?.videoId;
-                            if (!videoId) return resolve({ count: 0, platformLive: false });
-                            // Fetch viewer count from video details
-                            this._fetchYouTubeVideoViewers(apiKey, videoId).then(resolve);
-                        } catch { resolve(null); }
-                    });
-                });
-                req.on('error', () => resolve(null));
-                req.on('timeout', () => { req.destroy(); resolve(null); });
-            });
+            // The YouTube search endpoint costs 100 quota units per call — polling it
+            // every minute exhausts the entire 10k/day project quota within an hour,
+            // which then 403s the go-live broadcast bind and breaks auto-start. So we
+            // find the live videoId with ONE search, cache it for the whole broadcast,
+            // and poll cheap videos.list (1 unit) for the concurrent-viewer count.
+            this._ytLiveVideo = this._ytLiveVideo || new Map();
+            const SEARCH_TTL = 10 * 60 * 1000; // don't re-search a not-live channel more than this often
+            const now = Date.now();
+            let entry = this._ytLiveVideo.get(channelId);
+
+            if (entry && entry.videoId) {
+                const r = await this._fetchYouTubeVideoViewers(apiKey, entry.videoId);
+                if (!r || r.platformLive === false) this._ytLiveVideo.delete(channelId); // ended → re-search next time
+                return r || { count: 0, platformLive: false };
+            }
+            // No known live video: only spend a search if we haven't recently.
+            if (entry && (now - entry.searchedAt) < SEARCH_TTL) return { count: 0, platformLive: false };
+            const videoId = await this._searchYouTubeLiveVideoId(apiKey, channelId);
+            this._ytLiveVideo.set(channelId, { videoId: videoId || null, searchedAt: now });
+            if (!videoId) return { count: 0, platformLive: false };
+            const r = await this._fetchYouTubeVideoViewers(apiKey, videoId);
+            if (!r || r.platformLive === false) this._ytLiveVideo.delete(channelId);
+            return r || { count: 0, platformLive: false };
         } catch {
             return null;
         }
     }
 
-    /** Resolve a YouTube handle/username to a channel ID */
-    async _resolveYouTubeChannelId(apiKey, handle) {
+    /** Find the current live videoId for a channel (search = 100 quota units). */
+    async _searchYouTubeLiveVideoId(apiKey, channelId) {
         const https = require('https');
-        const cleanHandle = handle.startsWith('@') ? handle.slice(1) : handle;
         return new Promise((resolve) => {
-            const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(cleanHandle)}&type=channel&maxResults=1&key=${encodeURIComponent(apiKey)}`;
-            const req = https.get(url, { timeout: 8000 }, (res) => {
+            const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=id&channelId=${encodeURIComponent(channelId)}&type=video&eventType=live&key=${encodeURIComponent(apiKey)}`;
+            const req = https.get(searchUrl, { timeout: 8000 }, (res) => {
                 let data = '';
                 res.on('data', (chunk) => data += chunk);
                 res.on('end', () => {
                     if (res.statusCode >= 400) return resolve(null);
-                    try {
-                        const parsed = JSON.parse(data);
-                        resolve(parsed?.items?.[0]?.snippet?.channelId || null);
-                    } catch { resolve(null); }
+                    try { resolve(JSON.parse(data)?.items?.[0]?.id?.videoId || null); }
+                    catch { resolve(null); }
                 });
             });
             req.on('error', () => resolve(null));
             req.on('timeout', () => { req.destroy(); resolve(null); });
         });
+    }
+
+    /**
+     * Resolve a YouTube handle/username to a channel ID, cached (a channel's ID never
+     * changes). Uses channels?forHandle / forUsername — 1 quota unit each — instead of
+     * search (100 units), and never falls back to search so it can't drain the quota.
+     */
+    async _resolveYouTubeChannelId(apiKey, handle) {
+        const cleanHandle = handle.startsWith('@') ? handle.slice(1) : handle;
+        this._ytChannelIdCache = this._ytChannelIdCache || new Map();
+        if (this._ytChannelIdCache.has(cleanHandle)) return this._ytChannelIdCache.get(cleanHandle);
+
+        const https = require('https');
+        const getJson = (url) => new Promise((resolve) => {
+            const req = https.get(url, { timeout: 8000 }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode >= 400) return resolve(null);
+                    try { resolve(JSON.parse(data)); } catch { resolve(null); }
+                });
+            });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => { req.destroy(); resolve(null); });
+        });
+
+        let id = null;
+        const byHandle = await getJson(`https://www.googleapis.com/youtube/v3/channels?part=id&forHandle=${encodeURIComponent('@' + cleanHandle)}&key=${encodeURIComponent(apiKey)}`);
+        id = byHandle?.items?.[0]?.id || null;
+        if (!id) {
+            const byUser = await getJson(`https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${encodeURIComponent(cleanHandle)}&key=${encodeURIComponent(apiKey)}`);
+            id = byUser?.items?.[0]?.id || null;
+        }
+        if (id) this._ytChannelIdCache.set(cleanHandle, id); // cache positive results only
+        return id;
     }
 
     /** Fetch concurrent viewers for a live YouTube video */
@@ -1477,8 +1519,12 @@ class RestreamManager extends EventEmitter {
                     if (res.statusCode >= 400) return resolve(null);
                     try {
                         const parsed = JSON.parse(data);
-                        const details = parsed?.items?.[0]?.liveStreamingDetails;
-                        if (details?.concurrentViewers != null) {
+                        const item = parsed?.items?.[0];
+                        const details = item?.liveStreamingDetails;
+                        // No item, or the broadcast has ended → not live (clears the cache).
+                        if (!item || (details && details.actualEndTime)) {
+                            resolve({ count: 0, platformLive: false });
+                        } else if (details?.concurrentViewers != null) {
                             resolve({ count: parseInt(details.concurrentViewers) || 0, platformLive: true });
                         } else {
                             resolve({ count: 0, platformLive: true });
