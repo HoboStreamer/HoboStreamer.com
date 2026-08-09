@@ -602,6 +602,26 @@ class RobotStreamerService {
                     }
                 } catch { /* non-critical — allow message through on error */ }
 
+                // Let RobotStreamer viewers trigger channel !sound commands too. If the
+                // message is a registered !sound, play it (attributed to the RS user) and
+                // don't also mirror the raw "!cmd" text — same as native chatters.
+                const trimmed = msgText.trim();
+                if (trimmed.startsWith('!')) {
+                    const parts = trimmed.split(/\s+/);
+                    const scmd = parts[0].slice(1).toLowerCase();
+                    if (scmd && db.getChannelSoundByCommand(stream.user_id, scmd)) {
+                        try {
+                            chatServer.triggerChannelSound(
+                                null,
+                                { streamId: stream.id, user: null, anonId: null, ip: null },
+                                stream, scmd, parts.slice(1),
+                                { username, role: 'external', profile_color: '#7dd3fc', avatar_url: data.avatar || null, sourcePlatform: 'rs' }
+                            );
+                        } catch { /* non-critical */ }
+                        return;
+                    }
+                }
+
                 const mirrored = {
                     type: 'chat',
                     username,

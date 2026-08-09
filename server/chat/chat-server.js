@@ -1120,7 +1120,7 @@ class ChatServer {
      * Silent no-op when the command is not a registered sound so unknown
      * commands don't spam the chat.
      */
-    triggerChannelSound(ws, client, stream, command, args = []) {
+    triggerChannelSound(ws, client, stream, command, args = [], relay = null) {
         try {
             if (!stream?.user_id || !command) return;
             const cmd = String(command).toLowerCase();
@@ -1129,7 +1129,7 @@ class ChatServer {
 
             const chatSettings = this._getChannelChatSettings(client.streamId);
             if (chatSettings.custom_sounds_enabled === 0) {
-                this.sendTo(ws, { type: 'system', message: 'This streamer has disabled chat sound commands.' });
+                if (ws) this.sendTo(ws, { type: 'system', message: 'This streamer has disabled chat sound commands.' });
                 return;
             }
 
@@ -1145,15 +1145,15 @@ class ChatServer {
 
             // Banned users can't trigger sounds
             if (client.user && db.isUserBanned(client.user.id, client.streamId)) return;
-            if (db.isIpBanned(client.ip, client.streamId)) return;
+            if (client.ip && db.isIpBanned(client.ip, client.streamId)) return;
 
             // Rate limits — reuse the soundboard limiter (per-user + per-stream window)
             const now = Date.now();
-            const rateKey = `${client.streamId}:${client.user ? `u${client.user.id}` : `a${client.anonId}`}`;
+            const rateKey = `${client.streamId}:${relay ? `rs${relay.username}` : (client.user ? `u${client.user.id}` : `a${client.anonId}`)}`;
             const lastUsedAt = this.soundboardRateLimits.get(rateKey) || 0;
             if ((now - lastUsedAt) < SOUNDBOARD_RATE_LIMIT_MS) {
                 const remaining = Math.ceil((SOUNDBOARD_RATE_LIMIT_MS - (now - lastUsedAt)) / 1000);
-                this.sendTo(ws, { type: 'system', message: `Wait ${remaining}s before triggering another sound.` });
+                if (ws) this.sendTo(ws, { type: 'system', message: `Wait ${remaining}s before triggering another sound.` });
                 return;
             }
             const streamWindow = this.soundboardStreamLimits.get(client.streamId) || { count: 0, windowStart: now };
@@ -1162,7 +1162,7 @@ class ChatServer {
                 streamWindow.windowStart = now;
             }
             if (streamWindow.count >= SOUNDBOARD_STREAM_MAX_PER_WINDOW) {
-                this.sendTo(ws, { type: 'system', message: 'Too many sounds are playing right now — try again shortly.' });
+                if (ws) this.sendTo(ws, { type: 'system', message: 'Too many sounds are playing right now — try again shortly.' });
                 return;
             }
 
@@ -1177,7 +1177,8 @@ class ChatServer {
             streamWindow.count += 1;
             this.soundboardStreamLimits.set(client.streamId, streamWindow);
 
-            const username = client.user ? (client.user.display_name || client.user.username) : (client.anonId || 'someone');
+            const username = relay ? relay.username
+                : (client.user ? (client.user.display_name || client.user.username) : (client.anonId || 'someone'));
 
             // Announce as a RICH chat message (same identity/cosmetics/tag as a normal
             // message) so it shows the user's nametag, badges, avatar and cosmetics —
@@ -1185,20 +1186,21 @@ class ChatServer {
             const soundMsg = {
                 type: 'chat',
                 username,
-                core_username: client.user ? client.user.username : null,
+                core_username: relay ? null : (client.user ? client.user.username : null),
                 user_id: client.user?.id || null,
-                anon_id: client.anonId,
-                role: client.user ? client.user.role : 'anon',
+                anon_id: relay ? null : client.anonId,
+                role: relay ? (relay.role || 'external') : (client.user ? client.user.role : 'anon'),
                 message: `played !${cmd}`,
                 message_type: 'channel-sound',
                 sound: { command: cmd },
                 stream_id: client.streamId,
                 is_global: !client.streamId,
-                avatar_url: client.user?.avatar_url || null,
-                profile_color: client.user?.profile_color || '#999',
+                avatar_url: (relay ? relay.avatar_url : client.user?.avatar_url) || null,
+                profile_color: (relay ? relay.profile_color : client.user?.profile_color) || '#999',
+                source_platform: relay ? relay.sourcePlatform : undefined,
                 timestamp: new Date().toISOString(),
             };
-            if (client.user?.id) {
+            if (!relay && client.user?.id) {
                 try {
                     const cp = cosmetics.getCosmeticProfile(client.user.id);
                     if (cp.nameFX) soundMsg.nameFX = cp.nameFX;

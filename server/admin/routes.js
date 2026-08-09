@@ -841,6 +841,20 @@ router.get('/storage/tiers', (req, res) => {
     }
 });
 
+// ── GET /api/admin/storage/buckets ───────────────────────────
+// Actual B2/R2 bucket usage (objects + bytes, per top-level prefix) + estimated cost.
+// Cached 10 min server-side (a full bucket listing is expensive). ?force=1 rescans.
+router.get('/storage/buckets', async (req, res) => {
+    try {
+        const usage = await storageTier.getBucketUsage(req.query.force === '1');
+        const costs = storageTier.estimateCloudCosts(usage);
+        res.json({ usage, costs, cachedAt: Date.now() });
+    } catch (err) {
+        console.error('[Admin] Bucket usage error:', err.message);
+        res.status(500).json({ error: 'Failed to scan buckets' });
+    }
+});
+
 // ── PUT /api/admin/storage/tiers/settings ────────────────────
 // Update storage tier settings
 router.put('/storage/tiers/settings', (req, res) => {

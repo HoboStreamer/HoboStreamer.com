@@ -1445,6 +1445,15 @@ async function loadAdminData() {
                 </div>
             </div>
 
+            <!-- Cloud storage (B2 / R2) usage + estimated cost (loaded async — bucket scan is slow) -->
+            <div id="admin-cloud-storage" style="margin-bottom:28px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+                    <h3 style="margin:0"><i class="fa-solid fa-cloud"></i> Cloud Storage — B2 &amp; R2 Usage &amp; Cost</h3>
+                    <button class="btn btn-outline btn-sm" onclick="_loadCloudStorageUsage(true)"><i class="fa-solid fa-rotate"></i> Rescan</button>
+                </div>
+                <p class="muted"><i class="fa-solid fa-spinner fa-spin"></i> Scanning cloud buckets…</p>
+            </div>
+
             <!-- VOD Management -->
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
                 <h3><i class="fa-solid fa-video"></i> VOD Management</h3>
@@ -1481,8 +1490,71 @@ async function loadAdminData() {
         if (!document.getElementById('admin-storage-styles')) { style.id = 'admin-storage-styles'; document.head.appendChild(style); }
 
         loadAdminVodTable();
+        _loadCloudStorageUsage();
     } catch (e) {
         c.innerHTML = `<p class="muted">Error loading storage data: ${esc(e.message)}</p>`;
+    }
+}
+
+/** Load real B2/R2 bucket usage + estimated cost into #admin-cloud-storage (slow scan). */
+async function _loadCloudStorageUsage(force = false) {
+    const el = document.getElementById('admin-cloud-storage');
+    if (!el) return;
+    const header = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <h3 style="margin:0"><i class="fa-solid fa-cloud"></i> Cloud Storage — B2 &amp; R2 Usage &amp; Cost</h3>
+            <button class="btn btn-outline btn-sm" onclick="_loadCloudStorageUsage(true)"><i class="fa-solid fa-rotate"></i> Rescan</button>
+        </div>`;
+    el.innerHTML = header + '<p class="muted"><i class="fa-solid fa-spinner fa-spin"></i> Scanning cloud buckets…</p>';
+    try {
+        const data = await api(`/admin/storage/buckets${force ? '?force=1' : ''}`);
+        const usage = data.usage || {};
+        const costs = data.costs || {};
+        const money = (n) => '$' + (Number(n) || 0).toFixed(2);
+
+        const providerCard = (key, label, color) => {
+            const u = usage[key];
+            const c = costs[key];
+            if (!u || u.configured === false) {
+                return `<div style="flex:1;min-width:260px;background:var(--bg-tertiary);border-radius:10px;padding:16px">
+                    <strong style="color:${color}"><i class="fa-solid fa-cloud"></i> ${label}</strong>
+                    <div class="muted" style="margin-top:8px">Not configured</div></div>`;
+            }
+            if (u.error) {
+                return `<div style="flex:1;min-width:260px;background:var(--bg-tertiary);border-radius:10px;padding:16px">
+                    <strong style="color:${color}"><i class="fa-solid fa-cloud"></i> ${label}</strong>
+                    <div style="color:#ef4444;margin-top:8px">Scan error: ${esc(u.error)}</div></div>`;
+            }
+            const topPrefixes = Object.entries(u.prefixes || {}).sort((a, b) => b[1].bytes - a[1].bytes).slice(0, 8);
+            const prefixRows = topPrefixes.map(([p, v]) => `
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);padding:2px 0">
+                    <span>${esc(p)}</span><span>${fmtBytes(v.bytes)} · ${v.objects.toLocaleString()}</span>
+                </div>`).join('');
+            return `<div style="flex:1;min-width:260px;background:var(--bg-tertiary);border-radius:10px;padding:16px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                    <strong style="color:${color}"><i class="fa-solid fa-cloud"></i> ${label}</strong>
+                    <span class="muted" style="font-size:12px">${esc(u.bucket || '')}</span>
+                </div>
+                <div style="display:flex;gap:16px;margin-bottom:10px">
+                    <div><div style="font-size:20px;font-weight:700">${fmtBytes(u.bytes)}</div><div class="muted" style="font-size:11px">${u.objects.toLocaleString()} objects</div></div>
+                    <div><div style="font-size:20px;font-weight:700;color:${color}">${c ? money(c.storageMonthly) : '—'}<span style="font-size:12px;font-weight:400" class="muted">/mo</span></div><div class="muted" style="font-size:11px">storage @ $${c ? c.storagePerGbMonth : '?'}/GB</div></div>
+                </div>
+                <div class="muted" style="font-size:11px;margin-bottom:6px">Egress: ${c ? esc(c.egressNote) : '—'}</div>
+                ${prefixRows ? `<div style="border-top:1px solid var(--border);padding-top:6px">${prefixRows}</div>` : ''}
+            </div>`;
+        };
+
+        el.innerHTML = header + `
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+                ${providerCard('b2', 'Backblaze B2', '#e21e2b')}
+                ${providerCard('r2', 'Cloudflare R2', '#f6821f')}
+            </div>
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between">
+                <span><i class="fa-solid fa-file-invoice-dollar" style="color:var(--accent)"></i> <strong>Estimated cloud storage cost</strong> <span class="muted" style="font-size:12px">(list prices; excludes egress/operations)</span></span>
+                <span style="font-size:22px;font-weight:800;color:var(--accent)">${money(costs.totalStorageMonthly)}<span style="font-size:13px;font-weight:400" class="muted">/mo</span></span>
+            </div>`;
+    } catch (e) {
+        el.innerHTML = header + `<p class="muted" style="color:#ef4444">Failed to scan buckets: ${esc(e.message)}</p>`;
     }
 }
 
