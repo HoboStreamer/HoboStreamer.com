@@ -1269,12 +1269,21 @@ class AiChatbotService {
         try {
             wavPath = await streamAudio.captureAudioChunk(worker.stream, AUDIO_CHUNK_SECONDS);
             if (!wavPath) return;
-            const text = await aiProvider.transcribe({
-                baseUrl: worker.config.base_url,
-                apiKey: worker.config.api_token,
-                model: worker.config.transcribe_model || 'whisper-1',
-                filePath: wavPath,
-            });
+            // Prefer FREE local transcription (whisper.cpp on the server CPU) — no
+            // API, no cost. Only fall back to the provider's paid /audio/transcriptions
+            // endpoint if local whisper isn't installed/available.
+            let text = '';
+            const localTx = require('../ai/transcribe');
+            if (localTx.available()) {
+                text = await localTx.transcribeWav(wavPath);
+            } else {
+                text = await aiProvider.transcribe({
+                    baseUrl: worker.config.base_url,
+                    apiKey: worker.config.api_token,
+                    model: worker.config.transcribe_model || 'whisper-1',
+                    filePath: wavPath,
+                });
+            }
             const clean = this._cleanTranscript(text);
             if (clean && clean.length > 1) {
                 // Keep the RAW chunk (may contain bot-TTS echo + streamer + watched
