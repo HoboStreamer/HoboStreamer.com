@@ -846,6 +846,8 @@ class ChatServer {
             this.broadcastToStream(client.streamId, chatMsg);
             // Also forward to global chat clients so the global feed sees all activity
             this.forwardToGlobal(client.streamId, chatMsg);
+            // And to viewers of the streamer's other live slots (cross-slot chat)
+            this.forwardToStreamerRooms(client.streamId, chatMsg);
 
             // Trigger server-side TTS synthesis (async, non-blocking).
             // identityKey uses the immutable login handle (or anon id) so the
@@ -1807,26 +1809,70 @@ class ChatServer {
      * so the global chat feed shows activity from every stream.
      */
     forwardToGlobal(streamId, data) {
-        // Look up stream owner username (cached per stream in a simple Map)
+        // Look up stream owner username + slot title/slug (cached per stream)
         if (!this._streamNameCache) this._streamNameCache = new Map();
-        let streamUsername = this._streamNameCache.get(streamId);
-        if (!streamUsername) {
+        let info = this._streamNameCache.get(streamId);
+        if (!info || typeof info !== 'object') {
             try {
                 const stream = db.getStreamById(streamId);
-                streamUsername = stream?.username || `stream-${streamId}`;
-                this._streamNameCache.set(streamId, streamUsername);
+                info = {
+                    username: stream?.username || `stream-${streamId}`,
+                    title: stream?.managed_stream_title || stream?.title || null,
+                    slug: stream?.managed_stream_slug || null,
+                    managedId: stream?.managed_stream_id || null,
+                };
+                this._streamNameCache.set(streamId, info);
                 // Auto-expire cache after 5 min
                 setTimeout(() => this._streamNameCache.delete(streamId), 300000);
             } catch {
-                streamUsername = `stream-${streamId}`;
+                info = { username: `stream-${streamId}`, title: null, slug: null, managedId: null };
             }
         }
-        const globalMsg = JSON.stringify({ ...data, stream_channel: streamUsername });
+        const globalMsg = JSON.stringify({
+            ...data,
+            stream_channel: info.username,
+            source_stream_id: streamId,
+            source_stream_title: info.title,
+            source_slug: info.slug,
+            source_managed_id: info.managedId,
+        });
         for (const [ws, client] of this.clients) {
             if (!client.streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
                 ws.send(globalMsg);
             }
         }
+    }
+
+    /**
+     * Deliver a stream message to viewers of the SAME streamer's OTHER live slots
+     * ("Show All Chats Under This Streamer"). Tagged with source-slot info so the
+     * client can show a stream-title badge + let viewers hop between slots. Only
+     * fires when the streamer has 2+ live slots.
+     */
+    forwardToStreamerRooms(streamId, data) {
+        try {
+            const stream = db.getStreamById(streamId);
+            if (!stream || !stream.user_id) return;
+            const siblings = db.getLiveStreamsByUserId(stream.user_id) || [];
+            if (siblings.length < 2) return;
+            const siblingIds = new Set(siblings.map(s => s.id));
+            const payload = JSON.stringify({
+                ...data,
+                cross_stream: true,
+                source_stream_id: streamId,
+                source_stream_title: stream.managed_stream_title || stream.title || null,
+                source_slug: stream.managed_stream_slug || null,
+                source_managed_id: stream.managed_stream_id || null,
+                source_channel: stream.username || null,
+                source_is_live: 1,
+            });
+            for (const [ws, client] of this.clients) {
+                if (client.streamId && client.streamId !== streamId && siblingIds.has(client.streamId)
+                    && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+                    ws.send(payload);
+                }
+            }
+        } catch { /* non-critical */ }
     }
 
     _broadcastDeletedMessages(streamId, ids) {

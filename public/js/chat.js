@@ -114,6 +114,15 @@ let chatSlowModeCooldownEnd = 0;
 // ── Reply-to state ──────────────────────────────────────────
 let _chatReplyTo = null; // { id, username, user_id, message }
 
+// Relay username colors, keyed by source_platform. Used for BOTH live and history
+// so external (RS/Twitch/Kick/YouTube) names keep a consistent color — history rows
+// don't persist a color, so without this they'd fall back to grey.
+const PLATFORM_NAME_COLORS = { rs: '#7dd3fc', robotstreamer: '#7dd3fc', twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', yt: '#ff0000' };
+function relayColorFor(msg) {
+    const sp = msg && msg.source_platform ? String(msg.source_platform).toLowerCase() : '';
+    return PLATFORM_NAME_COLORS[sp] || null;
+}
+
 // ── Chat settings (persisted to localStorage) ────────────────
 const CHAT_SETTINGS_KEY = 'hobo_chat_settings';
 const CHAT_SETTINGS_DEFAULTS = {
@@ -145,6 +154,7 @@ const CHAT_SETTINGS_DEFAULTS = {
     // Cross-feed — show messages from other sources while in a stream chat
     showGlobalInStream: true,     // Show global chat messages in stream chat (on by default)
     showAllStreamsInStream: true, // Show messages from ALL live streams in stream chat (on by default)
+    showOtherSlotsInStream: true, // Show chat from this streamer's OTHER live slots (on by default)
     // TTS
     ttsEnabled: false,            // TTS toggle for regular pages (off by default)
     streamingTtsEnabled: true,    // Separate TTS toggle while broadcasting live
@@ -663,6 +673,8 @@ function applyChatSettings() {
     document.documentElement.classList.toggle('chat-alt-bg', chatSettings.alternateBackground);
     // System messages
     document.documentElement.classList.toggle('chat-hide-system', !chatSettings.showSystemMessages);
+    // Cross-slot chat visibility ("Show All Chats Under This Streamer")
+    document.documentElement.classList.toggle('chat-hide-otherslots', chatSettings.showOtherSlotsInStream === false);
     // Compact mode (used by popout and any surface that renders .pc-msgs or .chat-messages)
     document.querySelectorAll('.chat-messages, .global-chat-messages, #pc-msgs').forEach(el => {
         el.classList.toggle('compact', !!chatSettings.compactMode);
@@ -2053,7 +2065,7 @@ function queueFullscreenChatEntry(entry) {
 
 function buildFullscreenChatEntry(msg) {
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
-    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
     const rawText = msg.message || msg.text || '';
@@ -2794,17 +2806,24 @@ function addChatMessage(msg) {
         streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_username)}'s stream" data-channel="${esc(msg.stream_username)}" onclick="navigate('/' + this.dataset.channel)">${esc(msg.stream_username)}</span> `;
     }
 
-    // Cross-stream origin badge: when viewing one stream but history spans all of
-    // the streamer's streams, tag messages that came from a different session/slot.
-    if (!isGlobal && msg.stream_id && chatStreamId && Number(msg.stream_id) !== Number(chatStreamId)
-        && (msg.source_stream_title || msg.source_slug)) {
+    // Cross-slot origin badge: tag messages that came from a DIFFERENT live slot of
+    // this same streamer. Keyed on the SLOT (managed_stream_id), not the session id,
+    // so older sessions of the slot you're watching don't get tagged. Applies to both
+    // live cross-slot messages and streamer-wide history — consistently.
+    const _curManagedId = ((typeof currentStreamData !== 'undefined' && currentStreamData && currentStreamData.managed_stream_id != null)
+        ? currentStreamData.managed_stream_id : chatCurrentManagedId);
+    const _srcManagedId = (msg.source_managed_id != null) ? Number(msg.source_managed_id) : null;
+    const isOtherSlot = !isGlobal && _srcManagedId != null && _curManagedId != null
+        && _srcManagedId !== Number(_curManagedId) && (msg.source_stream_title || msg.source_slug);
+    if (isOtherSlot) {
+        el.classList.add('chat-msg-otherslot');
         const srcTitle = esc(msg.source_stream_title || msg.source_slug || 'other stream');
         const ch = esc(msg.source_channel || chatChannel || '');
         const ref = esc(String(msg.source_slug || msg.source_managed_id || ''));
         if (msg.source_is_live && ch && ref) {
             streamBadge += `<span class="chat-stream-badge chat-origin-badge" title="From this streamer's other live stream — click to watch" data-channel="${ch}" data-ref="${ref}" onclick="hopToStreamSlot(this)"><i class="fa-solid fa-tower-broadcast"></i> ${srcTitle}</span> `;
         } else {
-            streamBadge += `<span class="chat-stream-badge chat-origin-badge chat-origin-offline" title="Earlier, from this streamer's stream: ${srcTitle}">${srcTitle}</span> `;
+            streamBadge += `<span class="chat-stream-badge chat-origin-badge chat-origin-offline" title="From this streamer's stream: ${srcTitle}">${srcTitle}</span> `;
         }
     }
 
@@ -2821,7 +2840,7 @@ function addChatMessage(msg) {
     }
 
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
-    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
     // Readable colors — ensure minimum contrast against dark backgrounds
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
 
@@ -3013,7 +3032,7 @@ function addSystemMessage(text, isError = false) {
  * Returns an <img> with letter fallback, or just a letter span for anon users.
  */
 function getChatAvatarHTML(msg) {
-    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
     // Strip any "[Twitch]/[Kick]/[RS]" relay prefix so the initial is the real letter.
     const raw = (msg.username || msg.displayName || `anon${msg.anonId || ''}`).replace(/^\[[^\]]+\]\s*/, '');
@@ -3034,7 +3053,7 @@ function addGottiMessage(msg) {
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
     const avatarHtml = getChatAvatarHTML(msg);
     const hatHtml = msg.hatFX?.emoji ? `<span class="chat-hat" aria-hidden="true">${esc(msg.hatFX.emoji)}</span>` : '';
-    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
 
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
@@ -3585,6 +3604,7 @@ document.addEventListener('input', (e) => {
 // Cross-stream context populated from the history response.
 let chatLiveSlots = [];   // [{managed_stream_id, slug, title, live_session_id}]
 let chatChannel = null;   // broadcaster username (for building hop links)
+let chatCurrentManagedId = null; // watched slot's managed_stream_id (fallback for badge keying)
 
 async function loadChatHistory(streamId) {
     if (!streamId) return; // Use loadGlobalChatHistory() for global
@@ -3592,6 +3612,7 @@ async function loadChatHistory(streamId) {
         const data = await api(`/chat/${streamId}/history?limit=500`);
         const msgs = data.messages || [];
         chatLiveSlots = data.liveSlots || [];
+        chatCurrentManagedId = data.activeManagedId != null ? data.activeManagedId : chatCurrentManagedId;
         chatChannel = data.channel || null;
         renderChatStreamHops();
         // Clear any loading skeleton / stale messages before inserting history
@@ -4858,7 +4879,7 @@ function _handleGlobalFeedMessage(msg) {
     }
 
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
-    let nameColor = msg.color || msg.profile_color || getRoleColor(msg.role);
+    let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
 
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
@@ -5347,6 +5368,11 @@ function buildSettingsPanelHTML() {
                 <span>Show All Streams</span>
                 <input type="checkbox" data-setting="showAllStreamsInStream" onchange="onChatSettingChange(this)">
             </label>
+            <label class="csp-row">
+                <span>Show All Chats Under This Streamer</span>
+                <input type="checkbox" data-setting="showOtherSlotsInStream" onchange="onChatSettingChange(this)">
+            </label>
+            <p class="csp-hint" style="margin-top:2px">When this streamer runs several live slots, show chat from all of them. Click a stream title to hop to that slot. Off = only the slot you're watching.</p>
         </div>
         <div class="csp-section">
             <div class="csp-title"><i class="fa-solid fa-volume-high"></i> Text-to-Speech</div>

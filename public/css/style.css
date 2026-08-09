@@ -3886,6 +3886,8 @@ main#app { position: relative; z-index: 1; }
 .chat-alt-bg .chat-msg:nth-child(even) { background: rgba(255,255,255,0.02); border-radius: 2px; padding: 2px 4px; }
 /* Hide system messages */
 .chat-hide-system .chat-msg.system { display: none !important; }
+/* "Show All Chats Under This Streamer" off → hide other slots' messages */
+.chat-hide-otherslots .chat-msg-otherslot { display: none !important; }
 /* Disable animated emotes — freeze GIFs by converting to static first frame */
 .chat-no-animated-emotes .chat-emote-animated { animation: none !important; animation-play-state: paused !important; }
 /* Emote scale */

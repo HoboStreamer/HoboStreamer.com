@@ -80,6 +80,12 @@ body.no-shadow .msg { text-shadow: none; }
 .badge-kick    { background: #53fc18; color: #000; }
 .badge-youtube { background: #ff0000; color: #fff; }
 .badge-rs      { background: #ff6600; color: #fff; }
+.stream-title-badge {
+    display: inline-block; font-size: 0.66em; font-weight: 700;
+    padding: 1px 6px; border-radius: 3px; margin-right: 4px; vertical-align: middle;
+    text-shadow: none; letter-spacing: 0.3px;
+    background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.25);
+}
 
 /* ── Chat badges (icon-based, matching main chat) ──────────── */
 .chat-badge {
@@ -378,6 +384,9 @@ body.no-shadow .msg { text-shadow: none; }
             document.body.classList.add('no-shadow');
         }
     }
+    // ?streamtitle=1 → show which stream slot each message came from (default off).
+    // Handy for a per-user overlay aggregating several live slots.
+    const showStreamTitle = ['1', 'true', 'on', 'yes'].includes(String(params.get('streamtitle') || '').toLowerCase());
 
     // ── Utility ────────────────────────────────────────────────
     function esc(s) {
@@ -549,6 +558,13 @@ body.no-shadow .msg { text-shadow: none; }
             platformBadge = `<span class="badge ${cls}">${esc(platform)}</span>`;
         }
 
+        // Stream-title badge (?streamtitle=1) — which slot this message came from
+        let streamTitleBadge = '';
+        if (showStreamTitle) {
+            const st = msg.source_stream_title || msg.stream_title || msg.stream_slug;
+            if (st) streamTitleBadge = `<span class="stream-title-badge">${esc(st)}</span>`;
+        }
+
         // Role badge (icon)
         const roleBadge = getBadgeHTML(msg.role);
 
@@ -590,7 +606,7 @@ body.no-shadow .msg { text-shadow: none; }
             replyHtml = `<div style="font-size:0.72em;opacity:0.6;margin-bottom:1px"><i class="fa-solid fa-reply fa-flip-horizontal" style="font-size:0.6em"></i> @${replyUser} ${replySnippet}</div>`;
         }
 
-        el.innerHTML = `${replyHtml}${platformBadge}${roleBadge}${hatHtml}${particleOpen}<span class="username${nameFXClass}" style="color:${esc(nameColor)}">${esc(cleanName)}</span>${particleClose}${sep}${text}`;
+        el.innerHTML = `${replyHtml}${streamTitleBadge}${platformBadge}${roleBadge}${hatHtml}${particleOpen}<span class="username${nameFXClass}" style="color:${esc(nameColor)}">${esc(cleanName)}</span>${particleClose}${sep}${text}`;
 
         // Spawn particles
         if (hasParticles) {

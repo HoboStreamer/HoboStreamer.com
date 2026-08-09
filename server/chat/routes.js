@@ -497,7 +497,11 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
                     }));
             } catch { /* non-critical */ }
         }
-        res.json({ messages, liveSlots, channel, activeStreamId: parseInt(req.params.streamId) || null });
+        res.json({
+            messages, liveSlots, channel,
+            activeStreamId: parseInt(req.params.streamId) || null,
+            activeManagedId: stream ? (stream.managed_stream_id || null) : null,
+        });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get chat history' });
     }

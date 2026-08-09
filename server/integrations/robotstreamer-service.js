@@ -680,6 +680,8 @@ class RobotStreamerService {
                 chatServer.broadcastToStream(stream.id, mirrored);
                 // Also surface on the global / username-only overlay (tags stream_channel)
                 try { chatServer.forwardToGlobal(stream.id, mirrored); } catch { /* non-critical */ }
+                // And to viewers of the streamer's other live slots (cross-slot chat)
+                try { chatServer.forwardToStreamerRooms(stream.id, mirrored); } catch { /* non-critical */ }
 
                 // Feed relayed RS chat into server-side TTS (same path as native chat)
                 try {

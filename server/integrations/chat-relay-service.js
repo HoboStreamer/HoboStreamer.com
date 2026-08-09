@@ -407,6 +407,8 @@ class ChatRelayService {
         chatServer.broadcastToStream(bridge.streamId, chatMsg);
         // Also surface on the global / username-only overlay (tags stream_channel)
         try { chatServer.forwardToGlobal(bridge.streamId, chatMsg); } catch { /* non-critical */ }
+        // And to viewers of the streamer's other live slots (cross-slot chat)
+        try { chatServer.forwardToStreamerRooms(bridge.streamId, chatMsg); } catch { /* non-critical */ }
 
         // Feed relayed platform chat (Kick/Twitch/YouTube) into server-side TTS
         try {
