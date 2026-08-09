@@ -11835,3 +11835,8 @@ body.theme-light .user-dropdown {
 }
 .card-ai-toggle i { transition: transform 0.2s ease; font-size: 0.6rem; }
 .card-ai-overview.expanded .card-ai-toggle i { transform: rotate(180deg); }
+
+/* Live stream AI overview under the video */
+.ch-stream-ai { margin-top: 8px; max-width: 760px; }
+/* Streamer overview on Recently Online cards */
+.streamer-group-card .card-ai-overview { margin: 2px 0 10px; }

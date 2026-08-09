@@ -1089,6 +1089,7 @@ function renderRecentlyOnline(containerId, streamers) {
                         <span class="streamer-group-last-online muted"><i class="fa-solid fa-clock"></i> ${timeAgo(s.last_online_at)}</span>
                     </a>
                 </div>
+                ${_cardAiHTML(s.ai_overview)}
                 <div class="streamer-group-streams">${streamsHtml}</div>
             </div>
         `;
@@ -3000,6 +3001,9 @@ function activateChannelStream(stream) {
         chDescEl.textContent = desc;
         chDescEl.style.display = desc ? '' : 'none';
     }
+    // Live AI overview of this stream (rolling summary of its memories). Refreshed
+    // from the 15s status poll — see startStreamStatusPoll.
+    _renderChStreamAi(stream.ai_overview);
     // Always destroy before init to prevent stale player state
     if (typeof destroyPlayer === 'function') {
         try { destroyPlayer(); } catch (e) { console.warn('[Player] destroy failed', e); }
@@ -3027,6 +3031,19 @@ const STREAM_POLL_INTERVAL = 15000; // 15 seconds
 
 function stopStreamStatusPoll() {
     if (_streamPollTimer) { clearInterval(_streamPollTimer); _streamPollTimer = null; }
+}
+
+// Render/update the live stream's AI overview under the stream info. Only re-renders
+// when the text actually changes, so it never clobbers a viewer's expanded state.
+function _renderChStreamAi(overview) {
+    const el = document.getElementById('ch-stream-ai');
+    if (!el) return;
+    const txt = (overview || '').trim();
+    if (el.dataset.ai === txt) return;
+    el.dataset.ai = txt;
+    const html = _cardAiHTML(txt);
+    el.innerHTML = html;
+    el.style.display = html ? '' : 'none';
 }
 
 function startStreamStatusPoll(stream) {
@@ -3058,6 +3075,7 @@ function startStreamStatusPoll(stream) {
 
             // Check if current stream is still live
             const current = liveStreams.find(s => s.id === currentStreamId);
+            if (current) _renderChStreamAi(current.ai_overview);
             const rsRestream = data.rs_restream || {};
             const restreamLinks = data.restream_links || null;
             const extViewers = data.external_viewers || null;

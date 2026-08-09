@@ -1977,6 +1977,28 @@ function getAllStreamerOverviews(limit = 100) {
                 FROM streamer_overviews o JOIN users u ON u.id = o.user_id
                 ORDER BY o.generated_at DESC LIMIT ?`, [limit]);
 }
+// Streamers whose aggregate AI overview is DUE for (re)generation. A "decent"
+// overview (>= decentLen chars) refreshes at most every 12h; a sparse/missing one
+// retries hourly until it fills out. Only streamers with some signal (memories or
+// VODs) are considered, so we never spend calls on users with nothing to summarize.
+function getStreamersNeedingOverview({ decentLen = 220, limit = 4 } = {}) {
+    return all(`
+        SELECT u.id AS user_id
+        FROM users u
+        LEFT JOIN streamer_overviews o ON o.user_id = u.id
+        WHERE (
+                EXISTS (SELECT 1 FROM stream_memories m WHERE m.user_id = u.id)
+             OR EXISTS (SELECT 1 FROM vods v WHERE v.user_id = u.id)
+              )
+          AND (
+                o.user_id IS NULL
+             OR (LENGTH(TRIM(COALESCE(o.overview,''))) >= ? AND o.generated_at <= datetime('now','-12 hours'))
+             OR (LENGTH(TRIM(COALESCE(o.overview,''))) <  ? AND o.generated_at <= datetime('now','-1 hours'))
+              )
+        ORDER BY (o.generated_at IS NULL) DESC, o.generated_at ASC
+        LIMIT ?
+    `, [decentLen, decentLen, limit]);
+}
 
 function updateViewerCount(streamId, count) {
     run(`UPDATE streams SET viewer_count = ?, peak_viewers = MAX(peak_viewers, ?) WHERE id = ?`,
@@ -2144,6 +2166,7 @@ function getRecentlyOnlineStreamers(limit = 20, offset = 0) {
     return all(`
         SELECT u.id AS user_id, u.username, u.display_name, u.avatar_url, u.profile_color,
                MAX(s.ended_at) AS last_online_at,
+               o.overview AS ai_overview,
                (
                    SELECT json_group_array(json_object(
                        'managed_stream_id', ms2.id,
@@ -2159,6 +2182,7 @@ function getRecentlyOnlineStreamers(limit = 20, offset = 0) {
                ) AS managed_streams_json
         FROM streams s
         JOIN users u ON s.user_id = u.id
+        LEFT JOIN streamer_overviews o ON o.user_id = u.id
         WHERE s.is_live = 0 AND s.ended_at IS NOT NULL
         GROUP BY u.id
         ORDER BY last_online_at DESC
@@ -5257,7 +5281,7 @@ module.exports = {
     getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiUsageSummary,
     getStreamMemoriesByUser, getUserPastesForAi,
-    upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews,
+    upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     // Homepage helpers
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
     getRecentVods, countRecentVods,
