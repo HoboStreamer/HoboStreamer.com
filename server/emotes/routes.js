@@ -335,6 +335,17 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
         const animated = req.file.mimetype === 'image/gif' || req.file.mimetype === 'image/webp';
         const isGlobal = req.body.is_global === 'true' && req.user.role === 'admin';
 
+        // Per-emote display size (percent), clamped to the channel's configured range.
+        let sizeMin = 25, sizeMax = 400;
+        if (channelOwnerId) {
+            try {
+                const ch = db.getChannelByUserId(channelOwnerId);
+                const st = ch ? db.getChannelModerationSettings(ch.id) : null;
+                if (st) { sizeMin = st.emote_size_min || 50; sizeMax = st.emote_size_max || 200; }
+            } catch { /* defaults */ }
+        }
+        const size = Math.min(sizeMax, Math.max(sizeMin, parseInt(req.body.size) || 100));
+
         const result = db.createEmote({
             user_id: req.user.id,
             code,
@@ -344,6 +355,7 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
             height: parseInt(req.body.height) || 28,
             is_global: isGlobal,
             channel_owner_id: isChannelUpload ? channelOwnerId : null,
+            size,
         });
 
         res.json({
@@ -590,6 +602,7 @@ router.get('/all/:streamId', optionalAuth, async (req, res) => {
                 animated: !!e.animated,
                 width: e.width,
                 height: e.height,
+                size: e.size || 100,
                 source: 'custom',
                 owner: e.username,
             }));
@@ -603,6 +616,7 @@ router.get('/all/:streamId', optionalAuth, async (req, res) => {
                     animated: !!e.animated,
                     width: e.width,
                     height: e.height,
+                    size: e.size || 100,
                     source: 'channel',
                     owner: e.username,
                     uploader: e.uploader_display_name || e.uploader_username || e.username,

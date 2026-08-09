@@ -112,7 +112,10 @@ function parseEmotes(text) {
                 const emote = emoteMap.get(token);
                 if (emote) {
                     const cls = emote.animated ? 'chat-emote chat-emote-animated' : 'chat-emote';
-                    return `<img class="${cls}" src="${_escEmote(emote.url)}" alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
+                    // Per-emote size (percent of base). Multiplies onto the channel scale var.
+                    const sz = Number(emote.size);
+                    const sizeStyle = (sz && sz !== 100) ? ` style="height:calc(1.6em * var(--chat-emote-scale,1) * ${Math.max(0.25, Math.min(4, sz / 100))})"` : '';
+                    return `<img class="${cls}" src="${_escEmote(emote.url)}"${sizeStyle} alt="${_escEmote(token)}" title="${_escEmote(token)}" loading="lazy" draggable="false">`;
                 }
                 if (_URL_RE.test(token)) return _makeChatLink(token);
                 return _escEmote(token);

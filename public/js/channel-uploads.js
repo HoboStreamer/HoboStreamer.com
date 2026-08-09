@@ -62,6 +62,15 @@
         .cu-del{background:none;border:none;color:#e66;cursor:pointer;font-size:12px;opacity:.8;}
         .cu-del:hover{opacity:1;}
         .cu-empty{opacity:.5;font-size:13px;padding:8px 0;}
+        .cu-set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;font-size:13px;}
+        .cu-set-row input[type=number]{width:84px;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:inherit;}
+        .cu-set-group{border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px 12px;}
+        .cu-set-group-title{font-weight:700;font-size:12px;opacity:.85;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;}
+        .cu-size-row{display:flex;align-items:center;gap:8px;font-size:13px;}
+        .cu-size-row input[type=range]{flex:1;}
+        .cu-count{background:var(--accent,#c0965c);color:#111;border-radius:10px;padding:0 7px;font-size:11px;font-weight:700;margin-left:2px;}
+        .cu-sound-group{width:100%;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:6px;}
+        .cu-sound-cmd-hd{display:flex;align-items:center;gap:6px;margin-bottom:2px;}
         `;
         const el = document.createElement('style');
         el.id = 'cu-styles';
@@ -73,11 +82,21 @@
         if (overlay) { overlay.remove(); overlay = null; }
     }
 
+    // Is the current viewer the streamer/owner (or a global mod) of this channel?
+    function isChannelOwner() {
+        try {
+            if (typeof canModerateCurrentStream === 'function') return canModerateCurrentStream();
+            const csd = window.currentStreamData, cu = window.currentUser;
+            return !!(csd && cu && csd.user_id === cu.id);
+        } catch { return false; }
+    }
+
     function render() {
         overlay.querySelectorAll('.cu-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === curTab));
         const body = overlay.querySelector('.cu-body');
-        if (curTab === 'emote') renderEmoteTab(body);
-        else renderSoundTab(body);
+        if (curTab === 'settings') renderSettingsTab(body);
+        else if (curTab === 'sound') renderSoundTab(body);
+        else renderEmoteTab(body);
     }
 
     function renderEmoteTab(body) {
@@ -85,8 +104,13 @@
             <form class="cu-form" id="cu-emote-form">
                 <input type="text" id="cu-emote-code" maxlength="32" placeholder="Emote code (letters/numbers/_)" autocomplete="off">
                 <input type="file" id="cu-emote-file" accept="image/png,image/gif,image/webp,image/jpeg,image/avif">
+                <div class="cu-size-row">
+                    <span>Size <b id="cu-emote-size-val">100%</b></span>
+                    <input type="range" id="cu-emote-size" min="25" max="400" step="5" value="100"
+                        oninput="document.getElementById('cu-emote-size-val').textContent=this.value+'%'">
+                </div>
                 <button class="cu-btn" type="submit">Upload emote to this channel</button>
-                <div class="cu-hint">Type the code in chat to use it. PNG/GIF/WebP/JPEG, up to 256&nbsp;KB.</div>
+                <div class="cu-hint">Type the code in chat to use it. PNG/GIF/WebP/JPEG, up to 256&nbsp;KB. Size is clamped to the streamer's allowed range.</div>
             </form>
             <div id="cu-emote-list" class="cu-list"><span class="cu-empty">Loading…</span></div>`;
         overlay.querySelector('#cu-emote-form').addEventListener('submit', submitEmote);
@@ -100,7 +124,7 @@
                 <input type="file" id="cu-sound-file" accept="audio/*">
                 <div id="cu-sound-preview" style="display:none;margin:2px 0"></div>
                 <button class="cu-btn" type="submit">Upload sound to this channel</button>
-                <div class="cu-hint">Trigger it by typing <b>!command</b> in chat. MP3/WAV/OGG, within the streamer's max length.</div>
+                <div class="cu-hint">Trigger it by typing <b>!command</b> in chat. MP3/WAV/OGG, within the streamer's max length. Upload several under the <b>same command</b> and one plays at random each time.</div>
             </form>
             <div id="cu-sound-list" class="cu-list" style="flex-direction:column;"><span class="cu-empty">Loading…</span></div>`;
         overlay.querySelector('#cu-sound-form').addEventListener('submit', submitSound);
@@ -120,6 +144,66 @@
         loadSoundList();
     }
 
+    // Streamer-only tab: emote size limits + emote/sound toggles for the channel.
+    async function renderSettingsTab(body) {
+        body.innerHTML = '<div class="cu-empty">Loading channel settings…</div>';
+        let ch = null;
+        try {
+            const r = await fetch('/api/channels/moderation/mine', { headers: { Authorization: `Bearer ${token()}` } });
+            const data = await r.json();
+            const list = data.channels || [];
+            const ownerId = (window.currentStreamData && window.currentStreamData.user_id) || (window.currentUser && window.currentUser.id) || null;
+            ch = list.find((c) => c.user_id === ownerId) || list[0] || null;
+        } catch { /* */ }
+        if (!ch) { body.innerHTML = '<div class="cu-empty">Could not load your channel settings.</div>'; return; }
+        const s = ch.moderation_settings || {};
+        const num = (v, d) => (v == null ? d : v);
+        const chk = (v, d) => (num(v, d) ? 'checked' : '');
+        body.innerHTML = `
+            <div class="cu-form" style="gap:12px" data-channel-id="${ch.id}">
+                <div class="cu-set-group">
+                    <div class="cu-set-group-title">Emotes</div>
+                    <label class="cu-set-row"><span>Custom emotes enabled</span><input type="checkbox" id="cu-set-emotes" ${chk(s.custom_emotes_enabled, 1)}></label>
+                    <label class="cu-set-row"><span>Only mods can upload</span><input type="checkbox" id="cu-set-modsonly" ${chk(s.uploads_mods_only, 0)}></label>
+                    <label class="cu-set-row"><span>Channel emote scale (%)</span><input type="number" id="cu-set-scale" min="50" max="300" value="${num(s.emote_scale, 100)}"></label>
+                    <label class="cu-set-row"><span>Min per-emote size (%)</span><input type="number" id="cu-set-emin" min="25" max="200" value="${num(s.emote_size_min, 50)}"></label>
+                    <label class="cu-set-row"><span>Max per-emote size (%)</span><input type="number" id="cu-set-emax" min="50" max="400" value="${num(s.emote_size_max, 200)}"></label>
+                </div>
+                <div class="cu-set-group">
+                    <div class="cu-set-group-title">Sounds</div>
+                    <label class="cu-set-row"><span>Custom sounds enabled</span><input type="checkbox" id="cu-set-sounds" ${chk(s.custom_sounds_enabled, 1)}></label>
+                    <label class="cu-set-row"><span>Max sound length (s)</span><input type="number" id="cu-set-maxsec" min="1" max="30" value="${num(s.max_sound_seconds, 10)}"></label>
+                </div>
+                <button class="cu-btn" id="cu-set-save" type="button">Save channel settings</button>
+                <div class="cu-hint">Applies to everyone in your channel's chat. Pitch/speed limits live in your dashboard's moderation panel.</div>
+            </div>`;
+        overlay.querySelector('#cu-set-save').onclick = () => saveChannelSettings(ch.id);
+    }
+
+    async function saveChannelSettings(channelId) {
+        const g = (id) => overlay.querySelector(id);
+        const payload = {
+            custom_emotes_enabled: g('#cu-set-emotes').checked,
+            uploads_mods_only: g('#cu-set-modsonly').checked,
+            emote_scale: parseInt(g('#cu-set-scale').value) || 100,
+            emote_size_min: parseInt(g('#cu-set-emin').value) || 50,
+            emote_size_max: parseInt(g('#cu-set-emax').value) || 200,
+            custom_sounds_enabled: g('#cu-set-sounds').checked,
+            max_sound_seconds: parseInt(g('#cu-set-maxsec').value) || 10,
+        };
+        const btn = g('#cu-set-save');
+        btn.disabled = true;
+        try {
+            const r = await fetch(`/api/channels/${channelId}/moderation`, {
+                method: 'PUT', headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || 'Save failed');
+            notify('Channel settings saved', 'success');
+        } catch (e) { notify(e.message, 'error'); }
+        finally { btn.disabled = false; }
+    }
+
     async function loadEmoteList() {
         const box = overlay && overlay.querySelector('#cu-emote-list');
         if (!box) return;
@@ -131,7 +215,7 @@
             box.innerHTML = list.map((e) => `
                 <div class="cu-emote">
                     <img src="${esc(e.url)}" alt="${esc(e.code)}" loading="lazy">
-                    <code>${esc(e.code)}</code>
+                    <code>${esc(e.code)}${e.size && e.size !== 100 ? ` · ${e.size}%` : ''}</code>
                     ${e.emote_id ? `<button class="cu-del" title="Delete" onclick="__cuDeleteEmote(${e.emote_id})">✕</button>` : ''}
                 </div>`).join('');
         } catch { box.innerHTML = '<span class="cu-empty">Could not load emotes.</span>'; }
@@ -145,13 +229,20 @@
             const data = await r.json();
             const list = data.sounds || [];
             if (!list.length) { box.innerHTML = '<span class="cu-empty">No channel sounds yet — be the first!</span>'; return; }
-            box.innerHTML = list.map((s) => `
-                <div class="cu-sound">
-                    <span class="cu-cmd">!${esc(s.command)}</span>
-                    <button class="cu-btn" style="padding:3px 8px;font-size:12px;" onclick="__cuPreviewSound('${esc(s.url)}')">▶</button>
-                    <span class="cu-meta">${(s.duration_seconds || 0).toFixed ? s.duration_seconds.toFixed(1) : s.duration_seconds}s · ${esc(s.uploader || '')}</span>
-                    <button class="cu-del" title="Delete" onclick="__cuDeleteSound(${s.id})">✕</button>
-                </div>`).join('');
+            // Group by command — a command can hold several sounds; one is chosen at random on play.
+            const groups = {};
+            list.forEach((s) => { (groups[s.command] = groups[s.command] || []).push(s); });
+            box.innerHTML = Object.keys(groups).sort().map((cmd) => {
+                const arr = groups[cmd];
+                return `<div class="cu-sound-group">
+                    <div class="cu-sound-cmd-hd"><span class="cu-cmd">!${esc(cmd)}</span>${arr.length > 1 ? `<span class="cu-count">×${arr.length}</span> <span class="cu-hint" style="opacity:.55">random</span>` : ''}</div>
+                    ${arr.map((s) => `<div class="cu-sound" style="margin-left:10px">
+                        <button class="cu-btn" style="padding:3px 8px;font-size:12px;" onclick="__cuPreviewSound('${esc(s.url)}')">▶</button>
+                        <span class="cu-meta">${(s.duration_seconds || 0).toFixed ? s.duration_seconds.toFixed(1) : s.duration_seconds}s · ${esc(s.uploader || '')}</span>
+                        <button class="cu-del" title="Delete" onclick="__cuDeleteSound(${s.id})">✕</button>
+                    </div>`).join('')}
+                </div>`;
+            }).join('');
         } catch { box.innerHTML = '<span class="cu-empty">Could not load sounds.</span>'; }
     }
 
@@ -168,6 +259,8 @@
             fd.append('code', code);
             fd.append('stream_id', curStreamId);
             fd.append('image', file);
+            const sizeEl = overlay.querySelector('#cu-emote-size');
+            if (sizeEl) fd.append('size', sizeEl.value || '100');
             const r = await fetch('/api/emotes', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: fd });
             const data = await r.json();
             if (!r.ok) throw new Error(data.error || 'Upload failed');
@@ -251,6 +344,7 @@
                 <div class="cu-tabs">
                     <button class="cu-tab" data-tab="emote"><i class="fa-solid fa-face-grin-stars"></i> Emote</button>
                     <button class="cu-tab" data-tab="sound"><i class="fa-solid fa-volume-high"></i> Sound</button>
+                    ${isChannelOwner() ? '<button class="cu-tab" data-tab="settings"><i class="fa-solid fa-sliders"></i> Settings</button>' : ''}
                 </div>
                 <div class="cu-body"></div>
             </div>`;

@@ -796,6 +796,9 @@ function initDb() {
         if (!cols.includes('sound_max_speed')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sound_max_speed REAL DEFAULT 3.0');
         if (!cols.includes('sound_min_pitch_cents')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sound_min_pitch_cents INTEGER DEFAULT -1200');
         if (!cols.includes('sound_max_pitch_cents')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sound_max_pitch_cents INTEGER DEFAULT 1200');
+        // Per-channel emote size limits (percent of the base emote height, 100 = default).
+        if (!cols.includes('emote_size_min')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN emote_size_min INTEGER DEFAULT 50');
+        if (!cols.includes('emote_size_max')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN emote_size_max INTEGER DEFAULT 200');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
 
     // Migrate: add channel_owner_id to emotes (viewer uploads targeting a channel) + channel_sounds table
@@ -805,7 +808,9 @@ function initDb() {
             database.exec('ALTER TABLE emotes ADD COLUMN channel_owner_id INTEGER');
             database.exec('CREATE INDEX IF NOT EXISTS idx_emotes_channel_owner ON emotes(channel_owner_id)');
         }
-    } catch (e) { console.warn('[DB] emotes channel_owner_id migration:', e.message); }
+        // Per-emote display size (percent of base, 100 = default). Clamped to the channel's min/max.
+        if (!emoteCols.includes('size')) database.exec('ALTER TABLE emotes ADD COLUMN size INTEGER DEFAULT 100');
+    } catch (e) { console.warn('[DB] emotes size/channel_owner_id migration:', e.message); }
 
     try {
         database.exec(`CREATE TABLE IF NOT EXISTS channel_sounds (
@@ -3149,11 +3154,11 @@ function isUsernameReserved(username) {
 
 // ── Emote helpers ────────────────────────────────────────────
 
-function createEmote({ user_id, code, url, animated = false, width = 28, height = 28, is_global = false, channel_owner_id = null }) {
+function createEmote({ user_id, code, url, animated = false, width = 28, height = 28, is_global = false, channel_owner_id = null, size = 100 }) {
     return run(
-        `INSERT INTO emotes (user_id, code, url, animated, width, height, is_global, channel_owner_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [user_id, code, url, animated ? 1 : 0, width, height, is_global ? 1 : 0, channel_owner_id || null]
+        `INSERT INTO emotes (user_id, code, url, animated, width, height, is_global, channel_owner_id, size)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [user_id, code, url, animated ? 1 : 0, width, height, is_global ? 1 : 0, channel_owner_id || null, Math.min(400, Math.max(25, parseInt(size) || 100))]
     );
 }
 
@@ -3711,6 +3716,8 @@ function getChannelModerationSettings(channelId) {
             max_sound_seconds: 10,
             uploads_mods_only: 0,
             emote_scale: 100,
+            emote_size_min: 50,
+            emote_size_max: 200,
             sound_min_speed: 0.5,
             sound_max_speed: 3.0,
             sound_min_pitch_cents: -1200,
@@ -3751,6 +3758,8 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.max_sound_seconds !== undefined) { updates.push('max_sound_seconds = ?'); params.push(Math.min(30, Math.max(1, Number(fields.max_sound_seconds) || 10))); }
         if (fields.uploads_mods_only !== undefined) { updates.push('uploads_mods_only = ?'); params.push(fields.uploads_mods_only ? 1 : 0); }
         if (fields.emote_scale !== undefined) { updates.push('emote_scale = ?'); params.push(Math.min(300, Math.max(50, Number(fields.emote_scale) || 100))); }
+        if (fields.emote_size_min !== undefined) { updates.push('emote_size_min = ?'); params.push(Math.min(200, Math.max(25, Number(fields.emote_size_min) || 50))); }
+        if (fields.emote_size_max !== undefined) { updates.push('emote_size_max = ?'); params.push(Math.min(400, Math.max(50, Number(fields.emote_size_max) || 200))); }
         if (fields.sound_min_speed !== undefined) { updates.push('sound_min_speed = ?'); params.push(Math.min(1, Math.max(0.1, Number(fields.sound_min_speed) || 0.5))); }
         if (fields.sound_max_speed !== undefined) { updates.push('sound_max_speed = ?'); params.push(Math.min(5, Math.max(1, Number(fields.sound_max_speed) || 3.0))); }
         if (fields.sound_min_pitch_cents !== undefined) { updates.push('sound_min_pitch_cents = ?'); params.push(Math.min(0, Math.max(-2400, Math.round(Number(fields.sound_min_pitch_cents) || -1200)))); }
@@ -3769,8 +3778,9 @@ function upsertChannelModerationSettings(channelId, fields) {
                 slur_filter_enabled, slur_filter_use_builtin, slur_filter_terms, slur_filter_regexes, slur_filter_nudge_message, slur_filter_disabled_categories,
                 ip_approval_mode, soundboard_enabled, soundboard_allow_pitch, soundboard_allow_speed, soundboard_banned_ids,
                 viewer_auto_delete_enabled, viewer_delete_all_enabled,
-                custom_emotes_enabled, custom_sounds_enabled, max_sound_seconds, uploads_mods_only, emote_scale
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+                custom_emotes_enabled, custom_sounds_enabled, max_sound_seconds, uploads_mods_only, emote_scale,
+                emote_size_min, emote_size_max
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
             [
                 channelId,
                 fields.slow_mode_seconds || 0,
@@ -3801,6 +3811,8 @@ function upsertChannelModerationSettings(channelId, fields) {
                 Math.min(30, Math.max(1, Number(fields.max_sound_seconds) || 10)),
                 fields.uploads_mods_only ? 1 : 0,
                 Math.min(300, Math.max(50, Number(fields.emote_scale) || 100)),
+                Math.min(200, Math.max(25, Number(fields.emote_size_min) || 50)),
+                Math.min(400, Math.max(50, Number(fields.emote_size_max) || 200)),
             ]
         );
     }
