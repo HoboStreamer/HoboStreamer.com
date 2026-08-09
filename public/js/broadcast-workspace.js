@@ -910,18 +910,28 @@ function _wsRenderPanel() {
                 <details class="bc-ws-slot-settings">
                     <summary><i class="fa-solid fa-film"></i> VOD &amp; Clips Settings</summary>
                     <div class="bc-ws-slot-settings-inner">
-                        <div class="form-group">
-                            <label class="bc-toggle-label">
-                                <input type="checkbox" id="bc-ws-vod-recording" ${ms.slot_vod_recording_enabled !== 0 ? 'checked' : ''}
-                                    onchange="_wsSlotSettingChanged()">
-                                VOD Recording Enabled
-                            </label>
+                        <div class="bc-ws-row">
+                            <div class="form-group" style="flex:1">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-ws-vod-recording" ${ms.slot_vod_recording_enabled !== 0 ? 'checked' : ''}
+                                        onchange="_wsSlotSettingChanged()">
+                                    Record VODs
+                                </label>
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-ws-clip-recording" ${ms.slot_clip_recording_enabled !== 0 ? 'checked' : ''}
+                                        onchange="_wsSlotSettingChanged()">
+                                    Allow Clips
+                                </label>
+                            </div>
                         </div>
                         <div class="bc-ws-row">
                             <div class="form-group" style="flex:1">
                                 <label>Default VOD Visibility</label>
                                 <select id="bc-ws-vod-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
                                     <option value="public" ${(ms.default_vod_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
+                                    <option value="unlisted" ${ms.default_vod_visibility === 'unlisted' ? 'selected' : ''}>Unlisted (link only)</option>
                                     <option value="private" ${ms.default_vod_visibility === 'private' ? 'selected' : ''}>Private</option>
                                 </select>
                             </div>
@@ -929,6 +939,7 @@ function _wsRenderPanel() {
                                 <label>Default Clip Visibility</label>
                                 <select id="bc-ws-clip-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
                                     <option value="public" ${(ms.default_clip_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
+                                    <option value="unlisted" ${ms.default_clip_visibility === 'unlisted' ? 'selected' : ''}>Unlisted (link only)</option>
                                     <option value="private" ${ms.default_clip_visibility === 'private' ? 'selected' : ''}>Private</option>
                                 </select>
                             </div>
@@ -1835,6 +1846,7 @@ async function _wsSaveAll() {
             default_vod_visibility: ms.default_vod_visibility || 'public',
             default_clip_visibility: ms.default_clip_visibility || 'public',
             slot_vod_recording_enabled: ms.slot_vod_recording_enabled !== undefined ? ms.slot_vod_recording_enabled : 1,
+            slot_clip_recording_enabled: ms.slot_clip_recording_enabled !== undefined ? ms.slot_clip_recording_enabled : 1,
             weather_zip: ms.weather_zip || null,
             weather_detail: ms.weather_detail || 'basic',
             weather_show_location: ms.weather_show_location || 0,
@@ -1974,6 +1986,7 @@ function _wsSlotSettingChanged() {
     ms.default_vod_visibility = document.getElementById('bc-ws-vod-visibility')?.value || 'public';
     ms.default_clip_visibility = document.getElementById('bc-ws-clip-visibility')?.value || 'public';
     ms.slot_vod_recording_enabled = document.getElementById('bc-ws-vod-recording')?.checked ? 1 : 0;
+    ms.slot_clip_recording_enabled = document.getElementById('bc-ws-clip-recording')?.checked ? 1 : 0;
     ms.weather_zip = document.getElementById('bc-ws-weather-zip')?.value.trim() || null;
     ms.weather_detail = document.getElementById('bc-ws-weather-detail')?.value || 'basic';
     ms.weather_show_location = document.getElementById('bc-ws-weather-location')?.checked ? 1 : 0;

@@ -740,10 +740,11 @@ async function deleteVod(vodId) {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function dashBulkDeleteByAge() {
+async function dashBulkActionByAge() {
     const ageInput = document.getElementById('dash-bulk-delete-age-days');
     const vodsToggle = document.getElementById('dash-bulk-delete-vods');
     const clipsToggle = document.getElementById('dash-bulk-delete-clips');
+    const action = document.getElementById('dash-bulk-action')?.value || 'delete';
     const olderThanDays = parseInt(ageInput?.value, 10);
     const deleteVods = !!vodsToggle?.checked;
     const deleteClips = !!clipsToggle?.checked;
@@ -752,24 +753,30 @@ async function dashBulkDeleteByAge() {
         return toast('Enter a valid age in days (minimum 1)', 'error');
     }
     if (!deleteVods && !deleteClips) {
-        return toast('Select VODs and/or Clips to delete', 'error');
+        return toast('Select VODs and/or Clips', 'error');
     }
 
     const targets = [deleteVods ? 'VODs' : null, deleteClips ? 'clips' : null].filter(Boolean).join(' and ');
-    if (!confirm(`Delete ${targets} older than ${olderThanDays} day(s)? This cannot be undone.`)) return;
+    const verb = action === 'delete' ? 'Delete' : (action === 'public' ? 'Make public' : (action === 'unlisted' ? 'Unlist' : 'Make private'));
+    const warn = action === 'delete' ? ' This cannot be undone.' : '';
+    if (!confirm(`${verb} ${targets} older than ${olderThanDays} day(s)?${warn}`)) return;
 
     try {
         const result = await api('/vods/bulk-delete-old', {
             method: 'POST',
-            body: { olderThanDays, deleteVods, deleteClips },
+            body: { olderThanDays, deleteVods, deleteClips, action },
         });
 
-        const deletedVods = result?.deleted?.vods || 0;
-        const deletedClips = result?.deleted?.clips || 0;
-        const fileErrors = result?.fileDeleteErrors || 0;
-        toast(`Deleted ${deletedVods} VOD(s) and ${deletedClips} clip(s) older than ${olderThanDays} day(s)`, 'success');
-        if (fileErrors > 0) {
-            toast(`Deleted records, but ${fileErrors} file(s) could not be removed`, 'warning');
+        if (action === 'delete') {
+            const deletedVods = result?.deleted?.vods || 0;
+            const deletedClips = result?.deleted?.clips || 0;
+            const fileErrors = result?.fileDeleteErrors || 0;
+            toast(`Deleted ${deletedVods} VOD(s) and ${deletedClips} clip(s) older than ${olderThanDays} day(s)`, 'success');
+            if (fileErrors > 0) toast(`Deleted records, but ${fileErrors} file(s) could not be removed`, 'warning');
+        } else {
+            const uv = result?.updated?.vods || 0;
+            const uc = result?.updated?.clips || 0;
+            toast(`${verb}: ${uv} VOD(s), ${uc} clip(s)`, 'success');
         }
 
         if (deleteVods) loadDashVods();
@@ -778,9 +785,11 @@ async function dashBulkDeleteByAge() {
             loadDashStreamClips();
         }
     } catch (e) {
-        toast(e.message || 'Bulk delete failed', 'error');
+        toast(e.message || 'Bulk action failed', 'error');
     }
 }
+// Back-compat alias.
+const dashBulkDeleteByAge = dashBulkActionByAge;
 
 /* ── My Clips (clips I created) ───────────────────────────────── */
 async function loadDashMyClips() {

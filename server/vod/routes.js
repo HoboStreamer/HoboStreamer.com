@@ -998,6 +998,7 @@ router.post('/bulk-delete-old', requireAuth, async (req, res) => {
         const olderThanDays = parseInt(req.body?.olderThanDays, 10);
         const deleteVods = req.body?.deleteVods !== false;
         const deleteClips = req.body?.deleteClips !== false;
+        const action = ['delete', 'public', 'unlisted', 'private'].includes(req.body?.action) ? req.body.action : 'delete';
 
         if (!Number.isFinite(olderThanDays) || olderThanDays < 1) {
             return res.status(400).json({ error: 'olderThanDays must be a positive integer' });
@@ -1034,6 +1035,13 @@ router.post('/bulk-delete-old', requireAuth, async (req, res) => {
                 [daysModifier, req.user.id, req.user.id, req.user.id]
             )
             : [];
+
+        // Visibility action (private/unlisted/public) — no file deletion, just flip visibility.
+        if (action !== 'delete') {
+            for (const v of vodsToDelete) db.setVodVisibility(v.id, action);
+            for (const c of clipsToDelete) db.setClipVisibility(c.id, action);
+            return res.json({ olderThanDays, action, updated: { vods: vodsToDelete.length, clips: clipsToDelete.length } });
+        }
 
         let vodFilesDeleted = 0;
         let clipFilesDeleted = 0;

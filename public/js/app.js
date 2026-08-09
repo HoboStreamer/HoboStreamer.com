@@ -1648,12 +1648,13 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
     }
 
     if (liveVodHtml || vods.length) {
-        const isOwner = currentUser && currentUser.username === username;
-        vodsGrid.innerHTML = liveVodHtml + vods.map(v => `
+        const canManage = _channelCanManage(username);
+        _selSetContext(canManage, () => _reloadChannelContent(username));
+        vodsGrid.innerHTML = liveVodHtml + vods.map(v => _selWrap('vod', v.id, `
             <a class="stream-card" href="/vod/${v.id}" onclick="return handleLinkClick(event, '/vod/${v.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
-                    ${!v.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
+                    ${_visBadge(v.visibility, v.is_public, canManage)}
                     ${v.stream_protocol ? protocolBadge(v.stream_protocol) : ''}
                     <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || v.duration)}</span>
                 </div>
@@ -1662,12 +1663,30 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
                     <div class="stream-card-streamer muted">${formatDateTime(v.created_at)}</div>
                 </div>
             </a>
-        `).join('');
+        `)).join('');
     } else {
         vodsGrid.innerHTML = '<p class="muted">No VODs yet</p>';
     }
 
     renderVodsPagination('ch-vods-pagination', page, total, pageSize, 'setChannelVodsPage', 'videos');
+}
+
+// Can the current user manage a channel's content (its owner, or any admin)?
+function _channelCanManage(username) {
+    return !!((currentUser && currentUser.username === username) || _isContentAdmin());
+}
+// A small visibility badge for a VOD/clip card (shown only to managers).
+function _visBadge(visibility, isPublic, canManage) {
+    if (!canManage) return '';
+    const vis = visibility || (isPublic ? 'public' : 'private');
+    if (vis === 'public') return '';
+    const label = vis === 'unlisted' ? 'UNLISTED' : 'PRIVATE';
+    return `<span class="stream-card-nsfw" style="background:var(--text-muted)">${label}</span>`;
+}
+// Reload all manageable channel content after a bulk action.
+function _reloadChannelContent(username) {
+    try { refreshChannelVodsPage(username); } catch { /* */ }
+    try { loadChannelPastes(username); } catch { /* */ }
 }
 
 function renderChannelClipsSection(username, clips, meta = {}) {
@@ -1680,12 +1699,13 @@ function renderChannelClipsSection(username, clips, meta = {}) {
     const page = Math.floor(offset / pageSize) + 1;
 
     if (clips.length) {
-        const isOwner = currentUser && currentUser.username === username;
-        clipsGrid.innerHTML = clips.map(cl => `
+        const canManage = _channelCanManage(username);
+        _selSetContext(canManage, () => _reloadChannelContent(username));
+        clipsGrid.innerHTML = clips.map(cl => _selWrap('clip', cl.id, `
             <a class="stream-card" href="/clip/${cl.id}" onclick="return handleLinkClick(event, '/clip/${cl.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
-                    ${!cl.is_public && isOwner ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">UNLISTED</span>' : ''}
+                    ${_visBadge(cl.visibility, cl.is_public, canManage)}
                     ${cl.stream_protocol ? protocolBadge(cl.stream_protocol) : ''}
                     <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(cl.duration_seconds)}</span>
                 </div>
@@ -1694,7 +1714,7 @@ function renderChannelClipsSection(username, clips, meta = {}) {
                     <div class="stream-card-streamer muted">${formatDateTime(cl.created_at)}</div>
                 </div>
             </a>
-        `).join('');
+        `)).join('');
     } else {
         clipsGrid.innerHTML = '<p class="muted">No clips yet</p>';
     }
@@ -1765,6 +1785,73 @@ async function refreshChannelVodsPage(username = currentChannelUsername) {
         limit: data.vodLimit || limit,
         offset: data.vodOffset || offset,
     });
+
+    // Load the channel's Pastes section + (re)start its periodic auto-refresh.
+    loadChannelPastes(username);
+    _startChannelPastesAutoRefresh(username);
+}
+
+/* ── Channel Pastes section (auto-refresh + sortable) ─────────── */
+let _channelPastesTimer = null;
+const channelPastesSortByUser = Object.create(null);
+
+function _startChannelPastesAutoRefresh(username) {
+    if (_channelPastesTimer) clearInterval(_channelPastesTimer);
+    _channelPastesTimer = setInterval(() => {
+        if (currentChannelUsername !== username) { clearInterval(_channelPastesTimer); _channelPastesTimer = null; return; }
+        loadChannelPastes(username);
+    }, 60000);
+}
+
+async function loadChannelPastes(username = currentChannelUsername) {
+    if (!username) return;
+    const grid = document.getElementById('ch-pastes-grid');
+    const header = document.getElementById('ch-pastes-header');
+    const pager = document.getElementById('ch-pastes-pagination');
+    if (!grid) return;
+    const sort = channelPastesSortByUser[username] || 'newest';
+    try {
+        const data = await api(`/pastes/by-user/${encodeURIComponent(username)}?limit=30&sort=${sort}`);
+        const pastes = data.pastes || [];
+        if (!pastes.length) {
+            if (header) header.style.display = 'none';
+            grid.style.display = 'none'; grid.innerHTML = '';
+            if (pager) { pager.style.display = 'none'; pager.innerHTML = ''; }
+            return;
+        }
+        const canManage = !!data.canManage || _channelCanManage(username);
+        _selSetContext(canManage, () => _reloadChannelContent(username));
+        if (header) header.style.display = '';
+        grid.style.display = '';
+        grid.innerHTML = pastes.map(p => _selWrap('paste', p.slug, _channelPasteCardHTML(p, canManage))).join('');
+        if (pager) {
+            pager.style.display = '';
+            pager.innerHTML = (typeof sortToggleHTML === 'function') ? sortToggleHTML(sort, 'setChannelPastesSort') : '';
+        }
+    } catch { /* silent */ }
+}
+
+function setChannelPastesSort(sort) {
+    const u = currentChannelUsername;
+    if (!u) return;
+    channelPastesSortByUser[u] = sort === 'oldest' ? 'oldest' : 'newest';
+    loadChannelPastes(u);
+}
+
+function _channelPasteCardHTML(p, canManage) {
+    const isShot = p.type === 'screenshot';
+    const vis = (canManage && p.visibility && p.visibility !== 'public')
+        ? `<span class="ch-paste-vis">${esc(p.visibility)}</span>` : '';
+    const thumb = (isShot && p.screenshot_url)
+        ? `<div class="ch-paste-thumb"><img src="${esc(p.screenshot_url)}" alt="" loading="lazy"></div>`
+        : `<div class="ch-paste-thumb ch-paste-thumb-icon"><i class="fa-solid ${isShot ? 'fa-image' : 'fa-code'}"></i></div>`;
+    return `<a class="ch-paste-card" href="/p/${esc(p.slug)}" onclick="return handleLinkClick(event, '/p/${esc(p.slug)}')">
+        ${thumb}
+        <div class="ch-paste-info">
+            <div class="ch-paste-title">${esc(p.title || 'Untitled')} ${vis}</div>
+            <div class="ch-paste-meta muted"><span>${timeAgo(p.created_at)}</span> · <span><i class="fa-solid fa-eye"></i> ${p.views || 0}</span></div>
+        </div>
+    </a>`;
 }
 
 function setChannelVodFilter(managedStreamId) {
@@ -3289,69 +3376,87 @@ async function toggleFollow() {
 }
 
 /* ── VODs Page ────────────────────────────────────────────────── */
-/* ── Admin bulk-select for VODs / clips pages ─────────────────── */
-window._adminSel = window._adminSel || { vod: new Set(), clip: new Set() };
+/* ── Unified bulk-select for VODs / clips / pastes (admin + owner) ──
+   Works on the global VODs/Clips pages (admins) and on a channel page (the
+   channel owner on their own content, or any admin). Actions: public | unlisted
+   | private | delete. Selection state is keyed by content type; the id is a VOD/
+   clip numeric id or a paste slug (stored as strings). */
+window._sel = window._sel || { vod: new Set(), clip: new Set(), paste: new Set() };
+window._selCtx = window._selCtx || { enabled: false, reload: null };
+window._selActiveType = window._selActiveType || null;
 
 function _isContentAdmin() {
     return !!(currentUser && (currentUser.role === 'admin' || currentUser.capabilities?.moderate_global));
 }
 
-/** Wrap a VOD/clip card with an admin select-checkbox (no-op for non-admins). */
-function _adminCardWrap(type, id, cardHtml) {
-    if (!_isContentAdmin()) return cardHtml;
-    const checked = window._adminSel[type].has(id) ? 'checked' : '';
-    return `<div class="admin-card-wrap">
-        <label class="admin-card-check" onclick="event.stopPropagation()" title="Select for bulk delete">
-            <input type="checkbox" ${checked} onchange="_adminToggleSelect('${type}', ${id}, this.checked)">
-        </label>
-        ${cardHtml}
-    </div>`;
+// Enable/disable selection for the current view + set the reload callback.
+function _selSetContext(enabled, reload) {
+    window._selCtx = { enabled: !!enabled, reload: reload || null };
+    if (!enabled) { _sel.vod.clear(); _sel.clip.clear(); _sel.paste.clear(); }
+    _selRenderBar();
 }
 
-function _adminToggleSelect(type, id, checked) {
-    const set = window._adminSel[type];
-    if (checked) set.add(id); else set.delete(id);
-    _updateAdminBulkBar(type);
+/** Wrap a VOD/clip/paste card with a select-checkbox (no-op when disabled). */
+function _selWrap(type, id, cardHtml) {
+    if (!window._selCtx.enabled) return cardHtml;
+    const sid = String(id).replace(/'/g, "\\'");
+    const checked = window._sel[type].has(String(id)) ? 'checked' : '';
+    return `<div class="sel-card-wrap">
+        <label class="sel-card-check" onclick="event.stopPropagation()" title="Select">
+            <input type="checkbox" ${checked} onchange="_selToggle('${type}','${sid}',this.checked)">
+        </label>${cardHtml}</div>`;
+}
+// Back-compat alias for the global VOD/clip page call sites.
+function _adminCardWrap(type, id, cardHtml) { return _selWrap(type, id, cardHtml); }
+function _updateAdminBulkBar() { _selRenderBar(); }
+
+function _selToggle(type, id, checked) {
+    const set = window._sel[type]; if (!set) return;
+    if (checked) set.add(String(id)); else set.delete(String(id));
+    window._selActiveType = type;
+    _selRenderBar();
 }
 
-function _adminClearSelect(type) {
-    window._adminSel[type].clear();
-    document.querySelectorAll('.admin-card-check input:checked').forEach(cb => { cb.checked = false; });
-    _updateAdminBulkBar(type);
+function _selClear(type) {
+    window._sel[type].clear();
+    document.querySelectorAll('.sel-card-check input:checked').forEach(cb => { cb.checked = false; });
+    _selRenderBar();
 }
 
-function _updateAdminBulkBar(type) {
-    if (!_isContentAdmin()) return;
-    let bar = document.getElementById('admin-bulk-bar');
-    const set = window._adminSel[type];
-    if (!bar) {
-        bar = document.createElement('div');
-        bar.id = 'admin-bulk-bar';
-        document.body.appendChild(bar);
-    }
-    if (!set || set.size === 0) { bar.style.display = 'none'; return; }
-    const label = type === 'vod' ? 'VOD' : 'clip';
+function _selRenderBar() {
+    let type = window._selActiveType;
+    if (!type || !window._sel[type]?.size) type = ['vod', 'clip', 'paste'].find(t => window._sel[t].size);
+    let bar = document.getElementById('sel-bulk-bar');
+    if (!type) { if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; } return; }
+    if (!bar) { bar = document.createElement('div'); bar.id = 'sel-bulk-bar'; document.body.appendChild(bar); }
+    const set = window._sel[type];
+    const noun = type === 'vod' ? 'video' : type;
     bar.style.display = 'flex';
-    bar.innerHTML = `<span><i class="fa-solid fa-check-double"></i> <strong>${set.size}</strong> ${label}${set.size === 1 ? '' : 's'} selected</span>
-        <button class="btn btn-small btn-outline" onclick="_adminClearSelect('${type}')">Clear</button>
-        <button class="btn btn-small btn-danger" onclick="_adminBulkDelete('${type}')"><i class="fa-solid fa-trash"></i> Delete selected</button>`;
+    bar.innerHTML = `<span><i class="fa-solid fa-check-double"></i> <strong>${set.size}</strong> ${noun}${set.size === 1 ? '' : 's'}</span>
+        <button class="btn btn-small btn-outline" onclick="_selClear('${type}')">Clear</button>
+        <button class="btn btn-small btn-outline" onclick="_selBulk('${type}','public')" title="Make public"><i class="fa-solid fa-globe"></i></button>
+        <button class="btn btn-small btn-outline" onclick="_selBulk('${type}','unlisted')" title="Unlist (link-only)"><i class="fa-solid fa-link"></i></button>
+        <button class="btn btn-small btn-outline" onclick="_selBulk('${type}','private')" title="Make private"><i class="fa-solid fa-lock"></i></button>
+        <button class="btn btn-small btn-danger" onclick="_selBulk('${type}','delete')"><i class="fa-solid fa-trash"></i> Delete</button>`;
 }
 
-async function _adminBulkDelete(type) {
-    const set = window._adminSel[type];
+async function _selBulk(type, action) {
+    const set = window._sel[type];
     const ids = [...set];
     if (!ids.length) return;
-    const label = type === 'vod' ? 'VOD' : 'clip';
-    if (!confirm(`Delete ${ids.length} ${label}${ids.length === 1 ? '' : 's'}? This removes them from storage (local + B2/R2) and cannot be undone.`)) return;
+    const noun = type === 'vod' ? 'video' : type;
+    if (action === 'delete' && !confirm(`Delete ${ids.length} ${noun}${ids.length === 1 ? '' : 's'}? This removes them from storage and cannot be undone.`)) return;
     try {
-        const endpoint = type === 'vod' ? '/admin/storage/vods/bulk' : '/admin/storage/clips/bulk';
-        const res = await api(endpoint, { method: 'DELETE', body: { ids } });
-        toast(`Deleted ${res.deleted || 0} ${label}${(res.deleted || 0) === 1 ? '' : 's'}`, 'success');
+        let res;
+        if (type === 'paste') res = await api('/pastes/bulk', { method: 'POST', body: { slugs: ids, action } });
+        else res = await api(`/${type === 'vod' ? 'vods' : 'clips'}/bulk`, { method: 'POST', body: { ids, action } });
+        const n = res.done || 0;
+        toast(`${action === 'delete' ? 'Deleted' : 'Updated'} ${n} ${noun}${n === 1 ? '' : 's'}`, 'success');
         set.clear();
-        _updateAdminBulkBar(type);
-        if (type === 'vod') loadVodsPage(); else loadClipsPage();
+        _selRenderBar();
+        if (window._selCtx.reload) window._selCtx.reload();
     } catch (e) {
-        toast(e.message || 'Bulk delete failed', 'error');
+        toast(e.message || 'Bulk action failed', 'error');
     }
 }
 
@@ -3366,6 +3471,7 @@ async function loadVodsPage() {
         filterBar.style.display = 'none';
         filterBar.innerHTML = '';
     }
+    _selSetContext(_isContentAdmin(), loadVodsPage);
 
     try {
         const limit = VODS_PAGE_SIZE;
@@ -3433,6 +3539,7 @@ async function loadClipsPage() {
         filterBar.style.display = 'none';
         filterBar.innerHTML = '';
     }
+    _selSetContext(_isContentAdmin(), loadClipsPage);
     try {
         const limit = CLIPS_PAGE_SIZE;
         const offset = (currentClipsPage - 1) * limit;
