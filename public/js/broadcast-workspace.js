@@ -2835,29 +2835,91 @@ function _wsConnectPlatform(platform) {
     const popup = window.open(url, 'restream_oauth', `width=${w},height=${h},left=${left},top=${top}`);
     if (!popup) { toast('Popup blocked — allow popups to connect your account', 'error'); return; }
 
-    const onMsg = async (e) => {
+    // Snapshot the current connection so polling only finalizes on a real change
+    // (avoids prematurely finishing when the user is already connected).
+    const startState = (_wsOAuthStatus && _wsOAuthStatus[platform]) || {};
+    const startConnected = !!startState.connected;
+    const startUsername = startState.username || '';
+
+    // Show a live "connecting…" hint in the connect container.
+    const box = document.getElementById('ws-rs-connect');
+    if (box && !document.getElementById('ws-rs-connecting')) {
+        box.insertAdjacentHTML('afterbegin',
+            `<div id="ws-rs-connecting" style="text-align:center;padding:6px 0;color:var(--text-secondary);font-size:0.8rem"><i class="fa-solid fa-spinner fa-spin"></i> Waiting for authorization…</div>`);
+    }
+
+    let finished = false;
+    let pollTimer = null;
+    let polls = 0;
+    let bc = null;
+
+    const cleanup = () => {
+        try { window.removeEventListener('message', onMsg); } catch { /* */ }
+        try { if (bc) bc.close(); } catch { /* */ }
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        const hint = document.getElementById('ws-rs-connecting');
+        if (hint) hint.remove();
+    };
+
+    // Update the open form's connect container in place (and reload destinations),
+    // then reopen it in edit mode bound to the freshly-provisioned destination so
+    // the "Connected" state + auto-filled key show without a manual close/reopen.
+    const finalize = async (payload) => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        if (payload && payload.ok === false) {
+            toast(payload.error || 'Connection failed', 'error');
+            _wsRenderRestreamConnect(document.getElementById('ws-rs-platform')?.value);
+            return;
+        }
+        await _wsLoadOAuthStatus();
+        await _wsLoadRestreamDests(_wsState.selectedId);
+        const dest = _wsRestreamDests.find(x => x.platform === platform);
+        const uname = (payload && payload.username) || (_wsOAuthStatus?.[platform]?.username) || '';
+        const needsKey = payload ? payload.needsManualKey : !!(dest && !dest.stream_key);
+        document.querySelectorAll('.bc-ws-confirm-overlay').forEach(o => o.remove());
+        toast(`Connected ${platform}${uname ? ' as ' + uname : ''}${needsKey ? ' — add your stream key to finish' : ''}`, needsKey ? 'info' : 'success');
+        if (dest) _wsShowRestreamForm(dest);
+        else _wsRenderRestreamConnect(platform);
+    };
+
+    // 1) postMessage (works when the popup keeps its opener reference)
+    const onMsg = (e) => {
         if (e.origin !== window.location.origin) return;
         const d = e.data;
         if (!d || d.type !== 'restream-oauth' || d.platform !== platform) return;
-        window.removeEventListener('message', onMsg);
-        if (!d.ok) { toast(d.error || 'Connection failed', 'error'); return; }
-
-        await _wsLoadOAuthStatus();
-        const slotId = _wsState.selectedId;
-        await _wsLoadRestreamDests(slotId);
-
-        if (d.needsManualKey) {
-            // Twitch key fetch failed, or Kick (no key via API) — reopen in edit mode to paste it
-            const dest = _wsRestreamDests.find(x => x.platform === platform);
-            document.querySelector('.bc-ws-confirm-overlay')?.remove();
-            toast(`Connected ${platform}${d.username ? ' as ' + d.username : ''} — add your stream key to finish`, 'info');
-            if (dest) _wsShowRestreamForm(dest);
-        } else {
-            document.querySelector('.bc-ws-confirm-overlay')?.remove();
-            toast(`Connected ${platform}${d.username ? ' as ' + d.username : ''} — ready to restream`, 'success');
-        }
+        finalize(d);
     };
     window.addEventListener('message', onMsg);
+
+    // 2) BroadcastChannel (survives COOP severing window.opener on cross-origin nav)
+    try {
+        bc = new BroadcastChannel('restream-oauth');
+        bc.onmessage = (e) => {
+            const d = e.data;
+            if (d && d.type === 'restream-oauth' && d.platform === platform) finalize(d);
+        };
+    } catch { bc = null; }
+
+    // 3) Polling fallback — the guaranteed path: re-check server status on a timer.
+    pollTimer = setInterval(async () => {
+        polls++;
+        let nowConnected = false, uname = '';
+        try {
+            await _wsLoadOAuthStatus();
+            const st = _wsOAuthStatus && _wsOAuthStatus[platform];
+            if (st && st.connected) { nowConnected = true; uname = st.username || ''; }
+        } catch { /* keep polling */ }
+        // Finalize only on a genuine change (newly connected or a different account).
+        if (nowConnected && (!startConnected || uname !== startUsername)) {
+            finalize(null);
+            return;
+        }
+        // Popup closed without a new connection (cancel) → stop waiting.
+        if (popup && popup.closed && polls >= 2 && !finished) { cleanup(); finished = true; return; }
+        if (polls >= 120 && !finished) { cleanup(); finished = true; } // ~4 min safety cap
+    }, 2000);
 }
 
 async function _wsDisconnectPlatform(platform) {

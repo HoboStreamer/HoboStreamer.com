@@ -426,7 +426,12 @@ function oauthResultPage(payload) {
 <script>
 (function(){
   var msg = Object.assign({ type: 'restream-oauth' }, ${data});
+  // Notify the opener through every available channel — postMessage can be lost
+  // when the browser severs window.opener on cross-origin navigation (COOP), so
+  // BroadcastChannel + localStorage give the opener a same-origin signal too.
   try { if (window.opener) window.opener.postMessage(msg, '${config.baseUrl}'); } catch(e){}
+  try { var bc = new BroadcastChannel('restream-oauth'); bc.postMessage(msg); setTimeout(function(){ try{bc.close();}catch(e){} }, 500); } catch(e){}
+  try { localStorage.setItem('restream-oauth', JSON.stringify(Object.assign({ t: Date.now() }, msg))); } catch(e){}
   setTimeout(function(){ try { window.close(); } catch(e){} }, ${payload.ok ? 900 : 2500});
 })();
 </script></body></html>`;
