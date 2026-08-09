@@ -712,6 +712,19 @@ function getStatus() {
     FROM vods
     `) || {};
 
+    // Clip tier counts (clips carry the same storage_provider/storage_key columns as vods,
+    // but file_size isn't tracked, so we surface counts).
+    let clipCounts = {};
+    try {
+        clipCounts = db.get(`
+            SELECT
+                SUM(CASE WHEN COALESCE(storage_provider, 'local') = 'local' THEN 1 ELSE 0 END) as localCount,
+                SUM(CASE WHEN storage_provider = 'b2' THEN 1 ELSE 0 END) as b2Count,
+                SUM(CASE WHEN storage_provider = 'r2' THEN 1 ELSE 0 END) as r2Count
+            FROM clips
+        `) || {};
+    } catch { clipCounts = {}; }
+
     return {
         settings,
         engine: 'local+b2+r2',
@@ -737,6 +750,11 @@ function getStatus() {
             local: { count: counts.localCount || 0, bytes: counts.localBytes || 0 },
             b2: { count: counts.b2Count || 0, bytes: counts.b2Bytes || 0 },
             r2: { count: counts.r2Count || 0, bytes: counts.r2Bytes || 0 },
+        },
+        clipTiers: {
+            local: { count: clipCounts.localCount || 0 },
+            b2: { count: clipCounts.b2Count || 0 },
+            r2: { count: clipCounts.r2Count || 0 },
         },
         sweepRunning,
     };

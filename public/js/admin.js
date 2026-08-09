@@ -1285,64 +1285,95 @@ async function loadAdminData() {
         const breakdown = (data.breakdown || []).sort((a, b) => b.bytes - a.bytes);
         const maxBreakdown = Math.max(...breakdown.map(b => b.bytes), 1);
 
-        // Storage tier info
+        // Storage tiers — Local / Backblaze B2 / Cloudflare R2 breakdown
         let tierHtml = '';
         if (tierData) {
-            const h = tierData.hot || {};
-            const co = tierData.cold || {};
-            const hDisk = h.disk || {};
-            const cDisk = co.disk || {};
-            const hPct = hDisk.total ? ((hDisk.used / hDisk.total) * 100).toFixed(1) : 0;
-            const cPct = cDisk.total ? ((cDisk.used / cDisk.total) * 100).toFixed(1) : 0;
+            const t = tierData.tiers || {};
+            const ct = tierData.clipTiers || {};
+            const prov = tierData.providers || {};
             const ts = tierData.settings || {};
+            const L = t.local || { count: 0, bytes: 0 };
+            const B = t.b2 || { count: 0, bytes: 0 };
+            const R = t.r2 || { count: 0, bytes: 0 };
+            const totalBytes = (L.bytes || 0) + (B.bytes || 0) + (R.bytes || 0);
+            const totalVods = (L.count || 0) + (B.count || 0) + (R.count || 0);
+            const totalClips = ((ct.local?.count) || 0) + ((ct.b2?.count) || 0) + ((ct.r2?.count) || 0);
+            const offloadedBytes = (B.bytes || 0) + (R.bytes || 0);
+            const offloadPct = totalBytes > 0 ? ((offloadedBytes / totalBytes) * 100).toFixed(1) : '0.0';
+            const pctOf = (b) => totalBytes > 0 ? (b / totalBytes) * 100 : 0;
+
+            const providerStatus = (p) => {
+                if (!p) return '<span class="muted">—</span>';
+                if (!p.configured) return '<span style="color:#9aa4b8">not configured</span>';
+                return p.healthy
+                    ? `<span style="color:#22c55e"><i class="fa-solid fa-circle-check"></i> healthy</span>${p.bucket ? ` <span class="muted" style="font-size:11px">· ${esc(p.bucket)}</span>` : ''}`
+                    : `<span style="color:#ef4444"><i class="fa-solid fa-circle-xmark"></i> error</span>`;
+            };
+
+            const rows = [
+                { label: 'Local (SSD)',    icon: 'fa-hard-drive',  color: '#f59e0b', v: L, clips: (ct.local?.count) || 0, status: '<span class="muted">primary disk</span>' },
+                { label: 'Backblaze B2',   icon: 'fa-box-archive', color: '#e21e2b', v: B, clips: (ct.b2?.count) || 0,    status: providerStatus(prov.b2) },
+                { label: 'Cloudflare R2',  icon: 'fa-cloud',       color: '#f6821f', v: R, clips: (ct.r2?.count) || 0,    status: providerStatus(prov.r2) },
+            ];
+
+            const bar = `<div style="display:flex;height:16px;border-radius:8px;overflow:hidden;margin:6px 0 16px;background:var(--bg-secondary)">
+                <div title="Local ${pctOf(L.bytes).toFixed(1)}%" style="width:${pctOf(L.bytes)}%;background:#f59e0b"></div>
+                <div title="B2 ${pctOf(B.bytes).toFixed(1)}%" style="width:${pctOf(B.bytes)}%;background:#e21e2b"></div>
+                <div title="R2 ${pctOf(R.bytes).toFixed(1)}%" style="width:${pctOf(R.bytes)}%;background:#f6821f"></div>
+            </div>`;
+
+            const rowHtml = rows.map(r => `
+                <tr>
+                    <td style="padding:8px 10px"><i class="fa-solid ${r.icon}" style="color:${r.color}"></i> <strong>${r.label}</strong></td>
+                    <td style="padding:8px 10px;text-align:right">${(r.v.count || 0).toLocaleString()}</td>
+                    <td style="padding:8px 10px;text-align:right">${fmtBytes(r.v.bytes || 0)}</td>
+                    <td style="padding:8px 10px;text-align:right">${pctOf(r.v.bytes).toFixed(1)}%</td>
+                    <td style="padding:8px 10px;text-align:right">${(r.clips || 0).toLocaleString()}</td>
+                    <td style="padding:8px 10px">${r.status}</td>
+                </tr>`).join('');
 
             tierHtml = `
             <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:28px">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                    <h3 style="margin:0"><i class="fa-solid fa-layer-group"></i> Storage Tiers</h3>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px">
+                    <h3 style="margin:0"><i class="fa-solid fa-layer-group"></i> Storage Tiers <span class="muted" style="font-size:13px;font-weight:400">— ${offloadPct}% of VOD data offloaded to cloud</span></h3>
                     <div style="display:flex;gap:8px">
                         <button class="btn btn-outline btn-sm" onclick="adminRunSweep()"><i class="fa-solid fa-broom"></i> Run Sweep</button>
                         <button class="btn btn-outline btn-sm" onclick="adminEditTierSettings()"><i class="fa-solid fa-gear"></i> Settings</button>
                     </div>
                 </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-                    <div style="background:var(--bg-tertiary);border-radius:10px;padding:16px">
-                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-                            <i class="fa-solid fa-bolt" style="color:#f59e0b"></i>
-                            <strong>Hot Storage</strong> <span class="muted" style="font-size:12px">(Primary SSD)</span>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-                            <span>${fmtBytes(hDisk.used)} / ${fmtBytes(hDisk.total)}</span>
-                            <span class="storage-pct-${storagePctClass(parseFloat(hPct))}" style="font-weight:700">${hPct}%</span>
-                        </div>
-                        <div style="background:var(--bg-secondary);border-radius:4px;height:10px;overflow:hidden;margin-bottom:8px">
-                            <div style="background:var(--storage-bar-${storagePctClass(parseFloat(hPct))});height:100%;width:${hPct}%;border-radius:4px"></div>
-                        </div>
-                        <div style="font-size:12px;color:var(--text-secondary)">${h.dbCount || 0} VODs — ${fmtBytes(h.vods?.bytes || 0)} on disk</div>
-                    </div>
-                    <div style="background:var(--bg-tertiary);border-radius:10px;padding:16px">
-                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-                            <i class="fa-solid fa-snowflake" style="color:#38bdf8"></i>
-                            <strong>Cold Storage</strong> <span class="muted" style="font-size:12px">(Block Volume)</span>
-                            ${co.available ? '<span style="color:#22c55e;font-size:11px"><i class="fa-solid fa-circle-check"></i> Mounted</span>' : '<span style="color:#ef4444;font-size:11px"><i class="fa-solid fa-circle-xmark"></i> Not mounted</span>'}
-                        </div>
-                        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-                            <span>${fmtBytes(cDisk.used)} / ${fmtBytes(cDisk.total)}</span>
-                            <span class="storage-pct-${storagePctClass(parseFloat(cPct))}" style="font-weight:700">${cPct}%</span>
-                        </div>
-                        <div style="background:var(--bg-secondary);border-radius:4px;height:10px;overflow:hidden;margin-bottom:8px">
-                            <div style="background:#38bdf8;height:100%;width:${cPct}%;border-radius:4px"></div>
-                        </div>
-                        <div style="font-size:12px;color:var(--text-secondary)">${co.dbCount || 0} VODs — ${fmtBytes(co.vods?.bytes || 0)} on disk</div>
-                    </div>
+                ${bar}
+                <div style="overflow-x:auto">
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead>
+                        <tr style="text-align:left;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+                            <th style="padding:6px 10px">Tier</th>
+                            <th style="padding:6px 10px;text-align:right">VODs</th>
+                            <th style="padding:6px 10px;text-align:right">VOD Size</th>
+                            <th style="padding:6px 10px;text-align:right">Share</th>
+                            <th style="padding:6px 10px;text-align:right">Clips</th>
+                            <th style="padding:6px 10px">Provider</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowHtml}
+                        <tr style="border-top:2px solid var(--border);font-weight:700">
+                            <td style="padding:8px 10px">Total</td>
+                            <td style="padding:8px 10px;text-align:right">${totalVods.toLocaleString()}</td>
+                            <td style="padding:8px 10px;text-align:right">${fmtBytes(totalBytes)}</td>
+                            <td style="padding:8px 10px;text-align:right">100%</td>
+                            <td style="padding:8px 10px;text-align:right">${totalClips.toLocaleString()}</td>
+                            <td style="padding:8px 10px">${tierData.sweepRunning ? '<span style="color:#f59e0b"><i class="fa-solid fa-spinner fa-spin"></i> sweeping</span>' : '<span class="muted">idle</span>'}</td>
+                        </tr>
+                    </tbody>
+                </table>
                 </div>
-                <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--text-secondary)">
-                    <span title="Auto-migration enabled"><i class="fa-solid ${ts.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}" style="color:${ts.enabled ? '#22c55e' : '#ef4444'}"></i> Auto-migrate: ${ts.enabled ? 'ON' : 'OFF'}</span>
-                    <span>| Age: ${ts.minAgeDays || '?'}d</span>
-                    <span>| Views ≤ ${ts.maxViewsForCold || '?'}</span>
-                    <span>| Last access: ${ts.minLastAccessDays || '?'}d</span>
-                    <span>| Sweep: every ${ts.sweepIntervalMs ? (ts.sweepIntervalMs / 60000).toFixed(0) + ' min' : '?'}</span>
-                    <span>| Max/sweep: ${ts.maxPerSweep || '?'}</span>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--text-secondary);margin-top:14px">
+                    <span title="Auto-migration enabled"><i class="fa-solid ${ts.enabled ? 'fa-toggle-on' : 'fa-toggle-off'}" style="color:${ts.enabled ? '#22c55e' : '#ef4444'}"></i> Auto-offload: ${ts.enabled ? 'ON' : 'OFF'}</span>
+                    <span>| Age ≥ ${ts.minAgeDays ?? '?'}d</span>
+                    <span>| Views ≤ ${ts.maxViewsForCold ?? '?'}</span>
+                    <span>| Idle ≥ ${ts.minLastAccessDays ?? '?'}d</span>
+                    <span>| Sweep every ${ts.sweepIntervalMs ? (ts.sweepIntervalMs / 60000).toFixed(0) + ' min' : '?'}</span>
+                    <span>| Max ${ts.maxPerSweep ?? '?'}/sweep</span>
                 </div>
             </div>`;
         }
