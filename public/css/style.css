@@ -8025,6 +8025,46 @@ body.theme-light .user-dropdown {
     font-size: 0.85rem;
 }
 
+/* ── Newest/Oldest sort toggle (VODs/Clips/Pastes pagination) ── */
+.sort-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px;
+}
+.sort-toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 0 6px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.sort-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.sort-btn:hover { color: var(--text-primary); }
+.sort-btn.active {
+    background: var(--accent);
+    color: var(--on-accent, #0b0d10);
+}
+/* Push page controls to the right when a sort toggle shares the pager row. */
+.pastes-pagination .sort-toggle { margin-right: auto; }
+
 /* ── Documentation Page ──────────────────────────────────── */
 #page-documentation h2 { margin-top: 2.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
 #page-documentation h3 { margin-top: 1.5rem; }
@@ -11723,6 +11763,49 @@ body.theme-light .user-dropdown {
 }
 .media-ai-label { color: var(--accent); font-weight: 700; margin-right: 6px; }
 .media-ai-text { color: var(--text-secondary); }
+
+/* ── VOD/clip transcript (collapsible + downloadable) ── */
+.media-transcript {
+    margin: 10px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-card);
+    overflow: hidden;
+}
+.media-transcript-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+}
+.media-transcript-toggle {
+    flex: 1; display: flex; align-items: center; gap: 8px;
+    background: transparent; border: none; cursor: pointer;
+    color: var(--text-primary); font-weight: 600; font-size: 0.9rem; text-align: left;
+    padding: 2px 0;
+}
+.media-transcript-toggle > i:first-child { color: var(--accent); }
+.media-transcript-meta {
+    font-size: 0.72rem; font-weight: 500; color: var(--text-muted);
+}
+.media-transcript-caret {
+    margin-left: auto; font-size: 0.75rem; color: var(--text-secondary);
+    transition: transform 0.2s ease;
+}
+.media-transcript.open .media-transcript-caret { transform: rotate(180deg); }
+.media-transcript-dl { flex-shrink: 0; }
+.media-transcript-body {
+    max-height: 0; overflow: hidden;
+    transition: max-height 0.3s ease;
+    border-top: 1px solid transparent;
+}
+.media-transcript.open .media-transcript-body {
+    max-height: 440px; overflow-y: auto;
+    border-top-color: var(--border);
+}
+.media-transcript-text {
+    white-space: pre-wrap; word-break: break-word;
+    line-height: 1.6; font-size: 0.85rem; color: var(--text-secondary);
+    padding: 12px; margin: 0;
+}
 
 /* Short AI overview on listing cards (VODs/clips/pastes) */
 .card-ai-overview {

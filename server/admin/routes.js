@@ -459,12 +459,18 @@ router.get('/ai/explorer/:userId', (req, res) => {
         const vods = (db.getVodsByUser ? db.getVodsByUser(userId, true, 40, 0) : []).map(v => ({
             id: v.id, title: v.title, category: v.category, created_at: v.created_at,
             duration_seconds: v.duration_seconds, ai_overview: v.ai_overview || null,
+            ai_transcript: (v.ai_transcript && v.ai_transcript.trim()) ? v.ai_transcript : null,
+        }));
+        const clips = (db.getClipsByUser ? db.getClipsByUser(userId, true, 40, 0) : []).map(c => ({
+            id: c.id, title: c.title, created_at: c.created_at,
+            duration_seconds: c.duration_seconds, ai_overview: c.ai_overview || null,
+            ai_transcript: (c.ai_transcript && c.ai_transcript.trim()) ? c.ai_transcript : null,
         }));
         res.json({
             user: { id: user.id, username: user.username, display_name: user.display_name, bio: user.bio },
             overview: db.getStreamerOverview(userId) || null,
-            counts: { memories: memories.length, pastes: pastes.length, vods: vods.length },
-            memories, pastes, vods,
+            counts: { memories: memories.length, pastes: pastes.length, vods: vods.length, clips: clips.length },
+            memories, pastes, vods, clips,
         });
     } catch (err) {
         res.status(500).json({ error: err.message || 'AI explorer failed' });

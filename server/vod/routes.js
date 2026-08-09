@@ -940,6 +940,7 @@ router.get('/', optionalAuth, (req, res) => {
         const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
         const usernameFilter = String(req.query.username || '').trim();
         const normalizedUsername = usernameFilter || null;
+        const sort = req.query.sort === 'oldest' ? 'oldest' : 'newest';
 
         let vods = [];
         let myPrivate = [];
@@ -957,12 +958,13 @@ router.get('/', optionalAuth, (req, res) => {
 
         if (myPrivate.length > 0) {
             const publicFetchCount = Math.min(Math.max(offset + limit, limit), publicCount);
-            const publicVods = db.getPublicVods(publicFetchCount, 0, { username: normalizedUsername });
+            const publicVods = db.getPublicVods(publicFetchCount, 0, { username: normalizedUsername, sort });
+            const dir = sort === 'oldest' ? 1 : -1;
             vods = [...publicVods, ...myPrivate]
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                .sort((a, b) => dir * (new Date(a.created_at) - new Date(b.created_at)))
                 .slice(offset, offset + limit);
         } else {
-            vods = db.getPublicVods(limit, offset, { username: normalizedUsername });
+            vods = db.getPublicVods(limit, offset, { username: normalizedUsername, sort });
         }
 
         res.json({

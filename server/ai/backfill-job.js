@@ -11,9 +11,20 @@ let _timer = null;
 let _busy = false;
 
 async function tick() {
-    if (_busy || !ai.isEnabled()) return;
+    if (_busy) return;
     _busy = true;
     try {
+        // Transcripts — FREE local whisper (no API/cost), so they run independent of
+        // the AI master switch. Backfills existing VODs/clips that have no transcript.
+        if (ai.transcriptionEnabled && ai.transcriptionEnabled()) {
+            try { for (const v of db.getVodsNeedingTranscript(1)) await ai.generateVodTranscript(v); }
+            catch (e) { console.warn('[AI backfill] vod transcript:', e.message); }
+            try { for (const c of db.getClipsNeedingTranscript(1)) await ai.generateClipTranscript(c); }
+            catch (e) { console.warn('[AI backfill] clip transcript:', e.message); }
+        }
+
+        if (!ai.isEnabled()) return;
+
         // Pastes — cheap text/image summaries.
         try {
             for (const p of db.getPastesNeedingAnalysis(2)) {
@@ -46,7 +57,7 @@ async function tick() {
 function start() {
     if (_timer) return;
     _timer = setInterval(tick, 60_000);
-    console.log('[AI] Backfill job started (paste summaries + VOD/clip overviews + clip transcripts)');
+    console.log('[AI] Backfill job started (paste summaries + VOD/clip overviews + VOD/clip transcripts)');
 }
 
 module.exports = { start, tick };

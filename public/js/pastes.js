@@ -9,6 +9,7 @@ let _pastesLoaded = false;
 let _pastesOffset = 0;
 let _pastesFilter = 'all'; // 'all' | 'paste' | 'screenshot'
 let _pastesSearch = '';
+let _pastesSort = 'newest'; // 'newest' | 'oldest'
 let _pastesTotal = 0;
 let _pastesCooldownUntil = 0; // timestamp (ms) until next paste allowed
 let _pasteLimitCache = null; // cached config from /pastes/config
@@ -53,6 +54,7 @@ function loadPastesPage() {
     _pastesOffset = 0;
     _pastesFilter = 'all';
     _pastesSearch = '';
+    _pastesSort = 'newest';
     _pastesLoaded = true;
 
     const grid = document.getElementById('pastes-grid');
@@ -69,6 +71,7 @@ async function fetchPastes() {
         let url = `/pastes?limit=${PASTES_PER_PAGE}&offset=${_pastesOffset}`;
         if (_pastesFilter !== 'all') url += `&type=${_pastesFilter}`;
         if (_pastesSearch) url += `&search=${encodeURIComponent(_pastesSearch)}`;
+        if (_pastesSort === 'oldest') url += `&sort=oldest`;
 
         const data = await api(url);
         _pastesTotal = data.total || 0;
@@ -91,12 +94,15 @@ async function fetchPastes() {
         if (pagEl) {
             const totalPages = Math.ceil(_pastesTotal / PASTES_PER_PAGE);
             const currentPage = Math.floor(_pastesOffset / PASTES_PER_PAGE) + 1;
-            if (totalPages <= 1) { pagEl.innerHTML = ''; return; }
-            let html = '';
-            if (currentPage > 1) html += `<button class="btn btn-outline btn-sm" onclick="pastesPaginate(${_pastesOffset - PASTES_PER_PAGE})"><i class="fa-solid fa-chevron-left"></i></button>`;
-            html += `<span class="pastes-page-info">Page ${currentPage} of ${totalPages}</span>`;
-            if (currentPage < totalPages) html += `<button class="btn btn-outline btn-sm" onclick="pastesPaginate(${_pastesOffset + PASTES_PER_PAGE})"><i class="fa-solid fa-chevron-right"></i></button>`;
-            pagEl.innerHTML = html;
+            const sortHtml = (typeof sortToggleHTML === 'function') ? sortToggleHTML(_pastesSort, 'pastesSort') : '';
+            let pageHtml = '';
+            if (totalPages > 1) {
+                if (currentPage > 1) pageHtml += `<button class="btn btn-outline btn-sm" onclick="pastesPaginate(${_pastesOffset - PASTES_PER_PAGE})"><i class="fa-solid fa-chevron-left"></i> Prev</button>`;
+                pageHtml += `<span class="pastes-page-info">Page ${currentPage} of ${totalPages}</span>`;
+                if (currentPage < totalPages) pageHtml += `<button class="btn btn-outline btn-sm" onclick="pastesPaginate(${_pastesOffset + PASTES_PER_PAGE})">Next <i class="fa-solid fa-chevron-right"></i></button>`;
+            }
+            pagEl.innerHTML = sortHtml + pageHtml;
+            pagEl.style.display = (sortHtml || pageHtml) ? '' : 'none';
         }
     } catch (err) {
         grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;text-align:center;padding:48px;"><p style="color:var(--danger);">Failed to load pastes</p></div>`;
@@ -164,6 +170,14 @@ function pastesPaginate(offset) {
     _pastesOffset = Math.max(0, offset);
     fetchPastes();
     document.getElementById('page-pastes')?.scrollTo(0, 0);
+}
+
+function pastesSort(sort) {
+    const s = sort === 'oldest' ? 'oldest' : 'newest';
+    if (s === _pastesSort) return;
+    _pastesSort = s;
+    _pastesOffset = 0;
+    fetchPastes();
 }
 
 // ── View single paste ───────────────────────────────────────

@@ -53,7 +53,8 @@ router.get('/', (req, res) => {
         const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
         const usernameFilter = String(req.query.username || '').trim();
         const normalizedUsername = usernameFilter || null;
-        const clips = db.getPublicClips(limit, offset, { username: normalizedUsername });
+        const sort = req.query.sort === 'oldest' ? 'oldest' : 'newest';
+        const clips = db.getPublicClips(limit, offset, { username: normalizedUsername, sort });
         const total = db.countPublicClips({ username: normalizedUsername });
         res.json({
             clips,

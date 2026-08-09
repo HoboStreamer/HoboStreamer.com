@@ -215,7 +215,8 @@ router.get('/', optionalAuth, (req, res) => {
             params.push(search, search);
         }
 
-        sql += ` ORDER BY p.pinned DESC, p.created_at DESC LIMIT ? OFFSET ?`;
+        const dir = req.query.sort === 'oldest' ? 'ASC' : 'DESC';
+        sql += ` ORDER BY p.pinned DESC, p.created_at ${dir} LIMIT ? OFFSET ?`;
         params.push(limit, offset);
 
         const pastes = db.all(sql, params).map(p => ({

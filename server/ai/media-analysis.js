@@ -113,4 +113,14 @@ async function analyzeMedia(src, { streamId = null, userId = null, numFrames = 5
     return { overview: overview || null, transcript: transcript || '', frames, duration };
 }
 
-module.exports = { analyzeMedia };
+/**
+ * Transcript-only: probe duration then whisper-transcribe (FREE local, no vision).
+ * @returns {Promise<string>} transcript text ('' if unavailable/empty).
+ */
+async function transcribeOnly(src) {
+    if (!src) return '';
+    const duration = await _ffprobeDuration(src);
+    try { return await _transcribeSpan(src, duration); } catch { return ''; }
+}
+
+module.exports = { analyzeMedia, transcribeOnly };

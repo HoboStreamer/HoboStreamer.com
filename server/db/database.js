@@ -785,6 +785,7 @@ function initDb() {
         // AI overview + transcript on VODs and clips.
         const vcols = database.prepare('PRAGMA table_info(vods)').all().map(c => c.name);
         if (!vcols.includes('ai_overview')) database.exec('ALTER TABLE vods ADD COLUMN ai_overview TEXT');
+        if (!vcols.includes('ai_transcript')) database.exec('ALTER TABLE vods ADD COLUMN ai_transcript TEXT');
         if (!vcols.includes('ai_analyzed_at')) database.exec('ALTER TABLE vods ADD COLUMN ai_analyzed_at DATETIME');
         const ccols = database.prepare('PRAGMA table_info(clips)').all().map(c => c.name);
         if (!ccols.includes('ai_overview')) database.exec('ALTER TABLE clips ADD COLUMN ai_overview TEXT');
@@ -1900,6 +1901,12 @@ function setVodAiOverview(vodId, text) {
 function setClipAiOverview(clipId, { overview = null, transcript = null }) {
     return run('UPDATE clips SET ai_overview = ?, ai_transcript = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [overview, transcript, clipId]);
 }
+function setVodTranscript(vodId, transcript) {
+    return run('UPDATE vods SET ai_transcript = ? WHERE id = ?', [transcript || null, vodId]);
+}
+function setClipTranscript(clipId, transcript) {
+    return run('UPDATE clips SET ai_transcript = ? WHERE id = ?', [transcript || null, clipId]);
+}
 function getStreamMemoriesInRange(streamId, startSec, endSec) {
     return all('SELECT * FROM stream_memories WHERE stream_id = ? AND offset_seconds BETWEEN ? AND ? ORDER BY offset_seconds ASC', [streamId, startSec, endSec]);
 }
@@ -1909,6 +1916,14 @@ function getVodsNeedingOverview(limit = 4) {
 }
 function getClipsNeedingOverview(limit = 4) {
     return all("SELECT * FROM clips WHERE (ai_overview IS NULL OR ai_overview = '') ORDER BY created_at DESC LIMIT ?", [limit]);
+}
+// Transcript backfill queues — items with no transcript yet (NULL/'' = pending;
+// a single space ' ' means "tried, nothing to transcribe" so we don't loop forever).
+function getVodsNeedingTranscript(limit = 2) {
+    return all("SELECT * FROM vods WHERE (ai_transcript IS NULL OR ai_transcript = '') AND COALESCE(is_recording,0)=0 ORDER BY created_at DESC LIMIT ?", [limit]);
+}
+function getClipsNeedingTranscript(limit = 2) {
+    return all("SELECT * FROM clips WHERE (ai_transcript IS NULL OR ai_transcript = '') ORDER BY created_at DESC LIMIT ?", [limit]);
 }
 function getPastesNeedingAnalysis(limit = 5) {
     return all("SELECT * FROM pastes WHERE ai_summary IS NULL AND type IN ('paste','screenshot') ORDER BY created_at DESC LIMIT ?", [limit]);
@@ -2923,7 +2938,7 @@ function countVodsByUser(userId, includePrivate = false) {
     `, [userId])?.count || 0;
 }
 
-function getPublicVods(limit = 50, offset = 0, { username = null } = {}) {
+function getPublicVods(limit = 50, offset = 0, { username = null, sort = 'newest' } = {}) {
     const conditions = ['v.is_public = 1', 'COALESCE(v.is_recording, 0) = 0'];
     const params = [];
 
@@ -2932,6 +2947,7 @@ function getPublicVods(limit = 50, offset = 0, { username = null } = {}) {
         params.push(String(username).trim());
     }
 
+    const dir = sort === 'oldest' ? 'ASC' : 'DESC';
     params.push(limit, offset);
     return all(`
         SELECT v.*, COALESCE(v.duration_seconds, v.probe_duration_seconds, 0) AS duration_seconds,
@@ -2940,7 +2956,7 @@ function getPublicVods(limit = 50, offset = 0, { username = null } = {}) {
         FROM vods v JOIN users u ON v.user_id = u.id
         LEFT JOIN streams s ON v.stream_id = s.id
         WHERE ${conditions.join(' AND ')}
-        ORDER BY v.created_at DESC
+        ORDER BY v.created_at ${dir}
         LIMIT ? OFFSET ?
     `, params);
 }
@@ -3053,7 +3069,7 @@ function setClipPublic(clipId, isPublic) {
     return run('UPDATE clips SET is_public = ? WHERE id = ?', [isPublic ? 1 : 0, clipId]);
 }
 
-function getPublicClips(limit = 50, offset = 0, { username = null } = {}) {
+function getPublicClips(limit = 50, offset = 0, { username = null, sort = 'newest' } = {}) {
     const conditions = ['c.is_public = 1'];
     const params = [];
 
@@ -3062,6 +3078,7 @@ function getPublicClips(limit = 50, offset = 0, { username = null } = {}) {
         params.push(String(username).trim());
     }
 
+    const dir = sort === 'oldest' ? 'ASC' : 'DESC';
     params.push(limit, offset);
     return all(`
         SELECT c.*, u.username, u.display_name, u.avatar_url,
@@ -3072,7 +3089,7 @@ function getPublicClips(limit = 50, offset = 0, { username = null } = {}) {
         LEFT JOIN streams s ON c.stream_id = s.id
         LEFT JOIN users su ON s.user_id = su.id
         WHERE ${conditions.join(' AND ')}
-        ORDER BY c.created_at DESC
+        ORDER BY c.created_at ${dir}
         LIMIT ? OFFSET ?
     `, params);
 }
@@ -5236,8 +5253,8 @@ module.exports = {
     getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId, getStreamHistoryByManagedStream,
     createStream, endStream, endOtherLiveStreamsForSlot, updateViewerCount,
     addStreamMemory, getStreamMemories, getLatestStreamMemory, updateStreamAiOverview,
-    setVodAiOverview, setClipAiOverview, getStreamMemoriesInRange,
-    getVodsNeedingOverview, getClipsNeedingOverview, getPastesNeedingAnalysis,
+    setVodAiOverview, setClipAiOverview, setVodTranscript, setClipTranscript, getStreamMemoriesInRange,
+    getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiUsageSummary,
     getStreamMemoriesByUser, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews,

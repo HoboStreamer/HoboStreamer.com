@@ -256,7 +256,37 @@ async function generateVodOverview(vod) {
     });
     const overview = r && r.overview ? r.overview : ' '; // ' ' = tried, nothing to say
     try { db.setVodAiOverview(vod.id, overview); } catch { /* */ }
+    // Persist the whisper transcript so users can read/download it on the VOD page.
+    try { const t = r ? r.transcript : ''; if (t) db.setVodTranscript(vod.id, t); } catch { /* */ }
     return r ? r.overview : null;
+}
+
+/**
+ * Transcript-only pass for a VOD — FREE local whisper (no vision, no API/budget).
+ * Used to backfill transcripts for existing VODs whose overview was generated
+ * before transcripts were stored. Marks ' ' when there's nothing to transcribe.
+ */
+async function generateVodTranscript(vod) {
+    if (!vod) return null;
+    if (!transcriptionEnabled()) return null;
+    const src = await _mediaSource(vod);
+    if (!src) { try { db.setVodTranscript(vod.id, ' '); } catch { /* */ } return null; }
+    let t = '';
+    try { t = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
+    try { db.setVodTranscript(vod.id, t || ' '); } catch { /* */ }
+    return t;
+}
+
+/** Transcript-only pass for a clip — FREE local whisper (see generateVodTranscript). */
+async function generateClipTranscript(clip) {
+    if (!clip) return null;
+    if (!transcriptionEnabled()) return null;
+    const src = await _mediaSource(clip);
+    if (!src) { try { db.setClipTranscript(clip.id, ' '); } catch { /* */ } return null; }
+    let t = '';
+    try { t = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
+    try { db.setClipTranscript(clip.id, t || ' '); } catch { /* */ }
+    return t;
 }
 
 /**
@@ -303,5 +333,6 @@ async function testStatus({ probe = true } = {}) {
 module.exports = {
     isEnabled, pasteAnalysisEnabled, streamMemoryEnabled, transcriptionEnabled, captureIntervalSec,
     analyzeImagePaste, analyzeTextPaste, analyzeStreamFrame, summarizeStreamMemories,
-    generateStreamerOverview, generateVodOverview, generateClipOverview, summarizeText, testStatus,
+    generateStreamerOverview, generateVodOverview, generateClipOverview,
+    generateVodTranscript, generateClipTranscript, summarizeText, testStatus,
 };

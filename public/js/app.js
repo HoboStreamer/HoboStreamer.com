@@ -125,6 +125,52 @@ function _renderMediaAiOverview(descElId, overview) {
     box.innerHTML = `<span class="media-ai-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI overview</span> <span class="media-ai-text">${esc(txt)}</span>`;
 }
 
+// Render a collapsible, downloadable transcript block after a VOD/clip description.
+// `item` carries {id, title, ai_transcript}. The ' ' sentinel = "no speech" → hidden.
+function _renderMediaTranscript(descElId, kind, item) {
+    const desc = document.getElementById(descElId);
+    if (!desc || !desc.parentNode) return;
+    const prev = desc.parentNode.querySelector('.media-transcript');
+    if (prev) prev.remove();
+    const t = ((item && item.ai_transcript) || '').trim();
+    if (!t) return;
+    const words = t.split(/\s+/).filter(Boolean).length;
+    const box = document.createElement('div');
+    box.className = 'media-transcript';
+    box.dataset.filename = `${kind}-${item.id}-transcript`;
+    box.innerHTML = `
+        <div class="media-transcript-head">
+            <button type="button" class="media-transcript-toggle" onclick="toggleMediaTranscript(this)">
+                <i class="fa-solid fa-file-lines"></i> <span>Transcript</span>
+                <span class="media-transcript-meta">${words} words · local AI</span>
+                <i class="fa-solid fa-chevron-down media-transcript-caret"></i>
+            </button>
+            <button type="button" class="btn btn-small btn-outline media-transcript-dl" onclick="downloadMediaTranscript(this)" title="Download as .txt">
+                <i class="fa-solid fa-download"></i> .txt
+            </button>
+        </div>
+        <div class="media-transcript-body"><p class="media-transcript-text">${esc(t)}</p></div>`;
+    desc.parentNode.insertBefore(box, desc.nextSibling);
+}
+
+function toggleMediaTranscript(btn) {
+    const box = btn.closest('.media-transcript');
+    if (box) box.classList.toggle('open');
+}
+
+function downloadMediaTranscript(btn) {
+    const box = btn.closest('.media-transcript');
+    if (!box) return;
+    const text = box.querySelector('.media-transcript-text')?.textContent || '';
+    const name = (box.dataset.filename || 'transcript') + '.txt';
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+}
+
 // How long a stream slot has been live, from its started_at (SQLite UTC datetime).
 function formatUptime(startedAt) {
     if (!startedAt) return '';
@@ -1435,6 +1481,8 @@ let currentVodsPage = 1;
 let currentClipsPage = 1;
 let currentVodsStreamerFilter = 'all';
 let currentClipsStreamerFilter = 'all';
+let currentVodsSort = 'newest';
+let currentClipsSort = 'newest';
 const channelVodsPageByUser = Object.create(null);
 const channelClipsPageByUser = Object.create(null);
 const channelClipsOfPageByUser = Object.create(null);
@@ -1452,14 +1500,26 @@ const HOME_RECENT_VODS_PAGE_SIZE = 12;
 const HOME_CLIPS_PAGE_SIZE = 12;
 const HOME_PASTES_PAGE_SIZE = 10;
 
-function renderVodsPagination(containerId, page, total, pageSize, setterName, itemLabel = 'videos') {
+// Small Newest/Oldest segmented control (shared markup). `setter` is a global fn name
+// taking 'newest'|'oldest'.
+function sortToggleHTML(sort, setter) {
+    const cur = sort === 'oldest' ? 'oldest' : 'newest';
+    return `<div class="sort-toggle" role="group" aria-label="Sort order">
+        <span class="sort-toggle-label"><i class="fa-solid fa-arrow-down-short-wide"></i> Sort</span>
+        <button type="button" class="sort-btn ${cur === 'newest' ? 'active' : ''}" onclick="${setter}('newest')">Newest</button>
+        <button type="button" class="sort-btn ${cur === 'oldest' ? 'active' : ''}" onclick="${setter}('oldest')">Oldest</button>
+    </div>`;
+}
+
+function renderVodsPagination(containerId, page, total, pageSize, setterName, itemLabel = 'videos', sortOpts = null) {
     const el = document.getElementById(containerId);
     if (!el) return;
 
     const totalItems = Math.max(0, Number(total) || 0);
     const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
-    if (totalPages <= 1) {
+    // With a sort toggle we always render (so sorting stays available on a single page).
+    if (totalPages <= 1 && !sortOpts) {
         el.style.display = 'none';
         el.innerHTML = '';
         return;
@@ -1468,16 +1528,18 @@ function renderVodsPagination(containerId, page, total, pageSize, setterName, it
     const start = totalItems ? ((page - 1) * pageSize) + 1 : 0;
     const end = Math.min(page * pageSize, totalItems);
 
-    el.style.display = '';
-    el.innerHTML = `
+    const sortHtml = sortOpts ? sortToggleHTML(sortOpts.sort, sortOpts.setter) : '';
+    const pageHtml = totalPages > 1 ? `
         <button class="btn btn-small btn-outline" ${page <= 1 ? 'disabled' : ''} onclick="${setterName}(${page - 1})">
-            <i class="fa-solid fa-chevron-left"></i> Newer
+            <i class="fa-solid fa-chevron-left"></i> Prev
         </button>
         <span class="pastes-page-info">Showing ${start}-${end} of ${totalItems} ${itemLabel} • Page ${page}/${totalPages}</span>
         <button class="btn btn-small btn-outline" ${page >= totalPages ? 'disabled' : ''} onclick="${setterName}(${page + 1})">
-            Older <i class="fa-solid fa-chevron-right"></i>
-        </button>
-    `;
+            Next <i class="fa-solid fa-chevron-right"></i>
+        </button>` : (sortOpts && totalItems ? `<span class="pastes-page-info">${totalItems} ${itemLabel}</span>` : '');
+
+    el.style.display = '';
+    el.innerHTML = sortHtml + pageHtml;
 }
 
 // Thin wrapper for homepage section pagination — same visual style as renderVodsPagination.
@@ -1696,6 +1758,22 @@ function setClipsPage(page) {
     loadClipsPage();
     const top = document.getElementById('page-clips');
     if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function setVodsSort(sort) {
+    const s = sort === 'oldest' ? 'oldest' : 'newest';
+    if (s === currentVodsSort) return;
+    currentVodsSort = s;
+    currentVodsPage = 1;
+    loadVodsPage();
+}
+
+function setClipsSort(sort) {
+    const s = sort === 'oldest' ? 'oldest' : 'newest';
+    if (s === currentClipsSort) return;
+    currentClipsSort = s;
+    currentClipsPage = 1;
+    loadClipsPage();
 }
 
 function renderMediaStreamerFilters({
@@ -3240,6 +3318,7 @@ async function loadVodsPage() {
         if (currentVodsStreamerFilter && currentVodsStreamerFilter !== 'all') {
             params.set('username', currentVodsStreamerFilter);
         }
+        if (currentVodsSort === 'oldest') params.set('sort', 'oldest');
         const data = await api(`/vods?${params.toString()}`);
         const vods = data.vods || [];
         const total = data.total ?? vods.length;
@@ -3279,7 +3358,7 @@ async function loadVodsPage() {
         `)).join('');
         _updateAdminBulkBar('vod');
 
-        renderVodsPagination('vods-pagination-page', currentVodsPage, total, limit, 'setVodsPage');
+        renderVodsPagination('vods-pagination-page', currentVodsPage, total, limit, 'setVodsPage', 'videos', { sort: currentVodsSort, setter: 'setVodsSort' });
     } catch (e) {
         console.error('Failed to load videos', e);
         grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation fa-3x"></i><p>Failed to load videos</p><p class="muted">' + esc(e.message || String(e)) + '</p></div>';
@@ -3305,6 +3384,7 @@ async function loadClipsPage() {
         if (currentClipsStreamerFilter && currentClipsStreamerFilter !== 'all') {
             params.set('username', currentClipsStreamerFilter);
         }
+        if (currentClipsSort === 'oldest') params.set('sort', 'oldest');
         const data = await api(`/clips?${params.toString()}`);
         const clips = data.clips || [];
         const total = data.total ?? clips.length;
@@ -3341,7 +3421,7 @@ async function loadClipsPage() {
         `)).join('');
         _updateAdminBulkBar('clip');
 
-        renderVodsPagination('clips-pagination-page', currentClipsPage, total, limit, 'setClipsPage', 'clips');
+        renderVodsPagination('clips-pagination-page', currentClipsPage, total, limit, 'setClipsPage', 'clips', { sort: currentClipsSort, setter: 'setClipsSort' });
     } catch (e) {
         console.error('Failed to load clips', e);
         grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation fa-3x"></i><p>Failed to load clips</p><p class="muted">' + esc(e.message || String(e)) + '</p></div>';
@@ -3390,6 +3470,7 @@ async function loadVodPlayer(vodId) {
         document.getElementById('vp-views').textContent = `${v.view_count || 0} views`;
         document.getElementById('vp-description').textContent = v.description || '';
         _renderMediaAiOverview('vp-description', v.ai_overview);
+        _renderMediaTranscript('vp-description', 'vod', v);
         // Show this streamer's Hobo Nickels in the navbar while viewing their VOD.
         if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(v.user_id);
 
@@ -4020,6 +4101,7 @@ async function loadClipPlayer(clipId) {
         document.getElementById('clp-duration').textContent = formatDuration(cl.duration_seconds);
         document.getElementById('clp-description').textContent = cl.description || '';
         _renderMediaAiOverview('clp-description', cl.ai_overview);
+        _renderMediaTranscript('clp-description', 'clip', cl);
         // Show this streamer's Hobo Nickels in the navbar while viewing their clip.
         if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(cl.user_id);
 
