@@ -11445,6 +11445,21 @@ body.theme-light .user-dropdown {
    so they looked mismatched. Normalise every button in the tools row to
    one square box; keep only meaningful state colors (TTS-active, currency).
    ═══════════════════════════════════════════════════════════════ */
+/* In-chat Hobo Nickels button: floats to the right of the tools row and shows the
+   viewer's channel-points balance for the streamer they're watching. */
+.chat-tools-row > button.chat-nickels-float,
+.pc-tools-row > button.chat-nickels-float {
+    margin-left: auto;
+    gap: 5px;
+    min-width: 44px;
+    padding: 0 11px;
+    font-weight: 700;
+}
+.chat-nickels-float .rewards-coin-balance { font-size: 0.85rem; }
+/* Live source badge in global chat */
+.chat-stream-badge-live { border-color: var(--live, #e0245e) !important; }
+.chat-stream-live-dot { font-size: 0.5em; color: var(--live, #e0245e); vertical-align: middle; margin-right: 1px; }
+
 .chat-tools-row > button,
 .pc-tools-row > button {
     height: 34px;

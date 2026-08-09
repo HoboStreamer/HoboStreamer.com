@@ -752,6 +752,16 @@ function initDb() {
         )`);
         database.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at)');
 
+        // AI-generated per-streamer overview (aggregated across their streams/vods/pastes/memories).
+        database.exec(`CREATE TABLE IF NOT EXISTS streamer_overviews (
+            user_id INTEGER PRIMARY KEY,
+            overview TEXT,
+            model TEXT,
+            sources TEXT,
+            generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+
         const pcols = database.prepare('PRAGMA table_info(pastes)').all().map(c => c.name);
         if (!pcols.includes('ai_summary')) database.exec('ALTER TABLE pastes ADD COLUMN ai_summary TEXT');
         if (!pcols.includes('ai_tags')) database.exec('ALTER TABLE pastes ADD COLUMN ai_tags TEXT');
@@ -1885,6 +1895,32 @@ function getAiUsageSummary(days = 30) {
                         COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(cost_usd),0) AS cost_usd
                         FROM ai_usage WHERE created_at >= date('now', ?)`, [`-${days} days`]);
     return { byDay, byKind, totals, today: getAiCostToday() };
+}
+
+// Memories across ALL of a streamer's streams (for the per-streamer AI overview + explorer).
+function getStreamMemoriesByUser(userId, limit = 60) {
+    return all('SELECT * FROM stream_memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?', [userId, limit]);
+}
+// A user's pastes including AI fields (the explorer + overview want ai_summary/ai_tags).
+function getUserPastesForAi(userId, limit = 30) {
+    return all(`SELECT id, slug, type, title, ai_summary, ai_tags, ai_analyzed_at, created_at
+                FROM pastes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`, [userId, limit]);
+}
+function upsertStreamerOverview(userId, { overview, model = null, sources = null }) {
+    return run(`INSERT INTO streamer_overviews (user_id, overview, model, sources, generated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    overview = excluded.overview, model = excluded.model,
+                    sources = excluded.sources, generated_at = CURRENT_TIMESTAMP`,
+        [userId, overview || '', model, sources]);
+}
+function getStreamerOverview(userId) {
+    return get('SELECT * FROM streamer_overviews WHERE user_id = ?', [userId]);
+}
+function getAllStreamerOverviews(limit = 100) {
+    return all(`SELECT o.*, u.username, u.display_name
+                FROM streamer_overviews o JOIN users u ON u.id = o.user_id
+                ORDER BY o.generated_at DESC LIMIT ?`, [limit]);
 }
 
 function updateViewerCount(streamId, count) {
@@ -5138,6 +5174,8 @@ module.exports = {
     createStream, endStream, endOtherLiveStreamsForSlot, updateViewerCount,
     addStreamMemory, getStreamMemories, getLatestStreamMemory, updateStreamAiOverview,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiUsageSummary,
+    getStreamMemoriesByUser, getUserPastesForAi,
+    upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews,
     // Homepage helpers
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
     getRecentVods, countRecentVods,

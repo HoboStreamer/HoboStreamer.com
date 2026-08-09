@@ -406,11 +406,16 @@ router.get('/global/history', optionalAuth, (req, res) => {
 
         let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
                           u.username AS core_username,
-                          su.username AS stream_channel
+                          su.username AS stream_channel,
+                          s.is_live AS source_is_live,
+                          s.managed_stream_id AS source_managed_id,
+                          COALESCE(ms.title, s.title) AS source_stream_title,
+                          ms.slug AS source_slug
                    FROM chat_messages cm
                    LEFT JOIN users u ON cm.user_id = u.id
                    LEFT JOIN streams s ON cm.stream_id = s.id
                    LEFT JOIN users su ON s.user_id = su.id
+                   LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
                    WHERE cm.is_deleted = 0 AND cm.message_type IN ('chat', 'system')
                      AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
         const params = [];

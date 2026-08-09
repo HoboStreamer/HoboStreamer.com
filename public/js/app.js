@@ -574,8 +574,11 @@ async function updateChannelPointsNav(streamerId) {
     }
     try {
         const d = await api(`/coins/channel-balance?streamerId=${streamerId}`);
-        if (amt) amt.textContent = (d.balance || 0).toLocaleString();
+        const bal = (d.balance || 0).toLocaleString();
+        if (amt) amt.textContent = bal;
         if (el) el.style.display = '';
+        // Keep the in-chat Nickels button (and rewards panels) in sync.
+        document.querySelectorAll('.rewards-coin-balance').forEach(x => { x.textContent = bal; });
     } catch { if (el) el.style.display = 'none'; }
 }
 // Navbar Nickels click → open this channel's rewards panel.

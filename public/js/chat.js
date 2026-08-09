@@ -2820,12 +2820,21 @@ function addChatMessage(msg) {
         ? `<span class="chat-time-inline">${tsSource.toLocaleTimeString([], tsOpts)}</span> `
         : '';
 
-    // Stream source badge for global chat
+    // Stream source badge for global chat: show the STREAM TITLE (username fallback).
+    // Live → click opens the live stream; offline → opens the streamer's channel.
     let streamBadge = '';
-    if (isGlobal && msg.stream_channel) {
-        streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_channel)}'s stream" data-channel="${esc(msg.stream_channel)}" onclick="navigate('/' + this.dataset.channel)">${esc(msg.stream_channel)}</span> `;
-    } else if (isGlobal && msg.stream_username) {
-        streamBadge = `<span class="chat-stream-badge" title="From ${esc(msg.stream_username)}'s stream" data-channel="${esc(msg.stream_username)}" onclick="navigate('/' + this.dataset.channel)">${esc(msg.stream_username)}</span> `;
+    if (isGlobal) {
+        const srcUser = msg.stream_channel || msg.stream_username || '';
+        if (srcUser) {
+            const label = esc(msg.source_stream_title || srcUser);
+            const chEsc = esc(srcUser);
+            const ref = esc(msg.source_slug || msg.source_managed_id || '');
+            if (msg.source_is_live) {
+                streamBadge = `<span class="chat-stream-badge chat-stream-badge-live" title="Live: ${label} — click to watch" data-channel="${chEsc}" data-ref="${ref}" onclick="hopToStreamSlot(this)"><i class="fa-solid fa-circle chat-stream-live-dot"></i> ${label}</span> `;
+            } else {
+                streamBadge = `<span class="chat-stream-badge" title="From ${chEsc} (offline) — open channel" data-channel="${chEsc}" onclick="navigate(channelPath(this.dataset.channel))">${label}</span> `;
+            }
+        }
     }
 
     // Cross-slot origin badge: tag messages that came from a DIFFERENT live slot of
@@ -2873,11 +2882,11 @@ function addChatMessage(msg) {
     const _rawName = (msg.username || msg.displayName || `anon${msg.anonId || ''}`).replace(/^\[[^\]]+\]\s*/, '');
     const avatarInitial = esc((_rawName.charAt(0) || '?').toUpperCase());
     const rawText = msg.message || msg.text || '';
-    // Messages prefixed with "." skipped TTS — mark them so they render muted.
-    if ((!msg.message_type || msg.message_type === 'chat') && rawText.trimStart().startsWith('.')) {
-        el.classList.add('chat-msg-tts-off');
-    }
-    let text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
+    // Messages prefixed with "." skipped TTS — mark them muted and hide the "." marker.
+    const ttsOff = (!msg.message_type || msg.message_type === 'chat') && rawText.trimStart().startsWith('.');
+    if (ttsOff) el.classList.add('chat-msg-tts-off');
+    const displayRaw = ttsOff ? rawText.replace(/^\s*\.\s?/, '') : rawText;
+    let text = (typeof parseEmotes === 'function') ? parseEmotes(displayRaw) : esc(displayRaw);
     // Append clickable source link for news headlines
     if (msg.message_type === 'news' && msg.url) {
         text += ` <a href="${esc(msg.url)}" target="_blank" rel="noopener" class="news-link"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>`;
@@ -2970,7 +2979,8 @@ function addChatMessage(msg) {
         replyHtml = `<div class="chat-reply-header" ${replyMsgId} onclick="scrollToReplyTarget(this)"><i class="fa-solid fa-reply fa-flip-horizontal"></i> <span class="chat-reply-user">@${replyUser}</span> <span class="chat-reply-snippet">${replySnippet}</span></div>`;
     }
 
-    const separator = (msg.message_type === 'soundboard' || msg.message_type === 'channel-sound') ? ' ' : ': ';
+    // tts-off messages drop the ":" so it reads "name 🔇 message" after the mute marker.
+    const separator = (ttsOff || msg.message_type === 'soundboard' || msg.message_type === 'channel-sound') ? ' ' : ': ';
     el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}${separator}${text}`;
 
     // Reply action button (hover)
@@ -3772,7 +3782,13 @@ async function loadGlobalChatHistory() {
                     profile_color: m.profile_color,
                     user_id: m.user_id,
                     timestamp: m.timestamp,
-                    stream_username: m.stream_username || null,
+                    stream_id: m.stream_id || null,
+                    stream_channel: m.stream_channel || null,
+                    source_stream_id: m.stream_id || null,
+                    source_stream_title: m.source_stream_title || null,
+                    source_slug: m.source_slug || null,
+                    source_managed_id: m.source_managed_id || null,
+                    source_is_live: m.source_is_live ? 1 : 0,
                     reply_to: m.reply_to || null,
                 });
             }
@@ -5863,10 +5879,16 @@ function _fcwScrollToBottom() {
 /** Mirror a chat message to the floating widget */
 /** Resolve a short "where did this come from" label for a widget message. */
 function _fcwSourceLabel(msg) {
-    const sid = msg.stream_id || msg.streamId || null;
-    if (msg.scope === 'global' || msg.is_global || !sid) return { text: 'Global', cls: 'fcw-src-global' };
-    const label = msg.stream_title || (window._fcwStreamLabels && window._fcwStreamLabels[sid]) || `Stream #${sid}`;
-    return { text: label, cls: '' };
+    // Prefer explicit stream attribution (title → username) — a message forwarded from
+    // a stream carries these even though its own is_global flag may be set on the wire.
+    const title = msg.source_stream_title || msg.stream_title;
+    const chan = msg.stream_channel || msg.source_channel || msg.stream_username;
+    const sid = msg.source_stream_id || msg.stream_id || msg.streamId || null;
+    if (title || chan) return { text: title || chan, cls: '' };
+    if (sid && !(msg.scope === 'global' || msg.is_global)) {
+        return { text: (window._fcwStreamLabels && window._fcwStreamLabels[sid]) || `Stream #${sid}`, cls: '' };
+    }
+    return { text: 'Global', cls: 'fcw-src-global' };
 }
 
 function _fcwAddMessage(msg) {

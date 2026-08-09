@@ -1855,10 +1855,12 @@ class ChatServer {
         const globalMsg = JSON.stringify({
             ...data,
             stream_channel: info.username,
+            source_channel: info.username,
             source_stream_id: streamId,
             source_stream_title: info.title,
             source_slug: info.slug,
             source_managed_id: info.managedId,
+            source_is_live: 1, // this path only fires for a live send
         });
         for (const [ws, client] of this.clients) {
             if (!client.streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {

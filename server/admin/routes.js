@@ -432,6 +432,69 @@ router.get('/ai/usage', (req, res) => {
     }
 });
 
+// ── AI Explorer + status tools (admin AI tab) ────────────────
+const aiAnalysis = require('../ai/ai-analysis');
+
+// AI health/config + optional live provider probe.
+router.get('/ai/status', async (req, res) => {
+    try {
+        const probe = req.query.probe !== '0' && req.query.probe !== 'false';
+        res.json({ status: await aiAnalysis.testStatus({ probe }) });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'AI status check failed' });
+    }
+});
+
+// Browse a streamer's AI-relevant data: memories, AI-analyzed pastes, VODs, overview.
+router.get('/ai/explorer/:userId', (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId, 10);
+        const user = db.getUserById(userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        const memories = db.getStreamMemoriesByUser(userId, 80).map(m => ({
+            id: m.id, stream_id: m.stream_id, description: m.description,
+            tags: m.tags, created_at: m.created_at, thumbnail_url: m.thumbnail_url,
+        }));
+        const pastes = db.getUserPastesForAi(userId, 40);
+        const vods = (db.getVodsByUser ? db.getVodsByUser(userId, true, 40, 0) : []).map(v => ({
+            id: v.id, title: v.title, category: v.category, created_at: v.created_at,
+            duration_seconds: v.duration_seconds, ai_overview: v.ai_overview || null,
+        }));
+        res.json({
+            user: { id: user.id, username: user.username, display_name: user.display_name, bio: user.bio },
+            overview: db.getStreamerOverview(userId) || null,
+            counts: { memories: memories.length, pastes: pastes.length, vods: vods.length },
+            memories, pastes, vods,
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'AI explorer failed' });
+    }
+});
+
+// List all stored per-streamer overviews.
+router.get('/ai/overviews', (req, res) => {
+    try {
+        res.json({ overviews: db.getAllStreamerOverviews(200) });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to list overviews' });
+    }
+});
+
+// Generate (or regenerate) the AI overview for a streamer.
+router.post('/ai/streamer/:userId/overview', async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId, 10);
+        const user = db.getUserById(userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (!aiAnalysis.isEnabled()) return res.status(400).json({ error: 'AI is disabled — enable it in AI Config first.' });
+        const overview = await aiAnalysis.generateStreamerOverview(userId);
+        if (!overview) return res.status(422).json({ error: 'Could not generate an overview — no AI-analyzable data for this streamer yet, or the provider returned nothing.' });
+        res.json({ overview: db.getStreamerOverview(userId) });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Overview generation failed' });
+    }
+});
+
 // ── Update Settings (bulk) ───────────────────────────────────
 router.put('/settings', (req, res) => {
     try {

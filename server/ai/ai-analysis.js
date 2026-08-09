@@ -138,7 +138,74 @@ async function summarizeStreamMemories(memories) {
     return text ? text.slice(0, 240) : null;
 }
 
+/**
+ * Build (and store) an AI overview of a streamer, aggregating signals across all
+ * their streams (memories), VODs, and pastes. Returns the overview text or null.
+ */
+async function generateStreamerOverview(userId) {
+    if (!isEnabled() || !withinBudget()) return null;
+    const user = db.getUserById(userId);
+    if (!user) return null;
+    const channel = (typeof db.getChannelByUserId === 'function') ? db.getChannelByUserId(userId) : null;
+
+    const memories = (db.getStreamMemoriesByUser ? db.getStreamMemoriesByUser(userId, 60) : []) || [];
+    const memLines = memories.slice(0, 40).map(m => `- ${m.description}`).filter(l => l.length > 2);
+
+    const vods = (db.getVodsByUser ? db.getVodsByUser(userId, false, 20, 0) : []) || [];
+    const vodLines = vods.map(v => `- ${v.title || 'Untitled VOD'}${v.category ? ` [${v.category}]` : ''}`);
+
+    const pastes = (db.getUserPastesForAi ? db.getUserPastesForAi(userId, 25) : []) || [];
+    const pasteLines = pastes.filter(p => p.ai_summary).map(p => `- "${p.title || 'paste'}": ${p.ai_summary}`);
+
+    if (!memLines.length && !vodLines.length && !pasteLines.length) return null;
+
+    const ctx = [
+        `Streamer: ${user.display_name || user.username} (@${user.username})`,
+        (channel?.bio || user.bio) ? `Bio: ${(channel?.bio || user.bio).slice(0, 400)}` : '',
+        channel?.category ? `Usual category: ${channel.category}` : '',
+        memLines.length ? `\nLive-stream observations (across sessions):\n${memLines.join('\n')}` : '',
+        vodLines.length ? `\nRecent VODs:\n${vodLines.join('\n')}` : '',
+        pasteLines.length ? `\nPaste summaries:\n${pasteLines.join('\n')}` : '',
+    ].filter(Boolean).join('\n');
+
+    const prompt = `You are building an internal profile of a livestreamer for site staff, using aggregated signals across their streams, VODs, and pastes. Write a concise overview (4-8 sentences) covering: what they stream / their content niche, recurring themes or activities, tone/vibe, and anything notable for moderation. Be factual and neutral; do NOT invent specifics that aren't supported by the signals below.\n\n${ctx}`;
+
+    const text = await _complete({ prompt, maxTokens: 550, kind: 'streamer_overview' });
+    if (!text) return null;
+    const overview = text.slice(0, 4000);
+    try {
+        db.upsertStreamerOverview(userId, {
+            overview,
+            model: model(),
+            sources: JSON.stringify({ memories: memories.length, vods: vods.length, pastes: pasteLines.length }),
+        });
+    } catch (e) { console.warn('[AI] overview store failed:', e.message); }
+    return overview;
+}
+
+/** Report AI config + optionally live-probe the provider. */
+async function testStatus({ probe = true } = {}) {
+    const cfg = {
+        enabled: isEnabled(),
+        provider: s('ai_provider') || 'anthropic',
+        model: model(),
+        has_key: !!s('ai_api_key'),
+        base_url: s('ai_base_url') || null,
+        paste_analysis: pasteAnalysisEnabled(),
+        stream_memory: streamMemoryEnabled(),
+        budget_cap_usd_per_day: num('ai_max_cost_usd_per_day', 0),
+        within_budget: withinBudget(),
+    };
+    try { cfg.cost_today = db.getAiCostToday(); } catch { cfg.cost_today = null; }
+    if (!cfg.enabled) return { ...cfg, ok: false, error: cfg.has_key ? 'AI is disabled (ai_enabled=false)' : 'No API key set' };
+    if (!probe) return { ...cfg, ok: true, probed: false };
+    const started = Date.now();
+    const reply = await _complete({ prompt: 'Reply with exactly: OK', maxTokens: 8, kind: 'status_check' });
+    return { ...cfg, ok: !!reply, probed: true, reply: reply || null, latency_ms: Date.now() - started, error: reply ? null : 'Provider returned no response (check key/model/base URL)' };
+}
+
 module.exports = {
     isEnabled, pasteAnalysisEnabled, streamMemoryEnabled, captureIntervalSec,
     analyzeImagePaste, analyzeTextPaste, analyzeStreamFrame, summarizeStreamMemories,
+    generateStreamerOverview, testStatus,
 };
