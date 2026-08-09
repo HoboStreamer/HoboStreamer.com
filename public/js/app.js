@@ -1362,12 +1362,50 @@ function _updateLiveCard(card, s) {
     if (up && s.started_at) { up.innerHTML = `<i class="fa-solid fa-clock"></i> ${formatUptime(s.started_at)}`; up.dataset.since = s.started_at; }
     const t = card.querySelector('.stream-card-title');
     if (t && t.textContent !== (s.title || 'Untitled Stream')) t.textContent = s.title || 'Untitled Stream';
-    const ai = card.querySelector('.card-ai-text');
-    if (ai && s.ai_overview && ai.textContent !== s.ai_overview) ai.textContent = s.ai_overview;
+    // AI overview: the card renders WITHOUT an overview block when the stream first
+    // goes live (none exists yet). Inject it the moment one becomes available, then
+    // keep its text current — otherwise it never appears without a full reload.
+    if (s.ai_overview) {
+        const aiBox = card.querySelector('.card-ai-overview');
+        if (aiBox) {
+            const ai = aiBox.querySelector('.card-ai-text');
+            if (ai && ai.textContent !== s.ai_overview) ai.textContent = s.ai_overview;
+        } else {
+            const info = card.querySelector('.stream-card-info');
+            if (info) {
+                const tmp = document.createElement('div');
+                tmp.innerHTML = _cardAiHTML(s.ai_overview);
+                const el = tmp.firstElementChild;
+                if (el) {
+                    const meta = info.querySelector('.stream-card-meta');
+                    meta ? info.insertBefore(el, meta) : info.appendChild(el);
+                }
+            }
+        }
+    }
     const desc = card.querySelector('.stream-card-desc');
     if (desc && s.description != null && desc.textContent !== s.description) desc.textContent = s.description;
-    const img = card.querySelector('.stream-card-thumb img');
-    if (img && s.thumbnail_url) _crossfadeThumb(img, s.thumbnail_url);
+    // Thumbnail: live cards render a placeholder icon (no <img>) until the first frame
+    // is captured. Crossfade if an <img> exists, else swap the placeholder for one.
+    if (s.thumbnail_url) {
+        const thumbBox = card.querySelector('.stream-card-thumb');
+        const img = thumbBox && thumbBox.querySelector('img');
+        if (img) {
+            _crossfadeThumb(img, s.thumbnail_url);
+        } else if (thumbBox) {
+            const placeholder = thumbBox.querySelector(':scope > i');
+            const newImg = document.createElement('img');
+            newImg.alt = s.title || '';
+            newImg.loading = 'lazy';
+            newImg.style.opacity = '0';
+            newImg.style.transition = 'opacity 0.4s';
+            newImg.onerror = function () { handleThumbnailError(this); };
+            newImg.onload = function () { this.style.opacity = '1'; };
+            newImg.src = s.thumbnail_url;
+            thumbBox.insertBefore(newImg, thumbBox.firstChild);
+            if (placeholder) placeholder.style.display = 'none';
+        }
+    }
 }
 
 // Live-counting uptime tooltip: hover an uptime chip to see H:MM:SS ticking.

@@ -1495,6 +1495,7 @@ async function handleViewerOffer(msg, ws, video) {
                     });
                 }
             } else {
+                video.muted = true;
                 video.volume = 0;
                 // Already muted — remove stale overlay if present
                 document.getElementById('unmute-overlay')?.remove();
@@ -1895,6 +1896,7 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                         showUnmuteOverlay(video);
                     });
                 } else {
+                    video.muted = true;
                     video.volume = 0;
                     document.getElementById('unmute-overlay')?.remove();
                 }
@@ -2836,6 +2838,15 @@ function setupVideoControls() {
 
         // Sync local muted state when the browser auto-mutes for autoplay policy
         vid.addEventListener('volumechange', () => {
+            // Enforce the user's saved MUTED preference: if something (a reconnect,
+            // track replacement, autoplay quirk) unmutes the element while the user
+            // has audio turned off, re-mute it. User unmute actions persist muted=0
+            // first, so getSavedMuted() is false by the time this runs — no conflict.
+            if (getSavedMuted() && !vid.muted && vid.volume > 0) {
+                vid.muted = true;
+                vid.volume = 0;
+                return; // this triggers volumechange again; next pass is consistent
+            }
             const actuallyMuted = vid.muted || vid.volume === 0;
             if (actuallyMuted !== muted) {
                 muted = actuallyMuted;
@@ -3339,7 +3350,7 @@ function destroyPlayer() {
     const canvas = document.getElementById('video-canvas');
     const video = document.getElementById('video-element');
     if (canvas) canvas.style.display = 'none';
-    if (video) { video.style.display = 'none'; video.muted = false; video.srcObject = null; video.removeAttribute('src'); }
+    if (video) { video.style.display = 'none'; video.muted = true; video.srcObject = null; video.removeAttribute('src'); }
     document.getElementById('unmute-overlay')?.remove();
 
     // Clean up VOD & Clip video elements so they stop playing on navigation

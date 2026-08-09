@@ -2831,7 +2831,7 @@ function addChatMessage(msg) {
             const chEsc = esc(srcUser);
             const ref = esc(msg.source_slug || msg.source_managed_id || '');
             if (msg.source_is_live) {
-                streamBadge = `<span class="chat-stream-badge chat-stream-badge-live" title="Live: ${label} — click to watch" data-channel="${chEsc}" data-ref="${ref}" onclick="hopToStreamSlot(this)"><i class="fa-solid fa-circle chat-stream-live-dot"></i> ${label}</span> `;
+                streamBadge = `<span class="chat-stream-badge chat-stream-badge-live" title="Live: ${label} — click to watch" data-channel="${chEsc}" data-ref="${ref}" onclick="hopToStreamSlot(this)">${label}</span> `;
             } else {
                 streamBadge = `<span class="chat-stream-badge" title="From ${chEsc} (offline) — open channel" data-channel="${chEsc}" onclick="navigate(channelPath(this.dataset.channel))">${label}</span> `;
             }
