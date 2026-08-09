@@ -91,6 +91,20 @@ function _avatarSpan(url, name, color, extraCls) {
         : `<span class="stream-card-avatar${cls}"${bg}>${letter}</span>`;
 }
 
+// How long a stream slot has been live, from its started_at (SQLite UTC datetime).
+function formatUptime(startedAt) {
+    if (!startedAt) return '';
+    const raw = String(startedAt);
+    const isUTC = raw.includes('Z') || raw.includes('+') || raw.includes('T');
+    const start = new Date(isUTC ? raw : raw.replace(' ', 'T') + 'Z').getTime();
+    if (!Number.isFinite(start)) return '';
+    let sec = Math.max(0, Math.floor((Date.now() - start) / 1000));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${sec}s`;
+}
+
 /* ── API helpers ──────────────────────────────────────────────── */
 function parseJwtExp(token) {
     if (!token) return null;
@@ -650,6 +664,7 @@ function navigate(urlPath, replace = false) {
     if (typeof destroyCanvasPage === 'function') destroyCanvasPage();
     if (typeof stopCoinHeartbeat === 'function') stopCoinHeartbeat();
     if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(null);
+    if (typeof stopHomeRefresh === 'function') stopHomeRefresh();
     if (typeof stopStreamStatusPoll === 'function') stopStreamStatusPoll();
     clearInterval(uptimeInterval);
 
@@ -949,6 +964,8 @@ async function loadHome() {
     loadHomeLeaderboards();
     // Load Canvas preview
     loadHomeCanvas();
+
+    startHomeRefresh(); // live grid + sections auto-update in real time
 }
 
 async function loadHomeRecentOnline(page) {
@@ -1187,36 +1204,27 @@ async function loadHomeCanvas() {
     } catch { /* silent */ }
 }
 
-function renderStreamGrid(containerId, streams, isLive) {
-    const c = document.getElementById(containerId);
-    if (!streams.length) {
-        if (!isLive) c.innerHTML = '<div class="empty-state"><p class="muted">No recent streams</p></div>';
-        return;
+// Markup for a single stream card (live or recent). Extracted so the home page
+// can reconcile the live grid in place for real-time updates.
+function streamCardHTML(s, isLive) {
+    let navUrl;
+    if (isLive && s.id) {
+        const msRef = s.managed_stream_slug || s.managed_stream_id || null;
+        navUrl = channelPath(s.username, msRef);
+    } else if (!isLive && s.vod_id && s.vod_is_public) {
+        navUrl = `/vod/${s.vod_id}`;
+    } else {
+        navUrl = channelPath(s.username);
     }
-    c.innerHTML = streams.map(s => {
-        // Navigate to channel with managed stream ref for live, VOD for recent if available, else channel
-        let navUrl;
-        if (isLive && s.id) {
-            // Use managed stream slug/id if available, else just channel
-            const msRef = s.managed_stream_slug || s.managed_stream_id || null;
-            navUrl = channelPath(s.username, msRef);
-        } else if (!isLive && s.vod_id && s.vod_is_public) {
-            navUrl = `/vod/${s.vod_id}`;
-        } else {
-            navUrl = channelPath(s.username);
-        }
-        const thumb = (!isLive && s.vod_thumbnail_url) ? s.vod_thumbnail_url : s.thumbnail_url;
-        const duration = !isLive && s.vod_duration ? `<span class="stream-card-duration">${formatDuration(s.vod_duration)}</span>` : '';
-        const endedAgo = !isLive && s.ended_at ? `<span class="stream-card-ago">${timeAgo(s.ended_at)}</span>` : '';
-        return `
-        <a class="stream-card" href="${esc(navUrl)}" onclick="return handleLinkClick(event, '${esc(navUrl)}')">
+    const thumb = (!isLive && s.vod_thumbnail_url) ? s.vod_thumbnail_url : s.thumbnail_url;
+    const duration = !isLive && s.vod_duration ? `<span class="stream-card-duration">${formatDuration(s.vod_duration)}</span>` : '';
+    const endedAgo = !isLive && s.ended_at ? `<span class="stream-card-ago">${timeAgo(s.ended_at)}</span>` : '';
+    return `
+        <a class="stream-card" data-stream-id="${esc(String(s.id || ''))}" href="${esc(navUrl)}" onclick="return handleLinkClick(event, '${esc(navUrl)}')">
             <div class="stream-card-thumb${s.is_nsfw ? ' stream-card-nsfw-blur' : ''}">
                 ${thumbImg(thumb, 'fa-campground', s.title, !isLive && s.vod_id ? `/api/thumbnails/generate/vod/${s.vod_id}` : null)}
-                ${isLive ? '<span class="stream-card-live">LIVE</span>' : ''}
-                ${s.protocol ? protocolBadge(s.protocol) : ''}
                 ${streamTypeBadge(s.browser_mode, s.streaming_method)}
                 ${s.is_nsfw ? '<span class="stream-card-nsfw">18+</span>' : ''}
-                ${isLive ? `<span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${s.total_viewer_count || s.viewer_count || 0}</span>` : ''}
                 ${duration}
             </div>
             <div class="stream-card-info">
@@ -1226,11 +1234,120 @@ function renderStreamGrid(containerId, streams, isLive) {
                     ${esc(s.username || 'Anonymous')}
                     ${endedAgo}
                 </div>
-                ${s.ai_overview ? `<div class="stream-card-ai" title="${esc(s.ai_overview)}"><i class="fa-solid fa-wand-magic-sparkles"></i> ${esc(s.ai_overview)}</div>` : ''}
-                ${s.category ? `<div class="stream-card-tags"><span class="stream-card-tag">${esc(s.category)}</span></div>` : ''}
+                ${s.ai_overview ? `<div class="stream-card-ai" title="Click to expand" onclick="event.preventDefault();event.stopPropagation();this.classList.toggle('expanded')"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="stream-card-ai-text">${esc(s.ai_overview)}</span></div>` : ''}
+                <div class="stream-card-meta">
+                    ${s.category ? `<span class="stream-card-tag">${esc(s.category)}</span>` : ''}
+                    <span class="stream-card-metaright">
+                        ${isLive && s.started_at ? `<span class="stream-card-uptime" data-since="${esc(s.started_at)}"><i class="fa-solid fa-clock"></i> ${formatUptime(s.started_at)}</span>` : ''}
+                        ${isLive ? `<span class="stream-card-vcount"><i class="fa-solid fa-eye"></i> ${s.total_viewer_count || s.viewer_count || 0}</span>` : ''}
+                    </span>
+                </div>
             </div>
         </a>`;
-    }).join('');
+}
+
+function renderStreamGrid(containerId, streams, isLive) {
+    const c = document.getElementById(containerId);
+    if (!streams.length) {
+        if (!isLive) c.innerHTML = '<div class="empty-state"><p class="muted">No recent streams</p></div>';
+        return;
+    }
+    c.innerHTML = streams.map(s => streamCardHTML(s, isLive)).join('');
+}
+
+/* ── Real-time home updates ─────────────────────────────────── */
+let _homeLiveTimer = null;
+let _homeSectionsTimer = null;
+
+function _homeIsActive() {
+    const p = document.getElementById('page-home');
+    return p && p.classList.contains('active');
+}
+
+// Cross-fade a card's thumbnail to a new frame (live thumbnails change per capture).
+function _crossfadeThumb(imgEl, newSrc) {
+    if (!imgEl || !newSrc || imgEl.getAttribute('src') === newSrc) return;
+    const pre = new Image();
+    pre.onload = () => {
+        imgEl.style.transition = 'opacity 0.4s';
+        imgEl.style.opacity = '0';
+        setTimeout(() => { imgEl.src = newSrc; imgEl.style.opacity = '1'; }, 400);
+    };
+    pre.src = newSrc;
+}
+
+function _updateLiveCard(card, s) {
+    const vc = card.querySelector('.stream-card-vcount');
+    if (vc) vc.innerHTML = `<i class="fa-solid fa-eye"></i> ${s.total_viewer_count || s.viewer_count || 0}`;
+    const up = card.querySelector('.stream-card-uptime');
+    if (up && s.started_at) up.innerHTML = `<i class="fa-solid fa-clock"></i> ${formatUptime(s.started_at)}`;
+    const t = card.querySelector('.stream-card-title');
+    if (t && t.textContent !== (s.title || 'Untitled Stream')) t.textContent = s.title || 'Untitled Stream';
+    const ai = card.querySelector('.stream-card-ai-text');
+    if (ai && s.ai_overview && ai.textContent !== s.ai_overview) ai.textContent = s.ai_overview;
+    const img = card.querySelector('.stream-card-thumb img');
+    if (img && s.thumbnail_url) _crossfadeThumb(img, s.thumbnail_url);
+}
+
+// Reconcile the live grid in place: update existing cards, animate in new streams,
+// animate out ended ones — no full re-render, no flashing.
+async function refreshHomeLive() {
+    if (!_homeIsActive()) return;
+    let streams;
+    try { const d = await api('/streams'); streams = d.streams || []; } catch { return; }
+    const grid = document.getElementById('stream-grid-live');
+    if (!grid) return;
+    const countEl = document.getElementById('live-count');
+    if (countEl) countEl.textContent = streams.length;
+    const noLiveEl = document.getElementById('no-live-streams');
+    if (noLiveEl) noLiveEl.style.display = streams.length ? 'none' : '';
+
+    const existing = new Map();
+    grid.querySelectorAll('.stream-card[data-stream-id]').forEach(el => existing.set(el.dataset.streamId, el));
+    const seen = new Set();
+    streams.forEach((s, idx) => {
+        const id = String(s.id);
+        seen.add(id);
+        const card = existing.get(id);
+        if (card) {
+            _updateLiveCard(card, s);
+        } else {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = streamCardHTML(s, true).trim();
+            const el = tmp.firstElementChild;
+            if (el) {
+                el.classList.add('stream-card-appear');
+                grid.insertBefore(el, grid.children[idx] || null);
+            }
+        }
+    });
+    existing.forEach((el, id) => {
+        if (!seen.has(id)) {
+            el.classList.add('stream-card-leave');
+            setTimeout(() => { try { el.remove(); } catch {} }, 420);
+        }
+    });
+}
+
+// Refresh the paginated home sections (only at page 1, only when visible — so we
+// never disrupt someone paging through or reading below the fold).
+function refreshHomeSections() {
+    if (!_homeIsActive() || document.visibilityState !== 'visible') return;
+    if (_homeRecentOnlinePage === 1 && typeof loadHomeRecentOnline === 'function') loadHomeRecentOnline();
+    if (_homeRecentVodsPage === 1 && typeof loadHomeRecentVods === 'function') loadHomeRecentVods();
+    if (_homeClipsPage === 1 && typeof loadHomeClips === 'function') loadHomeClips();
+    if (_homePastesPage === 1 && typeof loadHomePastes === 'function') loadHomePastes();
+    if (typeof loadHomeLeaderboards === 'function') loadHomeLeaderboards();
+}
+
+function startHomeRefresh() {
+    stopHomeRefresh();
+    _homeLiveTimer = setInterval(refreshHomeLive, 12000);
+    _homeSectionsTimer = setInterval(refreshHomeSections, 60000);
+}
+function stopHomeRefresh() {
+    if (_homeLiveTimer) { clearInterval(_homeLiveTimer); _homeLiveTimer = null; }
+    if (_homeSectionsTimer) { clearInterval(_homeSectionsTimer); _homeSectionsTimer = null; }
 }
 
 /* ── Channel Page (/:username) ────────────────────────────────── */
@@ -1776,7 +1893,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             }
             const _chUser = document.getElementById('ch-username');
             if (_chUser) _chUser.style.display = 'none';
-            document.getElementById('ch-category-badge').textContent = ch.category || 'irl';
+            document.getElementById('ch-category-badge').textContent = (liveStreams[0] && liveStreams[0].category) || ch.category || 'irl';
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
             setupBanBtn(document.getElementById('ch-btn-ban'));
@@ -2711,6 +2828,9 @@ function activateChannelStream(stream) {
     currentStreamData = stream;
     document.getElementById('ch-stream-title').textContent = stream.title || 'Untitled Stream';
     setPageTitle(`${stream.title || 'Live'} — ${stream.display_name || stream.username || ''}`.trim());
+    // Category pill reflects THIS live slot's category (set in /broadcast), not the
+    // channel's stale default.
+    if (stream.category) { const _cb = document.getElementById('ch-category-badge'); if (_cb) _cb.textContent = stream.category; }
     // Stream-type badge only (Screen Share / Audio Only / Camera). The WEBRTC/RTMP
     // protocol tag was removed from the header — that info now lives in the player's
     // stats overlay, which is more useful than the raw transport for viewers.

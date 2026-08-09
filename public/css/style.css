@@ -11562,3 +11562,69 @@ body.theme-light .user-dropdown {
 .emote-sound-img { height: 26px; width: auto; display: block; }
 .emote-sound-cmd { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); }
 .emote-sound-tile:hover .emote-sound-cmd { color: var(--text-primary); }
+
+/* ── Stream-card info row: uptime + viewers on the right, expandable AI overview ── */
+.stream-card-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.stream-card-metaright { margin-left: auto; display: inline-flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.75rem; }
+.stream-card-metaright i { margin-right: 3px; opacity: 0.85; }
+.stream-card-uptime, .stream-card-vcount { display: inline-flex; align-items: center; white-space: nowrap; }
+/* AI overview: clamped to 2 lines, click to expand with a smooth reveal. */
+.stream-card-ai { cursor: pointer; max-height: 2.7em; transition: max-height 0.35s ease; }
+.stream-card-ai.expanded { -webkit-line-clamp: unset; max-height: 40em; }
+
+/* ── Stream page: scroll the page instead of an inner scrollbar that clipped the
+   info/weather area under the video. Keep the chat column pinned. (Desktop only —
+   mobile stacks into a column already.) ── */
+@media (min-width: 769px) {
+    #page-channel .stream-layout { height: auto; min-height: calc(100vh - var(--navbar-h)); }
+    #page-channel.has-live-tabs .stream-layout { height: auto; min-height: calc(100vh - var(--navbar-h) - 44px); }
+    #page-channel .stream-main { overflow-y: visible; }
+    #page-channel .stream-layout > .chat-sidebar {
+        position: sticky;
+        top: var(--navbar-h);
+        height: calc(100vh - var(--navbar-h));
+        align-self: flex-start;
+    }
+}
+
+/* Real-time live-grid card transitions */
+@keyframes streamCardAppear {
+    0%   { opacity: 0; transform: scale(0.94) translateY(8px); box-shadow: 0 0 0 3px var(--accent, #c0965c), var(--shadow-soft); }
+    100% { opacity: 1; transform: none; box-shadow: var(--shadow-soft); }
+}
+.stream-card-appear { animation: streamCardAppear 0.6s ease; }
+.stream-card-leave { opacity: 0; transform: scale(0.94); transition: opacity 0.4s ease, transform 0.4s ease; pointer-events: none; }
+.stream-card-thumb img { transition: opacity 0.4s; }
+@media (prefers-reduced-motion: reduce) {
+    .stream-card-appear { animation: none; }
+    .stream-card-leave { transition: none; }
+}
+
+/* ── Home hero: animated aurora glow + shimmering title ── */
+.hero { position: relative; overflow: hidden; }
+.hero-content { position: relative; z-index: 1; }
+.hero-aurora {
+    position: absolute; inset: -45% -12% auto -12%; height: 520px; z-index: 0;
+    pointer-events: none; filter: blur(64px); opacity: 0.45;
+    background:
+        radial-gradient(40% 60% at 20% 30%, var(--accent, #c0965c) 0%, transparent 60%),
+        radial-gradient(35% 55% at 80% 22%, #6c3fb5 0%, transparent 60%),
+        radial-gradient(45% 65% at 52% 82%, #10b981 0%, transparent 62%);
+    animation: heroAurora 20s ease-in-out infinite alternate;
+    will-change: transform;
+}
+@keyframes heroAurora {
+    0%   { transform: translate3d(-4%, -2%, 0) rotate(0deg) scale(1); }
+    50%  { transform: translate3d(4%, 2%, 0) rotate(8deg) scale(1.12); }
+    100% { transform: translate3d(-2%, 3%, 0) rotate(-6deg) scale(1.06); }
+}
+.hero h1 {
+    background: linear-gradient(90deg, var(--accent, #c0965c), #ffd479, var(--accent, #c0965c));
+    background-size: 200% auto;
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+    animation: heroShimmer 7s linear infinite;
+}
+.hero h1 i { -webkit-text-fill-color: var(--accent, #c0965c); color: var(--accent, #c0965c); }
+@keyframes heroShimmer { to { background-position: 200% center; } }
+@media (prefers-reduced-motion: reduce) { .hero-aurora, .hero h1 { animation: none; } }
