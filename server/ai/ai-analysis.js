@@ -112,6 +112,11 @@ async function _complete({ prompt, image = null, maxTokens = 400, kind }) {
     return r.text || null;
 }
 
+/** Generic text completion (used by media analysis to synthesize overviews). */
+async function summarizeText(prompt, maxTokens = 350, kind = 'media_overview') {
+    return _complete({ prompt, maxTokens, kind });
+}
+
 function _parseJson(text) {
     if (!text) return null;
     const m = text.match(/\{[\s\S]*\}/);
@@ -204,51 +209,59 @@ async function generateStreamerOverview(userId) {
     return overview;
 }
 
-/** Generate + store a VOD's AI overview from its source stream's memories. */
-async function generateVodOverview(vod) {
-    if (!vod || !vod.stream_id) return null;
-    const memories = db.getStreamMemories(vod.stream_id) || [];
-    if (!memories.length) return null;
-    const overview = await summarizeStreamMemories(memories);
-    if (overview) { try { db.setVodAiOverview(vod.id, overview); } catch { /* */ } }
-    return overview;
+// Resolve an ffmpeg-consumable source (local path or presigned URL) for a vod/clip.
+async function _mediaSource(row) {
+    if (row && row.file_path) { try { if (require('fs').existsSync(row.file_path)) return row.file_path; } catch { /* */ } }
+    try {
+        const s = await require('../vod/vod-storage').resolveMediaSource(row);
+        if (s && s.value) return s.value;
+    } catch { /* */ }
+    return null;
 }
 
 /**
- * Generate + store a clip's AI overview: a local whisper transcript of the clip's
- * audio + the stream memories from around when the clip happened.
+ * Generate + store a VOD's AI overview. Prefers existing stream memories; otherwise
+ * extracts a spread of frames + sampled audio from the VOD file itself (creating
+ * memories) so pre-existing VODs get real overviews.
+ */
+async function generateVodOverview(vod) {
+    if (!vod) return null;
+    if (!isEnabled() || !withinBudget()) return null;
+    const existing = vod.stream_id ? (db.getStreamMemories(vod.stream_id) || []) : [];
+    if (existing.length >= 3) {
+        const overview = await summarizeStreamMemories(existing);
+        if (overview) { try { db.setVodAiOverview(vod.id, overview); } catch { /* */ } }
+        return overview;
+    }
+    const src = await _mediaSource(vod);
+    if (!src) { try { db.setVodAiOverview(vod.id, ' '); } catch { /* */ } return null; } // unprocessable — mark done
+    const r = await require('./media-analysis').analyzeMedia(src, {
+        streamId: vod.stream_id || null, userId: vod.user_id || null,
+        numFrames: 6, storeMemories: !!vod.stream_id, offsetBase: 0,
+    });
+    const overview = r && r.overview ? r.overview : ' '; // ' ' = tried, nothing to say
+    try { db.setVodAiOverview(vod.id, overview); } catch { /* */ }
+    return r ? r.overview : null;
+}
+
+/**
+ * Generate + store a clip's AI overview from a spread of frames + a whisper
+ * transcript of the clip's audio (combined). Stores memories at the clip's position
+ * in the source stream.
  */
 async function generateClipOverview(clip) {
     if (!clip) return null;
-    // Transcribe the clip's own audio (free, local).
-    let transcript = '';
-    try {
-        if (transcriptionEnabled() && clip.file_path) {
-            transcript = await require('./transcribe').transcribeMedia(clip.file_path, { seconds: 0 });
-        }
-    } catch { /* */ }
-
-    // Memories from around the clip's moment in the source stream.
-    let memLines = [];
-    if (clip.stream_id) {
-        const pad = 90;
-        const start = Math.max(0, Math.floor((clip.start_time || 0) - pad));
-        const end = Math.ceil((clip.end_time || clip.start_time || 0) + pad);
-        const mems = db.getStreamMemoriesInRange(clip.stream_id, start, end) || [];
-        memLines = mems.map(m => `- ${m.description}`).filter(Boolean);
-    }
-
-    let overview = null;
-    if (transcript || memLines.length) {
-        const parts = [];
-        if (memLines.length) parts.push(`On-screen around this moment:\n${memLines.slice(0, 20).join('\n')}`);
-        if (transcript) parts.push(`Transcript of what was said in the clip:\n"${transcript.slice(0, 3000)}"`);
-        const prompt = `Summarize what happens in this stream clip in 1-3 sentences, using the signals below (be concrete, don't invent):\n\n${parts.join('\n\n')}`;
-        overview = await _complete({ prompt, maxTokens: 250, kind: 'clip_overview' });
-        overview = overview ? overview.slice(0, 1200) : (transcript ? transcript.slice(0, 400) : null);
-    }
+    if (!isEnabled() || !withinBudget()) return null;
+    const src = await _mediaSource(clip);
+    if (!src) { try { db.setClipAiOverview(clip.id, { overview: ' ', transcript: null }); } catch { /* */ } return null; }
+    const r = await require('./media-analysis').analyzeMedia(src, {
+        streamId: clip.stream_id || null, userId: clip.user_id || null,
+        numFrames: 3, storeMemories: !!clip.stream_id, offsetBase: clip.start_time || 0,
+    });
+    const overview = (r && r.overview) ? r.overview : ' ';
+    const transcript = r ? r.transcript : '';
     try { db.setClipAiOverview(clip.id, { overview, transcript: transcript || null }); } catch { /* */ }
-    return { overview, transcript };
+    return { overview: r ? r.overview : null, transcript };
 }
 
 /** Report AI config + optionally live-probe the provider. */
@@ -275,5 +288,5 @@ async function testStatus({ probe = true } = {}) {
 module.exports = {
     isEnabled, pasteAnalysisEnabled, streamMemoryEnabled, transcriptionEnabled, captureIntervalSec,
     analyzeImagePaste, analyzeTextPaste, analyzeStreamFrame, summarizeStreamMemories,
-    generateStreamerOverview, generateVodOverview, generateClipOverview, testStatus,
+    generateStreamerOverview, generateVodOverview, generateClipOverview, summarizeText, testStatus,
 };

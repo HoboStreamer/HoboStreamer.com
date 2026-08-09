@@ -31,12 +31,12 @@ async function tick() {
             }
         } catch (e) { console.warn('[AI backfill] paste:', e.message); }
 
-        // VOD overviews (from the source stream's memories).
-        try { for (const v of db.getVodsNeedingOverview(1)) { const o = await ai.generateVodOverview(v); if (!o) db.setVodAiOverview(v.id, ' '); } }
+        // VOD overviews (frames + audio extracted from the file; self-marks on completion).
+        try { for (const v of db.getVodsNeedingOverview(1)) await ai.generateVodOverview(v); }
         catch (e) { console.warn('[AI backfill] vod:', e.message); }
 
-        // Clip overviews + local transcripts.
-        try { for (const c of db.getClipsNeedingOverview(1)) { const r = await ai.generateClipOverview(c); if (!r || (!r.overview && !r.transcript)) db.setClipAiOverview(c.id, { overview: ' ', transcript: null }); } }
+        // Clip overviews + local transcripts (frames + audio; self-marks).
+        try { for (const c of db.getClipsNeedingOverview(1)) await ai.generateClipOverview(c); }
         catch (e) { console.warn('[AI backfill] clip:', e.message); }
     } finally {
         _busy = false;
