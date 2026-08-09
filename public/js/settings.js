@@ -346,23 +346,32 @@ function renderThemeGrid() {
         return;
     }
 
-    grid.innerHTML = themes.map(t => {
-        const p = t.preview_colors || {};
-        const isActive = activeTheme?.id === t.id && !isCustomMode;
-        return `
-            <div class="theme-card ${isActive ? 'theme-card-active' : ''}" onclick="selectTheme(${t.id}).then(()=>renderThemeGrid())" title="${esc(t.name)}">
-                <div class="theme-card-preview" style="background:${esc(p.bg || '#0d0d0f')}">
-                    <div class="theme-card-accent" style="background:${esc(p.accent || '#c0965c')}"></div>
-                    <div class="theme-card-text" style="color:${esc(p.text || '#e8e6e3')}">Aa</div>
-                </div>
-                <div class="theme-card-info">
-                    <span class="theme-card-name">${esc(t.name)}</span>
-                    ${t.mode === 'light' ? '<i class="fa-solid fa-sun" title="Light"></i>' : '<i class="fa-solid fa-moon" title="Dark"></i>'}
-                </div>
-                ${isActive ? '<div class="theme-card-check"><i class="fa-solid fa-check-circle"></i></div>' : ''}
+    const dark = themes.filter(t => t.mode !== 'light');
+    const light = themes.filter(t => t.mode === 'light');
+    const section = (title, icon, list) => list.length ? `
+        <div class="theme-grid-section">
+            <h4 class="theme-grid-section-title"><i class="fa-solid ${icon}"></i> ${title} <span class="theme-grid-section-count">${list.length}</span></h4>
+            <div class="theme-grid-cards">${list.map(_settingsThemeCardHTML).join('')}</div>
+        </div>` : '';
+    grid.innerHTML = section('Dark Themes', 'fa-moon', dark) + section('Light Themes', 'fa-sun', light);
+}
+
+function _settingsThemeCardHTML(t) {
+    const p = t.preview_colors || {};
+    const isActive = activeTheme?.id === t.id && !isCustomMode;
+    return `
+        <div class="theme-card ${isActive ? 'theme-card-active' : ''}" onclick="selectTheme(${t.id}).then(()=>renderThemeGrid())" title="${esc(t.name)}">
+            <div class="theme-card-preview" style="background:${esc(p.bg || '#0d0d0f')}">
+                <div class="theme-card-accent" style="background:${esc(p.accent || '#c0965c')}"></div>
+                <div class="theme-card-text" style="color:${esc(p.text || '#e8e6e3')}">Aa</div>
             </div>
-        `;
-    }).join('');
+            <div class="theme-card-info">
+                <span class="theme-card-name">${esc(t.name)}</span>
+                ${t.mode === 'light' ? '<i class="fa-solid fa-sun" title="Light"></i>' : '<i class="fa-solid fa-moon" title="Dark"></i>'}
+            </div>
+            ${isActive ? '<div class="theme-card-check"><i class="fa-solid fa-check-circle"></i></div>' : ''}
+        </div>
+    `;
 }
 
 function renderThemeEditor() {
@@ -470,7 +479,17 @@ function renderDirGrid() {
         return;
     }
 
-    grid.innerHTML = dirThemes.map(t => {
+    const dark = dirThemes.filter(t => t.mode !== 'light');
+    const light = dirThemes.filter(t => t.mode === 'light');
+    const section = (title, icon, list) => list.length ? `
+        <div class="theme-dir-section">
+            <h3 class="theme-dir-section-title"><i class="fa-solid ${icon}"></i> ${title} <span class="theme-dir-section-count">${list.length}</span></h3>
+            <div class="theme-dir-cards">${list.map(_dirThemeCardHTML).join('')}</div>
+        </div>` : '';
+    grid.innerHTML = section('Dark Themes', 'fa-moon', dark) + section('Light Themes', 'fa-sun', light);
+}
+
+function _dirThemeCardHTML(t) {
         const p = t.preview_colors || {};
         const isActive = activeTheme?.id === t.id && !isCustomMode;
         return `
@@ -507,7 +526,6 @@ function renderDirGrid() {
                 </div>
             </div>
         `;
-    }).join('');
 }
 
 async function previewDirTheme(themeId) {

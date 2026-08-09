@@ -91,11 +91,23 @@ function _avatarSpan(url, name, color, extraCls) {
         : `<span class="stream-card-avatar${cls}"${bg}>${letter}</span>`;
 }
 
-// Short AI-overview snippet for a VOD/clip/paste listing card (2-line clamp).
+// Short AI-overview snippet for a VOD/clip/paste listing card — expandable in place.
 function _cardAiHTML(text) {
     const t = (text || '').trim();
     if (!t) return '';
-    return `<div class="card-ai-overview" title="${esc(t)}"><i class="fa-solid fa-wand-magic-sparkles"></i> ${esc(t)}</div>`;
+    return `<div class="card-ai-overview" role="button" tabindex="0" onclick="toggleCardAi(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCardAi(event,this)">
+        <div class="card-ai-clamp"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="card-ai-text">${esc(t)}</span></div>
+        <span class="card-ai-toggle"><span class="card-ai-toggle-label">Read overview</span> <i class="fa-solid fa-chevron-down"></i></span>
+    </div>`;
+}
+
+// Toggle in-card AI-overview expansion (used on home + VODs/clips/pastes cards).
+function toggleCardAi(e, el) {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    const box = (el.closest && el.closest('.card-ai-overview')) || el;
+    const expanded = box.classList.toggle('expanded');
+    const lbl = box.querySelector('.card-ai-toggle-label');
+    if (lbl) lbl.textContent = expanded ? 'Show less' : 'Read overview';
 }
 
 // Render an AI overview block just above a VOD/clip description element.
@@ -1254,7 +1266,7 @@ function streamCardHTML(s, isLive) {
                     ${endedAgo}
                 </div>
                 ${(isLive && s.description) ? `<div class="stream-card-desc" title="Click to expand" onclick="event.preventDefault();event.stopPropagation();this.classList.toggle('expanded')">${esc(s.description)}</div>` : ''}
-                ${s.ai_overview ? `<div class="stream-card-ai" title="Click to expand" onclick="event.preventDefault();event.stopPropagation();this.classList.toggle('expanded')"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="stream-card-ai-text">${esc(s.ai_overview)}</span></div>` : ''}
+                ${_cardAiHTML(s.ai_overview)}
                 <div class="stream-card-meta">
                     ${s.category ? `<span class="stream-card-tag">${esc(s.category)}</span>` : ''}
                     <span class="stream-card-metaright">
@@ -1303,7 +1315,7 @@ function _updateLiveCard(card, s) {
     if (up && s.started_at) { up.innerHTML = `<i class="fa-solid fa-clock"></i> ${formatUptime(s.started_at)}`; up.dataset.since = s.started_at; }
     const t = card.querySelector('.stream-card-title');
     if (t && t.textContent !== (s.title || 'Untitled Stream')) t.textContent = s.title || 'Untitled Stream';
-    const ai = card.querySelector('.stream-card-ai-text');
+    const ai = card.querySelector('.card-ai-text');
     if (ai && s.ai_overview && ai.textContent !== s.ai_overview) ai.textContent = s.ai_overview;
     const desc = card.querySelector('.stream-card-desc');
     if (desc && s.description != null && desc.textContent !== s.description) desc.textContent = s.description;
