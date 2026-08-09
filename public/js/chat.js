@@ -2856,15 +2856,16 @@ function addChatMessage(msg) {
     }
     if (msg.message_type === 'channel-sound') {
         const cmd = esc((msg.sound && msg.sound.command) || '');
-        const sPitch = Number((msg.sound && msg.sound.pitch) || 1);
         const sSpeed = Number((msg.sound && msg.sound.speed) || 1);
+        const sPitchShift = Number((msg.sound && msg.sound.pitchShift) || 0);
         const argStr = esc((msg.sound && msg.sound.args) || '');
         let modBadges = '';
         if (Math.abs(sSpeed - 1) > 0.001) {
             modBadges += `<span class="channel-sound-mod" style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:10px;background:rgba(0,0,0,0.25);font-size:0.82em"><i class="fa-solid fa-gauge-high"></i> ${sSpeed.toFixed(2)}x</span>`;
         }
-        if (Math.abs(sPitch - 1) > 0.001) {
-            modBadges += `<span class="channel-sound-mod" style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:10px;background:rgba(0,0,0,0.25);font-size:0.82em"><i class="fa-solid fa-music"></i> ${sPitch.toFixed(2)}x</span>`;
+        if (Math.abs(sPitchShift) > 0.5) {
+            const sign = sPitchShift > 0 ? '+' : '';
+            modBadges += `<span class="channel-sound-mod" style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:10px;background:rgba(0,0,0,0.25);font-size:0.82em"><i class="fa-solid fa-music"></i> ${sign}${Math.round(sPitchShift)}</span>`;
         }
         const label = argStr ? `played !${cmd} ${argStr}` : `played !${cmd}`;
         text = `<span class="channel-sound-pill" style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:12px;background:color-mix(in srgb,var(--accent,#e0a44a) 18%,transparent);color:var(--accent,#e0a44a);font-weight:600;font-size:0.92em"><i class="fa-solid fa-volume-high"></i> ${label}${modBadges}</span>`;
@@ -4974,24 +4975,102 @@ let _ttsAudioQueue = [];
 let _ttsAudioPlaying = false;
 
 /**
- * Apply pitch + speed to an <audio> element.
- * Speed alone (no pitch mod) uses tempo-stretch (preservesPitch=true) so it
- * sounds natural — this preserves the existing "!sound 0.5" behavior. As soon
- * as a pitch modifier is present we disable pitch preservation so the combined
- * rate audibly shifts pitch (chipmunk / deep-voice), which is what pitch tokens
- * like "300p" / "-100p" are for. Both mods multiply into playbackRate so they
- * combine (e.g. "!sound 0.5 300p").
+ * Set playback SPEED as a pure tempo change (pitch preserved) so it stays
+ * independent of the pitch shifter below. "!sound 2" → 2× tempo, same pitch.
  */
-function applyPitchSpeed(audio, pitchMod, speedMod) {
-    const p = Number(pitchMod) || 1.0;
-    const s = Number(speedMod) || 1.0;
-    const rate = Math.max(0.25, Math.min(4.0, s * p));
-    audio.playbackRate = rate;
-    const hasPitch = Math.abs(p - 1) > 0.001;
-    // When a pitch mod is set, let playbackRate move the pitch; otherwise keep tempo-only.
-    audio.preservesPitch = !hasPitch;
-    audio.mozPreservesPitch = !hasPitch;
-    audio.webkitPreservesPitch = !hasPitch;
+function _setSoundSpeed(audio, speedMod) {
+    const s = Math.max(0.25, Math.min(4.0, Number(speedMod) || 1.0));
+    audio.playbackRate = s;
+    audio.preservesPitch = true;
+    audio.mozPreservesPitch = true;
+    audio.webkitPreservesPitch = true;
+}
+
+// ── Real-time PITCH shifter (independent of speed) ───────────────────────
+// Compact version of the classic Web Audio "Jungle" pitch shifter: two
+// crossfaded, sawtooth-modulated delay lines. setPitchOffset(o) shifts by
+// o octaves (o≈[-1,1]); pitchShift units map o = units/100 (100 = +1 octave).
+function _jungleFadeBuffer(context, activeTime, fadeTime) {
+    const length1 = activeTime * context.sampleRate;
+    const length = length1 + fadeTime * context.sampleRate;
+    const buffer = context.createBuffer(1, length, context.sampleRate);
+    const p = buffer.getChannelData(0);
+    const fadeLength = fadeTime * context.sampleRate;
+    const fadeIndex1 = fadeLength;
+    const fadeIndex2 = length1 - fadeLength;
+    for (let i = 0; i < length1; ++i) {
+        let v;
+        if (i < fadeIndex1) v = Math.sqrt(i / fadeLength);
+        else if (i >= fadeIndex2) v = Math.sqrt(1 - (i - fadeIndex2) / fadeLength);
+        else v = 1;
+        p[i] = v;
+    }
+    for (let i = length1; i < length; ++i) p[i] = 0;
+    return buffer;
+}
+function _jungleDelayBuffer(context, activeTime, fadeTime, shiftUp) {
+    const length1 = activeTime * context.sampleRate;
+    const length = length1 + fadeTime * context.sampleRate;
+    const buffer = context.createBuffer(1, length, context.sampleRate);
+    const p = buffer.getChannelData(0);
+    for (let i = 0; i < length1; ++i) p[i] = shiftUp ? (length1 - i) / length : i / length;
+    for (let i = length1; i < length; ++i) p[i] = 0;
+    return buffer;
+}
+function _createJunglePitchShifter(context) {
+    const delayTime = 0.100, fadeTime = 0.050, bufferTime = 0.100;
+    const input = context.createGain();
+    const output = context.createGain();
+
+    const mod1 = context.createBufferSource(), mod2 = context.createBufferSource();
+    const mod3 = context.createBufferSource(), mod4 = context.createBufferSource();
+    const shiftDown = _jungleDelayBuffer(context, bufferTime, fadeTime, false);
+    const shiftUp = _jungleDelayBuffer(context, bufferTime, fadeTime, true);
+    mod1.buffer = shiftDown; mod2.buffer = shiftDown; mod3.buffer = shiftUp; mod4.buffer = shiftUp;
+    mod1.loop = mod2.loop = mod3.loop = mod4.loop = true;
+
+    const mod1Gain = context.createGain(), mod2Gain = context.createGain();
+    const mod3Gain = context.createGain(), mod4Gain = context.createGain();
+    mod3Gain.gain.value = 0; mod4Gain.gain.value = 0;
+    mod1.connect(mod1Gain); mod2.connect(mod2Gain); mod3.connect(mod3Gain); mod4.connect(mod4Gain);
+
+    const modGain1 = context.createGain(), modGain2 = context.createGain();
+    mod1Gain.connect(modGain1); mod3Gain.connect(modGain1);
+    mod2Gain.connect(modGain2); mod4Gain.connect(modGain2);
+
+    const delay1 = context.createDelay(), delay2 = context.createDelay();
+    modGain1.connect(delay1.delayTime); modGain2.connect(delay2.delayTime);
+
+    const fade1 = context.createBufferSource(), fade2 = context.createBufferSource();
+    const fadeBuffer = _jungleFadeBuffer(context, bufferTime, fadeTime);
+    fade1.buffer = fadeBuffer; fade2.buffer = fadeBuffer;
+    fade1.loop = true; fade2.loop = true;
+    const mix1 = context.createGain(), mix2 = context.createGain();
+    mix1.gain.value = 0; mix2.gain.value = 0;
+    fade1.connect(mix1.gain); fade2.connect(mix2.gain);
+
+    input.connect(delay1); input.connect(delay2);
+    delay1.connect(mix1); delay2.connect(mix2);
+    mix1.connect(output); mix2.connect(output);
+
+    const t = context.currentTime + 0.050;
+    const t2 = t + bufferTime - fadeTime;
+    mod1.start(t); mod2.start(t2); mod3.start(t); mod4.start(t2);
+    fade1.start(t); fade2.start(t2);
+
+    return {
+        input, output,
+        setPitchOffset(mult) {
+            const up = mult > 0;
+            mod1Gain.gain.value = up ? 0 : 1;
+            mod2Gain.gain.value = up ? 0 : 1;
+            mod3Gain.gain.value = up ? 1 : 0;
+            mod4Gain.gain.value = up ? 1 : 0;
+            const g = 0.5 * delayTime * Math.abs(mult);
+            modGain1.gain.value = g;
+            modGain2.gain.value = g;
+        },
+    };
 }
 
 function playTTSAudio(msg) {
@@ -5012,18 +5091,26 @@ function _processTTSAudioQueue() {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         const volume = (chatSettings.ttsVolume || 80) / 100;
-        // Soundboard pitch/speed modifiers (default 1.0 = normal)
-        const pitchMod = msg.pitch || 1.0;
+        // Speed = tempo (pitch preserved); pitch = independent shift (units, 100=+1oct)
         const speedMod = msg.speed || 1.0;
-        applyPitchSpeed(audio, pitchMod, speedMod);
-        console.log('[TTS] Chat audio volume:', volume, '(raw setting:', chatSettings.ttsVolume, ')');
+        const pitchShift = Number(msg.pitchShift || 0);
+        _setSoundSpeed(audio, speedMod);
         // Use Web Audio API GainNode for volume — Audio.volume is unreliable on PipeWire/Steam Deck
         try {
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
             const source = ctx.createMediaElementSource(audio);
             const gain = ctx.createGain();
             gain.gain.value = volume;
-            source.connect(gain).connect(ctx.destination);
+            if (pitchShift) {
+                try {
+                    const shifter = _createJunglePitchShifter(ctx);
+                    shifter.setPitchOffset(pitchShift / 100);
+                    source.connect(shifter.input);
+                    shifter.output.connect(gain).connect(ctx.destination);
+                } catch { source.connect(gain).connect(ctx.destination); }
+            } else {
+                source.connect(gain).connect(ctx.destination);
+            }
             const cleanup = () => { URL.revokeObjectURL(url); try { ctx.close(); } catch { } _ttsAudioPlaying = false; _processTTSAudioQueue(); };
             audio.onended = cleanup;
             audio.onerror = cleanup;

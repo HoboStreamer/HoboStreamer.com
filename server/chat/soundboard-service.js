@@ -102,9 +102,17 @@ function parseModifiers(tokens, options = {}) {
         minPitch: Number.isFinite(options.minPitch) ? options.minPitch : 0.5,   // rate
         maxPitch: Number.isFinite(options.maxPitch) ? options.maxPitch : 2.0,   // rate
     };
+    // Pitch is expressed in "units": +100 = one octave up (2×), -100 = one octave
+    // down (0.5×), 0 = unchanged. This is an INDEPENDENT pitch shift (applied via a
+    // real pitch shifter on the client) so it combines with speed, e.g. "2 100p" =
+    // 2× speed AND pitch up. Derive the allowed unit range from the channel's
+    // pitch-rate limits (rate = 2^(units/100)).
+    const minUnits = 100 * Math.log2(settings.minPitch);
+    const maxUnits = 100 * Math.log2(settings.maxPitch);
     const result = {
-        pitch: 1,
+        pitch: 1,       // rate multiplier (back-compat / display)
         speed: 1,
+        pitchShift: 0,  // pitch units in [-100, 100]-ish (clamped to channel range)
     };
 
     for (const rawToken of tokens) {
@@ -115,8 +123,8 @@ function parseModifiers(tokens, options = {}) {
         if (pitchToken && settings.allowPitch) {
             const raw = parseFloat(pitchToken[1]);
             if (Number.isFinite(raw)) {
-                // Values with |x| > 10 are cents (e.g. 500p, -500p); small values are a raw rate.
-                result.pitch = clamp(Math.abs(raw) > 10 ? centsToRate(raw) : raw, settings.minPitch, settings.maxPitch);
+                result.pitchShift = clamp(raw, minUnits, maxUnits);
+                result.pitch = Math.pow(2, result.pitchShift / 100);
             }
             continue;
         }

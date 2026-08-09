@@ -1192,7 +1192,7 @@ class ChatServer {
                 role: relay ? (relay.role || 'external') : (client.user ? client.user.role : 'anon'),
                 message: `played !${cmd}`,
                 message_type: 'channel-sound',
-                sound: { command: cmd, pitch: mods.pitch, speed: mods.speed, args: (args || []).join(' ') },
+                sound: { command: cmd, pitch: mods.pitch, speed: mods.speed, pitchShift: mods.pitchShift, args: (args || []).join(' ') },
                 stream_id: client.streamId,
                 is_global: !client.streamId,
                 avatar_url: (relay ? relay.avatar_url : client.user?.avatar_url) || null,
@@ -1223,6 +1223,7 @@ class ChatServer {
                 mimeType: sound.mime || 'audio/mpeg',
                 pitch: mods.pitch,
                 speed: mods.speed,
+                pitchShift: mods.pitchShift,
                 source: 'channel-sound',
                 timestamp: new Date().toISOString(),
             });
@@ -1690,6 +1691,7 @@ class ChatServer {
                     sourceUrl: result.sourceUrl,
                     pitch: parsed.pitch,
                     speed: parsed.speed,
+                    pitchShift: parsed.pitchShift,
                 },
                 timestamp: new Date().toISOString(),
             });
@@ -1704,6 +1706,7 @@ class ChatServer {
                 sourceUrl: result.sourceUrl,
                 pitch: parsed.pitch,
                 speed: parsed.speed,
+                pitchShift: parsed.pitchShift,
                 timestamp: new Date().toISOString(),
             });
         } catch (err) {

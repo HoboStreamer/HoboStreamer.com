@@ -5285,24 +5285,28 @@ function _processBcTtsAudioQueue() {
         const audio = new Audio(url);
         const s = broadcastState.settings;
         const volume = (s.ttsVolume || 800) / 1000;
-        // Soundboard pitch/speed modifiers (default 1.0 = normal).
-        // Speed alone = tempo-stretch (natural); a pitch mod disables pitch
-        // preservation so the rate audibly shifts pitch and combines with speed.
-        const pitchMod = Number(msg.pitch) || 1.0;
+        // Speed = tempo (pitch preserved); pitch = independent shift (units, 100=+1oct).
+        // Reuses the pitch-shifter helpers defined in chat.js (loaded first).
         const speedMod = Number(msg.speed) || 1.0;
-        audio.playbackRate = Math.max(0.25, Math.min(4.0, speedMod * pitchMod));
-        const _hasPitch = Math.abs(pitchMod - 1) > 0.001;
-        audio.preservesPitch = !_hasPitch;
-        audio.mozPreservesPitch = !_hasPitch;
-        audio.webkitPreservesPitch = !_hasPitch;
-        console.log('[TTS] Broadcast audio volume:', volume, '(raw setting:', s.ttsVolume, ')');
+        const pitchShift = Number(msg.pitchShift || 0);
+        if (typeof _setSoundSpeed === 'function') { _setSoundSpeed(audio, speedMod); }
+        else { audio.playbackRate = Math.max(0.25, Math.min(4.0, speedMod)); audio.preservesPitch = true; }
         // Use Web Audio API GainNode for volume — Audio.volume is unreliable on PipeWire/Steam Deck
         try {
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
             const source = ctx.createMediaElementSource(audio);
             const gain = ctx.createGain();
             gain.gain.value = volume;
-            source.connect(gain).connect(ctx.destination);
+            if (pitchShift && typeof _createJunglePitchShifter === 'function') {
+                try {
+                    const shifter = _createJunglePitchShifter(ctx);
+                    shifter.setPitchOffset(pitchShift / 100);
+                    source.connect(shifter.input);
+                    shifter.output.connect(gain).connect(ctx.destination);
+                } catch { source.connect(gain).connect(ctx.destination); }
+            } else {
+                source.connect(gain).connect(ctx.destination);
+            }
             const cleanup = () => { URL.revokeObjectURL(url); try { ctx.close(); } catch {} _bcTtsAudioPlaying = false; _processBcTtsAudioQueue(); };
             audio.onended = cleanup;
             audio.onerror = cleanup;
