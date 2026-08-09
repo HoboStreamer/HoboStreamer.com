@@ -422,6 +422,16 @@ router.get('/settings', (req, res) => {
     }
 });
 
+// AI usage + estimated cost breakdown (for the hobo.tools admin AI tab).
+router.get('/ai/usage', (req, res) => {
+    try {
+        const days = Math.min(365, Math.max(1, parseInt(req.query.days, 10) || 30));
+        res.json({ days, usage: db.getAiUsageSummary(days) });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get AI usage' });
+    }
+});
+
 // ── Update Settings (bulk) ───────────────────────────────────
 router.put('/settings', (req, res) => {
     try {

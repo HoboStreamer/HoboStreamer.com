@@ -678,7 +678,61 @@ function initDb() {
         ];
         const seedPay = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
         for (const [k, v, d, t] of paymentSeeds) seedPay.run(k, v, d, t);
+
+        // AI analysis subsystem (configured in hobo.tools/admin → AI). Master switch
+        // OFF by default so no API calls (or cost) happen until an admin enables it.
+        const aiSeeds = [
+            ['ai_enabled', 'false', 'Master switch: enable AI analysis (pastes + stream memories)', 'boolean'],
+            ['ai_provider', 'anthropic', 'AI provider: anthropic | openai', 'string'],
+            ['ai_api_key', '', 'AI API key (Anthropic or OpenAI-compatible)', 'string'],
+            ['ai_base_url', '', 'Optional custom base URL (OpenAI-compatible gateway). Blank = provider default', 'string'],
+            ['ai_model', 'claude-sonnet-5', 'Vision-capable model id (e.g. claude-sonnet-5)', 'string'],
+            ['ai_paste_analysis_enabled', 'true', 'Analyze image + text pastes (when AI is enabled)', 'boolean'],
+            ['ai_stream_memory_enabled', 'false', 'Periodically analyze live-stream thumbnails into timestamped memories', 'boolean'],
+            ['ai_stream_capture_interval_sec', '120', 'Seconds between live-stream AI memory captures', 'number'],
+            ['ai_max_cost_usd_per_day', '0', 'Daily AI spend cap in USD (0 = no cap)', 'number'],
+            ['ai_input_cost_per_mtok', '3.0', 'Estimated input cost per million tokens (for cost breakdown)', 'number'],
+            ['ai_output_cost_per_mtok', '15.0', 'Estimated output cost per million tokens (for cost breakdown)', 'number'],
+        ];
+        const seedAi = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of aiSeeds) seedAi.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
+
+    // AI subsystem tables + columns.
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS stream_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stream_id INTEGER NOT NULL,
+            user_id INTEGER,
+            offset_seconds INTEGER DEFAULT 0,      -- seconds into the stream when captured
+            captured_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            description TEXT,
+            tags TEXT,                              -- JSON array
+            thumbnail_url TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (stream_id) REFERENCES streams(id) ON DELETE CASCADE
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_stream_memories_stream ON stream_memories(stream_id, offset_seconds)');
+
+        database.exec(`CREATE TABLE IF NOT EXISTS ai_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT,                              -- paste_image | paste_text | stream_memory
+            model TEXT,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cost_usd REAL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at)');
+
+        const pcols = database.prepare('PRAGMA table_info(pastes)').all().map(c => c.name);
+        if (!pcols.includes('ai_summary')) database.exec('ALTER TABLE pastes ADD COLUMN ai_summary TEXT');
+        if (!pcols.includes('ai_tags')) database.exec('ALTER TABLE pastes ADD COLUMN ai_tags TEXT');
+        if (!pcols.includes('ai_analyzed_at')) database.exec('ALTER TABLE pastes ADD COLUMN ai_analyzed_at DATETIME');
+
+        const scols = database.prepare('PRAGMA table_info(streams)').all().map(c => c.name);
+        if (!scols.includes('ai_overview')) database.exec('ALTER TABLE streams ADD COLUMN ai_overview TEXT');
+    } catch (e) { console.warn('[DB] AI subsystem migration:', e.message); }
 
     // Migrate: extend the subscriptions table for real recurring billing.
     try {
@@ -1746,6 +1800,46 @@ function endOtherLiveStreamsForSlot(managedStreamId, keepStreamId) {
         [managedStreamId, keepStreamId || 0]);
     for (const r of rows) endStream(r.id);
     return rows.map(r => r.id);
+}
+
+// ── AI analysis helpers ──────────────────────────────────────
+function addStreamMemory({ stream_id, user_id = null, offset_seconds = 0, description, tags = null, thumbnail_url = null }) {
+    return run(`INSERT INTO stream_memories (stream_id, user_id, offset_seconds, description, tags, thumbnail_url)
+                VALUES (?, ?, ?, ?, ?, ?)`,
+        [stream_id, user_id, Math.max(0, Math.round(offset_seconds || 0)), description || '',
+         tags ? (typeof tags === 'string' ? tags : JSON.stringify(tags)) : null, thumbnail_url]);
+}
+function getStreamMemories(streamId) {
+    return all('SELECT * FROM stream_memories WHERE stream_id = ? ORDER BY offset_seconds ASC', [streamId]);
+}
+function getLatestStreamMemory(streamId) {
+    return get('SELECT * FROM stream_memories WHERE stream_id = ? ORDER BY offset_seconds DESC LIMIT 1', [streamId]);
+}
+function updateStreamAiOverview(streamId, text) {
+    return run('UPDATE streams SET ai_overview = ? WHERE id = ?', [text || null, streamId]);
+}
+function updatePasteAi(pasteId, { ai_summary = null, ai_tags = null }) {
+    return run('UPDATE pastes SET ai_summary = ?, ai_tags = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [ai_summary, ai_tags ? (typeof ai_tags === 'string' ? ai_tags : JSON.stringify(ai_tags)) : null, pasteId]);
+}
+function recordAiUsage({ kind, model, input_tokens = 0, output_tokens = 0, cost_usd = 0 }) {
+    return run('INSERT INTO ai_usage (kind, model, input_tokens, output_tokens, cost_usd) VALUES (?, ?, ?, ?, ?)',
+        [kind || null, model || null, input_tokens || 0, output_tokens || 0, cost_usd || 0]);
+}
+function getAiCostToday() {
+    const r = get("SELECT COALESCE(SUM(cost_usd),0) AS c FROM ai_usage WHERE created_at >= date('now')");
+    return r ? r.c : 0;
+}
+function getAiUsageSummary(days = 30) {
+    const byDay = all(`SELECT date(created_at) AS day, COUNT(*) AS calls, SUM(input_tokens) AS input_tokens,
+                       SUM(output_tokens) AS output_tokens, SUM(cost_usd) AS cost_usd
+                       FROM ai_usage WHERE created_at >= date('now', ?) GROUP BY day ORDER BY day DESC`, [`-${days} days`]);
+    const byKind = all(`SELECT kind, COUNT(*) AS calls, SUM(cost_usd) AS cost_usd
+                        FROM ai_usage WHERE created_at >= date('now', ?) GROUP BY kind ORDER BY cost_usd DESC`, [`-${days} days`]);
+    const totals = get(`SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens),0) AS input_tokens,
+                        COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(cost_usd),0) AS cost_usd
+                        FROM ai_usage WHERE created_at >= date('now', ?)`, [`-${days} days`]);
+    return { byDay, byKind, totals, today: getAiCostToday() };
 }
 
 function updateViewerCount(streamId, count) {
@@ -4930,6 +5024,8 @@ module.exports = {
     // Streams (sessions)
     getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId, getStreamHistoryByManagedStream,
     createStream, endStream, endOtherLiveStreamsForSlot, updateViewerCount,
+    addStreamMemory, getStreamMemories, getLatestStreamMemory, updateStreamAiOverview,
+    updatePasteAi, recordAiUsage, getAiCostToday, getAiUsageSummary,
     // Homepage helpers
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
     getRecentVods, countRecentVods,

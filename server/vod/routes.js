@@ -1101,6 +1101,24 @@ router.post('/bulk-delete-old', requireAuth, async (req, res) => {
 });
 
 // ── Get VOD Details ──────────────────────────────────────────
+// AI "memory" timeline for a VOD (from its source live stream). Timestamps are
+// seconds into the stream ≈ seconds into a full VOD.
+router.get('/:id/memories', optionalAuth, (req, res) => {
+    try {
+        if (!/^\d+$/.test(req.params.id)) return res.status(404).json({ error: 'VOD not found' });
+        const vod = db.getVodById(req.params.id);
+        if (!vod || !vod.stream_id) return res.json({ memories: [] });
+        const memories = (db.getStreamMemories(vod.stream_id) || []).map(m => ({
+            offset_seconds: m.offset_seconds,
+            description: m.description,
+            tags: m.tags ? (() => { try { return JSON.parse(m.tags); } catch { return []; } })() : [],
+        }));
+        res.json({ memories });
+    } catch {
+        res.status(500).json({ error: 'Failed to load AI timeline' });
+    }
+});
+
 router.get('/:id', optionalAuth, async (req, res) => {
     try {
         // Skip non-numeric IDs (avoid matching 'mine', 'file', etc.)

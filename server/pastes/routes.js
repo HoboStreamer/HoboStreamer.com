@@ -13,8 +13,22 @@ const fs = require('fs');
 const multer = require('multer');
 const sharp = require('sharp');
 const db = require('../db/database');
+const aiAnalysis = require('../ai/ai-analysis');
 const { requireAuth, optionalAuth } = require('../auth/auth');
 const { pushNotification, actorInfo: notificationActor } = require('../utils/notify');
+
+/** Fire-and-forget AI analysis of a newly created paste (image description/tags or text overview). */
+function _analyzePasteAsync(paste) {
+    if (!paste || !aiAnalysis.pasteAnalysisEnabled()) return;
+    (async () => {
+        try {
+            let r = null;
+            if (paste.type === 'screenshot' && paste.screenshot_path) r = await aiAnalysis.analyzeImagePaste(paste.screenshot_path, paste.title);
+            else if (paste.type === 'paste') r = await aiAnalysis.analyzeTextPaste(paste.content, paste.title);
+            if (r && r.description) db.updatePasteAi(paste.id, { ai_summary: r.description, ai_tags: (r.tags && r.tags.length) ? r.tags : null });
+        } catch (e) { console.warn('[Pastes] AI analysis failed:', e.message); }
+    })();
+}
 
 function truncatePreview(text, max = 120) {
     const clean = String(text || '').replace(/\s+/g, ' ').trim();
@@ -385,6 +399,7 @@ router.post('/', optionalAuth, (req, res) => {
         );
 
         const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [slug]);
+        _analyzePasteAsync(paste);
         res.status(201).json({ paste, url: `/p/${slug}` });
     } catch (err) {
         console.error('[Pastes] Create error:', err);
@@ -489,6 +504,7 @@ async function _handleScreenshotUpload(req, res) {
 
         const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [slug]);
         paste.screenshot_url = `/data/pastes/screenshots/${path.basename(req.file.path)}`;
+        _analyzePasteAsync(paste);
         res.status(201).json({ paste, url: `/p/${slug}` });
     } catch (err) {
         console.error('[Pastes] Screenshot error:', err);

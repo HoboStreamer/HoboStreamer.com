@@ -254,6 +254,15 @@ async function loadPasteViewer(slug) {
 
         const forkedFrom = p.forked_from ? `<span class="paste-forked-badge"><i class="fa-solid fa-code-fork"></i> Forked</span>` : '';
 
+        let _aiTags = [];
+        try { _aiTags = p.ai_tags ? JSON.parse(p.ai_tags) : []; } catch { _aiTags = []; }
+        const aiHtml = p.ai_summary ? `
+            <div class="paste-ai-analysis">
+                <div class="paste-ai-title"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Analysis</div>
+                <div class="paste-ai-summary">${escapeHtml(p.ai_summary)}</div>
+                ${_aiTags.length ? `<div class="paste-ai-tags">${_aiTags.map(t => `<span class="paste-ai-tag">${escapeHtml(String(t))}</span>`).join('')}</div>` : ''}
+            </div>` : '';
+
         container.innerHTML = `
             <div class="paste-view-header">
                 <div class="paste-view-title-row">
@@ -282,6 +291,7 @@ async function loadPasteViewer(slug) {
                     ` : ''}
                 </div>
             </div>
+            ${aiHtml}
             ${contentHtml}
 
             <div class="paste-comments-section" id="paste-comments-section">

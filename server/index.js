@@ -872,6 +872,9 @@ async function start() {
         console.log('[Server] Ready. Happy camping! 🏕️');
         console.log('');
 
+        // AI stream-memory job (no-op until enabled in hobo.tools/admin → AI).
+        try { require('./ai/stream-memory-job').start(); } catch (e) { console.warn('[AI] memory job not started:', e.message); }
+
         // Broadcast recent git changes to all chat clients after startup.
         // Uses a retry loop — clients reconnect with backoff after a restart,
         // so a single 5s broadcast misses most of them. We broadcast at 5s,

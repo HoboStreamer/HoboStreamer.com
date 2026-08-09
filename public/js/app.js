@@ -1161,6 +1161,7 @@ function renderStreamGrid(containerId, streams, isLive) {
                     ${esc(s.username || 'Anonymous')}
                     ${endedAgo}
                 </div>
+                ${s.ai_overview ? `<div class="stream-card-ai" title="${esc(s.ai_overview)}"><i class="fa-solid fa-wand-magic-sparkles"></i> ${esc(s.ai_overview)}</div>` : ''}
                 ${s.category ? `<div class="stream-card-tags"><span class="stream-card-tag">${esc(s.category)}</span></div>` : ''}
             </div>
         </a>`;
@@ -1966,6 +1967,30 @@ async function renderViewerChart(data, stream) {
             },
         },
     });
+}
+
+// AI "memory" timeline on the VOD player — clickable timestamps that seek the video.
+async function loadVodAiTimeline(vodId) {
+    const el = document.getElementById('vp-ai-timeline');
+    if (!el) return;
+    el.style.display = 'none'; el.innerHTML = '';
+    try {
+        const data = await api(`/vods/${vodId}/memories`);
+        const mems = data.memories || [];
+        if (!mems.length) return;
+        el.innerHTML = `<div class="vod-ai-timeline-title"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Timeline</div>` +
+            mems.map(m => {
+                const t = formatDuration(m.offset_seconds || 0);
+                return `<button class="vod-ai-memory" onclick="seekVodTo(${Number(m.offset_seconds) || 0})">
+                    <span class="vod-ai-memory-t">${t}</span>
+                    <span class="vod-ai-memory-d">${esc(m.description || '')}</span></button>`;
+            }).join('');
+        el.style.display = '';
+    } catch { /* silent */ }
+}
+function seekVodTo(seconds) {
+    const v = document.getElementById('vp-video');
+    if (v && Number.isFinite(seconds)) { v.currentTime = Math.max(0, seconds); if (v.play) v.play().catch(() => {}); }
 }
 
 function formatDurationShort(seconds) {
@@ -3075,6 +3100,7 @@ async function loadVodPlayer(vodId) {
 
         document.getElementById('vp-title').textContent = v.title || 'Video';
         setPageTitle(v.title || 'Video');
+        loadVodAiTimeline(v.id);
         document.getElementById('vp-streamer').textContent = v.display_name || v.username || 'Unknown';
         document.getElementById('vp-avatar').textContent = (v.username || '?')[0].toUpperCase();
         document.getElementById('vp-date').textContent = formatDateTime(v.created_at);
