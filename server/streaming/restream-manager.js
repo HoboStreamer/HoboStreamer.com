@@ -1029,13 +1029,19 @@ class RestreamManager extends EventEmitter {
      * Returns { total, breakdown: [{ platform, name, count }] }
      * count is null when the platform is live but viewer count is unavailable.
      */
-    getExternalViewerCountsForUser(userId) {
+    /**
+     * External (Twitch/Kick/YouTube) viewer counts for a user. When managedStreamId is
+     * provided, only destinations bound to that stream slot are counted — so a channel
+     * running multiple slots doesn't leak one slot's platform viewers onto another.
+     */
+    getExternalViewerCountsForUser(userId, managedStreamId = null) {
         const db = require('../db/database');
         const dests = db.getRestreamDestinationsByUserId(userId) || [];
         const breakdown = [];
         let total = 0;
         for (const d of dests) {
             if (!d.enabled) continue;
+            if (managedStreamId != null && d.managed_stream_id !== managedStreamId) continue;
             const count = this.getCachedViewerCount(d.id);
             const platformLive = this.isPlatformLive(d.id);
             if (count != null && count > 0) {

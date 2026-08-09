@@ -37,8 +37,8 @@
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=17">
-    <link rel="stylesheet" href="/css/broadcast.css?v=6">
+    <link rel="stylesheet" href="/css/style.css?v=18">
+    <link rel="stylesheet" href="/css/broadcast.css?v=7">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -744,10 +744,11 @@
                                 <p class="ch-stream-title" id="ch-stream-title">Stream Title</p>
                                 <p class="ch-stream-description muted" id="ch-stream-description" style="display:none"></p>
                                 <div class="ch-cumulative-viewers" id="ch-cumulative-viewers" style="display:none"></div>
+                                <!-- Weather sits BELOW the streamer details/links -->
+                                <div class="ch-weather-widget" id="ch-weather-widget" style="display:none"></div>
                             </div>
                         </div>
                         <div class="ch-info-bar-right">
-                            <div class="ch-weather-widget" id="ch-weather-widget" style="display:none"></div>
                             <span class="ch-follower-count" id="ch-follower-count">0 followers</span>
                             <button class="btn btn-follow" id="ch-btn-follow">
                                 <i class="fa-solid fa-heart"></i> Follow
@@ -1722,15 +1723,25 @@
                     <h2><i class="fa-solid fa-tower-broadcast"></i> Go Live</h2>
                     <p class="bc-page-subtitle">Select a stream slot to configure your profile and go live.</p>
 
-                    <!-- Active Streams Section (shown above if any live streams) -->
-                    <div id="bc-active-streams-container" class="bc-active-streams-section">
-                        <h3><i class="fa-solid fa-circle-pulse"></i> Active Streams</h3>
+                    <!-- Top-level tabs — the "Active Streams" tab only appears when a stream is live -->
+                    <div class="bc-top-tabs" id="bc-top-tabs" style="display:none">
+                        <button class="bc-top-tab" data-bctab="active" style="display:none" onclick="switchBroadcastTopTab('active')">
+                            <i class="fa-solid fa-circle-pulse"></i> Active Streams
+                        </button>
+                        <button class="bc-top-tab active" data-bctab="mine" onclick="switchBroadcastTopTab('mine')">
+                            <i class="fa-solid fa-tower-broadcast"></i> My Streams
+                        </button>
+                    </div>
+
+                    <!-- Active Streams panel -->
+                    <div id="bc-active-streams-container" class="bc-active-streams-section bc-top-tab-panel" data-bctabpanel="active">
                         <div id="bc-active-list" class="bc-streams-list">
                             <!-- Populated by JavaScript -->
                         </div>
                     </div>
 
-                    <!-- ═══ Managed-stream workspace (broadcast-workspace.js) ═══ -->
+                    <!-- My Streams panel: managed-stream workspace (broadcast-workspace.js) -->
+                    <div class="bc-top-tab-panel active" data-bctabpanel="mine">
                     <div class="bc-workspace" id="bc-workspace">
 
                         <!-- Left sidebar: stream slot list -->
@@ -1762,6 +1773,7 @@
                         </div>
 
                     </div><!-- .bc-workspace -->
+                    </div><!-- .bc-top-tab-panel[mine] -->
 
                 </div>
 
@@ -4494,7 +4506,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=2"></script>
-<script src="/js/app.js?v=11"></script>
+<script src="/js/app.js?v=12"></script>
 <script src="/js/stream-player.js?v=5"></script>
 <script src="/js/emotes.js?v=4"></script>
 <script src="/js/gif-picker.js?v=1"></script>
@@ -4556,7 +4568,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/broadcast-devices.js?v=2"></script>
 <script src="/js/broadcast-vods.js?v=2"></script>
 <script src="/js/broadcast-workspace.js?v=4"></script>
-<script src="/js/broadcast.js?v=16"></script>
+<script src="/js/broadcast.js?v=17"></script>
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
 <script src="/js/settings.js?v=2"></script>

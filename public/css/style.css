@@ -5870,14 +5870,16 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
 /* ── Streamer Info Bar (below video, Kick/Twitch style) ───── */
 .ch-info-bar {
-    display: flex; align-items: center; gap: 16px;
+    display: flex; align-items: flex-start; gap: 16px;
     padding: 12px 16px;
     background: var(--bg-card);
     border-bottom: 1px solid var(--border);
 }
 .ch-info-bar-left {
-    display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;
+    display: flex; align-items: flex-start; gap: 12px; flex: 1; min-width: 0;
 }
+/* Weather now sits below the streamer details/links (moved out of the right column) */
+.ch-info-bar-text > .ch-weather-widget { margin-top: 10px; width: 100%; }
 .ch-info-bar .ch-avatar {
     width: 44px; height: 44px; border-radius: 50%;
     background: var(--primary, var(--accent)); color: var(--bg-main, #000);
@@ -11110,9 +11112,43 @@ body.theme-light .user-dropdown {
         border-right: none;
         border-bottom: 1px solid var(--border);
     }
+    /* Slot list becomes a compact horizontal chip strip on mobile so it doesn't
+       eat vertical space — the selected slot's config gets the room instead. */
     .bc-ws-list {
-        max-height: 200px;
+        display: flex;
+        flex-direction: row;
+        max-height: none;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        gap: 8px;
+        padding: 10px 12px;
     }
+    .bc-ws-item {
+        flex: 0 0 auto;
+        width: auto;
+        max-width: 200px;
+        padding: 8px 10px;
+    }
+    .bc-ws-item-name {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 130px;
+    }
+    .bc-ws-item-meta { display: none; }        /* details live in the panel; keep chips compact */
+    .bc-ws-item-del { opacity: 0.6; }
+    /* Internal slot tabs (Stream/Settings/Endpoint/History) scroll horizontally */
+    .bc-ws-tabs {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 0 12px;
+    }
+    .bc-ws-tab {
+        white-space: nowrap;
+        padding: 10px 12px;
+    }
+    .bc-top-tab { padding: 11px 10px; font-size: 0.9rem; }
     .bc-ws-panel-hd {
         padding: 14px 14px 10px;
     }

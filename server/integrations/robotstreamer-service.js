@@ -35,26 +35,27 @@ class RobotStreamerService {
         this.chatBridges = new Map();
         /** @type {Map<number, { ws: WebSocket, upstream: WebSocket|null, connectedAt: number }>} streamId → active publish session */
         this._activePublish = new Map();
-        /** @type {Map<number, { count: number, fetchedAt: number }>} userId → cached RS viewer count */
+        /** @type {Map<string, { count: number, fetchedAt: number }>} `userId:slotId` → cached RS viewer count */
         this._rsViewerCounts = new Map();
         this.publishProxy = new WebSocket.Server({ noServer: true, maxPayload: 512 * 1024, perMessageDeflate: false });
         this.publishProxy.on('connection', (ws, req, ctx) => this._handlePublishConnection(ws, req, ctx));
     }
 
     /**
-     * Cache a RobotStreamer viewer count for a user.
-     * Called from the validate endpoint when the broadcaster polls.
+     * Cache a RobotStreamer viewer count for a user's stream slot.
+     * Called from the validate endpoint when the broadcaster polls. Keyed per slot so
+     * a channel's two RS robots (one per slot) don't share a single count.
      */
-    setRsViewerCount(userId, count) {
-        this._rsViewerCounts.set(userId, { count: Number(count) || 0, fetchedAt: Date.now() });
+    setRsViewerCount(userId, count, managedStreamId = null) {
+        this._rsViewerCounts.set(`${userId}:${managedStreamId || 0}`, { count: Number(count) || 0, fetchedAt: Date.now() });
     }
 
     /**
-     * Get cached RS viewer count for a user.
+     * Get cached RS viewer count for a user's stream slot.
      * Returns count if fresh (<120s), otherwise 0.
      */
-    getRsViewerCount(userId) {
-        const cached = this._rsViewerCounts.get(userId);
+    getRsViewerCount(userId, managedStreamId = null) {
+        const cached = this._rsViewerCounts.get(`${userId}:${managedStreamId || 0}`);
         if (!cached || Date.now() - cached.fetchedAt > 120000) return 0;
         return cached.count;
     }

@@ -84,7 +84,7 @@ router.post('/integration/validate', requireAuth, async (req, res) => {
         const robotId = robotStreamerService.normalizeRobotInput(robotInput);
         const activeRobot = validated.availableRobots.find(r => String(r.robot_id) === String(robotId));
         if (activeRobot) {
-            robotStreamerService.setRsViewerCount(req.user.id, activeRobot.viewers);
+            robotStreamerService.setRsViewerCount(req.user.id, activeRobot.viewers, slotId);
         }
 
         res.json({

@@ -2389,19 +2389,24 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
     }
 
     const hsTotal = liveStreams.reduce((sum, s) => sum + (s.viewer_count || 0), 0);
-    const externalTotal = externalViewers?.total || 0;
+    const externalTotal = externalViewers?.total || 0;   // channel-wide (cumulative line only)
     const combinedTotal = hsTotal + externalTotal;
     const streamCount = liveStreams.length;
 
-    // Update the cached external viewer count for the vc-viewers badge
-    // Always update — even when externalViewers is null (dropped to 0)
-    _cachedExternalViewerCount = externalTotal;
-    // Also update the main viewer badge with combined total
+    // The stream slot actually being watched — its counts/links drive the main badge.
+    const watched = liveStreams.find(s => String(s.id) === String(typeof currentStreamId !== 'undefined' ? currentStreamId : ''))
+        || liveStreams[0] || null;
+    const watchedMsId = watched?.managed_stream_id ?? null;
+    const watchedNative = watched?.viewer_count || 0;
+    const watchedExternal = watched?.external_viewer_count || 0;
+
+    // Cache the WATCHED slot's external count so the live WS update adds the right number.
+    _cachedExternalViewerCount = watchedExternal;
+    // Main viewer badge = this slot's native + this slot's restream viewers.
     const vcEl = document.getElementById('vc-viewers');
     if (vcEl) {
-        // Use the larger of the WS-reported HS count and the polled HS total
-        const bestHs = Math.max(_cachedHsViewerCount || 0, hsTotal);
-        vcEl.textContent = bestHs + externalTotal;
+        const bestHs = Math.max(_cachedHsViewerCount || 0, watchedNative);
+        vcEl.textContent = bestHs + watchedExternal;
     }
 
     let html = '';
@@ -2412,26 +2417,28 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
         html += `<span class="ch-viewer-total"><i class="fa-solid fa-layer-group"></i> <strong>${combinedTotal}</strong> viewer${combinedTotal !== 1 ? 's' : ''} ${totalLabel}${streamCount > 1 ? ` across <strong>${streamCount}</strong> streams` : ''}</span>`;
     }
 
-    // RS restream badge — combine all active RS entries into one badge with summed viewers
-    const activeRsList = Object.values(rsRestream).filter(rs => rs.active);
-    if (activeRsList.length > 0) {
-        const rsViewersTotal = activeRsList.reduce((sum, rs) => sum + (rs.viewer_count || 0), 0) || (externalViewers?.rs_viewers || 0);
-        const viewerStr = rsViewersTotal > 0 ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${rsViewersTotal}` : '';
-        // Use the first entry with a robot_id for the link
-        const linkable = activeRsList.find(rs => rs.robot_id);
-        if (linkable) {
-            const rsUrl = `https://robotstreamer.com/robot/${esc(linkable.robot_id)}`;
-            html += `<a href="${rsUrl}" target="_blank" rel="noopener" class="ch-rs-badge" title="Also live on RobotStreamer${linkable.robot_name ? ': ' + esc(linkable.robot_name) : ''}${rsViewersTotal ? ' (' + rsViewersTotal + ' viewers)' : ''}"><i class="fa-solid fa-robot"></i> RS${viewerStr}</a>`;
+    // RS restream badge — reflect the WATCHED slot's robot only (not the first slot's).
+    const rsWatched = (watched && rsRestream[watched.id] && rsRestream[watched.id].active) ? rsRestream[watched.id] : null;
+    if (rsWatched) {
+        const rsViewers = rsWatched.viewer_count || 0;
+        const viewerStr = rsViewers > 0 ? ` · <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${rsViewers}` : '';
+        if (rsWatched.robot_id) {
+            const rsUrl = `https://robotstreamer.com/robot/${esc(rsWatched.robot_id)}`;
+            html += `<a href="${rsUrl}" target="_blank" rel="noopener" class="ch-rs-badge" title="Also live on RobotStreamer${rsWatched.robot_name ? ': ' + esc(rsWatched.robot_name) : ''}${rsViewers ? ' (' + rsViewers + ' viewers)' : ''}"><i class="fa-solid fa-robot"></i> RS${viewerStr}</a>`;
         } else {
             html += `<span class="ch-rs-badge" title="Also live on RobotStreamer"><i class="fa-solid fa-robot"></i> RS${viewerStr}</span>`;
         }
     }
 
-    // Restream platform link badges (Twitch/Kick/YouTube) with viewer counts
-    if (hasRestream) {
+    // Restream platform link badges (Twitch/Kick/YouTube) — only for the WATCHED slot,
+    // so links point at the platform channel for the stream you're actually watching.
+    const watchedLinks = hasRestream
+        ? restreamLinks.filter(l => (l.managed_stream_id ?? null) === watchedMsId)
+        : [];
+    if (watchedLinks.length > 0) {
         const platformIcons = { twitch: 'fa-brands fa-twitch', kick: 'fa-brands fa-kickstarter-k', youtube: 'fa-brands fa-youtube', custom: 'fa-solid fa-globe' };
         const platformColors = { twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', custom: '#888' };
-        for (const link of restreamLinks) {
+        for (const link of watchedLinks) {
             const icon = platformIcons[link.platform] || platformIcons.custom;
             const color = platformColors[link.platform] || platformColors.custom;
             const liveDot = link.is_live ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#e91916;margin-right:4px;animation:pulse-live 1.5s infinite"></span>' : '';
