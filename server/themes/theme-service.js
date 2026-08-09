@@ -17,6 +17,7 @@ const BUILTIN_THEMES = (() => {
     const mix = (a,b,t) => { const A=_rgb(a),B=_rgb(b); return _hex(A[0]+(B[0]-A[0])*t,A[1]+(B[1]-A[1])*t,A[2]+(B[2]-A[2])*t); };
     const lum = (h) => { const c=_rgb(h).map(v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);}); return 0.2126*c[0]+0.7152*c[1]+0.0722*c[2]; };
     const onAccent = (a) => lum(a) > 0.42 ? '#0b0d10' : '#ffffff';
+    const rgba = (h,a) => { const c=_rgb(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; };
     const W='#ffffff', K='#000000';
     const SEM = { '--live-red':'#f0485c', '--success':'#37c871', '--warning':'#e6a53a', '--danger':'#f0485c', '--info':'#4aa3e8' };
     const dark = (base, accent, sem) => Object.assign({
@@ -26,16 +27,24 @@ const BUILTIN_THEMES = (() => {
         '--text-primary': mix(base,W,0.91), '--text-secondary': mix(base,W,0.56), '--text-muted': mix(base,W,0.36),
         '--accent': accent, '--accent-light': mix(accent,W,0.22), '--accent-dark': mix(accent,K,0.30),
         '--border': mix(base,W,0.085), '--border-light': mix(base,W,0.15), '--on-accent': onAccent(accent),
+        '--glass': rgba(mix(base,K,0.10), 0.82), '--glass-strong': rgba(mix(base,K,0.28), 0.94),
+        '--ring-accent': `0 0 0 1px ${rgba(accent,0.20)}, 0 18px 40px rgba(0,0,0,0.30)`,
         '--shadow': '0 2px 12px rgba(0,0,0,0.45)', '--shadow-lg': '0 12px 40px rgba(0,0,0,0.6)',
+        '--shadow-soft': '0 12px 40px rgba(0,0,0,0.28)',
     }, SEM, sem||{});
+    // Light: soft off-white surfaces (never harsh pure white), cards gently
+    // elevated above a tinted page, and a matching LIGHT navbar glass.
     const light = (base, accent, sem) => Object.assign({
-        '--bg-primary': mix(base,W,0.5), '--bg-secondary': base,
-        '--bg-tertiary': mix(base,K,0.05), '--bg-card': mix(base,W,0.32),
-        '--bg-hover': mix(base,K,0.055), '--bg-input': W,
-        '--text-primary': mix(base,K,0.86), '--text-secondary': mix(base,K,0.52), '--text-muted': mix(base,K,0.38),
+        '--bg-primary': mix(base,K,0.045), '--bg-secondary': base,
+        '--bg-tertiary': mix(base,K,0.085), '--bg-card': mix(base,W,0.30),
+        '--bg-hover': mix(base,K,0.07), '--bg-input': mix(base,W,0.42),
+        '--text-primary': mix(base,K,0.87), '--text-secondary': mix(base,K,0.50), '--text-muted': mix(base,K,0.36),
         '--accent': accent, '--accent-light': mix(accent,W,0.18), '--accent-dark': mix(accent,K,0.22),
-        '--border': mix(base,K,0.12), '--border-light': mix(base,K,0.06), '--on-accent': onAccent(accent),
+        '--border': mix(base,K,0.14), '--border-light': mix(base,K,0.08), '--on-accent': onAccent(accent),
+        '--glass': rgba(mix(base,W,0.18), 0.86), '--glass-strong': rgba(mix(base,W,0.35), 0.95),
+        '--ring-accent': `0 0 0 1px ${rgba(accent,0.22)}, 0 18px 40px rgba(20,25,40,0.14)`,
         '--shadow': '0 2px 12px rgba(20,25,40,0.08)', '--shadow-lg': '0 12px 40px rgba(20,25,40,0.14)',
+        '--shadow-soft': '0 12px 40px rgba(20,25,40,0.10)',
     }, SEM, sem||{});
     const T = (name, slug, mode, description, tags, variables) => ({ name, slug, mode, description, tags, variables });
     return [
