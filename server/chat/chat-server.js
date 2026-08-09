@@ -320,12 +320,8 @@ class ChatServer {
             db.logIp({ userId: user?.id, anonId, ip, action: 'chat', geo });
         } catch (e) { /* non-critical */ }
 
-        // Send welcome message
-        this.sendTo(ws, {
-            type: 'system',
-            message: `Welcome${user ? `, ${user.display_name}` : ` ${anonId}`}. Use /help for help.${streamId ? ` You joined stream chat ${streamId}.` : ' You joined global chat.'}`,
-            timestamp: new Date().toISOString(),
-        });
+        // (No verbose welcome message — the client shows a concise "Connected to
+        // chat" / "Chatting as X" instead.)
 
         // Send user count + users list update
         this.broadcastUserCount(streamId);

@@ -1234,6 +1234,7 @@ function streamCardHTML(s, isLive) {
                     ${esc(s.username || 'Anonymous')}
                     ${endedAgo}
                 </div>
+                ${(isLive && s.description) ? `<div class="stream-card-desc" title="Click to expand" onclick="event.preventDefault();event.stopPropagation();this.classList.toggle('expanded')">${esc(s.description)}</div>` : ''}
                 ${s.ai_overview ? `<div class="stream-card-ai" title="Click to expand" onclick="event.preventDefault();event.stopPropagation();this.classList.toggle('expanded')"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="stream-card-ai-text">${esc(s.ai_overview)}</span></div>` : ''}
                 <div class="stream-card-meta">
                     ${s.category ? `<span class="stream-card-tag">${esc(s.category)}</span>` : ''}

@@ -2245,7 +2245,7 @@ function initChat(streamId) {
         }));
         ws._authToken = token || null;
         _chatReconnectDelay = CHAT_RECONNECT_BASE; // reset backoff on success
-        addSystemMessage('Connected to chat');
+        addRichSystemMessage('<i class="fa-solid fa-plug-circle-check" style="margin-right:5px;opacity:0.8"></i> Connected to chat');
     };
 
     // Load emotes + channel sounds for this stream context
@@ -2519,14 +2519,14 @@ function handleChatMessage(msg) {
             break;
         case 'auth':
             if (msg.authenticated) {
-                addSystemMessage(`Chatting as ${msg.username}`);
+                addRichSystemMessage(`<i class="fa-solid fa-user-check" style="margin-right:5px;opacity:0.8"></i> Chatting as ${esc(msg.username)}`);
             } else {
                 // Server didn't authenticate us — show as anon
                 const hasToken = !!localStorage.getItem('token');
                 if (hasToken) {
                     // We think we're logged in but the server rejected the token —
                     // token may be expired/invalid. Reconnect chat after loadUser refreshes auth.
-                    addSystemMessage(`Chatting as ${msg.username} (not logged in)`);
+                    addRichSystemMessage(`<i class="fa-solid fa-user" style="margin-right:5px;opacity:0.8"></i> Chatting as ${esc(msg.username)} (not logged in)`);
                     console.warn('[Chat] Token rejected by server — will attempt re-auth');
                     // Re-validate token; if still valid, reconnect chat with fresh state
                     if (typeof loadUser === 'function') {
@@ -2545,7 +2545,7 @@ function handleChatMessage(msg) {
                         }).catch(() => { });
                     }
                 } else {
-                    addSystemMessage(`Chatting as ${msg.username}`);
+                    addRichSystemMessage(`<i class="fa-solid fa-user-check" style="margin-right:5px;opacity:0.8"></i> Chatting as ${esc(msg.username)}`);
                 }
             }
             // Sync slow mode state from server on join
@@ -3789,6 +3789,9 @@ async function loadGlobalChatHistory() {
                     source_slug: m.source_slug || null,
                     source_managed_id: m.source_managed_id || null,
                     source_is_live: m.source_is_live ? 1 : 0,
+                    hatFX: m.hatFX || null,
+                    nameFX: m.nameFX || null,
+                    particleFX: m.particleFX || null,
                     reply_to: m.reply_to || null,
                 });
             }
@@ -5897,13 +5900,40 @@ function _fcwAddMessage(msg) {
 
     const username = msg.username || msg.displayName || 'anon';
     const text = msg.message || msg.text || '';
-    const color = msg.color || msg.profile_color || '#999';
+
+    // Full parity with the main chat: role badge, relay/role name color, name
+    // effects, hat, and particles.
+    const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
+    const nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
+    const nameFXClass = msg.nameFX?.cssClass ? ` ${esc(msg.nameFX.cssClass)}` : '';
+    let hatHtml = '';
+    if (msg.hatFX && msg.hatFX.hatChar) {
+        const animClass = msg.hatFX.animated ? ` hat-${esc(msg.hatFX.animated)}` : '';
+        hatHtml = `<span class="chat-hat${animClass}">${esc(msg.hatFX.hatChar)}</span>`;
+    }
+    const hasParticles = msg.particleFX?.chars;
+    const particleOpen = hasParticles ? `<span class="chat-particle-wrap ${esc(msg.particleFX.cssClass || '')}">` : '';
+    const particleClose = hasParticles ? '</span>' : '';
+
+    // Stream source badge — clickable stream TITLE (live → watch, offline → channel).
     const src = _fcwSourceLabel(msg);
-    const srcBadge = `<span class="fcw-msg-source ${src.cls}" title="Sent from ${esc(src.text)}">${esc(src.text)}</span>`;
+    const srcUser = msg.stream_channel || msg.source_channel || msg.stream_username;
+    let srcBadge;
+    if (srcUser && src.cls !== 'fcw-src-global') {
+        const chEsc = esc(srcUser);
+        const ref = esc(msg.source_slug || msg.source_managed_id || '');
+        if (msg.source_is_live) {
+            srcBadge = `<span class="fcw-msg-source" style="cursor:pointer" title="Live: ${esc(src.text)} — click to watch" data-channel="${chEsc}" data-ref="${ref}" onclick="hopToStreamSlot(this)">${esc(src.text)}</span>`;
+        } else {
+            srcBadge = `<span class="fcw-msg-source" style="cursor:pointer" title="From ${chEsc} (offline)" data-channel="${chEsc}" onclick="navigate(channelPath(this.dataset.channel))">${esc(src.text)}</span>`;
+        }
+    } else {
+        srcBadge = `<span class="fcw-msg-source ${src.cls}" title="Sent from ${esc(src.text)}">${esc(src.text)}</span>`;
+    }
 
     const el = document.createElement('div');
     el.className = 'chat-msg';
-    el.innerHTML = `${srcBadge}<span class="chat-user" style="color:${esc(color)}">${esc(username)}</span>: ${(typeof parseEmotes === 'function') ? parseEmotes(text) : esc(text)}`;
+    el.innerHTML = `${srcBadge}${badge}${hatHtml}${particleOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}">${esc(username)}</span>${particleClose}: ${(typeof parseEmotes === 'function') ? parseEmotes(text) : esc(text)}`;
     container.appendChild(el);
 
     // Trim old messages

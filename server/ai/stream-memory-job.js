@@ -38,8 +38,18 @@ async function _analyzeOne(stream) {
             stream_id: stream.id, user_id: stream.user_id, offset_seconds: offset,
             description: r.description, tags: r.tags, thumbnail_url: stream.thumbnail_url || null,
         });
-        // The latest observation is the "AI Overview" shown on the home card (free — no extra call).
-        db.updateStreamAiOverview(stream.id, r.description);
+        // Roll ALL of this stream's memories (since it started) into a general
+        // "AI Overview" for the home card — not just the latest frame. Falls back
+        // to the latest description if the summary call is unavailable.
+        let overview = r.description;
+        try {
+            const memories = db.getStreamMemories(stream.id);
+            if (memories && memories.length > 1) {
+                const summary = await ai.summarizeStreamMemories(memories);
+                if (summary) overview = summary;
+            }
+        } catch { /* keep latest description */ }
+        db.updateStreamAiOverview(stream.id, overview);
     } catch (e) { console.warn('[AI] memory store failed:', e.message); }
 }
 

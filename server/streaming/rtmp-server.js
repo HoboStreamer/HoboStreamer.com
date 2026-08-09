@@ -180,6 +180,7 @@ class RTMPServer extends EventEmitter {
             // Discord webhook notification (fire-and-forget)
             const stream = db.getStreamById ? db.getStreamById(streamId) : { id: streamId, title: `${resolvedUser.display_name}'s Stream` };
             notifyDiscordGoLive(resolvedUser, stream || { id: streamId });
+            try { require('./live-events').announceGoLive(stream || { id: streamId }, resolvedUser); } catch { /* */ }
 
             // Start server-side VOD recording via FFmpeg
             // Small delay to let NMS fully register the RTMP stream before FFmpeg pulls it

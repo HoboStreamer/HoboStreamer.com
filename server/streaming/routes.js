@@ -1461,6 +1461,8 @@ router.post('/', requireAuth, (req, res) => {
 
         // Notify followers that this streamer went live (fire-and-forget)
         notifyFollowersGoLive(req.user, stream);
+        // Cross-site on-screen "went live" notification (rate-limited per slot/hour).
+        try { require('./live-events').announceGoLive(stream, req.user); } catch { /* */ }
 
         res.status(201).json({ stream, endpoint });
     } catch (err) {

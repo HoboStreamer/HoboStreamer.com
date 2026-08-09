@@ -469,15 +469,8 @@
     color: #7dcc6f !important;
 }
 
-/* Mini coins button in chat — also gold */
-.btn-hobo-coins-mini {
-    border-color: #c8962e !important;
-    color: #ffd700 !important;
-}
-.btn-hobo-coins-mini:hover {
-    background: #c8962e22 !important;
-    border-color: #ffd700 !important;
-}
+/* Mini channel-points button in chat blends with the other themed chat buttons
+   (bucks/subscribe) — styling handled by the unified .chat-tools-row rules. */
 
 /* Coin redeem panel — gold theme */
 .coins-panel-header {

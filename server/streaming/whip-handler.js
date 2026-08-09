@@ -540,6 +540,7 @@ function autoCreateWhipSession(managedStream, user) {
 
         // Fire-and-forget side effects
         notifyDiscordGoLive(user, stream || { id: streamId });
+        try { require('./live-events').announceGoLive(stream || { id: streamId }, user); } catch { /* */ }
         if (chatRelayService) {
             chatRelayService.startForStream(stream).catch(() => {});
         }

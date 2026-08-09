@@ -404,6 +404,9 @@ app.use('/data/pastes/screenshots', express.static(path.resolve('./data/pastes/s
 // ── API Routes ───────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/streams', streamRoutes);
+// Cross-site "streamer went live" SSE feed (consumed by /live-notify.js everywhere).
+const liveEvents = require('./streaming/live-events');
+app.get('/api/live-events', (req, res) => liveEvents.subscribe(req, res));
 app.use('/api/chat', chatRoutes);
 app.use('/api/funds', monetizationRoutes);
 app.use('/api/coins', coinsRoutes);
