@@ -11636,3 +11636,21 @@ body.theme-light .user-dropdown {
     line-height: 1.35; max-height: 2.85em; transition: max-height 0.35s ease; cursor: pointer;
 }
 .stream-card-desc.expanded { -webkit-line-clamp: unset; max-height: 40em; }
+
+/* Clickable channel-points bonus chest */
+.cp-bonus-chest {
+    position: fixed; left: 20px; bottom: 20px; z-index: 3000;
+    width: 58px; height: 58px; border-radius: 50%;
+    border: 2px solid var(--accent); background: linear-gradient(135deg, #2a200e, #1a1508);
+    color: var(--accent); font-size: 1.5rem; cursor: pointer;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    display: flex; align-items: center; justify-content: center;
+    animation: cpChestPop .4s ease, cpChestPulse 1.6s ease-in-out infinite;
+}
+.cp-bonus-chest:hover { transform: scale(1.08); }
+@keyframes cpChestPop { from { transform: scale(0) rotate(-20deg); } to { transform: none; } }
+@keyframes cpChestPulse {
+    0%,100% { box-shadow: 0 8px 24px rgba(0,0,0,.5), 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+    50%     { box-shadow: 0 8px 24px rgba(0,0,0,.5), 0 0 0 12px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .cp-bonus-chest { animation: none; } }

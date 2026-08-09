@@ -10,6 +10,7 @@ let coinHeartbeatInterval = null;
 function startCoinHeartbeat(streamId) {
     stopCoinHeartbeat();
     if (!currentUser || !streamId) return;
+    startBonusGame(streamId);
 
     // Send heartbeat every 60 seconds (server tracks 5-min earning intervals)
     coinHeartbeatInterval = setInterval(async () => {
@@ -21,9 +22,8 @@ function startCoinHeartbeat(streamId) {
             if (data.earned > 0) {
                 showCoinToast(data.earned, data.balance);
             }
-            // Update nav coins display
-            const navCoins = document.getElementById('nav-coins-amount');
-            if (navCoins) navCoins.textContent = (data.balance || 0).toLocaleString();
+            // Watching earns this channel's CHANNEL POINTS (not the global Nickels
+            // navbar), so only update the in-chat / rewards-panel balance.
             document.querySelectorAll('.rewards-coin-balance').forEach(el => {
                 el.textContent = (data.balance || 0).toLocaleString();
             });
@@ -36,10 +36,66 @@ function stopCoinHeartbeat() {
         clearInterval(coinHeartbeatInterval);
         coinHeartbeatInterval = null;
     }
+    stopBonusGame();
+}
+
+// ── Clickable bonus game (a chest appears on a timer for extra points) ──
+let _bonusTimer = null;
+async function startBonusGame(streamId) {
+    stopBonusGame();
+    if (!currentUser || !streamId || typeof currentStreamData === 'undefined' || !currentStreamData) return;
+    if (String(currentStreamData.user_id) === String(currentUser.id)) return; // not on your own stream
+    let cfg;
+    try { cfg = (await api(`/coins/config/${currentStreamData.user_id}`)).config; } catch { return; }
+    _applyChannelPointsBranding(cfg);
+    const mins = cfg && cfg.game_interval_min;
+    if (!mins || mins <= 0) return;
+    _bonusTimer = setInterval(() => _showBonusChest(streamId), mins * 60_000);
+}
+function stopBonusGame() {
+    if (_bonusTimer) { clearInterval(_bonusTimer); _bonusTimer = null; }
+    document.getElementById('cp-bonus-chest')?.remove();
+}
+function _showBonusChest(streamId) {
+    if (document.getElementById('cp-bonus-chest')) return;
+    const el = document.createElement('button');
+    el.id = 'cp-bonus-chest';
+    el.className = 'cp-bonus-chest';
+    el.title = `Claim bonus ${channelPointsName()}!`;
+    el.innerHTML = `<i class="fa-solid ${_cpIcon}"></i>`;
+    el.onclick = async () => {
+        el.disabled = true;
+        try {
+            const d = await api('/coins/bonus', { method: 'POST', body: { streamId } });
+            showCoinToast(d.earned, d.balance);
+            document.querySelectorAll('.rewards-coin-balance').forEach(x => { x.textContent = (d.balance || 0).toLocaleString(); });
+        } catch (e) { toast(e.message || 'Not available yet', 'error'); }
+        el.remove();
+    };
+    document.body.appendChild(el);
+    setTimeout(() => { try { el.remove(); } catch {} }, 30_000); // vanishes if unclaimed
+}
+
+// Per-streamer channel-points branding (set from the rewards API response).
+let _cpName = 'Channel Points';
+let _cpIcon = 'fa-coins';
+function channelPointsName() { return _cpName || 'Channel Points'; }
+
+// Apply a streamer's channel-points branding (name + FA icon) to the rewards panel,
+// the in-chat points button, and any labelled elements.
+function _applyChannelPointsBranding(cfg) {
+    if (!cfg) return;
+    _cpName = cfg.name || 'Channel Points';
+    _cpIcon = cfg.icon || 'fa-coins';
+    document.querySelectorAll('.rewards-cp-label').forEach(el => { el.textContent = _cpName; });
+    document.querySelectorAll('.rewards-cp-icon, .chat-nickels-float > i').forEach(el => {
+        el.className = (el.classList.contains('rewards-cp-icon') ? 'fa-solid rewards-cp-icon ' : 'fa-solid ') + _cpIcon;
+    });
+    document.querySelectorAll('.chat-nickels-float').forEach(b => { b.title = _cpName + ' — this channel (click for rewards)'; });
 }
 
 function showCoinToast(earned, total) {
-    toast(`+${earned} Hobo Nickels earned!`, 'success');
+    toast(`+${earned} ${channelPointsName()} earned!`, 'success');
 }
 
 // ── Rewards Panel Toggle ─────────────────────────────────────
@@ -71,6 +127,7 @@ async function loadRewardsPanel() {
     try {
         const data = await api(`/coins/rewards/${currentStreamData.user_id}`);
         const rewards = data.rewards || [];
+        _applyChannelPointsBranding(data.config);
 
         const html = !rewards.length
             ? '<p class="muted" style="padding:8px">No rewards configured for this channel</p>'
@@ -84,7 +141,7 @@ async function loadRewardsPanel() {
                         style="--reward-color:${esc(r.color || '#c0965c')}" title="${esc(r.description || r.title)}">
                     <i class="fa-solid ${esc(r.icon || 'fa-star')}"></i>
                     <span class="reward-title">${esc(r.title)}</span>
-                    <span class="reward-cost"><i class="fa-solid fa-coins"></i> ${safeCost.toLocaleString()}</span>
+                    <span class="reward-cost"><i class="fa-solid ${esc(_cpIcon)}"></i> ${safeCost.toLocaleString()}</span>
                 </button>
             `; }).join('');
 
@@ -119,14 +176,14 @@ function showRedeemModal(rewardId, title, cost) {
     const overlay = document.getElementById('modal-overlay');
     const content = document.getElementById('modal-content');
     content.innerHTML = `
-        <h3><i class="fa-solid fa-gem"></i> ${esc(title)}</h3>
-        <p class="muted" style="margin-bottom:12px">Cost: <strong>${cost.toLocaleString()} Hobo Nickels</strong></p>
+        <h3><i class="fa-solid ${esc(_cpIcon)}"></i> ${esc(title)}</h3>
+        <p class="muted" style="margin-bottom:12px">Cost: <strong>${cost.toLocaleString()} ${esc(channelPointsName())}</strong></p>
         <div class="form-group">
             <label>Your Message</label>
             <input type="text" id="modal-redeem-input" class="form-input" placeholder="Type your message..." maxlength="200">
         </div>
         <button class="btn btn-primary btn-lg" onclick="doRedeem(${rewardId}, document.getElementById('modal-redeem-input').value)" style="width:100%;margin-top:8px">
-            <i class="fa-solid fa-gem"></i> Redeem
+            <i class="fa-solid ${esc(_cpIcon)}"></i> Redeem
         </button>`;
     overlay.classList.add('show');
 }
@@ -141,9 +198,7 @@ async function doRedeem(rewardId, userInput) {
         toast(data.message || 'Redeemed!', 'success');
         closeModal();
 
-        // Update balance
-        const navCoins = document.getElementById('nav-coins-amount');
-        if (navCoins && data.remaining !== undefined) navCoins.textContent = data.remaining.toLocaleString();
+        // Redeeming spends CHANNEL POINTS (in-chat balance), not the global Nickels navbar.
         document.querySelectorAll('.rewards-coin-balance').forEach(el => {
             if (data.remaining !== undefined) el.textContent = data.remaining.toLocaleString();
         });
@@ -157,15 +212,19 @@ async function doRedeem(rewardId, userInput) {
 // ── Chat coin_earned handler ─────────────────────────────────
 // This is called from chat.js when a coin_earned message arrives
 function handleCoinEarned(msg) {
-    // "gold" events (media/game spend) don't touch the per-channel Nickels display.
-    if (msg.currency === 'gold') return;
-    // Only reflect points for the channel currently shown in the navbar.
+    if (msg.total === undefined) return;
+    // "gold" events change the GLOBAL Hobo Nickels wallet → update the navbar.
+    if (msg.currency === 'gold') {
+        const navCoins = document.getElementById('nav-coins-amount');
+        if (navCoins) navCoins.textContent = msg.total.toLocaleString();
+        return;
+    }
+    // Otherwise it's CHANNEL POINTS for a streamer → update the in-chat balance,
+    // but only for the channel currently being watched.
     if (msg.streamerId && typeof _navPointsStreamerId !== 'undefined' && _navPointsStreamerId
         && String(msg.streamerId) !== String(_navPointsStreamerId)) return;
-    const navCoins = document.getElementById('nav-coins-amount');
-    if (navCoins && msg.total !== undefined) navCoins.textContent = msg.total.toLocaleString();
     document.querySelectorAll('.rewards-coin-balance').forEach(el => {
-        if (msg.total !== undefined) el.textContent = msg.total.toLocaleString();
+        el.textContent = msg.total.toLocaleString();
     });
 }
 

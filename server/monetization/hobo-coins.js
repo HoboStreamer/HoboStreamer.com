@@ -26,6 +26,8 @@ const COINS = {
 
 // In-memory cooldown tracker (userId → lastChatCoinTime)
 const chatCooldowns = new Map();
+// Bonus-game claim throttle ("userId:streamerId" → last claim ms)
+const bonusClaims = new Map();
 
 class HoboCoins {
 
@@ -43,19 +45,22 @@ class HoboCoins {
         const wt = db.getWatchTime(userId, streamId);
         if (!wt) return null;
 
-        // Only award every 5 minutes
-        if (wt.minutes_watched % 5 !== 0) return null;
+        // Channel points are per-streamer — resolve the streamer + their earn config.
+        const streamerId = db.getStreamById(streamId)?.user_id;
+        if (!streamerId || streamerId === userId) return null; // don't earn on your own stream
+        const cfg = db.getChannelPointsConfig(streamerId);
+        const interval = cfg.watch_interval_min || 5;
 
-        let coins = COINS.WATCH_PER_5MIN;
+        // Award every <interval> minutes, per the streamer's config.
+        if (wt.minutes_watched % interval !== 0) return null;
 
+        let coins = cfg.watch_amount || 0;
+        if (coins <= 0) return null;
         // Streak bonus: 2x after 60 min continuous
         if (wt.minutes_watched >= COINS.STREAK_THRESHOLD_MIN) {
             coins *= COINS.STREAK_MULTIPLIER;
         }
 
-        // Channel points are per-streamer — resolve the streamer who owns this stream.
-        const streamerId = db.getStreamById(streamId)?.user_id;
-        if (!streamerId || streamerId === userId) return null; // don't earn on your own stream
         const total = db.addChannelPoints(userId, streamerId, coins);
         db.createCoinTransaction({
             user_id: userId,
@@ -156,7 +161,8 @@ class HoboCoins {
 
         // Check user has enough points for this channel
         if (!db.deductChannelPoints(userId, pointsStreamerId, reward.cost)) {
-            throw new Error('Not enough Hobo Nickels for this channel');
+            const cpName = (db.getChannelPointsConfig(pointsStreamerId).name) || 'Channel Points';
+            throw new Error(`Not enough ${cpName}`);
         }
 
         // Check per-user cooldown
@@ -219,7 +225,28 @@ class HoboCoins {
     }
 
     /**
-     * A viewer's channel-points balance for a specific streamer ("Hobo Nickels").
+     * Claim the clickable "bonus game" — extra channel points, throttled to once
+     * per the streamer's configured interval. Returns { coins, total, streamerId } or null.
+     */
+    awardBonusGame(userId, streamId) {
+        if (!userId || !streamId) return null;
+        const streamerId = db.getStreamById(streamId)?.user_id;
+        if (!streamerId || streamerId === userId) return null;
+        const cfg = db.getChannelPointsConfig(streamerId);
+        if (!cfg.game_interval_min) return null; // bonus game disabled for this channel
+        const key = `${userId}:${streamerId}`;
+        const now = Date.now();
+        const windowMs = cfg.game_interval_min * 60_000 * 0.9; // small grace for client timing
+        if (now - (bonusClaims.get(key) || 0) < windowMs) return null;
+        bonusClaims.set(key, now);
+        const amount = Math.max(1, (cfg.watch_amount || 10) * 3);
+        const total = db.addChannelPoints(userId, streamerId, amount);
+        db.createCoinTransaction({ user_id: userId, stream_id: streamId, amount, type: 'watch', message: 'Bonus game' });
+        return { coins: amount, total, streamerId };
+    }
+
+    /**
+     * A viewer's channel-points balance for a specific streamer.
      */
     getBalance(userId, streamerId) {
         return db.getChannelPoints(userId, streamerId);

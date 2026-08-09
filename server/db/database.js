@@ -252,6 +252,17 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] Channel weather migration:', e.message); }
 
+    // Per-streamer Channel Points customization.
+    try {
+        const cpCols = database.prepare("PRAGMA table_info('channels')").all().map(c => c.name);
+        const add = (name, ddl) => { if (!cpCols.includes(name)) { database.exec(`ALTER TABLE channels ADD COLUMN ${ddl}`); console.log(`[DB] Added ${name} to channels`); } };
+        add('cp_name', "cp_name TEXT DEFAULT 'Channel Points'");
+        add('cp_icon', "cp_icon TEXT DEFAULT 'fa-coins'");
+        add('cp_watch_interval_min', 'cp_watch_interval_min INTEGER DEFAULT 5');
+        add('cp_watch_amount', 'cp_watch_amount INTEGER DEFAULT 10');
+        add('cp_game_interval_min', 'cp_game_interval_min INTEGER DEFAULT 0');
+    } catch (e) { console.warn('[DB] Channel points config migration:', e.message); }
+
     // Migrate: add VOD health and recording metadata columns
     try {
         const vodCols = database.prepare("PRAGMA table_info('vods')").all().map(c => c.name);
@@ -2236,6 +2247,29 @@ function getClipsByUserPaginated(userId, includePrivate = false, limit = 12, off
 
 function getChannelByUserId(userId) {
     return get('SELECT * FROM channels WHERE user_id = ?', [userId]);
+}
+
+// A streamer's Channel Points config (custom name/icon + earn/game intervals), with defaults.
+function getChannelPointsConfig(streamerId) {
+    const ch = getChannelByUserId(streamerId) || {};
+    const n = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+    return {
+        name: (ch.cp_name || 'Channel Points').toString().slice(0, 32),
+        icon: (ch.cp_icon || 'fa-coins').toString(),
+        watch_interval_min: Math.max(1, n(ch.cp_watch_interval_min, 5)),
+        watch_amount: Math.max(0, n(ch.cp_watch_amount, 10)),
+        game_interval_min: Math.max(0, n(ch.cp_game_interval_min, 0)),
+    };
+}
+function setChannelPointsConfig(streamerId, fields) {
+    const ch = ensureChannel(streamerId);
+    if (!ch) return;
+    const map = { name: 'cp_name', icon: 'cp_icon', watch_interval_min: 'cp_watch_interval_min', watch_amount: 'cp_watch_amount', game_interval_min: 'cp_game_interval_min' };
+    const cols = [], vals = [];
+    for (const k in map) if (fields[k] !== undefined) { cols.push(`${map[k]} = ?`); vals.push(fields[k]); }
+    if (!cols.length) return;
+    vals.push(ch.id);
+    run(`UPDATE channels SET ${cols.join(', ')} WHERE id = ?`, vals);
 }
 
 function getChannelByUsername(username) {
@@ -5185,6 +5219,7 @@ module.exports = {
     getClipsByUserPaginated,
     // Channels
     getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
+    getChannelPointsConfig, setChannelPointsConfig,
     getChannelVodRecordingPolicyByUserId,
     // RobotStreamer integration
     getRobotStreamerIntegrationByUserId, upsertRobotStreamerIntegration,

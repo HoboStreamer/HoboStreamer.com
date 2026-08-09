@@ -570,35 +570,30 @@ async function loadBalance() {
         const balEl = document.getElementById('nav-balance-amount');
         if (balEl) balEl.textContent = parseFloat(bal).toFixed(2);
     } catch { /* silent */ }
-    // Nickels are per-channel now — the navbar coins are driven by updateChannelPointsNav()
-    // when a stream/VOD/clip is open, not by this global balance load.
+    // Navbar Hobo Nickels = the GLOBAL currency (game / cosmetics / media wallet).
+    try {
+        const coinData = await api('/coins/balance');
+        const coins = coinData.balance || 0;
+        const coinEl = document.getElementById('nav-coins-amount');
+        if (coinEl) coinEl.textContent = coins.toLocaleString();
+    } catch { /* silent */ }
 }
 
-// Navbar "Hobo Nickels" = the viewer's channel points for the streamer they're
-// currently watching. Show + populate it for a streamer, or hide when not watching
-// (or when it's your own channel — you don't earn points on yourself).
+// The viewer's per-streamer CHANNEL POINTS (shown in the in-chat button + rewards
+// panel), for the streamer they're currently watching. Not the navbar (that's the
+// global Hobo Nickels wallet).
 let _navPointsStreamerId = null;
 async function updateChannelPointsNav(streamerId) {
-    _navPointsStreamerId = streamerId || null;
-    const el = document.getElementById('nav-coins');
-    const amt = document.getElementById('nav-coins-amount');
-    if (!streamerId || !currentUser || String(streamerId) === String(currentUser.id)) {
-        if (el) el.style.display = 'none';
-        return;
-    }
+    _navPointsStreamerId = (streamerId && (!currentUser || String(streamerId) !== String(currentUser.id))) ? streamerId : null;
+    if (!_navPointsStreamerId) return;
     try {
-        const d = await api(`/coins/channel-balance?streamerId=${streamerId}`);
+        const d = await api(`/coins/channel-balance?streamerId=${_navPointsStreamerId}`);
         const bal = (d.balance || 0).toLocaleString();
-        if (amt) amt.textContent = bal;
-        if (el) el.style.display = '';
-        // Keep the in-chat Nickels button (and rewards panels) in sync.
         document.querySelectorAll('.rewards-coin-balance').forEach(x => { x.textContent = bal; });
-    } catch { if (el) el.style.display = 'none'; }
+    } catch { /* silent */ }
 }
-// Navbar Nickels click → open this channel's rewards panel.
 function openChannelRewards() {
     if (typeof toggleRewardsPanel === 'function') toggleRewardsPanel();
-    else if (_navPointsStreamerId) navigate(channelPath(currentStreamData?.username || ''));
 }
 
 function toggleUserMenu() {

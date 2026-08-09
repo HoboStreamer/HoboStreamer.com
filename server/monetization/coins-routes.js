@@ -62,10 +62,50 @@ router.post('/heartbeat', requireAuth, (req, res) => {
     }
 });
 
-// ── Get Available Rewards ────────────────────────────────────
+// Claim the clickable bonus game (extra channel points, throttled per channel).
+router.post('/bonus', requireAuth, (req, res) => {
+    try {
+        const { streamId } = req.body;
+        if (!streamId) return res.status(400).json({ error: 'streamId required' });
+        const r = hoboCoins.awardBonusGame(req.user.id, streamId);
+        if (!r) return res.status(429).json({ error: 'Bonus not available right now' });
+        res.json({ earned: r.coins, balance: r.total, streamerId: r.streamerId });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// ── Get Available Rewards + this channel's points config ─────
 router.get('/rewards/:userId', (req, res) => {
-    const rewards = hoboCoins.getRewards(parseInt(req.params.userId));
-    res.json({ rewards });
+    const streamerId = parseInt(req.params.userId);
+    const rewards = hoboCoins.getRewards(streamerId);
+    res.json({ rewards, config: db.getChannelPointsConfig(streamerId) });
+});
+
+// Public: a streamer's Channel Points branding/config (name, icon, earn rates).
+router.get('/config/:userId', (req, res) => {
+    res.json({ config: db.getChannelPointsConfig(parseInt(req.params.userId)) });
+});
+
+// A streamer configures their own Channel Points.
+router.put('/config', requireAuth, (req, res) => {
+    try {
+        const b = req.body || {};
+        const fields = {};
+        if (b.name !== undefined) fields.name = (String(b.name).trim().slice(0, 32)) || 'Channel Points';
+        if (b.icon !== undefined) {
+            const ic = String(b.icon).trim();
+            if (!/^fa-[a-z0-9-]+$/.test(ic)) return res.status(400).json({ error: 'Icon must be a Font Awesome class like fa-coins' });
+            fields.icon = ic;
+        }
+        if (b.watch_interval_min !== undefined) fields.watch_interval_min = Math.max(1, Math.min(120, parseInt(b.watch_interval_min, 10) || 5));
+        if (b.watch_amount !== undefined) fields.watch_amount = Math.max(0, Math.min(100000, parseInt(b.watch_amount, 10) || 0));
+        if (b.game_interval_min !== undefined) fields.game_interval_min = Math.max(0, Math.min(1440, parseInt(b.game_interval_min, 10) || 0));
+        db.setChannelPointsConfig(req.user.id, fields);
+        res.json({ config: db.getChannelPointsConfig(req.user.id) });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
 });
 
 // ── Create Reward (Streamer) ─────────────────────────────────
