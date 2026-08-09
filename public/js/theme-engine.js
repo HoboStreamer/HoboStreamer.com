@@ -23,6 +23,7 @@ const DEFAULT_VARS = {
     '--accent': '#c0965c',
     '--accent-light': '#dbb077',
     '--accent-dark': '#8a6a3a',
+    '--on-accent': '#0b0d10',
     '--live-red': '#e74c3c',
     '--success': '#2ecc71',
     '--warning': '#f39c12',
@@ -45,7 +46,7 @@ const DEFAULT_VARS = {
 const THEME_VARS = [
     '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-card', '--bg-hover', '--bg-input',
     '--text-primary', '--text-secondary', '--text-muted',
-    '--accent', '--accent-light', '--accent-dark',
+    '--accent', '--accent-light', '--accent-dark', '--on-accent',
     '--live-red', '--success', '--warning', '--danger', '--info',
     '--border', '--border-light',
     '--shadow', '--shadow-lg',

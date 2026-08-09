@@ -26,6 +26,7 @@
     --accent: #c0965c;           /* Campfire amber */
     --accent-light: #dbb077;
     --accent-dark: #8a6a3a;
+    --on-accent: #0b0d10; /* readable text/icon color on top of --accent (themes override) */
 
     --live-red: #e74c3c;
     --success: #2ecc71;
@@ -1145,7 +1146,7 @@ main#app { position: relative; z-index: 1; }
     border: 1px solid transparent; transition: all 0.2s; cursor: pointer;
     box-shadow: 0 6px 18px rgba(0,0,0,0.14);
 }
-.btn-primary { background: var(--accent); color: #000; }
+.btn-primary { background: var(--accent); color: var(--on-accent, #0b0d10); }
 .btn-primary:hover { background: var(--accent-light); transform: translateY(-1px); }
 .btn-outline {
     background: transparent; color: var(--text-primary);
