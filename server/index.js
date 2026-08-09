@@ -206,6 +206,15 @@ app.use(helmet({
     },
     crossOriginEmbedderPolicy: false,
 }));
+// The cross-site go-live widget + its SSE feed must be loadable from other Hobo
+// origins (hobo.tools / hobo.quest), so relax CORP for just those two paths.
+app.use((req, res, next) => {
+    if (req.path === '/live-notify.js' || req.path === '/api/live-events') {
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    next();
+});
 app.use(cors({
     origin(origin, callback) {
         if (!origin) return callback(null, true);
