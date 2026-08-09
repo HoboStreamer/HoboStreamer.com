@@ -82,12 +82,14 @@ class RobotStreamerService {
         try {
             const token = integration?.token;
             const robotId = integration?.robot_id;
-            const userName = integration?.owner_name;
+            // owner_name may be blank if the integration was set up by pasting a token —
+            // fall back to the user_name embedded in the JWT.
+            const userName = integration?.owner_name || this.decodeToken(token)?.user_name;
             const title = String(newTitle || '').trim();
             if (!token || !robotId || !userName || !title) return false;
 
             const settings = await this._rsApiPost('/v1/get_user_settings', { user_name: userName, token });
-            if (!settings || (settings.status && settings.status !== 'ok')) return false;
+            if (!settings || (settings.status && settings.status !== 'ok' && settings.status !== true)) return false;
 
             const robots = (settings.robots || [])
                 .map(r => (typeof r === 'string' ? safeJsonParse(r, null) : r))
@@ -98,21 +100,45 @@ class RobotStreamerService {
                 robot_id: r.robot_id,
                 robot_name: String(r.robot_id) === String(robotId) ? title : r.robot_name,
                 robot_desc: r.robot_desc || '',
-                tts_price: r.tts_price != null ? r.tts_price : 0,
+                tts_price: r.tts_price != null ? r.tts_price : '0',
                 pip_camera_id: r.pip_camera_id || '',
-                control_filter: r.control_filter != null ? r.control_filter : '',
-                control_enabled: r.control_enabled != null ? r.control_enabled : '',
+                control_filter: r.control_filter || 'all',
+                control_enabled: r.control_enabled != null ? r.control_enabled : 'true',
                 panels: (typeof r.panels === 'string' ? safeJsonParse(r.panels, r.panels) : r.panels) || [],
                 robot_delete: false,
             }));
 
-            // Echo the whole account payload back unchanged, only swapping robots.
-            const body = { ...settings, user_name: userName, token, robots: sendRobots };
-            delete body.status; delete body.status_readable; delete body.error;
+            // Build the EXACT body /v2/set_user_settings expects. get_user_settings uses
+            // DIFFERENT field names for some values (chat_filter_type → filter_type_chat,
+            // chat_filter_enabled → filter_enable), so spreading it verbatim breaks the save.
+            const body = {
+                user_name: userName,
+                token,
+                email: settings.email || '',
+                avatar: settings.avatar || '',
+                over18: !!settings.over18,
+                nsfw_broadcaster: !!settings.nsfw_broadcaster,
+                stream_key: settings.stream_key || '',
+                filter_type_chat: settings.chat_filter_type || 'all',
+                filter_enable: !!settings.chat_filter_enabled,
+                chat_ip_throttling: !!settings.chat_ip_throttling,
+                record_streams: settings.record_streams !== false,
+                clip_streams: settings.clip_streams !== false,
+                chat_filter_words: Array.isArray(settings.chat_filter_words) ? settings.chat_filter_words : [''],
+                chat_limit: String(settings.chat_limit || '500'),
+                subscription_icon: settings.subscription_icon || '',
+                viewer_tags_enabled: settings.viewer_tags_enabled !== false,
+                robots: sendRobots,
+            };
 
             const res = await this._rsApiPost('/v2/set_user_settings', body);
-            const ok = !res || res.status === true || res.status === 'ok' || (Array.isArray(res.error) && res.error.length === 0);
-            if (!ok) console.warn('[RS] set_user_settings did not confirm title update:', JSON.stringify(res?.error || res?.status_readable || ''));
+            // RS returns status:true on save even when a non-blocking field warning (e.g. an
+            // empty stream_key) is present in the error array. A title error would name field
+            // "robot_name". Treat status:true as success unless the error array flags robots.
+            const errs = Array.isArray(res?.error) ? res.error : [];
+            const robotErr = errs.some(e => /robot|name/i.test(e?.field || '') || /robot|name/i.test(e?.error || ''));
+            const ok = !!res && (res.status === true || res.status === 'ok') && !robotErr;
+            if (!ok) console.warn('[RS] Title sync not confirmed:', JSON.stringify(res?.error || res?.status_readable || res || ''));
             return ok;
         } catch (err) {
             console.warn('[RS] Title sync failed:', err.message);
