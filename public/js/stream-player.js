@@ -2875,6 +2875,12 @@ function setupVideoControls() {
         createLiveClip();
     };
 
+    // Stats button — toggle the live stream-stats overlay
+    const btnStats = document.getElementById('btn-stats');
+    if (btnStats) btnStats.onclick = () => toggleStreamStats();
+    const btnStatsClose = document.getElementById('btn-stats-close');
+    if (btnStatsClose) btnStatsClose.onclick = () => toggleStreamStats(false);
+
     // Keyboard shortcuts for DVR seeking
     const container = document.getElementById('video-container');
     if (container) {
@@ -3408,4 +3414,86 @@ function showUnmuteOverlay(video) {
         video.play().catch(() => {});
     }, { once: true });
     container.appendChild(overlay);
+}
+
+/* ── Player stats overlay ─────────────────────────────────────
+   Toggled by the gauge button. Shows the real streaming method, codec,
+   bitrate, resolution, fps and loss — measured live from the video element
+   and (for WebRTC/SFU) RTCPeerConnection/Transport getStats(). */
+let _statsPoll = null;
+let _statsPrev = null; // { ts, bytes, frames }
+
+function toggleStreamStats(force) {
+    const panel = document.getElementById('stream-stats-panel');
+    if (!panel) return;
+    const show = (force === undefined) ? (panel.style.display === 'none') : !!force;
+    panel.style.display = show ? '' : 'none';
+    if (show) {
+        _statsPrev = null;
+        _updateStreamStats();
+        if (_statsPoll) clearInterval(_statsPoll);
+        _statsPoll = setInterval(_updateStreamStats, 1000);
+    } else if (_statsPoll) {
+        clearInterval(_statsPoll); _statsPoll = null;
+    }
+}
+
+function _getStatsSource() {
+    // Both RTCPeerConnection (legacy) and the mediasoup recv Transport expose getStats()
+    if (typeof player !== 'undefined' && player) {
+        if (player.pc && typeof player.pc.getStats === 'function') return player.pc;
+        if (player._sfuRecvTransport && typeof player._sfuRecvTransport.getStats === 'function') return player._sfuRecvTransport;
+    }
+    return null;
+}
+
+async function _updateStreamStats() {
+    const body = document.getElementById('stream-stats-body');
+    if (!body) return;
+    const vid = document.getElementById('video-element');
+    const rows = [];
+    let method = 'Unknown';
+    try { method = (typeof _getPlayerProtocolLabel === 'function') ? _getPlayerProtocolLabel(playerType) : (typeof playerType !== 'undefined' ? playerType : 'Unknown'); } catch { /* */ }
+    rows.push(['Method', method || 'Unknown']);
+    let haveRes = false;
+    if (vid && vid.videoWidth) { rows.push(['Resolution', `${vid.videoWidth}×${vid.videoHeight}`]); haveRes = true; }
+
+    let codec = null, fps = null, kbps = null, loss = null, jitter = null;
+    const src = _getStatsSource();
+    if (src) {
+        try {
+            const report = await src.getStats();
+            let inbound = null, codecId = null;
+            report.forEach(st => { if (st.type === 'inbound-rtp' && (st.kind === 'video' || st.mediaType === 'video')) inbound = st; });
+            if (inbound) {
+                codecId = inbound.codecId || null;
+                if (inbound.framesPerSecond) fps = Math.round(inbound.framesPerSecond);
+                if (!haveRes && inbound.frameWidth) { rows.push(['Resolution', `${inbound.frameWidth}×${inbound.frameHeight}`]); haveRes = true; }
+                if (typeof inbound.packetsLost === 'number') loss = inbound.packetsLost;
+                if (typeof inbound.jitter === 'number') jitter = Math.round(inbound.jitter * 1000);
+                const now = inbound.timestamp, bytes = inbound.bytesReceived || 0;
+                if (_statsPrev && _statsPrev.bytes != null && now > _statsPrev.ts) {
+                    kbps = Math.max(0, Math.round(((bytes - _statsPrev.bytes) * 8) / (now - _statsPrev.ts))); // bits/ms = kbit/s
+                }
+                _statsPrev = { ts: now, bytes };
+            }
+            if (codecId && report.get) { const c = report.get(codecId); if (c && c.mimeType) codec = c.mimeType.replace('video/', '').toUpperCase(); }
+        } catch { /* getStats unavailable */ }
+    }
+    // FPS fallback for HLS/JSMPEG (no peer connection)
+    if (fps == null && vid && vid.getVideoPlaybackQuality) {
+        try {
+            const q = vid.getVideoPlaybackQuality();
+            if (_statsPrev && _statsPrev.frames != null) fps = Math.max(0, q.totalVideoFrames - _statsPrev.frames);
+            _statsPrev = Object.assign(_statsPrev || {}, { frames: q.totalVideoFrames });
+        } catch { /* */ }
+    }
+    if (codec) rows.push(['Codec', codec]);
+    if (kbps != null) rows.push(['Bitrate', kbps >= 1000 ? (kbps / 1000).toFixed(1) + ' Mbps' : kbps + ' kbps']);
+    if (fps != null) rows.push(['FPS', String(fps)]);
+    if (loss != null) rows.push(['Packets lost', String(loss)]);
+    if (jitter != null) rows.push(['Jitter', jitter + ' ms']);
+    if (navigator.connection && navigator.connection.effectiveType) rows.push(['Network', navigator.connection.effectiveType]);
+    const esc2 = (s) => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    body.innerHTML = rows.map(([k, v]) => `<span class="ssp-k">${esc2(k)}</span><span class="ssp-v">${esc2(v)}</span>`).join('');
 }

@@ -377,23 +377,44 @@ async function youtubeGoLive(token, title) {
     const ingest = stream && stream.cdn && stream.cdn.ingestionInfo;
     if (!ingest || !ingest.streamName) return null;
 
-    // Create a broadcast that YouTube auto-starts when it sees the ingest and
-    // auto-stops when it ends — avoids us having to poll + transition manually.
+    // Avoid piling up "Upcoming" broadcasts: reuse an existing upcoming/ready one
+    // (and clean up extras) instead of creating a fresh broadcast on every go-live.
     try {
-        const body = {
-            snippet: { title: (title || 'HoboStreamer').slice(0, 100), scheduledStartTime: new Date(Date.now() + 5000).toISOString() },
-            status: { privacyStatus: 'public', selfDeclaredMadeForKids: false },
-            contentDetails: { enableAutoStart: true, enableAutoStop: true },
-        };
-        const res = await fetch('https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet,status,contentDetails', {
-            method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
-        const broadcast = await res.json();
-        if (!res.ok) throw new Error(broadcast.error?.message || `insert ${res.status}`);
-        // Bind broadcast → stream
-        const bindRes = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${broadcast.id}&part=id,contentDetails&streamId=${stream.id}`, { method: 'POST', headers: H });
+        let reuse = null;
+        try {
+            const bl = await getJson('https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,status,contentDetails&broadcastStatus=upcoming&broadcastType=all&maxResults=50', H);
+            const upcoming = (bl.items || []).filter(b => ['created', 'ready', 'testing'].includes(b.status && b.status.lifeCycleStatus));
+            // Prefer one already bound to our stream, else any upcoming one we can rebind.
+            reuse = upcoming.find(b => b.contentDetails && b.contentDetails.boundStreamId === stream.id) || upcoming[0] || null;
+            // Delete the leftover upcoming duplicates to clear the pileup.
+            for (const b of upcoming) {
+                if (reuse && b.id !== reuse.id) {
+                    try { await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts?id=${b.id}`, { method: 'DELETE', headers: H }); } catch { /* */ }
+                }
+            }
+        } catch { /* listing failed — fall through to create */ }
+
+        let broadcastId;
+        if (reuse) {
+            broadcastId = reuse.id;
+            console.log(`[PlatformOAuth] Reusing YouTube broadcast ${broadcastId} (no new "Upcoming" created)`);
+        } else {
+            const body = {
+                snippet: { title: (title || 'HoboStreamer').slice(0, 100), scheduledStartTime: new Date(Date.now() + 5000).toISOString() },
+                status: { privacyStatus: 'public', selfDeclaredMadeForKids: false },
+                contentDetails: { enableAutoStart: true, enableAutoStop: true },
+            };
+            const res = await fetch('https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet,status,contentDetails', {
+                method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+            });
+            const broadcast = await res.json();
+            if (!res.ok) throw new Error(broadcast.error?.message || `insert ${res.status}`);
+            broadcastId = broadcast.id;
+            console.log(`[PlatformOAuth] YouTube broadcast ${broadcastId} created (auto-start)`);
+        }
+        // Bind broadcast → stream (idempotent — safe to rebind the reused one).
+        const bindRes = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${broadcastId}&part=id,contentDetails&streamId=${stream.id}`, { method: 'POST', headers: H });
         if (!bindRes.ok) { const j = await bindRes.json().catch(() => ({})); throw new Error(j.error?.message || `bind ${bindRes.status}`); }
-        console.log(`[PlatformOAuth] YouTube broadcast ${broadcast.id} created + bound (auto-start)`);
     } catch (e) {
         // Still return the key — if the user has auto-start enabled in YT Studio it works anyway.
         console.warn('[PlatformOAuth] YouTube broadcast setup failed (key still returned):', e.message);

@@ -2821,7 +2821,7 @@ function addChatMessage(msg) {
         const ch = esc(msg.source_channel || chatChannel || '');
         const ref = esc(String(msg.source_slug || msg.source_managed_id || ''));
         if (msg.source_is_live && ch && ref) {
-            streamBadge += `<span class="chat-stream-badge chat-origin-badge" title="From this streamer's other live stream — click to watch" data-channel="${ch}" data-ref="${ref}" onclick="hopToStreamSlot(this)"><i class="fa-solid fa-tower-broadcast"></i> ${srcTitle}</span> `;
+            streamBadge += `<span class="chat-stream-badge chat-origin-badge" title="From this streamer's other live stream — click to watch" data-channel="${ch}" data-ref="${ref}" onclick="hopToStreamSlot(this)">${srcTitle}</span> `;
         } else {
             streamBadge += `<span class="chat-stream-badge chat-origin-badge chat-origin-offline" title="From this streamer's stream: ${srcTitle}">${srcTitle}</span> `;
         }
@@ -3634,6 +3634,11 @@ async function loadChatHistory(streamId) {
                 timestamp: m.timestamp,
                 reply_to: m.reply_to || null,
                 source_platform: m.source_platform || undefined,
+                // Cosmetics (name/particle/hat effects + tag) so history matches live
+                nameFX: m.nameFX || undefined,
+                particleFX: m.particleFX || undefined,
+                hatFX: m.hatFX || undefined,
+                tag: m.tag || undefined,
                 // Source-stream context (for the per-message origin badge)
                 stream_id: m.stream_id,
                 source_stream_title: m.source_stream_title,

@@ -5973,6 +5973,33 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     font-size: 0.82rem; color: var(--text-secondary);
     max-width: 340px;
 }
+/* Full-width variant: spans the area under the info bar, left-aligned, no wasted inset */
+.ch-weather-full {
+    max-width: 100%; width: 100%;
+    padding: 6px 16px 10px; margin: 0;
+    border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+}
+.ch-weather-full .weather-hourly-scroll { max-width: 100%; }
+/* Let hourly cells stretch to fill the wider row instead of clumping left */
+.ch-weather-full .weather-hourly-scroll { display: flex; gap: 8px; }
+.ch-weather-full .weather-hour { flex: 1 1 0; min-width: 64px; }
+.ch-weather-full .weather-tabs, .ch-weather-full .weather-daily { width: 100%; }
+
+/* ── Player stats overlay ────────────────────────────────── */
+.stream-stats-panel {
+    position: absolute; top: 12px; right: 12px; z-index: 12;
+    width: 268px; max-width: calc(100% - 24px);
+    background: rgba(15,15,18,0.92); backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+    color: #eee; font-size: 0.8rem; overflow: hidden;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+}
+.ssp-header { display:flex; align-items:center; justify-content:space-between; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: 600; }
+.ssp-close { background: none; border: none; color: #aaa; cursor: pointer; font-size: 0.95rem; padding: 2px 4px; }
+.ssp-close:hover { color: #fff; }
+.ssp-body { padding: 8px 12px; display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; }
+.ssp-body .ssp-k { color: #99a; }
+.ssp-body .ssp-v { color: #fff; text-align: right; font-variant-numeric: tabular-nums; word-break: break-word; }
 .weather-current {
     display: flex; align-items: center; gap: 10px;
 }

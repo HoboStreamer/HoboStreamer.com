@@ -14,6 +14,35 @@ const { optionalAuth, requireAuth, requireAdmin } = require('../auth/auth');
 const permissions = require('../auth/permissions');
 
 const router = express.Router();
+
+/**
+ * Attach each author's CURRENT cosmetics (name/particle/hat effects) + tag to
+ * history rows, so historical messages render with the same effects as live ones
+ * (chat_messages doesn't persist cosmetics). Cached per user_id within the batch.
+ */
+function enrichMessagesWithCosmetics(messages) {
+    let cosmetics = null, tags = null;
+    try { cosmetics = require('../monetization/cosmetics'); } catch { /* */ }
+    try { tags = require('../game/tags'); } catch { /* */ }
+    if ((!cosmetics && !tags) || !Array.isArray(messages)) return messages;
+    const cache = new Map();
+    for (const m of messages) {
+        if (!m || !m.user_id) continue;
+        let prof = cache.get(m.user_id);
+        if (!prof) {
+            prof = {};
+            try { if (cosmetics) Object.assign(prof, cosmetics.getCosmeticProfile(m.user_id) || {}); } catch { /* */ }
+            try { if (tags) prof.tag = tags.getTagProfile(m.user_id) || null; } catch { /* */ }
+            cache.set(m.user_id, prof);
+        }
+        if (prof.nameFX) m.nameFX = prof.nameFX;
+        if (prof.particleFX) m.particleFX = prof.particleFX;
+        if (prof.hatFX) m.hatFX = prof.hatFX;
+        if (prof.tag) m.tag = prof.tag;
+    }
+    return messages;
+}
+
 const MIN_SELF_DELETE_MINUTES = 3;
 const MAX_SELF_DELETE_MINUTES = 10080;
 const GIF_ALLOWED_PROVIDERS = new Set(['tenor', 'giphy']);
@@ -399,7 +428,7 @@ router.get('/global/history', optionalAuth, (req, res) => {
         sql += ` ORDER BY cm.timestamp DESC LIMIT ?`;
         params.push(limit);
 
-        const messages = hydrateReplies(db.all(sql, params).reverse());
+        const messages = enrichMessagesWithCosmetics(hydrateReplies(db.all(sql, params).reverse()));
         res.json({ messages });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get global chat history' });
@@ -477,7 +506,7 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
         sql += ` ORDER BY cm.timestamp DESC LIMIT ?`;
         params.push(limit);
 
-        const messages = hydrateReplies(db.all(sql, params).reverse());
+        const messages = enrichMessagesWithCosmetics(hydrateReplies(db.all(sql, params).reverse()));
 
         // Currently-live slots for this broadcaster — lets the client render a
         // "hop between live streams" affordance.

@@ -2588,10 +2588,11 @@ function activateChannelStream(stream) {
     currentStreamId = stream.id;
     currentStreamData = stream;
     document.getElementById('ch-stream-title').textContent = stream.title || 'Untitled Stream';
-    // Protocol badge on live channel page (moved from tabs to info bar)
+    // Stream-type badge only (Screen Share / Audio Only / Camera). The WEBRTC/RTMP
+    // protocol tag was removed from the header — that info now lives in the player's
+    // stats overlay, which is more useful than the raw transport for viewers.
     const chProtoEl = document.getElementById('ch-protocol-badge');
-    if (chProtoEl) chProtoEl.innerHTML = (stream.protocol ? protocolBadge(stream.protocol) : '') +
-        streamTypeBadge(stream.browser_mode, stream.streaming_method);
+    if (chProtoEl) chProtoEl.innerHTML = streamTypeBadge(stream.browser_mode, stream.streaming_method);
 
     // Mic-only audio overlay for viewers
     _updateMicOnlyOverlay(stream.browser_mode, stream.streaming_method);
