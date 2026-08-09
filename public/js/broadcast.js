@@ -1200,10 +1200,10 @@ async function loadExistingStreams(excludeStreamId) {
         // Only show ACTIVE streams in the top section
         const live = all.filter(s => s.is_live);
         activeListEl.innerHTML = live.map(s => renderStreamItem(s)).join('');
-        _updateBroadcastTopTabs(live.length > 0);
+        _updateBroadcastTopTabs(live.length);
     } catch (err) {
         console.error('[Broadcast] Failed to load active streams:', err);
-        _updateBroadcastTopTabs(false);
+        _updateBroadcastTopTabs(0);
     }
 }
 
@@ -1219,11 +1219,18 @@ function switchBroadcastTopTab(tab) {
  * With no live streams the tab bar hides and only "My Streams" shows; the page
  * defaults to "My Streams" so slot config is front-and-center.
  */
-function _updateBroadcastTopTabs(hasActive) {
+function _updateBroadcastTopTabs(activeCount) {
+    const count = Number(activeCount) || 0;
+    const hasActive = count > 0;
     const bar = document.getElementById('bc-top-tabs');
     const activeBtn = document.querySelector('.bc-top-tab[data-bctab="active"]');
+    const badge = document.getElementById('bc-active-count');
     if (bar) bar.style.display = hasActive ? 'flex' : 'none';
     if (activeBtn) activeBtn.style.display = hasActive ? '' : 'none';
+    if (badge) {
+        badge.textContent = count;
+        badge.style.display = hasActive ? '' : 'none';
+    }
     if (!hasActive) {
         switchBroadcastTopTab('mine');       // no active streams → always My Streams
     } else if (!window._bcTopTab) {

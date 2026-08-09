@@ -97,6 +97,10 @@ function parseModifiers(tokens, options = {}) {
     const settings = {
         allowPitch: options.allowPitch !== false,
         allowSpeed: options.allowSpeed !== false,
+        minSpeed: Number.isFinite(options.minSpeed) ? options.minSpeed : 0.5,
+        maxSpeed: Number.isFinite(options.maxSpeed) ? options.maxSpeed : 3.0,
+        minPitch: Number.isFinite(options.minPitch) ? options.minPitch : 0.5,   // rate
+        maxPitch: Number.isFinite(options.maxPitch) ? options.maxPitch : 2.0,   // rate
     };
     const result = {
         pitch: 1,
@@ -111,7 +115,8 @@ function parseModifiers(tokens, options = {}) {
         if (pitchToken && settings.allowPitch) {
             const raw = parseFloat(pitchToken[1]);
             if (Number.isFinite(raw)) {
-                result.pitch = clamp(Math.abs(raw) > 10 ? centsToRate(raw) : raw, 0.5, 2.0);
+                // Values with |x| > 10 are cents (e.g. 500p, -500p); small values are a raw rate.
+                result.pitch = clamp(Math.abs(raw) > 10 ? centsToRate(raw) : raw, settings.minPitch, settings.maxPitch);
             }
             continue;
         }
@@ -119,13 +124,13 @@ function parseModifiers(tokens, options = {}) {
         const speedToken = token.match(/^([0-9]*\.?[0-9]+)s$/i);
         if (speedToken && settings.allowSpeed) {
             const raw = parseFloat(speedToken[1]);
-            if (Number.isFinite(raw)) result.speed = clamp(raw, 0.5, 3.0);
+            if (Number.isFinite(raw)) result.speed = clamp(raw, settings.minSpeed, settings.maxSpeed);
             continue;
         }
 
         if (/^[0-9]*\.?[0-9]+$/.test(token) && settings.allowSpeed) {
             const raw = parseFloat(token);
-            if (Number.isFinite(raw)) result.speed = clamp(raw, 0.5, 3.0);
+            if (Number.isFinite(raw)) result.speed = clamp(raw, settings.minSpeed, settings.maxSpeed);
         }
     }
 
@@ -400,6 +405,7 @@ cleanupCache().catch(() => {});
 
 module.exports = {
     parseSoundboardMessage,
+    parseModifiers,
     getSoundboardAudio,
     isConfigured,
     cleanupCache,

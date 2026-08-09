@@ -674,6 +674,11 @@ function initDb() {
         if (!cols.includes('max_sound_seconds')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN max_sound_seconds INTEGER DEFAULT 10');
         if (!cols.includes('uploads_mods_only')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN uploads_mods_only INTEGER DEFAULT 0');
         if (!cols.includes('emote_scale')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN emote_scale INTEGER DEFAULT 100');
+        // Per-channel sound pitch/speed limits (speed as a rate; pitch as cents).
+        if (!cols.includes('sound_min_speed')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sound_min_speed REAL DEFAULT 0.5');
+        if (!cols.includes('sound_max_speed')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sound_max_speed REAL DEFAULT 3.0');
+        if (!cols.includes('sound_min_pitch_cents')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sound_min_pitch_cents INTEGER DEFAULT -1200');
+        if (!cols.includes('sound_max_pitch_cents')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sound_max_pitch_cents INTEGER DEFAULT 1200');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
 
     // Migrate: add channel_owner_id to emotes (viewer uploads targeting a channel) + channel_sounds table
@@ -3411,6 +3416,10 @@ function getChannelModerationSettings(channelId) {
             max_sound_seconds: 10,
             uploads_mods_only: 0,
             emote_scale: 100,
+            sound_min_speed: 0.5,
+            sound_max_speed: 3.0,
+            sound_min_pitch_cents: -1200,
+            sound_max_pitch_cents: 1200,
         };
 }
 
@@ -3447,6 +3456,10 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.max_sound_seconds !== undefined) { updates.push('max_sound_seconds = ?'); params.push(Math.min(30, Math.max(1, Number(fields.max_sound_seconds) || 10))); }
         if (fields.uploads_mods_only !== undefined) { updates.push('uploads_mods_only = ?'); params.push(fields.uploads_mods_only ? 1 : 0); }
         if (fields.emote_scale !== undefined) { updates.push('emote_scale = ?'); params.push(Math.min(300, Math.max(50, Number(fields.emote_scale) || 100))); }
+        if (fields.sound_min_speed !== undefined) { updates.push('sound_min_speed = ?'); params.push(Math.min(1, Math.max(0.1, Number(fields.sound_min_speed) || 0.5))); }
+        if (fields.sound_max_speed !== undefined) { updates.push('sound_max_speed = ?'); params.push(Math.min(5, Math.max(1, Number(fields.sound_max_speed) || 3.0))); }
+        if (fields.sound_min_pitch_cents !== undefined) { updates.push('sound_min_pitch_cents = ?'); params.push(Math.min(0, Math.max(-2400, Math.round(Number(fields.sound_min_pitch_cents) || -1200)))); }
+        if (fields.sound_max_pitch_cents !== undefined) { updates.push('sound_max_pitch_cents = ?'); params.push(Math.max(0, Math.min(2400, Math.round(Number(fields.sound_max_pitch_cents) || 1200)))); }
         if (updates.length > 0) {
             updates.push('updated_at = CURRENT_TIMESTAMP');
             params.push(channelId);

@@ -30,9 +30,19 @@ const RESERVED_COMMANDS = new Set([
 
 const MIME_TO_EXT = {
     'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav',
+    'audio/wave': '.wav', 'audio/vnd.wave': '.wav', 'audio/x-pn-wav': '.wav',
     'audio/ogg': '.ogg', 'audio/webm': '.webm', 'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a',
-    'audio/aac': '.aac', 'audio/flac': '.flac',
+    'audio/aac': '.aac', 'audio/flac': '.flac', 'audio/x-flac': '.flac', 'audio/opus': '.opus',
 };
+// Browsers/OSes report .wav (and others) under many mimetypes — or none at all
+// (application/octet-stream). Fall back to the file extension so uploads don't wrongly fail.
+const ALLOWED_EXT = new Set(['.mp3', '.wav', '.ogg', '.oga', '.opus', '.webm', '.m4a', '.mp4', '.aac', '.flac']);
+
+function extFor(file) {
+    if (MIME_TO_EXT[file.mimetype]) return MIME_TO_EXT[file.mimetype];
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    return ALLOWED_EXT.has(ext) ? ext : '';
+}
 
 function soundsDir() {
     const dir = path.resolve(config.sounds.path);
@@ -43,7 +53,7 @@ function soundsDir() {
 const soundStorage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, soundsDir()),
     filename: (req, file, cb) => {
-        const ext = MIME_TO_EXT[file.mimetype] || '.mp3';
+        const ext = extFor(file) || '.bin';
         cb(null, `snd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
 });
@@ -51,10 +61,29 @@ const soundUpload = multer({
     storage: soundStorage,
     limits: { fileSize: config.sounds.maxSizeKb * 1024 },
     fileFilter: (req, file, cb) => {
-        if (MIME_TO_EXT[file.mimetype]) cb(null, true);
-        else cb(new Error('Only MP3, WAV, OGG, WebM, M4A, AAC, or FLAC audio is allowed'));
+        // Accept by known audio mimetype OR by a recognized audio extension.
+        if (MIME_TO_EXT[file.mimetype] || ALLOWED_EXT.has(path.extname(file.originalname || '').toLowerCase())) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only audio files are allowed (MP3, WAV, OGG, Opus, WebM, M4A, AAC, FLAC).'));
+        }
     },
 });
+
+/** Transcode an audio file to a canonical MP3 (fast decode, small, universal). Returns the
+ *  new path on success (original left for the caller to delete), or null on failure. */
+function convertToMp3(srcPath) {
+    return new Promise((resolve) => {
+        const outPath = srcPath.replace(/\.[^.]+$/, '') + '.conv.mp3';
+        let proc;
+        try {
+            proc = spawn('ffmpeg', ['-y', '-i', srcPath, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '128k', outPath]);
+        } catch { return resolve(null); }
+        proc.on('close', (code) => resolve(code === 0 && fs.existsSync(outPath) ? outPath : null));
+        proc.on('error', () => resolve(null));
+        setTimeout(() => { try { proc.kill(); } catch {} resolve(null); }, 20000);
+    });
+}
 
 /** Probe an audio file's duration in seconds (0 on failure). */
 function probeDuration(filePath) {
@@ -182,11 +211,27 @@ router.post('/', requireAuth, soundUpload.single('sound'), async (req, res) => {
             return res.status(400).json({ error: `Sound is too long (${duration.toFixed(1)}s). Max is ${maxSeconds}s for this channel.` });
         }
 
+        // Normalize every upload to MP3 — universal, small, and the fastest to decode for
+        // low-latency chat playback. (Skip if it's already an .mp3.)
+        let finalPath = req.file.path;
+        let finalMime = req.file.mimetype;
+        if (path.extname(finalPath).toLowerCase() !== '.mp3') {
+            const mp3 = await convertToMp3(req.file.path);
+            if (mp3) {
+                try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
+                finalPath = mp3;
+                finalMime = 'audio/mpeg';
+            } else {
+                cleanup();
+                return res.status(400).json({ error: 'Could not process that audio file. Try a standard MP3 or WAV.' });
+            }
+        }
+
         const result = db.createChannelSound({
             channel_owner_id: channelOwnerId,
             command,
-            url: req.file.path,
-            mime: req.file.mimetype,
+            url: finalPath,
+            mime: finalMime,
             duration_seconds: duration,
             created_by: req.user.id,
             created_by_name: req.user.display_name || req.user.username,
@@ -196,7 +241,7 @@ router.post('/', requireAuth, soundUpload.single('sound'), async (req, res) => {
             sound: {
                 id: result.lastInsertRowid,
                 command,
-                url: `/api/sounds/file/${path.basename(req.file.path)}`,
+                url: `/api/sounds/file/${path.basename(finalPath)}`,
                 duration_seconds: Math.round(duration * 10) / 10,
                 channel_id: channelOwnerId,
             },

@@ -466,7 +466,33 @@ html, body {
     }
 
     // ── Render message ─────────────────────────────────────────
+    // One-time "connected" flags + noise suppression for the overlay.
+    let _hoboConnectedShown = false;
+    let _rsConnectedShown = false;
+    function _showConnected(text) {
+        const el = document.createElement('div');
+        el.className = 'msg system';
+        el.textContent = text;
+        appendMessage(el);
+    }
+    // Join/welcome/help/funbits chatter we don't want cluttering an OBS overlay.
+    const HOBO_JOIN_RE = /you joined (the |stream )?chat|welcome[, ].*use \/help|^welcome\b.*\/help|chatting as |^connected to chat|anti-slur nudge|^heads up:/i;
+    const RS_NOISE_RE = /use \/help|joined the owners chatroom|tts price is|funbits|^welcome\b/i;
+
     function addMessage(msg) {
+        const _rawText = String(msg.message || msg.text || '');
+        const _rawName = String(msg.username || msg.displayName || '');
+        const _isRs = /^\s*\[RS/i.test(_rawName) || /^\s*\[RS/i.test(_rawText);
+
+        // Suppress noisy HoboStreamer join/system lines (a clean "connected" shows on open).
+        if (msg.type === 'system' && HOBO_JOIN_RE.test(_rawText)) return;
+
+        // RobotStreamer relayed noise → suppress; announce RS connection once on first RS msg.
+        if (_isRs) {
+            if (!_rsConnectedShown) { _rsConnectedShown = true; _showConnected('Connected to RobotStreamer chat successfully'); }
+            if (RS_NOISE_RE.test(_rawText)) return;
+        }
+
         if (isGlobalOverlay && msg.type === 'system') {
             return;
         }
@@ -646,6 +672,7 @@ html, body {
             reconnectDelay = RECONNECT_BASE;
             ws.send(JSON.stringify({ type: 'join', streamId }));
             setStatus('Connected');
+            if (!_hoboConnectedShown) { _hoboConnectedShown = true; _showConnected('Connected to HoboStreamer chat successfully'); }
         };
 
         ws.onmessage = (e) => {

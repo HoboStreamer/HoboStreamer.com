@@ -1106,7 +1106,8 @@ class ChatServer {
 
                 default:
                     // Unknown !command → try a per-channel viewer-uploaded sound clip.
-                    this.triggerChannelSound(ws, client, stream, cmd.slice(1));
+                    // Forward trailing tokens (e.g. "500p", "0.5") as pitch/speed args.
+                    this.triggerChannelSound(ws, client, stream, cmd.slice(1), parts.slice(1));
                     return;
             }
         } catch (err) {
@@ -1119,7 +1120,7 @@ class ChatServer {
      * Silent no-op when the command is not a registered sound so unknown
      * commands don't spam the chat.
      */
-    triggerChannelSound(ws, client, stream, command) {
+    triggerChannelSound(ws, client, stream, command, args = []) {
         try {
             if (!stream?.user_id || !command) return;
             const cmd = String(command).toLowerCase();
@@ -1131,6 +1132,16 @@ class ChatServer {
                 this.sendTo(ws, { type: 'system', message: 'This streamer has disabled chat sound commands.' });
                 return;
             }
+
+            // Pitch/speed args (e.g. "!honk 500p 0.5"), clamped to the channel's limits.
+            const mods = soundboard.parseModifiers(args || [], {
+                allowPitch: chatSettings.soundboard_allow_pitch !== 0,
+                allowSpeed: chatSettings.soundboard_allow_speed !== 0,
+                minSpeed: chatSettings.sound_min_speed,
+                maxSpeed: chatSettings.sound_max_speed,
+                minPitch: chatSettings.sound_min_pitch_rate,
+                maxPitch: chatSettings.sound_max_pitch_rate,
+            });
 
             // Banned users can't trigger sounds
             if (client.user && db.isUserBanned(client.user.id, client.streamId)) return;
@@ -1206,8 +1217,8 @@ class ChatServer {
                 title: `!${cmd}`,
                 audio: audioB64,
                 mimeType: sound.mime || 'audio/mpeg',
-                pitch: 1,
-                speed: 1,
+                pitch: mods.pitch,
+                speed: mods.speed,
                 source: 'channel-sound',
                 timestamp: new Date().toISOString(),
             });
@@ -2044,16 +2055,26 @@ class ChatServer {
             max_sound_seconds: 10,
             uploads_mods_only: 0,
             emote_scale: 100,
+            sound_min_speed: 0.5,
+            sound_max_speed: 3.0,
+            sound_min_pitch_cents: -1200,
+            sound_max_pitch_cents: 1200,
         };
-        if (!streamId) return defaults;
+        // Derive pitch rate bounds from the configured cents (2^(cents/1200)).
+        const finalize = (s) => ({
+            ...s,
+            sound_min_pitch_rate: Math.pow(2, (Number(s.sound_min_pitch_cents) ?? -1200) / 1200),
+            sound_max_pitch_rate: Math.pow(2, (Number(s.sound_max_pitch_cents) ?? 1200) / 1200),
+        });
+        if (!streamId) return finalize(defaults);
         try {
             const stream = db.getStreamById(streamId);
-            if (!stream) return defaults;
+            if (!stream) return finalize(defaults);
             const channel = stream.channel_id ? db.getChannelById(stream.channel_id) : db.getChannelByUserId(stream.user_id);
-            if (!channel) return defaults;
-            return { ...defaults, ...db.getChannelModerationSettings(channel.id) };
+            if (!channel) return finalize(defaults);
+            return finalize({ ...defaults, ...db.getChannelModerationSettings(channel.id) });
         } catch {
-            return defaults;
+            return finalize(defaults);
         }
     }
 

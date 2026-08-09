@@ -39,6 +39,85 @@ class RobotStreamerService {
         this._rsViewerCounts = new Map();
         this.publishProxy = new WebSocket.Server({ noServer: true, maxPayload: 512 * 1024, perMessageDeflate: false });
         this.publishProxy.on('connection', (ws, req, ctx) => this._handlePublishConnection(ws, req, ctx));
+        this._startRsViewerPolling();
+    }
+
+    /** Extract a robot's live viewer count from a robot_page_load response. */
+    _extractRobotViewers(pageData, robotId) {
+        for (const owner of pageData?.robots || []) {
+            for (const r of owner?.robots || []) {
+                if (String(r.robot_id) === String(robotId)) return Number(r.viewers || 0);
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Poll RobotStreamer's live viewer count for every active chat-mirror bridge and cache
+     * it per-slot. robot_page_load is the only endpoint that returns the count (RS's own
+     * client polls it on a 30–60s cadence), so we mirror that here.
+     */
+    _startRsViewerPolling() {
+        if (this._rsViewerPollTimer) return;
+        this._rsViewerPollTimer = setInterval(async () => {
+            for (const [, bridge] of this.chatBridges) {
+                if (bridge.stopped || !bridge.token || !bridge.robotId) continue;
+                try {
+                    const pageData = await this.robotPageLoad(bridge.token, bridge.robotId);
+                    const viewers = this._extractRobotViewers(pageData, bridge.robotId);
+                    this.setRsViewerCount(bridge.userId, viewers, bridge.managedStreamId || null);
+                } catch { /* transient — keep the last cached value */ }
+            }
+        }, 45000);
+        if (this._rsViewerPollTimer.unref) this._rsViewerPollTimer.unref();
+    }
+
+    /**
+     * Sync a HoboStreamer stream title to the RobotStreamer robot's name. Best-effort and
+     * non-blocking: fetches the account's current settings, changes only the target robot's
+     * robot_name, and echoes everything else back to /v2/set_user_settings (RS's save takes
+     * the whole account payload + robots-as-objects; omitting a robot would delete it).
+     */
+    async syncRobotName(integration, newTitle) {
+        try {
+            const token = integration?.token;
+            const robotId = integration?.robot_id;
+            const userName = integration?.owner_name;
+            const title = String(newTitle || '').trim();
+            if (!token || !robotId || !userName || !title) return false;
+
+            const settings = await this._rsApiPost('/v1/get_user_settings', { user_name: userName, token });
+            if (!settings || (settings.status && settings.status !== 'ok')) return false;
+
+            const robots = (settings.robots || [])
+                .map(r => (typeof r === 'string' ? safeJsonParse(r, null) : r))
+                .filter(Boolean);
+            if (!robots.some(r => String(r.robot_id) === String(robotId))) return false;   // robot not on this account
+
+            const sendRobots = robots.map(r => ({
+                robot_id: r.robot_id,
+                robot_name: String(r.robot_id) === String(robotId) ? title : r.robot_name,
+                robot_desc: r.robot_desc || '',
+                tts_price: r.tts_price != null ? r.tts_price : 0,
+                pip_camera_id: r.pip_camera_id || '',
+                control_filter: r.control_filter != null ? r.control_filter : '',
+                control_enabled: r.control_enabled != null ? r.control_enabled : '',
+                panels: (typeof r.panels === 'string' ? safeJsonParse(r.panels, r.panels) : r.panels) || [],
+                robot_delete: false,
+            }));
+
+            // Echo the whole account payload back unchanged, only swapping robots.
+            const body = { ...settings, user_name: userName, token, robots: sendRobots };
+            delete body.status; delete body.status_readable; delete body.error;
+
+            const res = await this._rsApiPost('/v2/set_user_settings', body);
+            const ok = !res || res.status === true || res.status === 'ok' || (Array.isArray(res.error) && res.error.length === 0);
+            if (!ok) console.warn('[RS] set_user_settings did not confirm title update:', JSON.stringify(res?.error || res?.status_readable || ''));
+            return ok;
+        } catch (err) {
+            console.warn('[RS] Title sync failed:', err.message);
+            return false;
+        }
     }
 
     /**
@@ -450,6 +529,7 @@ class RobotStreamerService {
         const bridge = {
             streamId: stream.id,
             userId: stream.user_id,
+            managedStreamId: integration.managed_stream_id || stream.managed_stream_id || null,
             token: integration.token,
             robotId: String(integration.robot_id),
             ownerId: String(integration.owner_id || ''),

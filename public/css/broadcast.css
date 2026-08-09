@@ -3705,6 +3705,21 @@
     color: var(--accent);
     border-bottom-color: var(--accent);
 }
+.bc-top-tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--live-red, #e74c3c);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    margin-left: 2px;
+}
 .bc-top-tab-panel { display: none; }
 .bc-top-tab-panel.active { display: block; }
 

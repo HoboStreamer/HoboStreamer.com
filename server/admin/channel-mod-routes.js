@@ -243,6 +243,14 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? Math.min(30, Math.max(1, parseInt(req.body.max_sound_seconds) || 10)) : undefined,
             emote_scale: req.body.emote_scale !== undefined
                 ? Math.min(300, Math.max(50, parseInt(req.body.emote_scale) || 100)) : undefined,
+            sound_min_speed: req.body.sound_min_speed !== undefined
+                ? Math.min(1, Math.max(0.1, parseFloat(req.body.sound_min_speed) || 0.5)) : undefined,
+            sound_max_speed: req.body.sound_max_speed !== undefined
+                ? Math.min(5, Math.max(1, parseFloat(req.body.sound_max_speed) || 3.0)) : undefined,
+            sound_min_pitch_cents: req.body.sound_min_pitch_cents !== undefined
+                ? Math.min(0, Math.max(-2400, parseInt(req.body.sound_min_pitch_cents) || -1200)) : undefined,
+            sound_max_pitch_cents: req.body.sound_max_pitch_cents !== undefined
+                ? Math.max(0, Math.min(2400, parseInt(req.body.sound_max_pitch_cents) || 1200)) : undefined,
         });
 
         db.logModerationAction({

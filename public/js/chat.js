@@ -143,8 +143,8 @@ const CHAT_SETTINGS_DEFAULTS = {
     fullscreenOverlayChat: true,  // Show OBS-style chat overlay in fullscreen live player
     compactMode: false,           // Compact message layout (popout & popout-compatible surfaces)
     // Cross-feed — show messages from other sources while in a stream chat
-    showGlobalInStream: false,    // Show global chat messages in stream chat
-    showAllStreamsInStream: false, // Show messages from ALL live streams in stream chat
+    showGlobalInStream: true,     // Show global chat messages in stream chat (on by default)
+    showAllStreamsInStream: true, // Show messages from ALL live streams in stream chat (on by default)
     // TTS
     ttsEnabled: false,            // TTS toggle for regular pages (off by default)
     streamingTtsEnabled: true,    // Separate TTS toggle while broadcasting live

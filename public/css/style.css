@@ -5524,7 +5524,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
     /* Even tighter video controls on small phones */
     .vc-btn { min-width: 26px; min-height: 26px; padding: 3px 4px; font-size: 0.82rem; }
-    #btn-clip { display: none; } /* hide clip button on tiny screens to save space */
+    /* Keep the clip button visible on vertical/mobile — users want to clip on phones too */
     .viewer-badge, .uptime-badge { font-size: 0.62rem; padding: 1px 4px; }
 
     .ch-info-bar { padding: 6px 10px; gap: 8px; }

@@ -142,6 +142,26 @@ function renderDashModerationChannels(channels) {
                                 <span>Max sound length (seconds)</span>
                                 <input type="number" id="dash-mod-max-sound-${channel.id}" class="form-input" min="1" max="30" value="${Number(settings.max_sound_seconds || 10)}" style="max-width:110px;">
                             </label>
+                            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                                <label style="flex:1;min-width:130px">
+                                    <span>Min speed <i class="fa-solid fa-gauge-simple-low" title="e.g. !sound 0.5"></i></span>
+                                    <input type="number" id="dash-mod-sound-minspeed-${channel.id}" class="form-input" min="0.1" max="1" step="0.05" value="${Number(settings.sound_min_speed ?? 0.5)}" style="max-width:110px">
+                                </label>
+                                <label style="flex:1;min-width:130px">
+                                    <span>Max speed <i class="fa-solid fa-gauge-simple-high" title="e.g. !sound 3"></i></span>
+                                    <input type="number" id="dash-mod-sound-maxspeed-${channel.id}" class="form-input" min="1" max="5" step="0.1" value="${Number(settings.sound_max_speed ?? 3.0)}" style="max-width:110px">
+                                </label>
+                            </div>
+                            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                                <label style="flex:1;min-width:130px">
+                                    <span>Min pitch (cents) <i class="fa-solid fa-arrow-down" title="e.g. !sound -500p; -1200 = one octave down"></i></span>
+                                    <input type="number" id="dash-mod-sound-minpitch-${channel.id}" class="form-input" min="-2400" max="0" step="100" value="${Number(settings.sound_min_pitch_cents ?? -1200)}" style="max-width:110px">
+                                </label>
+                                <label style="flex:1;min-width:130px">
+                                    <span>Max pitch (cents) <i class="fa-solid fa-arrow-up" title="e.g. !sound 500p; 1200 = one octave up"></i></span>
+                                    <input type="number" id="dash-mod-sound-maxpitch-${channel.id}" class="form-input" min="0" max="2400" step="100" value="${Number(settings.sound_max_pitch_cents ?? 1200)}" style="max-width:110px">
+                                </label>
+                            </div>
                             <label>
                                 <span>Emote size in chat: <b id="dash-mod-emote-scale-val-${channel.id}">${Number(settings.emote_scale || 100)}</b>%</span>
                                 <input type="range" id="dash-mod-emote-scale-${channel.id}" min="50" max="300" step="10" value="${Number(settings.emote_scale || 100)}"
@@ -302,6 +322,10 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
                 uploads_mods_only: !!document.getElementById(`dash-mod-uploads-modsonly-${channelId}`)?.checked,
                 max_sound_seconds: Number(document.getElementById(`dash-mod-max-sound-${channelId}`)?.value || 10),
                 emote_scale: Number(document.getElementById(`dash-mod-emote-scale-${channelId}`)?.value || 100),
+                sound_min_speed: Number(document.getElementById(`dash-mod-sound-minspeed-${channelId}`)?.value || 0.5),
+                sound_max_speed: Number(document.getElementById(`dash-mod-sound-maxspeed-${channelId}`)?.value || 3.0),
+                sound_min_pitch_cents: Number(document.getElementById(`dash-mod-sound-minpitch-${channelId}`)?.value ?? -1200),
+                sound_max_pitch_cents: Number(document.getElementById(`dash-mod-sound-maxpitch-${channelId}`)?.value ?? 1200),
             },
         });
         toast('Channel moderation settings saved', 'success');

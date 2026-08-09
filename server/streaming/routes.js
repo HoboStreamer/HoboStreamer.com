@@ -1226,6 +1226,19 @@ router.put('/managed/:id', requireAuth, (req, res) => {
 
         db.updateManagedStream(msId, ms.user_id, fields);
         const updated = db.getManagedStreamById(msId);
+
+        // If the title changed and this slot has a RobotStreamer integration, mirror the
+        // new title to the RS robot name (best-effort, non-blocking).
+        if (hasOwn(req.body, 'title') && fields.title) {
+            try {
+                const rsIntegration = db.getRobotStreamerIntegrationForStream(ms.user_id, msId);
+                if (rsIntegration?.token && rsIntegration?.robot_id) {
+                    require('../integrations/robotstreamer-service').syncRobotName(rsIntegration, fields.title)
+                        .catch(() => {});
+                }
+            } catch { /* non-critical */ }
+        }
+
         res.json({ managed_stream: updated });
     } catch (err) {
         console.error('[ManagedStreams] Update error:', err.message);
