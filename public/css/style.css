@@ -5252,9 +5252,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
         background: rgba(255,255,255,0.03);
         font-size: 0.92rem;
     }
-    /* Keep the "Go Live" trigger (a real link to /broadcast) visible; only hide the
-       "Game" trigger since its Quest/Canvas items already cover it. */
-    .nav-links.show #nav-game-dropdown > .nav-link { display: none; }
+    /* "Go Live" is the only remaining nav dropdown — keep its trigger visible. */
 
     /* Nav-right stays visible, pushed to end before hamburger */
     .nav-right { margin-left: auto; gap: 6px; }
