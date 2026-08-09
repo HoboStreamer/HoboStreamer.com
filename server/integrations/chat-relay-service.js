@@ -730,7 +730,7 @@ class ChatRelayService {
         const poll = async () => {
             if (bridge.stopped) return;
             try {
-                const url = new URL('https://www.googleapis.com/youtube/v3/liveChatMessages');
+                const url = new URL('https://www.googleapis.com/youtube/v3/liveChat/messages');
                 url.searchParams.set('liveChatId', liveChatId);
                 url.searchParams.set('part', 'snippet,authorDetails');
                 url.searchParams.set('maxResults', '200');
