@@ -185,7 +185,7 @@ class RTMPServer extends EventEmitter {
             // Start server-side VOD recording via FFmpeg
             // Small delay to let NMS fully register the RTMP stream before FFmpeg pulls it
             setTimeout(() => {
-                const vodPolicy = db.getChannelVodRecordingPolicyByUserId(resolvedUser.id);
+                const vodPolicy = db.getChannelVodRecordingPolicyByUserId(resolvedUser.id, db.getStreamById(streamId)?.managed_stream_id);
                 if (vodPolicy.recordingEnabled) {
                     recorder.startRecording(streamId, 'rtmp', { streamKey });
                 }

@@ -793,6 +793,26 @@ function initDb() {
         if (!ccols.includes('ai_analyzed_at')) database.exec('ALTER TABLE clips ADD COLUMN ai_analyzed_at DATETIME');
     } catch (e) { console.warn('[DB] AI subsystem migration:', e.message); }
 
+    // Visibility (public | unlisted | private) on VODs/clips. `is_public` is kept as
+    // a synced mirror (1 iff public) so all existing is_public=1 listing filters keep
+    // working; unlisted stays out of listings but reachable by direct link.
+    try {
+        const vcols = database.prepare('PRAGMA table_info(vods)').all().map(c => c.name);
+        if (!vcols.includes('visibility')) {
+            database.exec("ALTER TABLE vods ADD COLUMN visibility TEXT DEFAULT 'public'");
+            database.exec("UPDATE vods SET visibility = CASE WHEN is_public = 1 THEN 'public' ELSE 'private' END");
+        }
+        const ccols = database.prepare('PRAGMA table_info(clips)').all().map(c => c.name);
+        if (!ccols.includes('visibility')) {
+            database.exec("ALTER TABLE clips ADD COLUMN visibility TEXT DEFAULT 'public'");
+            database.exec("UPDATE clips SET visibility = CASE WHEN is_public = 1 THEN 'public' ELSE 'unlisted' END");
+        }
+        const msCols = database.prepare('PRAGMA table_info(managed_streams)').all().map(c => c.name);
+        if (!msCols.includes('slot_clip_recording_enabled')) {
+            database.exec('ALTER TABLE managed_streams ADD COLUMN slot_clip_recording_enabled INTEGER DEFAULT 1');
+        }
+    } catch (e) { console.warn('[DB] visibility migration:', e.message); }
+
     // Migrate: extend the subscriptions table for real recurring billing.
     try {
         const cols = database.pragma('table_info(subscriptions)').map(c => c.name);
@@ -2075,7 +2095,7 @@ function updateManagedStream(managedStreamId, userId, fields) {
         'slug', 'title', 'description', 'category', 'tags', 'protocol',
         'is_nsfw', 'control_config_id', 'sort_order',
         'streaming_method', 'browser_mode',
-        'default_vod_visibility', 'default_clip_visibility', 'slot_vod_recording_enabled',
+        'default_vod_visibility', 'default_clip_visibility', 'slot_vod_recording_enabled', 'slot_clip_recording_enabled',
         'weather_zip', 'weather_detail', 'weather_show_location', 'mic_only_image',
     ]);
     const updates = [];
@@ -2382,16 +2402,56 @@ function ensureChannel(userId) {
     return ch;
 }
 
-function getChannelVodRecordingPolicyByUserId(userId) {
+function getChannelVodRecordingPolicyByUserId(userId, managedStreamId = null) {
     const channel = getChannelByUserId(userId);
-    const recordingEnabled = !channel
+    let recordingEnabled = !channel
         ? true
         : !!channel.vod_recording_enabled && !channel.force_vod_recording_disabled;
+    // Per-stream override: a slot can disable VOD recording for just that stream.
+    if (recordingEnabled && managedStreamId) {
+        try {
+            const ms = get('SELECT slot_vod_recording_enabled FROM managed_streams WHERE id = ?', [managedStreamId]);
+            if (ms && ms.slot_vod_recording_enabled === 0) recordingEnabled = false;
+        } catch { /* keep channel-level */ }
+    }
     return {
         channel,
         recordingEnabled,
         forcedDisabled: !!channel?.force_vod_recording_disabled,
     };
+}
+// Effective VOD/clip visibility for a stream: per-slot setting first, else channel, else public.
+function resolveStreamVodVisibility(stream) {
+    try {
+        if (stream && stream.managed_stream_id) {
+            const ms = get('SELECT default_vod_visibility FROM managed_streams WHERE id = ?', [stream.managed_stream_id]);
+            if (ms && ms.default_vod_visibility) return ms.default_vod_visibility;
+        }
+        const ch = stream && getChannelByUserId(stream.user_id);
+        if (ch && ch.default_vod_visibility) return ch.default_vod_visibility;
+    } catch { /* fall through */ }
+    return 'public';
+}
+function resolveStreamClipVisibility(stream) {
+    try {
+        if (stream && stream.managed_stream_id) {
+            const ms = get('SELECT default_clip_visibility, slot_clip_recording_enabled FROM managed_streams WHERE id = ?', [stream.managed_stream_id]);
+            if (ms && ms.default_clip_visibility) return ms.default_clip_visibility;
+        }
+        const ch = stream && getChannelByUserId(stream.user_id);
+        if (ch && ch.default_clip_visibility) return ch.default_clip_visibility;
+    } catch { /* fall through */ }
+    return 'public';
+}
+// Whether clip creation is enabled for a stream's slot (per-stream toggle).
+function isStreamClipRecordingEnabled(stream) {
+    try {
+        if (stream && stream.managed_stream_id) {
+            const ms = get('SELECT slot_clip_recording_enabled FROM managed_streams WHERE id = ?', [stream.managed_stream_id]);
+            if (ms && ms.slot_clip_recording_enabled === 0) return false;
+        }
+    } catch { /* default enabled */ }
+    return true;
 }
 
 // ── RobotStreamer integration helpers ───────────────────────
@@ -3090,7 +3150,36 @@ function countClipsByUser(userId, includePrivate = false) {
 }
 
 function setClipPublic(clipId, isPublic) {
-    return run('UPDATE clips SET is_public = ? WHERE id = ?', [isPublic ? 1 : 0, clipId]);
+    return run('UPDATE clips SET is_public = ?, visibility = ? WHERE id = ?', [isPublic ? 1 : 0, isPublic ? 'public' : 'unlisted', clipId]);
+}
+const VALID_VISIBILITY = new Set(['public', 'unlisted', 'private']);
+function _normVisibility(v) { return VALID_VISIBILITY.has(v) ? v : 'public'; }
+// Set VOD/clip visibility; is_public mirrors (1 iff public) so listing filters hold.
+function setVodVisibility(vodId, visibility) {
+    const vis = _normVisibility(visibility);
+    return run('UPDATE vods SET visibility = ?, is_public = ? WHERE id = ?', [vis, vis === 'public' ? 1 : 0, vodId]);
+}
+function setClipVisibility(clipId, visibility) {
+    const vis = _normVisibility(visibility);
+    return run('UPDATE clips SET visibility = ?, is_public = ? WHERE id = ?', [vis, vis === 'public' ? 1 : 0, clipId]);
+}
+// A specific user's pastes for their channel page. Non-owners see public only;
+// the owner/admin also sees their unlisted + private. sort: 'newest' | 'oldest'.
+function getUserPastesForChannel(userId, { includeHidden = false, sort = 'newest', limit = 30, offset = 0 } = {}) {
+    const dir = sort === 'oldest' ? 'ASC' : 'DESC';
+    const visClause = includeHidden ? '' : "AND p.visibility = 'public'";
+    return all(`
+        SELECT p.id, p.slug, p.type, p.title, p.language, p.visibility, p.pinned, p.views, p.copies, p.likes, p.created_at,
+               p.screenshot_path, substr(p.content, 1, 300) AS content
+        FROM pastes p
+        WHERE p.user_id = ? ${visClause}
+        ORDER BY p.pinned DESC, p.created_at ${dir}
+        LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
+}
+function countUserPastesForChannel(userId, { includeHidden = false } = {}) {
+    const visClause = includeHidden ? '' : "AND visibility = 'public'";
+    return get(`SELECT COUNT(*) AS count FROM pastes WHERE user_id = ? ${visClause}`, [userId]).count;
 }
 
 function getPublicClips(limit = 50, offset = 0, { username = null, sort = 'newest' } = {}) {
@@ -5292,7 +5381,7 @@ module.exports = {
     // Channels
     getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
     getChannelPointsConfig, setChannelPointsConfig,
-    getChannelVodRecordingPolicyByUserId,
+    getChannelVodRecordingPolicyByUserId, resolveStreamVodVisibility, resolveStreamClipVisibility, isStreamClipRecordingEnabled,
     // RobotStreamer integration
     getRobotStreamerIntegrationByUserId, upsertRobotStreamerIntegration,
     getRobotStreamerIntegrationBySlot, getRobotStreamerIntegrationForStream,
@@ -5336,7 +5425,7 @@ module.exports = {
     createVod, getVodById, getVodsByUser, countVodsByUser, getPublicVods, countPublicVods, listVodStreamers, getActiveVodByStream, getOrphanedRecordingVods,
     updateVodHealth, repairVodDuration, getVodHealthById, getVodScanCandidates,
     // Clips
-    createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, listClipStreamers, getClipsByStream, setClipPublic, getClipsOfUserStreams, findDuplicateClip,
+    createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, listClipStreamers, getClipsByStream, setClipPublic, setVodVisibility, setClipVisibility, getClipsOfUserStreams, findDuplicateClip,
     // Controls
     getStreamControls, createControl, bindStreamToControlConfig,
     // ONVIF Cameras
@@ -5375,7 +5464,7 @@ module.exports = {
     getChannelModerationSettings, upsertChannelModerationSettings,
     // Pastes
     createPaste, getPasteBySlug, getPasteById, listPastes,
-    incrementPasteViews, updatePaste, deletePaste, getUserPastes,
+    incrementPasteViews, updatePaste, deletePaste, getUserPastes, getUserPastesForChannel, countUserPastesForChannel,
     likePaste, unlikePaste, hasUserLikedPaste, incrementPasteCopies,
     countUserPastesToday, getLastPasteTime, deleteAllForks, getPasteStats, getUserTotalGameLevel,
     // Paste Comments

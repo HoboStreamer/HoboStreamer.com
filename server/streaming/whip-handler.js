@@ -546,7 +546,7 @@ function autoCreateWhipSession(managedStream, user) {
         }
         try { require('../integrations/ai-chatbot-service').startForStream(stream); } catch { /* non-critical */ }
         setTimeout(() => {
-            const vodPolicy = db.getChannelVodRecordingPolicyByUserId(user.id);
+            const vodPolicy = db.getChannelVodRecordingPolicyByUserId(user.id, stream && stream.managed_stream_id);
             if (vodPolicy.recordingEnabled) {
                 recorder.startRecording(streamId, 'webrtc', {});
             }

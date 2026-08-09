@@ -1201,14 +1201,17 @@ router.put('/managed/:id', requireAuth, (req, res) => {
         }
         if (hasOwn(req.body, 'default_vod_visibility')) {
             const vis = String(req.body.default_vod_visibility || 'public').trim().toLowerCase();
-            fields.default_vod_visibility = vis === 'private' ? 'private' : 'public';
+            fields.default_vod_visibility = ['unlisted', 'private'].includes(vis) ? vis : 'public';
         }
         if (hasOwn(req.body, 'default_clip_visibility')) {
             const vis = String(req.body.default_clip_visibility || 'public').trim().toLowerCase();
-            fields.default_clip_visibility = vis === 'private' ? 'private' : 'public';
+            fields.default_clip_visibility = ['unlisted', 'private'].includes(vis) ? vis : 'public';
         }
         if (hasOwn(req.body, 'slot_vod_recording_enabled')) {
             fields.slot_vod_recording_enabled = cleanBooleanFlag(req.body.slot_vod_recording_enabled) ? 1 : 0;
+        }
+        if (hasOwn(req.body, 'slot_clip_recording_enabled')) {
+            fields.slot_clip_recording_enabled = cleanBooleanFlag(req.body.slot_clip_recording_enabled) ? 1 : 0;
         }
         if (hasOwn(req.body, 'weather_zip')) {
             fields.weather_zip = req.body.weather_zip ? String(req.body.weather_zip).trim().slice(0, 20) : null;
@@ -1590,7 +1593,7 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             endpoint = jsmpegRelay.getChannelInfo(msKey) || jsmpegRelay.createChannel(msKey);
 
             // Start server-side VOD recording for JSMPEG (taps the relay WebSocket, zero delay to live)
-            const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id);
+            const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id, stream.managed_stream_id);
             if (stream.is_live && vodPolicy.recordingEnabled && !recorder.isRecording(stream.id)) {
                 recorder.startRecording(stream.id, 'jsmpeg', {
                     streamKey: msKey,

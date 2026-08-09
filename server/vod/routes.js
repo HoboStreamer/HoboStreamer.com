@@ -617,7 +617,7 @@ router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), a
             return res.status(403).json({ error: 'Not your stream' });
         }
 
-        const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id);
+        const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id, stream.managed_stream_id);
         if (!vodPolicy.recordingEnabled) {
             cleanupTempFile(req.file.path);
             if (db.getActiveVodByStream(streamId)) {
@@ -668,11 +668,8 @@ router.post('/stream/:streamId/chunk', requireAuth, vodUpload.single('chunk'), a
             const vodId = result.lastInsertRowid;
             db.run('UPDATE vods SET is_recording = 1 WHERE id = ?', [vodId]);
 
-            // Apply streamer's default VOD visibility
-            const channel = db.getChannelByUserId(stream.user_id);
-            if (channel && channel.default_vod_visibility === 'public') {
-                db.run('UPDATE vods SET is_public = 1 WHERE id = ?', [vodId]);
-            }
+            // Apply the stream's default VOD visibility (per-slot, else channel).
+            db.setVodVisibility(vodId, db.resolveStreamVodVisibility(stream));
 
             rec = { vodId, filePath, startTime: Date.now(), chunkCount: 1, currentSegmentId: segmentId, currentSegmentPath: filePath };
             activeRecordings.set(streamId, rec);
@@ -730,7 +727,7 @@ router.post('/stream/:streamId/finalize', requireAuth, async (req, res) => {
             return res.status(403).json({ error: 'Not your stream' });
         }
 
-        const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id);
+        const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id, stream.managed_stream_id);
         if (!vodPolicy.recordingEnabled && !db.getActiveVodByStream(streamId)) {
             return res.status(404).json({ error: 'No active recording for this stream' });
         }
@@ -1150,9 +1147,11 @@ router.get('/:id', optionalAuth, async (req, res) => {
             }
         }
 
-        // Private VOD — allow page load but restrict video access
+        // Private VOD — allow page load but restrict video access. Unlisted VODs
+        // (is_public=0 but visibility='unlisted') stay reachable by direct link.
         const isOwnerOrAdmin = req.user && (req.user.id === vod.user_id || req.user.role === 'admin');
-        if (!vod.is_public && !isOwnerOrAdmin) {
+        const isPrivate = (vod.visibility ? vod.visibility === 'private' : !vod.is_public);
+        if (isPrivate && !isOwnerOrAdmin) {
             // Return limited data so clips section is still accessible
             const clips = vod.stream_id ? db.getClipsByStream(vod.stream_id) : [];
             return res.json({
@@ -1211,23 +1210,57 @@ router.put('/:id', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not your VOD' });
         }
 
-        const { title, description, is_public } = req.body;
+        const { title, description, is_public, visibility } = req.body;
         const updates = [];
         const params = [];
 
         if (title !== undefined) { updates.push('title = ?'); params.push(title); }
         if (description !== undefined) { updates.push('description = ?'); params.push(description); }
-        if (is_public !== undefined) { updates.push('is_public = ?'); params.push(is_public ? 1 : 0); }
-
         if (updates.length > 0) {
             params.push(req.params.id);
             db.run(`UPDATE vods SET ${updates.join(', ')} WHERE id = ?`, params);
+        }
+        // Visibility: prefer the explicit 3-state value; fall back to legacy is_public.
+        if (visibility !== undefined) {
+            db.setVodVisibility(req.params.id, visibility);
+        } else if (is_public !== undefined) {
+            db.setVodVisibility(req.params.id, is_public ? 'public' : 'private');
         }
 
         const updated = db.getVodById(req.params.id);
         res.json({ vod: updated });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update VOD' });
+    }
+});
+
+// ── Bulk action on VODs (owner's own, or any for admins): delete | public | unlisted | private ──
+router.post('/bulk', requireAuth, async (req, res) => {
+    try {
+        const { ids, action } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'No ids provided' });
+        if (!['delete', 'public', 'unlisted', 'private'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+        const isAdmin = req.user.role === 'admin' || req.user.capabilities?.moderate_global;
+        let done = 0, skipped = 0;
+        for (const rawId of ids.slice(0, 500)) {
+            const id = parseInt(rawId, 10);
+            if (!id) { skipped++; continue; }
+            const vod = db.get('SELECT * FROM vods WHERE id = ?', [id]);
+            if (!vod) { skipped++; continue; }
+            let owns = isAdmin || vod.user_id === req.user.id;
+            if (!owns && vod.stream_id) { const s = db.getStreamById(vod.stream_id); if (s && s.user_id === req.user.id) owns = true; }
+            if (!owns) { skipped++; continue; }
+            if (action === 'delete') {
+                if (vod.file_path) { require('./vod-storage').deleteVodObjects(vod).catch(() => {}); cleanupSeekableFile(vod.file_path); }
+                db.run('DELETE FROM vods WHERE id = ?', [id]);
+            } else {
+                db.setVodVisibility(id, action);
+            }
+            done++;
+        }
+        res.json({ done, skipped });
+    } catch (err) {
+        res.status(500).json({ error: 'Bulk action failed' });
     }
 });
 
@@ -1468,9 +1501,8 @@ router.post('/upload', requireAuth, vodUpload.single('video'), async (req, res) 
             }
         }
 
-        // Create VOD entry (apply user's default visibility)
-        const channel = db.getChannelByUserId(req.user.id);
-        const defaultPublic = channel && channel.default_vod_visibility === 'public' ? 1 : 0;
+        // Create VOD entry (apply the stream's default visibility: per-slot, else channel)
+        const uStream = stream_id ? db.getStreamById(parseInt(stream_id)) : null;
         const result = db.createVod({
             stream_id: stream_id ? parseInt(stream_id) : null,
             user_id: req.user.id,
@@ -1480,9 +1512,7 @@ router.post('/upload', requireAuth, vodUpload.single('video'), async (req, res) 
             file_size: finalStat.size,
             duration_seconds: durationSeconds,
         });
-        if (defaultPublic) {
-            db.run('UPDATE vods SET is_public = 1 WHERE id = ?', [result.lastInsertRowid]);
-        }
+        db.setVodVisibility(result.lastInsertRowid, uStream ? db.resolveStreamVodVisibility(uStream) : (db.getChannelByUserId(req.user.id)?.default_vod_visibility || 'public'));
 
         const vod = db.getVodById(result.lastInsertRowid);
         console.log(`[VOD] Uploaded: ${req.file.filename} (${(finalStat.size / 1024 / 1024).toFixed(1)} MB, ${durationSeconds}s) for user ${req.user.username}`);
@@ -1623,9 +1653,13 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             const stat = fs.statSync(clipPath);
 
             const duration = endTime - startTime;
-            // Honor the streamer's default clip visibility (streamer = stream owner).
+            // Honor the streamer's per-stream clip settings (streamer = stream owner).
             const liveStream = parsedStreamId ? db.getStreamById(parsedStreamId) : null;
-            const liveStreamOwnerId = liveStream?.user_id || null;
+            if (liveStream && !db.isStreamClipRecordingEnabled(liveStream)) {
+                try { fs.existsSync(clipPath) && fs.unlinkSync(clipPath); } catch { /* */ }
+                return res.status(403).json({ error: 'Clipping is disabled for this stream.' });
+            }
+            const clipVis = liveStream ? db.resolveStreamClipVisibility(liveStream) : 'public';
             const result = db.createClip({
                 stream_id: parsedStreamId,
                 user_id: req.user.id,
@@ -1635,10 +1669,11 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
                 end_time: endTime,
                 duration_seconds: duration > 0 ? duration : 0,
                 description: '',
-                is_public: resolveClipIsPublic(liveStreamOwnerId),
+                is_public: clipVis === 'public' ? 1 : 0,
             });
 
             const clipId = result.lastInsertRowid;
+            try { db.setClipVisibility(clipId, clipVis); } catch { /* */ }
             const clip = db.getClipById(clipId);
             console.log(`[Clips] Direct upload: ${req.file.filename} for user ${req.user.username} (${stat.size} bytes)`);
             // AI overview + local transcript for this clip (fire-and-forget).
@@ -1812,7 +1847,11 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
 
             const effStreamId = parsedStreamId || vod.stream_id;
             const effStream = effStreamId ? db.getStreamById(effStreamId) : null;
-            const streamOwnerId = effStream?.user_id || vod.user_id;
+            if (effStream && !db.isStreamClipRecordingEnabled(effStream)) {
+                try { fs.existsSync(clipPath) && fs.unlinkSync(clipPath); } catch { /* */ }
+                return res.status(403).json({ error: 'Clipping is disabled for this stream.' });
+            }
+            const clipVis = effStream ? db.resolveStreamClipVisibility(effStream) : 'public';
             const result = db.createClip({
                 vod_id: parsedVodId,
                 stream_id: effStreamId,
@@ -1823,8 +1862,9 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
                 end_time: endTime,
                 duration_seconds: duration,
                 description: '',
-                is_public: resolveClipIsPublic(streamOwnerId),
+                is_public: clipVis === 'public' ? 1 : 0,
             });
+            try { db.setClipVisibility(result.lastInsertRowid, clipVis); } catch { /* */ }
 
             const clip = db.getClipById(result.lastInsertRowid);
             console.log(`[Clips] VOD clip extracted: ${clipFilename} for user ${req.user.username} (VOD ${parsedVodId}, ${startTime.toFixed(1)}s-${endTime.toFixed(1)}s)`);

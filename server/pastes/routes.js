@@ -312,8 +312,12 @@ router.get('/:slug', optionalAuth, (req, res) => {
         );
         if (!paste) return res.status(404).json({ error: 'Paste not found' });
 
-        // Unlisted pastes: only accessible via direct link (no auth check needed — that's the point)
-        // But we still serve them.
+        // Unlisted pastes: only accessible via direct link (no auth check needed — that's the point).
+        // Private pastes: owner/staff only.
+        if (paste.visibility === 'private') {
+            const allowed = req.user && (paste.user_id === req.user.id || req.user.role === 'admin' || req.user.role === 'global_mod');
+            if (!allowed) return res.status(404).json({ error: 'Paste not found' });
+        }
 
         // Increment view count (don't count own views)
         const isOwner = req.user && paste.user_id === req.user.id;
@@ -598,7 +602,7 @@ router.put('/:slug', requireAuth, (req, res) => {
             updates.push('content = ?'); params.push(content);
             updates.push('language = ?'); params.push(detectLanguage(content, language));
         }
-        if (visibility !== undefined) { updates.push('visibility = ?'); params.push(visibility === 'unlisted' ? 'unlisted' : 'public'); }
+        if (visibility !== undefined) { updates.push('visibility = ?'); params.push(['unlisted', 'private'].includes(visibility) ? visibility : 'public'); }
         if (is_nsfw !== undefined) { updates.push('is_nsfw = ?'); params.push(is_nsfw ? 1 : 0); }
         if (pinned !== undefined && (req.user.role === 'admin' || req.user.role === 'global_mod')) {
             updates.push('pinned = ?'); params.push(pinned ? 1 : 0);
@@ -652,6 +656,56 @@ router.delete('/:slug', requireAuth, (req, res) => {
     } catch (err) {
         console.error('[Pastes] Delete error:', err);
         res.status(500).json({ error: 'Failed to delete paste' });
+    }
+});
+
+// ── Bulk action on pastes (owner's own, or any for staff): delete | public | unlisted | private ──
+router.post('/bulk', requireAuth, (req, res) => {
+    try {
+        const { slugs, action } = req.body || {};
+        if (!Array.isArray(slugs) || !slugs.length) return res.status(400).json({ error: 'No slugs provided' });
+        if (!['delete', 'public', 'unlisted', 'private'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+        const isStaff = req.user.role === 'admin' || req.user.role === 'global_mod';
+        let done = 0, skipped = 0;
+        for (const slug of slugs.slice(0, 500)) {
+            const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [String(slug)]);
+            if (!paste) { skipped++; continue; }
+            if (!isStaff && paste.user_id !== req.user.id) { skipped++; continue; }
+            if (action === 'delete') {
+                removePasteScreenshot(paste);
+                db.run('DELETE FROM pastes WHERE id = ?', [paste.id]);
+                db.resetAvatarsForPaste(paste.id);
+            } else {
+                db.run('UPDATE pastes SET visibility = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [action, paste.id]);
+            }
+            done++;
+        }
+        res.json({ done, skipped });
+    } catch (err) {
+        console.error('[Pastes] Bulk error:', err);
+        res.status(500).json({ error: 'Bulk action failed' });
+    }
+});
+
+// ── A specific user's pastes, for their channel page ────────
+router.get('/by-user/:username', optionalAuth, (req, res) => {
+    try {
+        const user = db.getUserByUsername(req.params.username);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        const sort = req.query.sort === 'oldest' ? 'oldest' : 'newest';
+        const includeHidden = !!(req.user && (req.user.id === user.id || req.user.role === 'admin' || req.user.role === 'global_mod'));
+        const pastes = db.getUserPastesForChannel(user.id, { includeHidden, sort, limit, offset }).map(p => ({
+            ...p,
+            content: p.type === 'paste' ? (p.content || '') : null,
+            screenshot_url: p.screenshot_path ? `/data/pastes/screenshots/${path.basename(p.screenshot_path)}` : null,
+        }));
+        const total = db.countUserPastesForChannel(user.id, { includeHidden });
+        res.json({ pastes, total, limit, offset, canManage: includeHidden });
+    } catch (err) {
+        console.error('[Pastes] by-user error:', err);
+        res.status(500).json({ error: 'Failed to list user pastes' });
     }
 });
 

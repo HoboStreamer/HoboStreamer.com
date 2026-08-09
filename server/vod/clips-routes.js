@@ -76,6 +76,13 @@ router.get('/:id', optionalAuth, (req, res) => {
         const clip = db.getClipById(req.params.id);
         if (!clip) return res.status(404).json({ error: 'Clip not found' });
 
+        // Private clips: only owner/stream-owner/admin. Unlisted stays link-reachable.
+        if (clip.visibility === 'private') {
+            let allowed = req.user && (req.user.id === clip.user_id || req.user.role === 'admin');
+            if (!allowed && req.user && clip.stream_id) { const s = db.getStreamById(clip.stream_id); if (s && s.user_id === req.user.id) allowed = true; }
+            if (!allowed) return res.status(404).json({ error: 'Clip not found' });
+        }
+
         // Track unique view by IP
         const ip = req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || 'unknown';
         const inserted = db.run(
@@ -152,12 +159,53 @@ router.put('/:id/visibility', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Only the streamer can change clip visibility' });
         }
 
+        if (req.body.visibility !== undefined) {
+            db.setClipVisibility(clip.id, req.body.visibility);
+            const v = db.getClipById(clip.id);
+            return res.json({ message: `Clip is now ${v.visibility}`, visibility: v.visibility, is_public: v.is_public });
+        }
         const isPublic = req.body.is_public ? 1 : 0;
         db.setClipPublic(clip.id, isPublic);
         res.json({ message: isPublic ? 'Clip is now public' : 'Clip is now unlisted', is_public: isPublic });
     } catch (err) {
         console.error('[Clips] Visibility toggle error:', err.message);
         res.status(500).json({ error: 'Failed to update clip visibility' });
+    }
+});
+
+// ── Bulk action on clips (streamer's own, or any for admins): delete | public | unlisted | private ──
+router.post('/bulk', requireAuth, async (req, res) => {
+    try {
+        const { ids, action } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'No ids provided' });
+        if (!['delete', 'public', 'unlisted', 'private'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+        const isAdmin = req.user.role === 'admin' || req.user.capabilities?.moderate_global;
+        const owns = (clip) => {
+            if (isAdmin || clip.user_id === req.user.id) return true;
+            if (clip.stream_id) { const s = db.getStreamById(clip.stream_id); if (s && s.user_id === req.user.id) return true; }
+            if (clip.vod_id) { const v = db.get('SELECT user_id FROM vods WHERE id = ?', [clip.vod_id]); if (v && v.user_id === req.user.id) return true; }
+            return false;
+        };
+        let done = 0, skipped = 0;
+        for (const rawId of ids.slice(0, 500)) {
+            const id = parseInt(rawId, 10);
+            if (!id) { skipped++; continue; }
+            const clip = db.get('SELECT * FROM clips WHERE id = ?', [id]);
+            if (!clip || !owns(clip)) { skipped++; continue; }
+            if (action === 'delete') {
+                try { if (clip.file_path && fs.existsSync(clip.file_path)) fs.unlinkSync(clip.file_path); } catch {}
+                if (clip.storage_provider && clip.storage_provider !== 'local' && clip.storage_key) {
+                    require('./vod-storage').deleteVodObjects(clip).catch(() => {});
+                }
+                db.run('DELETE FROM clips WHERE id = ?', [id]);
+            } else {
+                db.setClipVisibility(id, action);
+            }
+            done++;
+        }
+        res.json({ done, skipped });
+    } catch (err) {
+        res.status(500).json({ error: 'Bulk action failed' });
     }
 });
 
