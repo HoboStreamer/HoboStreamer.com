@@ -3652,7 +3652,23 @@ async function loadChatHistory(streamId) {
 }
 
 // Navigate to another of the streamer's live slots (from an origin badge or hop bar).
+// True when the user is actively broadcasting via the browser here — navigating
+// away (a stream hop) would tear down their live broadcast, so we disable hops.
+function _chatHopWouldEndBroadcast() {
+    try {
+        if (typeof currentPage !== 'undefined' && currentPage === 'broadcast') return true;
+        if (typeof broadcastState !== 'undefined' && broadcastState && broadcastState.streams) {
+            for (const [, ss] of broadcastState.streams) { if (ss && ss.localStream) return true; }
+        }
+    } catch { /* */ }
+    return false;
+}
+
 function hopToStreamSlot(el) {
+    if (_chatHopWouldEndBroadcast()) {
+        if (typeof toast === 'function') toast("You're live in this tab — stop your broadcast before switching streams", 'info');
+        return;
+    }
     const ch = el && el.dataset ? el.dataset.channel : '';
     const ref = el && el.dataset ? el.dataset.ref : '';
     if (!ch || typeof navigate !== 'function' || typeof channelPath !== 'function') return;
@@ -3665,7 +3681,8 @@ function renderChatStreamHops() {
     if (!messages || !messages.parentNode) return;
     let bar = document.getElementById('chat-stream-hops');
     const others = (chatLiveSlots || []).filter(s => Number(s.live_session_id) !== Number(chatStreamId));
-    if (!chatChannel || others.length === 0) {
+    // Hide the hop bar entirely while broadcasting here (hopping would end the stream).
+    if (!chatChannel || others.length === 0 || _chatHopWouldEndBroadcast()) {
         if (bar) bar.remove();
         return;
     }
@@ -4878,9 +4895,9 @@ function _handleGlobalFeedMessage(msg) {
     // Source badge
     let sourceBadge = '';
     if (hasStreamChannel) {
-        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-stream" title="From ${esc(msg.stream_channel)}'s stream"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</span> `;
+        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-stream" title="From ${esc(msg.stream_channel)}'s stream" style="cursor:pointer" onclick="navigate('/' + this.dataset.channel)" data-channel="${esc(msg.stream_channel)}"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</span> `;
     } else {
-        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-global" title="Global chat"><i class="fa-solid fa-globe"></i> Global</span> `;
+        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-global" title="Open Global Chat" style="cursor:pointer" onclick="navigate('/chat')"><i class="fa-solid fa-globe"></i> Global</span> `;
     }
 
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';

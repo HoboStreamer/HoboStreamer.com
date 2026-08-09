@@ -688,8 +688,92 @@ class ChatRelayService {
 
     // ── YouTube Live Chat (Scraping approach — no API key needed) ──
 
+    /**
+     * Official YouTube liveChat API path (used when the streamer linked YouTube via
+     * OAuth — reliable, unlike page scraping which YouTube blocks). Returns true if
+     * it took ownership of the bridge (connection exists), false to fall back.
+     */
+    async _connectYouTubeApi(bridge) {
+        if (bridge.stopped) return false;
+        let userId = null;
+        try { const s = db.getStreamById(bridge.streamId); userId = s && s.user_id; } catch { /* */ }
+        if (!userId) return false;
+        const conn = db.getPlatformConnection(userId, 'youtube');
+        if (!conn || !conn.access_token) return false;
+
+        const platformOAuth = require('./platform-oauth');
+        const token = await platformOAuth.getValidAccessToken(conn);
+        if (!token) return false;
+        const H = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+        // Resolve the currently-live broadcast's liveChatId.
+        let liveChatId = null;
+        for (const status of ['active', 'upcoming']) {
+            try {
+                const r = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&broadcastStatus=${status}&broadcastType=all&maxResults=10`, { headers: H });
+                if (!r.ok) continue;
+                const j = await r.json();
+                const item = (j.items || []).find(b => b.snippet && b.snippet.liveChatId);
+                if (item) { liveChatId = item.snippet.liveChatId; break; }
+            } catch { /* try next */ }
+        }
+        if (!liveChatId) {
+            // Linked but no live chat yet — retry the API path shortly (own it, don't scrape).
+            if (!bridge.stopped) bridge.reconnectTimer = setTimeout(() => this._connectYouTubeApi(bridge).catch(() => {}), 15000);
+            return true;
+        }
+
+        console.log(`[ChatRelay] YouTube: using official liveChat API for stream ${bridge.streamId}`);
+        bridge._ytPageToken = undefined;
+        bridge._ytFirstPoll = true; // skip the initial backlog; only relay new messages
+
+        const poll = async () => {
+            if (bridge.stopped) return;
+            try {
+                const url = new URL('https://www.googleapis.com/youtube/v3/liveChatMessages');
+                url.searchParams.set('liveChatId', liveChatId);
+                url.searchParams.set('part', 'snippet,authorDetails');
+                url.searchParams.set('maxResults', '200');
+                if (bridge._ytPageToken) url.searchParams.set('pageToken', bridge._ytPageToken);
+                const r = await fetch(url, { headers: H });
+                if (!r.ok) {
+                    if (r.status === 403 || r.status === 404) {
+                        // Chat ended / access lost — try to re-resolve after a delay.
+                        if (!bridge.stopped) bridge.reconnectTimer = setTimeout(() => this._connectYouTubeApi(bridge).catch(() => {}), 20000);
+                        return;
+                    }
+                    if (!bridge.stopped) bridge.pollTimer = setTimeout(poll, 5000);
+                    return;
+                }
+                const j = await r.json();
+                bridge._ytPageToken = j.nextPageToken;
+                if (!bridge._ytFirstPoll) {
+                    for (const it of (j.items || [])) {
+                        const name = it.authorDetails && it.authorDetails.displayName;
+                        const sn = it.snippet || {};
+                        const text = sn.displayMessage || (sn.textMessageDetails && sn.textMessageDetails.messageText);
+                        if (name && text) this._broadcastMessage(bridge, name, text);
+                    }
+                }
+                bridge._ytFirstPoll = false;
+                const interval = Math.max(2500, Math.min(15000, j.pollingIntervalMillis || 5000));
+                if (!bridge.stopped) bridge.pollTimer = setTimeout(poll, interval);
+            } catch (e) {
+                if (!bridge.stopped) bridge.pollTimer = setTimeout(poll, 6000);
+            }
+        };
+        poll();
+        return true;
+    }
+
     async _connectYouTube(bridge) {
         if (bridge.stopped) return;
+        // Prefer the official liveChat API when YouTube is linked (scraping is unreliable).
+        try {
+            if (await this._connectYouTubeApi(bridge)) return;
+        } catch (e) {
+            console.warn('[ChatRelay] YouTube API path error, falling back to scrape:', e.message);
+        }
 
         // Track consecutive YouTube failures — give up after 5 to avoid log spam
         if (!bridge._ytFailures) bridge._ytFailures = 0;
