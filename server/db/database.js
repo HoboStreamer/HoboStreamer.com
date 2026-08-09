@@ -728,6 +728,7 @@ function initDb() {
             ['ai_paste_analysis_enabled', 'true', 'Analyze image + text pastes (when AI is enabled)', 'boolean'],
             ['ai_stream_memory_enabled', 'false', 'Periodically analyze live-stream thumbnails into timestamped memories', 'boolean'],
             ['ai_stream_capture_interval_sec', '120', 'Seconds between live-stream AI memory captures', 'number'],
+            ['ai_transcription_enabled', 'true', 'Transcribe live-stream/clip/VOD audio into memories — FREE, runs locally via whisper.cpp (no API/cost). Requires whisper.cpp installed on the server', 'boolean'],
             ['ai_max_cost_usd_per_day', '0', 'Daily AI spend cap in USD (0 = no cap)', 'number'],
             ['ai_input_cost_per_mtok', '3.0', 'Estimated input cost per million tokens (for cost breakdown)', 'number'],
             ['ai_output_cost_per_mtok', '15.0', 'Estimated output cost per million tokens (for cost breakdown)', 'number'],
