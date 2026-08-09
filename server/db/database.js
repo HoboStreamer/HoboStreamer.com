@@ -421,6 +421,20 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] platform_connections migration:', e.message); }
 
+    // Per-streamer channel points ("Hobo Nickels"). A viewer holds a separate
+    // Nickels balance for each streamer they watch (Twitch-channel-points style),
+    // spent only on that streamer's rewards. The global users.hobo_coins_balance
+    // is now a decoupled "gold" wallet for HoboGame / cosmetics / media requests.
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS channel_points (
+            user_id INTEGER NOT NULL,
+            streamer_id INTEGER NOT NULL,
+            balance INTEGER NOT NULL DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, streamer_id)
+        )`);
+    } catch (e) { console.warn('[DB] channel_points migration:', e.message); }
+
     // Kick chatroom-id cache. Kick's v2 API (which exposes the Pusher chatroom id)
     // is Cloudflare-blocked from datacenter IPs, so resolution fails intermittently.
     // Once we resolve a channel's ids we persist them here and reuse forever — the
@@ -2361,6 +2375,30 @@ function getRestreamDestinationsByManagedStream(managedStreamId) {
 }
 
 // ── Platform OAuth connection helpers ────────────────────────
+
+// ── Per-streamer channel points ("Hobo Nickels") ──
+function getChannelPoints(userId, streamerId) {
+    if (!userId || !streamerId) return 0;
+    const r = get('SELECT balance FROM channel_points WHERE user_id = ? AND streamer_id = ?', [userId, streamerId]);
+    return r ? r.balance : 0;
+}
+function addChannelPoints(userId, streamerId, amount) {
+    if (!userId || !streamerId || !amount) return getChannelPoints(userId, streamerId);
+    run(`INSERT INTO channel_points (user_id, streamer_id, balance, updated_at)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(user_id, streamer_id) DO UPDATE SET
+            balance = balance + excluded.balance, updated_at = CURRENT_TIMESTAMP`,
+        [userId, streamerId, amount]);
+    return getChannelPoints(userId, streamerId);
+}
+// Atomic spend — returns true only if the viewer had enough for this streamer.
+function deductChannelPoints(userId, streamerId, amount) {
+    if (!userId || !streamerId) return false;
+    const res = run(`UPDATE channel_points SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP
+                     WHERE user_id = ? AND streamer_id = ? AND balance >= ?`,
+        [amount, userId, streamerId, amount]);
+    return (res?.changes || 0) > 0;
+}
 
 // ── Kick chatroom-id cache (survives the Cloudflare-blocked v2 API) ──
 function getKickChannelCache(slug) {
@@ -5128,6 +5166,7 @@ module.exports = {
     // Profiles
     getUserProfile, updateUserAvatar, resetAvatarsForPaste, getUserAvatarPastes,
     getKickChannelCache, setKickChannelCache,
+    getChannelPoints, addChannelPoints, deductChannelPoints,
     // Follows
     followUser, unfollowUser, getFollowerCount, isFollowing, getFollowerIds,
     // Transactions (Hobo Bucks)

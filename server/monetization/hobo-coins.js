@@ -53,7 +53,10 @@ class HoboCoins {
             coins *= COINS.STREAK_MULTIPLIER;
         }
 
-        db.addHoboCoins(userId, coins);
+        // Channel points are per-streamer — resolve the streamer who owns this stream.
+        const streamerId = db.getStreamById(streamId)?.user_id;
+        if (!streamerId || streamerId === userId) return null; // don't earn on your own stream
+        const total = db.addChannelPoints(userId, streamerId, coins);
         db.createCoinTransaction({
             user_id: userId,
             stream_id: streamId,
@@ -68,8 +71,7 @@ class HoboCoins {
         db.run('UPDATE watch_time SET coins_earned = coins_earned + ? WHERE id = ?',
             [coins, wt.id]);
 
-        const user = db.getUserById(userId);
-        return { coins, total: user ? user.hobo_coins_balance : 0 };
+        return { coins, total, streamerId };
     }
 
     /**
@@ -85,9 +87,11 @@ class HoboCoins {
         const lastTime = chatCooldowns.get(userId) || 0;
         if (now - lastTime < COINS.CHAT_COOLDOWN_MS) return null;
 
+        const streamerId = streamId ? db.getStreamById(streamId)?.user_id : null;
+        if (!streamerId || streamerId === userId) return null;
         chatCooldowns.set(userId, now);
 
-        db.addHoboCoins(userId, COINS.CHAT_BONUS);
+        const total = db.addChannelPoints(userId, streamerId, COINS.CHAT_BONUS);
         db.createCoinTransaction({
             user_id: userId,
             stream_id: streamId,
@@ -96,8 +100,7 @@ class HoboCoins {
             message: 'Chat activity bonus',
         });
 
-        const user = db.getUserById(userId);
-        return { coins: COINS.CHAT_BONUS, total: user ? user.hobo_coins_balance : 0 };
+        return { coins: COINS.CHAT_BONUS, total, streamerId };
     }
 
     /**
@@ -114,8 +117,9 @@ class HoboCoins {
             [userId, streamerId]
         );
         if (existing) return null;
+        if (!streamerId || streamerId === userId) return null;
 
-        db.addHoboCoins(userId, COINS.FOLLOW_BONUS);
+        const total = db.addChannelPoints(userId, streamerId, COINS.FOLLOW_BONUS);
         db.createCoinTransaction({
             user_id: userId,
             stream_id: null,
@@ -124,8 +128,7 @@ class HoboCoins {
             message: `Followed streamer:${streamerId}`,
         });
 
-        const user = db.getUserById(userId);
-        return { coins: COINS.FOLLOW_BONUS, total: user ? user.hobo_coins_balance : 0 };
+        return { coins: COINS.FOLLOW_BONUS, total, streamerId };
     }
 
     /**
@@ -141,9 +144,19 @@ class HoboCoins {
         if (!reward) throw new Error('Reward not found');
         if (!reward.is_enabled) throw new Error('Reward is disabled');
 
-        // Check user has enough coins
-        if (!db.deductHoboCoins(userId, reward.cost)) {
-            throw new Error('Not enough Hobo Nickels');
+        // Channel points are per-streamer. Normal rewards spend the reward owner's
+        // points; a global (admin) reward spends the points of the channel you're
+        // currently watching.
+        let pointsStreamerId = reward.streamer_id;
+        if (reward.is_global && streamId) {
+            const s = db.getStreamById(streamId);
+            if (s?.user_id) pointsStreamerId = s.user_id;
+        }
+        if (!pointsStreamerId) throw new Error('No channel context for this reward');
+
+        // Check user has enough points for this channel
+        if (!db.deductChannelPoints(userId, pointsStreamerId, reward.cost)) {
+            throw new Error('Not enough Hobo Nickels for this channel');
         }
 
         // Check per-user cooldown
@@ -155,8 +168,7 @@ class HoboCoins {
             if (lastRedemption) {
                 const elapsed = (Date.now() - new Date(lastRedemption.created_at.replace(' ', 'T') + 'Z').getTime()) / 1000;
                 if (elapsed < reward.cooldown_seconds) {
-                    // Refund
-                    db.addHoboCoins(userId, reward.cost);
+                    db.addChannelPoints(userId, pointsStreamerId, reward.cost); // refund
                     throw new Error(`Cooldown: wait ${Math.ceil(reward.cooldown_seconds - elapsed)}s`);
                 }
             }
@@ -169,7 +181,7 @@ class HoboCoins {
                 [rewardId, streamId]
             );
             if (count && count.c >= reward.max_per_stream) {
-                db.addHoboCoins(userId, reward.cost);
+                db.addChannelPoints(userId, pointsStreamerId, reward.cost); // refund
                 throw new Error('Max redemptions reached for this stream');
             }
         }
@@ -195,21 +207,28 @@ class HoboCoins {
         // Increment redemption count
         db.run('UPDATE coin_rewards SET redemption_count = redemption_count + 1 WHERE id = ?', [rewardId]);
 
-        const user = db.getUserById(userId);
         return {
             redemption: {
                 id: result.lastInsertRowid,
                 reward: reward,
                 user_input: userInput,
             },
-            remaining: user ? user.hobo_coins_balance : 0,
+            remaining: db.getChannelPoints(userId, pointsStreamerId),
+            streamerId: pointsStreamerId,
         };
     }
 
     /**
-     * Get user's coin balance
+     * A viewer's channel-points balance for a specific streamer ("Hobo Nickels").
      */
-    getBalance(userId) {
+    getBalance(userId, streamerId) {
+        return db.getChannelPoints(userId, streamerId);
+    }
+
+    /**
+     * The global "gold" wallet (HoboGame / cosmetics / media requests).
+     */
+    getGold(userId) {
         const user = db.getUserById(userId);
         return user ? user.hobo_coins_balance : 0;
     }

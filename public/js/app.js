@@ -556,16 +556,32 @@ async function loadBalance() {
         const balEl = document.getElementById('nav-balance-amount');
         if (balEl) balEl.textContent = parseFloat(bal).toFixed(2);
     } catch { /* silent */ }
+    // Nickels are per-channel now — the navbar coins are driven by updateChannelPointsNav()
+    // when a stream/VOD/clip is open, not by this global balance load.
+}
+
+// Navbar "Hobo Nickels" = the viewer's channel points for the streamer they're
+// currently watching. Show + populate it for a streamer, or hide when not watching
+// (or when it's your own channel — you don't earn points on yourself).
+let _navPointsStreamerId = null;
+async function updateChannelPointsNav(streamerId) {
+    _navPointsStreamerId = streamerId || null;
+    const el = document.getElementById('nav-coins');
+    const amt = document.getElementById('nav-coins-amount');
+    if (!streamerId || !currentUser || String(streamerId) === String(currentUser.id)) {
+        if (el) el.style.display = 'none';
+        return;
+    }
     try {
-        const coinData = await api('/coins/balance');
-        const coins = coinData.balance || 0;
-        const coinEl = document.getElementById('nav-coins-amount');
-        if (coinEl) coinEl.textContent = coins.toLocaleString();
-        // Also update rewards panels if visible
-        document.querySelectorAll('.rewards-coin-balance').forEach(el => {
-            el.textContent = coins.toLocaleString();
-        });
-    } catch { /* silent */ }
+        const d = await api(`/coins/channel-balance?streamerId=${streamerId}`);
+        if (amt) amt.textContent = (d.balance || 0).toLocaleString();
+        if (el) el.style.display = '';
+    } catch { if (el) el.style.display = 'none'; }
+}
+// Navbar Nickels click → open this channel's rewards panel.
+function openChannelRewards() {
+    if (typeof toggleRewardsPanel === 'function') toggleRewardsPanel();
+    else if (_navPointsStreamerId) navigate(channelPath(currentStreamData?.username || ''));
 }
 
 function toggleUserMenu() {
@@ -630,6 +646,7 @@ function navigate(urlPath, replace = false) {
     if (typeof destroyChat === 'function') destroyChat();
     if (typeof destroyCanvasPage === 'function') destroyCanvasPage();
     if (typeof stopCoinHeartbeat === 'function') stopCoinHeartbeat();
+    if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(null);
     if (typeof stopStreamStatusPoll === 'function') stopStreamStatusPoll();
     clearInterval(uptimeInterval);
 
@@ -2721,6 +2738,7 @@ function activateChannelStream(stream) {
     if (typeof initChat === 'function') initChat(stream.id);
     if (typeof loadStreamControls === 'function') loadStreamControls(stream.id);
     if (typeof startCoinHeartbeat === 'function') startCoinHeartbeat(stream.id);
+    if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(stream.user_id);
     startUptime(stream.started_at);
 
     // Start polling for stream status changes
@@ -2881,6 +2899,7 @@ async function openStream(streamId) {
         if (typeof initChat === 'function') initChat(streamId);
         if (typeof loadStreamControls === 'function') loadStreamControls(streamId);
         if (typeof startCoinHeartbeat === 'function') startCoinHeartbeat(streamId);
+        if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(s.user_id);
         loadStreamGoals(streamId);
         startUptime(s.started_at);
     } catch (e) {
@@ -3170,6 +3189,8 @@ async function loadVodPlayer(vodId) {
         document.getElementById('vp-duration').textContent = formatDuration(v.duration_seconds || v.duration);
         document.getElementById('vp-views').textContent = `${v.view_count || 0} views`;
         document.getElementById('vp-description').textContent = v.description || '';
+        // Show this streamer's Hobo Nickels in the navbar while viewing their VOD.
+        if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(v.user_id);
 
         // Protocol badge
         const vpProto = document.getElementById('vp-protocol');
@@ -3797,6 +3818,8 @@ async function loadClipPlayer(clipId) {
         document.getElementById('clp-date').textContent = formatDateTime(cl.created_at);
         document.getElementById('clp-duration').textContent = formatDuration(cl.duration_seconds);
         document.getElementById('clp-description').textContent = cl.description || '';
+        // Show this streamer's Hobo Nickels in the navbar while viewing their clip.
+        if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(cl.user_id);
 
         // View count
         const clpViews = document.getElementById('clp-views');

@@ -815,6 +815,7 @@ class ChatServer {
                         type: 'coin_earned',
                         coins: coinResult.coins,
                         total: coinResult.total,
+                        streamerId: coinResult.streamerId,
                         reason: 'Chat bonus',
                     });
                 }
@@ -988,12 +989,13 @@ class ChatServer {
                     }).then((request) => {
                         this.broadcastToStream(client.streamId, {
                             type: 'system',
-                            message: `${request.username} added “${request.title}”${request.duration_seconds ? ` (${Math.floor(request.duration_seconds / 60)}m${request.duration_seconds % 60}s)` : ''} to the media queue for ${request.cost} Hobo Nickels.`,
+                            message: `${request.username} added “${request.title}”${request.duration_seconds ? ` (${Math.floor(request.duration_seconds / 60)}m${request.duration_seconds % 60}s)` : ''} to the media queue for ${request.cost} gold.`,
                             timestamp: new Date().toISOString(),
                         });
                         this.sendTo(ws, {
                             type: 'coin_earned',
                             coins: 0,
+                            currency: 'gold',
                             total: db.getUserById(client.user.id)?.hobo_coins_balance || 0,
                             reason: 'Media request purchase',
                         });

@@ -21,10 +21,15 @@ const db = require('../db/database');
 
 const router = express.Router();
 
-// ── Get Coin Balance ─────────────────────────────────────────
+// ── Get GOLD balance (HoboGame / cosmetics / media wallet) ───
 router.get('/balance', requireAuth, (req, res) => {
-    const balance = hoboCoins.getBalance(req.user.id);
-    res.json({ balance });
+    res.json({ balance: hoboCoins.getGold(req.user.id) });
+});
+
+// ── Get channel-points ("Hobo Nickels") for a specific streamer ──
+router.get('/channel-balance', requireAuth, (req, res) => {
+    const streamerId = parseInt(req.query.streamerId) || null;
+    res.json({ balance: streamerId ? hoboCoins.getBalance(req.user.id, streamerId) : 0, streamerId });
 });
 
 // ── Get Earning Rates ────────────────────────────────────────
@@ -47,11 +52,11 @@ router.post('/heartbeat', requireAuth, (req, res) => {
 
         const result = hoboCoins.awardWatch(req.user.id, streamId);
         if (result) {
-            return res.json({ earned: result.coins, balance: result.total });
+            return res.json({ earned: result.coins, balance: result.total, streamerId: result.streamerId });
         }
-        // No coins earned this tick (not on a 5-min boundary)
-        const balance = hoboCoins.getBalance(req.user.id);
-        res.json({ earned: 0, balance });
+        // No points earned this tick (not on a 5-min boundary) — return this channel's balance.
+        const streamerId = db.getStreamById(parseInt(streamId))?.user_id || null;
+        res.json({ earned: 0, balance: streamerId ? hoboCoins.getBalance(req.user.id, streamerId) : 0, streamerId });
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
@@ -181,6 +186,7 @@ router.post('/redeem', requireAuth, (req, res) => {
         res.json({
             message: `Redeemed "${result.redemption.reward.title}"`,
             remaining: result.remaining,
+            streamerId: result.streamerId,
             redemption_id: result.redemption.id,
         });
     } catch (err) {
@@ -209,13 +215,19 @@ router.post('/redemptions/:id', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not your redemption' });
         }
 
-        // If rejected, refund coins
+        // If rejected, refund the channel points to the channel they were spent on.
         if (status === 'rejected') {
             const reward = db.getCoinRewardById(redemption.reward_id);
             if (reward) {
-                db.addHoboCoins(redemption.user_id, reward.cost);
+                let refundStreamerId = redemption.streamer_id;
+                if (reward.is_global && redemption.stream_id) {
+                    const s = db.getStreamById(redemption.stream_id);
+                    if (s?.user_id) refundStreamerId = s.user_id;
+                }
+                db.addChannelPoints(redemption.user_id, refundStreamerId, reward.cost);
                 db.createCoinTransaction({
                     user_id: redemption.user_id,
+                    stream_id: redemption.stream_id || null,
                     amount: reward.cost,
                     type: 'refund',
                     reward_id: redemption.reward_id,

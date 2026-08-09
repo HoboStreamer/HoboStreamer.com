@@ -93,9 +93,9 @@ async function loadRewardsPanel() {
         grids.forEach(g => { g.innerHTML = '<p class="muted" style="padding:8px">Failed to load rewards</p>'; });
     }
 
-    // Update coin balance in all reward panels
+    // Update this channel's points balance in all reward panels
     try {
-        const coinData = await api('/coins/balance');
+        const coinData = await api(`/coins/channel-balance?streamerId=${currentStreamData.user_id}`);
         document.querySelectorAll('.rewards-coin-balance').forEach(el => {
             el.textContent = (coinData.balance || 0).toLocaleString();
         });
@@ -157,8 +157,16 @@ async function doRedeem(rewardId, userInput) {
 // ── Chat coin_earned handler ─────────────────────────────────
 // This is called from chat.js when a coin_earned message arrives
 function handleCoinEarned(msg) {
+    // "gold" events (media/game spend) don't touch the per-channel Nickels display.
+    if (msg.currency === 'gold') return;
+    // Only reflect points for the channel currently shown in the navbar.
+    if (msg.streamerId && typeof _navPointsStreamerId !== 'undefined' && _navPointsStreamerId
+        && String(msg.streamerId) !== String(_navPointsStreamerId)) return;
     const navCoins = document.getElementById('nav-coins-amount');
     if (navCoins && msg.total !== undefined) navCoins.textContent = msg.total.toLocaleString();
+    document.querySelectorAll('.rewards-coin-balance').forEach(el => {
+        if (msg.total !== undefined) el.textContent = msg.total.toLocaleString();
+    });
 }
 
 // ── Chat redemption handler ──────────────────────────────────

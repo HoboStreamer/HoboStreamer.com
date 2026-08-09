@@ -142,7 +142,7 @@
             </a>
         </div>
         <div id="nav-auth-user" style="display:none">
-            <span class="nav-coins" id="nav-coins" title="Hobo Nickels — Click to open inventory" onclick="openCosmeticsModal()">
+            <span class="nav-coins" id="nav-coins" title="Hobo Nickels — this channel's points (click for rewards)" style="display:none" onclick="openChannelRewards()">
                 <i class="fa-solid fa-coins"></i> <span id="nav-coins-amount">0</span>
             </span>
             <span class="nav-balance" id="nav-balance" title="Hobo Bucks balance" onclick="showModal('buy-funds')">
@@ -161,6 +161,7 @@
                 <a href="/dashboard" onclick="return handleLinkClick(event, '/dashboard')"><i class="fa-solid fa-gauge-high"></i> My Dashboard</a>
                 <hr>
                 <a href="#" onclick="event.preventDefault();showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
+                <a href="#" onclick="event.preventDefault();if(typeof openCosmeticsModal==='function')openCosmeticsModal()"><i class="fa-solid fa-shirt"></i> Cosmetics</a>
                 <a href="/themes" onclick="return handleLinkClick(event, '/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
                 <a href="https://my.hobo.tools" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
                 <hr>
@@ -4534,7 +4535,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=2"></script>
-<script src="/js/app.js?v=21"></script>
+<script src="/js/app.js?v=22"></script>
 <script src="/js/stream-player.js?v=8"></script>
 <script src="/js/emotes.js?v=8"></script>
 <script src="/js/gif-picker.js?v=1"></script>
@@ -4589,7 +4590,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 </div>
 
 <script src="/js/hobo-bucks.js?v=3"></script>
-<script src="/js/hobo-coins.js?v=2"></script>
+<script src="/js/hobo-coins.js?v=3"></script>
 <script src="/js/cosmetics-ui.js?v=2"></script>
 <!-- Broadcast modules — load order matters: state → devices → vods → workspace → core -->
 <script src="/js/broadcast-state.js?v=1"></script>
