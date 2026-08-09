@@ -643,7 +643,85 @@ function initDb() {
         ];
         const seedGoogle = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
         for (const [k, v, d, t] of googleSeeds) seedGoogle.run(k, v, d, t);
+
+        // Seed payment-provider + monetization settings (configured in hobo.tools/admin → Payments).
+        // Master switch is OFF by default so nothing goes live until an admin enables it.
+        const paymentSeeds = [
+            ['payments_enabled', 'false', 'Master switch: enable real-money purchases & subscriptions', 'boolean'],
+            ['bucks_per_usd', '1', 'Hobo Bucks granted per 1 USD (1 Buck = $1.00)', 'number'],
+            ['bucks_min_purchase_usd', '5', 'Minimum Hobo Bucks purchase in USD', 'number'],
+            ['sub_price_usd', '4.99', 'Monthly channel subscription price in USD', 'number'],
+            ['sub_streamer_share_pct', '70', 'Percent of a subscription that goes to the streamer (as Hobo Bucks)', 'number'],
+            // PayPal (REST)
+            ['paypal_enabled', 'false', 'Enable PayPal', 'boolean'],
+            ['paypal_mode', 'sandbox', 'PayPal mode: sandbox | live', 'string'],
+            ['paypal_client_id', '', 'PayPal REST client ID', 'string'],
+            ['paypal_client_secret', '', 'PayPal REST client secret', 'string'],
+            ['paypal_webhook_id', '', 'PayPal webhook ID (for signature verification)', 'string'],
+            // Stripe
+            ['stripe_enabled', 'false', 'Enable Stripe', 'boolean'],
+            ['stripe_secret_key', '', 'Stripe secret key (sk_live_… / sk_test_…)', 'string'],
+            ['stripe_publishable_key', '', 'Stripe publishable key (pk_…)', 'string'],
+            ['stripe_webhook_secret', '', 'Stripe webhook signing secret (whsec_…)', 'string'],
+            // CCBill (FlexForms)
+            ['ccbill_enabled', 'false', 'Enable CCBill', 'boolean'],
+            ['ccbill_client_account', '', 'CCBill client account number', 'string'],
+            ['ccbill_subaccount', '', 'CCBill subaccount', 'string'],
+            ['ccbill_flexform_id', '', 'CCBill FlexForms form ID', 'string'],
+            ['ccbill_salt', '', 'CCBill FlexForms encryption/salt key', 'string'],
+            ['ccbill_webhook_secret', '', 'CCBill webhook shared secret (query token we require)', 'string'],
+            // Crypto (NOWPayments hosted)
+            ['crypto_enabled', 'false', 'Enable crypto payments', 'boolean'],
+            ['crypto_provider', 'nowpayments', 'Crypto provider (nowpayments)', 'string'],
+            ['crypto_api_key', '', 'Crypto provider API key', 'string'],
+            ['crypto_ipn_secret', '', 'Crypto provider IPN/webhook secret', 'string'],
+        ];
+        const seedPay = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of paymentSeeds) seedPay.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
+
+    // Migrate: extend the subscriptions table for real recurring billing.
+    try {
+        const cols = database.pragma('table_info(subscriptions)').map(c => c.name);
+        const add = [
+            { name: 'provider', def: "TEXT DEFAULT NULL" },            // stripe|paypal|ccbill|crypto|bucks
+            { name: 'provider_ref', def: "TEXT DEFAULT NULL" },        // provider subscription/agreement id
+            { name: 'price_cents', def: "INTEGER DEFAULT 0" },
+            { name: 'currency', def: "TEXT DEFAULT 'usd'" },
+            { name: 'status', def: "TEXT DEFAULT 'active'" },          // active|canceled|past_due|expired
+            { name: 'cancel_at_period_end', def: "INTEGER DEFAULT 0" },
+            { name: 'current_period_end', def: "DATETIME DEFAULT NULL" },
+            { name: 'created_at', def: "DATETIME DEFAULT CURRENT_TIMESTAMP" },
+            { name: 'updated_at', def: "DATETIME DEFAULT CURRENT_TIMESTAMP" },
+        ];
+        for (const c of add) {
+            if (!cols.includes(c.name)) database.exec(`ALTER TABLE subscriptions ADD COLUMN ${c.name} ${c.def}`);
+        }
+        database.exec('CREATE INDEX IF NOT EXISTS idx_subs_streamer ON subscriptions(streamer_id, status)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_subs_subscriber ON subscriptions(subscriber_id, status)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_subs_provider_ref ON subscriptions(provider, provider_ref)');
+    } catch (e) { console.warn('[DB] subscriptions migration:', e.message); }
+
+    // Payment intents/orders — tracks pending purchases so webhooks can credit idempotently.
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS payment_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            provider TEXT NOT NULL,
+            provider_ref TEXT,
+            kind TEXT NOT NULL DEFAULT 'bucks',        -- bucks | subscription
+            amount_cents INTEGER NOT NULL DEFAULT 0,
+            currency TEXT DEFAULT 'usd',
+            bucks INTEGER DEFAULT 0,
+            streamer_id INTEGER,
+            status TEXT DEFAULT 'pending',             -- pending | paid | failed | credited
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_payment_orders_ref ON payment_orders(provider, provider_ref)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_payment_orders_user ON payment_orders(user_id)');
+    } catch (e) { console.warn('[DB] payment_orders migration:', e.message); }
 
     // Migrate: expand role CHECK to include global_mod, migrate 'mod' → 'global_mod'
     try {
@@ -2325,6 +2403,96 @@ function deductHoboBucks(userId, amount) {
     run(`UPDATE users SET hobo_bucks_balance = hobo_bucks_balance - ? WHERE id = ?`,
         [amount, userId]);
     return true;
+}
+
+// ── Payment orders (idempotent purchase tracking) ────────────
+
+function createPaymentOrder({ user_id, provider, provider_ref = null, kind = 'bucks', amount_cents = 0, currency = 'usd', bucks = 0, streamer_id = null, status = 'pending' }) {
+    const res = run(
+        `INSERT INTO payment_orders (user_id, provider, provider_ref, kind, amount_cents, currency, bucks, streamer_id, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [user_id, provider, provider_ref, kind, amount_cents, currency, bucks, streamer_id, status]
+    );
+    return get('SELECT * FROM payment_orders WHERE id = ?', [res.lastInsertRowid]);
+}
+
+function getPaymentOrderById(id) {
+    return get('SELECT * FROM payment_orders WHERE id = ?', [id]);
+}
+
+function getPaymentOrderByRef(provider, ref) {
+    if (!ref) return null;
+    return get('SELECT * FROM payment_orders WHERE provider = ? AND provider_ref = ? ORDER BY id DESC LIMIT 1', [provider, ref]);
+}
+
+function updatePaymentOrder(id, fields) {
+    const allowed = new Set(['provider_ref', 'status', 'amount_cents', 'bucks', 'currency', 'streamer_id']);
+    const entries = Object.entries(fields || {}).filter(([k]) => allowed.has(k));
+    if (!entries.length) return getPaymentOrderById(id);
+    const sets = entries.map(([k]) => `${k} = ?`);
+    sets.push('updated_at = CURRENT_TIMESTAMP');
+    run(`UPDATE payment_orders SET ${sets.join(', ')} WHERE id = ?`, [...entries.map(([, v]) => v), id]);
+    return getPaymentOrderById(id);
+}
+
+// ── Subscription helpers ─────────────────────────────────────
+
+function upsertSubscription({ subscriber_id, streamer_id, tier = 1, provider = null, provider_ref = null, price_cents = 0, currency = 'usd', status = 'active', current_period_end = null }) {
+    // Reuse an existing (subscriber,streamer) row if present, else insert.
+    const existing = get('SELECT * FROM subscriptions WHERE subscriber_id = ? AND streamer_id = ?', [subscriber_id, streamer_id]);
+    if (existing) {
+        run(`UPDATE subscriptions SET tier=?, provider=?, provider_ref=COALESCE(?, provider_ref), price_cents=?, currency=?,
+                status=?, is_active=?, current_period_end=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+            [tier, provider, provider_ref, price_cents, currency, status, status === 'active' ? 1 : 0, current_period_end, existing.id]);
+        return get('SELECT * FROM subscriptions WHERE id = ?', [existing.id]);
+    }
+    const res = run(`INSERT INTO subscriptions (subscriber_id, streamer_id, tier, provider, provider_ref, price_cents, currency, status, is_active, current_period_end)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [subscriber_id, streamer_id, tier, provider, provider_ref, price_cents, currency, status, status === 'active' ? 1 : 0, current_period_end]);
+    return get('SELECT * FROM subscriptions WHERE id = ?', [res.lastInsertRowid]);
+}
+
+function getSubscriptionByProviderRef(provider, ref) {
+    if (!ref) return null;
+    return get('SELECT * FROM subscriptions WHERE provider = ? AND provider_ref = ? ORDER BY id DESC LIMIT 1', [provider, ref]);
+}
+
+function getActiveSubscription(subscriberId, streamerId) {
+    return get(`SELECT * FROM subscriptions WHERE subscriber_id = ? AND streamer_id = ? AND status = 'active'
+                AND (current_period_end IS NULL OR datetime(current_period_end) > CURRENT_TIMESTAMP) LIMIT 1`,
+        [subscriberId, streamerId]);
+}
+
+function isActiveSubscriber(subscriberId, streamerId) {
+    if (!subscriberId || !streamerId) return false;
+    return !!getActiveSubscription(subscriberId, streamerId);
+}
+
+function getSubscriptionsByStreamer(streamerId) {
+    return all(`SELECT s.*, u.username AS subscriber_username, u.display_name AS subscriber_display, u.avatar_url AS subscriber_avatar
+                FROM subscriptions s LEFT JOIN users u ON s.subscriber_id = u.id
+                WHERE s.streamer_id = ? AND s.status = 'active' ORDER BY s.started_at DESC`, [streamerId]);
+}
+
+function getSubscriptionsBySubscriber(subscriberId) {
+    return all(`SELECT s.*, u.username AS streamer_username, u.display_name AS streamer_display, u.avatar_url AS streamer_avatar
+                FROM subscriptions s LEFT JOIN users u ON s.streamer_id = u.id
+                WHERE s.subscriber_id = ? ORDER BY s.started_at DESC`, [subscriberId]);
+}
+
+function getActiveSubscriberCount(streamerId) {
+    const r = get(`SELECT COUNT(*) AS n FROM subscriptions WHERE streamer_id = ? AND status = 'active'
+                   AND (current_period_end IS NULL OR datetime(current_period_end) > CURRENT_TIMESTAMP)`, [streamerId]);
+    return r ? r.n : 0;
+}
+
+function setSubscriptionStatus(id, status, fields = {}) {
+    const cpe = fields.current_period_end !== undefined ? fields.current_period_end : null;
+    const cape = fields.cancel_at_period_end !== undefined ? (fields.cancel_at_period_end ? 1 : 0) : 0;
+    run(`UPDATE subscriptions SET status=?, is_active=?, cancel_at_period_end=?,
+            current_period_end=COALESCE(?, current_period_end), updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+        [status, status === 'active' ? 1 : 0, cape, cpe, id]);
+    return get('SELECT * FROM subscriptions WHERE id = ?', [id]);
 }
 
 // ── VOD helpers ──────────────────────────────────────────────
@@ -4756,6 +4924,9 @@ module.exports = {
     createRestreamDestination, updateRestreamDestination, deleteRestreamDestination,
     getPlatformConnection, getPlatformConnectionById, getPlatformConnectionsByUserId,
     upsertPlatformConnection, updatePlatformConnectionTokens, deletePlatformConnection,
+    createPaymentOrder, getPaymentOrderById, getPaymentOrderByRef, updatePaymentOrder,
+    upsertSubscription, getSubscriptionByProviderRef, getActiveSubscription, isActiveSubscriber,
+    getSubscriptionsByStreamer, getSubscriptionsBySubscriber, getActiveSubscriberCount, setSubscriptionStatus,
     getRestreamDestinationsByManagedStream,
     // Chat
     saveChatMessage, searchChatMessages, getUserChatHistory,

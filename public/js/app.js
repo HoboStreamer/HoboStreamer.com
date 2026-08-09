@@ -427,6 +427,7 @@ function showModal(id) {
     };
     content.innerHTML = typeof templates[id] === 'function' ? templates[id]() : (templates[id] || `<p>Unknown modal: ${id}</p>`);
     overlay.classList.add('show');
+    if (id === 'buy-funds' && typeof _initBuyBucks === 'function') _initBuyBucks();
 }
 
 function closeModal() {
