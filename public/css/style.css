@@ -66,10 +66,10 @@ body {
     line-height: 1.5;
     min-height: 100vh;
     overflow-x: hidden;
-    background-image:
-        radial-gradient(circle at top left, rgba(192, 150, 92, 0.14), transparent 28%),
-        radial-gradient(circle at top right, rgba(52, 152, 219, 0.08), transparent 24%),
-        linear-gradient(180deg, #101015 0%, #0d0d0f 36%, #0c0d12 100%);
+    /* Theme-following page backdrop (was a hardcoded dark gradient that made every
+       LIGHT theme render dark → invisible dark text). */
+    background-image: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 42%);
+    background-attachment: fixed;
 }
 body::before,
 body::after {
@@ -1203,7 +1203,7 @@ main#app { position: relative; z-index: 1; }
    HERO
    ═══════════════════════════════════════════════════════════════ */
 .hero {
-    background: linear-gradient(135deg, #1a150e 0%, #0d0d0f 50%, #0e1018 100%);
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 65%);
     border-bottom: 1px solid var(--border);
     padding: clamp(48px, 8vw, 84px) 20px;
     text-align: center;

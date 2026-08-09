@@ -18,31 +18,40 @@ const BUILTIN_THEMES = (() => {
     const lum = (h) => { const c=_rgb(h).map(v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);}); return 0.2126*c[0]+0.7152*c[1]+0.0722*c[2]; };
     const onAccent = (a) => lum(a) > 0.42 ? '#0b0d10' : '#ffffff';
     const rgba = (h,a) => { const c=_rgb(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; };
+    // HSL conditioning: keep every theme's accent + surfaces in a comfortable,
+    // cohesive band (no neon accents, no harsh-black or blinding-white surfaces),
+    // while preserving each theme's hue identity.
+    const _r2h = (c) => { const r=c[0]/255,g=c[1]/255,b=c[2]/255,mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn; let h=0,s=0,l=(mx+mn)/2; if(d){ s=l>0.5?d/(2-mx-mn):d/(mx+mn); h=mx===r?((g-b)/d+(g<b?6:0)):mx===g?((b-r)/d+2):((r-g)/d+4); h/=6;} return [h,s,l]; };
+    const _h2r = (h,s,l) => { if(!s) return [l*255,l*255,l*255]; const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q,f=(t)=>{t=(t%1+1)%1;return t<1/6?p+(q-p)*6*t:t<0.5?q:t<2/3?p+(q-p)*(2/3-t)*6:p;}; return [f(h+1/3)*255,f(h)*255,f(h-1/3)*255]; };
+    const clmp = (v,a,b)=>Math.max(a,Math.min(b,v));
+    const condAcc  = (hex)=>{ const [h,s,l]=_r2h(_rgb(hex)); return _hex(..._h2r(h, clmp(s,0.45,0.68), clmp(l,0.58,0.70))); };
+    const condDark = (hex)=>{ const [h,s,l]=_r2h(_rgb(hex)); return _hex(..._h2r(h, Math.min(s,0.20), clmp(l,0.085,0.145))); };
+    const condLight= (hex)=>{ const [h,s,l]=_r2h(_rgb(hex)); return _hex(..._h2r(h, Math.min(s,0.10), clmp(l,0.895,0.94))); };
     const W='#ffffff', K='#000000';
     const SEM = { '--live-red':'#f0485c', '--success':'#37c871', '--warning':'#e6a53a', '--danger':'#f0485c', '--info':'#4aa3e8' };
-    const dark = (base, accent, sem) => Object.assign({
-        '--bg-primary': mix(base,K,0.34), '--bg-secondary': base,
-        '--bg-tertiary': mix(base,W,0.055), '--bg-card': mix(base,W,0.028),
-        '--bg-hover': mix(base,W,0.10), '--bg-input': mix(base,K,0.22),
-        '--text-primary': mix(base,W,0.91), '--text-secondary': mix(base,W,0.56), '--text-muted': mix(base,W,0.36),
-        '--accent': accent, '--accent-light': mix(accent,W,0.22), '--accent-dark': mix(accent,K,0.30),
-        '--border': mix(base,W,0.085), '--border-light': mix(base,W,0.15), '--on-accent': onAccent(accent),
-        '--glass': rgba(mix(base,K,0.10), 0.82), '--glass-strong': rgba(mix(base,K,0.28), 0.94),
-        '--ring-accent': `0 0 0 1px ${rgba(accent,0.20)}, 0 18px 40px rgba(0,0,0,0.30)`,
+    const dark = (b0, a0, sem) => { const base=condDark(b0), accent=condAcc(a0); return Object.assign({
+        '--bg-primary': mix(base,K,0.30), '--bg-secondary': base,
+        '--bg-tertiary': mix(base,W,0.06), '--bg-card': mix(base,W,0.03),
+        '--bg-hover': mix(base,W,0.10), '--bg-input': mix(base,K,0.20),
+        '--text-primary': mix(base,W,0.90), '--text-secondary': mix(base,W,0.56), '--text-muted': mix(base,W,0.38),
+        '--accent': accent, '--accent-light': mix(accent,W,0.20), '--accent-dark': mix(accent,K,0.26),
+        '--border': mix(base,W,0.09), '--border-light': mix(base,W,0.15), '--on-accent': onAccent(accent),
+        '--glass': rgba(mix(base,K,0.08), 0.85), '--glass-strong': rgba(mix(base,K,0.24), 0.95),
+        '--ring-accent': `0 0 0 1px ${rgba(accent,0.22)}, 0 18px 40px rgba(0,0,0,0.30)`,
         '--shadow': '0 2px 12px rgba(0,0,0,0.45)', '--shadow-lg': '0 12px 40px rgba(0,0,0,0.6)',
         '--shadow-soft': '0 12px 40px rgba(0,0,0,0.28)',
-    }, SEM, sem||{});
-    // Light: MUTED soft-gray surfaces (deliberately not bright white), a page that
-    // reads like tinted paper, gently elevated cards, and a calm muted navbar.
-    const light = (b0, accent, sem) => { const base = mix(b0, K, 0.07); return Object.assign({
+    }, SEM, sem||{}); };
+    // Light: soft tinted-paper surfaces (never harsh white), gently elevated cards,
+    // a calm muted navbar; accents conditioned to the same pleasant band.
+    const light = (b0, a0, sem) => { const base=mix(condLight(b0),K,0.04), accent=condAcc(a0); return Object.assign({
         '--bg-primary': mix(base,K,0.035), '--bg-secondary': mix(base,K,0.085),
-        '--bg-tertiary': mix(base,K,0.13), '--bg-card': mix(base,W,0.30),
-        '--bg-hover': mix(base,K,0.10), '--bg-input': mix(base,W,0.36),
-        '--text-primary': mix(base,K,0.88), '--text-secondary': mix(base,K,0.52), '--text-muted': mix(base,K,0.38),
-        '--accent': accent, '--accent-light': mix(accent,W,0.18), '--accent-dark': mix(accent,K,0.22),
-        '--border': mix(base,K,0.16), '--border-light': mix(base,K,0.09), '--on-accent': onAccent(accent),
-        '--glass': rgba(mix(base,K,0.075), 0.92), '--glass-strong': rgba(mix(base,W,0.10), 0.96),
-        '--ring-accent': `0 0 0 1px ${rgba(accent,0.22)}, 0 16px 36px rgba(20,25,40,0.12)`,
+        '--bg-tertiary': mix(base,K,0.13), '--bg-card': mix(base,W,0.32),
+        '--bg-hover': mix(base,K,0.09), '--bg-input': mix(base,W,0.38),
+        '--text-primary': mix(base,K,0.88), '--text-secondary': mix(base,K,0.52), '--text-muted': mix(base,K,0.40),
+        '--accent': accent, '--accent-light': mix(accent,W,0.16), '--accent-dark': mix(accent,K,0.20),
+        '--border': mix(base,K,0.15), '--border-light': mix(base,K,0.08), '--on-accent': onAccent(accent),
+        '--glass': rgba(mix(base,K,0.07), 0.92), '--glass-strong': rgba(mix(base,W,0.10), 0.96),
+        '--ring-accent': `0 0 0 1px ${rgba(accent,0.24)}, 0 16px 36px rgba(20,25,40,0.12)`,
         '--shadow': '0 2px 12px rgba(20,25,40,0.07)', '--shadow-lg': '0 12px 40px rgba(20,25,40,0.12)',
         '--shadow-soft': '0 12px 40px rgba(20,25,40,0.09)',
     }, SEM, sem||{}); };
