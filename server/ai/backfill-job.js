@@ -17,14 +17,15 @@ async function tick() {
         // Pastes — cheap text/image summaries.
         try {
             for (const p of db.getPastesNeedingAnalysis(2)) {
+                // Always mark attempted (even on failure / unsupported image formats) so a
+                // paste is never retried forever.
                 if (p.type === 'screenshot' && p.screenshot_path) {
                     const r = await ai.analyzeImagePaste(p.screenshot_path, p.title);
-                    if (r) db.updatePasteAi(p.id, { ai_summary: r.description || ' ', ai_tags: JSON.stringify(r.tags || []) });
+                    db.updatePasteAi(p.id, { ai_summary: (r && r.description) ? r.description : ' ', ai_tags: JSON.stringify((r && r.tags) || []) });
                 } else if (p.type === 'paste' && p.content) {
                     const r = await ai.analyzeTextPaste(p.content, p.title);
-                    if (r) db.updatePasteAi(p.id, { ai_summary: r.description || ' ', ai_tags: '[]' });
+                    db.updatePasteAi(p.id, { ai_summary: (r && r.description) ? r.description : ' ', ai_tags: '[]' });
                 } else {
-                    // Nothing analyzable — mark as attempted so it isn't retried forever.
                     db.updatePasteAi(p.id, { ai_summary: ' ', ai_tags: '[]' });
                 }
             }
