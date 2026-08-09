@@ -11569,8 +11569,8 @@ body.theme-light .user-dropdown {
 .stream-card-metaright i { margin-right: 3px; opacity: 0.85; }
 .stream-card-uptime, .stream-card-vcount { display: inline-flex; align-items: center; white-space: nowrap; }
 /* AI overview: clamped to 2 lines, click to expand with a smooth reveal. */
-.stream-card-ai { cursor: pointer; max-height: 2.7em; transition: max-height 0.35s ease; }
-.stream-card-ai.expanded { -webkit-line-clamp: unset; max-height: 40em; }
+.stream-card-ai { cursor: pointer; max-height: 2.7em; transition: max-height 0.5s ease; }
+.stream-card-ai.expanded { -webkit-line-clamp: unset; max-height: 4000px; overflow-y: auto; }
 
 /* ── Stream page: scroll the page instead of an inner scrollbar that clipped the
    info/weather area under the video. Keep the chat column pinned. (Desktop only —
@@ -11635,7 +11635,7 @@ body.theme-light .user-dropdown {
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     line-height: 1.35; max-height: 2.85em; transition: max-height 0.35s ease; cursor: pointer;
 }
-.stream-card-desc.expanded { -webkit-line-clamp: unset; max-height: 40em; }
+.stream-card-desc.expanded { -webkit-line-clamp: unset; max-height: 4000px; overflow-y: auto; }
 
 /* Clickable channel-points bonus chest */
 .cp-bonus-chest {
@@ -11654,3 +11654,11 @@ body.theme-light .user-dropdown {
     50%     { box-shadow: 0 8px 24px rgba(0,0,0,.5), 0 0 0 12px transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .cp-bonus-chest { animation: none; } }
+
+/* Live-counting uptime tooltip */
+.uptime-tooltip {
+    position: fixed; z-index: 4000; display: none;
+    background: #0d0d14; color: #fff; border: 1px solid var(--border);
+    padding: 4px 9px; border-radius: 6px; font-size: 0.78rem; font-variant-numeric: tabular-nums;
+    box-shadow: 0 6px 18px rgba(0,0,0,.5); pointer-events: none; white-space: nowrap;
+}

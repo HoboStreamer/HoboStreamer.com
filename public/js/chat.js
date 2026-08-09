@@ -160,7 +160,8 @@ const CHAT_SETTINGS_DEFAULTS = {
                                   // OFF prepends "." to your messages so TTS skips them (and mutes local playback).
                                   // Defaults ON so messages aren't dot-prefixed/muted-styled by default.
     streamingTtsEnabled: true,    // Separate TTS toggle while broadcasting live
-    ttsVolume: 80,                // TTS volume (0–100)
+    ttsVolume: 80,                // TTS message volume (0–100)
+    soundVolume: 80,              // Chat !sound / soundboard clip volume (0–100), independent of TTS
     // Chat sounds (soundboard + channel !sound commands) — independent of TTS
     soundsEnabled: true,          // Play chat sound clips (default on)
     // Per-source TTS — which relay platforms contribute to TTS
@@ -5202,7 +5203,10 @@ function _processTTSAudioQueue() {
         const blob = new Blob([bytes], { type: msg.mimeType });
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
-        const volume = (chatSettings.ttsVolume || 80) / 100;
+        // Sound clips (!sound / soundboard) use the independent sound volume; TTS uses TTS volume.
+        const _isSoundClip = msg.type === 'soundboard-audio' || msg.message_type === 'channel-sound' || msg.message_type === 'soundboard';
+        const _volPref = _isSoundClip ? chatSettings.soundVolume : chatSettings.ttsVolume;
+        const volume = (Number.isFinite(_volPref) ? _volPref : 80) / 100;
         // Speed = tempo (pitch preserved); pitch = independent shift (units, 100=+1oct)
         const speedMod = msg.speed || 1.0;
         const pitchShift = Number(msg.pitchShift || 0);
@@ -5482,6 +5486,10 @@ function buildSettingsPanelHTML() {
             <label class="csp-row" title="Play soundboard clips and channel !sound commands (separate from TTS).">
                 <span>Chat Sounds</span>
                 <input type="checkbox" data-setting="soundsEnabled" onchange="onChatSettingChange(this)">
+            </label>
+            <label class="csp-row" title="Volume for chat !sound / soundboard clips — independent of TTS volume.">
+                <span>Sound Volume</span>
+                <input type="range" min="0" max="100" step="5" data-setting="soundVolume" onchange="onChatSettingChange(this)" oninput="onChatSettingChange(this)">
             </label>
             <div class="csp-sub-title" style="margin-top:8px;font-size:0.8rem;color:var(--text-muted)">TTS Sources</div>
             <label class="csp-row">

@@ -145,11 +145,11 @@ async function analyzeStreamFrame(image) {
 async function summarizeStreamMemories(memories) {
     // Use observations from across the whole session (capped for token budget) so the
     // overview reflects the entire stream since it started, not just the latest frame.
-    const lines = (memories || []).slice(-40).map(m => `- ${m.description}`).join('\n');
+    const lines = (memories || []).slice(-80).map(m => `- ${m.description}`).join('\n');
     if (!lines) return null;
-    const prompt = `These are timestamped observations from a live stream, in order since it started. In 1-2 sentences (max ~200 chars), give a general overview of what this stream has been about overall (not just the latest moment):\n${lines}`;
-    const text = await _complete({ prompt, maxTokens: 120, kind: 'stream_memory' });
-    return text ? text.slice(0, 300) : null;
+    const prompt = `These are timestamped observations from a live stream, in order since it started. Give a thorough overview (2-6 sentences) of what this stream has been about overall — the main activities, topics, and vibe across the whole session (not just the latest moment):\n${lines}`;
+    const text = await _complete({ prompt, maxTokens: 500, kind: 'stream_memory' });
+    return text ? text.slice(0, 2000) : null;
 }
 
 /**

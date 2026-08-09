@@ -1276,13 +1276,55 @@ function _updateLiveCard(card, s) {
     const vc = card.querySelector('.stream-card-vcount');
     if (vc) vc.innerHTML = `<i class="fa-solid fa-eye"></i> ${s.total_viewer_count || s.viewer_count || 0}`;
     const up = card.querySelector('.stream-card-uptime');
-    if (up && s.started_at) up.innerHTML = `<i class="fa-solid fa-clock"></i> ${formatUptime(s.started_at)}`;
+    if (up && s.started_at) { up.innerHTML = `<i class="fa-solid fa-clock"></i> ${formatUptime(s.started_at)}`; up.dataset.since = s.started_at; }
     const t = card.querySelector('.stream-card-title');
     if (t && t.textContent !== (s.title || 'Untitled Stream')) t.textContent = s.title || 'Untitled Stream';
     const ai = card.querySelector('.stream-card-ai-text');
     if (ai && s.ai_overview && ai.textContent !== s.ai_overview) ai.textContent = s.ai_overview;
+    const desc = card.querySelector('.stream-card-desc');
+    if (desc && s.description != null && desc.textContent !== s.description) desc.textContent = s.description;
     const img = card.querySelector('.stream-card-thumb img');
     if (img && s.thumbnail_url) _crossfadeThumb(img, s.thumbnail_url);
+}
+
+// Live-counting uptime tooltip: hover an uptime chip to see H:MM:SS ticking.
+let _uptimeTipEl = null, _uptimeTipTimer = null, _uptimeTipSince = 0;
+function _fmtHMS(ms) {
+    let sec = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(sec / 3600); sec -= h * 3600;
+    const m = Math.floor(sec / 60); sec -= m * 60;
+    return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+function _initUptimeTooltip() {
+    if (window.__uptimeTipInit) return; window.__uptimeTipInit = true;
+    document.addEventListener('mouseover', (e) => {
+        const el = e.target.closest && e.target.closest('.stream-card-uptime[data-since]');
+        if (!el) return;
+        const raw = el.dataset.since;
+        const isUTC = raw.includes('Z') || raw.includes('+') || raw.includes('T');
+        _uptimeTipSince = new Date(isUTC ? raw : raw.replace(' ', 'T') + 'Z').getTime();
+        if (!_uptimeTipEl) {
+            _uptimeTipEl = document.createElement('div');
+            _uptimeTipEl.className = 'uptime-tooltip';
+            document.body.appendChild(_uptimeTipEl);
+        }
+        const tick = () => {
+            _uptimeTipEl.textContent = 'Live for ' + _fmtHMS(Date.now() - _uptimeTipSince);
+        };
+        tick();
+        const r = el.getBoundingClientRect();
+        _uptimeTipEl.style.left = Math.round(r.left) + 'px';
+        _uptimeTipEl.style.top = Math.round(r.top - 30) + 'px';
+        _uptimeTipEl.style.display = 'block';
+        clearInterval(_uptimeTipTimer);
+        _uptimeTipTimer = setInterval(tick, 1000);
+    });
+    document.addEventListener('mouseout', (e) => {
+        const el = e.target.closest && e.target.closest('.stream-card-uptime[data-since]');
+        if (!el) return;
+        clearInterval(_uptimeTipTimer);
+        if (_uptimeTipEl) _uptimeTipEl.style.display = 'none';
+    });
 }
 
 // Reconcile the live grid in place: update existing cards, animate in new streams,
@@ -1338,6 +1380,7 @@ function refreshHomeSections() {
 
 function startHomeRefresh() {
     stopHomeRefresh();
+    _initUptimeTooltip();
     _homeLiveTimer = setInterval(refreshHomeLive, 12000);
     _homeSectionsTimer = setInterval(refreshHomeSections, 60000);
 }
