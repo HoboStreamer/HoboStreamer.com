@@ -1617,6 +1617,20 @@ class RestreamManager extends EventEmitter {
         const db = require('../db/database');
         const conn = db.getPlatformConnection(destination.user_id, destination.platform);
         if (!conn) return destination;
+        // Only refresh the ingest/broadcast ONCE per go-live. For YouTube this creates+
+        // binds a live broadcast (costly on the YouTube Data API quota); re-running it on
+        // every ffmpeg restart/resume drains the daily quota and then 403s the bind —
+        // which is exactly what breaks auto-start. Restarts reuse the stored key.
+        this._ingestRefreshedAt = this._ingestRefreshedAt || new Map();
+        const rkey = `${streamId || 0}:${destination.id}`;
+        const REFRESH_TTL = 30 * 60 * 1000;
+        if (Date.now() - (this._ingestRefreshedAt.get(rkey) || 0) < REFRESH_TTL) return destination;
+        this._ingestRefreshedAt.set(rkey, Date.now()); // mark now so restarts don't re-run it
+        // Opportunistic cleanup of old entries.
+        if (this._ingestRefreshedAt.size > 200) {
+            const cutoff = Date.now() - REFRESH_TTL;
+            for (const [k, t] of this._ingestRefreshedAt) if (t < cutoff) this._ingestRefreshedAt.delete(k);
+        }
         try {
             const platformOAuth = require('../integrations/platform-oauth');
             const stream = streamId ? db.getStreamById(streamId) : null;
