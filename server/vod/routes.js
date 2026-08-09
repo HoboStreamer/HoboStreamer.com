@@ -1639,6 +1639,8 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             const clipId = result.lastInsertRowid;
             const clip = db.getClipById(clipId);
             console.log(`[Clips] Direct upload: ${req.file.filename} for user ${req.user.username} (${stat.size} bytes)`);
+            // AI overview + local transcript for this clip (fire-and-forget).
+            try { require('../ai/ai-analysis').generateClipOverview(clip).catch(() => {}); } catch { /* */ }
 
             // Notify streamer that someone clipped their stream
             try {
@@ -1824,6 +1826,8 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
 
             const clip = db.getClipById(result.lastInsertRowid);
             console.log(`[Clips] VOD clip extracted: ${clipFilename} for user ${req.user.username} (VOD ${parsedVodId}, ${startTime.toFixed(1)}s-${endTime.toFixed(1)}s)`);
+            // AI overview + local transcript for this clip (fire-and-forget).
+            try { require('../ai/ai-analysis').generateClipOverview(clip).catch(() => {}); } catch { /* */ }
 
             // Notify streamer that someone clipped their stream
             try {

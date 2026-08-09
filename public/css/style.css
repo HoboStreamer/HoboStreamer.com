@@ -11665,3 +11665,13 @@ body.theme-light .user-dropdown {
     padding: 4px 9px; border-radius: 6px; font-size: 0.78rem; font-variant-numeric: tabular-nums;
     box-shadow: 0 6px 18px rgba(0,0,0,.5); pointer-events: none; white-space: nowrap;
 }
+
+/* AI overview block on VOD/clip pages */
+.media-ai-overview {
+    margin: 8px 0 10px; padding: 10px 12px;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+    border-radius: 8px; font-size: 0.9rem; line-height: 1.5;
+}
+.media-ai-label { color: var(--accent); font-weight: 700; margin-right: 6px; }
+.media-ai-text { color: var(--text-secondary); }

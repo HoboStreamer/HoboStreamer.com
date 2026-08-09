@@ -91,6 +91,21 @@ function _avatarSpan(url, name, color, extraCls) {
         : `<span class="stream-card-avatar${cls}"${bg}>${letter}</span>`;
 }
 
+// Render an AI overview block just above a VOD/clip description element.
+function _renderMediaAiOverview(descElId, overview) {
+    const desc = document.getElementById(descElId);
+    if (!desc || !desc.parentNode) return;
+    let box = desc.parentNode.querySelector('.media-ai-overview');
+    const txt = (overview || '').trim();
+    if (!txt) { if (box) box.remove(); return; }
+    if (!box) {
+        box = document.createElement('div');
+        box.className = 'media-ai-overview';
+        desc.parentNode.insertBefore(box, desc);
+    }
+    box.innerHTML = `<span class="media-ai-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI overview</span> <span class="media-ai-text">${esc(txt)}</span>`;
+}
+
 // How long a stream slot has been live, from its started_at (SQLite UTC datetime).
 function formatUptime(startedAt) {
     if (!startedAt) return '';
@@ -3351,6 +3366,7 @@ async function loadVodPlayer(vodId) {
         document.getElementById('vp-duration').textContent = formatDuration(v.duration_seconds || v.duration);
         document.getElementById('vp-views').textContent = `${v.view_count || 0} views`;
         document.getElementById('vp-description').textContent = v.description || '';
+        _renderMediaAiOverview('vp-description', v.ai_overview);
         // Show this streamer's Hobo Nickels in the navbar while viewing their VOD.
         if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(v.user_id);
 
@@ -3980,6 +3996,7 @@ async function loadClipPlayer(clipId) {
         document.getElementById('clp-date').textContent = formatDateTime(cl.created_at);
         document.getElementById('clp-duration').textContent = formatDuration(cl.duration_seconds);
         document.getElementById('clp-description').textContent = cl.description || '';
+        _renderMediaAiOverview('clp-description', cl.ai_overview);
         // Show this streamer's Hobo Nickels in the navbar while viewing their clip.
         if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(cl.user_id);
 

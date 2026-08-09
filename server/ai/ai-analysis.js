@@ -18,6 +18,13 @@ function num(k, d) { const v = parseFloat(db.getSetting(k)); return Number.isFin
 function isEnabled() { return b('ai_enabled') && !!s('ai_api_key'); }
 function pasteAnalysisEnabled() { return isEnabled() && b('ai_paste_analysis_enabled'); }
 function streamMemoryEnabled() { return isEnabled() && b('ai_stream_memory_enabled'); }
+// Local whisper.cpp transcription (default on when installed). Independent of the
+// LLM being enabled — it's free/local — but we only bother while capturing memories.
+function transcriptionEnabled() {
+    const setting = db.getSetting('ai_transcription_enabled');
+    const on = (setting === undefined || setting === null || setting === '') ? true : (setting === true || setting === 'true' || setting === 1 || setting === '1');
+    try { return on && require('./transcribe').available(); } catch { return false; }
+}
 function captureIntervalSec() { return Math.max(30, num('ai_stream_capture_interval_sec', 120)); }
 function model() { return s('ai_model') || (s('ai_provider') === 'openai' ? 'gpt-4o-mini' : 'claude-sonnet-5'); }
 
@@ -197,6 +204,53 @@ async function generateStreamerOverview(userId) {
     return overview;
 }
 
+/** Generate + store a VOD's AI overview from its source stream's memories. */
+async function generateVodOverview(vod) {
+    if (!vod || !vod.stream_id) return null;
+    const memories = db.getStreamMemories(vod.stream_id) || [];
+    if (!memories.length) return null;
+    const overview = await summarizeStreamMemories(memories);
+    if (overview) { try { db.setVodAiOverview(vod.id, overview); } catch { /* */ } }
+    return overview;
+}
+
+/**
+ * Generate + store a clip's AI overview: a local whisper transcript of the clip's
+ * audio + the stream memories from around when the clip happened.
+ */
+async function generateClipOverview(clip) {
+    if (!clip) return null;
+    // Transcribe the clip's own audio (free, local).
+    let transcript = '';
+    try {
+        if (transcriptionEnabled() && clip.file_path) {
+            transcript = await require('./transcribe').transcribeMedia(clip.file_path, { seconds: 0 });
+        }
+    } catch { /* */ }
+
+    // Memories from around the clip's moment in the source stream.
+    let memLines = [];
+    if (clip.stream_id) {
+        const pad = 90;
+        const start = Math.max(0, Math.floor((clip.start_time || 0) - pad));
+        const end = Math.ceil((clip.end_time || clip.start_time || 0) + pad);
+        const mems = db.getStreamMemoriesInRange(clip.stream_id, start, end) || [];
+        memLines = mems.map(m => `- ${m.description}`).filter(Boolean);
+    }
+
+    let overview = null;
+    if (transcript || memLines.length) {
+        const parts = [];
+        if (memLines.length) parts.push(`On-screen around this moment:\n${memLines.slice(0, 20).join('\n')}`);
+        if (transcript) parts.push(`Transcript of what was said in the clip:\n"${transcript.slice(0, 3000)}"`);
+        const prompt = `Summarize what happens in this stream clip in 1-3 sentences, using the signals below (be concrete, don't invent):\n\n${parts.join('\n\n')}`;
+        overview = await _complete({ prompt, maxTokens: 250, kind: 'clip_overview' });
+        overview = overview ? overview.slice(0, 1200) : (transcript ? transcript.slice(0, 400) : null);
+    }
+    try { db.setClipAiOverview(clip.id, { overview, transcript: transcript || null }); } catch { /* */ }
+    return { overview, transcript };
+}
+
 /** Report AI config + optionally live-probe the provider. */
 async function testStatus({ probe = true } = {}) {
     const cfg = {
@@ -219,7 +273,7 @@ async function testStatus({ probe = true } = {}) {
 }
 
 module.exports = {
-    isEnabled, pasteAnalysisEnabled, streamMemoryEnabled, captureIntervalSec,
+    isEnabled, pasteAnalysisEnabled, streamMemoryEnabled, transcriptionEnabled, captureIntervalSec,
     analyzeImagePaste, analyzeTextPaste, analyzeStreamFrame, summarizeStreamMemories,
-    generateStreamerOverview, testStatus,
+    generateStreamerOverview, generateVodOverview, generateClipOverview, testStatus,
 };

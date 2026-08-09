@@ -780,6 +780,15 @@ function initDb() {
 
         const scols = database.prepare('PRAGMA table_info(streams)').all().map(c => c.name);
         if (!scols.includes('ai_overview')) database.exec('ALTER TABLE streams ADD COLUMN ai_overview TEXT');
+
+        // AI overview + transcript on VODs and clips.
+        const vcols = database.prepare('PRAGMA table_info(vods)').all().map(c => c.name);
+        if (!vcols.includes('ai_overview')) database.exec('ALTER TABLE vods ADD COLUMN ai_overview TEXT');
+        if (!vcols.includes('ai_analyzed_at')) database.exec('ALTER TABLE vods ADD COLUMN ai_analyzed_at DATETIME');
+        const ccols = database.prepare('PRAGMA table_info(clips)').all().map(c => c.name);
+        if (!ccols.includes('ai_overview')) database.exec('ALTER TABLE clips ADD COLUMN ai_overview TEXT');
+        if (!ccols.includes('ai_transcript')) database.exec('ALTER TABLE clips ADD COLUMN ai_transcript TEXT');
+        if (!ccols.includes('ai_analyzed_at')) database.exec('ALTER TABLE clips ADD COLUMN ai_analyzed_at DATETIME');
     } catch (e) { console.warn('[DB] AI subsystem migration:', e.message); }
 
     // Migrate: extend the subscriptions table for real recurring billing.
@@ -1883,6 +1892,25 @@ function getLatestStreamMemory(streamId) {
 }
 function updateStreamAiOverview(streamId, text) {
     return run('UPDATE streams SET ai_overview = ? WHERE id = ?', [text || null, streamId]);
+}
+function setVodAiOverview(vodId, text) {
+    return run('UPDATE vods SET ai_overview = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [text || null, vodId]);
+}
+function setClipAiOverview(clipId, { overview = null, transcript = null }) {
+    return run('UPDATE clips SET ai_overview = ?, ai_transcript = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [overview, transcript, clipId]);
+}
+function getStreamMemoriesInRange(streamId, startSec, endSec) {
+    return all('SELECT * FROM stream_memories WHERE stream_id = ? AND offset_seconds BETWEEN ? AND ? ORDER BY offset_seconds ASC', [streamId, startSec, endSec]);
+}
+// Backfill queues (items still lacking AI output).
+function getVodsNeedingOverview(limit = 4) {
+    return all("SELECT * FROM vods WHERE (ai_overview IS NULL OR ai_overview = '') AND stream_id IS NOT NULL ORDER BY created_at DESC LIMIT ?", [limit]);
+}
+function getClipsNeedingOverview(limit = 4) {
+    return all("SELECT * FROM clips WHERE (ai_overview IS NULL OR ai_overview = '') ORDER BY created_at DESC LIMIT ?", [limit]);
+}
+function getPastesNeedingAnalysis(limit = 5) {
+    return all("SELECT * FROM pastes WHERE ai_summary IS NULL AND type IN ('paste','screenshot') ORDER BY created_at DESC LIMIT ?", [limit]);
 }
 function updatePasteAi(pasteId, { ai_summary = null, ai_tags = null }) {
     return run('UPDATE pastes SET ai_summary = ?, ai_tags = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -5207,6 +5235,8 @@ module.exports = {
     getLiveStreams, getRecentStreams, getStreamById, getStreamByUserId, getLiveStreamsByUserId, getLiveStreamsByControlConfigId, getStreamsByUserId, getStreamHistoryByManagedStream,
     createStream, endStream, endOtherLiveStreamsForSlot, updateViewerCount,
     addStreamMemory, getStreamMemories, getLatestStreamMemory, updateStreamAiOverview,
+    setVodAiOverview, setClipAiOverview, getStreamMemoriesInRange,
+    getVodsNeedingOverview, getClipsNeedingOverview, getPastesNeedingAnalysis,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiUsageSummary,
     getStreamMemoriesByUser, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews,
