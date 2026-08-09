@@ -492,8 +492,28 @@ async function synthesize(text, voiceId, username) {
 async function _synthesizeWithDef(text, voiceDef, voiceId) {
     const settings = getTTSSettings();
 
-    // Browser-only voices cannot be synthesized server-side
-    if (voiceDef.engine === 'browser') return null;
+    // "Browser" voices were designed for client-side Web Speech synthesis, but this
+    // pipeline renders TTS server-side and broadcasts the audio — so a browser voice
+    // produced no sound at all. Render them with espeak instead, mapping the Web Speech
+    // pitch (0–2, 1=normal) and rate (~0.1–10, 1=normal) onto espeak's pitch/speed.
+    if (voiceDef.engine === 'browser') {
+        const bv = voiceDef.browserVoice || {};
+        const espeakDef = {
+            engine: 'espeak-ng',
+            name: voiceDef.name,
+            params: {
+                voice: bv.voice || 'en',
+                pitch: Math.max(0, Math.min(99, Math.round((bv.pitch != null ? bv.pitch : 1) * 50))),
+                speed: Math.max(80, Math.min(400, Math.round((bv.rate != null ? bv.rate : 1) * 175))),
+            },
+        };
+        try {
+            return { ...(await synthesizeEspeak(text, espeakDef)), voiceId };
+        } catch (err) {
+            console.error(`[TTS] Browser-voice espeak render failed (${voiceId}):`, err.message);
+            return null;
+        }
+    }
 
     try {
         switch (voiceDef.engine) {
