@@ -667,14 +667,11 @@ async function start() {
     try { db.run("ALTER TABLE vods ADD COLUMN last_accessed_at DATETIME"); console.log('[DB] Added vods.last_accessed_at column'); } catch { /* already exists */ }
     console.log('[Server] Database ready');
 
-    // Seed built-in themes if empty
+    // Seed/refresh built-in themes on every start (upserts by slug, so re-tuned
+    // palettes always take effect; IDs stay stable).
     try {
-        const themeCount = db.get("SELECT COUNT(*) as count FROM themes WHERE is_builtin = 1");
-        if (!themeCount || themeCount.count === 0) {
-            const themeService = require('./themes/theme-service');
-            themeService.seedBuiltinThemes();
-            console.log('[Themes] Built-in themes seeded');
-        }
+        require('./themes/theme-service').seedBuiltinThemes();
+        console.log('[Themes] Built-in themes seeded/refreshed');
     } catch (err) {
         console.warn('[Themes] Seed error:', err.message);
     }
