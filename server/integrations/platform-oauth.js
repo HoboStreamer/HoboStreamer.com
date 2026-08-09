@@ -319,6 +319,88 @@ async function fetchKick(accessToken) {
     };
 }
 
+// ── Live ingest resolution from a stored connection (used at restream go-live) ──
+
+/** Return a valid access token for a stored connection, refreshing + persisting if needed. */
+async function getValidAccessToken(connection) {
+    if (!connection) return null;
+    const skew = 60 * 1000;
+    if (connection.access_token && connection.token_expires_at && (connection.token_expires_at - Date.now() > skew)) {
+        return connection.access_token;
+    }
+    if (!connection.refresh_token) return connection.access_token || null; // may be non-expiring
+    try {
+        const tok = await refreshAccessToken(connection.platform, connection.refresh_token);
+        db.updatePlatformConnectionTokens(connection.id, {
+            access_token: tok.accessToken, refresh_token: tok.refreshToken,
+            token_expires_at: tok.expiresAt, scope: tok.scope,
+        });
+        return tok.accessToken;
+    } catch (e) {
+        console.warn('[PlatformOAuth] token refresh failed for', connection.platform, e.message);
+        return connection.access_token || null;
+    }
+}
+
+/**
+ * Resolve the current ingest URL + stream key for a linked destination at go-live.
+ * Twitch: fetches the live stream key. YouTube: gets the persistent key AND creates
+ * an auto-start/auto-stop broadcast bound to the stream so it actually goes live.
+ * Kick: returns null (its API doesn't expose the key). Returns {server_url, stream_key} or null.
+ */
+async function resolveIngestForConnection(connection, { title } = {}) {
+    const token = await getValidAccessToken(connection);
+    if (!token) return null;
+    if (connection.platform === 'twitch') {
+        const cfg = getClientConfig('twitch');
+        const headers = { Authorization: `Bearer ${token}`, 'Client-Id': cfg.clientId };
+        const users = await getJson('https://api.twitch.tv/helix/users', headers);
+        const u = users.data && users.data[0];
+        if (!u) return null;
+        const keyRes = await getJson(`https://api.twitch.tv/helix/streams/key?broadcaster_id=${u.id}`, headers);
+        const key = keyRes.data && keyRes.data[0] && keyRes.data[0].stream_key;
+        return key ? { server_url: 'rtmps://live.twitch.tv/app', stream_key: key } : null;
+    }
+    if (connection.platform === 'youtube') {
+        return youtubeGoLive(token, title);
+    }
+    return null; // kick — no API key
+}
+
+/** Get the reusable YouTube ingest and create+bind an auto-start broadcast. */
+async function youtubeGoLive(token, title) {
+    const H = { Authorization: `Bearer ${token}` };
+    let stream = null;
+    const list = await getJson('https://www.googleapis.com/youtube/v3/liveStreams?part=cdn,snippet&mine=true', H);
+    if (list.items && list.items.length) stream = list.items.find(s => s.cdn && s.cdn.ingestionType === 'rtmp') || list.items[0];
+    if (!stream) stream = await createYouTubeStream(H);
+    const ingest = stream && stream.cdn && stream.cdn.ingestionInfo;
+    if (!ingest || !ingest.streamName) return null;
+
+    // Create a broadcast that YouTube auto-starts when it sees the ingest and
+    // auto-stops when it ends — avoids us having to poll + transition manually.
+    try {
+        const body = {
+            snippet: { title: (title || 'HoboStreamer').slice(0, 100), scheduledStartTime: new Date(Date.now() + 5000).toISOString() },
+            status: { privacyStatus: 'public', selfDeclaredMadeForKids: false },
+            contentDetails: { enableAutoStart: true, enableAutoStop: true },
+        };
+        const res = await fetch('https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet,status,contentDetails', {
+            method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const broadcast = await res.json();
+        if (!res.ok) throw new Error(broadcast.error?.message || `insert ${res.status}`);
+        // Bind broadcast → stream
+        const bindRes = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${broadcast.id}&part=id,contentDetails&streamId=${stream.id}`, { method: 'POST', headers: H });
+        if (!bindRes.ok) { const j = await bindRes.json().catch(() => ({})); throw new Error(j.error?.message || `bind ${bindRes.status}`); }
+        console.log(`[PlatformOAuth] YouTube broadcast ${broadcast.id} created + bound (auto-start)`);
+    } catch (e) {
+        // Still return the key — if the user has auto-start enabled in YT Studio it works anyway.
+        console.warn('[PlatformOAuth] YouTube broadcast setup failed (key still returned):', e.message);
+    }
+    return { server_url: ingest.ingestionAddress, stream_key: ingest.streamName };
+}
+
 module.exports = {
     PLATFORMS,
     isValidPlatform,
@@ -329,4 +411,6 @@ module.exports = {
     exchangeCode,
     refreshAccessToken,
     fetchConnection,
+    getValidAccessToken,
+    resolveIngestForConnection,
 };

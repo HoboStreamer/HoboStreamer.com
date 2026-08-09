@@ -2197,7 +2197,7 @@ function createRestreamDestination(userId, fields) {
 function updateRestreamDestination(id, fields) {
     const allowed = new Set(['name', 'server_url', 'stream_key', 'enabled', 'auto_start', 'quality_preset',
         'custom_video_bitrate', 'custom_audio_bitrate', 'custom_fps', 'custom_encoder_preset',
-        'channel_url', 'chat_relay', 'managed_stream_id']);
+        'channel_url', 'chat_relay', 'managed_stream_id', 'connection_id']);
     const filtered = Object.entries(fields || {}).filter(([key]) => allowed.has(key));
     if (!filtered.length) return getRestreamDestinationById(id);
 

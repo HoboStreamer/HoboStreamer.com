@@ -239,6 +239,12 @@ class RestreamManager extends EventEmitter {
             }
         }
 
+        // If this destination is linked to an OAuth account (Twitch/YouTube),
+        // refresh the ingest URL + stream key from the platform right now so we
+        // never push with a stale key — and, for YouTube, spin up the broadcast
+        // that makes it actually go live.
+        destination = await this._refreshDestFromConnection(destination, streamId);
+
         const destUrl = this._buildDestUrl(destination);
         if (!destUrl) {
             console.error(`[Restream] Invalid destination URL for ${destination.platform}:${destination.id}`);
@@ -1554,6 +1560,35 @@ class RestreamManager extends EventEmitter {
      * restreams also resume — the stream is live, so they should be running.
      * Skips destinations that already have an active session.
      */
+    /**
+     * For OAuth-linked destinations (Twitch/YouTube), fetch the current ingest URL
+     * + stream key from the platform and persist it, so go-live always uses a valid
+     * key. YouTube additionally gets an auto-start broadcast created. No-op for
+     * unlinked destinations or Kick (no API key). Failures fall back to stored values.
+     */
+    async _refreshDestFromConnection(destination, streamId) {
+        if (!destination || (destination.platform !== 'twitch' && destination.platform !== 'youtube')) return destination;
+        const db = require('../db/database');
+        const conn = db.getPlatformConnection(destination.user_id, destination.platform);
+        if (!conn) return destination;
+        try {
+            const platformOAuth = require('../integrations/platform-oauth');
+            const stream = streamId ? db.getStreamById(streamId) : null;
+            const title = (stream && stream.title) || destination.name || 'HoboStreamer';
+            const ingest = await platformOAuth.resolveIngestForConnection(conn, { title });
+            if (ingest && ingest.stream_key) {
+                db.updateRestreamDestination(destination.id, {
+                    server_url: ingest.server_url, stream_key: ingest.stream_key, connection_id: conn.id,
+                });
+                console.log(`[Restream] Refreshed ${destination.platform} ingest from linked account for dest ${destination.id}`);
+                return { ...destination, server_url: ingest.server_url, stream_key: ingest.stream_key };
+            }
+        } catch (e) {
+            console.warn(`[Restream] Could not refresh ${destination.platform} ingest from connection:`, e.message);
+        }
+        return destination;
+    }
+
     _getDestinationsForStream(streamId, userId) {
         const db = require('../db/database');
         const stream = db.getStreamById(streamId);
