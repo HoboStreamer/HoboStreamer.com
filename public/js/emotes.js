@@ -64,6 +64,53 @@ async function _doLoadEmotes(streamId) {
     }
 }
 
+/* ── Channel sound commands (for the picker's "Channel Sounds" section) ── */
+let channelSounds = [];         // [{ command, url, emote_code, count }]
+let _soundsLoadContext = null;  // streamId string this list was loaded for
+
+/** Load the channel's !sound commands for a stream context, grouped by command. */
+async function loadChannelSounds(streamId) {
+    const key = String(streamId || 0);
+    if (key === '0') { channelSounds = []; _soundsLoadContext = key; return; }
+    try {
+        const r = await fetch(`/api/sounds/all/${key}`);
+        const d = await r.json();
+        const map = new Map();
+        for (const s of (d.sounds || [])) {
+            if (!s.command) continue;
+            let g = map.get(s.command);
+            if (!g) { g = { command: s.command, url: s.url, emote_code: s.emote_code || '', count: 0 }; map.set(s.command, g); }
+            g.count++;
+            if (!g.emote_code && s.emote_code) g.emote_code = s.emote_code;
+        }
+        channelSounds = [...map.values()].sort((a, b) => a.command.localeCompare(b.command));
+        _soundsLoadContext = key;
+    } catch (e) {
+        console.warn('[Sounds] Failed to load channel sounds', e);
+        channelSounds = [];
+    }
+}
+
+/** Force a live refresh of emotes (used by the 'emotes-updated' WS event + post-upload). */
+async function reloadChannelEmotes(streamId) {
+    emotesLoaded = false;
+    _emoteLoadContext = null;
+    await loadEmotes(streamId);
+    _refreshOpenEmotePicker();
+}
+/** Force a live refresh of channel sounds (used by 'sounds-updated' + post-upload). */
+async function reloadChannelSounds(streamId) {
+    _soundsLoadContext = null;
+    await loadChannelSounds(streamId);
+    _refreshOpenEmotePicker();
+}
+/** Re-render the emote picker if it's open on the Emotes tab. */
+function _refreshOpenEmotePicker() {
+    if (_emotePickerOpen && _emoteMenuMode === 'emotes') {
+        try { renderEmotePicker('emotes'); } catch { /* */ }
+    }
+}
+
 /* ── URL detection regex ───────────────────────────────────────── */
 const _URL_RE = /^(https?:\/\/[^\s<>"'`]+|www\.[^\s<>"'`]+\.[^\s<>"'`]+)$/i;
 
@@ -230,6 +277,11 @@ function toggleEmotePicker(inputId) {
     if (_emotePickerOpen) {
         _emoteMenuMode = 'emotes';
         _buildEmoteMenuTabs(picker);
+        // Lazy-load this channel's sound commands the first time the menu opens for it.
+        const _sid = (typeof chatStreamId !== 'undefined') ? chatStreamId : 0;
+        if (typeof loadChannelSounds === 'function' && _soundsLoadContext !== String(_sid || 0)) {
+            loadChannelSounds(_sid).then(_refreshOpenEmotePicker);
+        }
         renderEmotePicker('emotes');
     }
 }
@@ -246,18 +298,61 @@ function renderEmotePicker(mode) {
     if (mode === 'gif') { _renderGifTab(grid, search); return; }
 
     const query = (search?.value || '').toLowerCase().trim();
+    const soundsHtml = _renderChannelSoundsSection(query);
+    let soundsInserted = false;
     let html = '';
     for (const cat of EMOTE_CATEGORY_ORDER) {
         let list = emoteCategories[cat.key] || [];
         if (query) list = list.filter(e => e.code.toLowerCase().includes(query));
-        if (!list.length) continue;
-        html += `<div class="emote-cat-header">${cat.icon ? `<i class="fa-solid ${cat.icon}"></i> ` : ''}${cat.label}<span class="emote-cat-count">${list.length}</span></div>`;
-        html += '<div class="emote-cat-grid">' + list.slice(0, 200).map(e => {
-            const cls = e.animated ? 'emote-picker-item emote-animated' : 'emote-picker-item';
-            return `<div class="${cls}" title="${_escEmote(e.code)}" onclick="insertEmote('${_escEmote(e.code).replace(/'/g, "\\'")}')"><img src="${e.url}" alt="${_escEmote(e.code)}" loading="lazy" draggable="false"></div>`;
-        }).join('') + '</div>';
+        if (list.length) {
+            html += `<div class="emote-cat-header">${cat.icon ? `<i class="fa-solid ${cat.icon}"></i> ` : ''}${cat.label}<span class="emote-cat-count">${list.length}</span></div>`;
+            html += '<div class="emote-cat-grid">' + list.slice(0, 200).map(e => {
+                const cls = e.animated ? 'emote-picker-item emote-animated' : 'emote-picker-item';
+                return `<div class="${cls}" title="${_escEmote(e.code)}" onclick="insertEmote('${_escEmote(e.code).replace(/'/g, "\\'")}')"><img src="${e.url}" alt="${_escEmote(e.code)}" loading="lazy" draggable="false"></div>`;
+            }).join('') + '</div>';
+        }
+        // "Channel Sounds" sits directly under "Channel Emotes".
+        if (cat.key === 'channel') { html += soundsHtml; soundsInserted = true; }
     }
+    if (!soundsInserted) html += soundsHtml;
     grid.innerHTML = html || '<div class="emote-picker-empty">No emotes found</div>';
+}
+
+/** Render the "Channel Sounds" section: click a tile to send its !command. */
+function _renderChannelSoundsSection(query) {
+    let list = channelSounds || [];
+    if (query) {
+        const q = query.replace(/^!/, '');
+        list = list.filter(s => s.command.toLowerCase().includes(q));
+    }
+    if (!list.length) return '';
+    let h = `<div class="emote-cat-header"><i class="fa-solid fa-volume-high"></i> Channel Sounds<span class="emote-cat-count">${list.length}</span></div>`;
+    h += '<div class="emote-sound-grid">' + list.slice(0, 200).map(s => {
+        const cmd = _escEmote(s.command);
+        const cmdArg = cmd.replace(/'/g, "\\'");
+        const emote = (s.emote_code && emoteMap && emoteMap.get) ? emoteMap.get(s.emote_code) : null;
+        let inner;
+        if (emote) {
+            const cls = emote.animated ? 'emote-sound-img emote-animated' : 'emote-sound-img';
+            inner = `<span class="emote-sound-bang">!</span><img class="${cls}" src="${emote.url}" alt="!${cmd}" loading="lazy" draggable="false">`;
+        } else {
+            inner = `<span class="emote-sound-cmd">!${cmd}</span>`;
+        }
+        return `<div class="emote-sound-tile" title="Send !${cmd}" onclick="sendChannelSound('${cmdArg}')">${inner}</div>`;
+    }).join('') + '</div>';
+    return h;
+}
+
+/** Send a channel sound command (!cmd) chosen from the picker. */
+function sendChannelSound(command) {
+    const picker = _getPickerEls(_emotePickerTarget).picker;
+    const inputId = picker?.dataset.targetInput || _emotePickerTarget || 'chat-input';
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.value = '!' + command;
+    if (picker) picker.style.display = 'none';
+    _emotePickerOpen = false;
+    if (typeof sendChat === 'function') sendChat(input);
 }
 
 // ── GIF tab (folded into the emote menu) ──────────────────────

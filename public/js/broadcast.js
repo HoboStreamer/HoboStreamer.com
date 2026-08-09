@@ -5270,6 +5270,8 @@ function cancelTTS() {
 function speakBroadcastTTS(text, username) {
     const s = broadcastState.settings;
     if (s.ttsMode === 'off') return;
+    // "." prefix = TTS explicitly skipped.
+    if (String(text || '').trimStart().startsWith('.')) return;
     const maxQueue = parseInt(s.ttsQueue) || 0;
     if (maxQueue > 0 && ttsQueue.length >= maxQueue) return;
     // Replace URLs with TTS-friendly descriptions
@@ -5288,6 +5290,8 @@ function playBroadcastTTSAudio(msg) {
     console.log('[TTS] playBroadcastTTSAudio called — mode:', s.ttsMode, 'hasAudio:', !!msg.audio, 'mimeType:', msg.mimeType);
     if (s.ttsMode !== 'site-wide') return;
     if (!msg.audio || !msg.mimeType) return;
+    // "." prefix = TTS explicitly skipped.
+    if (String(msg.message || msg.text || '').trimStart().startsWith('.')) return;
     const maxQueue = parseInt(s.ttsQueue) || 0;
     if (maxQueue > 0 && _bcTtsAudioQueue.length >= maxQueue) return;
     _bcTtsAudioQueue.push(msg);

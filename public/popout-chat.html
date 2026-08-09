@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat — HoboStreamer</title>
-    <link rel="stylesheet" href="/css/style.css?v=28">
+    <link rel="stylesheet" href="/css/style.css?v=29">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         html, body { height: 100%; margin: 0; overflow: hidden; }
@@ -187,7 +187,7 @@
                         <i class="fa-solid fa-plus"></i>
                     </button>
                     <button class="btn btn-hobo-coins-mini" onclick="if(typeof toggleRewardsPanel==='function')toggleRewardsPanel()" title="Redeem Hobo Nickels">
-                        <i class="fa-solid fa-gem"></i>
+                        <i class="fa-solid fa-coins"></i>
                     </button>
                     <button class="btn btn-hobo-bucks-mini" onclick="if(typeof showModal==='function')showModal('donate')" title="Send Hobo Bucks">
                         <i class="fa-solid fa-dollar-sign"></i>
@@ -196,7 +196,7 @@
                 <!-- Rewards Panel (Hobo Coins) -->
                 <div class="rewards-panel" id="ch-rewards-panel" style="display:none">
                     <div class="rewards-panel-header">
-                        <span><i class="fa-solid fa-gem"></i> Hobo Nickels Rewards</span>
+                        <span><i class="fa-solid fa-coins"></i> Hobo Nickels Rewards</span>
                         <span class="rewards-coin-bal"><i class="fa-solid fa-coins"></i> <span class="rewards-coin-balance">0</span></span>
                     </div>
                     <div class="rewards-grid ch-rewards-grid">
@@ -263,13 +263,13 @@
     <!-- Chat feature scripts — mirror index.html so the popout has full parity.
          Order: dependencies (app/emotes/gif/uploads/coins/bucks/cosmetics) before chat.js. -->
     <script src="/js/app.js?v=20"></script>
-    <script src="/js/emotes.js?v=7"></script>
+    <script src="/js/emotes.js?v=8"></script>
     <script src="/js/gif-picker.js?v=1"></script>
-    <script src="/js/channel-uploads.js?v=4"></script>
+    <script src="/js/channel-uploads.js?v=5"></script>
     <script src="/js/hobo-bucks.js?v=3"></script>
     <script src="/js/hobo-coins.js?v=2"></script>
     <script src="/js/cosmetics-ui.js?v=2"></script>
-    <script src="/js/chat.js?v=26"></script>
+    <script src="/js/chat.js?v=27"></script>
     <script src="/js/chat-autocomplete.js?v=1"></script>
     <script>
     'use strict';

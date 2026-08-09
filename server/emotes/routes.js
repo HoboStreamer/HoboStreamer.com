@@ -358,6 +358,11 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
             size,
         });
 
+        // Refresh viewers' emote pickers live (no reload) for channel emotes.
+        if (isChannelUpload) {
+            try { require('../chat/chat-server').broadcastToOwnerStreams(channelOwnerId, { type: 'emotes-updated' }); } catch { /* */ }
+        }
+
         res.json({
             emote: {
                 id: result.lastInsertRowid,
@@ -411,6 +416,9 @@ router.delete('/:id', requireAuth, (req, res) => {
         }
 
         db.deleteEmote(req.params.id);
+        if (emote.channel_owner_id) {
+            try { require('../chat/chat-server').broadcastToOwnerStreams(emote.channel_owner_id, { type: 'emotes-updated' }); } catch { /* */ }
+        }
         res.json({ message: 'Emote deleted' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to delete emote' });

@@ -316,7 +316,9 @@
             overlay.querySelector('#cu-emote-code').value = '';
             overlay.querySelector('#cu-emote-file').value = '';
             loadEmoteList();
-            if (typeof loadEmotes === 'function' && curStreamId) loadEmotes(curStreamId);
+            // Force-refresh so the change applies immediately without a page reload.
+            if (typeof reloadChannelEmotes === 'function' && curStreamId) reloadChannelEmotes(curStreamId);
+            else if (typeof loadEmotes === 'function' && curStreamId) loadEmotes(curStreamId);
         } catch (e) { notify(e.message, 'error'); }
         finally { btn.disabled = false; }
     }
@@ -352,6 +354,8 @@
             if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
             if (_soundPreviewUrl) { try { URL.revokeObjectURL(_soundPreviewUrl); } catch {} _soundPreviewUrl = null; }
             loadSoundList();
+            // Refresh the chat picker's Channel Sounds immediately (no page reload).
+            if (typeof reloadChannelSounds === 'function' && curStreamId) reloadChannelSounds(curStreamId);
         } catch (e) { notify(e.message, 'error'); }
         finally { btn.disabled = false; }
     }
@@ -374,7 +378,9 @@
             if (!r.ok) throw new Error(data.error || 'Delete failed');
             notify('Emote removed.', 'success');
             loadEmoteList();
-            if (typeof loadEmotes === 'function' && curStreamId) loadEmotes(curStreamId);
+            // Force-refresh so the change applies immediately without a page reload.
+            if (typeof reloadChannelEmotes === 'function' && curStreamId) reloadChannelEmotes(curStreamId);
+            else if (typeof loadEmotes === 'function' && curStreamId) loadEmotes(curStreamId);
         } catch (e) { notify(e.message, 'error'); }
     };
 
@@ -386,6 +392,7 @@
             if (!r.ok) throw new Error(data.error || 'Delete failed');
             notify('Sound removed.', 'success');
             loadSoundList();
+            if (typeof reloadChannelSounds === 'function' && curStreamId) reloadChannelSounds(curStreamId);
         } catch (e) { notify(e.message, 'error'); }
     };
 

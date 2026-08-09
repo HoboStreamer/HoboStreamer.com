@@ -11434,3 +11434,113 @@ body.theme-light .user-dropdown {
 .emote-gif-item:hover { outline: 2px solid var(--accent, #c0965c); }
 /* GIF now lives in the emote-menu tab — hide the old separate toolbar GIF button */
 .emote-picker-btn.gif-btn { display: none !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   Chat input action buttons — unified sizing/style across surfaces.
+   The row historically mixed .emote-picker-btn / .chat-tts-toggle /
+   .btn.btn-hobo-*-mini, each with different padding/border/shadow/font,
+   so they looked mismatched. Normalise every button in the tools row to
+   one square box; keep only meaningful state colors (TTS-active, currency).
+   ═══════════════════════════════════════════════════════════════ */
+.chat-tools-row > button,
+.pc-tools-row > button {
+    height: 34px;
+    min-width: 34px;
+    padding: 0 9px;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    font-size: 0.95rem;
+    font-weight: 500;
+    line-height: 1;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+    opacity: 1;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.chat-tools-row > button:hover,
+.pc-tools-row > button:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--accent-dark);
+}
+/* Currency / subscribe actions read as accent-gold, same box as the rest. */
+.chat-tools-row > button.btn-hobo-coins-mini,
+.pc-tools-row > button.btn-hobo-coins-mini,
+.chat-tools-row > button.btn-hobo-bucks-mini,
+.pc-tools-row > button.btn-hobo-bucks-mini {
+    color: var(--accent);
+    border-color: var(--border);
+}
+.chat-tools-row > button.btn-hobo-coins-mini:hover,
+.pc-tools-row > button.btn-hobo-coins-mini:hover,
+.chat-tools-row > button.btn-hobo-bucks-mini:hover,
+.pc-tools-row > button.btn-hobo-bucks-mini:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+/* TTS toggle: dim when off, accent when on. */
+.chat-tools-row > button.chat-tts-toggle { opacity: 0.5; }
+.chat-tools-row > button.chat-tts-toggle.tts-active,
+.pc-tools-row > button.chat-tts-toggle.tts-active {
+    color: var(--accent);
+    border-color: var(--accent-dark);
+    opacity: 1;
+}
+
+/* Send button — was absolutely pinned to the textarea bottom (looked offset).
+   Center it vertically and match the tool-button height. Scoped to .chat-input-row
+   so the floating-widget send button (.fcw-input-area) is untouched. */
+.chat-input-row .chat-send-btn {
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+    height: 34px;
+    min-width: 40px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95rem;
+    border-radius: var(--radius);
+}
+
+/* TTS-off chat messages (text prefixed with ".") render muted with a small
+   crossed-out-speaker marker after the username. */
+.chat-msg-tts-off { opacity: 0.62; }
+.chat-msg-tts-off .chat-user::after {
+    content: "\f6a9"; /* fa-volume-xmark */
+    font-family: "Font Awesome 6 Free";
+    font-weight: 900;
+    font-size: 0.68em;
+    margin-left: 5px;
+    vertical-align: baseline;
+    color: var(--text-muted);
+    opacity: 0.85;
+}
+
+/* "Channel Sounds" section in the emote picker */
+.emote-sound-grid { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 6px 8px; }
+.emote-sound-tile {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-tertiary);
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s;
+}
+.emote-sound-tile:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.emote-sound-bang { font-weight: 800; color: var(--accent); font-size: 0.95em; }
+.emote-sound-img { height: 26px; width: auto; display: block; }
+.emote-sound-cmd { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); }
+.emote-sound-tile:hover .emote-sound-cmd { color: var(--text-primary); }

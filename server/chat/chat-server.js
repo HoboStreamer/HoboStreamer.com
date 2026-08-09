@@ -1542,6 +1542,9 @@ class ChatServer {
      */
     async synthesizeAndBroadcastTTS(streamId, username, text, voiceFX, sourcePlatform = null, identityKey = null) {
         try {
+            // "." prefix = user opted this message out of TTS — never synthesize or broadcast it.
+            if (String(text || '').trimStart().startsWith('.')) return;
+
             const settings = ttsEngine.getTTSSettings();
             if (!settings.enabled) return;
 
@@ -1802,6 +1805,25 @@ class ChatServer {
                 ws.send(msg);
             }
         }
+    }
+
+    /**
+     * Notify everyone watching any of a channel owner's live streams that the
+     * channel's emotes/sounds changed, so their chat pickers refresh live
+     * (no page reload). No-op when the owner has no live streams / viewers.
+     */
+    broadcastToOwnerStreams(ownerUserId, data) {
+        try {
+            const streams = db.getLiveStreamsByUserId(ownerUserId) || [];
+            if (!streams.length) return;
+            const ids = new Set(streams.map(s => String(s.id)));
+            const msg = JSON.stringify(data);
+            for (const [ws, client] of this.clients) {
+                if (ids.has(String(client.streamId)) && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+                    ws.send(msg);
+                }
+            }
+        } catch { /* ignore */ }
     }
 
     /**

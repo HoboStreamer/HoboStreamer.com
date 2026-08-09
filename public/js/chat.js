@@ -156,7 +156,9 @@ const CHAT_SETTINGS_DEFAULTS = {
     showAllStreamsInStream: true, // Show messages from ALL live streams in stream chat (on by default)
     showOtherSlotsInStream: true, // Show chat from this streamer's OTHER live slots (on by default)
     // TTS
-    ttsEnabled: false,            // TTS toggle for regular pages (off by default)
+    ttsEnabled: true,             // TTS participation toggle. ON = your messages are read normally;
+                                  // OFF prepends "." to your messages so TTS skips them (and mutes local playback).
+                                  // Defaults ON so messages aren't dot-prefixed/muted-styled by default.
     streamingTtsEnabled: true,    // Separate TTS toggle while broadcasting live
     ttsVolume: 80,                // TTS volume (0–100)
     // Chat sounds (soundboard + channel !sound commands) — independent of TTS
@@ -225,7 +227,18 @@ let _settingsSyncTimer = null;
 function loadChatSettings() {
     try {
         const saved = JSON.parse(localStorage.getItem(CHAT_SETTINGS_KEY));
-        if (saved) chatSettings = { ...CHAT_SETTINGS_DEFAULTS, ...saved };
+        if (saved) {
+            chatSettings = { ...CHAT_SETTINGS_DEFAULTS, ...saved };
+            // Migration: the TTS toggle changed from a receiver-side mute to a
+            // sender-side "prefix '.' to skip TTS" control that defaults ON. Old
+            // saved settings may carry ttsEnabled:false from the previous default,
+            // which would dot-prefix/mute every message — reset it once.
+            if (!saved.ttsSendModeV2) {
+                chatSettings.ttsEnabled = true;
+                chatSettings.ttsSendModeV2 = true;
+                try { localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(chatSettings)); } catch { /* */ }
+            }
+        }
     } catch { /* use defaults */ }
     chatSettings.autoDeleteMinutes = normalizeChatAutoDeleteMinutes(chatSettings.autoDeleteMinutes);
     // Async server sync — merge server settings on top of local
@@ -2235,8 +2248,9 @@ function initChat(streamId) {
         addSystemMessage('Connected to chat');
     };
 
-    // Load emotes for this stream context
+    // Load emotes + channel sounds for this stream context
     if (typeof loadEmotes === 'function') loadEmotes(streamId);
+    if (typeof loadChannelSounds === 'function') loadChannelSounds(streamId);
 
     ws.onmessage = (e) => {
         if (chatWs !== ws) return;
@@ -2667,6 +2681,14 @@ function handleChatMessage(msg) {
         case 'error':
             addSystemMessage(msg.message, true);
             break;
+        case 'emotes-updated':
+            // A channel emote was added/removed — refresh so it works without a reload.
+            if (typeof reloadChannelEmotes === 'function') reloadChannelEmotes(chatStreamId);
+            break;
+        case 'sounds-updated':
+            // A channel sound command changed — refresh the picker's Channel Sounds.
+            if (typeof reloadChannelSounds === 'function') reloadChannelSounds(chatStreamId);
+            break;
         case 'slur-blocked':
             showSlurNudgeModal(msg.message || null);
             addSystemMessage('Message blocked by this streamer\'s Anti-Slur Nudge setting.');
@@ -2851,6 +2873,10 @@ function addChatMessage(msg) {
     const _rawName = (msg.username || msg.displayName || `anon${msg.anonId || ''}`).replace(/^\[[^\]]+\]\s*/, '');
     const avatarInitial = esc((_rawName.charAt(0) || '?').toUpperCase());
     const rawText = msg.message || msg.text || '';
+    // Messages prefixed with "." skipped TTS — mark them so they render muted.
+    if ((!msg.message_type || msg.message_type === 'chat') && rawText.trimStart().startsWith('.')) {
+        el.classList.add('chat-msg-tts-off');
+    }
     let text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
     // Append clickable source link for news headlines
     if (msg.message_type === 'news' && msg.url) {
@@ -3357,8 +3383,17 @@ function showSlurNudgeModal(customMessage = null) {
 function sendChat(overrideInput = null) {
     const input = overrideInput || getChatEl().input;
     if (!input) return;
-    const text = input.value.trim();
+    let text = input.value.trim();
     if (!text) return;
+
+    // TTS-off toggle: when the TTS button for this chat surface is OFF, prepend a
+    // "." so the message is skipped by the TTS pipeline (server + all clients).
+    // Users can also type "." manually for the same effect.
+    // (Skip commands/sounds like "!clip" or "/tts" — only plain chat text is TTS'd.)
+    const _ttsBtn = input.closest('.chat-input-area, .pc-input-area')?.querySelector('.chat-tts-toggle');
+    if (_ttsBtn && !_ttsBtn.classList.contains('tts-active') && !/^[.!/]/.test(text)) {
+        text = '.' + text;
+    }
 
     if (messageHitsSlurPolicy(text)) {
         showSlurNudgeModal();
@@ -5011,6 +5046,8 @@ function timeAgoShort(dateStr) {
 /** Browser-side TTS using SpeechSynthesis API (Self TTS / legacy fallback) */
 function speakTTS(text, voiceFX, username) {
     if (!('speechSynthesis' in window)) return;
+    // "." prefix = TTS explicitly skipped (regardless of any per-viewer setting).
+    if (String(text || '').trimStart().startsWith('.')) return;
     // Replace URLs with TTS-friendly descriptions
     let cleanText = text.replace(/(?:https?:\/\/)?(?:www\.)?([a-z0-9][-a-z0-9]*(?:\.[a-z]{2,})+)(?:[^\s]*)/gi, (m, domain) => {
         const parts = domain.split('.');
@@ -5129,6 +5166,8 @@ function _createJunglePitchShifter(context) {
 
 function playTTSAudio(msg) {
     if (!msg.audio || !msg.mimeType) return;
+    // "." prefix = TTS explicitly skipped.
+    if (String(msg.message || msg.text || '').trimStart().startsWith('.')) return;
     _ttsAudioQueue.push(msg);
     _processTTSAudioQueue();
 }
