@@ -193,7 +193,7 @@ app.use(helmet({
             // esm.sh: mediasoup-client dynamic import for WebRTC SFU restreaming + RS restream
             styleSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
             fontSrc: ["'self'", "fonts.gstatic.com", "cdnjs.cloudflare.com"],
-            imgSrc: ["'self'", "data:", "blob:", "image.tmdb.org", "https://hobo.tools", "cdn.frankerfacez.com", "cdn.betterttv.net", "cdn.7tv.app"],
+            imgSrc: ["'self'", "data:", "blob:", "image.tmdb.org", "https://hobo.tools", "cdn.frankerfacez.com", "cdn.betterttv.net", "cdn.7tv.app", "https://files.kick.com"],
             connectSrc: ["'self'", "wss:", "https://hobo.tools", "https://hobo.quest", "https://cdn.jsdelivr.net", "https://esm.sh", "https://static.cloudflareinsights.com"],
             // Offloaded VODs/clips play from presigned B2/R2 object-store URLs (the
             // playback route 302-redirects there), so those hosts must be allowed or the
