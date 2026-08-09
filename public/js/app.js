@@ -91,6 +91,13 @@ function _avatarSpan(url, name, color, extraCls) {
         : `<span class="stream-card-avatar${cls}"${bg}>${letter}</span>`;
 }
 
+// Short AI-overview snippet for a VOD/clip/paste listing card (2-line clamp).
+function _cardAiHTML(text) {
+    const t = (text || '').trim();
+    if (!t) return '';
+    return `<div class="card-ai-overview" title="${esc(t)}"><i class="fa-solid fa-wand-magic-sparkles"></i> ${esc(t)}</div>`;
+}
+
 // Render an AI overview block just above a VOD/clip description element.
 function _renderMediaAiOverview(descElId, overview) {
     const desc = document.getElementById(descElId);
@@ -1057,6 +1064,7 @@ async function loadHomeRecentVods(page) {
                             ${esc(v.display_name || v.username)}
                             <span class="muted" style="margin-left:auto;font-size:0.75rem">${timeAgo(v.created_at)}</span>
                         </div>
+                        ${_cardAiHTML(v.ai_overview)}
                     </div>
                 </a>
             `;
@@ -1089,6 +1097,7 @@ async function loadHomeClips(page) {
                         ${esc(c.username || 'Anonymous')}
                         <span class="muted" style="margin-left:auto;font-size:0.75rem">${timeAgo(c.created_at)}</span>
                     </div>
+                    ${_cardAiHTML(c.ai_overview)}
                 </div>
             </a>
         `).join('');
@@ -3252,6 +3261,7 @@ async function loadVodsPage() {
                         ${esc(v.username || 'Unknown')}
                         <span class="stream-card-date">${timeAgo(v.created_at)}</span>
                     </div>
+                    ${_cardAiHTML(v.ai_overview)}
                 </div>
             </a>
         `)).join('');
@@ -3313,6 +3323,7 @@ async function loadClipsPage() {
                         Clipped by ${esc(cl.display_name || cl.username || 'Unknown')}
                         <span class="stream-card-date">${timeAgo(cl.created_at)}</span>
                     </div>
+                    ${_cardAiHTML(cl.ai_overview)}
                 </div>
             </a>
         `)).join('');

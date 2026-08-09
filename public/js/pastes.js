@@ -141,6 +141,7 @@ function renderPasteCard(p) {
                         <span class="paste-card-time">${timeAgo}</span>
                     </div>
                 </div>
+                ${(p.ai_summary && p.ai_summary.trim()) ? `<div class="card-ai-overview" title="${escapeHtml(p.ai_summary)}"><i class="fa-solid fa-wand-magic-sparkles"></i> ${escapeHtml(p.ai_summary)}</div>` : ''}
             </div>
         </div>`;
 }

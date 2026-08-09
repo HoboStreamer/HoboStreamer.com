@@ -126,11 +126,26 @@ function _parseJson(text) {
 
 // ── Public analysis functions ──
 
+/** Re-encode any image (path/data) to a vision-friendly JPEG data URL. Handles
+ *  avif/gif/webp/huge images that the vision API otherwise rejects. */
+async function _toVisionJpeg(image) {
+    try {
+        const sharp = require('sharp');
+        const buf = await sharp(image, { failOn: 'none', animated: false })
+            .rotate()
+            .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 82 })
+            .toBuffer();
+        return `data:image/jpeg;base64,${buf.toString('base64')}`;
+    } catch { return image; }
+}
+
 /** Describe an image paste → { description, tags }. */
 async function analyzeImagePaste(image, title) {
     const prompt = `You are describing an uploaded image/screenshot for a paste titled "${(title || '').slice(0, 120)}".
 Reply ONLY with compact JSON: {"description":"1-2 sentence description of what the image shows","tags":["3-6","short","lowercase","tags"]}.`;
-    const text = await _complete({ prompt, image, maxTokens: 300, kind: 'paste_image' });
+    const img = await _toVisionJpeg(image);
+    const text = await _complete({ prompt, image: img, maxTokens: 300, kind: 'paste_image' });
     const j = _parseJson(text);
     if (j) return { description: String(j.description || '').slice(0, 600), tags: Array.isArray(j.tags) ? j.tags.slice(0, 8).map(String) : [] };
     return text ? { description: text.slice(0, 600), tags: [] } : null;

@@ -11675,3 +11675,11 @@ body.theme-light .user-dropdown {
 }
 .media-ai-label { color: var(--accent); font-weight: 700; margin-right: 6px; }
 .media-ai-text { color: var(--text-secondary); }
+
+/* Short AI overview on listing cards (VODs/clips/pastes) */
+.card-ai-overview {
+    font-size: 0.75rem; color: var(--accent); margin-top: 6px; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.card-ai-overview i { opacity: 0.8; margin-right: 3px; }
+.paste-card-info .card-ai-overview { margin-top: 8px; }
