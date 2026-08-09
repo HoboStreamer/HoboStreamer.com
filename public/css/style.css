@@ -11889,6 +11889,20 @@ body.theme-light .user-dropdown {
     line-height: 1.6; font-size: 0.85rem; color: var(--text-secondary);
     padding: 12px; margin: 0;
 }
+/* Timestamped transcript segments — click a line to seek the player. */
+.media-transcript-segs { display: flex; flex-direction: column; padding: 6px; gap: 1px; }
+.ts-seg {
+    display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+    background: transparent; border: none; border-radius: 6px; cursor: pointer;
+    padding: 5px 8px; color: var(--text-secondary); font-size: 0.85rem; line-height: 1.5;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.ts-seg:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text-primary); }
+.ts-time {
+    flex-shrink: 0; font-variant-numeric: tabular-nums; font-weight: 700;
+    font-size: 0.78rem; color: var(--accent); min-width: 44px;
+}
+.ts-text { flex: 1; }
 
 /* Short AI overview on listing cards (VODs/clips/pastes) */
 .card-ai-overview {

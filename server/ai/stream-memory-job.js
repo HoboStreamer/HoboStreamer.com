@@ -34,14 +34,23 @@ async function _analyzeOne(stream) {
     const r = await ai.analyzeStreamFrame(image);
     if (!r || !r.description) return;
 
+    const startedMs = stream.started_at ? new Date(String(stream.started_at).replace(' ', 'T') + 'Z').getTime() : Date.now();
+    const offset = Math.max(0, Math.round((Date.now() - startedMs) / 1000));
+    const CHUNK_SEC = 12;
+
     // Free local audio transcription (whisper.cpp) folded into the memory, so the
-    // overview reflects what was SAID, not just what's on screen.
+    // overview reflects what was SAID, not just what's on screen. Cleaned of the
+    // usual whisper hallucinations; segment timestamps are stored (absolute stream
+    // time) as contextual data for the AI system.
     let heard = '';
+    let heardSegments = null;
     try {
         if (ai.transcriptionEnabled && ai.transcriptionEnabled()) {
-            const audio = require('./stream-audio').captureAudioChunk ? await require('./stream-audio').captureAudioChunk(stream, 12) : null;
+            const audio = require('./stream-audio').captureAudioChunk ? await require('./stream-audio').captureAudioChunk(stream, CHUNK_SEC) : null;
             if (audio) {
-                heard = await require('./transcribe').transcribeWav(audio);
+                const tx = await require('./transcribe').transcribeWavDetailed(audio, { offsetSec: Math.max(0, offset - CHUNK_SEC) });
+                heard = tx.text || '';
+                heardSegments = (tx.segments && tx.segments.length) ? tx.segments : null;
                 try { require('fs').unlinkSync(audio); } catch { /* */ }
             }
             console.log(`[AI-Hear] stream ${stream.id}: audio=${audio ? 'captured' : 'null'} transcript=${JSON.stringify((heard || '').slice(0, 100))}`);
@@ -51,12 +60,11 @@ async function _analyzeOne(stream) {
     } catch (e) { console.warn(`[AI-Hear] stream ${stream.id}: transcription error`, e.message); }
     const memDesc = heard ? `${r.description} — heard: "${heard.slice(0, 500)}"` : r.description;
 
-    const startedMs = stream.started_at ? new Date(String(stream.started_at).replace(' ', 'T') + 'Z').getTime() : Date.now();
-    const offset = Math.max(0, Math.round((Date.now() - startedMs) / 1000));
     try {
         db.addStreamMemory({
             stream_id: stream.id, user_id: stream.user_id, offset_seconds: offset,
             description: memDesc, tags: r.tags, thumbnail_url: stream.thumbnail_url || null,
+            transcript_json: heardSegments,
         });
         // Roll this stream's memories into an overview — but only RE-summarize when
         // enough new memories have accumulated (SUMMARY_MIN_NEW) or enough time has

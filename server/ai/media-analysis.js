@@ -48,22 +48,28 @@ async function _extractFrame(src, t) {
     return null;
 }
 
-// Transcribe the audio: full for short media, else 3 spread 60s windows.
+// Transcribe the audio: full for short media, else 3 spread 60s windows. Returns
+// { text, segments:[{start,end,text}] } with segment times relative to the recording.
 async function _transcribeSpan(src, duration) {
     const transcribe = require('./transcribe');
-    if (!transcribe.available()) return '';
+    if (!transcribe.available()) return { text: '', segments: [] };
     if (duration > 0 && duration <= 200) {
-        return await transcribe.transcribeMedia(src, { seconds: 0, timeoutMs: 240000 });
+        return await transcribe.transcribeMediaDetailed(src, { seconds: 0, timeoutMs: 300000 });
     }
     const parts = [];
+    const segments = [];
     for (const frac of [0.1, 0.45, 0.8]) {
         const start = Math.floor((duration || 0) * frac);
         const wav = _tmp('wav');
         const ok = await _runFf('ffmpeg', ['-y', '-ss', String(start), '-i', src, '-t', '60', '-vn', '-ac', '1', '-ar', '16000', '-f', 'wav', wav], 120000);
-        if (ok) { const txt = await transcribe.transcribeWav(wav, { timeoutMs: 120000 }); if (txt) parts.push(txt); }
+        if (ok) {
+            const r = await transcribe.transcribeWavDetailed(wav, { timeoutMs: 150000, offsetSec: start });
+            if (r.text) parts.push(r.text);
+            if (r.segments && r.segments.length) segments.push(...r.segments);
+        }
         try { fs.existsSync(wav) && fs.unlinkSync(wav); } catch { /* */ }
     }
-    return parts.join(' … ');
+    return { text: parts.join(' … '), segments };
 }
 
 /**
@@ -99,7 +105,7 @@ async function analyzeMedia(src, { streamId = null, userId = null, numFrames = 5
         if (duration <= 2) break;
     }
 
-    const transcript = await _transcribeSpan(src, duration);
+    const { text: transcript, segments } = await _transcribeSpan(src, duration);
 
     let overview = null;
     if (frames.length || transcript) {
@@ -110,17 +116,17 @@ async function analyzeMedia(src, { streamId = null, userId = null, numFrames = 5
         overview = await ai.summarizeText(prompt, 400, 'media_overview');
         if (overview) overview = overview.slice(0, 2000);
     }
-    return { overview: overview || null, transcript: transcript || '', frames, duration };
+    return { overview: overview || null, transcript: transcript || '', segments: segments || [], frames, duration };
 }
 
 /**
  * Transcript-only: probe duration then whisper-transcribe (FREE local, no vision).
- * @returns {Promise<string>} transcript text ('' if unavailable/empty).
+ * @returns {Promise<{text:string, segments:Array}>}
  */
 async function transcribeOnly(src) {
-    if (!src) return '';
+    if (!src) return { text: '', segments: [] };
     const duration = await _ffprobeDuration(src);
-    try { return await _transcribeSpan(src, duration); } catch { return ''; }
+    try { return await _transcribeSpan(src, duration); } catch { return { text: '', segments: [] }; }
 }
 
 module.exports = { analyzeMedia, transcribeOnly };

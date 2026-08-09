@@ -256,8 +256,8 @@ async function generateVodOverview(vod) {
     });
     const overview = r && r.overview ? r.overview : ' '; // ' ' = tried, nothing to say
     try { db.setVodAiOverview(vod.id, overview); } catch { /* */ }
-    // Persist the whisper transcript so users can read/download it on the VOD page.
-    try { const t = r ? r.transcript : ''; if (t) db.setVodTranscript(vod.id, t); } catch { /* */ }
+    // Persist the whisper transcript (+ timestamped segments) for the VOD page.
+    try { const t = r ? r.transcript : ''; if (t) db.setVodTranscript(vod.id, t, r ? r.segments : null); } catch { /* */ }
     return r ? r.overview : null;
 }
 
@@ -271,10 +271,10 @@ async function generateVodTranscript(vod) {
     if (!transcriptionEnabled()) return null;
     const src = await _mediaSource(vod);
     if (!src) { try { db.setVodTranscript(vod.id, ' '); } catch { /* */ } return null; }
-    let t = '';
-    try { t = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
-    try { db.setVodTranscript(vod.id, t || ' '); } catch { /* */ }
-    return t;
+    let r = { text: '', segments: [] };
+    try { r = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
+    try { db.setVodTranscript(vod.id, r.text || ' ', r.segments); } catch { /* */ }
+    return r.text;
 }
 
 /** Transcript-only pass for a clip — FREE local whisper (see generateVodTranscript). */
@@ -283,10 +283,10 @@ async function generateClipTranscript(clip) {
     if (!transcriptionEnabled()) return null;
     const src = await _mediaSource(clip);
     if (!src) { try { db.setClipTranscript(clip.id, ' '); } catch { /* */ } return null; }
-    let t = '';
-    try { t = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
-    try { db.setClipTranscript(clip.id, t || ' '); } catch { /* */ }
-    return t;
+    let r = { text: '', segments: [] };
+    try { r = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
+    try { db.setClipTranscript(clip.id, r.text || ' ', r.segments); } catch { /* */ }
+    return r.text;
 }
 
 /**
@@ -305,7 +305,7 @@ async function generateClipOverview(clip) {
     });
     const overview = (r && r.overview) ? r.overview : ' ';
     const transcript = r ? r.transcript : '';
-    try { db.setClipAiOverview(clip.id, { overview, transcript: transcript || null }); } catch { /* */ }
+    try { db.setClipAiOverview(clip.id, { overview, transcript: transcript || null, segments: r ? r.segments : null }); } catch { /* */ }
     return { overview: r ? r.overview : null, transcript };
 }
 

@@ -831,6 +831,15 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] short-overview migration:', e.message); }
 
+    // Timestamped transcript segments (JSON) — contextual data for the AI system +
+    // clickable timestamps in the VOD/clip transcript UI.
+    try {
+        for (const [t, col] of [['vods', 'ai_transcript_json'], ['clips', 'ai_transcript_json'], ['stream_memories', 'transcript_json']]) {
+            const cols = database.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+            if (!cols.includes(col)) database.exec(`ALTER TABLE ${t} ADD COLUMN ${col} TEXT`);
+        }
+    } catch (e) { console.warn('[DB] transcript-json migration:', e.message); }
+
     // Migrate: extend the subscriptions table for real recurring billing.
     try {
         const cols = database.pragma('table_info(subscriptions)').map(c => c.name);
@@ -1918,11 +1927,12 @@ function endOtherLiveStreamsForSlot(managedStreamId, keepStreamId) {
 }
 
 // ── AI analysis helpers ──────────────────────────────────────
-function addStreamMemory({ stream_id, user_id = null, offset_seconds = 0, description, tags = null, thumbnail_url = null }) {
-    return run(`INSERT INTO stream_memories (stream_id, user_id, offset_seconds, description, tags, thumbnail_url)
-                VALUES (?, ?, ?, ?, ?, ?)`,
+function addStreamMemory({ stream_id, user_id = null, offset_seconds = 0, description, tags = null, thumbnail_url = null, transcript_json = null }) {
+    return run(`INSERT INTO stream_memories (stream_id, user_id, offset_seconds, description, tags, thumbnail_url, transcript_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [stream_id, user_id, Math.max(0, Math.round(offset_seconds || 0)), description || '',
-         tags ? (typeof tags === 'string' ? tags : JSON.stringify(tags)) : null, thumbnail_url]);
+         tags ? (typeof tags === 'string' ? tags : JSON.stringify(tags)) : null, thumbnail_url,
+         (transcript_json && typeof transcript_json !== 'string') ? JSON.stringify(transcript_json) : (transcript_json || null)]);
 }
 function getStreamMemories(streamId) {
     return all('SELECT * FROM stream_memories WHERE stream_id = ? ORDER BY offset_seconds ASC', [streamId]);
@@ -1956,14 +1966,18 @@ function updateStreamAiOverview(streamId, text) {
 function setVodAiOverview(vodId, text) {
     return run('UPDATE vods SET ai_overview = ?, ai_overview_short = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [text || null, _shortOverview(text), vodId]);
 }
-function setClipAiOverview(clipId, { overview = null, transcript = null }) {
-    return run('UPDATE clips SET ai_overview = ?, ai_overview_short = ?, ai_transcript = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [overview, _shortOverview(overview), transcript, clipId]);
+function setClipAiOverview(clipId, { overview = null, transcript = null, segments = null }) {
+    return run('UPDATE clips SET ai_overview = ?, ai_overview_short = ?, ai_transcript = ?, ai_transcript_json = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [overview, _shortOverview(overview), transcript, _segJson(segments), clipId]);
 }
-function setVodTranscript(vodId, transcript) {
-    return run('UPDATE vods SET ai_transcript = ? WHERE id = ?', [transcript || null, vodId]);
+function _segJson(segments) {
+    try { return (Array.isArray(segments) && segments.length) ? JSON.stringify(segments.slice(0, 2000)) : null; }
+    catch { return null; }
 }
-function setClipTranscript(clipId, transcript) {
-    return run('UPDATE clips SET ai_transcript = ? WHERE id = ?', [transcript || null, clipId]);
+function setVodTranscript(vodId, transcript, segments) {
+    return run('UPDATE vods SET ai_transcript = ?, ai_transcript_json = ? WHERE id = ?', [transcript || null, _segJson(segments), vodId]);
+}
+function setClipTranscript(clipId, transcript, segments) {
+    return run('UPDATE clips SET ai_transcript = ?, ai_transcript_json = ? WHERE id = ?', [transcript || null, _segJson(segments), clipId]);
 }
 function getStreamMemoriesInRange(streamId, startSec, endSec) {
     return all('SELECT * FROM stream_memories WHERE stream_id = ? AND offset_seconds BETWEEN ? AND ? ORDER BY offset_seconds ASC', [streamId, startSec, endSec]);

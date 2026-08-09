@@ -137,29 +137,54 @@ function _renderMediaAiOverview(descElId, overview) {
 
 // Render a collapsible, downloadable transcript block after a VOD/clip description.
 // `item` carries {id, title, ai_transcript}. The ' ' sentinel = "no speech" → hidden.
+function _fmtTs(sec) {
+    sec = Math.max(0, Math.floor(Number(sec) || 0));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(s).padStart(2, '0');
+}
+// Seek a VOD/clip <video> to a transcript timestamp.
+function seekMediaTo(videoId, sec) {
+    const v = document.getElementById(videoId);
+    if (!v) return;
+    try { v.currentTime = Math.max(0, Number(sec) || 0); v.play().catch(() => {}); } catch { /* */ }
+    v.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 function _renderMediaTranscript(descElId, kind, item) {
     const desc = document.getElementById(descElId);
     if (!desc || !desc.parentNode) return;
     const prev = desc.parentNode.querySelector('.media-transcript');
     if (prev) prev.remove();
     const t = ((item && item.ai_transcript) || '').trim();
-    if (!t) return;
-    const words = t.split(/\s+/).filter(Boolean).length;
+    let segments = null;
+    try { segments = (item && item.ai_transcript_json) ? JSON.parse(item.ai_transcript_json) : null; } catch { segments = null; }
+    const hasSegs = Array.isArray(segments) && segments.length > 0;
+    if (!t && !hasSegs) return;
+    const videoId = kind === 'vod' ? 'vp-video' : 'clp-video';
+    const words = (t || segments.map(s => s.text).join(' ')).split(/\s+/).filter(Boolean).length;
+
+    const bodyHtml = hasSegs
+        ? `<div class="media-transcript-segs">${segments.map(s =>
+            `<button type="button" class="ts-seg" onclick="seekMediaTo('${videoId}', ${Number(s.start) || 0})"><span class="ts-time">${_fmtTs(s.start)}</span><span class="ts-text">${esc(s.text)}</span></button>`
+          ).join('')}</div>`
+        : `<p class="media-transcript-text">${esc(t)}</p>`;
+
     const box = document.createElement('div');
     box.className = 'media-transcript';
     box.dataset.filename = `${kind}-${item.id}-transcript`;
+    box.dataset.plain = hasSegs ? segments.map(s => `[${_fmtTs(s.start)}] ${s.text}`).join('\n') : t;
     box.innerHTML = `
         <div class="media-transcript-head">
             <button type="button" class="media-transcript-toggle" onclick="toggleMediaTranscript(this)">
                 <i class="fa-solid fa-file-lines"></i> <span>Transcript</span>
-                <span class="media-transcript-meta">${words} words · local AI</span>
+                <span class="media-transcript-meta">${words} words · ${hasSegs ? 'timestamped · ' : ''}local AI</span>
                 <i class="fa-solid fa-chevron-down media-transcript-caret"></i>
             </button>
             <button type="button" class="btn btn-small btn-outline media-transcript-dl" onclick="downloadMediaTranscript(this)" title="Download as .txt">
                 <i class="fa-solid fa-download"></i> .txt
             </button>
         </div>
-        <div class="media-transcript-body"><p class="media-transcript-text">${esc(t)}</p></div>`;
+        <div class="media-transcript-body">${bodyHtml}</div>`;
     desc.parentNode.insertBefore(box, desc.nextSibling);
 }
 
@@ -171,7 +196,7 @@ function toggleMediaTranscript(btn) {
 function downloadMediaTranscript(btn) {
     const box = btn.closest('.media-transcript');
     if (!box) return;
-    const text = box.querySelector('.media-transcript-text')?.textContent || '';
+    const text = box.dataset.plain || box.querySelector('.media-transcript-text')?.textContent || '';
     const name = (box.dataset.filename || 'transcript') + '.txt';
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
