@@ -2097,6 +2097,12 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
 
     _loadingHistory = true;
     try {
+        // Load emotes BEFORE rendering history — otherwise parseEmotes falls back to
+        // plain text and historical messages show raw codes (e.g. "PepeD") instead of
+        // the emote image. Deduped with the connect-time load, so it's a single fetch.
+        if (typeof loadEmotes === 'function') {
+            try { await loadEmotes(streamId); } catch { /* non-fatal — history still renders */ }
+        }
         if (streamId) await loadChatHistory(streamId);
         else await loadGlobalChatHistory();
     } catch {

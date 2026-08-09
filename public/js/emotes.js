@@ -16,7 +16,25 @@ let _emotePickerTarget = null; // which picker element is active
 let _emoteSearchTimeout = null;
 
 /* ── Load emotes for a stream context ─────────────────────────── */
+let _emoteLoadPromise = null;
+let _emoteLoadContext = null;
+
+/**
+ * Load (and dedupe) emotes for a stream context. Returns a promise so callers can
+ * AWAIT emote readiness before rendering — e.g. chat history must wait for emotes or
+ * historical messages render raw codes ("PepeD") instead of the emote image. Concurrent
+ * or repeat calls for the same context share a single in-flight fetch.
+ */
 async function loadEmotes(streamId) {
+    const key = String(streamId || 0);
+    if (emotesLoaded && _emoteLoadContext === key && !_emoteLoadPromise) return;
+    if (_emoteLoadPromise && _emoteLoadContext === key) return _emoteLoadPromise;
+    _emoteLoadContext = key;
+    _emoteLoadPromise = _doLoadEmotes(streamId).finally(() => { _emoteLoadPromise = null; });
+    return _emoteLoadPromise;
+}
+
+async function _doLoadEmotes(streamId) {
     try {
         const data = await api(`/emotes/all/${streamId || 0}`);
         emoteCategories = {
