@@ -32,20 +32,20 @@ const BUILTIN_THEMES = (() => {
         '--shadow': '0 2px 12px rgba(0,0,0,0.45)', '--shadow-lg': '0 12px 40px rgba(0,0,0,0.6)',
         '--shadow-soft': '0 12px 40px rgba(0,0,0,0.28)',
     }, SEM, sem||{});
-    // Light: soft off-white surfaces (never harsh pure white), cards gently
-    // elevated above a tinted page, and a matching LIGHT navbar glass.
-    const light = (base, accent, sem) => Object.assign({
-        '--bg-primary': mix(base,K,0.045), '--bg-secondary': base,
-        '--bg-tertiary': mix(base,K,0.085), '--bg-card': mix(base,W,0.30),
-        '--bg-hover': mix(base,K,0.07), '--bg-input': mix(base,W,0.42),
-        '--text-primary': mix(base,K,0.87), '--text-secondary': mix(base,K,0.50), '--text-muted': mix(base,K,0.36),
+    // Light: MUTED soft-gray surfaces (deliberately not bright white), a page that
+    // reads like tinted paper, gently elevated cards, and a calm muted navbar.
+    const light = (b0, accent, sem) => { const base = mix(b0, K, 0.07); return Object.assign({
+        '--bg-primary': mix(base,K,0.035), '--bg-secondary': mix(base,K,0.085),
+        '--bg-tertiary': mix(base,K,0.13), '--bg-card': mix(base,W,0.30),
+        '--bg-hover': mix(base,K,0.10), '--bg-input': mix(base,W,0.36),
+        '--text-primary': mix(base,K,0.88), '--text-secondary': mix(base,K,0.52), '--text-muted': mix(base,K,0.38),
         '--accent': accent, '--accent-light': mix(accent,W,0.18), '--accent-dark': mix(accent,K,0.22),
-        '--border': mix(base,K,0.14), '--border-light': mix(base,K,0.08), '--on-accent': onAccent(accent),
-        '--glass': rgba(mix(base,W,0.18), 0.86), '--glass-strong': rgba(mix(base,W,0.35), 0.95),
-        '--ring-accent': `0 0 0 1px ${rgba(accent,0.22)}, 0 18px 40px rgba(20,25,40,0.14)`,
-        '--shadow': '0 2px 12px rgba(20,25,40,0.08)', '--shadow-lg': '0 12px 40px rgba(20,25,40,0.14)',
-        '--shadow-soft': '0 12px 40px rgba(20,25,40,0.10)',
-    }, SEM, sem||{});
+        '--border': mix(base,K,0.16), '--border-light': mix(base,K,0.09), '--on-accent': onAccent(accent),
+        '--glass': rgba(mix(base,K,0.075), 0.92), '--glass-strong': rgba(mix(base,W,0.10), 0.96),
+        '--ring-accent': `0 0 0 1px ${rgba(accent,0.22)}, 0 16px 36px rgba(20,25,40,0.12)`,
+        '--shadow': '0 2px 12px rgba(20,25,40,0.07)', '--shadow-lg': '0 12px 40px rgba(20,25,40,0.12)',
+        '--shadow-soft': '0 12px 40px rgba(20,25,40,0.09)',
+    }, SEM, sem||{}); };
     const T = (name, slug, mode, description, tags, variables) => ({ name, slug, mode, description, tags, variables });
     return [
         // ─── DARK ───
