@@ -863,6 +863,9 @@ function routeFromURL() {
     } else if (segments[0] === 'tos' || segments[0] === 'terms') {
         window.location.replace('/tos');
         return;
+    } else if (segments[0] === 'privacy') {
+        window.location.replace('/privacy');
+        return;
     } else if (segments[0] === 'p' && segments[1]) {
         showPage('paste-viewer');
         loadPasteViewer(segments[1]);

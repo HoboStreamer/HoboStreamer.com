@@ -11738,20 +11738,57 @@ body.theme-light .user-dropdown {
 /* ── Home hero: animated aurora glow + shimmering title ── */
 .hero { position: relative; overflow: hidden; }
 .hero-content { position: relative; z-index: 1; }
+/* ── Campfire hero ambience (theme-aware) ─────────────────────────
+   A warm fire glow rising from the bottom + drifting embers. Colours are
+   mixed from the active theme's --accent so it fits any theme, warmed toward
+   fire tones. Overlaid glow uses lighten so it reads on light + dark. */
 .hero-aurora {
-    position: absolute; inset: -45% -12% auto -12%; height: 520px; z-index: 0;
-    pointer-events: none; filter: blur(64px); opacity: 0.45;
+    position: absolute; inset: 0; z-index: 0; pointer-events: none;
     background:
-        radial-gradient(40% 60% at 20% 30%, var(--accent, #c0965c) 0%, transparent 60%),
-        radial-gradient(35% 55% at 80% 22%, #6c3fb5 0%, transparent 60%),
-        radial-gradient(45% 65% at 52% 82%, #10b981 0%, transparent 62%);
-    animation: heroAurora 20s ease-in-out infinite alternate;
-    will-change: transform;
+        radial-gradient(62% 46% at 50% 112%, color-mix(in srgb, var(--accent, #c0965c) 55%, #ff7a18) 0%, transparent 72%),
+        radial-gradient(34% 28% at 50% 106%, color-mix(in srgb, var(--accent-light, var(--accent, #c0965c)) 65%, #ffd479) 0%, transparent 72%);
+    filter: blur(22px);
+    opacity: 0.55;
+    mix-blend-mode: lighten;
+    animation: heroFireGlow 3.4s ease-in-out infinite;
+    will-change: opacity, transform;
 }
-@keyframes heroAurora {
-    0%   { transform: translate3d(-4%, -2%, 0) rotate(0deg) scale(1); }
-    50%  { transform: translate3d(4%, 2%, 0) rotate(8deg) scale(1.12); }
-    100% { transform: translate3d(-2%, 3%, 0) rotate(-6deg) scale(1.06); }
+/* Two ember layers of different size/speed for depth. Seamless upward scroll. */
+.hero-aurora::before, .hero-aurora::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background-repeat: repeat;
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent, #c0965c) 55%, #ff8c00));
+}
+.hero-aurora::before {
+    background-image:
+        radial-gradient(1.6px 1.6px at 15% 80%, var(--accent-light, #dbb077) 50%, transparent 55%),
+        radial-gradient(2px 2px at 52% 62%, #ffb347 50%, transparent 55%),
+        radial-gradient(1.4px 1.4px at 82% 74%, var(--accent, #c0965c) 50%, transparent 55%),
+        radial-gradient(1.2px 1.2px at 34% 40%, #ffd479 50%, transparent 55%),
+        radial-gradient(1.6px 1.6px at 68% 30%, var(--accent-light, #dbb077) 50%, transparent 55%);
+    background-size: 230px 230px;
+    opacity: 0.5;
+    animation: heroEmbers 9s linear infinite;
+}
+.hero-aurora::after {
+    background-image:
+        radial-gradient(1px 1px at 28% 85%, #ffd479 50%, transparent 55%),
+        radial-gradient(1.3px 1.3px at 62% 66%, var(--accent-light, #dbb077) 50%, transparent 55%),
+        radial-gradient(1px 1px at 88% 46%, #ffb347 50%, transparent 55%),
+        radial-gradient(1.2px 1.2px at 44% 24%, var(--accent, #c0965c) 50%, transparent 55%);
+    background-size: 160px 160px;
+    opacity: 0.35;
+    animation: heroEmbers 6s linear infinite;
+}
+@keyframes heroFireGlow {
+    0%, 100% { opacity: 0.44; transform: translateY(0) scaleX(1); }
+    25%      { opacity: 0.62; transform: translateY(-2%) scaleX(1.05); }
+    50%      { opacity: 0.38; transform: translateY(1%) scaleX(0.97); }
+    75%      { opacity: 0.56; transform: translateY(-1%) scaleX(1.03); }
+}
+@keyframes heroEmbers {
+    from { background-position: 0 0; }
+    to   { background-position: 26px -230px; }
 }
 .hero h1 {
     background: linear-gradient(90deg, var(--accent, #c0965c), #ffd479, var(--accent, #c0965c));
@@ -11762,7 +11799,9 @@ body.theme-light .user-dropdown {
 }
 .hero h1 i { -webkit-text-fill-color: var(--accent, #c0965c); color: var(--accent, #c0965c); }
 @keyframes heroShimmer { to { background-position: 200% center; } }
-@media (prefers-reduced-motion: reduce) { .hero-aurora, .hero h1 { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+    .hero-aurora, .hero-aurora::before, .hero-aurora::after, .hero h1 { animation: none; }
+}
 
 /* Stream description on live cards (collapsible) */
 .stream-card-desc {
