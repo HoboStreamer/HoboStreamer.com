@@ -309,6 +309,7 @@ router.get('/:slug', optionalAuth, (req, res) => {
 
         // Burn-after-read: allow one non-owner read, then redact content and delete
         if (paste.burn_after_read && !isOwner && paste.views > 1) {
+            removePasteScreenshot(paste);   // don't leave the screenshot behind on burn
             db.run('DELETE FROM pastes WHERE id = ?', [paste.id]);
             return res.json({ paste: { slug: paste.slug, burn_after_read: 1, burned: true, views: paste.views } });
         }
@@ -542,6 +543,15 @@ router.put('/:slug', requireAuth, (req, res) => {
     }
 });
 
+// Fully remove a paste's screenshot from local disk AND any legacy B2 object.
+function removePasteScreenshot(paste) {
+    if (!paste) return;
+    if (paste.screenshot_path) {
+        try { fs.unlinkSync(paste.screenshot_path); } catch { /* ignore */ }
+    }
+    try { require('../vod/vod-storage').deleteLegacyPasteScreenshot(paste.id).catch(() => {}); } catch { /* ignore */ }
+}
+
 // ── Delete paste ────────────────────────────────────────────
 router.delete('/:slug', requireAuth, (req, res) => {
     try {
@@ -553,10 +563,8 @@ router.delete('/:slug', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not your paste' });
         }
 
-        // Delete screenshot file if exists
-        if (paste.screenshot_path) {
-            try { fs.unlinkSync(paste.screenshot_path); } catch {}
-        }
+        // Delete screenshot everywhere (local + legacy B2)
+        removePasteScreenshot(paste);
 
         db.run('DELETE FROM pastes WHERE id = ?', [paste.id]);
         res.json({ success: true });

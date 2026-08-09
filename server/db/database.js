@@ -3650,6 +3650,10 @@ function getLastPasteTime(userId, ip) {
 
 function deleteAllForks() {
     const forks = all('SELECT id, screenshot_path FROM pastes WHERE forked_from IS NOT NULL');
+    // Unlink the fork screenshots so they don't leak on disk.
+    for (const f of forks) {
+        if (f.screenshot_path) { try { fs.unlinkSync(f.screenshot_path); } catch { /* ignore */ } }
+    }
     run('DELETE FROM pastes WHERE forked_from IS NOT NULL');
     return forks.length;
 }

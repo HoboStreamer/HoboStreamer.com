@@ -180,9 +180,14 @@ router.delete('/:id', requireAuth, (req, res) => {
             return res.status(403).json({ error: 'Not authorized to delete this clip' });
         }
 
-        // Delete file
+        // Delete the local file + any offloaded B2/R2 object (clips carry
+        // storage_provider/storage_key like VODs).
         if (clip.file_path && fs.existsSync(clip.file_path)) {
-            fs.unlinkSync(clip.file_path);
+            try { fs.unlinkSync(clip.file_path); } catch { /* ignore */ }
+        }
+        if (clip.storage_provider && clip.storage_provider !== 'local' && clip.storage_key) {
+            require('./vod-storage').deleteVodObjects(clip).catch(err =>
+                console.warn(`[Clips] Remote object cleanup failed for clip ${clip.id}:`, err.message));
         }
 
         db.run('DELETE FROM clips WHERE id = ?', [req.params.id]);

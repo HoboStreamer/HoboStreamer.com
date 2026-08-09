@@ -2836,6 +2836,10 @@ function addChatMessage(msg) {
             </div>
         `;
     }
+    if (msg.message_type === 'channel-sound') {
+        const cmd = esc((msg.sound && msg.sound.command) || '');
+        text = `<span class="channel-sound-pill" style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:12px;background:color-mix(in srgb,var(--accent,#e0a44a) 18%,transparent);color:var(--accent,#e0a44a);font-weight:600;font-size:0.92em"><i class="fa-solid fa-volume-high"></i> played !${cmd}</span>`;
+    }
     const isAnon = displayName.startsWith('anon');
 
     // Mention highlighting
@@ -2880,7 +2884,7 @@ function addChatMessage(msg) {
         replyHtml = `<div class="chat-reply-header" ${replyMsgId} onclick="scrollToReplyTarget(this)"><i class="fa-solid fa-reply fa-flip-horizontal"></i> <span class="chat-reply-user">@${replyUser}</span> <span class="chat-reply-snippet">${replySnippet}</span></div>`;
     }
 
-    const separator = msg.message_type === 'soundboard' ? ' ' : ': ';
+    const separator = (msg.message_type === 'soundboard' || msg.message_type === 'channel-sound') ? ' ' : ': ';
     el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}${separator}${text}`;
 
     // Reply action button (hover)

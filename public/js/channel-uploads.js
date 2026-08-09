@@ -30,6 +30,7 @@
 
     let overlay = null;
     let curStreamId = null;
+    let _soundPreviewUrl = null;   // object URL for the attached-sound preview
     let curTab = 'emote';
 
     function ensureStyles() {
@@ -97,11 +98,25 @@
             <form class="cu-form" id="cu-sound-form">
                 <input type="text" id="cu-sound-cmd" maxlength="24" placeholder="Command name (e.g. airhorn) → !airhorn" autocomplete="off">
                 <input type="file" id="cu-sound-file" accept="audio/*">
+                <div id="cu-sound-preview" style="display:none;margin:2px 0"></div>
                 <button class="cu-btn" type="submit">Upload sound to this channel</button>
                 <div class="cu-hint">Trigger it by typing <b>!command</b> in chat. MP3/WAV/OGG, within the streamer's max length.</div>
             </form>
             <div id="cu-sound-list" class="cu-list" style="flex-direction:column;"><span class="cu-empty">Loading…</span></div>`;
         overlay.querySelector('#cu-sound-form').addEventListener('submit', submitSound);
+        // Preview the attached file before uploading.
+        const fileInput = overlay.querySelector('#cu-sound-file');
+        fileInput.addEventListener('change', () => {
+            const preview = overlay.querySelector('#cu-sound-preview');
+            if (_soundPreviewUrl) { try { URL.revokeObjectURL(_soundPreviewUrl); } catch {} _soundPreviewUrl = null; }
+            const f = fileInput.files[0];
+            if (!f) { preview.style.display = 'none'; preview.innerHTML = ''; return; }
+            _soundPreviewUrl = URL.createObjectURL(f);
+            const sizeKb = (f.size / 1024).toFixed(0);
+            preview.style.display = '';
+            preview.innerHTML = `<audio controls preload="metadata" src="${_soundPreviewUrl}" style="width:100%;height:34px"></audio>
+                <div class="cu-hint" style="margin-top:2px">Preview: <b>${esc(f.name)}</b> · ${sizeKb} KB</div>`;
+        });
         loadSoundList();
     }
 
@@ -184,6 +199,9 @@
             notify(`Sound !${cmd} added — type it in chat to play it!`, 'success');
             overlay.querySelector('#cu-sound-cmd').value = '';
             overlay.querySelector('#cu-sound-file').value = '';
+            const preview = overlay.querySelector('#cu-sound-preview');
+            if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
+            if (_soundPreviewUrl) { try { URL.revokeObjectURL(_soundPreviewUrl); } catch {} _soundPreviewUrl = null; }
             loadSoundList();
         } catch (e) { notify(e.message, 'error'); }
         finally { btn.disabled = false; }

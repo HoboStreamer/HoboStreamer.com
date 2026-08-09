@@ -234,6 +234,32 @@ async function deleteObject(provider, key) {
     }
 }
 
+/**
+ * Best-effort removal of a paste's legacy B2 screenshot object(s). Legacy paste
+ * screenshots live in B2 under `community.attachments/objects/<date>/media-hobostreamer-
+ * paste-screenshot-<pasteId>.<ext>` (date-partitioned, key not stored in the DB), so we
+ * list the prefix and delete anything matching the paste id. Silent no-op if B2 is off.
+ */
+async function deleteLegacyPasteScreenshot(pasteId) {
+    const client = clientFor('b2');
+    if (!client || !pasteId) return;
+    const marker = `media-hobostreamer-paste-screenshot-${pasteId}.`;
+    try {
+        let token;
+        do {
+            const r = await client.send(new S3.ListObjectsV2Command({
+                Bucket: PROVIDER_ENV.b2.bucket, Prefix: 'community.attachments/', ContinuationToken: token, MaxKeys: 1000,
+            }));
+            for (const o of (r.Contents || [])) {
+                if (o.Key.split('/').pop().startsWith(marker)) await deleteObject('b2', o.Key);
+            }
+            token = r.IsTruncated ? r.NextContinuationToken : null;
+        } while (token);
+    } catch (err) {
+        console.warn(`[VodStorage] Legacy paste screenshot cleanup failed for paste ${pasteId}:`, err.message);
+    }
+}
+
 async function presignGet(provider, key, expiresInSeconds = 900) {
     const client = clientFor(provider);
     if (!client) return null;
@@ -779,6 +805,8 @@ module.exports = {
     promoteToR2,
     demoteFromR2,
     deleteVodObjects,
+    deleteObject,
+    deleteLegacyPasteScreenshot,
     runSweep,
     checkProviders,
     migrateLegacy,

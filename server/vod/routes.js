@@ -1011,7 +1011,7 @@ router.post('/bulk-delete-old', requireAuth, async (req, res) => {
 
         const vodsToDelete = deleteVods
             ? db.all(
-                `SELECT id, file_path
+                `SELECT id, file_path, storage_provider, storage_key
                  FROM vods
                  WHERE user_id = ?
                    AND COALESCE(is_recording, 0) = 0
@@ -1022,7 +1022,7 @@ router.post('/bulk-delete-old', requireAuth, async (req, res) => {
 
         const clipsToDelete = deleteClips
             ? db.all(
-                `SELECT DISTINCT c.id, c.file_path
+                `SELECT DISTINCT c.id, c.file_path, c.storage_provider, c.storage_key
                  FROM clips c
                  LEFT JOIN streams s ON c.stream_id = s.id
                  LEFT JOIN vods v ON c.vod_id = v.id
@@ -1057,6 +1057,10 @@ router.post('/bulk-delete-old', requireAuth, async (req, res) => {
                 if (fs.existsSync(clip.file_path)) {
                     fs.unlinkSync(clip.file_path);
                     clipFilesDeleted++;
+                }
+                // Also remove any offloaded B2/R2 object.
+                if (clip.storage_provider && clip.storage_provider !== 'local' && clip.storage_key) {
+                    await require('./vod-storage').deleteVodObjects(clip);
                 }
             } catch {
                 fileDeleteErrors++;

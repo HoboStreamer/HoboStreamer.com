@@ -370,28 +370,48 @@ html, body {
     }
 
     // ── Emote parsing ──────────────────────────────────────────
+    // Kick inline emote format: [emote:<id>:<name>] (numeric id first).
+    const KICK_EMOTE_RE = /\[emote:(\d+):([^\]:]+)\]/g;
     function parseEmotes(text) {
-        if (!Object.keys(emoteMap).length) return esc(text);
-        // Split on whitespace, replace known emote codes with <img>
-        return text.split(/(\s+)/).map(token => {
-            const emote = emoteMap[token];
-            if (emote) {
-                const cls = emote.animated ? 'emote emote-animated' : 'emote';
-                return `<img class="${cls}" src="${esc(emote.url)}" alt="${esc(token)}" title="${esc(token)}">`;
-            }
-            return esc(token);
+        // First expand Kick inline emotes (independent of the loaded emote map).
+        const parts = [];
+        let last = 0, m;
+        KICK_EMOTE_RE.lastIndex = 0;
+        while ((m = KICK_EMOTE_RE.exec(text)) !== null) {
+            if (m.index > last) parts.push({ t: 'text', v: text.slice(last, m.index) });
+            parts.push({ t: 'html', v: `<img class="emote" src="https://files.kick.com/emotes/${esc(m[1])}/fullsize" alt="${esc(m[2])}" title="${esc(m[2])}">` });
+            last = m.index + m[0].length;
+        }
+        if (last < text.length) parts.push({ t: 'text', v: text.slice(last) });
+        if (!parts.length) parts.push({ t: 'text', v: text });
+
+        const hasMap = Object.keys(emoteMap).length > 0;
+        return parts.map(seg => {
+            if (seg.t === 'html') return seg.v;
+            if (!hasMap) return esc(seg.v);
+            return seg.v.split(/(\s+)/).map(token => {
+                const emote = emoteMap[token];
+                if (emote) {
+                    const cls = emote.animated ? 'emote emote-animated' : 'emote';
+                    return `<img class="${cls}" src="${esc(emote.url)}" alt="${esc(token)}" title="${esc(token)}">`;
+                }
+                return esc(token);
+            }).join('');
         }).join('');
     }
 
     async function loadEmotes() {
-        if (!streamId) return;
         try {
-            const resp = await fetch(`/api/emotes/all/${streamId}`);
+            // The endpoint returns categorized arrays (defaults/channel/global/ffz/bttv/7tv),
+            // NOT a flat `emotes` list. Merge them (channel/custom highest priority).
+            const resp = await fetch(`/api/emotes/all/${streamId || 0}`);
             if (!resp.ok) return;
             const data = await resp.json();
             const map = {};
-            for (const emote of (data.emotes || [])) {
-                map[emote.code] = { url: emote.url, animated: !!emote.animated };
+            for (const cat of ['bttv', '7tv', 'ffz', 'defaults', 'global', 'channel']) {
+                for (const e of (data[cat] || [])) {
+                    if (e && e.code) map[e.code] = { url: e.url, animated: !!e.animated };
+                }
             }
             emoteMap = map;
         } catch { /* ignore */ }

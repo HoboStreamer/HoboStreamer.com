@@ -1168,12 +1168,38 @@ class ChatServer {
 
             const username = client.user ? (client.user.display_name || client.user.username) : (client.anonId || 'someone');
 
-            // Announce in chat + broadcast the audio (reuses the soundboard-audio client path)
-            this.broadcastToStream(client.streamId, {
-                type: 'system',
-                message: `${username} played !${cmd}`,
+            // Announce as a RICH chat message (same identity/cosmetics/tag as a normal
+            // message) so it shows the user's nametag, badges, avatar and cosmetics —
+            // not a plain "x played !command" text line.
+            const soundMsg = {
+                type: 'chat',
+                username,
+                core_username: client.user ? client.user.username : null,
+                user_id: client.user?.id || null,
+                anon_id: client.anonId,
+                role: client.user ? client.user.role : 'anon',
+                message: `played !${cmd}`,
+                message_type: 'channel-sound',
+                sound: { command: cmd },
+                stream_id: client.streamId,
+                is_global: !client.streamId,
+                avatar_url: client.user?.avatar_url || null,
+                profile_color: client.user?.profile_color || '#999',
                 timestamp: new Date().toISOString(),
-            });
+            };
+            if (client.user?.id) {
+                try {
+                    const cp = cosmetics.getCosmeticProfile(client.user.id);
+                    if (cp.nameFX) soundMsg.nameFX = cp.nameFX;
+                    if (cp.particleFX) soundMsg.particleFX = cp.particleFX;
+                    if (cp.hatFX) soundMsg.hatFX = cp.hatFX;
+                } catch { /* non-critical */ }
+                try {
+                    const tagProfile = require('../game/tags').getTagProfile(client.user.id);
+                    if (tagProfile) soundMsg.tag = tagProfile;
+                } catch { /* non-critical */ }
+            }
+            this.broadcastToStream(client.streamId, soundMsg);
             this.broadcastToStream(client.streamId, {
                 type: 'soundboard-audio',
                 username,
