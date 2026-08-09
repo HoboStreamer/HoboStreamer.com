@@ -421,6 +421,19 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] platform_connections migration:', e.message); }
 
+    // Kick chatroom-id cache. Kick's v2 API (which exposes the Pusher chatroom id)
+    // is Cloudflare-blocked from datacenter IPs, so resolution fails intermittently.
+    // Once we resolve a channel's ids we persist them here and reuse forever — the
+    // chatroom id is stable per channel, so the relay survives the API being blocked.
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS kick_channel_cache (
+            slug TEXT PRIMARY KEY,
+            chatroom_id INTEGER,
+            kick_channel_id INTEGER,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+    } catch (e) { console.warn('[DB] kick_channel_cache migration:', e.message); }
+
     // Migrate: link a restream destination to the OAuth connection that provisioned it
     try {
         const cols = database.pragma('table_info(restream_destinations)').map(c => c.name);
@@ -2348,6 +2361,22 @@ function getRestreamDestinationsByManagedStream(managedStreamId) {
 }
 
 // ── Platform OAuth connection helpers ────────────────────────
+
+// ── Kick chatroom-id cache (survives the Cloudflare-blocked v2 API) ──
+function getKickChannelCache(slug) {
+    if (!slug) return null;
+    return get('SELECT * FROM kick_channel_cache WHERE slug = ?', [String(slug).toLowerCase()]);
+}
+function setKickChannelCache(slug, chatroomId, kickChannelId) {
+    if (!slug || !chatroomId) return;
+    run(`INSERT INTO kick_channel_cache (slug, chatroom_id, kick_channel_id, updated_at)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(slug) DO UPDATE SET
+            chatroom_id = excluded.chatroom_id,
+            kick_channel_id = COALESCE(excluded.kick_channel_id, kick_channel_cache.kick_channel_id),
+            updated_at = CURRENT_TIMESTAMP`,
+        [String(slug).toLowerCase(), chatroomId, kickChannelId || null]);
+}
 
 function getPlatformConnection(userId, platform) {
     return get('SELECT * FROM platform_connections WHERE user_id = ? AND platform = ?', [userId, platform]);
@@ -5098,6 +5127,7 @@ module.exports = {
     saveChatMessage, searchChatMessages, getUserChatHistory,
     // Profiles
     getUserProfile, updateUserAvatar, resetAvatarsForPaste, getUserAvatarPastes,
+    getKickChannelCache, setKickChannelCache,
     // Follows
     followUser, unfollowUser, getFollowerCount, isFollowing, getFollowerIds,
     // Transactions (Hobo Bucks)

@@ -37,7 +37,7 @@
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=29">
+    <link rel="stylesheet" href="/css/style.css?v=30">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -121,12 +121,14 @@
                 </a>
             </div>
         </div>
-        <a href="/broadcast" onclick="return handleLinkClick(event, '/broadcast')" class="nav-link" data-page="broadcast" id="nav-broadcast" style="display:none" data-tooltip="Go Live">
-            <i class="fa-solid fa-tower-broadcast"></i> <span>Go Live</span><span class="nav-live-dot" id="nav-live-dot" style="display:none"><i class="fa-solid fa-circle"></i></span>
-        </a>
-        <a href="/dashboard" onclick="return handleLinkClick(event, '/dashboard')" class="nav-link" data-page="dashboard" id="nav-dashboard" style="display:none" data-tooltip="Dashboard">
-            <i class="fa-solid fa-gauge-high"></i> <span>Dashboard</span>
-        </a>
+        <div class="nav-dropdown" id="nav-golive-dropdown">
+            <a href="/broadcast" onclick="return goLiveNav(event)" class="nav-link" data-page="broadcast" id="nav-broadcast" data-tooltip="Go Live">
+                <i class="fa-solid fa-tower-broadcast"></i> <span>Go Live</span><span class="nav-live-dot" id="nav-live-dot" style="display:none"><i class="fa-solid fa-circle"></i></span> <i class="fa-solid fa-caret-down nav-dd-caret"></i>
+            </a>
+            <div class="nav-dropdown-menu" id="nav-golive-menu">
+                <a href="/dashboard" id="nav-golive-dash" onclick="return dashNav(event)"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+            </div>
+        </div>
         <a href="https://hobo.tools/admin" class="nav-link" data-page="admin" id="nav-admin" style="display:none" data-tooltip="Admin" rel="noopener noreferrer">
             <i class="fa-solid fa-shield-halved"></i> <span>Admin</span>
         </a>
@@ -140,11 +142,11 @@
             </a>
         </div>
         <div id="nav-auth-user" style="display:none">
-            <span class="nav-balance" id="nav-balance" title="Hobo Bucks balance" onclick="showModal('buy-funds')">
-                <i class="fa-solid fa-wallet"></i> <span id="nav-balance-amount">0</span>
-            </span>
             <span class="nav-coins" id="nav-coins" title="Hobo Nickels — Click to open inventory" onclick="openCosmeticsModal()">
                 <i class="fa-solid fa-coins"></i> <span id="nav-coins-amount">0</span>
+            </span>
+            <span class="nav-balance" id="nav-balance" title="Hobo Bucks balance" onclick="showModal('buy-funds')">
+                <i class="fa-solid fa-wallet"></i> <span id="nav-balance-amount">0</span>
             </span>
             <span id="hobo-bell-mount" style="display:inline-flex;align-items:center"></span>
             <div class="nav-avatar-wrap" onclick="toggleUserMenu()">
@@ -153,10 +155,11 @@
                 <i class="fa-solid fa-caret-down"></i>
             </div>
             <div class="user-dropdown" id="user-dropdown">
-                <a href="#" onclick="return handleLinkClick(event, channelPath(currentUser?.username))"><i class="fa-solid fa-user"></i> My Channel</a>
-                <a href="/broadcast" onclick="return handleLinkClick(event, '/broadcast')"><i class="fa-solid fa-tower-broadcast"></i> Go Live</a>
-                <a href="/dashboard" onclick="return handleLinkClick(event, '/dashboard')"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
                 <a href="/settings" onclick="return handleLinkClick(event, '/settings')"><i class="fa-solid fa-gear"></i> Settings</a>
+                <hr>
+                <a href="#" onclick="return handleLinkClick(event, channelPath(currentUser?.username))"><i class="fa-solid fa-user"></i> My Channel</a>
+                <a href="/dashboard" onclick="return handleLinkClick(event, '/dashboard')"><i class="fa-solid fa-gauge-high"></i> My Dashboard</a>
+                <hr>
                 <a href="#" onclick="event.preventDefault();showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</a>
                 <a href="/themes" onclick="return handleLinkClick(event, '/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
                 <a href="https://my.hobo.tools" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
@@ -2939,7 +2942,7 @@ WantedBy=multi-user.target</code>
                 <div class="settings-banner">
                     <div class="settings-banner-overlay"></div>
                     <div class="settings-banner-content">
-                        <div class="settings-banner-avatar" id="settings-banner-initial" title="Change avatar" onclick="document.getElementById('set-avatar-file').click()" style="cursor:pointer;position:relative;overflow:hidden">
+                        <div class="settings-banner-avatar" id="settings-banner-initial" title="Change avatar" onclick="document.getElementById('set-avatar-file').click()" style="cursor:pointer;position:relative">
                             ?
                             <span class="settings-avatar-edit"><i class="fa-solid fa-camera"></i></span>
                         </div>
@@ -4531,7 +4534,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=2"></script>
-<script src="/js/app.js?v=20"></script>
+<script src="/js/app.js?v=21"></script>
 <script src="/js/stream-player.js?v=8"></script>
 <script src="/js/emotes.js?v=8"></script>
 <script src="/js/gif-picker.js?v=1"></script>
@@ -4600,7 +4603,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/staff-console.js?v=1"></script>
 <script src="/js/dashboard-moderation.js?v=2"></script>
 <script src="/js/ai-chatbot-settings.js?v=4"></script>
-<script src="/js/pastes.js?v=4"></script>
+<script src="/js/pastes.js?v=5"></script>
 <script src="/js/messenger.js?v=1"></script>
 
 <!-- ── Hobo Network shared libs (notifications, account sync, themes) ── -->

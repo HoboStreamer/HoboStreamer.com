@@ -505,34 +505,34 @@ async function loadUser() {
 function onAuthChange() {
     const anon = document.getElementById('nav-auth-anon');
     const user = document.getElementById('nav-auth-user');
-    const dash = document.getElementById('nav-dashboard');
-    const broadcast = document.getElementById('nav-broadcast');
     const admin = document.getElementById('nav-admin');
 
     // The nav chrome doesn't exist in every document that loads app.js (e.g. the
     // popout chat window), so guard it — the auth-changed event below must still fire.
-    if (anon && user && dash && broadcast && admin) {
+    if (anon && user) {
         if (currentUser) {
             anon.style.display = 'none';
             user.style.display = 'flex';
-            dash.style.display = '';
-            broadcast.style.display = '';
-            admin.style.display = (currentUser.capabilities?.admin_panel || hasCapability('can_access_staff_console')) ? '' : 'none';
+            if (admin) admin.style.display = (currentUser.capabilities?.admin_panel || hasCapability('can_access_staff_console')) ? '' : 'none';
             const navAv = document.getElementById('nav-avatar');
             if (navAv) navAv.innerHTML = _avatarInner(currentUser.avatar_url, currentUser.username);
             const navUn = document.getElementById('nav-username');
-            if (navUn) navUn.textContent = currentUser.username;
+            if (navUn) navUn.textContent = currentUser.display_name || currentUser.username;
             loadBalance();
         } else {
             anon.style.display = '';
             user.style.display = 'none';
-            dash.style.display = 'none';
-            broadcast.style.display = 'none';
-            admin.style.display = 'none';
+            if (admin) admin.style.display = 'none';
         }
     } else if (currentUser) {
         loadBalance();
     }
+    // Go Live nav is always visible (logged out → prompts sign-up); its Dashboard
+    // sub-menu + caret only apply when logged in.
+    const goliveMenu = document.getElementById('nav-golive-menu');
+    if (goliveMenu) goliveMenu.style.display = currentUser ? '' : 'none';
+    const goliveCaret = document.querySelector('#nav-golive-dropdown .nav-dd-caret');
+    if (goliveCaret) goliveCaret.style.display = currentUser ? '' : 'none';
     document.getElementById('user-dropdown')?.classList.remove('show');
 
     // Sync canvas auth state if canvas page is loaded
@@ -599,6 +599,25 @@ function handleDropdownLinkClick(event, dropdownId) {
     if (isModifiedLinkClick(event)) return true;
     event?.preventDefault?.();
     toggleNavDropdown(dropdownId);
+    return false;
+}
+
+// Go Live nav button — always visible. Logged in → the broadcast workspace;
+// logged out → prompt to sign up ("begin your streaming journey").
+function goLiveNav(event) {
+    if (isModifiedLinkClick(event)) return true;
+    event?.preventDefault?.();
+    if (currentUser) navigate('/broadcast');
+    else if (typeof showModal === 'function') showModal('register');
+    return false;
+}
+// Dashboard (Go Live sub-menu). Logged out → sign-up prompt.
+function dashNav(event) {
+    if (isModifiedLinkClick(event)) return true;
+    event?.preventDefault?.();
+    if (typeof closeNavDropdowns === 'function') closeNavDropdowns();
+    if (currentUser) navigate('/dashboard');
+    else if (typeof showModal === 'function') showModal('register');
     return false;
 }
 

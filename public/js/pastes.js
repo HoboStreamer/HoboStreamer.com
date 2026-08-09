@@ -1025,34 +1025,102 @@ let _screenshotPending = false;
 async function captureScreenshot() {
     if (_screenshotPending) return;
     _screenshotPending = true;
-
+    // Open the dialog immediately with a capturing indicator so it never feels frozen.
+    _openScreenshotUploadDialog(null, { mode: 'screenshot' });
+    _setScreenshotCapturing(true);
     try {
         const blob = await _captureViewportToBlob();
         if (!blob) throw new Error('Capture failed');
-        _openScreenshotUploadDialog(blob, { mode: 'screenshot' });
+        _applyScreenshotBlob(blob);
     } catch (err) {
         console.error('[Screenshot] Capture error:', err);
-        // Fallback: let user pick a file
-        _openScreenshotUploadDialog(null, { mode: 'screenshot' });
+        // Leave the drop-zone / file-picker fallback visible.
     } finally {
+        _setScreenshotCapturing(false);
         _screenshotPending = false;
     }
 }
 
+// Show/clear a "Capturing…" indicator in the screenshot dialog while we render.
+function _setScreenshotCapturing(on) {
+    const area = document.querySelector('#screenshot-upload-modal .screenshot-preview-area');
+    const submit = document.getElementById('screenshot-submit-btn');
+    if (submit) submit.disabled = !!on;
+    const zone = document.getElementById('screenshot-upload-zone');
+    if (!area) return;
+    let el = document.getElementById('screenshot-capturing');
+    if (on) {
+        if (zone) zone.style.display = 'none';
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'screenshot-capturing';
+            el.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:10px;padding:32px;color:var(--text-secondary);font-size:0.95rem';
+            el.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Capturing screenshot…';
+            area.prepend(el);
+        }
+    } else {
+        if (el) el.remove();
+        // Only re-show the drop zone if we didn't end up with a preview image.
+        const preview = document.getElementById('screenshot-preview');
+        if (zone && !(preview && preview._blob)) zone.style.display = '';
+    }
+}
+
+// Put a captured blob into the dialog's preview.
+function _applyScreenshotBlob(blob) {
+    const preview = document.getElementById('screenshot-preview');
+    if (!preview || !blob) return;
+    try { if (preview._objUrl) URL.revokeObjectURL(preview._objUrl); } catch { /* */ }
+    const url = URL.createObjectURL(blob);
+    preview._objUrl = url;
+    preview.src = url;
+    preview.style.display = 'block';
+    preview._blob = blob;
+    preview._fromCapture = true;
+    const zone = document.getElementById('screenshot-upload-zone');
+    if (zone) zone.style.display = 'none';
+}
+
+// Pick the dominant on-screen <video>/<canvas> (the player) for a fast, pixel-accurate
+// capture. Only used when it clearly dominates the viewport, else we rasterize the DOM.
+function _pickCaptureMedia() {
+    let best = null, bestArea = 0;
+    const vpArea = window.innerWidth * window.innerHeight;
+    for (const el of document.querySelectorAll('video, canvas')) {
+        const w = el.videoWidth || el.width, h = el.videoHeight || el.height;
+        if (!w || !h) continue;
+        if (el.tagName === 'VIDEO' && el.readyState < 2) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 40 || r.height < 40) continue;
+        const area = r.width * r.height;
+        if (area > bestArea) { bestArea = area; best = el; }
+    }
+    // Require the media to dominate the view (i.e. it's the player, not a widget/bg).
+    return (best && bestArea > vpArea * 0.15) ? best : null;
+}
+
 async function _captureViewportToBlob() {
-    // Use html2canvas if available, otherwise fallback to file picker
-    // For now we'll do a lightweight in-page capture using OffscreenCanvas + drawWindow
-    // Since drawWindow is Firefox-only and deprecated, we'll use a different approach:
-    // Render the visible page to canvas using the html2canvas technique of
-    // serializing DOM + CSS. But that's a huge lib. Instead, let's use a
-    // pragmatic approach: screenshot the current view using the toBlob of a
-    // canvas that draws the main content.
+    // Fast path: if a stream/VOD/clip player dominates the view, grab its actual
+    // frame directly (instant, and html2canvas can't read <video>/<canvas> pixels).
+    const media = _pickCaptureMedia();
+    if (media) {
+        try {
+            const w = media.videoWidth || media.width;
+            const h = media.videoHeight || media.height;
+            if (w && h) {
+                const c = document.createElement('canvas');
+                c.width = w; c.height = h;
+                c.getContext('2d').drawImage(media, 0, 0, w, h);
+                const b = await new Promise(r => c.toBlob(r, 'image/png'));
+                if (b) return b;
+            }
+        } catch (e) {
+            // Cross-origin video taints the canvas — fall through to DOM rasterization.
+            console.warn('[Screenshot] media capture unavailable, rasterizing DOM:', e.message);
+        }
+    }
 
-    // Actually the cleanest approach for "screenshot for devs" is just:
-    // 1. Try to use the newer Presentation/Screenshot API (not widely available)
-    // 2. Fall back to letting the user use their OS screenshot tool and upload
-
-    // We'll load html2canvas on-demand from CDN (it's only ~44KB gzipped)
+    // Fallback: rasterize the visible page DOM. Load html2canvas on-demand (~44KB gz).
     if (typeof html2canvas === 'undefined') {
         await new Promise((resolve, reject) => {
             const script = document.createElement('script');
@@ -1067,7 +1135,7 @@ async function _captureViewportToBlob() {
     const activePage = document.querySelector('.page.active') || document.getElementById('app');
     const canvas = await html2canvas(activePage, {
         backgroundColor: getComputedStyle(document.body).backgroundColor || '#0e0e10',
-        scale: window.devicePixelRatio || 1,
+        scale: 1, // was devicePixelRatio — 1x is much faster and plenty for a screenshot
         useCORS: true,
         logging: false,
         ignoreElements: (el) => {

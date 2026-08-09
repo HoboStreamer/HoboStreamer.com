@@ -656,34 +656,51 @@ class ChatRelayService {
      * @param {string} channelName - Kick channel slug
      * @returns {Promise<{chatroomId: number, kickChannelId: number|null}>}
      */
-    _getKickChannelInfo(channelName) {
-        return new Promise((resolve, reject) => {
-            const req = https.get(`https://kick.com/api/v2/channels/${channelName}`, {
-                headers: {
-                    'Accept': 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                },
-                timeout: 10000,
-            }, (res) => {
-                let data = '';
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    if (res.statusCode >= 400) {
-                        return reject(new Error(`Kick API returned ${res.statusCode}`));
-                    }
-                    const parsed = safeJsonParse(data);
-                    if (!parsed?.chatroom?.id) {
-                        return reject(new Error('No chatroom ID found in Kick API response'));
-                    }
-                    resolve({
-                        chatroomId: parsed.chatroom.id,
-                        kickChannelId: (typeof parsed.id === 'number') ? parsed.id : null,
+    async _getKickChannelInfo(channelName) {
+        const slug = String(channelName || '').toLowerCase();
+        try {
+            const info = await new Promise((resolve, reject) => {
+                const req = https.get(`https://kick.com/api/v2/channels/${channelName}`, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    },
+                    timeout: 10000,
+                }, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => { data += chunk; });
+                    res.on('end', () => {
+                        if (res.statusCode >= 400) {
+                            return reject(new Error(`Kick API returned ${res.statusCode}`));
+                        }
+                        const parsed = safeJsonParse(data);
+                        if (!parsed?.chatroom?.id) {
+                            return reject(new Error('No chatroom ID found in Kick API response'));
+                        }
+                        resolve({
+                            chatroomId: parsed.chatroom.id,
+                            kickChannelId: (typeof parsed.id === 'number') ? parsed.id : null,
+                        });
                     });
                 });
+                req.on('error', reject);
+                req.on('timeout', () => req.destroy(new Error('Kick API request timed out')));
             });
-            req.on('error', reject);
-            req.on('timeout', () => req.destroy(new Error('Kick API request timed out')));
-        });
+            // Persist so future go-lives reuse it even when Kick's API is blocked.
+            try { db.setKickChannelCache(slug, info.chatroomId, info.kickChannelId); } catch { /* */ }
+            return info;
+        } catch (err) {
+            // Cloudflare-blocked / transient failure — reuse a previously-resolved id
+            // (the chatroom id is stable per channel, so a cached hit is authoritative).
+            try {
+                const cached = db.getKickChannelCache(slug);
+                if (cached?.chatroom_id) {
+                    console.log(`[ChatRelay] Kick: Using cached chatroom id ${cached.chatroom_id} for ${slug} (live API failed: ${err.message})`);
+                    return { chatroomId: cached.chatroom_id, kickChannelId: cached.kick_channel_id || null };
+                }
+            } catch { /* */ }
+            throw err;
+        }
     }
 
     // ── YouTube Live Chat (Scraping approach — no API key needed) ──
