@@ -9922,6 +9922,8 @@ body.theme-light .user-dropdown {
     }
     .video-container { max-height: 50vh; }
     .mobile-chat-toggle { display: flex; }
+    /* The chat is an overlay at ≤1180px — give its header a working close button. */
+    .chat-sidebar .mobile-chat-close { display: inline-flex; }
 }
 @media (max-width: 1180px) and (orientation: landscape) {
     .chat-sidebar {
@@ -11572,10 +11574,11 @@ body.theme-light .user-dropdown {
 .stream-card-ai { cursor: pointer; max-height: 2.7em; transition: max-height 0.5s ease; }
 .stream-card-ai.expanded { -webkit-line-clamp: unset; max-height: 4000px; overflow-y: auto; }
 
-/* ── Stream page: scroll the page instead of an inner scrollbar that clipped the
-   info/weather area under the video. Keep the chat column pinned. (Desktop only —
-   mobile stacks into a column already.) ── */
-@media (min-width: 769px) {
+/* ── Stream page (TRUE desktop only, ≥1181px — matches the JS mobile threshold of
+   1180px): scroll the page instead of an inner scrollbar that clipped the
+   info/weather area under the video, and keep the chat column pinned. Below 1181px
+   the chat is a fixed bottom-sheet/side-drawer overlay, so these must NOT apply. ── */
+@media (min-width: 1181px) {
     #page-channel .stream-layout { height: auto; min-height: calc(100vh - var(--navbar-h)); }
     #page-channel.has-live-tabs .stream-layout { height: auto; min-height: calc(100vh - var(--navbar-h) - 44px); }
     #page-channel .stream-main { overflow-y: visible; }
