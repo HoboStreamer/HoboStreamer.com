@@ -91,21 +91,31 @@ function _avatarSpan(url, name, color, extraCls) {
         : `<span class="stream-card-avatar${cls}"${bg}>${letter}</span>`;
 }
 
-// Short AI-overview snippet for a VOD/clip/paste listing card — expandable in place.
-function _cardAiHTML(text) {
-    const t = (text || '').trim();
-    if (!t) return '';
-    return `<div class="card-ai-overview" role="button" tabindex="0" onclick="toggleCardAi(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCardAi(event,this)">
-        <div class="card-ai-clamp"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="card-ai-text">${esc(t)}</span></div>
-        <span class="card-ai-toggle"><span class="card-ai-toggle-label">Read overview</span> <i class="fa-solid fa-chevron-down"></i></span>
+// AI-overview snippet for a card. Shows the cached SHORT summary; when a longer
+// full overview exists, "Read overview" expands to it in place. `full` is optional.
+function _cardAiHTML(text, full) {
+    const short = (text || '').trim();
+    const long = (full || '').trim();
+    const display = short || long;
+    if (!display) return '';
+    const hasMore = long && long !== display && long.length > display.length;
+    return `<div class="card-ai-overview" role="button" tabindex="0" onclick="toggleCardAi(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCardAi(event,this)"${hasMore ? ` data-full="${esc(long)}"` : ''}>
+        <div class="card-ai-clamp"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="card-ai-text">${esc(display)}</span></div>
+        ${hasMore ? '<span class="card-ai-toggle"><span class="card-ai-toggle-label">Read overview</span> <i class="fa-solid fa-chevron-down"></i></span>' : ''}
     </div>`;
 }
 
-// Toggle in-card AI-overview expansion (used on home + VODs/clips/pastes cards).
+// Toggle in-card AI-overview expansion — swaps the short summary for the full text.
 function toggleCardAi(e, el) {
     if (e) { e.preventDefault(); e.stopPropagation(); }
     const box = (el.closest && el.closest('.card-ai-overview')) || el;
     const expanded = box.classList.toggle('expanded');
+    const textEl = box.querySelector('.card-ai-text');
+    const full = box.dataset.full;
+    if (textEl && full) {
+        if (expanded) { box.dataset.short = textEl.textContent; textEl.textContent = full; }
+        else if (box.dataset.short != null) { textEl.textContent = box.dataset.short; }
+    }
     const lbl = box.querySelector('.card-ai-toggle-label');
     if (lbl) lbl.textContent = expanded ? 'Show less' : 'Read overview';
 }
@@ -1089,7 +1099,7 @@ function renderRecentlyOnline(containerId, streamers) {
                         <span class="streamer-group-last-online muted"><i class="fa-solid fa-clock"></i> ${timeAgo(s.last_online_at)}</span>
                     </a>
                 </div>
-                ${_cardAiHTML(s.ai_overview)}
+                ${_cardAiHTML(s.ai_overview_short, s.ai_overview)}
                 <div class="streamer-group-streams">${streamsHtml}</div>
             </div>
         `;
@@ -1123,7 +1133,7 @@ async function loadHomeRecentVods(page) {
                             ${esc(v.display_name || v.username)}
                             <span class="muted" style="margin-left:auto;font-size:0.75rem">${timeAgo(v.created_at)}</span>
                         </div>
-                        ${_cardAiHTML(v.ai_overview)}
+                        ${_cardAiHTML(v.ai_overview_short, v.ai_overview)}
                     </div>
                 </a>
             `;
@@ -1156,7 +1166,7 @@ async function loadHomeClips(page) {
                         ${esc(c.username || 'Anonymous')}
                         <span class="muted" style="margin-left:auto;font-size:0.75rem">${timeAgo(c.created_at)}</span>
                     </div>
-                    ${_cardAiHTML(c.ai_overview)}
+                    ${_cardAiHTML(c.ai_overview_short, c.ai_overview)}
                 </div>
             </a>
         `).join('');
@@ -1313,7 +1323,7 @@ function streamCardHTML(s, isLive) {
                     ${endedAgo}
                 </div>
                 ${(isLive && s.description) ? `<div class="stream-card-desc" title="Click to expand" onclick="event.preventDefault();event.stopPropagation();this.classList.toggle('expanded')">${esc(s.description)}</div>` : ''}
-                ${_cardAiHTML(s.ai_overview)}
+                ${_cardAiHTML(s.ai_overview_short, s.ai_overview)}
                 <div class="stream-card-meta">
                     ${s.category ? `<span class="stream-card-tag">${esc(s.category)}</span>` : ''}
                     <span class="stream-card-metaright">
@@ -1368,13 +1378,19 @@ function _updateLiveCard(card, s) {
     if (s.ai_overview) {
         const aiBox = card.querySelector('.card-ai-overview');
         if (aiBox) {
-            const ai = aiBox.querySelector('.card-ai-text');
-            if (ai && ai.textContent !== s.ai_overview) ai.textContent = s.ai_overview;
+            const shortTxt = (s.ai_overview_short || s.ai_overview || '').trim();
+            const longTxt = (s.ai_overview || '').trim();
+            // Don't clobber the text while the viewer has it expanded.
+            if (!aiBox.classList.contains('expanded')) {
+                const ai = aiBox.querySelector('.card-ai-text');
+                if (ai && shortTxt && ai.textContent !== shortTxt) ai.textContent = shortTxt;
+            }
+            if (longTxt && longTxt !== shortTxt) aiBox.dataset.full = longTxt; else delete aiBox.dataset.full;
         } else {
             const info = card.querySelector('.stream-card-info');
             if (info) {
                 const tmp = document.createElement('div');
-                tmp.innerHTML = _cardAiHTML(s.ai_overview);
+                tmp.innerHTML = _cardAiHTML(s.ai_overview_short, s.ai_overview);
                 const el = tmp.firstElementChild;
                 if (el) {
                     const meta = info.querySelector('.stream-card-meta');
@@ -3128,7 +3144,7 @@ function activateChannelStream(stream) {
     }
     // Live AI overview of this stream (rolling summary of its memories). Refreshed
     // from the 15s status poll — see startStreamStatusPoll.
-    _renderChStreamAi(stream.ai_overview);
+    _renderChStreamAi(stream.ai_overview, stream.ai_overview_short);
     // Always destroy before init to prevent stale player state
     if (typeof destroyPlayer === 'function') {
         try { destroyPlayer(); } catch (e) { console.warn('[Player] destroy failed', e); }
@@ -3160,13 +3176,15 @@ function stopStreamStatusPoll() {
 
 // Render/update the live stream's AI overview under the stream info. Only re-renders
 // when the text actually changes, so it never clobbers a viewer's expanded state.
-function _renderChStreamAi(overview) {
+function _renderChStreamAi(overview, short) {
     const el = document.getElementById('ch-stream-ai');
     if (!el) return;
-    const txt = (overview || '').trim();
-    if (el.dataset.ai === txt) return;
-    el.dataset.ai = txt;
-    const html = _cardAiHTML(txt);
+    const longTxt = (overview || '').trim();
+    const shortTxt = (short || '').trim() || longTxt;
+    const key = shortTxt + '|' + longTxt;
+    if (el.dataset.ai === key) return;
+    el.dataset.ai = key;
+    const html = _cardAiHTML(shortTxt, longTxt);
     el.innerHTML = html;
     el.style.display = html ? '' : 'none';
 }
@@ -3200,7 +3218,7 @@ function startStreamStatusPoll(stream) {
 
             // Check if current stream is still live
             const current = liveStreams.find(s => s.id === currentStreamId);
-            if (current) _renderChStreamAi(current.ai_overview);
+            if (current) _renderChStreamAi(current.ai_overview, current.ai_overview_short);
             const rsRestream = data.rs_restream || {};
             const restreamLinks = data.restream_links || null;
             const extViewers = data.external_viewers || null;
@@ -3514,7 +3532,7 @@ async function loadVodsPage() {
                         ${esc(v.username || 'Unknown')}
                         <span class="stream-card-date">${timeAgo(v.created_at)}</span>
                     </div>
-                    ${_cardAiHTML(v.ai_overview)}
+                    ${_cardAiHTML(v.ai_overview_short, v.ai_overview)}
                 </div>
             </a>
         `)).join('');
@@ -3578,7 +3596,7 @@ async function loadClipsPage() {
                         Clipped by ${esc(cl.display_name || cl.username || 'Unknown')}
                         <span class="stream-card-date">${timeAgo(cl.created_at)}</span>
                     </div>
-                    ${_cardAiHTML(cl.ai_overview)}
+                    ${_cardAiHTML(cl.ai_overview_short, cl.ai_overview)}
                 </div>
             </a>
         `)).join('');

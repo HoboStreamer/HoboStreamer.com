@@ -813,6 +813,24 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] visibility migration:', e.message); }
 
+    // Cached SHORT overview (a concise, locally-derived version of the long AI
+    // overview) shown on listing cards — computed once at write time, no extra API.
+    try {
+        for (const [t, col, scol] of [
+            ['streams', 'ai_overview', 'ai_overview_short'],
+            ['vods', 'ai_overview', 'ai_overview_short'],
+            ['clips', 'ai_overview', 'ai_overview_short'],
+            ['streamer_overviews', 'overview', 'overview_short'],
+        ]) {
+            const cols = database.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+            if (!cols.includes(scol)) database.exec(`ALTER TABLE ${t} ADD COLUMN ${scol} TEXT`);
+            // Backfill shorts for existing overviews (one-time; cheap string op).
+            const rows = database.prepare(`SELECT rowid AS rid, ${col} AS ov FROM ${t} WHERE ${col} IS NOT NULL AND TRIM(${col}) != '' AND (${scol} IS NULL OR ${scol} = '')`).all();
+            const upd = database.prepare(`UPDATE ${t} SET ${scol} = ? WHERE rowid = ?`);
+            for (const r of rows) { const s = _shortOverview(r.ov); if (s) upd.run(s, r.rid); }
+        }
+    } catch (e) { console.warn('[DB] short-overview migration:', e.message); }
+
     // Migrate: extend the subscriptions table for real recurring billing.
     try {
         const cols = database.pragma('table_info(subscriptions)').map(c => c.name);
@@ -1912,14 +1930,34 @@ function getStreamMemories(streamId) {
 function getLatestStreamMemory(streamId) {
     return get('SELECT * FROM stream_memories WHERE stream_id = ? ORDER BY offset_seconds DESC LIMIT 1', [streamId]);
 }
+// Derive a concise short overview from a long one — the lead sentence(s), capped
+// ~150 chars at a sentence/word boundary. Deterministic + free (no AI call), so it
+// can be cached at write time and shown on listing cards.
+function _shortOverview(text) {
+    const t = (text || '').replace(/\s+/g, ' ').trim();
+    if (!t || t === ' ') return null;
+    if (t.length <= 150) return t;
+    const m = t.match(/^.*?[.!?](\s|$)/);
+    let s = m ? m[0].trim() : '';
+    if (s && s.length <= 175) {
+        if (s.length < 85) {
+            const rest = t.slice(s.length).match(/^\s*.*?[.!?](\s|$)/);
+            if (rest && (s.length + rest[0].length) <= 175) s = (s + ' ' + rest[0].trim()).trim();
+        }
+        return s;
+    }
+    const cut = t.slice(0, 150);
+    const sp = cut.lastIndexOf(' ');
+    return (sp > 40 ? cut.slice(0, sp) : cut).trim() + '…';
+}
 function updateStreamAiOverview(streamId, text) {
-    return run('UPDATE streams SET ai_overview = ? WHERE id = ?', [text || null, streamId]);
+    return run('UPDATE streams SET ai_overview = ?, ai_overview_short = ? WHERE id = ?', [text || null, _shortOverview(text), streamId]);
 }
 function setVodAiOverview(vodId, text) {
-    return run('UPDATE vods SET ai_overview = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [text || null, vodId]);
+    return run('UPDATE vods SET ai_overview = ?, ai_overview_short = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [text || null, _shortOverview(text), vodId]);
 }
 function setClipAiOverview(clipId, { overview = null, transcript = null }) {
-    return run('UPDATE clips SET ai_overview = ?, ai_transcript = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [overview, transcript, clipId]);
+    return run('UPDATE clips SET ai_overview = ?, ai_overview_short = ?, ai_transcript = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [overview, _shortOverview(overview), transcript, clipId]);
 }
 function setVodTranscript(vodId, transcript) {
     return run('UPDATE vods SET ai_transcript = ? WHERE id = ?', [transcript || null, vodId]);
@@ -1982,12 +2020,12 @@ function getUserPastesForAi(userId, limit = 30) {
                 FROM pastes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`, [userId, limit]);
 }
 function upsertStreamerOverview(userId, { overview, model = null, sources = null }) {
-    return run(`INSERT INTO streamer_overviews (user_id, overview, model, sources, generated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    return run(`INSERT INTO streamer_overviews (user_id, overview, overview_short, model, sources, generated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(user_id) DO UPDATE SET
-                    overview = excluded.overview, model = excluded.model,
+                    overview = excluded.overview, overview_short = excluded.overview_short, model = excluded.model,
                     sources = excluded.sources, generated_at = CURRENT_TIMESTAMP`,
-        [userId, overview || '', model, sources]);
+        [userId, overview || '', _shortOverview(overview), model, sources]);
 }
 function getStreamerOverview(userId) {
     return get('SELECT * FROM streamer_overviews WHERE user_id = ?', [userId]);
@@ -2186,7 +2224,7 @@ function getRecentlyOnlineStreamers(limit = 20, offset = 0) {
     return all(`
         SELECT u.id AS user_id, u.username, u.display_name, u.avatar_url, u.profile_color,
                MAX(s.ended_at) AS last_online_at,
-               o.overview AS ai_overview,
+               o.overview AS ai_overview, o.overview_short AS ai_overview_short,
                (
                    SELECT json_group_array(json_object(
                        'managed_stream_id', ms2.id,

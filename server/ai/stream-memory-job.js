@@ -14,6 +14,9 @@ let vision = null;
 try { vision = require('./stream-vision'); } catch { /* optional */ }
 
 const _last = new Map(); // streamId -> last capture ms (avoids overlap / respects interval)
+const _lastSummary = new Map(); // streamId -> { count, at } — throttles the summarizer
+const SUMMARY_MIN_NEW = 3;              // re-summarize once this many new memories exist
+const SUMMARY_MAX_AGE_MS = 5 * 60 * 1000; // ...or at least this long since the last rollup
 
 async function _analyzeOne(stream) {
     let image = null;
@@ -55,18 +58,28 @@ async function _analyzeOne(stream) {
             stream_id: stream.id, user_id: stream.user_id, offset_seconds: offset,
             description: memDesc, tags: r.tags, thumbnail_url: stream.thumbnail_url || null,
         });
-        // Roll ALL of this stream's memories (since it started) into a general
-        // "AI Overview" for the home card — not just the latest frame. Falls back
-        // to the latest description if the summary call is unavailable.
-        let overview = r.description;
+        // Roll this stream's memories into an overview — but only RE-summarize when
+        // enough new memories have accumulated (SUMMARY_MIN_NEW) or enough time has
+        // passed (SUMMARY_MAX_AGE_MS), NOT on every 120s frame capture. This cuts the
+        // summarizer API calls ~2-3x. Between rollups the existing overview is kept
+        // (better than overwriting it with a single-frame description).
         try {
-            const memories = db.getStreamMemories(stream.id);
-            if (memories && memories.length > 1) {
+            const memories = db.getStreamMemories(stream.id) || [];
+            const now = Date.now();
+            const last = _lastSummary.get(stream.id) || { count: 0, at: 0 };
+            const grew = (memories.length - last.count) >= SUMMARY_MIN_NEW;
+            const stale = (now - last.at) >= SUMMARY_MAX_AGE_MS;
+            if (memories.length > 1 && (!last.at || grew || stale)) {
                 const summary = await ai.summarizeStreamMemories(memories);
-                if (summary) overview = summary;
+                if (summary) {
+                    db.updateStreamAiOverview(stream.id, summary);
+                    _lastSummary.set(stream.id, { count: memories.length, at: now });
+                }
+            } else if (!stream.ai_overview) {
+                // Nothing summarized yet — seed the card with the latest observation.
+                db.updateStreamAiOverview(stream.id, r.description);
             }
-        } catch { /* keep latest description */ }
-        db.updateStreamAiOverview(stream.id, overview);
+        } catch { /* keep existing overview */ }
     } catch (e) { console.warn('[AI] memory store failed:', e.message); }
 }
 
@@ -82,9 +95,10 @@ async function tick() {
         _analyzeOne(stream).catch(() => {});
     }
     // GC entries for streams no longer live.
-    if (_last.size > 300) {
+    if (_last.size > 300 || _lastSummary.size > 300) {
         const liveIds = new Set(streams.map(s => s.id));
         for (const id of _last.keys()) if (!liveIds.has(id)) _last.delete(id);
+        for (const id of _lastSummary.keys()) if (!liveIds.has(id)) _lastSummary.delete(id);
     }
 }
 
