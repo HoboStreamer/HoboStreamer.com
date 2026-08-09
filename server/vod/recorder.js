@@ -642,8 +642,9 @@ class StreamRecorder {
             ffmpegArgs.push('-err_detect', 'ignore_err');
         }
 
+        // Declared at function scope so it's in scope later (activeRec.masterFilePath).
+        const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
         if (isMasterRecording) {
-            const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
             ffmpegArgs.push(
                 '-map', '0',
                 '-c:v', 'copy',
