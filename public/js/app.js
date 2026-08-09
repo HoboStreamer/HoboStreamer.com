@@ -2833,6 +2833,72 @@ async function toggleFollow() {
 }
 
 /* ── VODs Page ────────────────────────────────────────────────── */
+/* ── Admin bulk-select for VODs / clips pages ─────────────────── */
+window._adminSel = window._adminSel || { vod: new Set(), clip: new Set() };
+
+function _isContentAdmin() {
+    return !!(currentUser && (currentUser.role === 'admin' || currentUser.capabilities?.moderate_global));
+}
+
+/** Wrap a VOD/clip card with an admin select-checkbox (no-op for non-admins). */
+function _adminCardWrap(type, id, cardHtml) {
+    if (!_isContentAdmin()) return cardHtml;
+    const checked = window._adminSel[type].has(id) ? 'checked' : '';
+    return `<div class="admin-card-wrap">
+        <label class="admin-card-check" onclick="event.stopPropagation()" title="Select for bulk delete">
+            <input type="checkbox" ${checked} onchange="_adminToggleSelect('${type}', ${id}, this.checked)">
+        </label>
+        ${cardHtml}
+    </div>`;
+}
+
+function _adminToggleSelect(type, id, checked) {
+    const set = window._adminSel[type];
+    if (checked) set.add(id); else set.delete(id);
+    _updateAdminBulkBar(type);
+}
+
+function _adminClearSelect(type) {
+    window._adminSel[type].clear();
+    document.querySelectorAll('.admin-card-check input:checked').forEach(cb => { cb.checked = false; });
+    _updateAdminBulkBar(type);
+}
+
+function _updateAdminBulkBar(type) {
+    if (!_isContentAdmin()) return;
+    let bar = document.getElementById('admin-bulk-bar');
+    const set = window._adminSel[type];
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'admin-bulk-bar';
+        document.body.appendChild(bar);
+    }
+    if (!set || set.size === 0) { bar.style.display = 'none'; return; }
+    const label = type === 'vod' ? 'VOD' : 'clip';
+    bar.style.display = 'flex';
+    bar.innerHTML = `<span><i class="fa-solid fa-check-double"></i> <strong>${set.size}</strong> ${label}${set.size === 1 ? '' : 's'} selected</span>
+        <button class="btn btn-small btn-outline" onclick="_adminClearSelect('${type}')">Clear</button>
+        <button class="btn btn-small btn-danger" onclick="_adminBulkDelete('${type}')"><i class="fa-solid fa-trash"></i> Delete selected</button>`;
+}
+
+async function _adminBulkDelete(type) {
+    const set = window._adminSel[type];
+    const ids = [...set];
+    if (!ids.length) return;
+    const label = type === 'vod' ? 'VOD' : 'clip';
+    if (!confirm(`Delete ${ids.length} ${label}${ids.length === 1 ? '' : 's'}? This removes them from storage (local + B2/R2) and cannot be undone.`)) return;
+    try {
+        const endpoint = type === 'vod' ? '/admin/storage/vods/bulk' : '/admin/storage/clips/bulk';
+        const res = await api(endpoint, { method: 'DELETE', body: { ids } });
+        toast(`Deleted ${res.deleted || 0} ${label}${(res.deleted || 0) === 1 ? '' : 's'}`, 'success');
+        set.clear();
+        _updateAdminBulkBar(type);
+        if (type === 'vod') loadVodsPage(); else loadClipsPage();
+    } catch (e) {
+        toast(e.message || 'Bulk delete failed', 'error');
+    }
+}
+
 async function loadVodsPage() {
     const grid = document.getElementById('vods-grid-page');
     const pager = document.getElementById('vods-pagination-page');
@@ -2870,7 +2936,7 @@ async function loadVodsPage() {
         }
 
         const myId = currentUser ? currentUser.id : null;
-        grid.innerHTML = vods.map(v => `
+        grid.innerHTML = vods.map(v => _adminCardWrap('vod', v.id, `
             <a class="stream-card" href="/vod/${v.id}" onclick="return handleLinkClick(event, '/vod/${v.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
@@ -2887,7 +2953,8 @@ async function loadVodsPage() {
                     </div>
                 </div>
             </a>
-        `).join('');
+        `)).join('');
+        _updateAdminBulkBar('vod');
 
         renderVodsPagination('vods-pagination-page', currentVodsPage, total, limit, 'setVodsPage');
     } catch (e) {
@@ -2931,7 +2998,7 @@ async function loadClipsPage() {
             grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-scissors fa-3x"></i><p>No public clips yet</p><p class="muted">Viewers can create clips during live streams using the clip button</p></div>';
             return;
         }
-        grid.innerHTML = clips.map(cl => `
+        grid.innerHTML = clips.map(cl => _adminCardWrap('clip', cl.id, `
             <a class="stream-card" href="/clip/${cl.id}" onclick="return handleLinkClick(event, '/clip/${cl.id}')">
                 <div class="stream-card-thumb">
                     ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
@@ -2947,7 +3014,8 @@ async function loadClipsPage() {
                     </div>
                 </div>
             </a>
-        `).join('');
+        `)).join('');
+        _updateAdminBulkBar('clip');
 
         renderVodsPagination('clips-pagination-page', currentClipsPage, total, limit, 'setClipsPage', 'clips');
     } catch (e) {

@@ -825,6 +825,47 @@ router.delete('/storage/vods/bulk', async (req, res) => {
     }
 });
 
+// ── DELETE /api/admin/storage/clips/bulk ─────────────────────
+// Bulk delete clips by array of IDs (local file + B2/R2 object).
+router.delete('/storage/clips/bulk', async (req, res) => {
+    try {
+        const fs = require('fs');
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'ids array required' });
+        }
+        if (ids.length > 200) {
+            return res.status(400).json({ error: 'Max 200 clips per bulk delete' });
+        }
+
+        let deleted = 0, errors = [];
+        for (const id of ids) {
+            try {
+                const clip = db.get('SELECT * FROM clips WHERE id = ?', [id]);
+                if (!clip) { errors.push(`Clip ${id} not found`); continue; }
+                if (clip.file_path && fs.existsSync(clip.file_path)) {
+                    try { fs.unlinkSync(clip.file_path); } catch { /* ignore */ }
+                }
+                if (clip.storage_provider && clip.storage_provider !== 'local' && clip.storage_key) {
+                    await storageTier.deleteVodObjects(clip);
+                }
+                db.run('DELETE FROM clips WHERE id = ?', [id]);
+                db.run("DELETE FROM content_views WHERE content_type = 'clip' AND content_id = ?", [id]);
+                db.run("DELETE FROM comments WHERE content_type = 'clip' AND content_id = ?", [id]);
+                deleted++;
+            } catch (err) {
+                errors.push(`Clip ${id}: ${err.message}`);
+            }
+        }
+
+        console.log(`[Admin] Bulk clip delete by ${req.user.username}: ${deleted}/${ids.length} deleted`);
+        res.json({ deleted, errors: errors.length ? errors : undefined });
+    } catch (err) {
+        console.error('[Admin] Bulk clip delete error:', err.message);
+        res.status(500).json({ error: 'Bulk delete failed' });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // Storage Tier Management — local / Backblaze B2 / Cloudflare R2
 // ═══════════════════════════════════════════════════════════════
