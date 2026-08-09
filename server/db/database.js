@@ -1991,11 +1991,21 @@ function getClipsNeedingOverview(limit = 4) {
 }
 // Transcript backfill queues — items with no transcript yet (NULL/'' = pending;
 // a single space ' ' means "tried, nothing to transcribe" so we don't loop forever).
+// Needs a transcript pass: never transcribed, OR has plain text but no timestamped
+// segments yet (so existing transcripts get upgraded to the timestamped pipeline).
+// The ' ' sentinel ("tried, no speech") is excluded so it isn't reprocessed forever.
 function getVodsNeedingTranscript(limit = 2) {
-    return all("SELECT * FROM vods WHERE (ai_transcript IS NULL OR ai_transcript = '') AND COALESCE(is_recording,0)=0 ORDER BY created_at DESC LIMIT ?", [limit]);
+    return all(`SELECT * FROM vods
+        WHERE ((ai_transcript IS NULL OR ai_transcript = '')
+               OR (ai_transcript_json IS NULL AND LENGTH(TRIM(COALESCE(ai_transcript,''))) > 3))
+          AND COALESCE(is_recording,0)=0
+        ORDER BY created_at DESC LIMIT ?`, [limit]);
 }
 function getClipsNeedingTranscript(limit = 2) {
-    return all("SELECT * FROM clips WHERE (ai_transcript IS NULL OR ai_transcript = '') ORDER BY created_at DESC LIMIT ?", [limit]);
+    return all(`SELECT * FROM clips
+        WHERE (ai_transcript IS NULL OR ai_transcript = '')
+           OR (ai_transcript_json IS NULL AND LENGTH(TRIM(COALESCE(ai_transcript,''))) > 3)
+        ORDER BY created_at DESC LIMIT ?`, [limit]);
 }
 function getPastesNeedingAnalysis(limit = 5) {
     return all("SELECT * FROM pastes WHERE ai_summary IS NULL AND type IN ('paste','screenshot') ORDER BY created_at DESC LIMIT ?", [limit]);
