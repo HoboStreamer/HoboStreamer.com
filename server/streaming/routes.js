@@ -240,8 +240,10 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             delete liveStream.managed_stream_key;
         }
 
-        // Show private VODs/clips to the channel owner, only public to others
+        // Show hidden (private + unlisted) VODs/clips to the channel owner AND admins;
+        // everyone else sees public only.
         const isOwner = req.user && req.user.id === channel.user_id;
+        const canSeeHidden = !!(isOwner || (req.user && (req.user.role === 'admin' || req.user.capabilities?.moderate_global)));
         const vodLimit = Math.min(Math.max(parseInt(req.query.vodLimit || '12', 10), 1), 48);
         const vodOffset = Math.max(parseInt(req.query.vodOffset || '0', 10), 0);
         const ALLOWED_VOD_ORDERS = new Set(['newest', 'oldest', 'views', 'peak_viewers']);
@@ -264,10 +266,10 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         }
         const clipLimit = Math.min(Math.max(parseInt(req.query.clipLimit || '12', 10), 1), 48);
         const clipOffset = Math.max(parseInt(req.query.clipOffset || '0', 10), 0);
-        const vods = db.getVodsByUserFiltered(channel.user_id, { includePrivate: isOwner, managedStreamId: vodManagedStreamId, orderBy: vodOrderBy, limit: vodLimit, offset: vodOffset }) || [];
-        const vodTotal = db.countVodsByUserFiltered(channel.user_id, { includePrivate: isOwner, managedStreamId: vodManagedStreamId });
-        const clips = db.getClipsByUser(channel.user_id, isOwner, clipLimit, clipOffset) || [];
-        const clipTotal = db.countClipsByUser(channel.user_id, isOwner);
+        const vods = db.getVodsByUserFiltered(channel.user_id, { includePrivate: canSeeHidden, managedStreamId: vodManagedStreamId, orderBy: vodOrderBy, limit: vodLimit, offset: vodOffset }) || [];
+        const vodTotal = db.countVodsByUserFiltered(channel.user_id, { includePrivate: canSeeHidden, managedStreamId: vodManagedStreamId });
+        const clips = db.getClipsByUser(channel.user_id, canSeeHidden, clipLimit, clipOffset) || [];
+        const clipTotal = db.countClipsByUser(channel.user_id, canSeeHidden);
         // Clips of this user's streams (by others)
         const clipsOfLimit = Math.min(Math.max(parseInt(req.query.clipsOfLimit || '12', 10), 1), 48);
         const clipsOfOffset = Math.max(parseInt(req.query.clipsOfOffset || '0', 10), 0);

@@ -1685,6 +1685,7 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
     }
 
     renderVodsPagination('ch-vods-pagination', page, total, pageSize, 'setChannelVodsPage', 'videos');
+    _selSyncAllBtns();
 }
 
 // Can the current user manage a channel's content (its owner, or any admin)?
@@ -1736,6 +1737,7 @@ function renderChannelClipsSection(username, clips, meta = {}) {
     }
 
     renderVodsPagination('ch-clips-pagination', page, total, pageSize, 'setChannelClipsPage', 'clips');
+    _selSyncAllBtns();
 }
 
 function renderChannelClipsOfSection(username, clips, meta = {}) {
@@ -1844,6 +1846,7 @@ async function loadChannelPastes(username = currentChannelUsername) {
             pager.style.display = '';
             pager.innerHTML = (typeof sortToggleHTML === 'function') ? sortToggleHTML(sort, 'setChannelPastesSort') : '';
         }
+        _selSyncAllBtns();
     } catch { /* silent */ }
 }
 
@@ -3401,7 +3404,6 @@ async function toggleFollow() {
    clip numeric id or a paste slug (stored as strings). */
 window._sel = window._sel || { vod: new Set(), clip: new Set(), paste: new Set() };
 window._selCtx = window._selCtx || { enabled: false, reload: null };
-window._selActiveType = window._selActiveType || null;
 
 function _isContentAdmin() {
     return !!(currentUser && (currentUser.role === 'admin' || currentUser.capabilities?.moderate_global));
@@ -3412,66 +3414,95 @@ function _selSetContext(enabled, reload) {
     window._selCtx = { enabled: !!enabled, reload: reload || null };
     if (!enabled) { _sel.vod.clear(); _sel.clip.clear(); _sel.paste.clear(); }
     _selRenderBar();
+    _selSyncAllBtns();
 }
 
 /** Wrap a VOD/clip/paste card with a select-checkbox (no-op when disabled). */
 function _selWrap(type, id, cardHtml) {
     if (!window._selCtx.enabled) return cardHtml;
-    const sid = String(id).replace(/'/g, "\\'");
-    const checked = window._sel[type].has(String(id)) ? 'checked' : '';
-    return `<div class="sel-card-wrap">
+    const sid = String(id);
+    const esid = sid.replace(/'/g, "\\'");
+    const checked = window._sel[type].has(sid) ? 'checked' : '';
+    return `<div class="sel-card-wrap" data-sel-type="${type}" data-sel-id="${esc(sid)}">
         <label class="sel-card-check" onclick="event.stopPropagation()" title="Select">
-            <input type="checkbox" ${checked} onchange="_selToggle('${type}','${sid}',this.checked)">
+            <input type="checkbox" ${checked} onchange="_selToggle('${type}','${esid}',this.checked)">
         </label>${cardHtml}</div>`;
 }
 // Back-compat alias for the global VOD/clip page call sites.
 function _adminCardWrap(type, id, cardHtml) { return _selWrap(type, id, cardHtml); }
-function _updateAdminBulkBar() { _selRenderBar(); }
+function _updateAdminBulkBar() { _selRenderBar(); _selSyncAllBtns(); }
+
+function _selCount() { return window._sel.vod.size + window._sel.clip.size + window._sel.paste.size; }
 
 function _selToggle(type, id, checked) {
     const set = window._sel[type]; if (!set) return;
     if (checked) set.add(String(id)); else set.delete(String(id));
-    window._selActiveType = type;
-    _selRenderBar();
+    _selRenderBar(); _selSyncAllBtns();
 }
 
-function _selClear(type) {
-    window._sel[type].clear();
+function _selClear() {
+    window._sel.vod.clear(); window._sel.clip.clear(); window._sel.paste.clear();
     document.querySelectorAll('.sel-card-check input:checked').forEach(cb => { cb.checked = false; });
-    _selRenderBar();
+    _selRenderBar(); _selSyncAllBtns();
+}
+
+// Select-all / deselect-all toggle scoped to one section's grid container.
+function _selAllToggle(containerId) {
+    const c = document.getElementById(containerId);
+    if (!c) return;
+    const wraps = [...c.querySelectorAll('.sel-card-wrap[data-sel-type]')];
+    if (!wraps.length) return;
+    const allSel = wraps.every(w => window._sel[w.dataset.selType]?.has(w.dataset.selId));
+    wraps.forEach(w => {
+        const t = w.dataset.selType, id = w.dataset.selId;
+        if (!window._sel[t]) return;
+        if (allSel) window._sel[t].delete(id); else window._sel[t].add(id);
+        const cb = w.querySelector('input'); if (cb) cb.checked = !allSel;
+    });
+    _selRenderBar(); _selSyncAllBtns();
+}
+
+// Keep each "Select all / Deselect all" button's label + visibility in sync.
+function _selSyncAllBtns() {
+    document.querySelectorAll('.sel-all-btn[data-sel-container]').forEach(btn => {
+        const c = document.getElementById(btn.dataset.selContainer);
+        const wraps = c ? [...c.querySelectorAll('.sel-card-wrap[data-sel-type]')] : [];
+        btn.style.display = (window._selCtx.enabled && wraps.length) ? '' : 'none';
+        const allSel = wraps.length && wraps.every(w => window._sel[w.dataset.selType]?.has(w.dataset.selId));
+        const span = btn.querySelector('.sel-all-label');
+        if (span) span.textContent = allSel ? 'Deselect all' : 'Select all';
+    });
 }
 
 function _selRenderBar() {
-    let type = window._selActiveType;
-    if (!type || !window._sel[type]?.size) type = ['vod', 'clip', 'paste'].find(t => window._sel[t].size);
+    const n = _selCount();
     let bar = document.getElementById('sel-bulk-bar');
-    if (!type) { if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; } return; }
+    if (!n) { if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; } return; }
     if (!bar) { bar = document.createElement('div'); bar.id = 'sel-bulk-bar'; document.body.appendChild(bar); }
-    const set = window._sel[type];
-    const noun = type === 'vod' ? 'video' : type;
     bar.style.display = 'flex';
-    bar.innerHTML = `<span><i class="fa-solid fa-check-double"></i> <strong>${set.size}</strong> ${noun}${set.size === 1 ? '' : 's'}</span>
-        <button class="btn btn-small btn-outline" onclick="_selClear('${type}')">Clear</button>
-        <button class="btn btn-small btn-outline" onclick="_selBulk('${type}','public')" title="Make public"><i class="fa-solid fa-globe"></i></button>
-        <button class="btn btn-small btn-outline" onclick="_selBulk('${type}','unlisted')" title="Unlist (link-only)"><i class="fa-solid fa-link"></i></button>
-        <button class="btn btn-small btn-outline" onclick="_selBulk('${type}','private')" title="Make private"><i class="fa-solid fa-lock"></i></button>
-        <button class="btn btn-small btn-danger" onclick="_selBulk('${type}','delete')"><i class="fa-solid fa-trash"></i> Delete</button>`;
+    bar.innerHTML = `<span><i class="fa-solid fa-check-double"></i> <strong>${n}</strong> selected</span>
+        <button class="btn btn-small btn-outline" onclick="_selClear()">Clear</button>
+        <button class="btn btn-small btn-outline" onclick="_selBulk('public')" title="Make public"><i class="fa-solid fa-globe"></i></button>
+        <button class="btn btn-small btn-outline" onclick="_selBulk('unlisted')" title="Unlist (link-only)"><i class="fa-solid fa-link"></i></button>
+        <button class="btn btn-small btn-outline" onclick="_selBulk('private')" title="Make private"><i class="fa-solid fa-lock"></i></button>
+        <button class="btn btn-small btn-danger" onclick="_selBulk('delete')"><i class="fa-solid fa-trash"></i> Delete</button>`;
 }
 
-async function _selBulk(type, action) {
-    const set = window._sel[type];
-    const ids = [...set];
-    if (!ids.length) return;
-    const noun = type === 'vod' ? 'video' : type;
-    if (action === 'delete' && !confirm(`Delete ${ids.length} ${noun}${ids.length === 1 ? '' : 's'}? This removes them from storage and cannot be undone.`)) return;
+// Apply a bulk action across every selected type (vods/clips/pastes) in one go.
+async function _selBulk(action) {
+    const total = _selCount();
+    if (!total) return;
+    if (action === 'delete' && !confirm(`Delete ${total} item${total === 1 ? '' : 's'}? This removes them from storage and cannot be undone.`)) return;
+    const jobs = [];
+    if (window._sel.vod.size) jobs.push(api('/vods/bulk', { method: 'POST', body: { ids: [...window._sel.vod], action } }));
+    if (window._sel.clip.size) jobs.push(api('/clips/bulk', { method: 'POST', body: { ids: [...window._sel.clip], action } }));
+    if (window._sel.paste.size) jobs.push(api('/pastes/bulk', { method: 'POST', body: { slugs: [...window._sel.paste], action } }));
     try {
-        let res;
-        if (type === 'paste') res = await api('/pastes/bulk', { method: 'POST', body: { slugs: ids, action } });
-        else res = await api(`/${type === 'vod' ? 'vods' : 'clips'}/bulk`, { method: 'POST', body: { ids, action } });
-        const n = res.done || 0;
-        toast(`${action === 'delete' ? 'Deleted' : 'Updated'} ${n} ${noun}${n === 1 ? '' : 's'}`, 'success');
-        set.clear();
-        _selRenderBar();
+        const results = await Promise.all(jobs);
+        const done = results.reduce((s, r) => s + (r && r.done || 0), 0);
+        toast(`${action === 'delete' ? 'Deleted' : 'Updated'} ${done} item${done === 1 ? '' : 's'}`, 'success');
+        window._sel.vod.clear(); window._sel.clip.clear(); window._sel.paste.clear();
+        _selRenderBar(); _selSyncAllBtns();
         if (window._selCtx.reload) window._selCtx.reload();
     } catch (e) {
         toast(e.message || 'Bulk action failed', 'error');

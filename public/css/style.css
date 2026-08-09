@@ -1644,6 +1644,8 @@ main#app { position: relative; z-index: 1; }
 }
 /* Unified selection wrap (VODs/clips/pastes on channel + global pages) */
 .sel-card-wrap { position: relative; }
+/* Dashboard media lists use inline-block cards — keep the selection wrapper inline. */
+.vod-grid .sel-card-wrap { display: inline-block; vertical-align: top; }
 .sel-card-check {
     position: absolute; top: 8px; left: 8px; z-index: 6;
     background: rgba(0,0,0,0.55); border-radius: 6px; padding: 3px 5px;

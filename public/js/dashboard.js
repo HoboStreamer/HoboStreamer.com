@@ -681,8 +681,19 @@ function dashPaginationHtml(prefix, page, total) {
     </div>`;
 }
 
+// ── Bulk selection wiring for the dashboard (uses the shared _sel system in app.js) ──
+function _dashWrap(type, id, html) { return (typeof _selWrap === 'function') ? _selWrap(type, id, html) : html; }
+function _dashReloadMedia() {
+    loadDashVods();
+    if (typeof loadDashMyClips === 'function') loadDashMyClips();
+    if (typeof loadDashStreamClips === 'function') loadDashStreamClips();
+}
+function _dashSelInit() { if (typeof _selSetContext === 'function') _selSetContext(true, _dashReloadMedia); }
+function _dashSelSync() { if (typeof _selSyncAllBtns === 'function') _selSyncAllBtns(); }
+
 async function loadDashVods() {
     const list = document.getElementById('dash-vods-list');
+    _dashSelInit();
     try {
         const data = await api(`/vods/mine?limit=${DASH_PAGE_SIZE}&offset=${dashVodPage * DASH_PAGE_SIZE}`);
         const vods = data.vods || [];
@@ -691,11 +702,11 @@ async function loadDashVods() {
             list.innerHTML = '<p class="muted">No recordings yet. Videos are created automatically when you stream.</p>';
             return;
         }
-        list.innerHTML = vods.map(v => `
+        list.innerHTML = vods.map(v => _dashWrap('vod', v.id, `
             <div class="stream-card" style="display:inline-block;width:240px;margin-right:12px;vertical-align:top">
                 <div class="stream-card-thumb" style="height:135px">
                     ${typeof thumbImg === 'function' ? thumbImg(v.thumbnail_url, 'fa-video', v.title) : '<i class="fa-solid fa-video"></i>'}
-                    ${!v.is_public ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : '<span class="stream-card-nsfw" style="background:var(--accent)">PUBLIC</span>'}
+                    ${_dashVisBadge(v.visibility, v.is_public)}
                     <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || v.duration)}</span>
                 </div>
                 <div class="stream-card-info">
@@ -709,8 +720,17 @@ async function loadDashVods() {
                     </div>
                 </div>
             </div>
-        `).join('') + dashPaginationHtml('dashVod', dashVodPage, dashVodTotal);
+        `)).join('') + dashPaginationHtml('dashVod', dashVodPage, dashVodTotal);
+        _dashSelSync();
     } catch { list.innerHTML = '<p class="muted">Failed to load videos</p>'; }
+}
+
+// 3-state visibility badge for dashboard media cards.
+function _dashVisBadge(visibility, isPublic) {
+    const vis = visibility || (isPublic ? 'public' : 'private');
+    const map = { public: ['PUBLIC', 'var(--accent)'], unlisted: ['UNLISTED', 'var(--text-muted)'], private: ['PRIVATE', 'var(--text-muted)'] };
+    const [label, bg] = map[vis] || map.public;
+    return `<span class="stream-card-nsfw" style="background:${bg}">${label}</span>`;
 }
 
 function dashVodGoPage(page) { dashVodPage = page; loadDashVods(); }
@@ -795,19 +815,21 @@ const dashBulkDeleteByAge = dashBulkActionByAge;
 async function loadDashMyClips() {
     const list = document.getElementById('dash-my-clips');
     if (!list) return;
+    _dashSelInit();
     try {
         const data = await api(`/clips/mine?limit=${DASH_PAGE_SIZE}&offset=${dashMyClipsPage * DASH_PAGE_SIZE}`);
         const clips = data.clips || [];
         dashMyClipsTotal = data.total ?? clips.length;
         if (!clips.length && dashMyClipsPage === 0) {
             list.innerHTML = '<p class="muted">You haven\'t clipped anything yet. Use the clip button while watching a stream!</p>';
+            _dashSelSync();
             return;
         }
-        list.innerHTML = clips.map(cl => `
+        list.innerHTML = clips.map(cl => _dashWrap('clip', cl.id, `
             <div class="stream-card" style="display:inline-block;width:240px;margin-right:12px;vertical-align:top">
                 <div class="stream-card-thumb" style="height:135px">
                     ${typeof thumbImg === 'function' ? thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title) : '<i class="fa-solid fa-scissors"></i>'}
-                    ${!cl.is_public ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">UNLISTED</span>' : '<span class="stream-card-nsfw" style="background:var(--accent)">PUBLIC</span>'}
+                    ${_dashVisBadge(cl.visibility, cl.is_public)}
                     <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(cl.duration_seconds)}</span>
                 </div>
                 <div class="stream-card-info">
@@ -822,7 +844,8 @@ async function loadDashMyClips() {
                     </div>
                 </div>
             </div>
-        `).join('') + dashPaginationHtml('dashMyClips', dashMyClipsPage, dashMyClipsTotal);
+        `)).join('') + dashPaginationHtml('dashMyClips', dashMyClipsPage, dashMyClipsTotal);
+        _dashSelSync();
     } catch { list.innerHTML = '<p class="muted">Failed to load clips</p>'; }
 }
 
@@ -832,19 +855,21 @@ function dashMyClipsGoPage(page) { dashMyClipsPage = page; loadDashMyClips(); }
 async function loadDashStreamClips() {
     const list = document.getElementById('dash-stream-clips');
     if (!list) return;
+    _dashSelInit();
     try {
         const data = await api(`/clips/my-stream?limit=${DASH_PAGE_SIZE}&offset=${dashStreamClipsPage * DASH_PAGE_SIZE}`);
         const clips = data.clips || [];
         dashStreamClipsTotal = data.total ?? clips.length;
         if (!clips.length && dashStreamClipsPage === 0) {
             list.innerHTML = '<p class="muted">No one has clipped your streams yet.</p>';
+            _dashSelSync();
             return;
         }
-        list.innerHTML = clips.map(cl => `
+        list.innerHTML = clips.map(cl => _dashWrap('clip', cl.id, `
             <div class="stream-card" style="display:inline-block;width:240px;margin-right:12px;vertical-align:top">
                 <div class="stream-card-thumb" style="height:135px">
                     ${typeof thumbImg === 'function' ? thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title) : '<i class="fa-solid fa-scissors"></i>'}
-                    ${!cl.is_public ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">UNLISTED</span>' : '<span class="stream-card-nsfw" style="background:var(--accent)">PUBLIC</span>'}
+                    ${_dashVisBadge(cl.visibility, cl.is_public)}
                     <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(cl.duration_seconds)}</span>
                 </div>
                 <div class="stream-card-info">
@@ -861,7 +886,8 @@ async function loadDashStreamClips() {
                     </div>
                 </div>
             </div>
-        `).join('') + dashPaginationHtml('dashStreamClips', dashStreamClipsPage, dashStreamClipsTotal);
+        `)).join('') + dashPaginationHtml('dashStreamClips', dashStreamClipsPage, dashStreamClipsTotal);
+        _dashSelSync();
     } catch { list.innerHTML = '<p class="muted">Failed to load clips</p>'; }
 }
 
