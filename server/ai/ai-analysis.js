@@ -66,12 +66,24 @@ async function _anthropic(prompt, img, maxTokens) {
 }
 async function _openai(prompt, img, maxTokens) {
     const base = (s('ai_base_url') || 'https://api.openai.com/v1').replace(/\/+$/, '');
+    const m = model();
     const content = [{ type: 'text', text: prompt }];
     if (img) content.push({ type: 'image_url', image_url: { url: `data:${img.mediaType};base64,${img.base64}` } });
+    const body = { model: m, messages: [{ role: 'user', content }] };
+    // GPT-5 / o-series are reasoning models: they reject `max_tokens` (need
+    // `max_completion_tokens`) and spend hidden reasoning tokens, so give the
+    // output headroom and keep reasoning effort low for these short tasks —
+    // otherwise the whole budget is consumed by reasoning and content is empty.
+    if (/^(gpt-5|o\d)/i.test(m)) {
+        body.max_completion_tokens = Math.max(maxTokens, 256) + 512;
+        body.reasoning_effort = /^gpt-5/i.test(m) ? 'minimal' : 'low';
+    } else {
+        body.max_tokens = maxTokens;
+    }
     const res = await fetch(`${base}/chat/completions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${s('ai_api_key')}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: model(), max_tokens: maxTokens, messages: [{ role: 'user', content }] }),
+        body: JSON.stringify(body),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((j.error && j.error.message) || `openai ${res.status}`);
