@@ -2614,6 +2614,7 @@ function _wsShowRestreamForm(existing) {
             <p id="ws-rs-rs-status" class="muted" style="font-size:0.8rem;margin:8px 0 0"></p>
         </div>
         <div id="ws-rs-rtmp-fields">
+            <div id="ws-rs-connect" style="display:none"></div>
             <div class="form-group">
                 <label>Name</label>
                 <input type="text" id="ws-rs-name" class="form-input form-input-sm" value="${esc(existing?.name || '')}" placeholder="e.g. My Twitch" maxlength="50">
@@ -2678,6 +2679,10 @@ function _wsShowRestreamForm(existing) {
 
     // Apply platform-specific UI on open
     _wsRestreamPlatformChanged();
+    // Load OAuth connection status, then render the per-platform Connect UI
+    _wsLoadOAuthStatus().then(() => {
+        _wsRenderRestreamConnect(document.getElementById('ws-rs-platform')?.value);
+    });
 
     overlay.querySelector('#ws-rs-cancel').onclick = () => overlay.remove();
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -2750,6 +2755,122 @@ function _wsShowRestreamForm(existing) {
     };
 }
 
+// ── Per-platform OAuth "Connect" (Twitch / YouTube / Kick) ──────────────
+let _wsOAuthStatus = null; // { platform: { configured, connected, username, providesKey, ... } }
+
+async function _wsLoadOAuthStatus() {
+    try {
+        const data = await api('/restream/oauth/status');
+        _wsOAuthStatus = {};
+        (data.platforms || []).forEach(p => { _wsOAuthStatus[p.platform] = p; });
+    } catch (err) {
+        _wsOAuthStatus = _wsOAuthStatus || {};
+    }
+    return _wsOAuthStatus;
+}
+
+/** Render the Connect box for the chosen platform inside #ws-rs-connect. */
+function _wsRenderRestreamConnect(platform) {
+    const box = document.getElementById('ws-rs-connect');
+    if (!box) return;
+    const supported = ['twitch', 'youtube', 'kick'];
+    if (!platform || !supported.includes(platform)) { box.innerHTML = ''; box.style.display = 'none'; return; }
+    box.style.display = '';
+
+    const plat = _wsRestreamPlatforms[platform];
+    const st = (_wsOAuthStatus && _wsOAuthStatus[platform]) || null;
+    const providesKey = st ? st.providesKey : (platform !== 'kick');
+
+    // Status not loaded yet — show a light placeholder
+    if (!st) {
+        box.innerHTML = `<div style="background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:0 0 12px">
+            <p class="muted" style="font-size:0.78rem;margin:0"><i class="fa-solid fa-spinner fa-spin"></i> Checking ${esc(plat.name)} connection…</p></div>`;
+        return;
+    }
+
+    if (st.connected) {
+        box.innerHTML = `
+        <div style="background:rgba(83,252,24,0.08);border:1px solid rgba(83,252,24,0.35);border-radius:8px;padding:10px 12px;margin:0 0 12px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <span style="color:${plat.color};font-weight:600"><i class="${plat.icon}"></i> Connected${st.username ? ' as ' + esc(st.username) : ''}</span>
+                <i class="fa-solid fa-circle-check" style="color:#53fc18"></i>
+                <span style="flex:1"></span>
+                <button class="btn btn-small btn-outline" type="button" onclick="_wsConnectPlatform('${platform}')" title="Reconnect"><i class="fa-solid fa-rotate"></i></button>
+                <button class="btn btn-small btn-outline" type="button" style="color:var(--danger)" onclick="_wsDisconnectPlatform('${platform}')"><i class="fa-solid fa-link-slash"></i> Disconnect</button>
+            </div>
+            <p class="muted" style="font-size:0.75rem;margin:6px 0 0">${providesKey
+                ? 'Your ingest URL &amp; stream key are filled in automatically — just save.'
+                : 'Account linked for chat &amp; viewer counts. Kick doesn’t expose stream keys via API, so paste your key below.'}</p>
+        </div>`;
+        return;
+    }
+
+    if (st.configured) {
+        box.innerHTML = `
+        <div style="background:rgba(74,158,255,0.08);border:1px solid rgba(74,158,255,0.3);border-radius:8px;padding:12px;margin:0 0 12px;text-align:center">
+            <button class="btn btn-primary" type="button" style="background:${plat.color};border-color:${plat.color};width:100%;justify-content:center" onclick="_wsConnectPlatform('${platform}')">
+                <i class="${plat.icon}"></i> Connect ${esc(plat.name)}
+            </button>
+            <p class="muted" style="font-size:0.75rem;margin:8px 0 0">${providesKey
+                ? `One click to link your ${esc(plat.name)} account — we’ll fetch your ingest URL and stream key for you.`
+                : `Link your ${esc(plat.name)} account for chat &amp; viewer counts. You’ll still paste your stream key below (Kick doesn’t share it via API).`}</p>
+        </div>`;
+        return;
+    }
+
+    // Configured=false → admin hasn't set up OAuth creds for this platform
+    box.innerHTML = `
+    <div style="background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:0 0 12px">
+        <p class="muted" style="font-size:0.78rem;margin:0"><i class="fa-solid fa-circle-info"></i> One-click connect for ${esc(plat.name)} isn’t enabled yet. Enter your server URL &amp; stream key manually below.</p>
+    </div>`;
+}
+
+/** Open the OAuth popup and finish setup when it reports back. */
+function _wsConnectPlatform(platform) {
+    const slot = _wsState.selectedId;
+    const url = `/api/restream/oauth/${platform}/start?managed_stream_id=${encodeURIComponent(slot)}`;
+    const w = 620, h = 800;
+    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+    const popup = window.open(url, 'restream_oauth', `width=${w},height=${h},left=${left},top=${top}`);
+    if (!popup) { toast('Popup blocked — allow popups to connect your account', 'error'); return; }
+
+    const onMsg = async (e) => {
+        if (e.origin !== window.location.origin) return;
+        const d = e.data;
+        if (!d || d.type !== 'restream-oauth' || d.platform !== platform) return;
+        window.removeEventListener('message', onMsg);
+        if (!d.ok) { toast(d.error || 'Connection failed', 'error'); return; }
+
+        await _wsLoadOAuthStatus();
+        const slotId = _wsState.selectedId;
+        await _wsLoadRestreamDests(slotId);
+
+        if (d.needsManualKey) {
+            // Twitch key fetch failed, or Kick (no key via API) — reopen in edit mode to paste it
+            const dest = _wsRestreamDests.find(x => x.platform === platform);
+            document.querySelector('.bc-ws-confirm-overlay')?.remove();
+            toast(`Connected ${platform}${d.username ? ' as ' + d.username : ''} — add your stream key to finish`, 'info');
+            if (dest) _wsShowRestreamForm(dest);
+        } else {
+            document.querySelector('.bc-ws-confirm-overlay')?.remove();
+            toast(`Connected ${platform}${d.username ? ' as ' + d.username : ''} — ready to restream`, 'success');
+        }
+    };
+    window.addEventListener('message', onMsg);
+}
+
+async function _wsDisconnectPlatform(platform) {
+    try {
+        await api(`/restream/oauth/${platform}/connection`, { method: 'DELETE' });
+        await _wsLoadOAuthStatus();
+        _wsRenderRestreamConnect(document.getElementById('ws-rs-platform')?.value);
+        toast(`Disconnected ${platform}`, 'success');
+    } catch (err) {
+        toast(err?.message || 'Failed to disconnect', 'error');
+    }
+}
+
 function _wsRestreamPlatformChanged() {
     const platform = document.getElementById('ws-rs-platform')?.value;
     const urlInput = document.getElementById('ws-rs-server-url');
@@ -2763,6 +2884,9 @@ function _wsRestreamPlatformChanged() {
     const isRs = !!(plat && plat.isRobotStreamer);
     if (rtmpFields) rtmpFields.style.display = isRs ? 'none' : '';
     if (rsFields) rsFields.style.display = isRs ? '' : 'none';
+
+    // Render the per-platform "Connect" (OAuth) UI
+    if (!isRs) _wsRenderRestreamConnect(platform);
 
     if (isRs) {
         // Prefill from the slot's existing RS config (if any)

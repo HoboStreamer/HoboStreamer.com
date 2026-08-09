@@ -398,4 +398,162 @@ router.get('/viewer-config', requireAuth, (req, res) => {
     }
 });
 
+// ════════════════════════════════════════════════════════════════════════
+//  Platform OAuth — "Connect" flow for Twitch / YouTube / Kick
+//  Lets a streamer authorize their account so ingest URL + stream key are
+//  auto-filled per slot instead of hand-pasted. Kick links identity only
+//  (Kick's API does not expose the RTMP key).
+// ════════════════════════════════════════════════════════════════════════
+const platformOAuth = require('../integrations/platform-oauth');
+const config = require('../config');
+
+const OAUTH_STATE_COOKIE = 'restream_oauth_state';
+const OAUTH_PLATFORMS = ['twitch', 'youtube', 'kick'];
+
+function oauthCookieOpts() {
+    const secure = config.baseUrl.startsWith('https');
+    return { httpOnly: true, sameSite: 'lax', secure, maxAge: 10 * 60 * 1000, path: '/api/restream/oauth' };
+}
+
+/** Small self-closing page that notifies the opener (popup) then closes. */
+function oauthResultPage(payload) {
+    const data = JSON.stringify(payload);
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Connecting…</title>
+<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.box{text-align:center}.ok{color:#53fc18}.err{color:#ff6b6b}</style></head>
+<body><div class="box"><h2 class="${payload.ok ? 'ok' : 'err'}">${payload.ok ? '✓ Connected' : '✗ Connection failed'}</h2>
+<p>${payload.ok ? (payload.platform + ' account linked. You can close this window.') : (payload.error || 'Something went wrong.')}</p></div>
+<script>
+(function(){
+  var msg = Object.assign({ type: 'restream-oauth' }, ${data});
+  try { if (window.opener) window.opener.postMessage(msg, '${config.baseUrl}'); } catch(e){}
+  setTimeout(function(){ try { window.close(); } catch(e){} }, ${payload.ok ? 900 : 2500});
+})();
+</script></body></html>`;
+}
+
+// ── GET /oauth/status — per-platform configured + connection state for the user
+router.get('/oauth/status', requireAuth, (req, res) => {
+    try {
+        const platforms = OAUTH_PLATFORMS.map((platform) => {
+            const cfg = platformOAuth.getClientConfig(platform);
+            const conn = db.getPlatformConnection(req.user.id, platform);
+            return {
+                platform,
+                name: platformOAuth.PLATFORMS[platform].name,
+                configured: cfg.configured,
+                providesKey: platformOAuth.PLATFORMS[platform].providesKey,
+                connected: Boolean(conn),
+                username: conn ? conn.platform_username : null,
+                channel_url: conn ? conn.channel_url : null,
+            };
+        });
+        res.json({ platforms });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load OAuth status' });
+    }
+});
+
+// ── GET /oauth/:platform/start — begin authorization (opened in a popup)
+router.get('/oauth/:platform/start', requireAuth, (req, res) => {
+    const { platform } = req.params;
+    if (!OAUTH_PLATFORMS.includes(platform)) return res.status(400).send('Unknown platform');
+    try {
+        const managedStreamId = req.query.managed_stream_id ? parseInt(req.query.managed_stream_id, 10) : null;
+        const { url, stateToken } = platformOAuth.buildAuthorize(platform, { userId: req.user.id, managedStreamId });
+        res.cookie(OAUTH_STATE_COOKIE, stateToken, oauthCookieOpts());
+        res.redirect(url);
+    } catch (err) {
+        res.status(400).send(oauthResultPage({ ok: false, platform, error: err.message }));
+    }
+});
+
+// ── GET /oauth/:platform/callback — exchange code, save connection + destination
+router.get('/oauth/:platform/callback', async (req, res) => {
+    const { platform } = req.params;
+    const send = (payload) => res.set('Content-Type', 'text/html').send(oauthResultPage(payload));
+    if (!OAUTH_PLATFORMS.includes(platform)) return send({ ok: false, platform, error: 'Unknown platform' });
+
+    try {
+        const { code, state, error: oauthErr, error_description } = req.query;
+        if (oauthErr) return send({ ok: false, platform, error: error_description || oauthErr });
+        if (!code || !state) return send({ ok: false, platform, error: 'Missing authorization code' });
+
+        const stateData = platformOAuth.verifyState(req.cookies?.[OAUTH_STATE_COOKIE]);
+        res.clearCookie(OAUTH_STATE_COOKIE, { path: '/api/restream/oauth' });
+        if (!stateData || stateData.platform !== platform || stateData.nonce !== state) {
+            return send({ ok: false, platform, error: 'Invalid or expired authorization state. Please try again.' });
+        }
+
+        const userId = stateData.userId;
+        const tokens = await platformOAuth.exchangeCode(platform, code, stateData.codeVerifier);
+        if (!tokens.accessToken) return send({ ok: false, platform, error: 'Failed to obtain access token' });
+
+        const info = await platformOAuth.fetchConnection(platform, tokens.accessToken);
+
+        const conn = db.upsertPlatformConnection(userId, platform, {
+            platform_user_id: info.platform_user_id,
+            platform_username: info.platform_username,
+            channel_url: info.channel_url,
+            access_token: tokens.accessToken,
+            refresh_token: tokens.refreshToken,
+            token_expires_at: tokens.expiresAt,
+            scope: tokens.scope,
+        });
+
+        // Provision / update the restream destination for the target slot
+        const managedStreamId = stateData.managedStreamId || null;
+        let destProvisioned = false;
+        if (managedStreamId) {
+            const existing = db.getRestreamDestinationsByManagedStream(managedStreamId)
+                .find((d) => d.platform === platform);
+            const destFields = {
+                name: info.platform_username || platformOAuth.PLATFORMS[platform].name,
+                channel_url: info.channel_url || null,
+                connection_id: conn.id,
+            };
+            // Only overwrite ingest fields when the platform actually provides them
+            if (info.server_url) destFields.server_url = info.server_url;
+            if (info.stream_key) destFields.stream_key = info.stream_key;
+
+            if (existing) {
+                db.updateRestreamDestination(existing.id, destFields);
+            } else {
+                db.createRestreamDestination(userId, {
+                    managed_stream_id: managedStreamId,
+                    platform,
+                    enabled: 1,
+                    auto_start: 0,
+                    ...destFields,
+                });
+            }
+            destProvisioned = true;
+        }
+
+        return send({
+            ok: true,
+            platform,
+            username: info.platform_username,
+            needsManualKey: info.needsManualKey,
+            destProvisioned,
+            managedStreamId,
+        });
+    } catch (err) {
+        console.error('[Restream OAuth] callback error:', err.message);
+        return send({ ok: false, platform, error: err.message });
+    }
+});
+
+// ── DELETE /oauth/:platform/connection — unlink a platform account
+router.delete('/oauth/:platform/connection', requireAuth, (req, res) => {
+    const { platform } = req.params;
+    if (!OAUTH_PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Unknown platform' });
+    try {
+        db.deletePlatformConnection(req.user.id, platform);
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to disconnect' });
+    }
+});
+
 module.exports = router;

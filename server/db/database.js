@@ -400,6 +400,36 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] Restream destinations migration:', e.message); }
 
+    // Per-user OAuth connections to external streaming platforms (Twitch/YouTube/Kick).
+    // Powers the "Connect" buttons that auto-fill ingest URL + stream key per slot.
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS platform_connections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            platform TEXT NOT NULL CHECK(platform IN ('youtube', 'twitch', 'kick')),
+            platform_user_id TEXT,
+            platform_username TEXT,
+            channel_url TEXT,
+            access_token TEXT,
+            refresh_token TEXT,
+            token_expires_at INTEGER,
+            scope TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, platform),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+    } catch (e) { console.warn('[DB] platform_connections migration:', e.message); }
+
+    // Migrate: link a restream destination to the OAuth connection that provisioned it
+    try {
+        const cols = database.pragma('table_info(restream_destinations)').map(c => c.name);
+        if (!cols.includes('connection_id')) {
+            database.exec(`ALTER TABLE restream_destinations ADD COLUMN connection_id INTEGER DEFAULT NULL REFERENCES platform_connections(id) ON DELETE SET NULL`);
+            console.log('[DB] Added connection_id column to restream_destinations');
+        }
+    } catch (e) { console.warn('[DB] Restream connection_id migration:', e.message); }
+
     // Migrate: add quality_preset column to restream_destinations
     try {
         const cols = database.pragma('table_info(restream_destinations)').map(c => c.name);
@@ -604,6 +634,15 @@ function initDb() {
         ];
         const seedKick = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
         for (const [k, v, d, t] of kickSeeds) seedKick.run(k, v, d, t);
+
+        // Seed Google/YouTube OAuth settings (Google Cloud OAuth client — used for
+        // the "Connect YouTube" flow that auto-fetches the RTMP ingest + stream key)
+        const googleSeeds = [
+            ['google_client_id', '', 'Google OAuth Client ID (Google Cloud Console, for YouTube Connect)', 'string'],
+            ['google_client_secret', '', 'Google OAuth Client Secret (Google Cloud Console)', 'string'],
+        ];
+        const seedGoogle = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of googleSeeds) seedGoogle.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
 
     // Migrate: expand role CHECK to include global_mod, migrate 'mod' → 'global_mod'
@@ -2061,6 +2100,56 @@ function deleteRestreamDestination(id) {
 
 function getRestreamDestinationsByManagedStream(managedStreamId) {
     return all('SELECT * FROM restream_destinations WHERE managed_stream_id = ? ORDER BY created_at', [managedStreamId]);
+}
+
+// ── Platform OAuth connection helpers ────────────────────────
+
+function getPlatformConnection(userId, platform) {
+    return get('SELECT * FROM platform_connections WHERE user_id = ? AND platform = ?', [userId, platform]);
+}
+
+function getPlatformConnectionById(id) {
+    return get('SELECT * FROM platform_connections WHERE id = ?', [id]);
+}
+
+function getPlatformConnectionsByUserId(userId) {
+    return all('SELECT * FROM platform_connections WHERE user_id = ? ORDER BY platform', [userId]);
+}
+
+/** Insert-or-update a user's connection for a platform (UNIQUE user_id+platform). */
+function upsertPlatformConnection(userId, platform, fields) {
+    const existing = getPlatformConnection(userId, platform);
+    if (existing) {
+        run(`UPDATE platform_connections SET
+                platform_user_id = ?, platform_username = ?, channel_url = ?,
+                access_token = ?, refresh_token = COALESCE(?, refresh_token),
+                token_expires_at = ?, scope = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [fields.platform_user_id || null, fields.platform_username || null, fields.channel_url || null,
+             fields.access_token || null, fields.refresh_token || null,
+             fields.token_expires_at || null, fields.scope || null, existing.id]);
+        return getPlatformConnectionById(existing.id);
+    }
+    const res = run(`INSERT INTO platform_connections
+            (user_id, platform, platform_user_id, platform_username, channel_url, access_token, refresh_token, token_expires_at, scope)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, platform, fields.platform_user_id || null, fields.platform_username || null, fields.channel_url || null,
+         fields.access_token || null, fields.refresh_token || null, fields.token_expires_at || null, fields.scope || null]);
+    return getPlatformConnectionById(res.lastInsertRowid);
+}
+
+/** Persist refreshed tokens for a connection. */
+function updatePlatformConnectionTokens(id, { access_token, refresh_token, token_expires_at, scope }) {
+    run(`UPDATE platform_connections SET
+            access_token = ?, refresh_token = COALESCE(?, refresh_token),
+            token_expires_at = ?, scope = COALESCE(?, scope), updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [access_token || null, refresh_token || null, token_expires_at || null, scope || null, id]);
+    return getPlatformConnectionById(id);
+}
+
+function deletePlatformConnection(userId, platform) {
+    return run('DELETE FROM platform_connections WHERE user_id = ? AND platform = ?', [userId, platform]);
 }
 
 // ── Chat helpers ─────────────────────────────────────────────
@@ -4627,6 +4716,8 @@ module.exports = {
     // Restream destinations
     getRestreamDestinationsByUserId, getRestreamDestinationById,
     createRestreamDestination, updateRestreamDestination, deleteRestreamDestination,
+    getPlatformConnection, getPlatformConnectionById, getPlatformConnectionsByUserId,
+    upsertPlatformConnection, updatePlatformConnectionTokens, deletePlatformConnection,
     getRestreamDestinationsByManagedStream,
     // Chat
     saveChatMessage, searchChatMessages, getUserChatHistory,
