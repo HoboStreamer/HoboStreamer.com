@@ -41,8 +41,11 @@ async function _analyzeOne(stream) {
                 heard = await require('./transcribe').transcribeWav(audio);
                 try { require('fs').unlinkSync(audio); } catch { /* */ }
             }
+            console.log(`[AI-Hear] stream ${stream.id}: audio=${audio ? 'captured' : 'null'} transcript=${JSON.stringify((heard || '').slice(0, 100))}`);
+        } else {
+            console.log(`[AI-Hear] stream ${stream.id}: transcription disabled (enabled=${ai.transcriptionEnabled && ai.transcriptionEnabled()})`);
         }
-    } catch { /* transcription is best-effort */ }
+    } catch (e) { console.warn(`[AI-Hear] stream ${stream.id}: transcription error`, e.message); }
     const memDesc = heard ? `${r.description} — heard: "${heard.slice(0, 500)}"` : r.description;
 
     const startedMs = stream.started_at ? new Date(String(stream.started_at).replace(' ', 'T') + 'Z').getTime() : Date.now();
