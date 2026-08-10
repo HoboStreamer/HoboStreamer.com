@@ -2245,6 +2245,8 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         // Weather is rendered on demand inside weather panels (see _fillWeatherPanels).
         _renderChannelAbout(ch);
         _resetChannelTabs(ch);
+        // Reveal the Media Request tab if the streamer has it enabled (non-blocking).
+        _initMediaRequestTab(username);
 
         // Follow button helper
         const setupFollowBtn = (btn) => {
@@ -3324,6 +3326,10 @@ function switchChannelTab(tab, btn) {
         _chTabLoaded.pastes = true;
         try { loadChannelPastes(currentChannelUsername); _startChannelPastesAutoRefresh(currentChannelUsername); } catch {}
     }
+    // Media queue changes constantly — reload every time the tab opens.
+    if (tab === 'media' && currentChannelUsername) {
+        try { loadChannelMedia(currentChannelUsername); } catch {}
+    }
 }
 let _chTabLoaded = {};
 let _chAnalyticsDays = 7;
@@ -3348,9 +3354,12 @@ function _resetChannelTabs(ch) {
     // Default to About only when it actually has content; otherwise Videos.
     const defTab = hasAbout ? 'about' : 'videos';
     switchChannelTab(defTab, document.querySelector(`#ch-tabs .ch-tab[data-tab="${defTab}"]`));
-    // Controls tab starts hidden; loadStreamControls reveals it when applicable.
+    // Controls + Media tabs start hidden; revealed by loadStreamControls /
+    // _initMediaRequestTab when applicable.
     const ctlBtn = document.getElementById('ch-tab-btn-controls');
     if (ctlBtn) ctlBtn.style.display = 'none';
+    const medBtn = document.getElementById('ch-tab-btn-media');
+    if (medBtn) medBtn.style.display = 'none';
 }
 
 // Render the About tab: bio + streamer-defined info panels. (Weather is injected
@@ -3440,6 +3449,67 @@ async function _fillWeatherPanels() {
     } catch {
         nodes.forEach(n => { const b = n.querySelector('.ch-weather-panel-body'); if (b) b.innerHTML = ''; });
     }
+}
+
+// ── Media Request tab ────────────────────────────────────────
+let _mediaState = null;
+// Reveal the Media Request tab if the streamer has it enabled.
+async function _initMediaRequestTab(username) {
+    const btn = document.getElementById('ch-tab-btn-media');
+    try {
+        const data = await api(`/media/channel/${encodeURIComponent(username)}`);
+        _mediaState = data.state || null;
+        const enabled = !!(_mediaState && _mediaState.settings && _mediaState.settings.enabled);
+        if (btn) btn.style.display = enabled ? '' : 'none';
+    } catch { if (btn) btn.style.display = 'none'; }
+}
+async function loadChannelMedia(username = currentChannelUsername) {
+    const host = document.getElementById('ch-media-content');
+    if (!host || !username) return;
+    try {
+        const data = await api(`/media/channel/${encodeURIComponent(username)}`);
+        _mediaState = data.state || {};
+        const s = _mediaState.settings || {};
+        if (!s.enabled) { host.innerHTML = '<div class="ch-about-empty">Media requests are off for this channel.</div>'; return; }
+        const cost = Number(s.request_cost || 0);
+        const maxMin = Math.floor((Number(s.max_duration_seconds) || 0) / 60);
+        const np = _mediaState.now_playing;
+        const queue = _mediaState.queue || [];
+        const loggedIn = !!currentUser;
+        const sources = [s.allow_youtube && 'YouTube', s.allow_vimeo && 'Vimeo', s.allow_direct_media && 'direct media', s.allow_live && 'live'].filter(Boolean).join(', ');
+        host.innerHTML = `
+          <div class="ch-media">
+            <form class="ch-media-req" onsubmit="return submitMediaRequest(event)">
+              <input id="ch-media-input" type="text" placeholder="Paste a ${esc(sources || 'media')} URL to request…" ${loggedIn ? '' : 'disabled'}>
+              <button class="btn btn-primary" ${loggedIn ? '' : 'disabled'}><i class="fa-solid fa-plus"></i> Request</button>
+            </form>
+            <div class="ch-media-hint muted">${loggedIn ? '' : '<i class="fa-solid fa-lock"></i> Log in to request. '}${cost > 0 ? `<i class="fa-solid fa-coins"></i> ${cost} coins per request. ` : 'Free requests. '}${maxMin ? `Max ${maxMin} min.` : ''}</div>
+            <div id="ch-media-status" class="ch-media-status"></div>
+            ${np ? `<div class="ch-media-now"><div class="ch-media-section-label"><i class="fa-solid fa-play"></i> Now Playing</div>${_mediaItemHTML(np)}</div>` : ''}
+            <div class="ch-media-section-label"><i class="fa-solid fa-list-ol"></i> Up Next (${queue.length})</div>
+            <div class="ch-media-queue">${queue.length ? queue.map((q, i) => _mediaItemHTML(q, i + 1)).join('') : '<div class="muted" style="padding:12px">Queue is empty — be the first to request something!</div>'}</div>
+          </div>`;
+    } catch { host.innerHTML = '<div class="ch-about-empty">Failed to load the media queue.</div>'; }
+}
+function _mediaItemHTML(m, pos) {
+    const dur = m.duration_seconds ? formatDuration(m.duration_seconds) : '';
+    const thumb = m.thumbnail_url ? `<img src="${esc(m.thumbnail_url)}" alt="" loading="lazy">` : '<div class="ch-media-thumb-ph"><i class="fa-solid fa-music"></i></div>';
+    return `<div class="ch-media-item">${pos ? `<span class="ch-media-pos">${pos}</span>` : ''}<div class="ch-media-thumb">${thumb}</div><div class="ch-media-meta"><div class="ch-media-title">${esc(m.title || m.input || 'Media')}</div><div class="ch-media-sub muted">${dur ? dur + ' · ' : ''}requested by ${esc(m.username || 'someone')}</div></div></div>`;
+}
+async function submitMediaRequest(e) {
+    if (e) e.preventDefault();
+    const input = document.getElementById('ch-media-input');
+    const status = document.getElementById('ch-media-status');
+    const val = input && input.value.trim();
+    if (!val) return false;
+    if (status) { status.className = 'ch-media-status'; status.textContent = 'Adding…'; }
+    try {
+        await api('/media/request', { method: 'POST', body: { username: currentChannelUsername, streamId: currentStreamId || undefined, input: val } });
+        if (input) input.value = '';
+        if (status) { status.className = 'ch-media-status ok'; status.textContent = '✓ Added to the queue!'; setTimeout(() => { status.textContent = ''; }, 2500); }
+        loadChannelMedia(currentChannelUsername);
+    } catch (err) { if (status) { status.className = 'ch-media-status err'; status.textContent = err.message || 'Request failed'; } }
+    return false;
 }
 
 // ── Edit mode ────────────────────────────────────────────────
