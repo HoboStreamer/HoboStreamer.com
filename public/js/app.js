@@ -2241,9 +2241,9 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         // Stable chat-room key for this channel (used by all initChat calls below).
         _activeChannelUserId = ch.user_id || null;
 
-        // Reset the channel tabs to Videos on (re)load + render the About tab.
-        _resetChannelTabs();
+        // Reset the channel tabs + render the About tab (About is default/first when set).
         _renderChannelAbout(ch);
+        _resetChannelTabs(ch);
 
         // Load weather widget (non-blocking) — now lives at the top of the About tab
         loadChannelWeather(username);
@@ -3317,18 +3317,36 @@ function switchChannelTab(tab, btn) {
     document.querySelectorAll('.ch-tab-panel').forEach(p => p.classList.remove('active'));
     const panel = document.getElementById('ch-panel-' + tab);
     if (panel) panel.classList.add('active');
-    // Lazy-load the heavier tabs the first time they're opened.
+    // Lazy-load the fetched-separately tabs the first time they're opened.
     if (tab === 'analytics' && currentChannelUsername && !_chTabLoaded.analytics) {
         _chTabLoaded.analytics = true;
         try { loadChannelAnalytics(currentChannelUsername, _chAnalyticsDays || 7); } catch {}
     }
+    if (tab === 'pastes' && currentChannelUsername && !_chTabLoaded.pastes) {
+        _chTabLoaded.pastes = true;
+        try { loadChannelPastes(currentChannelUsername); _startChannelPastesAutoRefresh(currentChannelUsername); } catch {}
+    }
 }
 let _chTabLoaded = {};
 let _chAnalyticsDays = 7;
-function _resetChannelTabs() {
+// About tab visibility + default open tab depend on whether the streamer has any
+// About content (bio/panels) or weather enabled.
+function _resetChannelTabs(ch) {
     _chTabLoaded = {};
-    const btn = document.querySelector('#ch-tabs .ch-tab[data-tab="videos"]');
-    switchChannelTab('videos', btn);
+    let hasAbout = false;
+    if (ch) {
+        const bio = (ch.bio || ch.description || '').trim();
+        let panels = [];
+        try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
+        hasAbout = !!bio || (Array.isArray(panels) && panels.length > 0);
+    }
+    const hasWeather = !!(ch && ch.weather_enabled);
+    const showAbout = hasAbout || hasWeather;
+    const aboutBtn = document.getElementById('ch-tab-btn-about');
+    if (aboutBtn) aboutBtn.style.display = showAbout ? '' : 'none';
+    // Default to About when there's something there; otherwise Videos.
+    const defTab = showAbout ? 'about' : 'videos';
+    switchChannelTab(defTab, document.querySelector(`#ch-tabs .ch-tab[data-tab="${defTab}"]`));
     // Controls tab starts hidden; loadStreamControls reveals it when applicable.
     const ctlBtn = document.getElementById('ch-tab-btn-controls');
     if (ctlBtn) ctlBtn.style.display = 'none';

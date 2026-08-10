@@ -549,7 +549,7 @@ const AVATAR_MIME_EXT = {
 // Move an already-validated image file into the paste screenshots dir and create
 // an avatar-tagged screenshot paste for it. Returns { pasteId, slug, screenshotUrl }.
 // Preserves the original format (so animated GIF avatars keep animating).
-function createAvatarPaste(userId, srcPath, mime, originalName) {
+function createAvatarPaste(userId, srcPath, mime, originalName, visibility = 'public') {
     const ext = AVATAR_MIME_EXT[mime] || (path.extname(srcPath) || '.png');
     const destName = `avatar-${userId || 'anon'}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
     const destPath = path.join(SCREENSHOTS_DIR, destName);
@@ -567,12 +567,13 @@ function createAvatarPaste(userId, srcPath, mime, originalName) {
         mime_type: mime || null,
     });
     const slug = generateSlug();
-    // Unlisted: avatars are viewable by direct link (profile/history) and fully
-    // moderatable by staff, but shouldn't flood the public paste feed.
+    const vis = ['public', 'unlisted', 'private'].includes(visibility) ? visibility : 'public';
+    // Avatars default to PUBLIC pastes (so they show in the user's channel Pastes
+    // tab + public feed); the uploader can opt out via the "Public Paste" checkbox.
     db.run(
         `INSERT INTO pastes (slug, user_id, type, title, content, language, visibility, screenshot_path, metadata)
-         VALUES (?, ?, 'screenshot', 'Avatar upload', '', 'text', 'unlisted', ?, ?)`,
-        [slug, userId || null, destPath, metadata]
+         VALUES (?, ?, 'screenshot', 'Avatar upload', '', 'text', ?, ?, ?)`,
+        [slug, userId || null, vis, destPath, metadata]
     );
     const paste = db.get('SELECT id FROM pastes WHERE slug = ?', [slug]);
     return { pasteId: paste.id, slug, screenshotUrl: `/data/pastes/screenshots/${destName}` };

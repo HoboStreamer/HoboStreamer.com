@@ -229,6 +229,8 @@ async function uploadSettingsAvatar(input) {
     try {
         const fd = new FormData();
         fd.append('avatar', file);
+        const pubCheck = document.getElementById('avatar-public-check');
+        fd.append('public', (pubCheck ? pubCheck.checked : true) ? 'true' : 'false');
         const token = localStorage.getItem('token');
         const r = await fetch('/api/auth/avatar', { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: fd });
         const data = await r.json();

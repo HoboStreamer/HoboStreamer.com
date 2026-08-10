@@ -938,13 +938,13 @@
         <div class="channel-below-fold">
             <div class="container">
                 <div class="ch-tabs" id="ch-tabs" role="tablist" aria-label="Channel sections">
+                    <button class="ch-tab" id="ch-tab-btn-about" role="tab" aria-selected="false" data-tab="about" onclick="switchChannelTab('about', this)" style="display:none"><i class="fa-solid fa-circle-info"></i> About</button>
                     <button class="ch-tab active" role="tab" aria-selected="true" data-tab="videos" onclick="switchChannelTab('videos', this)"><i class="fa-solid fa-video"></i> Videos</button>
                     <button class="ch-tab" role="tab" aria-selected="false" data-tab="clips" onclick="switchChannelTab('clips', this)"><i class="fa-solid fa-scissors"></i> Clips</button>
                     <button class="ch-tab" role="tab" aria-selected="false" data-tab="clips-taken" onclick="switchChannelTab('clips-taken', this)"><i class="fa-solid fa-film"></i> Clips Taken</button>
                     <button class="ch-tab" role="tab" aria-selected="false" data-tab="pastes" onclick="switchChannelTab('pastes', this)"><i class="fa-solid fa-paste"></i> Pastes</button>
                     <button class="ch-tab" role="tab" aria-selected="false" data-tab="analytics" onclick="switchChannelTab('analytics', this)"><i class="fa-solid fa-chart-line"></i> Analytics</button>
                     <button class="ch-tab ch-tab-controls" id="ch-tab-btn-controls" role="tab" aria-selected="false" data-tab="controls" onclick="switchChannelTab('controls', this)" style="display:none"><i class="fa-solid fa-gamepad"></i> Controls</button>
-                    <button class="ch-tab" role="tab" aria-selected="false" data-tab="about" onclick="switchChannelTab('about', this)"><i class="fa-solid fa-circle-info"></i> About</button>
                 </div>
 
                 <!-- Videos -->
@@ -3007,6 +3007,14 @@ WantedBy=multi-user.target</code>
 
                 <!-- Profile Panel -->
                 <div class="settings-panel active" id="settings-profile">
+                    <div class="settings-card">
+                        <h3><i class="fa-solid fa-image-portrait"></i> Avatar</h3>
+                        <p class="muted" style="margin-bottom:10px">Click your avatar above to upload a new one.</p>
+                        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+                            <input type="checkbox" id="avatar-public-check" checked>
+                            <span>Public Paste — show this avatar image in my public Pastes</span>
+                        </label>
+                    </div>
                     <div class="settings-card" id="settings-avatar-history-card" style="display:none">
                         <h3><i class="fa-solid fa-clock-rotate-left"></i> Avatar History</h3>
                         <div class="settings-row-hint" style="margin-bottom:10px">Every avatar you upload is saved here. Click one to use it again.</div>
@@ -4641,7 +4649,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=1" defer></script>
-<script src="/js/app.js?v=47"></script>
+<script src="/js/app.js?v=48"></script>
 <script src="/js/stream-player.js?v=9"></script>
 <script src="/js/emotes.js?v=8"></script>
 <script src="/js/gif-picker.js?v=1"></script>
@@ -4706,10 +4714,10 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/broadcast.js?v=22"></script>
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
-<script src="/js/settings.js?v=6"></script>
+<script src="/js/settings.js?v=7"></script>
 <script src="/js/staff-console.js?v=1"></script>
 <script src="/js/dashboard-moderation.js?v=2"></script>
-<script src="/js/ai-chatbot-settings.js?v=6"></script>
+<script src="/js/ai-chatbot-settings.js?v=7"></script>
 <script src="/js/pastes.js?v=9"></script>
 <script src="/js/messenger.js?v=1"></script>
 

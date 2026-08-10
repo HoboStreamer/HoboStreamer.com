@@ -212,8 +212,10 @@ router.post('/avatar', requireAuth, avatarUpload.single('avatar'), async (req, r
         // moderate avatar images via the normal paste tooling. This also moves
         // the uploaded file out of ./data/avatars into the paste screenshots dir.
         const { createAvatarPaste } = require('../pastes/routes');
+        // Default to a PUBLIC paste (checkbox checked); accept opt-out via `public=false`.
+        const makePublic = req.body.public === undefined ? true : !(req.body.public === 'false' || req.body.public === false || req.body.public === '0');
         const { pasteId, screenshotUrl } = createAvatarPaste(
-            req.user.id, req.file.path, req.file.mimetype, req.file.originalname
+            req.user.id, req.file.path, req.file.mimetype, req.file.originalname, makePublic ? 'public' : 'unlisted'
         );
         db.updateUserAvatar(req.user.id, screenshotUrl, pasteId);
 

@@ -427,6 +427,9 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
 
         // Strip private fields from public channel response
         const publicChannel = { ...channel, follower_count: followerCount, is_following: isFollowing };
+        // Whether the weather widget is on (without leaking the zip) — used by the
+        // client to decide if the About tab should show.
+        publicChannel.weather_enabled = !!(channel.weather_zip && channel.weather_detail && channel.weather_detail !== 'off');
         delete publicChannel.weather_zip;
         delete publicChannel.stream_key;
         delete publicChannel.vod_recording_enabled;
