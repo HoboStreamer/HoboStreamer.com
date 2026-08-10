@@ -14,6 +14,27 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db/database');
 const { requireAuth, optionalAuth } = require('../auth/auth');
+const permissions = require('../auth/permissions');
+
+// Can `actor` edit/delete this clip? Self / stream-owner / vod-owner always may;
+// otherwise it's a moderation action — allowed for staff EXCEPT when the clip's
+// creator OR the source streamer is an owner-rank user (protected from admins).
+function canActorModerateClip(actor, clip) {
+    if (!actor || !clip) return false;
+    if (actor.id === clip.user_id) return true;
+    let streamOwner = null;
+    if (clip.stream_id) {
+        const s = db.getStreamById(clip.stream_id);
+        if (s) { if (s.user_id === actor.id) return true; streamOwner = db.getUserById(s.user_id); }
+    }
+    if (clip.vod_id) {
+        const v = db.get('SELECT user_id FROM vods WHERE id = ?', [clip.vod_id]);
+        if (v && v.user_id === actor.id) return true;
+    }
+    const clipOwner = clip.user_id ? db.getUserById(clip.user_id) : null;
+    return permissions.canModerateContentOwner(actor, clipOwner) &&
+           permissions.canModerateContentOwner(actor, streamOwner);
+}
 const config = require('../config');
 
 const router = express.Router();
@@ -122,7 +143,7 @@ router.put('/:id/title', requireAuth, (req, res) => {
     try {
         const clip = db.get('SELECT * FROM clips WHERE id = ?', [req.params.id]);
         if (!clip) return res.status(404).json({ error: 'Clip not found' });
-        if (clip.user_id !== req.user.id && req.user.role !== 'admin') {
+        if (!canActorModerateClip(req.user, clip)) {
             return res.status(403).json({ error: 'Not authorized to edit this clip' });
         }
 
@@ -145,17 +166,9 @@ router.put('/:id/visibility', requireAuth, (req, res) => {
         const clip = db.get('SELECT * FROM clips WHERE id = ?', [req.params.id]);
         if (!clip) return res.status(404).json({ error: 'Clip not found' });
 
-        // Only the stream owner (streamer) or admin can toggle visibility
-        let canToggle = (req.user.role === 'admin');
-        if (!canToggle && clip.stream_id) {
-            const stream = db.getStreamById(clip.stream_id);
-            if (stream && stream.user_id === req.user.id) canToggle = true;
-        }
-        if (!canToggle && clip.vod_id) {
-            const vod = db.get('SELECT user_id FROM vods WHERE id = ?', [clip.vod_id]);
-            if (vod && vod.user_id === req.user.id) canToggle = true;
-        }
-        if (!canToggle) {
+        // Stream owner / vod owner / clip creator, or a permitted moderator
+        // (admins may not touch an owner-rank user's clips).
+        if (!canActorModerateClip(req.user, clip)) {
             return res.status(403).json({ error: 'Only the streamer can change clip visibility' });
         }
 
@@ -179,19 +192,12 @@ router.post('/bulk', requireAuth, async (req, res) => {
         const { ids, action } = req.body || {};
         if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'No ids provided' });
         if (!['delete', 'public', 'unlisted', 'private'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
-        const isAdmin = req.user.role === 'admin' || req.user.capabilities?.moderate_global;
-        const owns = (clip) => {
-            if (isAdmin || clip.user_id === req.user.id) return true;
-            if (clip.stream_id) { const s = db.getStreamById(clip.stream_id); if (s && s.user_id === req.user.id) return true; }
-            if (clip.vod_id) { const v = db.get('SELECT user_id FROM vods WHERE id = ?', [clip.vod_id]); if (v && v.user_id === req.user.id) return true; }
-            return false;
-        };
         let done = 0, skipped = 0;
         for (const rawId of ids.slice(0, 500)) {
             const id = parseInt(rawId, 10);
             if (!id) { skipped++; continue; }
             const clip = db.get('SELECT * FROM clips WHERE id = ?', [id]);
-            if (!clip || !owns(clip)) { skipped++; continue; }
+            if (!clip || !canActorModerateClip(req.user, clip)) { skipped++; continue; }
             if (action === 'delete') {
                 try { if (clip.file_path && fs.existsSync(clip.file_path)) fs.unlinkSync(clip.file_path); } catch {}
                 if (clip.storage_provider && clip.storage_provider !== 'local' && clip.storage_key) {
@@ -215,17 +221,9 @@ router.delete('/:id', requireAuth, (req, res) => {
         const clip = db.get('SELECT * FROM clips WHERE id = ?', [req.params.id]);
         if (!clip) return res.status(404).json({ error: 'Clip not found' });
 
-        // Allow clip creator, stream owner, or admin to delete
-        let canDelete = (clip.user_id === req.user.id) || (req.user.role === 'admin');
-        if (!canDelete && clip.stream_id) {
-            const stream = db.getStreamById(clip.stream_id);
-            if (stream && stream.user_id === req.user.id) canDelete = true;
-        }
-        if (!canDelete && clip.vod_id) {
-            const vod = db.get('SELECT user_id FROM vods WHERE id = ?', [clip.vod_id]);
-            if (vod && vod.user_id === req.user.id) canDelete = true;
-        }
-        if (!canDelete) {
+        // Clip creator / stream owner / vod owner, or a permitted moderator
+        // (admins may not delete an owner-rank user's clips).
+        if (!canActorModerateClip(req.user, clip)) {
             return res.status(403).json({ error: 'Not authorized to delete this clip' });
         }
 

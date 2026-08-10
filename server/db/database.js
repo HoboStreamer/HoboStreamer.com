@@ -2407,9 +2407,10 @@ function countClipsOfUserStreams(userId) {
 function getClipsByUserPaginated(userId, includePrivate = false, limit = 12, offset = 0) {
     const publicFilter = includePrivate ? '' : 'AND c.is_public = 1';
     return all(`
-        SELECT c.*, u.username, u.display_name, u.avatar_url,
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.is_owner AS owner_is_owner,
                s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol,
-               su.username AS streamer_username, su.display_name AS streamer_display_name, su.avatar_url AS streamer_avatar_url
+               su.username AS streamer_username, su.display_name AS streamer_display_name, su.avatar_url AS streamer_avatar_url,
+               su.is_owner AS streamer_is_owner
         FROM clips c
         JOIN users u ON c.user_id = u.id
         LEFT JOIN streams s ON c.stream_id = s.id
@@ -3114,7 +3115,7 @@ function getVodsByUser(userId, includePrivate = false, limit = null, offset = 0)
     if (usePaging) params.push(limit, offset);
     return all(`
         SELECT v.*, COALESCE(v.duration_seconds, v.probe_duration_seconds, 0) AS duration_seconds,
-               u.username, u.display_name, u.avatar_url,
+               u.username, u.display_name, u.avatar_url, u.is_owner AS owner_is_owner,
                s.protocol AS stream_protocol
         FROM vods v JOIN users u ON v.user_id = u.id
         LEFT JOIN streams s ON v.stream_id = s.id
@@ -3145,7 +3146,7 @@ function getPublicVods(limit = 50, offset = 0, { username = null, sort = 'newest
     params.push(limit, offset);
     return all(`
         SELECT v.*, COALESCE(v.duration_seconds, v.probe_duration_seconds, 0) AS duration_seconds,
-               u.username, u.display_name, u.avatar_url,
+               u.username, u.display_name, u.avatar_url, u.is_owner AS owner_is_owner,
                s.protocol AS stream_protocol
         FROM vods v JOIN users u ON v.user_id = u.id
         LEFT JOIN streams s ON v.stream_id = s.id
@@ -3304,9 +3305,10 @@ function getPublicClips(limit = 50, offset = 0, { username = null, sort = 'newes
     const dir = sort === 'oldest' ? 'ASC' : 'DESC';
     params.push(limit, offset);
     return all(`
-        SELECT c.*, u.username, u.display_name, u.avatar_url,
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.is_owner AS owner_is_owner,
                s.title AS stream_title, s.started_at AS stream_started_at, s.protocol AS stream_protocol,
-               su.username AS streamer_username, su.display_name AS streamer_display_name, su.avatar_url AS streamer_avatar_url
+               su.username AS streamer_username, su.display_name AS streamer_display_name, su.avatar_url AS streamer_avatar_url,
+               su.is_owner AS streamer_is_owner
         FROM clips c
         JOIN users u ON c.user_id = u.id
         LEFT JOIN streams s ON c.stream_id = s.id

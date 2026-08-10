@@ -27,6 +27,7 @@ const { spawn } = require('child_process');
 const multer = require('multer');
 const db = require('../db/database');
 const { requireAuth, optionalAuth } = require('../auth/auth');
+const permissions = require('../auth/permissions');
 const config = require('../config');
 const thumbService = require('../thumbnails/thumbnail-service');
 
@@ -1214,8 +1215,11 @@ router.put('/:id', requireAuth, (req, res) => {
     try {
         const vod = db.get('SELECT * FROM vods WHERE id = ?', [req.params.id]);
         if (!vod) return res.status(404).json({ error: 'VOD not found' });
-        if (vod.user_id !== req.user.id && req.user.role !== 'admin') {
-            return res.status(403).json({ error: 'Not your VOD' });
+        // Owner's content is protected from admins: only the VOD owner, or a
+        // moderator allowed to act on that owner's content, may edit it.
+        if (vod.user_id !== req.user.id &&
+            !permissions.canModerateContentOwner(req.user, db.getUserById(vod.user_id))) {
+            return res.status(403).json({ error: 'Not authorized to edit this VOD' });
         }
 
         const { title, description, is_public, visibility } = req.body;
@@ -1248,15 +1252,16 @@ router.post('/bulk', requireAuth, async (req, res) => {
         const { ids, action } = req.body || {};
         if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'No ids provided' });
         if (!['delete', 'public', 'unlisted', 'private'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
-        const isAdmin = req.user.role === 'admin' || req.user.capabilities?.moderate_global;
         let done = 0, skipped = 0;
         for (const rawId of ids.slice(0, 500)) {
             const id = parseInt(rawId, 10);
             if (!id) { skipped++; continue; }
             const vod = db.get('SELECT * FROM vods WHERE id = ?', [id]);
             if (!vod) { skipped++; continue; }
-            let owns = isAdmin || vod.user_id === req.user.id;
+            let owns = vod.user_id === req.user.id;
             if (!owns && vod.stream_id) { const s = db.getStreamById(vod.stream_id); if (s && s.user_id === req.user.id) owns = true; }
+            // admins may act on others' — but never an owner-rank user's content.
+            if (!owns) owns = permissions.canModerateContentOwner(req.user, db.getUserById(vod.user_id));
             if (!owns) { skipped++; continue; }
             if (action === 'delete') {
                 if (vod.file_path) { require('./vod-storage').deleteVodObjects(vod).catch(() => {}); cleanupSeekableFile(vod.file_path); }
@@ -1277,12 +1282,14 @@ router.delete('/:id', requireAuth, (req, res) => {
     try {
         const vod = db.get('SELECT * FROM vods WHERE id = ?', [req.params.id]);
         if (!vod) return res.status(404).json({ error: 'VOD not found' });
-        // Allow VOD owner, stream owner, or admin to delete
-        let canDelete = (vod.user_id === req.user.id) || (req.user.role === 'admin');
+        // Allow VOD owner or stream owner; admins may delete others' EXCEPT an
+        // owner-rank user's content (protected from admins).
+        let canDelete = (vod.user_id === req.user.id);
         if (!canDelete && vod.stream_id) {
             const stream = db.getStreamById(vod.stream_id);
             if (stream && stream.user_id === req.user.id) canDelete = true;
         }
+        if (!canDelete) canDelete = permissions.canModerateContentOwner(req.user, db.getUserById(vod.user_id));
         if (!canDelete) {
             return res.status(403).json({ error: 'Not authorized to delete this VOD' });
         }

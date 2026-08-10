@@ -971,6 +971,10 @@ router.delete('/storage/vods/bulk', async (req, res) => {
             try {
                 const vod = db.get('SELECT * FROM vods WHERE id = ?', [id]);
                 if (!vod) { errors.push(`VOD ${id} not found`); continue; }
+                // Owner-rank users' content is protected from admins.
+                if (!permissions.canModerateContentOwner(req.user, db.getUserById(vod.user_id))) {
+                    errors.push(`VOD ${id}: protected (owner content)`); continue;
+                }
 
                 // Delete media everywhere (local + B2 + R2)
                 if (vod.file_path) {
@@ -1011,6 +1015,14 @@ router.delete('/storage/clips/bulk', async (req, res) => {
             try {
                 const clip = db.get('SELECT * FROM clips WHERE id = ?', [id]);
                 if (!clip) { errors.push(`Clip ${id} not found`); continue; }
+                // Owner-rank users' content is protected from admins (clip creator
+                // or the source streamer being owner-rank).
+                let clipStreamOwner = null;
+                if (clip.stream_id) { const s = db.getStreamById(clip.stream_id); if (s) clipStreamOwner = db.getUserById(s.user_id); }
+                if (!permissions.canModerateContentOwner(req.user, clip.user_id ? db.getUserById(clip.user_id) : null) ||
+                    !permissions.canModerateContentOwner(req.user, clipStreamOwner)) {
+                    errors.push(`Clip ${id}: protected (owner content)`); continue;
+                }
                 if (clip.file_path && fs.existsSync(clip.file_path)) {
                     try { fs.unlinkSync(clip.file_path); } catch { /* ignore */ }
                 }

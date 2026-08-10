@@ -15,6 +15,7 @@ const sharp = require('sharp');
 const db = require('../db/database');
 const aiAnalysis = require('../ai/ai-analysis');
 const { requireAuth, optionalAuth } = require('../auth/auth');
+const permissions = require('../auth/permissions');
 const { pushNotification, actorInfo: notificationActor } = require('../utils/notify');
 
 /** Fire-and-forget AI analysis of a newly created paste (image description/tags or text overview). */
@@ -202,7 +203,7 @@ router.get('/', optionalAuth, (req, res) => {
 
         const username = req.query.username && req.query.username !== 'all' ? String(req.query.username).trim() : null;
 
-        let sql = `SELECT p.*, u.username, u.display_name, u.avatar_url
+        let sql = `SELECT p.*, u.username, u.display_name, u.avatar_url, u.is_owner AS owner_is_owner
                     FROM pastes p
                     LEFT JOIN users u ON p.user_id = u.id
                     WHERE p.visibility = 'public'`;
@@ -602,10 +603,10 @@ router.put('/:slug', requireAuth, (req, res) => {
     try {
         const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [req.params.slug]);
         if (!paste) return res.status(404).json({ error: 'Paste not found' });
-        const isOwner = paste.user_id && paste.user_id === req.user.id;
-        const isStaff = req.user.role === 'admin' || req.user.role === 'global_mod';
-        if (!isOwner && !isStaff) {
-            return res.status(403).json({ error: 'Not your paste' });
+        const isSelf = paste.user_id && paste.user_id === req.user.id;
+        // Staff may moderate others' pastes, but not an owner-rank user's paste.
+        if (!isSelf && !permissions.canModerateContentOwner(req.user, paste.user_id ? db.getUserById(paste.user_id) : null)) {
+            return res.status(403).json({ error: 'Not authorized for this paste' });
         }
 
         const { title, content, language, visibility, pinned, is_nsfw } = req.body;
@@ -656,10 +657,10 @@ router.delete('/:slug', requireAuth, (req, res) => {
     try {
         const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [req.params.slug]);
         if (!paste) return res.status(404).json({ error: 'Paste not found' });
-        const isOwner = paste.user_id && paste.user_id === req.user.id;
-        const isStaff = req.user.role === 'admin' || req.user.role === 'global_mod';
-        if (!isOwner && !isStaff) {
-            return res.status(403).json({ error: 'Not your paste' });
+        const isSelf = paste.user_id && paste.user_id === req.user.id;
+        // Staff may moderate others' pastes, but not an owner-rank user's paste.
+        if (!isSelf && !permissions.canModerateContentOwner(req.user, paste.user_id ? db.getUserById(paste.user_id) : null)) {
+            return res.status(403).json({ error: 'Not authorized for this paste' });
         }
 
         // Delete screenshot everywhere (local + legacy B2)
@@ -681,12 +682,13 @@ router.post('/bulk', requireAuth, (req, res) => {
         const { slugs, action } = req.body || {};
         if (!Array.isArray(slugs) || !slugs.length) return res.status(400).json({ error: 'No slugs provided' });
         if (!['delete', 'public', 'unlisted', 'private'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
-        const isStaff = req.user.role === 'admin' || req.user.role === 'global_mod';
         let done = 0, skipped = 0;
         for (const slug of slugs.slice(0, 500)) {
             const paste = db.get('SELECT * FROM pastes WHERE slug = ?', [String(slug)]);
             if (!paste) { skipped++; continue; }
-            if (!isStaff && paste.user_id !== req.user.id) { skipped++; continue; }
+            const isSelf = paste.user_id && paste.user_id === req.user.id;
+            // staff may act on others' — but never an owner-rank user's paste.
+            if (!isSelf && !permissions.canModerateContentOwner(req.user, paste.user_id ? db.getUserById(paste.user_id) : null)) { skipped++; continue; }
             if (action === 'delete') {
                 removePasteScreenshot(paste);
                 db.run('DELETE FROM pastes WHERE id = ?', [paste.id]);
@@ -716,9 +718,10 @@ router.get('/by-user/:username', optionalAuth, (req, res) => {
             ...p,
             content: p.type === 'paste' ? (p.content || '') : null,
             screenshot_url: p.screenshot_path ? `/data/pastes/screenshots/${path.basename(p.screenshot_path)}` : null,
+            owner_is_owner: user.is_owner ? 1 : 0,
         }));
         const total = db.countUserPastesForChannel(user.id, { includeHidden });
-        res.json({ pastes, total, limit, offset, canManage: includeHidden });
+        res.json({ pastes, total, limit, offset, canManage: includeHidden, owner_is_owner: user.is_owner ? 1 : 0 });
     } catch (err) {
         console.error('[Pastes] by-user error:', err);
         res.status(500).json({ error: 'Failed to list user pastes' });

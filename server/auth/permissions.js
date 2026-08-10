@@ -43,6 +43,25 @@ function isOwner(user) {
     return !!(user && user.is_owner && (user.role === 'admin' || roleRank(user.role) >= ROLE_RANK.admin));
 }
 
+/**
+ * Can `actor` edit/delete content (VOD/clip/paste) OWNED BY `contentOwner`?
+ * This is for MODERATING SOMEONE ELSE'S content — callers still allow a user to
+ * manage their own content separately (self-ownership check).
+ *   - Owners may moderate anything.
+ *   - Admins may moderate anyone EXCEPT an owner-rank user's content (an admin
+ *     must not delete/edit the owner's VODs/clips/pastes).
+ *   - Everyone else: no (only their own, handled by the caller).
+ * `contentOwner` is the user record of the content's owner (may be null/anon).
+ */
+function canModerateContentOwner(actor, contentOwner) {
+    if (!actor) return false;
+    if (isOwner(actor)) return true;                      // network owner: anything
+    if (isAdmin(actor) || isGlobalMod(actor)) {           // staff moderators…
+        return !(contentOwner && contentOwner.is_owner);  // …but never an owner's content
+    }
+    return false;
+}
+
 // Settings whose values are secrets or control money/AI spend — owner-only to view/edit.
 const SENSITIVE_KEY_RE = /(api[_-]?key|secret|token|password|client_id|client_secret|service_account|private[_-]?key)/i;
 const SENSITIVE_KEY_PREFIXES = ['ai_', 'stripe_', 'ccbill_', 'crypto_', 'tts_google_'];
@@ -391,6 +410,7 @@ module.exports = {
     canManageSecrets,
     canManageMoney,
     canGrantAdmin,
+    canModerateContentOwner,
     requireOwner,
     isChannelMod,
     isChannelOwner,

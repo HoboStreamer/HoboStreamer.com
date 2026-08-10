@@ -1602,6 +1602,7 @@ function stopHomeRefresh() {
 
 /* ── Channel Page (/:username) ────────────────────────────────── */
 let currentChannelUsername = null;
+let _activeChannelIsOwnerRank = false; // is the current channel's user owner-rank?
 const VODS_PAGE_SIZE = 24;
 const CHANNEL_VODS_PAGE_SIZE = 12;
 const CLIPS_PAGE_SIZE = 24;
@@ -1753,7 +1754,7 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
                     <div class="stream-card-streamer muted">${formatDateTime(v.created_at)}</div>
                 </div>
             </a>
-        `)).join('');
+        `, _activeChannelIsOwnerRank || !!v.owner_is_owner)).join('');
     } else {
         vodsGrid.innerHTML = '<p class="muted">No VODs yet</p>';
     }
@@ -1824,7 +1825,7 @@ function renderChannelClipsSection(username, clips, meta = {}) {
                     <div class="stream-card-streamer muted">${formatDateTime(cl.created_at)}</div>
                 </div>
             </a>
-        `)).join('');
+        `, _activeChannelIsOwnerRank || !!(cl.owner_is_owner || cl.streamer_is_owner))).join('');
     } else {
         clipsGrid.innerHTML = '<p class="muted">No clips yet</p>';
     }
@@ -1934,7 +1935,7 @@ async function loadChannelPastes(username = currentChannelUsername) {
         _selSetContext(canManage, () => _reloadChannelContent(username));
         if (header) header.style.display = '';
         grid.style.display = '';
-        grid.innerHTML = pastes.map(p => _selWrap('paste', p.slug, _channelPasteCardHTML(p, canManage))).join('');
+        grid.innerHTML = pastes.map(p => _selWrap('paste', p.slug, _channelPasteCardHTML(p, canManage), !!(p.owner_is_owner || data.owner_is_owner))).join('');
         if (pager) {
             pager.style.display = '';
             pager.innerHTML = (typeof sortToggleHTML === 'function') ? sortToggleHTML(sort, 'setChannelPastesSort') : '';
@@ -2286,6 +2287,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             }
             const _chStaff = document.getElementById('ch-staff-badge');
             if (_chStaff) _chStaff.innerHTML = _staffBadge(ch.role, ch.is_owner);
+            _activeChannelIsOwnerRank = !!ch.is_owner;
             const _chUser = document.getElementById('ch-username');
             if (_chUser) _chUser.style.display = 'none';
             document.getElementById('ch-category-badge').textContent = _capTag((liveStreams[0] && liveStreams[0].category) || ch.category || 'irl');
@@ -2345,6 +2347,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             // Populate offline header
             document.getElementById('ch-avatar-offline').textContent = (ch.username || '?')[0].toUpperCase();
             document.getElementById('ch-display-name-offline').innerHTML = `${esc(ch.display_name || ch.username)} ${_staffBadge(ch.role, ch.is_owner)}`;
+            _activeChannelIsOwnerRank = !!ch.is_owner;
             document.getElementById('ch-username-offline').textContent = '@' + ch.username;
             document.getElementById('ch-description-offline').textContent = ch.description || '';
             document.getElementById('ch-follower-count-offline').textContent = `${ch.follower_count || 0} followers`;
@@ -3515,8 +3518,13 @@ function _selSetContext(enabled, reload) {
 }
 
 /** Wrap a VOD/clip/paste card with a select-checkbox (no-op when disabled). */
-function _selWrap(type, id, cardHtml) {
+function _currentUserIsOwner() {
+    return !!(currentUser && (currentUser.capabilities?.is_owner || currentUser.is_owner));
+}
+function _selWrap(type, id, cardHtml, ownerIsOwner) {
     if (!window._selCtx.enabled) return cardHtml;
+    // Owner-rank users' content is off-limits to non-owner admins/mods — no checkbox.
+    if (ownerIsOwner && !_currentUserIsOwner()) return cardHtml;
     const sid = String(id);
     const esid = sid.replace(/'/g, "\\'");
     const checked = window._sel[type].has(sid) ? 'checked' : '';
@@ -3526,7 +3534,7 @@ function _selWrap(type, id, cardHtml) {
         </label>${cardHtml}</div>`;
 }
 // Back-compat alias for the global VOD/clip page call sites.
-function _adminCardWrap(type, id, cardHtml) { return _selWrap(type, id, cardHtml); }
+function _adminCardWrap(type, id, cardHtml, ownerIsOwner) { return _selWrap(type, id, cardHtml, ownerIsOwner); }
 function _updateAdminBulkBar() { _selRenderBar(); _selSyncAllBtns(); }
 
 function _selCount() { return window._sel.vod.size + window._sel.clip.size + window._sel.paste.size; }
@@ -3663,7 +3671,7 @@ async function loadVodsPage() {
                     ${_cardAiHTML(v.ai_overview_short, v.ai_overview)}
                 </div>
             </a>
-        `)).join('');
+        `, !!v.owner_is_owner)).join('');
         _updateAdminBulkBar('vod');
 
         renderVodsPagination('vods-pagination-page', currentVodsPage, total, limit, 'setVodsPage', 'videos', { sort: currentVodsSort, setter: 'setVodsSort' });
@@ -3727,7 +3735,7 @@ async function loadClipsPage() {
                     ${_cardAiHTML(cl.ai_overview_short, cl.ai_overview)}
                 </div>
             </a>
-        `)).join('');
+        `, !!(cl.owner_is_owner || cl.streamer_is_owner))).join('');
         _updateAdminBulkBar('clip');
 
         renderVodsPagination('clips-pagination-page', currentClipsPage, total, limit, 'setClipsPage', 'clips', { sort: currentClipsSort, setter: 'setClipsSort' });
