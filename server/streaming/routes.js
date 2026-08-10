@@ -31,6 +31,36 @@ const recorder = require('../vod/recorder');
 const robotStreamerService = require('../integrations/robotstreamer-service');
 const chatRelayService = require('../integrations/chat-relay-service');
 const chatServer = require('../chat/chat-server');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { spawn } = require('child_process');
+let sharp; try { sharp = require('sharp'); } catch { /* optional */ }
+
+// Offline-screen asset storage + upload/transcode
+const OFFLINE_DIR = process.env.OFFLINE_SCREEN_PATH || './data/offline';
+try { fs.mkdirSync(OFFLINE_DIR, { recursive: true }); } catch { /* exists */ }
+const offlineUpload = multer({
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, OFFLINE_DIR),
+        filename: (req, file, cb) => cb(null, `tmp-${req.user?.id || 0}-${Math.random().toString(16).slice(2)}`),
+    }),
+    limits: { fileSize: 80 * 1024 * 1024 }, // 80MB
+});
+// Transcode any uploaded video/gif to an optimized, muted, looping WebM.
+function transcodeOfflineWebm(input, output) {
+    return new Promise((resolve, reject) => {
+        const args = ['-y', '-i', input,
+            '-c:v', 'libvpx', '-b:v', '1200k', '-crf', '24', '-deadline', 'good', '-cpu-used', '2',
+            '-vf', "scale='min(1280,iw)':-2", '-an', '-f', 'webm', output];
+        const p = spawn('ffmpeg', args);
+        let err = '';
+        p.stderr.on('data', d => { err += d; if (err.length > 4000) err = err.slice(-4000); });
+        const to = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} reject(new Error('transcode timeout')); }, 180000);
+        p.on('error', e => { clearTimeout(to); reject(e); });
+        p.on('close', code => { clearTimeout(to); code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${err.slice(-200)}`)); });
+    });
+}
 const { pushNotification, actorInfo } = require('../utils/notify');
 
 const router = express.Router();
@@ -540,6 +570,14 @@ router.put('/channel', requireAuth, (req, res) => {
             fields.weather_show_location = cleanBooleanFlag(req.body.weather_show_location) ? 1 : 0;
         }
 
+        // Offline screen config (asset is uploaded separately at /channel/offline-screen)
+        if (hasOwn(req.body, 'offline_screen_type')) {
+            const t = String(req.body.offline_screen_type || 'none').trim();
+            if (['none', 'image', 'video', 'html'].includes(t)) fields.offline_screen_type = t;
+        }
+        if (hasOwn(req.body, 'offline_html')) fields.offline_html = String(req.body.offline_html || '').slice(0, 20000);
+        if (hasOwn(req.body, 'offline_css')) fields.offline_css = String(req.body.offline_css || '').slice(0, 20000);
+
         if (Object.keys(fields).length > 0) {
             db.updateChannel(req.user.id, fields);
         }
@@ -547,8 +585,55 @@ router.put('/channel', requireAuth, (req, res) => {
         const channel = db.getChannelByUserId(req.user.id);
         res.json({ channel });
     } catch (err) {
-        console.error('[Channels] Update error:', err.message);
-        res.status(500).json({ error: 'Failed to update channel' });
+        // (falls through to the shared handler below)
+        console.error('[Channel] update error:', err.message);
+        return res.status(500).json({ error: 'Failed to update channel' });
+    }
+});
+
+// Upload an offline-screen asset (image OR video/gif). Videos/gifs are transcoded
+// to an optimized muted looping WebM served just for this channel. Images are
+// re-encoded to WebP. Sets channels.offline_screen_url + type.
+router.post('/channel/offline-screen', requireAuth, offlineUpload.single('file'), async (req, res) => {
+    const tmp = req.file?.path;
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file' });
+        db.ensureChannel(req.user.id);
+        const mime = (req.file.mimetype || '').toLowerCase();
+        const isPlainImage = /^image\/(png|jpe?g|webp|avif)$/.test(mime);
+        const isVideoish = /^video\//.test(mime) || mime === 'image/gif';
+        if (!isPlainImage && !isVideoish) { fs.unlink(tmp, () => {}); return res.status(400).json({ error: 'Unsupported file type' }); }
+
+        const stamp = Date.now().toString(36);
+        let outName, type;
+        if (isVideoish) {
+            outName = `off-${req.user.id}-${stamp}.webm`;
+            await transcodeOfflineWebm(tmp, path.join(OFFLINE_DIR, outName));
+            type = 'video';
+        } else {
+            outName = `off-${req.user.id}-${stamp}.webp`;
+            if (sharp) {
+                await sharp(tmp).rotate().resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toFile(path.join(OFFLINE_DIR, outName));
+            } else {
+                fs.copyFileSync(tmp, path.join(OFFLINE_DIR, outName));
+            }
+            type = 'image';
+        }
+        fs.unlink(tmp, () => {});
+
+        // Remove the previous asset (best-effort) to avoid orphans.
+        try {
+            const prev = db.getChannelByUserId(req.user.id)?.offline_screen_url;
+            if (prev && prev.startsWith('/data/offline/')) fs.unlink(path.join(OFFLINE_DIR, path.basename(prev)), () => {});
+        } catch { /* ignore */ }
+
+        const url = `/data/offline/${outName}`;
+        db.updateChannel(req.user.id, { offline_screen_url: url, offline_screen_type: type });
+        res.json({ url, type });
+    } catch (err) {
+        if (tmp) fs.unlink(tmp, () => {});
+        console.error('[OfflineScreen] upload error:', err.message);
+        res.status(500).json({ error: 'Failed to process offline screen: ' + err.message });
     }
 });
 

@@ -22,7 +22,139 @@ function switchSettingsTab(tab) {
     switch (tab) {
         case 'profile': loadSettingsProfile(); break;
         case 'appearance': loadSettingsAppearance(); break;
+        case 'offline': loadSettingsOffline(); break;
+        case 'about': loadSettingsAbout(); break;
     }
+}
+
+/* ── Offline Screen Tab ───────────────────────────────────────── */
+let _offlineChannel = null;
+async function loadSettingsOffline() {
+    try {
+        const data = await api('/streams/channel');
+        _offlineChannel = data.channel || {};
+        const type = _offlineChannel.offline_screen_type || 'none';
+        document.getElementById('offline-screen-type').value = ['none', 'image', 'video', 'html'].includes(type) ? (type === 'video' ? 'image' : type) : 'none';
+        document.getElementById('offline-html').value = _offlineChannel.offline_html || '';
+        document.getElementById('offline-css').value = _offlineChannel.offline_css || '';
+        _renderOfflinePreview();
+        onOfflineTypeChange();
+    } catch (e) { toast('Failed to load channel settings', 'error'); }
+}
+function _renderOfflinePreview() {
+    const box = document.getElementById('offline-preview');
+    if (!box) return;
+    const url = _offlineChannel && _offlineChannel.offline_screen_url;
+    const t = _offlineChannel && _offlineChannel.offline_screen_type;
+    if (url && t === 'image') box.innerHTML = `<img src="${escapeHtml(url)}" style="max-width:320px;max-height:180px;border-radius:8px;border:1px solid var(--border)">`;
+    else if (url && t === 'video') box.innerHTML = `<video src="${escapeHtml(url)}" autoplay muted loop playsinline style="max-width:320px;max-height:180px;border-radius:8px;border:1px solid var(--border)"></video>`;
+    else box.innerHTML = '<span class="muted" style="font-size:0.82rem">No asset uploaded yet.</span>';
+}
+function onOfflineTypeChange() {
+    const t = document.getElementById('offline-screen-type').value;
+    document.getElementById('offline-media-row').style.display = (t === 'image') ? '' : 'none';
+    document.getElementById('offline-html-row').style.display = (t === 'html') ? '' : 'none';
+}
+async function uploadOfflineScreen(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const status = document.getElementById('offline-save-status');
+    status.textContent = 'Uploading & optimizing…';
+    try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API}/api/streams/channel/offline-screen`, {
+            method: 'POST',
+            headers: token ? { Authorization: 'Bearer ' + token } : {},
+            body: fd,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+        _offlineChannel.offline_screen_url = data.url;
+        _offlineChannel.offline_screen_type = data.type;
+        _renderOfflinePreview();
+        status.textContent = '';
+        toast('Offline screen uploaded', 'success');
+    } catch (e) { status.textContent = ''; toast(e.message || 'Upload failed', 'error'); }
+    input.value = '';
+}
+async function saveOfflineScreen() {
+    const sel = document.getElementById('offline-screen-type').value;
+    const status = document.getElementById('offline-save-status');
+    // 'image' in the selector covers both stored image + video assets — keep whichever
+    // asset type was uploaded; only force 'none'/'html' explicitly.
+    let type = sel;
+    if (sel === 'image') type = (_offlineChannel.offline_screen_type === 'video') ? 'video' : 'image';
+    try {
+        const body = {
+            offline_screen_type: type,
+            offline_html: document.getElementById('offline-html').value,
+            offline_css: document.getElementById('offline-css').value,
+        };
+        await api('/streams/channel', { method: 'PUT', body });
+        status.textContent = 'Saved ✓';
+        setTimeout(() => { status.textContent = ''; }, 1500);
+        toast('Offline screen saved', 'success');
+    } catch (e) { toast(e.message || 'Save failed', 'error'); }
+}
+
+/* ── About / Panels Tab ───────────────────────────────────────── */
+let _aboutPanels = [];
+async function loadSettingsAbout() {
+    try {
+        const me = await api('/auth/me');
+        document.getElementById('about-bio').value = (me.user || me).bio || '';
+        const data = await api('/streams/channel');
+        const ch = data.channel || {};
+        try { _aboutPanels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { _aboutPanels = []; }
+        if (!Array.isArray(_aboutPanels)) _aboutPanels = [];
+        _renderAboutPanels();
+    } catch (e) { toast('Failed to load About settings', 'error'); }
+}
+function _renderAboutPanels() {
+    const host = document.getElementById('about-panels-editor');
+    if (!host) return;
+    host.innerHTML = _aboutPanels.map((p, i) => `
+        <div class="settings-card" style="margin-top:12px;padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <strong>Panel ${i + 1}</strong>
+                <button class="btn btn-sm btn-outline" onclick="removeAboutPanel(${i})"><i class="fa-solid fa-trash"></i></button>
+            </div>
+            <input type="text" placeholder="Title" value="${escapeHtml(p.title || '')}" oninput="_aboutPanels[${i}].title=this.value" style="width:100%;margin-bottom:6px">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+                <img src="${p.image ? escapeHtml(p.image) : ''}" style="width:56px;height:40px;object-fit:cover;border-radius:6px;background:var(--bg-secondary);${p.image ? '' : 'display:none'}" id="about-panel-img-${i}">
+                <input type="file" accept="image/*" onchange="uploadAboutPanelImage(${i}, this)">
+            </div>
+            <textarea placeholder="Text (links become clickable)" rows="2" oninput="_aboutPanels[${i}].body=this.value" style="width:100%;margin-bottom:6px">${escapeHtml(p.body || p.text || '')}</textarea>
+            <input type="text" placeholder="Link URL (optional)" value="${escapeHtml(p.link || p.url || '')}" oninput="_aboutPanels[${i}].link=this.value" style="width:100%">
+        </div>`).join('') || '<p class="muted" style="margin-top:10px">No panels yet.</p>';
+}
+function addAboutPanel() { _aboutPanels.push({ title: '', body: '', image: '', link: '' }); _renderAboutPanels(); }
+function removeAboutPanel(i) { _aboutPanels.splice(i, 1); _renderAboutPanels(); }
+async function uploadAboutPanelImage(i, input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+        const fd = new FormData(); fd.append('screenshot', file);
+        const token = localStorage.getItem('token');
+        // Reuse the paste-screenshot uploader as a generic image→URL endpoint.
+        const res = await fetch(`${API}/api/pastes/screenshot`, { method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {}, body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+        _aboutPanels[i].image = data.screenshot_url || data.url;
+        _renderAboutPanels();
+    } catch (e) { toast(e.message || 'Image upload failed', 'error'); }
+    input.value = '';
+}
+async function saveAboutSettings() {
+    const status = document.getElementById('about-save-status');
+    try {
+        await api('/auth/profile', { method: 'PUT', body: { bio: document.getElementById('about-bio').value } });
+        await api('/streams/channel', { method: 'PUT', body: { panels: JSON.stringify(_aboutPanels) } });
+        status.textContent = 'Saved ✓'; setTimeout(() => { status.textContent = ''; }, 1500);
+        toast('About saved', 'success');
+    } catch (e) { toast(e.message || 'Save failed', 'error'); }
 }
 
 /* ── Profile Tab ──────────────────────────────────────────────── */

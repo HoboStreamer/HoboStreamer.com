@@ -2365,6 +2365,9 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             setupFollowBtn(document.getElementById('ch-btn-follow-offline'));
             setupBanBtn(document.getElementById('ch-btn-ban-offline'));
 
+            // Customizable offline screen (image / video / custom HTML)
+            _renderOfflineScreen(ch);
+
             // Offline: join the streamer's PERSISTENT chat room (not global) so
             // viewers can keep chatting + see history while the streamer is offline.
             initChat(null, ch.user_id);
@@ -3361,6 +3364,34 @@ function _renderChannelAbout(ch) {
 // Minimal, safe linkifier for already-HTML-escaped text.
 function _linkify(escaped) {
     return String(escaped).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+}
+
+// Render a streamer's customizable offline screen into #ch-offline-screen.
+// image/video → served asset; html → sandboxed iframe (no same-origin, so the
+// streamer's markup can't touch viewers' session). Falls back to a tasteful default.
+function _renderOfflineScreen(ch) {
+    const host = document.getElementById('ch-offline-screen');
+    if (!host) return;
+    const type = ch && ch.offline_screen_type;
+    const url = ch && ch.offline_screen_url;
+    if (type === 'image' && url) {
+        host.innerHTML = `<img class="ch-offline-media" src="${esc(url)}" alt="Offline">`;
+    } else if (type === 'video' && url) {
+        host.innerHTML = `<video class="ch-offline-media" src="${esc(url)}" autoplay muted loop playsinline></video>`;
+    } else if (type === 'html' && (ch.offline_html || ch.offline_css)) {
+        const doc = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;color:#eee;font-family:system-ui,sans-serif;overflow:auto}a{color:#e0a44a}${ch.offline_css || ''}</style></head><body>${ch.offline_html || ''}</body></html>`;
+        const iframe = document.createElement('iframe');
+        iframe.className = 'ch-offline-html';
+        // Sandbox WITHOUT allow-same-origin → the custom page is fully isolated.
+        iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms');
+        iframe.setAttribute('referrerpolicy', 'no-referrer');
+        iframe.srcdoc = doc;
+        host.innerHTML = '';
+        host.appendChild(iframe);
+    } else {
+        const av = _avatarInner(ch && ch.avatar_url, ch && (ch.display_name || ch.username));
+        host.innerHTML = `<div class="ch-offline-default"><div class="ch-offline-default-avatar">${av}</div><div class="ch-offline-default-name">${esc((ch && (ch.display_name || ch.username)) || 'Streamer')}</div><div class="ch-offline-default-sub">is offline — chat's still open below</div></div>`;
+    }
 }
 
 function startStreamStatusPoll(stream) {

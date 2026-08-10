@@ -1437,6 +1437,23 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] channel control config migration:', e.message); }
 
+    // Migrate: customizable offline screen (image / transcoded webm / custom HTML+CSS)
+    try {
+        const cols = database.pragma('table_info(channels)').map(c => c.name);
+        if (!cols.includes('offline_screen_type')) {
+            database.exec("ALTER TABLE channels ADD COLUMN offline_screen_type TEXT DEFAULT 'none'"); // none|image|video|html
+        }
+        if (!cols.includes('offline_screen_url')) {
+            database.exec('ALTER TABLE channels ADD COLUMN offline_screen_url TEXT');
+        }
+        if (!cols.includes('offline_html')) {
+            database.exec('ALTER TABLE channels ADD COLUMN offline_html TEXT');
+        }
+        if (!cols.includes('offline_css')) {
+            database.exec('ALTER TABLE channels ADD COLUMN offline_css TEXT');
+        }
+    } catch (e) { console.warn('[DB] channel offline-screen migration:', e.message); }
+
     // Migrate: add control_config_id to streams for stream-scoped control profiles
     try {
         const cols = database.pragma('table_info(streams)').map(c => c.name);
@@ -2485,7 +2502,7 @@ function updateChannel(userId, fields) {
     const updates = [];
     const params = [];
     for (const [key, val] of Object.entries(fields)) {
-        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'vod_recording_enabled', 'force_vod_recording_disabled', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms', 'active_control_config_id', 'video_click_enabled'].includes(key)) {
+        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'vod_recording_enabled', 'force_vod_recording_disabled', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms', 'active_control_config_id', 'video_click_enabled', 'offline_screen_type', 'offline_screen_url', 'offline_html', 'offline_css'].includes(key)) {
             updates.push(`${key} = ?`);
             params.push(['tags', 'panels', 'emote_sources'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
         }

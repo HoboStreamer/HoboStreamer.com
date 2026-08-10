@@ -375,7 +375,7 @@ app.use('/css', express.static(path.join(__dirname, '../public/css'), { maxAge: 
 app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, filePath) => { if (filePath.endsWith('.html')) noCacheHeaders(res); } }));
 
 // Ensure data directories exist
-['./data', './data/vods', './data/clips', './data/media', './data/media/cache', './data/thumbnails', './data/emotes', './data/avatars', './data/pastes', './data/pastes/screenshots'].forEach(dir => {
+['./data', './data/vods', './data/clips', './data/media', './data/media/cache', './data/thumbnails', './data/emotes', './data/avatars', './data/pastes', './data/pastes/screenshots', './data/offline'].forEach(dir => {
     const fullPath = path.resolve(dir);
     if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
 });
@@ -407,6 +407,17 @@ app.use('/data/pastes/screenshots', express.static(path.resolve('./data/pastes/s
         res.setHeader('Content-Disposition', 'inline');
         const ext = path.extname(filePath).toLowerCase();
         if (IMAGE_EXT_MIME[ext]) res.setHeader('Content-Type', IMAGE_EXT_MIME[ext]);
+    },
+}));
+
+// Offline-screen assets (channel offline background: webp images + transcoded webm)
+app.use('/data/offline', express.static(path.resolve('./data/offline'), {
+    maxAge: '1h',
+    setHeaders: (res, filePath) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Disposition', 'inline');
+        if (filePath.endsWith('.webm')) res.setHeader('Content-Type', 'video/webm');
+        else if (filePath.endsWith('.webp')) res.setHeader('Content-Type', 'image/webp');
     },
 }));
 
