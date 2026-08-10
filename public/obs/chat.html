@@ -64,40 +64,39 @@ body.no-shadow .msg { text-shadow: none; }
     font-weight: 700;
 }
 
-/* ── Relay platform badge (icon chip, matches main chat) ─────── */
-.chat-relay-badge {
+/* ── Badges on the overlay need to read over ANY video, so they use a solid
+   dark base + bright coloured icon + coloured border + drop-shadow (low-opacity
+   tints washed out over bright footage). currentColor drives border + icon. ── */
+.chat-relay-badge, .chat-badge {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 1.25em; height: 1.25em; border-radius: 0.32em;
-    margin-right: 4px; vertical-align: middle; position: relative;
-    font-size: 0.85em; text-shadow: none; border: 1px solid transparent;
+    width: 1.45em; height: 1.45em; border-radius: 0.34em;
+    margin-right: 5px; vertical-align: middle; position: relative;
+    font-size: 0.9em; text-shadow: none;
+    background: rgba(0,0,0,0.62);
+    border: 1.5px solid currentColor;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.7);
 }
-.chat-relay-badge i { font-size: 0.66em; line-height: 1; }
-.relay-twitch  { color: #b48bff; background: rgba(145,70,255,0.22);  border-color: rgba(145,70,255,0.45); }
-.relay-kick    { color: #53fc18; background: rgba(83,252,24,0.20);   border-color: rgba(83,252,24,0.45); }
-.relay-youtube { color: #ff5c5c; background: rgba(255,0,0,0.20);     border-color: rgba(255,0,0,0.45); }
-/* RS badge now matches its name text colour (#7dd3fc) instead of orange. */
-.relay-rs      { color: #7dd3fc; background: rgba(125,211,252,0.20); border-color: rgba(125,211,252,0.45); }
+.chat-relay-badge i, .chat-badge i {
+    font-size: 0.82em; line-height: 1;
+    filter: drop-shadow(0 0 1.5px rgba(0,0,0,0.9));
+}
+/* Relay platforms (brightened for contrast on the dark chip) */
+.relay-twitch  { color: #b98bff; }
+.relay-kick    { color: #7dff45; }
+.relay-youtube { color: #ff6b6b; }
+.relay-rs      { color: #7dd3fc; }
+/* Roles */
+.chat-badge-admin    { color: #f5c46a; }
+.chat-badge-mod      { color: #63e29a; }
+.chat-badge-cmod     { color: #8ab8ff; }
+.chat-badge-streamer { color: #ff7a6a; }
+.chat-badge-sub      { color: #e2bd7a; }
 .stream-title-badge {
     display: inline-block; font-size: 0.66em; font-weight: 700;
     padding: 1px 6px; border-radius: 3px; margin-right: 4px; vertical-align: middle;
     text-shadow: none; letter-spacing: 0.3px;
-    background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.55); color: #fff; border: 1px solid rgba(255,255,255,0.3);
 }
-
-/* ── Chat role badges — cohesive icon chips (matches main chat) ── */
-.chat-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 1.25em; height: 1.25em; border-radius: 0.32em;   /* em so it scales with overlay fontsize */
-    margin-right: 4px; vertical-align: middle; position: relative;
-    font-size: 0.85em; text-shadow: none;
-    border: 1px solid transparent;
-}
-.chat-badge i { font-size: 0.72em; line-height: 1; }
-.chat-badge-admin    { color: #f0b74a; background: rgba(240,183,74,0.20); border-color: rgba(240,183,74,0.42); }
-.chat-badge-mod      { color: #4fd48a; background: rgba(79,212,138,0.20); border-color: rgba(79,212,138,0.42); }
-.chat-badge-cmod     { color: #6ea8ff; background: rgba(110,168,255,0.20); border-color: rgba(110,168,255,0.42); }
-.chat-badge-streamer { color: #ff6a5a; background: rgba(255,106,90,0.20); border-color: rgba(255,106,90,0.42); }
-.chat-badge-sub      { color: #d9b06a; background: rgba(217,176,106,0.20); border-color: rgba(217,176,106,0.42); }
 /* Tooltip (visible when the overlay is viewed in a browser; harmless in OBS) */
 .chat-badge[data-tip]::after {
     content: attr(data-tip);
