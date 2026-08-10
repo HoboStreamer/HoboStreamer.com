@@ -83,13 +83,21 @@ function verifyTokenWithReason(token) {
 // on EVERY auth — not just at account creation — so role changes (e.g. an admin grant
 // in hobo.tools/admin) propagate. Only writes when a value actually changed. The local
 // `is_owner` flag is NOT in the token and is never touched here.
+const _ROLE_RANK = { user: 0, streamer: 1, global_mod: 2, admin: 3 };
+
 function _syncSsoUserFields(user, decoded) {
     if (!user || !decoded) return user;
     const updates = [];
     const params = [];
     if (decoded.avatar_url && decoded.avatar_url !== user.avatar_url) { updates.push('avatar_url = ?'); params.push(decoded.avatar_url); }
     if (decoded.profile_color && decoded.profile_color !== user.profile_color) { updates.push('profile_color = ?'); params.push(decoded.profile_color); }
-    if (decoded.role && ['user', 'streamer', 'global_mod', 'admin'].includes(decoded.role) && decoded.role !== user.role) {
+    // Sync role from the SSO token, but NEVER downgrade based on it. Access tokens
+    // live 24h, so a just-promoted admin's older token still carries role:'user'
+    // and would otherwise strip their role (and Staff badge) on every connect.
+    // Upgrades apply immediately; downgrades are pushed authoritatively from
+    // hobo.tools via POST /internal/user-role instead of trusting a stale token.
+    if (decoded.role && _ROLE_RANK[decoded.role] !== undefined && decoded.role !== user.role
+        && _ROLE_RANK[decoded.role] > (_ROLE_RANK[user.role] ?? 0)) {
         updates.push('role = ?'); params.push(decoded.role);
     }
     if (!updates.length) return user;
