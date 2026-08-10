@@ -397,6 +397,16 @@ router.get('/user/:username/profile', optionalAuth, (req, res) => {
     }
 });
 
+// ── Chat-relay (external) user info: join date (first message) etc. ──
+router.get('/relay-user/:platform/:username', optionalAuth, (req, res) => {
+    try {
+        const r = db.getRelayUser(req.params.platform, req.params.username);
+        res.json({ relayUser: r || null });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get relay user' });
+    }
+});
+
 // ── Global Chat History (all streams) ────────────────────────
 router.get('/global/history', optionalAuth, (req, res) => {
     try {

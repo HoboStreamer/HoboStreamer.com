@@ -831,6 +831,20 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] short-overview migration:', e.message); }
 
+    // Chat-relay users (external Twitch/Kick/YouTube handles): record their first
+    // message as a "join date" + last-seen + message count, for the context menu.
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS relay_users (
+            platform TEXT NOT NULL,
+            username TEXT NOT NULL,
+            display_name TEXT,
+            first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+            message_count INTEGER DEFAULT 0,
+            PRIMARY KEY (platform, username)
+        )`);
+    } catch (e) { console.warn('[DB] relay_users migration:', e.message); }
+
     // Timestamped transcript segments (JSON) — contextual data for the AI system +
     // clickable timestamps in the VOD/clip transcript UI.
     try {
@@ -2437,7 +2451,7 @@ function setChannelPointsConfig(streamerId, fields) {
 
 function getChannelByUsername(username) {
     return get(`
-        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.bio, u.stream_key
+        SELECT c.*, u.username, u.display_name, u.avatar_url, u.profile_color, u.bio, u.stream_key, u.role, u.is_owner
         FROM channels c
         JOIN users u ON c.user_id = u.id
         WHERE u.username = ? COLLATE NOCASE
@@ -2800,6 +2814,27 @@ function getUserChatHistory(userId, limit = 50, offset = 0) {
         [userId]
     )?.c || 0;
     return { messages, total };
+}
+
+// Record a chat-relay (external platform) user's activity; keeps the earliest
+// first_seen as their "join date". Keyed case-insensitively by platform+username.
+function recordRelayUser(platform, username) {
+    if (!platform || !username) return;
+    const key = String(username).toLowerCase();
+    try {
+        run(`INSERT INTO relay_users (platform, username, display_name, first_seen, last_seen, message_count)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+             ON CONFLICT(platform, username) DO UPDATE SET
+                last_seen = CURRENT_TIMESTAMP,
+                message_count = message_count + 1,
+                display_name = excluded.display_name`,
+            [String(platform).toLowerCase(), key, String(username)]);
+    } catch { /* non-critical */ }
+}
+function getRelayUser(platform, username) {
+    if (!platform || !username) return null;
+    return get('SELECT * FROM relay_users WHERE platform = ? AND username = ?',
+        [String(platform).toLowerCase(), String(username).toLowerCase()]);
 }
 
 function getUserProfile(userId) {
@@ -5559,7 +5594,7 @@ module.exports = {
     holdMessageForApproval, getPendingIpMessages, reviewPendingIpMessage,
     approveAllFromIp, denyAllFromIp,
     // Hidden Relay Users
-    hideRelayUser, isRelayUserHidden, unhideRelayUser, getHiddenRelayUsers,
+    hideRelayUser, isRelayUserHidden, unhideRelayUser, getHiddenRelayUsers, recordRelayUser, getRelayUser,
     // IP Tracking
     logIp, getIpsByUser, getUsersByIp, getLinkedAccounts, getLinkedAccountsByAnon,
     getLatestIpForUser, getLatestIpForAnon, getIpLog, banAllAccountsOnIp,

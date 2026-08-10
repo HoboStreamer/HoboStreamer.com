@@ -375,6 +375,9 @@ class ChatRelayService {
             }
         } catch { /* non-critical — allow message through on error */ }
 
+        // Record this relay user's activity; their first message becomes a join date.
+        try { db.recordRelayUser(bridge.platform, username); } catch { /* non-critical */ }
+
         const chatMsg = {
             type: 'chat',
             username: prefixedUsername,

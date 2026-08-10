@@ -643,6 +643,9 @@ function onAuthChange() {
             anon.style.display = 'none';
             user.style.display = 'flex';
             if (admin) admin.style.display = (currentUser.capabilities?.admin_panel || hasCapability('can_access_staff_console')) ? '' : 'none';
+            // Admin Panel link in the user dropdown — admins/owners only (mods can't access it).
+            const ddAdmin = document.getElementById('user-dropdown-admin');
+            if (ddAdmin) ddAdmin.style.display = (currentUser.role === 'admin' || currentUser.capabilities?.is_owner) ? '' : 'none';
             const navAv = document.getElementById('nav-avatar');
             if (navAv) navAv.innerHTML = _avatarInner(currentUser.avatar_url, currentUser.username);
             const navUn = document.getElementById('nav-username');
@@ -1717,6 +1720,13 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
 }
 
 // Can the current user manage a channel's content (its owner, or any admin)?
+// Hobo Network staff badge for a user (admin/owner -> Staff · Admin, mod -> Staff · Mod).
+function _staffBadge(role, isOwner) {
+    if (role === 'admin' || isOwner) return '<span class="staff-badge staff-badge-admin" title="Hobo Network Staff — Admin"><i class="fa-solid fa-shield-halved"></i> Staff · Admin</span>';
+    if (role === 'global_mod') return '<span class="staff-badge staff-badge-mod" title="Hobo Network Staff — Mod"><i class="fa-solid fa-gavel"></i> Staff · Mod</span>';
+    return '';
+}
+
 function _channelCanManage(username) {
     return !!((currentUser && currentUser.username === username) || _isContentAdmin());
 }
@@ -2215,7 +2225,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             }
             const _chName = document.getElementById('ch-display-name');
             if (_chName) {
-                _chName.innerHTML = `<a href="${esc(_chPath)}" onclick="event.preventDefault();navigate('${esc(_chPath)}')" style="color:inherit;text-decoration:none">${esc(ch.display_name || ch.username)}</a>`;
+                _chName.innerHTML = `<a href="${esc(_chPath)}" onclick="event.preventDefault();navigate('${esc(_chPath)}')" style="color:inherit;text-decoration:none">${esc(ch.display_name || ch.username)}</a> ${_staffBadge(ch.role, ch.is_owner)}`;
             }
             const _chUser = document.getElementById('ch-username');
             if (_chUser) _chUser.style.display = 'none';
@@ -2275,7 +2285,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
 
             // Populate offline header
             document.getElementById('ch-avatar-offline').textContent = (ch.username || '?')[0].toUpperCase();
-            document.getElementById('ch-display-name-offline').textContent = ch.display_name || ch.username;
+            document.getElementById('ch-display-name-offline').innerHTML = `${esc(ch.display_name || ch.username)} ${_staffBadge(ch.role, ch.is_owner)}`;
             document.getElementById('ch-username-offline').textContent = '@' + ch.username;
             document.getElementById('ch-description-offline').textContent = ch.description || '';
             document.getElementById('ch-follower-count-offline').textContent = `${ch.follower_count || 0} followers`;

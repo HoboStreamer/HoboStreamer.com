@@ -4387,6 +4387,7 @@ function renderRelayContextMenu(menu, username, sourcePlatform) {
             <div class="ctx-info">
                 <span class="ctx-name">${esc(externalUsername)}</span>
                 <span class="ctx-meta"><i class="fa-solid fa-link"></i> ${esc(displayPlatform)} relay user</span>
+                <span class="ctx-meta ctx-relay-joined" style="opacity:0.85"><i class="fa-solid fa-clock"></i> …</span>
             </div>
         </div>
         <div class="ctx-actions">
@@ -4394,6 +4395,21 @@ function renderRelayContextMenu(menu, username, sourcePlatform) {
             ${modBtns ? '<div class="ctx-divider"></div>' + modBtns : ''}
         </div>
     `;
+
+    // Async: their first message time = "join date" (+ message count).
+    (async () => {
+        try {
+            const d = await api(`/chat/relay-user/${encodeURIComponent(platform)}/${encodeURIComponent(externalUsername)}`);
+            const el = menu.querySelector('.ctx-relay-joined');
+            if (!el) return;
+            if (d && d.relayUser && d.relayUser.first_seen) {
+                const mc = d.relayUser.message_count || 0;
+                el.innerHTML = `<i class="fa-solid fa-clock"></i> First seen ${timeAgoShort(d.relayUser.first_seen)} &middot; ${formatNumber(mc)} msg${mc === 1 ? '' : 's'}`;
+            } else {
+                el.remove();
+            }
+        } catch { menu.querySelector('.ctx-relay-joined')?.remove(); }
+    })();
 }
 
 /* ═══════════════════════════════════════════════════════════════

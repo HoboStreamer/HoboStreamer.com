@@ -4264,6 +4264,17 @@ main#app { position: relative; z-index: 1; }
 }
 .chat-badge-staff i { font-size: 0.62rem !important; }
 
+/* Staff badge for channel pages / general use (Staff · Admin / Staff · Mod) */
+.staff-badge {
+    display: inline-flex; align-items: center; gap: 5px; vertical-align: middle;
+    padding: 2px 9px; border-radius: 999px;
+    font-size: 0.66rem; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase;
+    white-space: nowrap; border: 1px solid currentColor; line-height: 1.5;
+}
+.staff-badge i { font-size: 0.62rem; }
+.staff-badge-admin { color: var(--warning); background: color-mix(in srgb, var(--warning) 15%, transparent); }
+.staff-badge-mod { color: var(--success); background: color-mix(in srgb, var(--success) 15%, transparent); }
+
 .chat-input-area {
     border-top: 1px solid var(--border);
     padding: 8px;
