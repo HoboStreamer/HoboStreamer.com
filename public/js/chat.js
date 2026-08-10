@@ -2938,8 +2938,13 @@ function addChatMessage(msg) {
     const isMention = currentUser && rawText.toLowerCase().includes(`@${currentUser.toLowerCase()}`);
     if (isMention && chatSettings.mentionHighlight) {
         el.classList.add('chat-msg-mention');
-        if (chatSettings.flashOnMention) flashTabTitle(displayName);
-        if (chatSettings.soundOnMention) playMentionSound();
+        // Only alert (tab flash / sound) for LIVE mentions — not when replaying
+        // chat history, where old, already-seen mentions would otherwise falsely
+        // flash the tab title as if someone just mentioned you.
+        if (!_loadingHistory) {
+            if (chatSettings.flashOnMention) flashTabTitle(displayName);
+            if (chatSettings.soundOnMention) playMentionSound();
+        }
     }
 
     // Avatar (respects showAvatars setting via CSS class on root, but still render for toggle)
