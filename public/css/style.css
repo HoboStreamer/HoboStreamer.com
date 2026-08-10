@@ -1226,11 +1226,11 @@ main#app { position: relative; z-index: 1; }
     background: radial-gradient(circle, rgba(192,150,92,0.18), transparent 68%);
 }
 .hero::after {
-    width: 260px;
-    height: 260px;
-    right: 10%;
-    bottom: -110px;
-    background: radial-gradient(circle, rgba(52,152,219,0.12), transparent 70%);
+    width: 300px;
+    height: 300px;
+    right: 8%;
+    bottom: -130px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent, #c0965c) 14%, transparent), transparent 70%);
 }
 .hero-content {
     position: relative;
@@ -11790,50 +11790,46 @@ body.theme-light .user-dropdown {
 .hero-aurora {
     position: absolute; inset: 0; z-index: 0; pointer-events: none;
     background:
-        radial-gradient(62% 46% at 50% 112%, color-mix(in srgb, var(--accent, #c0965c) 55%, #ff7a18) 0%, transparent 72%),
-        radial-gradient(34% 28% at 50% 106%, color-mix(in srgb, var(--accent-light, var(--accent, #c0965c)) 65%, #ffd479) 0%, transparent 72%);
-    filter: blur(22px);
-    opacity: 0.55;
+        radial-gradient(70% 50% at 50% 118%, color-mix(in srgb, var(--accent, #c0965c) 58%, #ff7a18) 0%, transparent 70%),
+        radial-gradient(40% 32% at 50% 110%, color-mix(in srgb, var(--accent-light, var(--accent, #c0965c)) 68%, #ffd479) 0%, transparent 72%);
+    filter: blur(28px);
+    opacity: 0.6;
     mix-blend-mode: lighten;
-    animation: heroFireGlow 3.4s ease-in-out infinite;
+    animation: heroGlowBreathe 8s ease-in-out infinite;
     will-change: opacity, transform;
 }
-/* Two ember layers of different size/speed for depth. Seamless upward scroll. */
+/* Two large, soft light pools drifting slowly in opposite directions — gentle
+   "living light" with no twinkle/flicker. All warm-toned to match the fire. */
 .hero-aurora::before, .hero-aurora::after {
-    content: ''; position: absolute; inset: 0; pointer-events: none;
-    background-repeat: repeat;
-    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent, #c0965c) 55%, #ff8c00));
+    content: ''; position: absolute; pointer-events: none; border-radius: 50%;
+    mix-blend-mode: lighten; filter: blur(44px);
 }
 .hero-aurora::before {
-    background-image:
-        radial-gradient(1.6px 1.6px at 15% 80%, var(--accent-light, #dbb077) 50%, transparent 55%),
-        radial-gradient(2px 2px at 52% 62%, #ffb347 50%, transparent 55%),
-        radial-gradient(1.4px 1.4px at 82% 74%, var(--accent, #c0965c) 50%, transparent 55%),
-        radial-gradient(1.2px 1.2px at 34% 40%, #ffd479 50%, transparent 55%),
-        radial-gradient(1.6px 1.6px at 68% 30%, var(--accent-light, #dbb077) 50%, transparent 55%);
-    background-size: 230px 230px;
-    opacity: 0.5;
-    animation: heroEmbers 9s linear infinite;
+    width: 48%; height: 150%; left: 6%; bottom: -42%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent, #c0965c) 46%, #ff9d3c) 0%, transparent 66%);
+    opacity: 0.4;
+    animation: heroDriftA 15s ease-in-out infinite;
+    will-change: transform, opacity;
 }
 .hero-aurora::after {
-    background-image:
-        radial-gradient(1px 1px at 28% 85%, #ffd479 50%, transparent 55%),
-        radial-gradient(1.3px 1.3px at 62% 66%, var(--accent-light, #dbb077) 50%, transparent 55%),
-        radial-gradient(1px 1px at 88% 46%, #ffb347 50%, transparent 55%),
-        radial-gradient(1.2px 1.2px at 44% 24%, var(--accent, #c0965c) 50%, transparent 55%);
-    background-size: 160px 160px;
-    opacity: 0.35;
-    animation: heroEmbers 6s linear infinite;
+    width: 42%; height: 140%; right: 6%; bottom: -40%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent-light, var(--accent, #c0965c)) 55%, #ffce7a) 0%, transparent 66%);
+    opacity: 0.32;
+    animation: heroDriftB 19s ease-in-out infinite;
+    will-change: transform, opacity;
 }
-@keyframes heroFireGlow {
-    0%, 100% { opacity: 0.44; transform: translateY(0) scaleX(1); }
-    25%      { opacity: 0.62; transform: translateY(-2%) scaleX(1.05); }
-    50%      { opacity: 0.38; transform: translateY(1%) scaleX(0.97); }
-    75%      { opacity: 0.56; transform: translateY(-1%) scaleX(1.03); }
+/* Smooth two-stop breathing — buttery, never a hard flicker. */
+@keyframes heroGlowBreathe {
+    0%, 100% { opacity: 0.5;  transform: translateY(0) scale(1); }
+    50%      { opacity: 0.66; transform: translateY(-1.5%) scale(1.035); }
 }
-@keyframes heroEmbers {
-    from { background-position: 0 0; }
-    to   { background-position: 26px -230px; }
+@keyframes heroDriftA {
+    0%, 100% { transform: translateX(0) translateY(0);       opacity: 0.34; }
+    50%      { transform: translateX(6%) translateY(-3%);    opacity: 0.46; }
+}
+@keyframes heroDriftB {
+    0%, 100% { transform: translateX(0) translateY(0);       opacity: 0.28; }
+    50%      { transform: translateX(-7%) translateY(-4%);   opacity: 0.42; }
 }
 .hero h1 {
     background: linear-gradient(90deg, var(--accent, #c0965c), #ffd479, var(--accent, #c0965c));
