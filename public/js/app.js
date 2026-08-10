@@ -2242,11 +2242,9 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         _activeChannelUserId = ch.user_id || null;
 
         // Reset the channel tabs + render the About tab (About is default/first when set).
+        // Weather is rendered on demand inside weather panels (see _fillWeatherPanels).
         _renderChannelAbout(ch);
         _resetChannelTabs(ch);
-
-        // Load weather widget (non-blocking) — now lives at the top of the About tab
-        loadChannelWeather(username);
 
         // Follow button helper
         const setupFollowBtn = (btn) => {
@@ -3340,12 +3338,15 @@ function _resetChannelTabs(ch) {
         try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
         hasAbout = !!bio || (Array.isArray(panels) && panels.length > 0);
     }
-    const hasWeather = !!(ch && ch.weather_enabled);
-    const showAbout = hasAbout || hasWeather;
+    // The streamer always sees their own About tab (so they can set it up), even
+    // when it's empty + hidden for everyone else.
+    const isOwn = !!(currentUser && ch && ch.username && currentUser.username &&
+        currentUser.username.toLowerCase() === String(ch.username).toLowerCase());
+    const showAbout = hasAbout || isOwn;
     const aboutBtn = document.getElementById('ch-tab-btn-about');
     if (aboutBtn) aboutBtn.style.display = showAbout ? '' : 'none';
-    // Default to About when there's something there; otherwise Videos.
-    const defTab = showAbout ? 'about' : 'videos';
+    // Default to About only when it actually has content; otherwise Videos.
+    const defTab = hasAbout ? 'about' : 'videos';
     switchChannelTab(defTab, document.querySelector(`#ch-tabs .ch-tab[data-tab="${defTab}"]`));
     // Controls tab starts hidden; loadStreamControls reveals it when applicable.
     const ctlBtn = document.getElementById('ch-tab-btn-controls');
@@ -3354,31 +3355,198 @@ function _resetChannelTabs(ch) {
 
 // Render the About tab: bio + streamer-defined info panels. (Weather is injected
 // separately at the top of the panel by loadChannelWeather.)
+/* ── About tab: inline live panel editor (Twitch/Kick-style under-stream area) ── */
+let _aboutPanels = [];        // working array of panels
+let _aboutBio = '';
+let _aboutIsOwner = false;    // is the viewer the streamer (can edit)?
+let _aboutEditMode = false;
+const ABOUT_WIDTHS = ['sm', 'md', 'lg', 'full'];
+
+function _normalizeAboutPanel(p) {
+    p = p || {};
+    return {
+        type: p.type === 'weather' ? 'weather' : 'info',
+        title: p.title || '',
+        body: p.body || p.text || p.description || '',
+        image: p.image || p.image_url || '',
+        link: p.link || p.url || '',
+        width: ABOUT_WIDTHS.includes(p.width) ? p.width : 'md',
+    };
+}
+
 function _renderChannelAbout(ch) {
     const host = document.getElementById('ch-about-content');
     if (!host || !ch) return;
+    _aboutIsOwner = !!(currentUser && ch.username && currentUser.username &&
+        currentUser.username.toLowerCase() === String(ch.username).toLowerCase());
+    _aboutBio = (ch.bio || ch.description || '').trim();
     let panels = [];
     try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
-    const bio = (ch.bio || ch.description || '').trim();
-    let html = '';
-    if (bio) html += `<div class="ch-about-bio">${_linkify(esc(bio))}</div>`;
-    if (Array.isArray(panels) && panels.length) {
-        html += '<div class="ch-about-panels">' + panels.map(p => {
-            const img = p.image || p.image_url || '';
-            const link = p.link || p.url || '';
-            const title = p.title || '';
-            const body = p.body || p.text || p.description || '';
-            const imgTag = img ? (link
-                ? `<a href="${esc(link)}" target="_blank" rel="noopener"><img src="${esc(img)}" alt="${esc(title)}" loading="lazy"></a>`
-                : `<img src="${esc(img)}" alt="${esc(title)}" loading="lazy">`) : '';
-            const bodyHtml = body ? `<div class="ch-about-panel-text">${_linkify(esc(body))}</div>` : '';
-            const titleHtml = title ? `<div class="ch-about-panel-title">${esc(title)}</div>` : '';
-            return `<div class="ch-about-panel">${imgTag}<div class="ch-about-panel-body">${titleHtml}${bodyHtml}</div></div>`;
-        }).join('') + '</div>';
-    }
-    if (!html) html = `<div class="ch-about-empty"><i class="fa-solid fa-circle-info"></i> This streamer hasn't added an About section yet.</div>`;
-    host.innerHTML = html;
+    _aboutPanels = (Array.isArray(panels) ? panels : []).map(_normalizeAboutPanel);
+    _aboutEditMode = false;
+    _renderAboutView();
 }
+
+function _renderAboutView() {
+    const host = document.getElementById('ch-about-content');
+    if (!host) return;
+    const hasContent = _aboutBio || _aboutPanels.length;
+    let html = '';
+    if (_aboutIsOwner) {
+        html += `<div class="ch-about-toolbar"><button class="btn btn-sm btn-primary" onclick="toggleAboutEdit()"><i class="fa-solid fa-pen"></i> Edit About</button></div>`;
+    }
+    if (!hasContent) {
+        html += _aboutIsOwner
+            ? `<div class="ch-about-empty"><i class="fa-solid fa-address-card" style="font-size:2rem;opacity:0.5"></i><p style="font-size:1.05rem;font-weight:600;margin-top:8px">Your About section is empty</p><p class="muted">Click <b>Edit About</b> to add a bio, info panels (links, images), and a weather panel — this is your under-stream area viewers see.</p></div>`
+            : `<div class="ch-about-empty">This streamer hasn't set up an About section yet.</div>`;
+        host.innerHTML = html;
+        return;
+    }
+    if (_aboutBio) html += `<div class="ch-about-bio">${_linkify(esc(_aboutBio))}</div>`;
+    html += '<div class="ch-about-panels">' + _aboutPanels.map((p, i) => _aboutPanelViewHTML(p, i)).join('') + '</div>';
+    host.innerHTML = html;
+    _fillWeatherPanels();
+}
+
+function _aboutPanelViewHTML(p, i) {
+    const w = ABOUT_WIDTHS.includes(p.width) ? p.width : 'md';
+    if (p.type === 'weather') {
+        return `<div class="ch-about-panel ch-panel-w-${w} ch-panel-weather" data-weather-panel="${i}">
+            ${p.title ? `<div class="ch-about-panel-title">${esc(p.title)}</div>` : ''}
+            <div class="ch-weather-panel-body"><div class="muted" style="padding:16px"><i class="fa-solid fa-cloud-sun fa-spin-pulse"></i> Loading weather…</div></div>
+        </div>`;
+    }
+    const img = p.image
+        ? (p.link ? `<a href="${esc(p.link)}" target="_blank" rel="noopener"><img src="${esc(p.image)}" alt="" loading="lazy"></a>`
+                  : `<img src="${esc(p.image)}" alt="" loading="lazy">`)
+        : '';
+    const title = p.title ? `<div class="ch-about-panel-title">${esc(p.title)}</div>` : '';
+    const body = p.body ? `<div class="ch-about-panel-text">${_linkify(esc(p.body))}</div>` : '';
+    const linkBtn = (p.link && !p.image) ? `<a class="ch-about-panel-link" href="${esc(p.link)}" target="_blank" rel="noopener"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open</a>` : '';
+    return `<div class="ch-about-panel ch-panel-w-${w}">${img}<div class="ch-about-panel-body">${title}${body}${linkBtn}</div></div>`;
+}
+
+// Fetch weather for the CURRENTLY-WATCHED slot and fill any weather panels.
+async function _fillWeatherPanels() {
+    const nodes = document.querySelectorAll('#ch-about-content [data-weather-panel]');
+    if (!nodes.length || !currentChannelUsername) return;
+    try {
+        const q = currentStreamId ? `?stream=${currentStreamId}` : '';
+        const data = await api(`/streams/channel/${encodeURIComponent(currentChannelUsername)}/weather${q}`);
+        const html = (data && data.enabled && data.current)
+            ? renderWeatherWidget(data)
+            : `<div class="muted" style="padding:16px"><i class="fa-solid fa-cloud-slash"></i> Weather isn't set for this stream.</div>`;
+        nodes.forEach(n => { const b = n.querySelector('.ch-weather-panel-body'); if (b) b.innerHTML = html; });
+    } catch {
+        nodes.forEach(n => { const b = n.querySelector('.ch-weather-panel-body'); if (b) b.innerHTML = ''; });
+    }
+}
+
+// ── Edit mode ────────────────────────────────────────────────
+function toggleAboutEdit() {
+    _aboutEditMode = !_aboutEditMode;
+    if (_aboutEditMode) _renderAboutEdit(); else _renderAboutView();
+}
+function _renderAboutEdit() {
+    const host = document.getElementById('ch-about-content');
+    if (!host) return;
+    host.innerHTML = `
+        <div class="ch-about-toolbar">
+            <button class="btn btn-sm btn-primary" onclick="saveAboutInline()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+            <button class="btn btn-sm btn-outline" onclick="cancelAboutEdit()">Cancel</button>
+            <span class="muted" style="font-size:0.82rem;margin-left:6px"><i class="fa-solid fa-arrows-up-down-left-right"></i> Drag panels to reorder</span>
+        </div>
+        <div class="ch-about-edit-bio">
+            <label class="ch-edit-label">Bio</label>
+            <textarea id="ch-about-bio-edit" rows="3" placeholder="Tell viewers about yourself…" oninput="_aboutBio=this.value">${esc(_aboutBio)}</textarea>
+        </div>
+        <div class="ch-about-panels ch-about-panels-edit" id="ch-about-panels-edit">
+            ${_aboutPanels.map((p, i) => _aboutPanelEditHTML(p, i)).join('')}
+        </div>
+        <div class="ch-about-add-row">
+            <button class="btn btn-sm btn-outline" onclick="addAboutPanel('info')"><i class="fa-solid fa-plus"></i> Add panel</button>
+            <button class="btn btn-sm btn-outline" onclick="addAboutPanel('weather')"><i class="fa-solid fa-cloud-sun"></i> Add weather panel</button>
+        </div>`;
+    _wireAboutDrag();
+}
+function _aboutPanelEditHTML(p, i) {
+    const widthSel = ABOUT_WIDTHS.map(w => `<option value="${w}" ${p.width === w ? 'selected' : ''}>${{ sm: 'Small', md: 'Medium', lg: 'Large', full: 'Full' }[w]}</option>`).join('');
+    const head = `<div class="ch-panel-edit-head">
+            <span class="ch-panel-drag" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span>
+            <span class="ch-panel-type">${p.type === 'weather' ? '<i class="fa-solid fa-cloud-sun"></i> Weather' : '<i class="fa-solid fa-window-maximize"></i> Panel'}</span>
+            <select onchange="_aboutPanels[${i}].width=this.value" title="Width">${widthSel}</select>
+            <button class="ch-panel-del" onclick="removeAboutPanel(${i})" title="Delete"><i class="fa-solid fa-trash"></i></button>
+        </div>`;
+    if (p.type === 'weather') {
+        return `<div class="ch-about-panel ch-panel-w-${p.width} ch-panel-edit" draggable="true" data-idx="${i}">
+            ${head}
+            <input type="text" placeholder="Panel title (optional)" value="${esc(p.title)}" oninput="_aboutPanels[${i}].title=this.value">
+            <p class="muted" style="font-size:0.8rem;margin:6px 0 0"><i class="fa-solid fa-location-dot"></i> Shows the weather for the slot the viewer is watching (set each slot's zip in the slot's broadcast settings).</p>
+        </div>`;
+    }
+    return `<div class="ch-about-panel ch-panel-w-${p.width} ch-panel-edit" draggable="true" data-idx="${i}">
+        ${head}
+        <input type="text" placeholder="Title" value="${esc(p.title)}" oninput="_aboutPanels[${i}].title=this.value">
+        <div class="ch-panel-img-row">
+            <img class="ch-panel-img-preview" src="${p.image ? esc(p.image) : ''}" style="${p.image ? '' : 'display:none'}">
+            <input type="file" accept="image/*" onchange="uploadAboutPanelImage(${i}, this)">
+            ${p.image ? `<button class="btn btn-xs btn-outline" onclick="_aboutPanels[${i}].image='';_renderAboutEdit()">Remove image</button>` : ''}
+        </div>
+        <textarea rows="2" placeholder="Text (URLs become links)" oninput="_aboutPanels[${i}].body=this.value">${esc(p.body)}</textarea>
+        <input type="text" placeholder="Link URL (optional)" value="${esc(p.link)}" oninput="_aboutPanels[${i}].link=this.value">
+    </div>`;
+}
+function addAboutPanel(type) {
+    _aboutPanels.push(_normalizeAboutPanel({ type, width: type === 'weather' ? 'md' : 'md' }));
+    _renderAboutEdit();
+}
+function removeAboutPanel(i) { _aboutPanels.splice(i, 1); _renderAboutEdit(); }
+function cancelAboutEdit() { _aboutEditMode = false; _renderAboutView(); }
+async function uploadAboutPanelImage(i, input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+        const fd = new FormData(); fd.append('file', file);
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API}/api/streams/panel-image`, { method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {}, body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+        _aboutPanels[i].image = data.url;
+        _renderAboutEdit();
+    } catch (e) { toast(e.message || 'Image upload failed', 'error'); }
+    input.value = '';
+}
+async function saveAboutInline() {
+    try {
+        await api('/auth/profile', { method: 'PUT', body: { bio: _aboutBio } });
+        await api('/streams/channel', { method: 'PUT', body: { panels: JSON.stringify(_aboutPanels) } });
+        if (currentUser) currentUser.bio = _aboutBio;
+        _aboutEditMode = false;
+        _renderAboutView();
+        toast('About saved', 'success');
+    } catch (e) { toast(e.message || 'Save failed', 'error'); }
+}
+// Native drag-and-drop reordering of edit panels.
+let _aboutDragIdx = null;
+function _wireAboutDrag() {
+    const wrap = document.getElementById('ch-about-panels-edit');
+    if (!wrap) return;
+    wrap.querySelectorAll('.ch-panel-edit').forEach(el => {
+        el.addEventListener('dragstart', e => { _aboutDragIdx = parseInt(el.dataset.idx, 10); el.classList.add('dragging'); });
+        el.addEventListener('dragend', () => el.classList.remove('dragging'));
+        el.addEventListener('dragover', e => e.preventDefault());
+        el.addEventListener('drop', e => {
+            e.preventDefault();
+            const to = parseInt(el.dataset.idx, 10);
+            if (_aboutDragIdx == null || to === _aboutDragIdx) return;
+            const [moved] = _aboutPanels.splice(_aboutDragIdx, 1);
+            _aboutPanels.splice(to, 0, moved);
+            _aboutDragIdx = null;
+            _renderAboutEdit();
+        });
+    });
+}
+
 // Minimal, safe linkifier for already-HTML-escaped text.
 function _linkify(escaped) {
     return String(escaped).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');

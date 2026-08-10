@@ -6064,21 +6064,50 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .ch-panel-title { font-size: 1.05rem; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
 .ch-panel-title i { color: var(--accent); opacity: 0.9; }
 .ch-about-content { display: flex; flex-direction: column; gap: 14px; }
+.ch-about-toolbar { display: flex; align-items: center; gap: 10px; }
 .ch-about-bio {
     background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px;
     padding: 16px 18px; line-height: 1.6; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
 }
-.ch-about-panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.ch-about-bio a { color: var(--accent); }
+/* 12-col responsive panel grid; each panel spans a width. */
+.ch-about-panels { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; align-items: start; }
+.ch-panel-w-sm   { grid-column: span 3; }
+.ch-panel-w-md   { grid-column: span 4; }
+.ch-panel-w-lg   { grid-column: span 6; }
+.ch-panel-w-full { grid-column: 1 / -1; }
+@media (max-width: 980px) { .ch-panel-w-sm, .ch-panel-w-md { grid-column: span 6; } .ch-panel-w-lg { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .ch-about-panels { grid-template-columns: 1fr; } .ch-about-panels > * { grid-column: 1 / -1 !important; } }
 .ch-about-panel {
     background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
     display: flex; flex-direction: column;
 }
-.ch-about-panel img { width: 100%; display: block; max-height: 220px; object-fit: cover; }
+.ch-about-panel > a > img, .ch-about-panel > img { width: 100%; display: block; max-height: 240px; object-fit: cover; }
 .ch-about-panel-body { padding: 12px 14px; }
 .ch-about-panel-title { font-weight: 700; margin-bottom: 5px; }
 .ch-about-panel-text { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .ch-about-panel-text a { color: var(--accent); }
-.ch-about-empty { color: var(--text-muted); padding: 24px; text-align: center; }
+.ch-about-panel-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.85rem; color: var(--accent); font-weight: 600; }
+.ch-panel-weather .ch-about-panel-title { padding: 12px 14px 0; }
+.ch-panel-weather .ch-weather-panel-body { padding: 4px; }
+.ch-about-empty { color: var(--text-muted); padding: 30px 24px; text-align: center; background: var(--bg-secondary); border: 1px dashed var(--border); border-radius: 12px; }
+.ch-about-empty p { margin: 6px 0; }
+/* ── Edit mode ── */
+.ch-edit-label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin-bottom: 5px; }
+.ch-about-edit-bio textarea { width: 100%; }
+.ch-about-add-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ch-panel-edit { padding: 10px 12px 12px; gap: 8px; cursor: default; }
+.ch-panel-edit.dragging { opacity: 0.45; outline: 2px dashed var(--accent); }
+.ch-panel-edit input, .ch-panel-edit textarea, .ch-panel-edit select { width: 100%; }
+.ch-panel-edit-head { display: flex; align-items: center; gap: 8px; }
+.ch-panel-edit-head .ch-panel-type { font-weight: 700; font-size: 0.85rem; flex: 1; }
+.ch-panel-edit-head select { width: auto; }
+.ch-panel-drag { cursor: grab; color: var(--text-muted); }
+.ch-panel-drag:active { cursor: grabbing; }
+.ch-panel-del { background: none; border: none; color: var(--live-red, #e05a5a); cursor: pointer; padding: 4px; }
+.ch-panel-img-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ch-panel-img-preview { width: 64px; height: 44px; object-fit: cover; border-radius: 6px; background: var(--bg-primary); }
+.btn-xs { padding: 3px 8px; font-size: 0.75rem; }
 @media (max-width: 640px) { .ch-tab { padding: 9px 11px; font-size: 0.84rem; } }
 
 /* ── Customizable offline screen ─────────────────────────────── */

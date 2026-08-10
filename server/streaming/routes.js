@@ -594,6 +594,28 @@ router.put('/channel', requireAuth, (req, res) => {
     }
 });
 
+// Upload an About-panel image → optimized WebP served from /data/offline.
+// Lightweight (no paste feed / cooldowns) — just returns a URL.
+router.post('/panel-image', requireAuth, offlineUpload.single('file'), async (req, res) => {
+    const tmp = req.file?.path;
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file' });
+        const mime = (req.file.mimetype || '').toLowerCase();
+        if (!/^image\//.test(mime)) { fs.unlink(tmp, () => {}); return res.status(400).json({ error: 'Image required' }); }
+        const outName = `panel-${req.user.id}-${Date.now().toString(36)}.webp`;
+        if (sharp) {
+            await sharp(tmp).rotate().resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toFile(path.join(OFFLINE_DIR, outName));
+        } else {
+            fs.copyFileSync(tmp, path.join(OFFLINE_DIR, outName));
+        }
+        fs.unlink(tmp, () => {});
+        res.json({ url: `/data/offline/${outName}` });
+    } catch (err) {
+        if (tmp) fs.unlink(tmp, () => {});
+        res.status(500).json({ error: 'Image upload failed: ' + err.message });
+    }
+});
+
 // Upload an offline-screen asset (image OR video/gif). Videos/gifs are transcoded
 // to an optimized muted looping WebM served just for this channel. Images are
 // re-encoded to WebP. Sets channels.offline_screen_url + type.
@@ -705,20 +727,38 @@ router.get('/channel/:username/weather', async (req, res) => {
     try {
         const channel = db.getChannelByUsername(req.params.username);
         if (!channel) return res.status(404).json({ error: 'Channel not found' });
-        if (!channel.weather_zip || channel.weather_detail === 'off') {
+
+        // Per-slot override: weather is configurable per managed stream slot, so a
+        // viewer watching a specific slot gets that slot's weather. Falls back to
+        // the channel default. `?managed=<id>` or `?stream=<liveSessionId>`.
+        let wZip = channel.weather_zip, wDetail = channel.weather_detail, wShowLoc = channel.weather_show_location;
+        try {
+            let slot = null;
+            const managedId = parseInt(req.query.managed, 10) || null;
+            const streamId = parseInt(req.query.stream, 10) || null;
+            if (managedId) slot = db.getManagedStreamById(managedId);
+            else if (streamId) { const s = db.getStreamById(streamId); if (s && s.managed_stream_id) slot = db.getManagedStreamById(s.managed_stream_id); }
+            if (slot && slot.user_id === channel.user_id && slot.weather_zip) {
+                wZip = slot.weather_zip;
+                wDetail = slot.weather_detail || wDetail;
+                wShowLoc = slot.weather_show_location;
+            }
+        } catch { /* fall back to channel */ }
+
+        if (!wZip || wDetail === 'off') {
             return res.json({ enabled: false });
         }
 
-        const weather = await fetchWeather(channel.weather_zip);
+        const weather = await fetchWeather(wZip);
         if (!weather) return res.json({ enabled: false, error: 'Weather data unavailable' });
 
-        const detail = channel.weather_detail || 'basic';
+        const detail = wDetail || 'basic';
 
         // Shape response based on detail level — never expose zip code
         const response = { enabled: true, detail };
         // Include UTC offset so frontend can convert streamer-local times to viewer-local
         if (weather.utc_offset_seconds != null) response.utc_offset_seconds = weather.utc_offset_seconds;
-        if (channel.weather_show_location) {
+        if (wShowLoc) {
             response.location = weather.location;
         }
 

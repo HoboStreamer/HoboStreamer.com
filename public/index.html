@@ -37,7 +37,7 @@
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=58">
+    <link rel="stylesheet" href="/css/style.css?v=59">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -1027,9 +1027,8 @@
                     </div>
                 </div>
 
-                <!-- About -->
+                <!-- About (weather is now an optional panel inside here) -->
                 <div class="ch-tab-panel" id="ch-panel-about" role="tabpanel">
-                    <div id="ch-weather-widget-about" class="ch-weather-full" style="display:none"></div>
                     <div id="ch-about-content" class="ch-about-content"></div>
                 </div>
             </div>
@@ -3000,9 +2999,6 @@ WantedBy=multi-user.target</code>
                     <button class="settings-nav-btn" data-tab="offline" onclick="switchSettingsTab('offline')">
                         <i class="fa-solid fa-image"></i> Offline Screen
                     </button>
-                    <button class="settings-nav-btn" data-tab="about" onclick="switchSettingsTab('about')">
-                        <i class="fa-solid fa-address-card"></i> About &amp; Panels
-                    </button>
                 </div>
 
                 <!-- Profile Panel -->
@@ -3155,23 +3151,7 @@ WantedBy=multi-user.target</code>
                     </div>
                 </div>
 
-                <!-- About / Panels Panel -->
-                <div class="settings-panel" id="settings-about">
-                    <div class="settings-card">
-                        <h3><i class="fa-solid fa-address-card"></i> About &amp; Info Panels</h3>
-                        <p class="muted" style="margin-bottom:12px">Bio + Twitch/Kick-style info panels (cards with an image, text, and a link) shown on your channel's About tab.</p>
-                        <div class="settings-row" style="flex-direction:column;align-items:stretch">
-                            <span class="settings-row-label">Bio</span>
-                            <textarea id="about-bio" rows="4" placeholder="Tell viewers about yourself…" style="width:100%"></textarea>
-                        </div>
-                        <div id="about-panels-editor"></div>
-                        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-                            <button class="btn btn-outline" onclick="addAboutPanel()"><i class="fa-solid fa-plus"></i> Add panel</button>
-                            <button class="btn btn-primary" onclick="saveAboutSettings()"><i class="fa-solid fa-floppy-disk"></i> Save About</button>
-                            <span id="about-save-status" style="align-self:center"></span>
-                        </div>
-                    </div>
-                </div>
+                <!-- About editing moved to an inline live editor on the channel's About tab -->
 
                 <!-- Broadcaster and My Streams panels removed — functionality moved to per-slot workspace -->
             </div>
@@ -4649,7 +4629,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=1" defer></script>
-<script src="/js/app.js?v=48"></script>
+<script src="/js/app.js?v=49"></script>
 <script src="/js/stream-player.js?v=9"></script>
 <script src="/js/emotes.js?v=8"></script>
 <script src="/js/gif-picker.js?v=1"></script>
@@ -4714,10 +4694,10 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/broadcast.js?v=22"></script>
 <script src="/js/call.js?v=3"></script>
 <script src="/js/voice-channels.js?v=2"></script>
-<script src="/js/settings.js?v=7"></script>
+<script src="/js/settings.js?v=8"></script>
 <script src="/js/staff-console.js?v=1"></script>
 <script src="/js/dashboard-moderation.js?v=2"></script>
-<script src="/js/ai-chatbot-settings.js?v=7"></script>
+<script src="/js/ai-chatbot-settings.js?v=8"></script>
 <script src="/js/pastes.js?v=9"></script>
 <script src="/js/messenger.js?v=1"></script>
 

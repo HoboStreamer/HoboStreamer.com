@@ -23,7 +23,6 @@ function switchSettingsTab(tab) {
         case 'profile': loadSettingsProfile(); break;
         case 'appearance': loadSettingsAppearance(); break;
         case 'offline': loadSettingsOffline(); break;
-        case 'about': loadSettingsAbout(); break;
     }
 }
 
@@ -96,64 +95,6 @@ async function saveOfflineScreen() {
         status.textContent = 'Saved ✓';
         setTimeout(() => { status.textContent = ''; }, 1500);
         toast('Offline screen saved', 'success');
-    } catch (e) { toast(e.message || 'Save failed', 'error'); }
-}
-
-/* ── About / Panels Tab ───────────────────────────────────────── */
-let _aboutPanels = [];
-async function loadSettingsAbout() {
-    try {
-        const me = await api('/auth/me');
-        document.getElementById('about-bio').value = (me.user || me).bio || '';
-        const data = await api('/streams/channel');
-        const ch = data.channel || {};
-        try { _aboutPanels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { _aboutPanels = []; }
-        if (!Array.isArray(_aboutPanels)) _aboutPanels = [];
-        _renderAboutPanels();
-    } catch (e) { toast('Failed to load About settings', 'error'); }
-}
-function _renderAboutPanels() {
-    const host = document.getElementById('about-panels-editor');
-    if (!host) return;
-    host.innerHTML = _aboutPanels.map((p, i) => `
-        <div class="settings-card" style="margin-top:12px;padding:12px 14px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <strong>Panel ${i + 1}</strong>
-                <button class="btn btn-sm btn-outline" onclick="removeAboutPanel(${i})"><i class="fa-solid fa-trash"></i></button>
-            </div>
-            <input type="text" placeholder="Title" value="${escapeHtml(p.title || '')}" oninput="_aboutPanels[${i}].title=this.value" style="width:100%;margin-bottom:6px">
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-                <img src="${p.image ? escapeHtml(p.image) : ''}" style="width:56px;height:40px;object-fit:cover;border-radius:6px;background:var(--bg-secondary);${p.image ? '' : 'display:none'}" id="about-panel-img-${i}">
-                <input type="file" accept="image/*" onchange="uploadAboutPanelImage(${i}, this)">
-            </div>
-            <textarea placeholder="Text (links become clickable)" rows="2" oninput="_aboutPanels[${i}].body=this.value" style="width:100%;margin-bottom:6px">${escapeHtml(p.body || p.text || '')}</textarea>
-            <input type="text" placeholder="Link URL (optional)" value="${escapeHtml(p.link || p.url || '')}" oninput="_aboutPanels[${i}].link=this.value" style="width:100%">
-        </div>`).join('') || '<p class="muted" style="margin-top:10px">No panels yet.</p>';
-}
-function addAboutPanel() { _aboutPanels.push({ title: '', body: '', image: '', link: '' }); _renderAboutPanels(); }
-function removeAboutPanel(i) { _aboutPanels.splice(i, 1); _renderAboutPanels(); }
-async function uploadAboutPanelImage(i, input) {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    try {
-        const fd = new FormData(); fd.append('screenshot', file);
-        const token = localStorage.getItem('token');
-        // Reuse the paste-screenshot uploader as a generic image→URL endpoint.
-        const res = await fetch(`${API}/api/pastes/screenshot`, { method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {}, body: fd });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Upload failed');
-        _aboutPanels[i].image = data.screenshot_url || data.url;
-        _renderAboutPanels();
-    } catch (e) { toast(e.message || 'Image upload failed', 'error'); }
-    input.value = '';
-}
-async function saveAboutSettings() {
-    const status = document.getElementById('about-save-status');
-    try {
-        await api('/auth/profile', { method: 'PUT', body: { bio: document.getElementById('about-bio').value } });
-        await api('/streams/channel', { method: 'PUT', body: { panels: JSON.stringify(_aboutPanels) } });
-        status.textContent = 'Saved ✓'; setTimeout(() => { status.textContent = ''; }, 1500);
-        toast('About saved', 'success');
     } catch (e) { toast(e.message || 'Save failed', 'error'); }
 }
 
