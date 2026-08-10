@@ -3386,7 +3386,8 @@ function _aboutPanelViewHTML(p, i) {
     const title = p.title ? `<div class="ch-about-panel-title">${esc(p.title)}</div>` : '';
     const body = p.body ? `<div class="ch-about-panel-text">${_linkify(esc(p.body))}</div>` : '';
     const linkBtn = (p.link && !p.image) ? `<a class="ch-about-panel-link" href="${esc(p.link)}" target="_blank" rel="noopener"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open</a>` : '';
-    return `<div class="ch-about-panel ch-panel-w-${w}">${img}<div class="ch-about-panel-body">${title}${body}${linkBtn}</div></div>`;
+    const content = p.title || p.body || p.link ? `<div class="ch-about-panel-content">${title}${body}${linkBtn}</div>` : '';
+    return `<div class="ch-about-panel ch-panel-w-${w}">${img}${content}</div>`;
 }
 
 // Fetch weather for the CURRENTLY-WATCHED slot and fill any weather panels.
