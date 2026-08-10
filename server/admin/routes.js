@@ -281,7 +281,33 @@ router.get('/streams', (req, res) => {
 // ── Force End Stream ─────────────────────────────────────────
 router.delete('/streams/:id', (req, res) => {
     try {
+        const stream = db.getStreamById(parseInt(req.params.id, 10));
+        if (!stream) return res.status(404).json({ error: 'Stream not found' });
+
+        // Protect the owner's stream: a regular admin/global-mod cannot force-end
+        // the network owner's broadcast — only the owner (or the streamer themself)
+        // may. Prevents a rogue admin from repeatedly knocking the owner offline.
+        const target = db.getUserById(stream.user_id);
+        if (target && target.is_owner && !permissions.isOwner(req.user) && req.user.id !== stream.user_id) {
+            return res.status(403).json({ error: "You cannot end the owner's stream" });
+        }
+
         db.endStream(req.params.id);
+
+        // Accountability: force-ending someone's live stream is a moderation action
+        // and MUST be logged (previously it left no trace at all).
+        try {
+            db.logModerationAction({
+                scope_type: 'stream',
+                scope_id: stream.id,
+                actor_user_id: req.user.id,
+                target_user_id: stream.user_id,
+                action_type: 'stream_force_end',
+                details: { title: stream.title || null },
+            });
+        } catch (e) { console.warn('[Admin] force-end log failed:', e.message); }
+
+        console.log(`[Admin] Stream ${stream.id} force-ended by ${req.user.username} (${req.user.id}); owner=${target?.username}`);
         res.json({ message: 'Stream force-ended' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to end stream' });

@@ -129,6 +129,20 @@ class ChatRelayService {
         const key = `${streamId}:${dest.id}`;
         if (this.bridges.has(key)) return; // already running
 
+        // A restream destination can only be fed by ONE live session at a time.
+        // If a previous (now-stale) session still holds a bridge for this same
+        // destination — e.g. the ingest flapped to a new stream session ID before
+        // the 5–6 min stale-stream cleanup tore the old one down — kill it now.
+        // Otherwise both bridges stay connected to the same external channel and
+        // every relayed message is duplicated (once per stale overlapping bridge).
+        for (const [existingKey, b] of this.bridges) {
+            if (b.destId === dest.id && b.streamId !== streamId) {
+                console.log(`[ChatRelay] Replacing stale bridge ${existingKey} -> ${key} (same destination, prevents duplicate relay)`);
+                this._teardown(b);
+                this.bridges.delete(existingKey);
+            }
+        }
+
         const parsed = parseChannelUrl(dest.channel_url);
         if (!parsed) {
             console.warn(`[ChatRelay] Cannot parse channel URL for dest ${dest.id}: ${dest.channel_url}`);
