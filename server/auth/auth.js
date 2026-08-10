@@ -79,6 +79,27 @@ function verifyTokenWithReason(token) {
  * Checks linked_accounts first, falls back to username match,
  * auto-creates a local account if none found.
  */
+// Keep the local user's role + profile fields in sync with the hobo.tools SSO token
+// on EVERY auth — not just at account creation — so role changes (e.g. an admin grant
+// in hobo.tools/admin) propagate. Only writes when a value actually changed. The local
+// `is_owner` flag is NOT in the token and is never touched here.
+function _syncSsoUserFields(user, decoded) {
+    if (!user || !decoded) return user;
+    const updates = [];
+    const params = [];
+    if (decoded.avatar_url && decoded.avatar_url !== user.avatar_url) { updates.push('avatar_url = ?'); params.push(decoded.avatar_url); }
+    if (decoded.profile_color && decoded.profile_color !== user.profile_color) { updates.push('profile_color = ?'); params.push(decoded.profile_color); }
+    if (decoded.role && ['user', 'streamer', 'global_mod', 'admin'].includes(decoded.role) && decoded.role !== user.role) {
+        updates.push('role = ?'); params.push(decoded.role);
+    }
+    if (!updates.length) return user;
+    try {
+        params.push(user.id);
+        db.getDb().prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+        return db.getUserById(user.id);
+    } catch { return user; }
+}
+
 function resolveHoboToolsUser(decoded) {
     const hoboToolsId = String(decoded.sub || decoded.id);
 
@@ -88,7 +109,7 @@ function resolveHoboToolsUser(decoded) {
     ).get(hoboToolsId);
 
     if (linked) {
-        return db.getUserById(linked.user_id);
+        return _syncSsoUserFields(db.getUserById(linked.user_id), decoded);
     }
 
     // Try matching by username (case-insensitive)
@@ -101,7 +122,7 @@ function resolveHoboToolsUser(decoded) {
             ).run(hoboToolsId, decoded.username, user.id);
             console.log(`[Auth] Auto-linked ${decoded.username} to hobo.tools id ${hoboToolsId}`);
         } catch { /* already linked */ }
-        return user;
+        return _syncSsoUserFields(user, decoded);
     }
 
     // Auto-create a local user for this hobo.tools account
