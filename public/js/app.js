@@ -101,8 +101,12 @@ function _cardAiHTML(text, full) {
     const hasMore = long && long !== display && long.length > display.length;
     // The expand affordance is just a chevron, placed inline right after the last
     // word of the summary (no "Read overview" label, no separate line).
+    // The chevron is a sibling of the clamped text (not inside it) so the 2-line
+    // -webkit-line-clamp overflow can't clip it away when the summary is long. It
+    // sits at the end/bottom-right, right after the last visible word.
     return `<div class="card-ai-overview${hasMore ? '' : ' card-ai-static'}" role="button" tabindex="0" onclick="toggleCardAi(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCardAi(event,this)"${hasMore ? ` data-full="${esc(long)}"` : ''}>
-        <div class="card-ai-clamp"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="card-ai-text">${esc(display)}</span>${hasMore ? ' <i class="card-ai-toggle fa-solid fa-chevron-down" aria-label="Expand overview"></i>' : ''}</div>
+        <div class="card-ai-clamp"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="card-ai-text">${esc(display)}</span></div>
+        ${hasMore ? '<i class="card-ai-toggle fa-solid fa-chevron-down" aria-label="Toggle overview"></i>' : ''}
     </div>`;
 }
 
@@ -2236,8 +2240,12 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             }
             const _chName = document.getElementById('ch-display-name');
             if (_chName) {
-                _chName.innerHTML = `<a href="${esc(_chPath)}" onclick="event.preventDefault();navigate('${esc(_chPath)}')" style="color:inherit;text-decoration:none">${esc(ch.display_name || ch.username)}</a> ${_staffBadge(ch.role, ch.is_owner)}`;
+                // Name only — the h2 clips with ellipsis, so the staff badge lives in
+                // its own sibling span (below) to stay visible and keep its tooltip.
+                _chName.innerHTML = `<a href="${esc(_chPath)}" onclick="event.preventDefault();navigate('${esc(_chPath)}')" style="color:inherit;text-decoration:none">${esc(ch.display_name || ch.username)}</a>`;
             }
+            const _chStaff = document.getElementById('ch-staff-badge');
+            if (_chStaff) _chStaff.innerHTML = _staffBadge(ch.role, ch.is_owner);
             const _chUser = document.getElementById('ch-username');
             if (_chUser) _chUser.style.display = 'none';
             document.getElementById('ch-category-badge').textContent = _capTag((liveStreams[0] && liveStreams[0].category) || ch.category || 'irl');
