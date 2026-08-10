@@ -11981,4 +11981,4 @@ body.theme-light .user-dropdown {
 /* Live stream AI overview under the video */
 .ch-stream-ai { margin-top: 8px; max-width: 760px; }
 /* Streamer overview on Recently Online cards */
-.streamer-group-card .card-ai-overview { margin: 2px 0 10px; }
+.streamer-group-card .card-ai-overview { margin: 5px 5px -2px 5px; }
