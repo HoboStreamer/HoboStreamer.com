@@ -8,6 +8,7 @@
 let _pastesLoaded = false;
 let _pastesOffset = 0;
 let _pastesFilter = 'all'; // 'all' | 'paste' | 'screenshot'
+let _pastesUser = 'all';   // 'all' | <username>
 let _pastesSearch = '';
 let _pastesSort = 'newest'; // 'newest' | 'oldest'
 let _pastesTotal = 0;
@@ -53,6 +54,7 @@ function highlightSyntax(code, lang) {
 function loadPastesPage() {
     _pastesOffset = 0;
     _pastesFilter = 'all';
+    _pastesUser = 'all';
     _pastesSearch = '';
     _pastesSort = 'newest';
     _pastesLoaded = true;
@@ -70,11 +72,24 @@ async function fetchPastes() {
     try {
         let url = `/pastes?limit=${PASTES_PER_PAGE}&offset=${_pastesOffset}`;
         if (_pastesFilter !== 'all') url += `&type=${_pastesFilter}`;
+        if (_pastesUser !== 'all') url += `&username=${encodeURIComponent(_pastesUser)}`;
         if (_pastesSearch) url += `&search=${encodeURIComponent(_pastesSearch)}`;
         if (_pastesSort === 'oldest') url += `&sort=oldest`;
 
         const data = await api(url);
         _pastesTotal = data.total || 0;
+
+        // Per-user filter bar (reuses the shared VOD/clip filter renderer).
+        if (typeof renderMediaStreamerFilters === 'function') {
+            renderMediaStreamerFilters({
+                barId: 'pastes-streamer-filters',
+                streamers: data.users || [],
+                activeFilter: _pastesUser,
+                onSelect: 'setPastesUserFilter',
+                countKey: 'paste_count',
+                allLabel: 'All users',
+            });
+        }
 
         document.getElementById('pastes-count').textContent = `${_pastesTotal} item${_pastesTotal !== 1 ? 's' : ''}`;
 
@@ -157,6 +172,16 @@ function filterPastes(type) {
     _pastesOffset = 0;
     document.querySelectorAll('.pastes-filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === type));
     fetchPastes();
+}
+
+function setPastesUserFilter(username = 'all') {
+    const next = String(username || 'all').trim() || 'all';
+    if (next === _pastesUser) return;
+    _pastesUser = next;
+    _pastesOffset = 0;
+    fetchPastes();
+    const top = document.getElementById('page-pastes');
+    if (top) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function searchPastes() {

@@ -200,6 +200,8 @@ router.get('/', optionalAuth, (req, res) => {
         const type = req.query.type; // 'paste', 'screenshot', or undefined for all
         const search = req.query.search ? `%${req.query.search}%` : null;
 
+        const username = req.query.username && req.query.username !== 'all' ? String(req.query.username).trim() : null;
+
         let sql = `SELECT p.*, u.username, u.display_name, u.avatar_url
                     FROM pastes p
                     LEFT JOIN users u ON p.user_id = u.id
@@ -209,6 +211,10 @@ router.get('/', optionalAuth, (req, res) => {
         if (type === 'paste' || type === 'screenshot') {
             sql += ` AND p.type = ?`;
             params.push(type);
+        }
+        if (username) {
+            sql += ` AND LOWER(u.username) = LOWER(?)`;
+            params.push(username);
         }
         if (search) {
             sql += ` AND (p.title LIKE ? OR p.content LIKE ?)`;
@@ -227,15 +233,25 @@ router.get('/', optionalAuth, (req, res) => {
             likes: p.likes || 0,
         }));
 
+        // Total respecting the active filters (type + username + search).
+        let countSql = `SELECT COUNT(*) as total FROM pastes p LEFT JOIN users u ON p.user_id = u.id WHERE p.visibility = 'public'`;
         const countParams = [];
-        let countSql = `SELECT COUNT(*) as total FROM pastes WHERE visibility = 'public'`;
-        if (type) {
-            countSql += ` AND type = ?`;
-            countParams.push(type === 'screenshot' ? 'screenshot' : 'paste');
-        }
+        if (type === 'paste' || type === 'screenshot') { countSql += ` AND p.type = ?`; countParams.push(type); }
+        if (username) { countSql += ` AND LOWER(u.username) = LOWER(?)`; countParams.push(username); }
+        if (search) { countSql += ` AND (p.title LIKE ? OR p.content LIKE ?)`; countParams.push(search, search); }
         const { total } = db.get(countSql, countParams);
 
-        res.json({ pastes, total, limit, offset });
+        // Per-user paste counts for the filter bar (registered users, public
+        // pastes, respecting the current type filter so the counts match the view).
+        let usersSql = `SELECT u.username, u.display_name, u.avatar_url, u.profile_color, COUNT(*) AS paste_count
+                        FROM pastes p JOIN users u ON p.user_id = u.id
+                        WHERE p.visibility = 'public'`;
+        const usersParams = [];
+        if (type === 'paste' || type === 'screenshot') { usersSql += ` AND p.type = ?`; usersParams.push(type); }
+        usersSql += ` GROUP BY u.id ORDER BY paste_count DESC, LOWER(u.username) ASC`;
+        const users = db.all(usersSql, usersParams);
+
+        res.json({ pastes, total, limit, offset, users });
     } catch (err) {
         console.error('[Pastes] List error:', err);
         res.status(500).json({ error: 'Failed to list pastes' });
