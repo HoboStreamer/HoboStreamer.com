@@ -1527,6 +1527,19 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] users avatar_paste_id migration:', e.message); }
 
+    // Owner rank: an admin with is_owner=1 who alone may view/change API keys, money
+    // settings, and grant admin. Regular admins keep moderation powers but not these.
+    // Bootstrapped to the network owner (Goosely) via OWNER_USERNAME (default goosely).
+    try {
+        const userCols4 = database.pragma('table_info(users)').map(c => c.name);
+        if (!userCols4.includes('is_owner')) {
+            database.exec('ALTER TABLE users ADD COLUMN is_owner INTEGER DEFAULT 0');
+            console.log('[DB] Added is_owner column to users');
+        }
+        const ownerName = (process.env.OWNER_USERNAME || 'goosely').toLowerCase();
+        database.prepare("UPDATE users SET is_owner = 1, role = 'admin' WHERE LOWER(username) = ? AND is_owner != 1").run(ownerName);
+    } catch (e) { console.warn('[DB] users is_owner migration:', e.message); }
+
     // Backfill: Create a default managed stream for each streamer who has session history
     // but no managed streams yet. This preserves all existing data.
     try {

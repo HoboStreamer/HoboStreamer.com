@@ -12,6 +12,7 @@
  */
 const express = require('express');
 const { requireAuth, requireAdmin } = require('../auth/auth');
+const { requireOwner } = require('../auth/permissions');
 const hoboBucks = require('./hobo-bucks');
 const db = require('../db/database');
 
@@ -133,7 +134,7 @@ router.get('/goals/:userId', (req, res) => {
 });
 
 // ── Admin: Approve Cashout ───────────────────────────────────
-router.post('/cashout/:id/approve', requireAdmin, (req, res) => {
+router.post('/cashout/:id/approve', requireOwner, (req, res) => {
     try {
         hoboBucks.approveCashout(req.params.id);
         res.json({ message: 'Cashout approved' });
@@ -143,7 +144,7 @@ router.post('/cashout/:id/approve', requireAdmin, (req, res) => {
 });
 
 // ── Admin: Deny Cashout ──────────────────────────────────────
-router.post('/cashout/:id/deny', requireAdmin, (req, res) => {
+router.post('/cashout/:id/deny', requireOwner, (req, res) => {
     try {
         hoboBucks.denyCashout(req.params.id, req.body.reason);
         res.json({ message: 'Cashout denied, funds refunded' });
@@ -153,7 +154,7 @@ router.post('/cashout/:id/deny', requireAdmin, (req, res) => {
 });
 
 // ── Admin: Get Pending Cashouts ──────────────────────────────
-router.get('/cashouts/pending', requireAdmin, (req, res) => {
+router.get('/cashouts/pending', requireOwner, (req, res) => {
     const pending = db.all(`
         SELECT t.*, u.username, u.display_name, u.email
         FROM transactions t

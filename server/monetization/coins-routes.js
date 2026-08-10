@@ -16,6 +16,7 @@
  */
 const express = require('express');
 const { requireAuth, requireAdmin } = require('../auth/auth');
+const { requireOwner } = require('../auth/permissions');
 const hoboCoins = require('./hobo-coins');
 const db = require('../db/database');
 
@@ -284,7 +285,7 @@ router.post('/redemptions/:id', requireAuth, (req, res) => {
 });
 
 // ── Admin: Grant Coins ───────────────────────────────────────
-router.post('/admin/grant', requireAdmin, (req, res) => {
+router.post('/admin/grant', requireOwner, (req, res) => {
     try {
         const { userId, amount, reason } = req.body;
         if (!userId || !amount) return res.status(400).json({ error: 'userId and amount required' });

@@ -414,7 +414,8 @@ router.put('/vpn-queue/:id', (req, res) => {
 // ── Get All Settings ─────────────────────────────────────────
 router.get('/settings', (req, res) => {
     try {
-        const settings = db.getAllSettings();
+        // Non-owners get API keys / secrets / money settings redacted.
+        const settings = permissions.redactSettingsForUser(db.getAllSettings(), req.user);
         res.json({ settings });
     } catch (err) {
         console.error('[Admin] Settings error:', err.message);
@@ -508,12 +509,18 @@ router.put('/settings', (req, res) => {
         if (!settings || typeof settings !== 'object') {
             return res.status(400).json({ error: 'Invalid settings payload' });
         }
+        const owner = permissions.isOwner(req.user);
+        let blocked = 0;
         for (const [key, value] of Object.entries(settings)) {
-            if (typeof key === 'string' && key.length <= 100) {
-                db.setSetting(key, value);
-            }
+            if (typeof key !== 'string' || key.length > 100) continue;
+            // Only the owner may change API keys / secrets / money settings.
+            if (!owner && permissions.isSensitiveSettingKey(key)) { blocked++; continue; }
+            db.setSetting(key, value);
         }
-        res.json({ message: 'Settings updated', settings: db.getAllSettings() });
+        res.json({
+            message: blocked ? `Settings updated (${blocked} owner-only setting${blocked === 1 ? '' : 's'} skipped)` : 'Settings updated',
+            settings: permissions.redactSettingsForUser(db.getAllSettings(), req.user),
+        });
     } catch (err) {
         console.error('[Admin] Settings update error:', err.message);
         res.status(500).json({ error: 'Failed to update settings' });
@@ -527,6 +534,9 @@ router.put('/settings/:key', (req, res) => {
         if (value === undefined) {
             return res.status(400).json({ error: 'Value is required' });
         }
+        if (permissions.isSensitiveSettingKey(req.params.key) && !permissions.isOwner(req.user)) {
+            return res.status(403).json({ error: 'Only the owner can change API keys / money settings' });
+        }
         db.setSetting(req.params.key, value);
         res.json({ message: 'Setting updated', setting: db.getSettingRow(req.params.key) });
     } catch (err) {
@@ -537,6 +547,9 @@ router.put('/settings/:key', (req, res) => {
 // ── Delete Setting ───────────────────────────────────────────
 router.delete('/settings/:key', (req, res) => {
     try {
+        if (permissions.isSensitiveSettingKey(req.params.key) && !permissions.isOwner(req.user)) {
+            return res.status(403).json({ error: 'Only the owner can change API keys / money settings' });
+        }
         db.deleteSetting(req.params.key);
         res.json({ message: 'Setting deleted' });
     } catch (err) {
@@ -607,6 +620,56 @@ router.delete('/moderators/:id', (req, res) => {
         res.json({ message: `${user.username} demoted to user` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to demote moderator' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Admins (OWNER only — admins can add mods, but not other admins)
+// ═══════════════════════════════════════════════════════════════
+
+router.get('/admins', permissions.requireOwner, (req, res) => {
+    try {
+        const admins = db.all("SELECT id, username, display_name, avatar_url, is_owner FROM users WHERE role = 'admin' ORDER BY is_owner DESC, username ASC");
+        res.json({ admins });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to list admins' });
+    }
+});
+
+// ── Promote to Admin (owner only) ────────────────────────────
+router.post('/admins', permissions.requireOwner, (req, res) => {
+    try {
+        const { username } = req.body;
+        if (!username) return res.status(400).json({ error: 'Username is required' });
+        const user = db.getUserByUsername(username);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (user.role === 'admin') return res.status(400).json({ error: 'User is already an admin' });
+        db.run("UPDATE users SET role = 'admin' WHERE id = ?", [user.id]);
+        db.logModerationAction({
+            scope_type: 'site', actor_user_id: req.user.id, target_user_id: user.id,
+            action_type: 'admin_promote', details: { username: user.username },
+        });
+        res.json({ message: `${user.username} promoted to admin` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to promote user to admin' });
+    }
+});
+
+// ── Revoke Admin (owner only; cannot demote an owner) ────────
+router.delete('/admins/:id', permissions.requireOwner, (req, res) => {
+    try {
+        const user = db.getUserById(req.params.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (user.role !== 'admin') return res.status(400).json({ error: 'User is not an admin' });
+        if (user.is_owner) return res.status(400).json({ error: 'Cannot demote an owner' });
+        db.run("UPDATE users SET role = 'user' WHERE id = ?", [user.id]);
+        db.logModerationAction({
+            scope_type: 'site', actor_user_id: req.user.id, target_user_id: user.id,
+            action_type: 'admin_demote', details: { username: user.username },
+        });
+        res.json({ message: `${user.username} demoted from admin` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to demote admin' });
     }
 });
 

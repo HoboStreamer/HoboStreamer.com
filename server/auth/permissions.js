@@ -33,6 +33,43 @@ function isAdmin(user) {
     return user?.role === 'admin';
 }
 
+/**
+ * Owner = an admin with the local is_owner flag. Owners are the ONLY users who may
+ * view/change API keys, touch money/payment settings, or grant admin. Regular admins
+ * keep all moderation powers but are walled off from those. is_owner is a local column
+ * (not synced from SSO), so it's stable across logins.
+ */
+function isOwner(user) {
+    return !!(user && user.is_owner && (user.role === 'admin' || roleRank(user.role) >= ROLE_RANK.admin));
+}
+
+// Settings whose values are secrets or control money/AI spend — owner-only to view/edit.
+const SENSITIVE_KEY_RE = /(api[_-]?key|secret|token|password|client_id|client_secret|service_account|private[_-]?key)/i;
+const SENSITIVE_KEY_PREFIXES = ['ai_', 'stripe_', 'ccbill_', 'crypto_', 'tts_google_'];
+const SENSITIVE_KEY_EXACT = new Set(['youtube_api_key']);
+function isSensitiveSettingKey(key) {
+    if (!key) return false;
+    const k = String(key).toLowerCase();
+    if (SENSITIVE_KEY_EXACT.has(k)) return true;
+    if (SENSITIVE_KEY_RE.test(k)) return true;
+    return SENSITIVE_KEY_PREFIXES.some(p => k.startsWith(p));
+}
+/** Owners see real values; everyone else gets sensitive settings redacted/hidden. */
+function redactSettingsForUser(settings, user, { drop = false } = {}) {
+    if (isOwner(user)) return settings;
+    if (!Array.isArray(settings)) return settings;
+    const out = [];
+    for (const s of settings) {
+        if (isSensitiveSettingKey(s.key)) {
+            if (drop) continue;
+            out.push({ ...s, value: (s.value ? '••••••••' : ''), redacted: true });
+        } else {
+            out.push(s);
+        }
+    }
+    return out;
+}
+
 function isGlobalMod(user) {
     return user?.role === 'global_mod';
 }
@@ -119,11 +156,24 @@ function canManageSiteSettings(user) {
     return isAdmin(user);
 }
 
+/** Can this user view/change API keys + other secret settings? (owner only) */
+function canManageSecrets(user) {
+    return isOwner(user);
+}
+/** Can this user manage money — payments config, cashouts/payouts, funds? (owner only) */
+function canManageMoney(user) {
+    return isOwner(user);
+}
+/** Can this user grant/revoke the ADMIN role? (owner only) */
+function canGrantAdmin(user) {
+    return isOwner(user);
+}
+
 /**
- * Can this user review cashouts? (admin only)
+ * Can this user review cashouts? Cashouts move real money out — owner only.
  */
 function canReviewCashouts(user) {
-    return isAdmin(user);
+    return isOwner(user);
 }
 
 /**
@@ -253,6 +303,7 @@ function getCapabilities(user) {
     const ownedChannel = db.getChannelByUserId(user.id);
     const moderatedChannels = db.getChannelsByModerator(user.id) || [];
     const isStaffUser = isGlobalModOrAbove(user);
+    const owner = isOwner(user);
 
     return {
         admin_panel: canAccessAdminPanel(user),
@@ -272,6 +323,13 @@ function getCapabilities(user) {
         can_manage_channels: !!ownedChannel || moderatedChannels.length > 0 || isStaffUser,
         can_moderate_site_chat: isStaffUser,
         view_ip_info: isStaffUser,
+        // Owner-only powers (keys / money / granting admin).
+        is_owner: owner,
+        manage_secrets: canManageSecrets(user),
+        manage_money: canManageMoney(user),
+        grant_admin: canGrantAdmin(user),
+        // Staff badge tier for the UI: 'owner' | 'admin' | 'mod' | null.
+        staff_tier: owner ? 'owner' : (isAdmin(user) ? 'admin' : (isGlobalMod(user) ? 'mod' : null)),
         owned_channel_id: ownedChannel?.id || null,
         moderated_channel_ids: moderatedChannels.map(ch => ch.id),
     };
@@ -302,6 +360,14 @@ function requireGlobalMod(req, res, next) {
 /** Alias for requireGlobalMod — used by canvas and other systems. */
 const requireStaff = requireGlobalMod;
 
+/** Middleware: require the OWNER (keys / money / grant-admin). */
+function requireOwner(req, res, next) {
+    if (!isOwner(req.user)) {
+        return res.status(403).json({ error: 'Owner access required' });
+    }
+    next();
+}
+
 /**
  * Middleware: require streamer or above.
  */
@@ -315,10 +381,17 @@ function requireStreamer(req, res, next) {
 module.exports = {
     // Role checks
     isAdmin,
+    isOwner,
     isGlobalMod,
     isGlobalModOrAbove,
     isStaff,
     isStreamer,
+    isSensitiveSettingKey,
+    redactSettingsForUser,
+    canManageSecrets,
+    canManageMoney,
+    canGrantAdmin,
+    requireOwner,
     isChannelMod,
     isChannelOwner,
     isStreamOwner,

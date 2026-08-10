@@ -4756,11 +4756,15 @@ function chatLogsNext() {
 /* ── Helpers ──────────────────────────────────────────────────── */
 function getBadgeHTML(role) {
     switch (role) {
-        case 'admin': return '<span class="chat-badge chat-badge-admin" title="Admin"><i class="fa-solid fa-shield"></i></span>';
+        // Admin + Owner are Hobo Network staff — shown as "Staff · Admin".
+        case 'owner':
+        case 'admin': return '<span class="chat-badge chat-badge-staff chat-badge-admin" title="Hobo Network Staff — Admin"><i class="fa-solid fa-shield-halved"></i> Staff · Admin</span>';
+        // Global (network) mods — "Staff · Mod".
+        case 'global_mod': return '<span class="chat-badge chat-badge-staff chat-badge-mod" title="Hobo Network Staff — Mod"><i class="fa-solid fa-gavel"></i> Staff · Mod</span>';
         case 'streamer': return '<span class="chat-badge chat-badge-streamer" title="Streamer"><i class="fa-solid fa-broadcast-tower"></i></span>';
-        case 'global_mod':
+        // Channel moderator (per-channel, not network staff).
         case 'mod':
-        case 'moderator': return '<span class="chat-badge chat-badge-mod" title="Moderator"><i class="fa-solid fa-gavel"></i></span>';
+        case 'moderator': return '<span class="chat-badge chat-badge-mod" title="Channel Moderator"><i class="fa-solid fa-gavel"></i></span>';
         case 'subscriber': return '<span class="chat-badge chat-badge-sub" title="Subscriber"><i class="fa-solid fa-star"></i></span>';
         default: return '';
     }
