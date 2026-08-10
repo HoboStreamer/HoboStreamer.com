@@ -1722,8 +1722,8 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
 // Can the current user manage a channel's content (its owner, or any admin)?
 // Hobo Network staff badge for a user (admin/owner -> Staff · Admin, mod -> Staff · Mod).
 function _staffBadge(role, isOwner) {
-    if (role === 'admin' || isOwner) return '<span class="staff-badge staff-badge-admin" title="Hobo Network Staff — Admin"><i class="fa-solid fa-shield-halved"></i> Staff · Admin</span>';
-    if (role === 'global_mod') return '<span class="staff-badge staff-badge-mod" title="Hobo Network Staff — Mod"><i class="fa-solid fa-gavel"></i> Staff · Mod</span>';
+    if (role === 'admin' || isOwner) return '<span class="staff-badge staff-badge-admin" title="Hobo Network Staff — Admin"><i class="fa-solid fa-shield-halved"></i> Staff - Admin</span>';
+    if (role === 'global_mod') return '<span class="staff-badge staff-badge-mod" title="Hobo Network Staff — Mod"><i class="fa-solid fa-shield"></i> Staff - Mod</span>';
     return '';
 }
 

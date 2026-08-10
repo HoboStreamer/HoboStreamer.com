@@ -4770,18 +4770,18 @@ function chatLogsNext() {
 }
 
 /* ── Helpers ──────────────────────────────────────────────────── */
+// Role badges — icon-only chips with an animated hover tooltip (see .chat-badge CSS).
 function getBadgeHTML(role) {
     switch (role) {
-        // Admin + Owner are Hobo Network staff — shown as "Staff · Admin".
+        // Network staff. Admin + Owner both read "Staff - Admin".
         case 'owner':
-        case 'admin': return '<span class="chat-badge chat-badge-staff chat-badge-admin" title="Hobo Network Staff — Admin"><i class="fa-solid fa-shield-halved"></i> Staff · Admin</span>';
-        // Global (network) mods — "Staff · Mod".
-        case 'global_mod': return '<span class="chat-badge chat-badge-staff chat-badge-mod" title="Hobo Network Staff — Mod"><i class="fa-solid fa-gavel"></i> Staff · Mod</span>';
-        case 'streamer': return '<span class="chat-badge chat-badge-streamer" title="Streamer"><i class="fa-solid fa-broadcast-tower"></i></span>';
+        case 'admin': return '<span class="chat-badge chat-badge-admin" data-tip="Staff - Admin"><i class="fa-solid fa-shield-halved"></i></span>';
+        case 'global_mod': return '<span class="chat-badge chat-badge-mod" data-tip="Staff - Mod"><i class="fa-solid fa-shield"></i></span>';
+        case 'streamer': return '<span class="chat-badge chat-badge-streamer" data-tip="Streamer"><i class="fa-solid fa-tower-broadcast"></i></span>';
         // Channel moderator (per-channel, not network staff).
         case 'mod':
-        case 'moderator': return '<span class="chat-badge chat-badge-mod" title="Channel Moderator"><i class="fa-solid fa-gavel"></i></span>';
-        case 'subscriber': return '<span class="chat-badge chat-badge-sub" title="Subscriber"><i class="fa-solid fa-star"></i></span>';
+        case 'moderator': return '<span class="chat-badge chat-badge-cmod" data-tip="Moderator"><i class="fa-solid fa-gavel"></i></span>';
+        case 'subscriber': return '<span class="chat-badge chat-badge-sub" data-tip="Subscriber"><i class="fa-solid fa-star"></i></span>';
         default: return '';
     }
 }
@@ -6245,10 +6245,7 @@ function renderChatUsersList(users) {
         const avatar = u.avatar_url
             ? `<img src="${esc(u.avatar_url)}" class="chat-users-avatar" alt="" loading="lazy">`
             : `<div class="chat-users-avatar chat-users-avatar-default"><i class="fa-solid fa-user"></i></div>`;
-        const badge = u.role === 'admin' ? '<span class="chat-users-badge admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>'
-            : u.role === 'global_mod' ? '<span class="chat-users-badge mod" title="Moderator"><i class="fa-solid fa-shield"></i></span>'
-                : u.role === 'streamer' ? '<span class="chat-users-badge streamer" title="Streamer"><i class="fa-solid fa-video"></i></span>'
-                    : '';
+        const badge = getBadgeHTML(u.role);
         listHtml += `<div class="chat-users-row"><a href="/${esc(u.username)}" class="chat-users-link" onclick="event.preventDefault(); if(typeof showPage==='function') showPage('/${esc(u.username)}')">${avatar}<span class="chat-users-name">${esc(u.display_name)}</span>${badge}</a></div>`;
     }
     if (anonCount > 0) {
