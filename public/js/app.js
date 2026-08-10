@@ -2206,11 +2206,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             }
         }
 
-        // Fetch channel data and media in parallel — player init shouldn't wait for media strip
-        const [data, mediaData] = await Promise.all([
-            api(`/streams/channel/${username}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${channelVodOffset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${channelClipOffset}${initialVodExtra}`),
-            api(`/media/channel/${username}`).catch(() => null),
-        ]);
+        const data = await api(`/streams/channel/${username}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${channelVodOffset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${channelClipOffset}${initialVodExtra}`);
         const ch = data.channel;
         const streams = data.streams || (data.stream ? [data.stream] : []);
         const vods = data.vods || [];
@@ -2235,8 +2231,6 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         if (legacySessionId && !managedStreamRef) {
             preferredStreamId = legacySessionId;
         }
-
-        renderChannelMediaStrip(ch, mediaData);
 
         // Stable chat-room key for this channel (used by all initChat calls below).
         _activeChannelUserId = ch.user_id || null;
@@ -2610,46 +2604,6 @@ function formatDate(dateStr) {
     if (!dateStr) return '—';
     const d = new Date(dateStr);
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function renderChannelMediaStrip(channel, mediaData) {
-    const mountId = 'ch-media-request-strip';
-    let mount = document.getElementById(mountId);
-    if (!mount) {
-        mount = document.createElement('div');
-        mount.id = mountId;
-        mount.className = 'ch-media-strip';
-        // Mount as its own row after the info bar, not inside info-bar-text
-        const infoBar = document.getElementById('ch-info-bar');
-        if (infoBar) infoBar.insertAdjacentElement('afterend', mount);
-        // Offline clone
-        const offlineInfo = document.querySelector('#ch-offline-header .ch-offline-header-info');
-        if (offlineInfo && !offlineInfo.querySelector(`#${mountId}`)) {
-            const clone = mount.cloneNode(false);
-            clone.id = `${mountId}-offline`;
-            offlineInfo.appendChild(clone);
-        }
-    }
-
-    const queueCount = mediaData?.state?.queue?.length || 0;
-    const cost = mediaData?.state?.settings?.request_cost || 25;
-    const queueUrl = mediaData?.media_player_url || `/media/${channel.username}`;
-    const html = `
-        <div class="ch-media-strip-info">
-            <i class="fa-solid fa-headphones"></i>
-            <span><strong>!sr</strong> &lt;url&gt;</span>
-            <span class="ch-media-strip-sep">·</span>
-            <span>${cost} coins</span>
-            <span class="ch-media-strip-sep">·</span>
-            <span>${queueCount} queued</span>
-        </div>
-        <a href="${queueUrl}" target="_blank" rel="noopener" class="ch-media-strip-link">
-            <i class="fa-solid fa-up-right-from-square"></i> Open queue
-        </a>`;
-
-    mount.innerHTML = html;
-    const offlineMount = document.getElementById(`${mountId}-offline`);
-    if (offlineMount) offlineMount.innerHTML = html;
 }
 
 /**
