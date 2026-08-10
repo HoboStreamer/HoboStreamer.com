@@ -2797,7 +2797,9 @@ function addChatMessage(msg) {
     if (msg.timestamp) el.dataset.timestamp = msg.timestamp;
     // Attach source platform for relay user identification
     if (msg.source_platform) el.dataset.sourcePlatform = msg.source_platform;
-    if (msg.role === 'external') el.dataset.isRelay = '1';
+    // Live relay messages carry role 'external'; history-loaded ones don't (null
+    // user role), so also flag any known relay source_platform as a relay message.
+    if (msg.role === 'external' || isRelayPlatform(msg.source_platform)) el.dataset.isRelay = '1';
     if (msg.message_type === 'news') el.classList.add('news');
     if (msg.message_type === 'soundboard') el.classList.add('soundboard');
 
@@ -3820,8 +3822,10 @@ function showChatContextMenu(event) {
     // Extract message data from parent .chat-msg for reply support
     const msgEl = target.closest('.chat-msg');
     const msgId = msgEl?.dataset?.msgId || null;
-    const isRelay = msgEl?.dataset?.isRelay === '1';
     const sourcePlatform = msgEl?.dataset?.sourcePlatform || '';
+    // Fall back to source_platform so history-loaded relay messages (no 'external'
+    // role) are still recognised as relay and get the relay menu, not the generic one.
+    const isRelay = msgEl?.dataset?.isRelay === '1' || isRelayPlatform(sourcePlatform);
 
     const menu = document.createElement('div');
     menu.className = 'chat-context-menu';
@@ -4307,6 +4311,15 @@ function ctxDeleteRelayMessages(relayUsername) {
 /**
  * Parse a relay username like "[Twitch] foobar" into { platform, externalUsername }.
  */
+// A message is a relay (external-platform mirror) if it came from one of these
+// source platforms. Live relay messages also carry role 'external', but
+// history-loaded ones have a null user role, so source_platform is the reliable
+// signal for BOTH cases.
+function isRelayPlatform(p) {
+    p = (p || '').toLowerCase();
+    return p === 'rs' || p === 'twitch' || p === 'kick' || p === 'youtube';
+}
+
 function parseRelayUsername(prefixedUsername) {
     const match = prefixedUsername.match(/^\[(\w+)\]\s*(.+)$/);
     if (match) return { platform: match[1].toLowerCase(), externalUsername: match[2] };
