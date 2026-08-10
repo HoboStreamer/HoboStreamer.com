@@ -6089,8 +6089,8 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 }
 .ch-about-panel > a > img, .ch-about-panel > img { width: 100%; display: block; max-height: 240px; object-fit: cover; }
 .ch-about-panel-body { padding: 12px 14px; }
-.ch-about-panel-title { font-weight: 700; margin-bottom: 5px; }
-.ch-about-panel-text { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.ch-about-panel-title { font-weight: 700; margin:12px 12px 6px 12px; }
+.ch-about-panel-text { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; margin:6px 12px 14px 12px; }
 .ch-about-panel-text a { color: var(--accent); }
 .ch-about-panel-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.85rem; color: var(--accent); font-weight: 600; }
 .ch-panel-weather .ch-about-panel-title { padding: 12px 14px 0; }
