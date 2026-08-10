@@ -26,7 +26,10 @@ const CANDIDATE_BINS = [
 ].filter(Boolean);
 const MODEL = process.env.WHISPER_MODEL || path.join(HOME, 'whisper.cpp/models/ggml-base.en.bin');
 const THREADS = Math.max(2, Math.min(8, parseInt(process.env.WHISPER_THREADS, 10) || 4));
-const BEAM = Math.max(1, Math.min(8, parseInt(process.env.WHISPER_BEAM, 10) || 2));
+// Default to greedy decoding (whisper.cpp default) — proven to transcribe speech
+// reliably here. Beam search (WHISPER_BEAM>1) sometimes collapses real speech into a
+// non-speech tag like "[Crowd noise]", so it's opt-in only.
+const BEAM = Math.max(1, Math.min(8, parseInt(process.env.WHISPER_BEAM, 10) || 1));
 
 let _binCache;
 function whisperBin() {
@@ -86,7 +89,8 @@ function transcribeWavDetailed(wavPath, { timeoutMs = 180000, offsetSec = 0 } = 
         if (!bin || !available() || !wavPath || !fs.existsSync(wavPath)) return resolve({ text: '', segments: [] });
         const outBase = `${wavPath}.out`;
         const jsonPath = `${outBase}.json`;
-        const args = ['-m', MODEL, '-f', wavPath, '-oj', '-of', outBase, '-t', String(THREADS), '-l', 'en', '-bs', String(BEAM)];
+        const args = ['-m', MODEL, '-f', wavPath, '-oj', '-of', outBase, '-t', String(THREADS), '-l', 'en'];
+        if (BEAM > 1) args.push('-bs', String(BEAM));
         let ff;
         try { ff = spawn(bin, args, { stdio: 'ignore' }); }
         catch { return resolve({ text: '', segments: [] }); }

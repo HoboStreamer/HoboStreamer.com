@@ -270,10 +270,15 @@ async function generateVodTranscript(vod) {
     if (!vod) return null;
     if (!transcriptionEnabled()) return null;
     const src = await _mediaSource(vod);
-    if (!src) { try { db.setVodTranscript(vod.id, ' '); } catch { /* */ } return null; }
+    const existing = (vod.ai_transcript || '').trim();
+    if (!src) { try { if (!existing) db.setVodTranscript(vod.id, ' '); } catch { /* */ } return null; }
     let r = { text: '', segments: [] };
     try { r = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
-    try { db.setVodTranscript(vod.id, r.text || ' ', r.segments); } catch { /* */ }
+    try {
+        if (r.text) db.setVodTranscript(vod.id, r.text, r.segments || []);     // got speech → store it (+segments)
+        else if (!existing) db.setVodTranscript(vod.id, ' ');                  // nothing, and none before → mark tried
+        else db.setVodTranscript(vod.id, vod.ai_transcript, []);              // keep existing text, mark segments-checked
+    } catch { /* */ }
     return r.text;
 }
 
@@ -282,10 +287,15 @@ async function generateClipTranscript(clip) {
     if (!clip) return null;
     if (!transcriptionEnabled()) return null;
     const src = await _mediaSource(clip);
-    if (!src) { try { db.setClipTranscript(clip.id, ' '); } catch { /* */ } return null; }
+    const existing = (clip.ai_transcript || '').trim();
+    if (!src) { try { if (!existing) db.setClipTranscript(clip.id, ' '); } catch { /* */ } return null; }
     let r = { text: '', segments: [] };
     try { r = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
-    try { db.setClipTranscript(clip.id, r.text || ' ', r.segments); } catch { /* */ }
+    try {
+        if (r.text) db.setClipTranscript(clip.id, r.text, r.segments || []);
+        else if (!existing) db.setClipTranscript(clip.id, ' ');
+        else db.setClipTranscript(clip.id, clip.ai_transcript, []);           // keep existing text, mark segments-checked
+    } catch { /* */ }
     return r.text;
 }
 

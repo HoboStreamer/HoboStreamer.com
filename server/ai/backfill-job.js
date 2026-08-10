@@ -16,7 +16,11 @@ async function tick() {
     try {
         // Transcripts — FREE local whisper (no API/cost), so they run independent of
         // the AI master switch. Backfills existing VODs/clips that have no transcript.
-        if (ai.transcriptionEnabled && ai.transcriptionEnabled()) {
+        // Skipped while anything is live: heavy whisper would starve the live encoders
+        // (and live streams have their own real-time transcription anyway).
+        let anyLive = false;
+        try { anyLive = ((db.getLiveStreams && db.getLiveStreams()) || []).length > 0; } catch { /* */ }
+        if (!anyLive && ai.transcriptionEnabled && ai.transcriptionEnabled()) {
             try { for (const v of db.getVodsNeedingTranscript(1)) await ai.generateVodTranscript(v); }
             catch (e) { console.warn('[AI backfill] vod transcript:', e.message); }
             try { for (const c of db.getClipsNeedingTranscript(1)) await ai.generateClipTranscript(c); }

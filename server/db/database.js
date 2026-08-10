@@ -1970,8 +1970,8 @@ function setClipAiOverview(clipId, { overview = null, transcript = null, segment
     return run('UPDATE clips SET ai_overview = ?, ai_overview_short = ?, ai_transcript = ?, ai_transcript_json = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?', [overview, _shortOverview(overview), transcript, _segJson(segments), clipId]);
 }
 function _segJson(segments) {
-    try { return (Array.isArray(segments) && segments.length) ? JSON.stringify(segments.slice(0, 2000)) : null; }
-    catch { return null; }
+    if (!Array.isArray(segments)) return null;   // null = never attempted
+    try { return JSON.stringify(segments.slice(0, 2000)); } catch { return null; } // [] = attempted, none found
 }
 function setVodTranscript(vodId, transcript, segments) {
     return run('UPDATE vods SET ai_transcript = ?, ai_transcript_json = ? WHERE id = ?', [transcript || null, _segJson(segments), vodId]);
