@@ -409,21 +409,16 @@ router.post('/delete-message', (req, res) => {
 
         db.deleteChatMessage(parseInt(message_id), req.user.id);
 
-        // Broadcast deletion to connected clients
-        if (message.stream_id) {
-            chatServer.broadcastToStream(message.stream_id, {
-                type: 'delete-messages',
-                ids: [parseInt(message_id)],
-            });
-            chatServer.forwardToGlobal(message.stream_id, {
-                type: 'delete-messages',
-                ids: [parseInt(message_id)],
-            });
+        // Broadcast deletion to connected clients — reach the streamer's whole
+        // channel room (all slots + offline viewers), plus the global feed.
+        const delPayload = { type: 'delete-messages', ids: [parseInt(message_id)] };
+        const chanUid = message.channel_user_id || (message.stream_id ? (db.getStreamById(message.stream_id)?.user_id || null) : null);
+        if (chanUid || message.stream_id) {
+            chatServer.broadcastToChannelRoom(chanUid, message.stream_id, delPayload);
+            if (message.stream_id) chatServer.forwardToGlobal(message.stream_id, delPayload);
+            else chatServer.broadcastGlobal(delPayload);
         } else {
-            chatServer.broadcastGlobal({
-                type: 'delete-messages',
-                ids: [parseInt(message_id)],
-            });
+            chatServer.broadcastGlobal(delPayload);
         }
 
         db.logModerationAction({
@@ -474,7 +469,8 @@ router.post('/delete-user-messages', (req, res) => {
         if (ids.length > 0) {
             const deleteMsg = { type: 'delete-messages', ids };
             if (scopedStreamId) {
-                chatServer.broadcastToStream(scopedStreamId, deleteMsg);
+                const chanUid = db.getStreamById(scopedStreamId)?.user_id || null;
+                chatServer.broadcastToChannelRoom(chanUid, scopedStreamId, deleteMsg);
                 chatServer.forwardToGlobal(scopedStreamId, deleteMsg);
             } else {
                 // Global deletion — broadcast to every connected client

@@ -551,6 +551,46 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
     }
 });
 
+// Persistent per-streamer chat history keyed by the broadcaster's USER id — spans
+// every live slot AND offline periods (channel_user_id), so it works when the
+// streamer has no active session. Used by the channel page (online + offline).
+router.get('/channel/:userId/history', optionalAuth, (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        if (!userId) return res.status(400).json({ error: 'Bad user id' });
+        const limit = Math.min(parseInt(req.query.limit || '500'), 500);
+        const before = req.query.before;
+        const select = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
+                          u.username AS core_username,
+                          s.title AS source_stream_title, s.managed_stream_id AS source_managed_id,
+                          s.is_live AS source_is_live, ms.slug AS source_slug,
+                          bu.username AS source_channel`;
+        let sql = `${select}
+                   FROM chat_messages cm
+                   LEFT JOIN users u ON cm.user_id = u.id
+                   LEFT JOIN streams s ON cm.stream_id = s.id
+                   LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
+                   LEFT JOIN users bu ON s.user_id = bu.id
+                   WHERE cm.channel_user_id = ? AND cm.is_deleted = 0
+                     AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
+        const params = [userId];
+        if (before) { sql += ' AND cm.timestamp < ?'; params.push(before); }
+        sql += ' ORDER BY cm.timestamp DESC LIMIT ?'; params.push(limit);
+        const messages = enrichMessagesWithCosmetics(hydrateReplies(db.all(sql, params).reverse()));
+        let liveSlots = [], channel = null;
+        try {
+            const owner = db.getUserById(userId);
+            channel = owner ? owner.username : null;
+            liveSlots = (db.getManagedStreamsByUserId(userId) || [])
+                .filter(ms => ms.is_currently_live)
+                .map(ms => ({ managed_stream_id: ms.id, slug: ms.slug, title: ms.title, live_session_id: ms.live_session_id }));
+        } catch { /* non-critical */ }
+        res.json({ messages, liveSlots, channel, activeStreamId: null, activeManagedId: null });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get channel chat history' });
+    }
+});
+
 // ── Chat User Count ──────────────────────────────────────────
 router.get('/:streamId/users', (req, res) => {
     const chatServer = require('./chat-server');

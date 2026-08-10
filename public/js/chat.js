@@ -4,6 +4,7 @@
 
 let chatWs = null;
 let chatStreamId = null;
+let chatChannelUserId = null; // streamer's user id — stable room across slots + offline
 let chatRenderTargetId = null;
 
 function esc(str) {
@@ -2145,6 +2146,7 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
             try { await loadEmotes(streamId); } catch { /* non-fatal — history still renders */ }
         }
         if (streamId) await loadChatHistory(streamId);
+        else if (chatChannelUserId) await loadChannelChatHistory(chatChannelUserId);
         else await loadGlobalChatHistory();
     } catch {
         // History failed — just clear the skeleton and let chat continue live
@@ -2175,7 +2177,8 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
  * Initialize chat for a stream.
  * Idempotent — if already connected to the same stream, skip reconnection.
  */
-function initChat(streamId) {
+function initChat(streamId, channelUserId = null) {
+    chatChannelUserId = channelUserId || null;
     const nextTargetId = getChatRenderTargetId();
 
     // Already connected or actively connecting to this stream — nothing to do
@@ -2257,6 +2260,7 @@ function initChat(streamId) {
         ws.send(JSON.stringify({
             type: 'join',
             streamId: streamId,
+            channelUserId: chatChannelUserId || undefined,
             token: token || undefined
         }));
         ws._authToken = token || null;
@@ -2373,7 +2377,7 @@ function _reconnectChatWs(streamId) {
     ws.onopen = () => {
         if (chatWs !== ws) return;
         _chatIsReconnecting = false;
-        ws.send(JSON.stringify({ type: 'join', streamId, token: token || undefined }));
+        ws.send(JSON.stringify({ type: 'join', streamId, channelUserId: chatChannelUserId || undefined, token: token || undefined }));
         _chatReconnectDelay = CHAT_RECONNECT_BASE;
         addSystemMessage('Reconnected to chat');
     };
@@ -3688,6 +3692,22 @@ async function loadChatHistory(streamId) {
     if (!streamId) return; // Use loadGlobalChatHistory() for global
     try {
         const data = await api(`/chat/${streamId}/history?limit=500`);
+        _renderChatHistoryData(data);
+    } catch { /* silent */ }
+}
+
+// Persistent per-streamer history by broadcaster user id — works offline + across
+// slots (backed by channel_user_id). Used on channel pages.
+async function loadChannelChatHistory(userId) {
+    if (!userId) return;
+    try {
+        const data = await api(`/chat/channel/${userId}/history?limit=500`);
+        _renderChatHistoryData(data);
+    } catch { /* silent */ }
+}
+
+function _renderChatHistoryData(data) {
+    {
         const msgs = data.messages || [];
         chatLiveSlots = data.liveSlots || [];
         chatCurrentManagedId = data.activeManagedId != null ? data.activeManagedId : chatCurrentManagedId;
@@ -3726,7 +3746,7 @@ async function loadChatHistory(streamId) {
                 source_channel: m.source_channel,
             });
         });
-    } catch { /* silent */ }
+    }
 }
 
 // Navigate to another of the streamer's live slots (from an origin badge or hop bar).

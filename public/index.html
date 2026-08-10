@@ -884,15 +884,12 @@
                     </button>
                 </div>
             </div>
-            <div class="ch-offline-banner">
-                <i class="fa-solid fa-campground fa-3x"></i>
-                <p>Channel is offline</p>
-                <p class="muted">Check back later!</p>
-            </div>
-            <!-- Global chat shown when offline -->
+            <!-- Customizable offline screen (image / video / custom HTML) — filled by JS -->
+            <div class="ch-offline-screen" id="ch-offline-screen"></div>
+            <!-- Streamer's persistent chat (works while offline) -->
             <div class="offline-global-chat" id="offline-global-chat">
                 <div class="chat-header">
-                    <span><i class="fa-solid fa-globe"></i> GLOBAL CHAT</span>
+                    <span><i class="fa-solid fa-comments"></i> STREAM CHAT</span>
                     <div class="chat-header-actions">
                         <button class="chat-settings-btn" onclick="toggleChatUsers(this)" title="Users">
                             <i class="fa-solid fa-users"></i>
@@ -4580,11 +4577,11 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=1" defer></script>
-<script src="/js/app.js?v=45"></script>
+<script src="/js/app.js?v=46"></script>
 <script src="/js/stream-player.js?v=9"></script>
 <script src="/js/emotes.js?v=8"></script>
 <script src="/js/gif-picker.js?v=1"></script>
-<script src="/js/chat.js?v=38"></script>
+<script src="/js/chat.js?v=39"></script>
 <script src="/js/chat-autocomplete.js?v=1"></script>
 <script src="/js/channel-uploads.js?v=6"></script>
 <script src="/js/controls.js?v=3"></script>

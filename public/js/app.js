@@ -1603,6 +1603,7 @@ function stopHomeRefresh() {
 /* ── Channel Page (/:username) ────────────────────────────────── */
 let currentChannelUsername = null;
 let _activeChannelIsOwnerRank = false; // is the current channel's user owner-rank?
+let _activeChannelUserId = null;       // streamer's user id — the stable chat room key
 const VODS_PAGE_SIZE = 24;
 const CHANNEL_VODS_PAGE_SIZE = 12;
 const CLIPS_PAGE_SIZE = 24;
@@ -2237,6 +2238,9 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
 
         renderChannelMediaStrip(ch, mediaData);
 
+        // Stable chat-room key for this channel (used by all initChat calls below).
+        _activeChannelUserId = ch.user_id || null;
+
         // Reset the channel tabs to Videos on (re)load + render the About tab.
         _resetChannelTabs();
         _renderChannelAbout(ch);
@@ -2361,9 +2365,9 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             setupFollowBtn(document.getElementById('ch-btn-follow-offline'));
             setupBanBtn(document.getElementById('ch-btn-ban-offline'));
 
-            // Show global chat on offline channel pages
-            initChat(null);
-            loadGlobalChatHistory();
+            // Offline: join the streamer's PERSISTENT chat room (not global) so
+            // viewers can keep chatting + see history while the streamer is offline.
+            initChat(null, ch.user_id);
 
             // Hide stream tabs on offline channels
             const tabsC = document.getElementById('live-stream-tabs');
@@ -3265,7 +3269,7 @@ function activateChannelStream(stream) {
             console.error('[Player] init failed', e);
         }
     }
-    if (typeof initChat === 'function') initChat(stream.id);
+    if (typeof initChat === 'function') initChat(stream.id, stream.user_id || _activeChannelUserId);
     if (typeof loadStreamControls === 'function') loadStreamControls(stream.id);
     if (typeof startCoinHeartbeat === 'function') startCoinHeartbeat(stream.id);
     if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(stream.user_id);
@@ -3503,7 +3507,7 @@ async function openStream(streamId) {
         document.getElementById('follower-count').textContent = `${s.follower_count || 0} followers`;
 
         if (typeof initPlayer === 'function') initPlayer(s);
-        if (typeof initChat === 'function') initChat(streamId);
+        if (typeof initChat === 'function') initChat(streamId, s.user_id || _activeChannelUserId);
         if (typeof loadStreamControls === 'function') loadStreamControls(streamId);
         if (typeof startCoinHeartbeat === 'function') startCoinHeartbeat(streamId);
         if (typeof updateChannelPointsNav === 'function') updateChannelPointsNav(s.user_id);

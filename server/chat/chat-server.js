@@ -393,6 +393,15 @@ class ChatServer {
                 }
                 const oldStream = client.streamId;
                 client.streamId = parseInt(msg.streamId || msg.stream_id) || null;
+                // Channel room: the streamer's stable user id. Lets a viewer stay in
+                // the SAME chat room across live-slot switches AND while the streamer
+                // is offline. Prefer an explicit channelUserId from the client; else
+                // derive it from the live stream's owner.
+                let channelUserId = parseInt(msg.channelUserId || msg.channel_user_id) || null;
+                if (!channelUserId && client.streamId) {
+                    try { const s = db.getStreamById(client.streamId); if (s) channelUserId = s.user_id; } catch { /* ignore */ }
+                }
+                client.channelUserId = channelUserId;
                 // Update viewer counts for old and new streams
                 if (oldStream !== client.streamId) {
                     if (oldStream) this.broadcastUserCount(oldStream);
@@ -753,7 +762,8 @@ class ChatServer {
             role,
             message: text,
             stream_id: client.streamId,
-            is_global: !client.streamId,
+            channel_user_id: client.channelUserId || null,
+            is_global: !client.streamId && !client.channelUserId,
             avatar_url: client.user?.avatar_url || null,
             profile_color: client.user?.profile_color || '#999',
             filtered: false,
@@ -786,12 +796,13 @@ class ChatServer {
         try {
             const result = db.saveChatMessage({
                 stream_id: client.streamId || null,
+                channel_user_id: client.channelUserId || null,
                 user_id: client.user?.id,
                 anon_id: client.anonId,
                 username,
                 message: text,
                 message_type: 'chat',
-                is_global: !client.streamId,
+                is_global: !client.streamId && !client.channelUserId,
                 reply_to_id: replyToId,
                 auto_delete_at: autoDeleteAt,
             });
@@ -838,13 +849,17 @@ class ChatServer {
         }
 
         // Broadcast to appropriate audience
+        if (client.streamId || client.channelUserId) {
+            // Deliver to the streamer's whole channel room (every live slot + offline
+            // viewers) plus the specific stream room. This subsumes cross-slot
+            // forwarding so a viewer isn't interrupted when the streamer switches
+            // slots or briefly drops offline.
+            this.broadcastToChannelRoom(client.channelUserId, client.streamId, chatMsg);
+            // Surface on the homepage global feed (tagged with the channel).
+            if (client.streamId) this.forwardToGlobal(client.streamId, chatMsg);
+            else this.forwardToGlobalByChannel(client.channelUserId, chatMsg);
+        }
         if (client.streamId) {
-            // Stream-specific chat
-            this.broadcastToStream(client.streamId, chatMsg);
-            // Also forward to global chat clients so the global feed sees all activity
-            this.forwardToGlobal(client.streamId, chatMsg);
-            // And to viewers of the streamer's other live slots (cross-slot chat)
-            this.forwardToStreamerRooms(client.streamId, chatMsg);
 
             // Trigger server-side TTS synthesis (async, non-blocking).
             // identityKey uses the immutable login handle (or anon id) so the
@@ -871,8 +886,9 @@ class ChatServer {
                     userId: client.user?.id || null,
                 });
             } catch { /* non-critical */ }
-        } else {
-            // Global chat
+        } else if (!client.channelUserId) {
+            // Pure global chat (homepage) — offline channel messages were already
+            // delivered to the channel room above.
             this.broadcastGlobal(chatMsg);
         }
     }
@@ -1792,6 +1808,40 @@ class ChatServer {
         for (const [ws, client] of this.clients) {
             if (client.streamId === streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
                 ws.send(msg);
+            }
+        }
+    }
+
+    /**
+     * Deliver to a streamer's whole channel room: any client in that streamer's
+     * channel (`channelUserId`, stable across slots + offline) OR in the specific
+     * live-session stream room (`streamId`, for backward-compat with clients that
+     * joined before channel rooms existed). Deduped per connection.
+     */
+    broadcastToChannelRoom(channelUserId, streamId, data) {
+        const msg = JSON.stringify(data);
+        for (const [ws, client] of this.clients) {
+            if (ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > MAX_SEND_BACKPRESSURE) continue;
+            const inChannel = channelUserId && client.channelUserId === channelUserId;
+            const inStream = streamId && client.streamId === streamId;
+            if (inChannel || inStream) ws.send(msg);
+        }
+    }
+
+    /**
+     * Forward an OFFLINE channel message to the homepage global feed, tagged with
+     * the channel username (parallels forwardToGlobal but keyed by user id since
+     * there's no live session id to resolve).
+     */
+    forwardToGlobalByChannel(channelUserId, data) {
+        if (!channelUserId) return;
+        let username = null;
+        try { username = db.getUserById(channelUserId)?.username; } catch { /* ignore */ }
+        if (!username) return;
+        const globalMsg = JSON.stringify({ ...data, stream_channel: username, source_channel: username });
+        for (const [ws, client] of this.clients) {
+            if (!client.streamId && !client.channelUserId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+                ws.send(globalMsg);
             }
         }
     }

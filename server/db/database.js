@@ -1316,6 +1316,20 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] chat_messages auto_delete_at migration:', e.message); }
 
+    // Migrate: add channel_user_id to chat_messages — the broadcaster's user id, so
+    // a streamer's chat is one persistent room across live slots AND offline periods
+    // (history no longer depends on the live-session stream row surviving). Backfill
+    // existing rows from their stream's owner.
+    try {
+        const cols = database.pragma('table_info(chat_messages)').map(c => c.name);
+        if (!cols.includes('channel_user_id')) {
+            database.exec("ALTER TABLE chat_messages ADD COLUMN channel_user_id INTEGER");
+            database.exec("UPDATE chat_messages SET channel_user_id = (SELECT s.user_id FROM streams s WHERE s.id = chat_messages.stream_id) WHERE stream_id IS NOT NULL AND channel_user_id IS NULL");
+            database.exec("CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_user ON chat_messages(channel_user_id, created_at)");
+            console.log('[DB] Added channel_user_id to chat_messages + backfilled');
+        }
+    } catch (e) { console.warn('[DB] chat_messages channel_user_id migration:', e.message); }
+
     // Migrate: add force_nsfw column to channels (admin-set, overrides user toggle)
     try {
         const cols = database.pragma('table_info(channels)').map(c => c.name);
@@ -2754,11 +2768,16 @@ function deletePlatformConnection(userId, platform) {
 
 // ── Chat helpers ─────────────────────────────────────────────
 
-function saveChatMessage({ stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at }) {
+function saveChatMessage({ stream_id, channel_user_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at }) {
+    // channel_user_id = the broadcaster's user id — set for all channel/stream
+    // messages so a streamer's chat history survives across sessions AND offline
+    // periods (independent of the live-session stream row's lifetime).
+    let chanUid = channel_user_id || null;
+    if (!chanUid && stream_id) { try { chanUid = getStreamById(stream_id)?.user_id || null; } catch { /* ignore */ } }
     return run(
-        `INSERT INTO chat_messages (stream_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [stream_id, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null, source_platform || null, auto_delete_at || null]
+        `INSERT INTO chat_messages (stream_id, channel_user_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, chanUid, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null, source_platform || null, auto_delete_at || null]
     );
 }
 
