@@ -5576,22 +5576,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
     /* Mobile chat is open — no scrim over video, keep it visible */
 
-    /* Offline global chat responsive */
-    .offline-global-chat { height: 50vh; max-height: 350px; margin: 16px 12px; }
-    /* Offline global chat as mobile bottom sheet */
-    .offline-global-chat.mobile-chat-open {
-        position: fixed;
-        left: 0; right: 0; bottom: 0;
-        width: 100%; height: 55vh;
-        max-height: 55vh;
-        max-height: 55dvh;
-        margin: 0;
-        border-top: 1px solid var(--border);
-        background: var(--bg-secondary);
-        z-index: 900;
-        border-radius: 16px 16px 0 0;
-        box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
-    }
+    /* Offline chat inherits the .chat-sidebar mobile bottom-sheet behavior (same as live). */
 
     /* Emote picker full-width on mobile */
     .emote-picker { max-height: 260px; }
@@ -5680,9 +5665,6 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     /* Control buttons compact on small phones */
     .control-btn { min-width: 50px; padding: 8px 10px; font-size: 0.75rem; }
     .control-btn i { font-size: 1rem; }
-
-    /* Offline global chat tighter on small screens */
-    .offline-global-chat { height: 45vh; margin: 12px 8px; }
 
     /* Context menu fits small screens */
     .chat-context-menu {
@@ -6307,6 +6289,10 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 
 /* ── Offline Area ────────────────────────────────────────── */
 .ch-offline-area { padding: 0; }
+/* Offline area reuses .stream-layout (main + chat sidebar). The offline screen fills
+   the main column with small gutters; the header sits above it, mirroring the live page. */
+.ch-offline-area .stream-main { padding-bottom: 14px; }
+.ch-offline-area .ch-offline-screen { margin: 14px; width: auto; flex-shrink: 0; }
 .ch-offline-header {
     display: flex; align-items: center; gap: 20px;
     padding: 24px; background: var(--bg-card); border-bottom: 1px solid var(--border);
@@ -6328,11 +6314,10 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .ch-offline-banner p { margin: 4px 0; }
 
 /* ── Offline Global Chat ─────────────────────────────────── */
-.offline-global-chat {
-    max-width: 700px; margin: 24px auto; border: 1px solid var(--border);
-    border-radius: var(--radius); background: var(--bg-secondary);
-    display: flex; flex-direction: column; height: 400px;
-}
+/* The offline chat now carries the shared .chat-sidebar class and lives beside the
+   offline screen inside a .stream-layout, so width/height/position are governed by
+   .chat-sidebar (identical to the live layout). Only inner styling remains here. */
+.offline-global-chat { background: var(--bg-secondary); }
 .offline-global-chat .chat-header { padding: 10px 16px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 0.85rem; letter-spacing: 0.05em; color: var(--text-muted); }
 .offline-global-chat .chat-messages { flex: 1; overflow-y: auto; padding: 8px; overscroll-behavior-y: contain; touch-action: pan-y; scrollbar-gutter: stable; }
 .offline-global-chat .chat-input-area { border-top: 1px solid var(--border); }
