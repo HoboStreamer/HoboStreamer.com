@@ -219,6 +219,11 @@
                     <label class="cu-set-row"><span>Max sound length (s)</span><input type="number" id="cu-set-maxsec" min="1" max="30" value="${num(s.max_sound_seconds, 10)}"></label>
                 </div>
                 <div class="cu-set-group">
+                    <div class="cu-set-group-title">About / Panels</div>
+                    <label class="cu-set-row"><span>Let my mods edit my About section &amp; panels</span><input type="checkbox" id="cu-set-mods-about" ${chk(s.mods_can_edit_about, 0)}></label>
+                    <div class="cu-hint">Off by default. When on, your channel moderators get the pencil edit button on your About tab and can update your bio &amp; panels for you.</div>
+                </div>
+                <div class="cu-set-group">
                     <div class="cu-set-group-title">Channel Points</div>
                     <label class="cu-set-row"><span>Name</span><input type="text" id="cu-cp-name" maxlength="32" value="${ev(cp.name || 'Channel Points')}"></label>
                     <label class="cu-set-row"><span>Icon (Font Awesome, e.g. fa-coins)</span><input type="text" id="cu-cp-icon" value="${ev(cp.icon || 'fa-coins')}"></label>
@@ -263,6 +268,7 @@
             custom_sounds_enabled: g('#cu-set-sounds').checked,
             sounds_mods_only: g('#cu-set-sounds-modsonly').checked,
             max_sound_seconds: parseInt(g('#cu-set-maxsec').value) || 10,
+            mods_can_edit_about: g('#cu-set-mods-about').checked,
         };
         const btn = g('#cu-set-save');
         btn.disabled = true;

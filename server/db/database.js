@@ -975,6 +975,8 @@ function initDb() {
         if (!cols.includes('emote_size_max')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN emote_size_max INTEGER DEFAULT 200');
         // Sounds-only "mods can upload" flag (independent of the emote uploads_mods_only).
         if (!cols.includes('sounds_mods_only')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN sounds_mods_only INTEGER DEFAULT 0');
+        // Allow channel mods to edit the streamer's About/panels (off by default).
+        if (!cols.includes('mods_can_edit_about')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN mods_can_edit_about INTEGER DEFAULT 0');
     } catch (e) { console.warn('[DB] channel_moderation_settings columns migration:', e.message); }
 
     // Migrate: add channel_owner_id to emotes (viewer uploads targeting a channel) + channel_sounds table
@@ -2511,6 +2513,12 @@ function updateChannel(userId, fields) {
     updates.push('updated_at = CURRENT_TIMESTAMP');
     params.push(userId);
     return run(`UPDATE channels SET ${updates.join(', ')} WHERE user_id = ?`, params);
+}
+
+// Set a user's bio (profile blurb). Used by the About-tab editor, including mods
+// editing a streamer's About when the streamer has allowed it.
+function setUserBio(userId, bio) {
+    return run('UPDATE users SET bio = ? WHERE id = ?', [String(bio == null ? '' : bio).slice(0, 500), userId]);
 }
 
 function ensureChannel(userId) {
@@ -4308,6 +4316,7 @@ function getChannelModerationSettings(channelId) {
             custom_sounds_enabled: 1,
             max_sound_seconds: 10,
             uploads_mods_only: 0,
+            mods_can_edit_about: 0,
             emote_scale: 100,
             emote_size_min: 50,
             emote_size_max: 200,
@@ -4351,6 +4360,7 @@ function upsertChannelModerationSettings(channelId, fields) {
         if (fields.custom_sounds_enabled !== undefined) { updates.push('custom_sounds_enabled = ?'); params.push(fields.custom_sounds_enabled ? 1 : 0); }
         if (fields.max_sound_seconds !== undefined) { updates.push('max_sound_seconds = ?'); params.push(Math.min(30, Math.max(1, Number(fields.max_sound_seconds) || 10))); }
         if (fields.uploads_mods_only !== undefined) { updates.push('uploads_mods_only = ?'); params.push(fields.uploads_mods_only ? 1 : 0); }
+        if (fields.mods_can_edit_about !== undefined) { updates.push('mods_can_edit_about = ?'); params.push(fields.mods_can_edit_about ? 1 : 0); }
         if (fields.emote_scale !== undefined) { updates.push('emote_scale = ?'); params.push(Math.min(300, Math.max(50, Number(fields.emote_scale) || 100))); }
         if (fields.emote_size_min !== undefined) { updates.push('emote_size_min = ?'); params.push(Math.min(200, Math.max(25, Number(fields.emote_size_min) || 50))); }
         if (fields.emote_size_max !== undefined) { updates.push('emote_size_max = ?'); params.push(Math.min(400, Math.max(50, Number(fields.emote_size_max) || 200))); }
@@ -4374,8 +4384,8 @@ function upsertChannelModerationSettings(channelId, fields) {
                 ip_approval_mode, soundboard_enabled, soundboard_allow_pitch, soundboard_allow_speed, soundboard_banned_ids,
                 viewer_auto_delete_enabled, viewer_delete_all_enabled,
                 custom_emotes_enabled, custom_sounds_enabled, max_sound_seconds, uploads_mods_only, emote_scale,
-                emote_size_min, emote_size_max, sounds_mods_only
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+                emote_size_min, emote_size_max, sounds_mods_only, mods_can_edit_about
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
             [
                 channelId,
                 fields.slow_mode_seconds || 0,
@@ -4409,6 +4419,7 @@ function upsertChannelModerationSettings(channelId, fields) {
                 Math.min(200, Math.max(25, Number(fields.emote_size_min) || 50)),
                 Math.min(400, Math.max(50, Number(fields.emote_size_max) || 200)),
                 fields.sounds_mods_only ? 1 : 0,
+                fields.mods_can_edit_about ? 1 : 0,
             ]
         );
     }
@@ -5539,7 +5550,7 @@ module.exports = {
     getClipsOfUserStreamsPaginated, countClipsOfUserStreams,
     getClipsByUserPaginated,
     // Channels
-    getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel,
+    getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel, setUserBio,
     getChannelPointsConfig, setChannelPointsConfig,
     getChannelVodRecordingPolicyByUserId, resolveStreamVodVisibility, resolveStreamClipVisibility, isStreamClipRecordingEnabled,
     // RobotStreamer integration

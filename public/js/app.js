@@ -3298,13 +3298,15 @@ function _resetChannelTabs(ch) {
         try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
         hasAbout = !!bio || (Array.isArray(panels) && panels.length > 0);
     }
-    // The streamer always sees their own About tab (so they can set it up), even
-    // when it's empty + hidden for everyone else.
-    const isOwn = !!(currentUser && ch && ch.username && currentUser.username &&
-        currentUser.username.toLowerCase() === String(ch.username).toLowerCase());
-    const showAbout = hasAbout || isOwn;
+    // Anyone who can edit (the streamer, or a mod the streamer allowed) always sees
+    // the About tab — even when empty + hidden for everyone else — so they can set it up.
+    const canEdit = !!(ch && ch.viewer_can_edit_about);
+    const showAbout = hasAbout || canEdit;
     const aboutBtn = document.getElementById('ch-tab-btn-about');
     if (aboutBtn) aboutBtn.style.display = showAbout ? '' : 'none';
+    // Pencil edit button on the About tab — only for people who can edit.
+    const aboutEditBtn = document.getElementById('ch-tab-about-edit');
+    if (aboutEditBtn) aboutEditBtn.style.display = canEdit ? '' : 'none';
     // Default to About only when it actually has content; otherwise Videos.
     const defTab = hasAbout ? 'about' : 'videos';
     switchChannelTab(defTab, document.querySelector(`#ch-tabs .ch-tab[data-tab="${defTab}"]`));
@@ -3321,7 +3323,8 @@ function _resetChannelTabs(ch) {
 /* ── About tab: inline live panel editor (Twitch/Kick-style under-stream area) ── */
 let _aboutPanels = [];        // working array of panels
 let _aboutBio = '';
-let _aboutIsOwner = false;    // is the viewer the streamer (can edit)?
+let _aboutIsOwner = false;    // is the viewer the streamer?
+let _aboutCanEdit = false;    // can the viewer edit (streamer, or an allowed mod)?
 let _aboutEditMode = false;
 const ABOUT_WIDTHS = ['sm', 'md', 'lg', 'full'];
 
@@ -3342,6 +3345,8 @@ function _renderChannelAbout(ch) {
     if (!host || !ch) return;
     _aboutIsOwner = !!(currentUser && ch.username && currentUser.username &&
         currentUser.username.toLowerCase() === String(ch.username).toLowerCase());
+    // The server decides who can edit (owner always; mods only when the streamer opted in).
+    _aboutCanEdit = !!ch.viewer_can_edit_about || _aboutIsOwner;
     _aboutBio = (ch.bio || ch.description || '').trim();
     let panels = [];
     try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
@@ -3355,12 +3360,9 @@ function _renderAboutView() {
     if (!host) return;
     const hasContent = _aboutBio || _aboutPanels.length;
     let html = '';
-    if (_aboutIsOwner) {
-        html += `<div class="ch-about-toolbar"><button class="btn btn-sm btn-primary" onclick="toggleAboutEdit()"><i class="fa-solid fa-pen"></i> Edit About</button></div>`;
-    }
     if (!hasContent) {
-        html += _aboutIsOwner
-            ? `<div class="ch-about-empty"><i class="fa-solid fa-address-card" style="font-size:2rem;opacity:0.5"></i><p style="font-size:1.05rem;font-weight:600;margin-top:8px">Your About section is empty</p><p class="muted">Click <b>Edit About</b> to add a bio, info panels (links, images), and a weather panel — this is your under-stream area viewers see.</p></div>`
+        html += _aboutCanEdit
+            ? `<div class="ch-about-empty"><i class="fa-solid fa-address-card" style="font-size:2rem;opacity:0.5"></i><p style="font-size:1.05rem;font-weight:600;margin-top:8px">${_aboutIsOwner ? 'Your' : 'This'} About section is empty</p><p class="muted">Click the <i class="fa-solid fa-pen"></i> pencil on the <b>About</b> tab to add a bio, info panels (links, images), and a weather panel — this is the under-stream area viewers see.</p><button class="btn btn-sm btn-primary" onclick="editAboutFromTab()"><i class="fa-solid fa-pen"></i> Set up About</button></div>`
             : `<div class="ch-about-empty">This streamer hasn't set up an About section yet.</div>`;
         host.innerHTML = html;
         return;
@@ -3468,7 +3470,15 @@ async function submitMediaRequest(e) {
 }
 
 // ── Edit mode ────────────────────────────────────────────────
+// Entered from the pencil button on the About tab: switch to About and open the editor.
+function editAboutFromTab() {
+    if (!_aboutCanEdit) return;
+    const btn = document.getElementById('ch-tab-btn-about');
+    switchChannelTab('about', btn);
+    if (!_aboutEditMode) toggleAboutEdit();
+}
 function toggleAboutEdit() {
+    if (!_aboutCanEdit) return;
     _aboutEditMode = !_aboutEditMode;
     if (_aboutEditMode) _renderAboutEdit(); else _renderAboutView();
 }
@@ -3543,9 +3553,12 @@ async function uploadAboutPanelImage(i, input) {
 }
 async function saveAboutInline() {
     try {
-        await api('/auth/profile', { method: 'PUT', body: { bio: _aboutBio } });
-        await api('/streams/channel', { method: 'PUT', body: { panels: JSON.stringify(_aboutPanels) } });
-        if (currentUser) currentUser.bio = _aboutBio;
+        // Targets the channel by username, so an allowed mod writes to the STREAMER's
+        // channel (not their own). Server enforces the edit permission.
+        await api(`/streams/channel/${encodeURIComponent(currentChannelUsername)}/about`, {
+            method: 'PUT', body: { bio: _aboutBio, panels: JSON.stringify(_aboutPanels) },
+        });
+        if (_aboutIsOwner && currentUser) currentUser.bio = _aboutBio;
         _aboutEditMode = false;
         _renderAboutView();
         toast('About saved', 'success');

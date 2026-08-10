@@ -6063,6 +6063,15 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     content: ''; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2.5px;
     background: var(--accent); border-radius: 2px;
 }
+/* Pencil edit affordance riding on the About tab (streamer + allowed mods only). */
+.ch-tab-edit {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; margin-left: 2px; border-radius: 5px;
+    color: var(--text-muted); background: color-mix(in srgb, var(--accent) 14%, transparent);
+    cursor: pointer; transition: color 0.15s ease, background 0.15s ease;
+}
+.ch-tab-edit:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.ch-tab-edit i { font-size: 0.72rem; opacity: 1; }
 .ch-tab-panel { display: none; }
 .ch-tab-panel.active { display: block; animation: chTabFade 0.2s ease; }
 @keyframes chTabFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }

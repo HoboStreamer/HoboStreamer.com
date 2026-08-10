@@ -430,6 +430,14 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         // Whether the weather widget is on (without leaking the zip) — used by the
         // client to decide if the About tab should show.
         publicChannel.weather_enabled = !!(channel.weather_zip && channel.weather_detail && channel.weather_detail !== 'off');
+        // About-tab edit permission: the owner always can; channel mods can only when
+        // the streamer has opted in (mods_can_edit_about). Surfaced so the client can
+        // show the pencil edit button to the right people.
+        let modsCanEditAbout = false;
+        try { modsCanEditAbout = !!(db.getChannelModerationSettings(channel.id) || {}).mods_can_edit_about; } catch { /* default off */ }
+        const viewerIsChannelMod = !!(req.user && db.isChannelModerator(req.user.id, channel.id));
+        publicChannel.mods_can_edit_about = modsCanEditAbout;
+        publicChannel.viewer_can_edit_about = !!(isOwner || (modsCanEditAbout && viewerIsChannelMod));
         delete publicChannel.weather_zip;
         delete publicChannel.stream_key;
         delete publicChannel.vod_recording_enabled;
@@ -591,6 +599,43 @@ router.put('/channel', requireAuth, (req, res) => {
         // (falls through to the shared handler below)
         console.error('[Channel] update error:', err.message);
         return res.status(500).json({ error: 'Failed to update channel' });
+    }
+});
+
+// ── Save a channel's About section (bio + panels) ────────────
+// Editable by the channel owner, and by channel moderators when the streamer has
+// enabled `mods_can_edit_about`. Targets the channel by username so a mod writes
+// to the STREAMER's channel, not their own.
+router.put('/channel/:username/about', requireAuth, (req, res) => {
+    try {
+        const channel = db.getChannelByUsername(req.params.username);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+        const isOwner = req.user.id === channel.user_id;
+        let modsCanEditAbout = false;
+        try { modsCanEditAbout = !!(db.getChannelModerationSettings(channel.id) || {}).mods_can_edit_about; } catch { /* off */ }
+        const isChannelMod = db.isChannelModerator(req.user.id, channel.id);
+        if (!isOwner && !(modsCanEditAbout && isChannelMod)) {
+            return res.status(403).json({ error: 'You do not have permission to edit this About section' });
+        }
+
+        // Bio (stored on the streamer's user profile)
+        if (hasOwn(req.body, 'bio')) {
+            const bio = String(req.body.bio == null ? '' : req.body.bio).replace(/<[^>]*>/g, '').slice(0, 500);
+            db.setUserBio(channel.user_id, bio);
+        }
+        // Panels (stored on the channel)
+        if (hasOwn(req.body, 'panels')) {
+            const panels = cleanPanels(req.body.panels);
+            if (panels === null) return res.status(400).json({ error: 'Invalid panels' });
+            if (panels !== undefined) db.updateChannel(channel.user_id, { panels });
+        }
+
+        const updated = db.getChannelByUsername(req.params.username);
+        res.json({ channel: updated, edited_by_mod: !isOwner });
+    } catch (err) {
+        console.error('[Channel] about update error:', err.message);
+        res.status(500).json({ error: 'Failed to save About section' });
     }
 });
 
