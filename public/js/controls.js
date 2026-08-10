@@ -24,13 +24,15 @@ let _controlsHaveOnvif = false;   // Panel has ONVIF camera controls (work witho
  * don't need the bridge, so a panel with cameras stays visible.
  */
 function _applyControlsVisibility() {
-    const panel = document.getElementById('controls-panel');
-    if (!panel) return;
-    if (!_controlsHaveContent) { panel.style.display = 'none'; return; }
-    if (_hardwareStatusKnown && !_hardwareConnected && !_controlsHaveOnvif) {
-        panel.style.display = 'none';
-    } else {
-        panel.style.display = '';
+    // Controls now live in the channel "Controls" tab. Show the TAB only when the
+    // watched stream actually has usable controls (buttons need the hardware bridge
+    // online; ONVIF cameras don't).
+    const show = _controlsHaveContent && !(_hardwareStatusKnown && !_hardwareConnected && !_controlsHaveOnvif);
+    const tabBtn = document.getElementById('ch-tab-btn-controls');
+    if (tabBtn) tabBtn.style.display = show ? '' : 'none';
+    // If controls vanished while the Controls tab was open, fall back to Videos.
+    if (!show && typeof _channelTab !== 'undefined' && _channelTab === 'controls' && typeof switchChannelTab === 'function') {
+        switchChannelTab('videos', document.querySelector('#ch-tabs .ch-tab[data-tab="videos"]'));
     }
 }
 
@@ -52,7 +54,8 @@ async function loadStreamControls(streamId) {
 
         if (!hasControls && !hasVideoClick) {
             _controlsHaveContent = false;
-            panel.style.display = 'none';
+            _controlsHaveOnvif = false;
+            _applyControlsVisibility();
             destroyVideoClickOverlay();
             return;
         }
@@ -140,7 +143,8 @@ async function loadStreamControls(streamId) {
         connectControlWs(streamId);
     } catch (e) {
         console.error('Failed to load controls:', e);
-        panel.style.display = 'none';
+        _controlsHaveContent = false;
+        _applyControlsVisibility();
     }
 }
 
