@@ -99,14 +99,16 @@ function _cardAiHTML(text, full) {
     const display = short || long;
     if (!display) return '';
     const hasMore = long && long !== display && long.length > display.length;
-    // The expand affordance is just a chevron, placed inline right after the last
-    // word of the summary (no "Read overview" label, no separate line).
+    // Show the expander when there's a longer version, or the summary is long
+    // enough that it's likely clamped. `_refineAiToggle` measures after layout and
+    // removes the chevron if the text actually fits and there's nothing more — so
+    // the button only stays when there's genuinely something to expand.
     // The chevron is a sibling of the clamped text (not inside it) so the 2-line
-    // -webkit-line-clamp overflow can't clip it away when the summary is long. It
-    // sits at the end/bottom-right, right after the last visible word.
-    return `<div class="card-ai-overview${hasMore ? '' : ' card-ai-static'}" role="button" tabindex="0" onclick="toggleCardAi(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCardAi(event,this)"${hasMore ? ` data-full="${esc(long)}"` : ''}>
+    // -webkit-line-clamp overflow can't clip it away; it sits at the bottom-right.
+    const showToggle = hasMore || display.length > 100;
+    return `<div class="card-ai-overview${showToggle ? '' : ' card-ai-static'}" role="button" tabindex="0" onclick="toggleCardAi(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCardAi(event,this)"${hasMore ? ` data-full="${esc(long)}"` : ''}>
         <div class="card-ai-clamp"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="card-ai-text">${esc(display)}</span></div>
-        ${hasMore ? '<i class="card-ai-toggle fa-solid fa-chevron-down" aria-label="Toggle overview"></i>' : ''}
+        ${showToggle ? '<i class="card-ai-toggle fa-solid fa-chevron-down" aria-label="Toggle overview"></i>' : ''}
     </div>`;
 }
 
@@ -121,6 +123,43 @@ function toggleCardAi(e, el) {
         if (expanded) { box.dataset.short = textEl.textContent; textEl.textContent = full; }
         else if (box.dataset.short != null) { textEl.textContent = box.dataset.short; }
     }
+}
+
+// After layout, drop the expand chevron on overviews that have nothing to expand:
+// no longer full version AND the summary isn't actually truncated by the clamp.
+function _refineAiToggle(box) {
+    if (!box || box.dataset.aiRefined || box.classList.contains('expanded')) return;
+    const clamp = box.querySelector('.card-ai-clamp');
+    if (!clamp || clamp.clientHeight === 0) return; // not laid out yet — try again later
+    box.dataset.aiRefined = '1';
+    const hasFull = !!box.dataset.full;
+    const truncated = clamp.scrollHeight > clamp.clientHeight + 1;
+    if (!hasFull && !truncated) {
+        box.querySelector('.card-ai-toggle')?.remove();
+        box.classList.add('card-ai-static');
+        box.removeAttribute('role');
+        box.removeAttribute('tabindex');
+    }
+}
+function _scanAiToggles() {
+    document.querySelectorAll('.card-ai-overview:not([data-ai-refined])').forEach(_refineAiToggle);
+}
+// Overviews are injected across many render paths — observe the DOM and refine
+// each new one on the next frame (once it's laid out and measurable).
+if (typeof MutationObserver !== 'undefined') {
+    let _aiPending = false;
+    const _aiObserver = new MutationObserver((muts) => {
+        for (const m of muts) {
+            for (const n of m.addedNodes) {
+                if (n.nodeType === 1 && (n.matches?.('.card-ai-overview') || n.querySelector?.('.card-ai-overview'))) {
+                    if (!_aiPending) { _aiPending = true; requestAnimationFrame(() => { _aiPending = false; _scanAiToggles(); }); }
+                    return;
+                }
+            }
+        }
+    });
+    if (document.body) _aiObserver.observe(document.body, { childList: true, subtree: true });
+    else document.addEventListener('DOMContentLoaded', () => _aiObserver.observe(document.body, { childList: true, subtree: true }));
 }
 
 // Render an AI overview block just above a VOD/clip description element.
@@ -1236,6 +1275,7 @@ async function loadHomePastes(page) {
                         ${p.language && p.language !== 'plaintext' ? ` · <span class="home-paste-lang">${esc(p.language)}</span>` : ''}
                         · ${timeAgo(p.created_at)}
                     </div>
+                    ${_cardAiHTML(p.ai_summary)}
                 </div>
                 </div>
             </a>`;
