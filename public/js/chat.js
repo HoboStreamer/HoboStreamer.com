@@ -123,6 +123,21 @@ function relayColorFor(msg) {
     return PLATFORM_NAME_COLORS[sp] || null;
 }
 
+// Relay platform → icon badge (replaces the old "[Twitch]/[RS]" text prefixes).
+const RELAY_BADGE = {
+    twitch:        { icon: 'fa-brands fa-twitch',  color: '#9146ff', label: 'Twitch' },
+    kick:          { icon: 'fa-solid fa-bolt',     color: '#53fc18', label: 'Kick' },
+    youtube:       { icon: 'fa-brands fa-youtube', color: '#ff0000', label: 'YouTube' },
+    yt:            { icon: 'fa-brands fa-youtube', color: '#ff0000', label: 'YouTube' },
+    rs:            { icon: 'fa-solid fa-robot',    color: '#7dd3fc', label: 'RobotStreamer' },
+    robotstreamer: { icon: 'fa-solid fa-robot',    color: '#7dd3fc', label: 'RobotStreamer' },
+};
+function relayBadgeHTML(platform) {
+    const b = RELAY_BADGE[(platform || '').toLowerCase()];
+    if (!b) return '';
+    return `<span class="chat-badge chat-relay-badge" data-tip="${b.label}" style="--relay-color:${b.color}"><i class="${b.icon}"></i></span>`;
+}
+
 // ── Chat settings (persisted to localStorage) ────────────────
 const CHAT_SETTINGS_KEY = 'hobo_chat_settings';
 const CHAT_SETTINGS_DEFAULTS = {
@@ -2877,6 +2892,12 @@ function addChatMessage(msg) {
     // users show their real first letter instead of "[".
     const _rawName = (msg.username || msg.displayName || `anon${msg.anonId || ''}`).replace(/^\[[^\]]+\]\s*/, '');
     const avatarInitial = esc((_rawName.charAt(0) || '?').toUpperCase());
+    // Relay platform badge (icon) replaces the "[Twitch]/[RS]" text prefix. The
+    // visible name is the clean name; data-username keeps the prefix so relay
+    // moderation still identifies the platform + external user.
+    const _relayPlatform = (msg.source_platform || parseRelayUsername(msg.username || '').platform || '').toLowerCase();
+    const _relayBadge = relayBadgeHTML(_relayPlatform);
+    const _visibleName = _relayBadge ? esc(_rawName) : displayName;
     const rawText = msg.message || msg.text || '';
     // Messages prefixed with "." skipped TTS — mark them muted and hide the "." marker.
     const ttsOff = (!msg.message_type || msg.message_type === 'chat') && rawText.trimStart().startsWith('.');
@@ -2982,7 +3003,7 @@ function addChatMessage(msg) {
 
     // tts-off messages drop the ":" so it reads "name 🔇 message" after the mute marker.
     const separator = (ttsOff || msg.message_type === 'soundboard' || msg.message_type === 'channel-sound') ? ' ' : ': ';
-    el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${displayName}</span>${particleWrapClose}${separator}${text}`;
+    el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${_relayBadge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${_visibleName}</span>${particleWrapClose}${separator}${text}`;
 
     // Reply action button (hover)
     if (msg.id) {
@@ -4169,7 +4190,8 @@ async function acceptVcInvite(channelId, channelName) {
 
 function ctxViewChannel(username) {
     dismissContextMenu();
-    navigate(`/${username}`);
+    // Channel pages live at /@username (the router requires the @ prefix).
+    navigate(typeof channelPath === 'function' ? channelPath(username) : `/@${username}`);
 }
 
 function ctxViewLogs(username, userId) {
@@ -4395,6 +4417,22 @@ function ctxBanRelayUser(prefixedUsername) {
         .catch(e => toast(e.message || 'Ban failed', 'error'));
 }
 
+function ctxUnbanRelayUser(prefixedUsername) {
+    dismissContextMenu();
+    const { platform, externalUsername } = parseRelayUsername(prefixedUsername);
+    if (!platform) return toast('Could not identify platform', 'error');
+    // Lifts a ban/hide for this exact relay identity only (never a registered account).
+    const body = {
+        channel_id: currentStreamData?.channel_id || null,
+        platform,
+        external_username: externalUsername,
+        action: 'unban',
+    };
+    api('/mod/relay-user/hide', { method: 'POST', body })
+        .then(() => toast(`[${platform}] ${externalUsername} unbanned — they can chat again`, 'success'))
+        .catch(e => toast(e.message || 'Unban failed', 'error'));
+}
+
 /**
  * Render context menu for relayed external users (Twitch, Kick, YouTube, RS).
  */
@@ -4418,6 +4456,7 @@ function renderRelayContextMenu(menu, username, sourcePlatform) {
         modBtns += `<button class="ctx-btn ctx-btn-warn" data-username="${esc(username)}" onclick="ctxDeleteRelayMessages(this.dataset.username)"><i class="fa-solid fa-trash-can"></i> Delete All Messages</button>`;
         modBtns += `<button class="ctx-btn ctx-btn-warn" data-username="${esc(username)}" onclick="ctxHideRelayUser(this.dataset.username)"><i class="fa-solid fa-eye-slash"></i> Hide from stream</button>`;
         modBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" onclick="ctxBanRelayUser(this.dataset.username)"><i class="fa-solid fa-ban"></i> Ban from stream</button>`;
+        modBtns += `<button class="ctx-btn" data-username="${esc(username)}" onclick="ctxUnbanRelayUser(this.dataset.username)"><i class="fa-solid fa-rotate-left"></i> Unban / unhide</button>`;
     }
 
     menu.innerHTML = `
@@ -5020,7 +5059,7 @@ function _handleGlobalFeedMessage(msg) {
     // Source badge
     let sourceBadge = '';
     if (hasStreamChannel) {
-        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-stream" title="From ${esc(msg.stream_channel)}'s stream" style="cursor:pointer" onclick="navigate('/' + this.dataset.channel)" data-channel="${esc(msg.stream_channel)}"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</span> `;
+        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-stream" title="From ${esc(msg.stream_channel)}'s stream" style="cursor:pointer" onclick="navigate('/@' + this.dataset.channel)" data-channel="${esc(msg.stream_channel)}"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</span> `;
     } else {
         sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-global" title="Open Global Chat" style="cursor:pointer" onclick="navigate('/chat')"><i class="fa-solid fa-globe"></i> Global</span> `;
     }
@@ -5100,7 +5139,7 @@ function updateTabViewerCount(streamId, count) {
 
 function viewProfile(username) {
     if (username.startsWith('anon')) return;
-    navigate(`/${username}`);
+    navigate(typeof channelPath === 'function' ? channelPath(username) : `/@${username}`);
 }
 
 function formatNumber(n) {

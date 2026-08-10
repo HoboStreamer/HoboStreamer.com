@@ -525,6 +525,19 @@ router.post('/relay-user/hide', (req, res) => {
             }
         }
 
+        // Unban / unhide — remove the ban for this exact relay identity only.
+        if (action === 'unban' || action === 'unhide') {
+            db.unhideRelayUserByIdentity(channel_id || null, platform, external_username);
+            db.logModerationAction({
+                scope_type: channel_id ? 'channel' : 'site',
+                scope_id: channel_id || undefined,
+                actor_user_id: req.user.id,
+                action_type: 'relay_user_unhide',
+                details: { platform, external_username },
+            });
+            return res.json({ message: `[${platform}] ${external_username} unbanned` });
+        }
+
         db.hideRelayUser({
             channelId: channel_id || null,
             platform,

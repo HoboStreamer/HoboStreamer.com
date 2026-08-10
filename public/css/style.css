@@ -4255,6 +4255,9 @@ main#app { position: relative; z-index: 1; }
 .chat-badge-cmod     { color: #6ea8ff;             background: color-mix(in srgb, #6ea8ff 18%, transparent);             border-color: color-mix(in srgb, #6ea8ff 40%, transparent); }
 .chat-badge-streamer { color: var(--live-red);     background: color-mix(in srgb, var(--live-red) 18%, transparent);     border-color: color-mix(in srgb, var(--live-red) 40%, transparent); }
 .chat-badge-sub      { color: var(--accent-light, var(--accent)); background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+/* Relay platform badge — colour driven by --relay-color (per platform). */
+.chat-relay-badge { color: var(--relay-color, #888); background: color-mix(in srgb, var(--relay-color, #888) 20%, transparent); border-color: color-mix(in srgb, var(--relay-color, #888) 45%, transparent); }
+.chat-relay-badge i { font-size: 0.6rem; }
 
 /* Animated tooltip (shared by any [data-tip] badge — chat, user list, context menu) */
 .chat-badge[data-tip]::after {
@@ -4284,14 +4287,37 @@ main#app { position: relative; z-index: 1; }
 
 /* Staff badge for channel pages / general use (Staff · Admin / Staff · Mod) */
 .staff-badge {
-    display: inline-flex; align-items: center; gap: 5px; vertical-align: middle;
-    padding: 2px 9px; border-radius: 999px;
-    font-size: 0.66rem; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase;
-    white-space: nowrap; border: 1px solid currentColor; line-height: 1.5;
+    display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+    width: 22px; height: 22px; border-radius: 6px;
+    border: 1px solid currentColor; position: relative; cursor: default;
+    transition: transform 0.12s ease;
 }
-.staff-badge i { font-size: 0.62rem; }
+.staff-badge i { font-size: 0.72rem; }
+.staff-badge:hover { transform: translateY(-1px); }
 .staff-badge-admin { color: var(--warning); background: color-mix(in srgb, var(--warning) 15%, transparent); }
 .staff-badge-mod { color: var(--success); background: color-mix(in srgb, var(--success) 15%, transparent); }
+/* Animated tooltip revealing "Staff - Admin" / "Staff - Mod" on hover. */
+.staff-badge[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 7px); left: 50%;
+    transform: translateX(-50%) translateY(5px) scale(0.92); transform-origin: bottom center;
+    background: var(--glass-strong, #16161a); color: var(--text-primary);
+    border: 1px solid var(--border-light, var(--border));
+    padding: 4px 9px; border-radius: 7px;
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.01em; text-transform: none;
+    white-space: nowrap; pointer-events: none; opacity: 0; z-index: 60;
+    box-shadow: 0 8px 22px rgba(0,0,0,0.4);
+    transition: opacity 0.18s ease, transform 0.2s cubic-bezier(.2,.9,.3,1.25);
+}
+.staff-badge[data-tip]::before {
+    content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%;
+    transform: translateX(-50%) translateY(5px);
+    border: 5px solid transparent; border-top-color: var(--border-light, var(--border));
+    opacity: 0; pointer-events: none; z-index: 60;
+    transition: opacity 0.18s ease, transform 0.2s cubic-bezier(.2,.9,.3,1.25);
+}
+.staff-badge[data-tip]:hover::after  { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+.staff-badge[data-tip]:hover::before { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 .chat-input-area {
     border-top: 1px solid var(--border);
@@ -11963,16 +11989,16 @@ body.theme-light .user-dropdown {
     font-size: 0.75rem; color: var(--accent); line-height: 1.35;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.card-ai-clamp i { opacity: 0.85; margin-right: 2px; }
+.card-ai-clamp i.fa-wand-magic-sparkles { opacity: 0.85; margin-right: 2px; }
 .card-ai-overview.expanded .card-ai-clamp { -webkit-line-clamp: unset; overflow: visible; }
+/* Inline expand chevron — sits right after the last word of the summary. */
 .card-ai-toggle {
-    display: inline-flex; align-items: center; gap: 5px;
-    margin-top: 5px; font-size: 0.66rem; font-weight: 700;
-    color: var(--accent); opacity: 0.92;
-    text-transform: uppercase; letter-spacing: 0.04em;
+    display: inline-block; vertical-align: middle; cursor: pointer;
+    margin-left: 5px; font-size: 0.62rem; color: var(--accent); opacity: 0.75;
+    transition: transform 0.2s ease, opacity 0.15s ease;
 }
-.card-ai-toggle i { transition: transform 0.2s ease; font-size: 0.6rem; }
-.card-ai-overview.expanded .card-ai-toggle i { transform: rotate(180deg); }
+.card-ai-toggle:hover { opacity: 1; }
+.card-ai-overview.expanded .card-ai-toggle { transform: rotate(180deg); opacity: 1; }
 
 /* Live stream AI overview under the video */
 .ch-stream-ai { margin-top: 8px; max-width: 760px; }

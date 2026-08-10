@@ -64,22 +64,19 @@ body.no-shadow .msg { text-shadow: none; }
     font-weight: 700;
 }
 
-/* ── Platform badge ─────────────────────────────────────────── */
-.badge {
-    display: inline-block;
-    font-size: 0.7em;
-    font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 3px;
-    margin-right: 4px;
-    vertical-align: middle;
-    text-shadow: none;
-    letter-spacing: 0.3px;
+/* ── Relay platform badge (icon chip, matches main chat) ─────── */
+.chat-relay-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.25em; height: 1.25em; border-radius: 0.32em;
+    margin-right: 4px; vertical-align: middle; position: relative;
+    font-size: 0.85em; text-shadow: none; border: 1px solid transparent;
 }
-.badge-twitch  { background: #9146ff; color: #fff; }
-.badge-kick    { background: #53fc18; color: #000; }
-.badge-youtube { background: #ff0000; color: #fff; }
-.badge-rs      { background: #ff6600; color: #fff; }
+.chat-relay-badge i { font-size: 0.66em; line-height: 1; }
+.relay-twitch  { color: #b48bff; background: rgba(145,70,255,0.22);  border-color: rgba(145,70,255,0.45); }
+.relay-kick    { color: #53fc18; background: rgba(83,252,24,0.20);   border-color: rgba(83,252,24,0.45); }
+.relay-youtube { color: #ff5c5c; background: rgba(255,0,0,0.20);     border-color: rgba(255,0,0,0.45); }
+/* RS badge now matches its name text colour (#7dd3fc) instead of orange. */
+.relay-rs      { color: #7dd3fc; background: rgba(125,211,252,0.20); border-color: rgba(125,211,252,0.45); }
 .stream-title-badge {
     display: inline-block; font-size: 0.66em; font-weight: 700;
     padding: 1px 6px; border-radius: 3px; margin-right: 4px; vertical-align: middle;
@@ -475,6 +472,19 @@ body.no-shadow .msg { text-shadow: none; }
         YouTube: '#ff0000',
         RS:      '#7dd3fc',
     };
+    // Relay platform → icon badge (replaces the old "[Twitch]/[RS]" text prefix).
+    const RELAY_BADGE = {
+        twitch:  { icon: 'fa-brands fa-twitch',  label: 'Twitch' },
+        kick:    { icon: 'fa-solid fa-bolt',     label: 'Kick' },
+        youtube: { icon: 'fa-brands fa-youtube', label: 'YouTube' },
+        rs:      { icon: 'fa-solid fa-robot',    label: 'RobotStreamer' },
+    };
+    function relayBadgeHTML(platform) {
+        const p = (platform || '').toLowerCase();
+        const b = RELAY_BADGE[p];
+        if (!b) return '';
+        return `<span class="chat-relay-badge relay-${p}" title="${b.label}"><i class="${b.icon}"></i></span>`;
+    }
 
     function detectPlatform(name) {
         const m = name.match(PLATFORM_RE);
@@ -568,11 +578,10 @@ body.no-shadow .msg { text-shadow: none; }
         const el = document.createElement('div');
         el.className = 'msg';
 
-        // Platform badge
+        // Platform badge (icon)
         let platformBadge = '';
         if (platform) {
-            const cls = 'badge-' + platform.toLowerCase();
-            platformBadge = `<span class="badge ${cls}">${esc(platform)}</span>`;
+            platformBadge = relayBadgeHTML(platform) || relayBadgeHTML(msg.source_platform);
         }
 
         // Stream-title badge (?streamtitle=1) — which slot this message came from

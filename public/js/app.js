@@ -99,9 +99,10 @@ function _cardAiHTML(text, full) {
     const display = short || long;
     if (!display) return '';
     const hasMore = long && long !== display && long.length > display.length;
-    return `<div class="card-ai-overview" role="button" tabindex="0" onclick="toggleCardAi(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCardAi(event,this)"${hasMore ? ` data-full="${esc(long)}"` : ''}>
-        <div class="card-ai-clamp"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="card-ai-text">${esc(display)}</span></div>
-        ${hasMore ? '<span class="card-ai-toggle"><span class="card-ai-toggle-label">Read overview</span> <i class="fa-solid fa-chevron-down"></i></span>' : ''}
+    // The expand affordance is just a chevron, placed inline right after the last
+    // word of the summary (no "Read overview" label, no separate line).
+    return `<div class="card-ai-overview${hasMore ? '' : ' card-ai-static'}" role="button" tabindex="0" onclick="toggleCardAi(event,this)" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCardAi(event,this)"${hasMore ? ` data-full="${esc(long)}"` : ''}>
+        <div class="card-ai-clamp"><i class="fa-solid fa-wand-magic-sparkles"></i> <span class="card-ai-text">${esc(display)}</span>${hasMore ? ' <i class="card-ai-toggle fa-solid fa-chevron-down" aria-label="Expand overview"></i>' : ''}</div>
     </div>`;
 }
 
@@ -116,8 +117,6 @@ function toggleCardAi(e, el) {
         if (expanded) { box.dataset.short = textEl.textContent; textEl.textContent = full; }
         else if (box.dataset.short != null) { textEl.textContent = box.dataset.short; }
     }
-    const lbl = box.querySelector('.card-ai-toggle-label');
-    if (lbl) lbl.textContent = expanded ? 'Show less' : 'Read overview';
 }
 
 // Render an AI overview block just above a VOD/clip description element.
@@ -1356,7 +1355,7 @@ function streamCardHTML(s, isLive) {
                 ${(isLive && s.description) ? `<div class="stream-card-desc" title="Click to expand" onclick="event.preventDefault();event.stopPropagation();this.classList.toggle('expanded')">${esc(s.description)}</div>` : ''}
                 ${_cardAiHTML(s.ai_overview_short, s.ai_overview)}
                 <div class="stream-card-meta">
-                    ${s.category ? `<span class="stream-card-tag">${esc(s.category)}</span>` : ''}
+                    ${s.category ? `<span class="stream-card-tag">${esc(_capTag(s.category))}</span>` : ''}
                     <span class="stream-card-metaright">
                         ${isLive && s.started_at ? `<span class="stream-card-uptime" data-since="${esc(s.started_at)}"><i class="fa-solid fa-clock"></i> ${formatUptime(s.started_at)}</span>` : ''}
                         ${isLive ? `<span class="stream-card-vcount"><i class="fa-solid fa-eye"></i> ${s.total_viewer_count || s.viewer_count || 0}</span>` : ''}
@@ -1722,9 +1721,21 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
 // Can the current user manage a channel's content (its owner, or any admin)?
 // Hobo Network staff badge for a user (admin/owner -> Staff · Admin, mod -> Staff · Mod).
 function _staffBadge(role, isOwner) {
-    if (role === 'admin' || isOwner) return '<span class="staff-badge staff-badge-admin" title="Hobo Network Staff — Admin"><i class="fa-solid fa-shield-halved"></i> Staff - Admin</span>';
-    if (role === 'global_mod') return '<span class="staff-badge staff-badge-mod" title="Hobo Network Staff — Mod"><i class="fa-solid fa-shield"></i> Staff - Mod</span>';
+    if (role === 'admin' || isOwner) return '<span class="staff-badge staff-badge-admin" data-tip="Staff - Admin"><i class="fa-solid fa-shield-halved"></i></span>';
+    if (role === 'global_mod') return '<span class="staff-badge staff-badge-mod" data-tip="Staff - Mod"><i class="fa-solid fa-shield"></i></span>';
     return '';
+}
+
+// Prettify a category/tag for display: capitalize words, upper-case known acronyms.
+// e.g. "desktop" -> "Desktop", "irl" -> "IRL", "just chatting" -> "Just Chatting".
+const _TAG_ACRONYMS = { irl: 'IRL', asmr: 'ASMR', diy: 'DIY', pvp: 'PvP', tts: 'TTS', nsfw: 'NSFW', vr: 'VR', ai: 'AI', fps: 'FPS', mmo: 'MMO', rpg: 'RPG' };
+function _capTag(s) {
+    if (!s) return s;
+    return String(s).trim().split(/\s+/).map(w => {
+        const lw = w.toLowerCase();
+        if (_TAG_ACRONYMS[lw]) return _TAG_ACRONYMS[lw];
+        return w.charAt(0).toUpperCase() + w.slice(1);
+    }).join(' ');
 }
 
 function _channelCanManage(username) {
@@ -2229,7 +2240,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             }
             const _chUser = document.getElementById('ch-username');
             if (_chUser) _chUser.style.display = 'none';
-            document.getElementById('ch-category-badge').textContent = (liveStreams[0] && liveStreams[0].category) || ch.category || 'irl';
+            document.getElementById('ch-category-badge').textContent = _capTag((liveStreams[0] && liveStreams[0].category) || ch.category || 'irl');
             document.getElementById('ch-follower-count').textContent = `${ch.follower_count || 0} followers`;
             setupFollowBtn(document.getElementById('ch-btn-follow'));
             setupBanBtn(document.getElementById('ch-btn-ban'));
@@ -2289,7 +2300,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             document.getElementById('ch-username-offline').textContent = '@' + ch.username;
             document.getElementById('ch-description-offline').textContent = ch.description || '';
             document.getElementById('ch-follower-count-offline').textContent = `${ch.follower_count || 0} followers`;
-            document.getElementById('ch-category-badge-offline').textContent = ch.category || 'irl';
+            document.getElementById('ch-category-badge-offline').textContent = _capTag(ch.category || 'irl');
             setupFollowBtn(document.getElementById('ch-btn-follow-offline'));
             setupBanBtn(document.getElementById('ch-btn-ban-offline'));
 
@@ -3166,7 +3177,7 @@ function activateChannelStream(stream) {
     setPageTitle(`${stream.title || 'Live'} — ${stream.display_name || stream.username || ''}`.trim());
     // Category pill reflects THIS live slot's category (set in /broadcast), not the
     // channel's stale default.
-    if (stream.category) { const _cb = document.getElementById('ch-category-badge'); if (_cb) _cb.textContent = stream.category; }
+    if (stream.category) { const _cb = document.getElementById('ch-category-badge'); if (_cb) _cb.textContent = _capTag(stream.category); }
     // Stream-type badge only (Screen Share / Audio Only / Camera). The WEBRTC/RTMP
     // protocol tag was removed from the header — that info now lives in the player's
     // stats overlay, which is more useful than the raw transport for viewers.
@@ -3732,7 +3743,7 @@ async function loadVodPlayer(vodId) {
         const extraDetails = document.getElementById('vp-extra-details');
         if (extraDetails) {
             let chips = '';
-            if (v.stream_category) chips += `<span class="detail-chip"><i class="fa-solid fa-tag"></i> ${esc(v.stream_category)}</span>`;
+            if (v.stream_category) chips += `<span class="detail-chip"><i class="fa-solid fa-tag"></i> ${esc(_capTag(v.stream_category))}</span>`;
             if (v.stream_peak_viewers) chips += `<span class="detail-chip"><i class="fa-solid fa-users"></i> Peak: ${v.stream_peak_viewers}</span>`;
             if (v.stream_started_at) {
                 const streamDate = new Date(v.stream_started_at + 'Z');
@@ -4367,7 +4378,7 @@ async function loadClipPlayer(clipId) {
         const extraDetails = document.getElementById('clp-extra-details');
         if (extraDetails) {
             let chips = '';
-            if (cl.stream_category) chips += `<span class="detail-chip"><i class="fa-solid fa-tag"></i> ${esc(cl.stream_category)}</span>`;
+            if (cl.stream_category) chips += `<span class="detail-chip"><i class="fa-solid fa-tag"></i> ${esc(_capTag(cl.stream_category))}</span>`;
             if (cl.stream_peak_viewers) chips += `<span class="detail-chip"><i class="fa-solid fa-users"></i> Peak: ${cl.stream_peak_viewers}</span>`;
             if (cl.stream_started_at) {
                 const streamDate = new Date(cl.stream_started_at + 'Z');

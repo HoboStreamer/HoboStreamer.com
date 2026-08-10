@@ -4924,6 +4924,18 @@ function unhideRelayUser(id) {
 }
 
 /**
+ * Unhide/unban a relayed external user by identity (platform + external username +
+ * channel). Scoped to a single relay identity — never touches a registered
+ * hobostreamer account of the same name. `channel_id IS ?` matches NULL safely.
+ */
+function unhideRelayUserByIdentity(channelId, platform, externalUsername) {
+    return run(
+        'DELETE FROM hidden_relay_users WHERE platform = ? AND external_username = ? AND channel_id IS ?',
+        [platform, externalUsername, channelId || null]
+    );
+}
+
+/**
  * Get hidden relay users for a channel (includes site-wide).
  */
 function getHiddenRelayUsers(channelId, { limit = 100 } = {}) {
@@ -5594,7 +5606,7 @@ module.exports = {
     holdMessageForApproval, getPendingIpMessages, reviewPendingIpMessage,
     approveAllFromIp, denyAllFromIp,
     // Hidden Relay Users
-    hideRelayUser, isRelayUserHidden, unhideRelayUser, getHiddenRelayUsers, recordRelayUser, getRelayUser,
+    hideRelayUser, isRelayUserHidden, unhideRelayUser, unhideRelayUserByIdentity, getHiddenRelayUsers, recordRelayUser, getRelayUser,
     // IP Tracking
     logIp, getIpsByUser, getUsersByIp, getLinkedAccounts, getLinkedAccountsByAnon,
     getLatestIpForUser, getLatestIpForAnon, getIpLog, banAllAccountsOnIp,
