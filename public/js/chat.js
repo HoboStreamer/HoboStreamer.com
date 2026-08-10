@@ -2098,12 +2098,15 @@ function buildFullscreenChatEntry(msg) {
     let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
+    const _relayPlatform = (msg.source_platform || parseRelayUsername(msg.username || msg.displayName || '').platform || '').toLowerCase();
+    const _relayBadge = relayBadgeHTML(_relayPlatform);
+    const _visibleName = _relayBadge ? esc((msg.username || msg.displayName || '').replace(/^\[[^\]]+\]\s*/, '')) : displayName;
     const rawText = msg.message || msg.text || '';
     const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
     const replyLine = msg.reply_to ? `<div style="font-size:0.72em;opacity:0.5;margin-bottom:1px"><i class="fa-solid fa-reply fa-flip-horizontal" style="font-size:0.65em"></i> @${esc(msg.reply_to.username || 'unknown')}</div>` : '';
     return {
         kind: 'chat',
-        html: `${replyLine}<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:${esc(nameColor)}">${badge}${displayName}</span></div><div class="fullscreen-chat-text">${text}</div>`,
+        html: `${replyLine}<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:${esc(nameColor)}">${badge}${_relayBadge}${_visibleName}</span></div><div class="fullscreen-chat-text">${text}</div>`,
     };
 }
 
@@ -5089,6 +5092,9 @@ function _handleGlobalFeedMessage(msg) {
     if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
 
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
+    const _relayPlatform = (msg.source_platform || parseRelayUsername(msg.username || msg.displayName || '').platform || '').toLowerCase();
+    const _relayBadge = relayBadgeHTML(_relayPlatform);
+    const _visibleName = _relayBadge ? esc((msg.username || msg.displayName || '').replace(/^\[[^\]]+\]\s*/, '')) : displayName;
     const rawText = msg.message || msg.text || '';
     const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
 
@@ -5102,7 +5108,7 @@ function _handleGlobalFeedMessage(msg) {
         tsHtml = `<span class="chat-time-inline">${tsSource.toLocaleTimeString([], tsOpts)}</span> `;
     }
 
-    el.innerHTML = `${tsHtml}${sourceBadge}${badge}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}">${displayName}</span>: <span class="chat-text">${text}</span>`;
+    el.innerHTML = `${tsHtml}${sourceBadge}${badge}${_relayBadge}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}">${_visibleName}</span>: <span class="chat-text">${text}</span>`;
 
     // Auto-scroll management
     if (!_chatUserScrolledUp) {
@@ -6027,9 +6033,13 @@ function _fcwAddMessage(msg) {
     const username = msg.username || msg.displayName || 'anon';
     const text = msg.message || msg.text || '';
 
-    // Full parity with the main chat: role badge, relay/role name color, name
-    // effects, hat, and particles.
+    // Full parity with the main chat: role badge, relay platform badge (icon
+    // instead of the "[RS]" text prefix), relay/role name color, name effects,
+    // hat, and particles.
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
+    const _relayPlatform = (msg.source_platform || parseRelayUsername(username).platform || '').toLowerCase();
+    const _relayBadge = relayBadgeHTML(_relayPlatform);
+    const _visibleName = _relayBadge ? username.replace(/^\[[^\]]+\]\s*/, '') : username;
     const nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
     const nameFXClass = msg.nameFX?.cssClass ? ` ${esc(msg.nameFX.cssClass)}` : '';
     let hatHtml = '';
@@ -6059,7 +6069,7 @@ function _fcwAddMessage(msg) {
 
     const el = document.createElement('div');
     el.className = 'chat-msg';
-    el.innerHTML = `${srcBadge}${badge}${hatHtml}${particleOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}">${esc(username)}</span>${particleClose}: ${(typeof parseEmotes === 'function') ? parseEmotes(text) : esc(text)}`;
+    el.innerHTML = `${srcBadge}${badge}${_relayBadge}${hatHtml}${particleOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}">${esc(_visibleName)}</span>${particleClose}: ${(typeof parseEmotes === 'function') ? parseEmotes(text) : esc(text)}`;
     container.appendChild(el);
 
     // Trim old messages

@@ -1651,7 +1651,14 @@ main#app { position: relative; z-index: 1; }
     background: rgba(0,0,0,0.55); border-radius: 6px; padding: 3px 5px;
     display: flex; align-items: center; cursor: pointer;
     -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+    opacity: 0; transition: opacity 0.12s ease;
 }
+/* Reveal on hover, and keep visible while checked. Shift+click anywhere on the
+   card also toggles selection (see _selWrap handler). */
+.sel-card-wrap:hover .sel-card-check,
+.sel-card-wrap:has(input:checked) .sel-card-check,
+.sel-card-wrap.sel-active .sel-card-check { opacity: 1; }
+.sel-card-wrap:has(input:checked) { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
 .sel-card-check input { width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); margin: 0; }
 
 /* Channel Pastes section */

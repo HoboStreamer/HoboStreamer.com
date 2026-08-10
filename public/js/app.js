@@ -3903,6 +3903,32 @@ function _selToggle(type, id, checked) {
     _selRenderBar(); _selSyncAllBtns();
 }
 
+// Shift+click anywhere on a selectable card toggles/range-selects it (so you don't
+// have to aim at the tiny checkbox). Capture phase so it beats the card's link nav.
+let _selLastIdx = null, _selLastContainer = null;
+function _selSetCard(wrap, checked) {
+    const cb = wrap.querySelector('input[type="checkbox"]');
+    if (cb) cb.checked = checked;
+    const type = wrap.dataset.selType, id = wrap.dataset.selId;
+    if (type && id) _selToggle(type, id, checked);
+}
+document.addEventListener('click', (e) => {
+    if (!e.shiftKey || !window._selCtx || !window._selCtx.enabled) return;
+    const wrap = e.target.closest && e.target.closest('.sel-card-wrap');
+    if (!wrap) return;
+    e.preventDefault(); e.stopPropagation();
+    const container = wrap.parentElement;
+    const cards = Array.from(container.children).filter(c => c.classList && c.classList.contains('sel-card-wrap'));
+    const idx = cards.indexOf(wrap);
+    if (_selLastIdx != null && _selLastContainer === container && idx >= 0) {
+        for (let i = Math.min(_selLastIdx, idx); i <= Math.max(_selLastIdx, idx); i++) _selSetCard(cards[i], true);
+    } else {
+        const cb = wrap.querySelector('input[type="checkbox"]');
+        _selSetCard(wrap, !(cb && cb.checked));
+    }
+    _selLastIdx = idx; _selLastContainer = container;
+}, true);
+
 function _selClear() {
     window._sel.vod.clear(); window._sel.clip.clear(); window._sel.paste.clear();
     document.querySelectorAll('.sel-card-check input:checked').forEach(cb => { cb.checked = false; });
