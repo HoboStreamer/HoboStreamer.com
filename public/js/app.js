@@ -1752,6 +1752,7 @@ async function renderChannelVodsSection(username, liveStreams, vods, meta = {}) 
                 <div class="stream-card-info">
                     <div class="stream-card-title">${esc(v.title || 'VOD')}</div>
                     <div class="stream-card-streamer muted">${formatDateTime(v.created_at)}</div>
+                    ${_cardAiHTML(v.ai_overview_short, v.ai_overview)}
                 </div>
             </a>
         `, _activeChannelIsOwnerRank || !!v.owner_is_owner)).join('');
@@ -1823,6 +1824,7 @@ function renderChannelClipsSection(username, clips, meta = {}) {
                 <div class="stream-card-info">
                     <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
                     <div class="stream-card-streamer muted">${formatDateTime(cl.created_at)}</div>
+                    ${_cardAiHTML(cl.ai_overview_short, cl.ai_overview)}
                 </div>
             </a>
         `, _activeChannelIsOwnerRank || !!(cl.owner_is_owner || cl.streamer_is_owner))).join('');
@@ -1844,8 +1846,7 @@ function renderChannelClipsOfSection(username, clips, meta = {}) {
     const total = meta.total || clips.length;
     const page = Math.floor(offset / pageSize) + 1;
 
-    if (header) header.style.display = total > 0 ? '' : 'none';
-    if (total === 0) { grid.innerHTML = ''; return; }
+    if (total === 0) { grid.innerHTML = '<p class="muted">No clips yet</p>'; return; }
 
     if (clips.length) {
         grid.innerHTML = clips.map(cl => `
@@ -1858,6 +1859,7 @@ function renderChannelClipsOfSection(username, clips, meta = {}) {
                 <div class="stream-card-info">
                     <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
                     <div class="stream-card-streamer muted">by ${esc(cl.clip_creator_display_name || cl.clip_creator_username || 'Unknown')} &middot; ${formatDateTime(cl.created_at)}</div>
+                    ${_cardAiHTML(cl.ai_overview_short, cl.ai_overview)}
                 </div>
             </a>
         `).join('');
@@ -1926,8 +1928,8 @@ async function loadChannelPastes(username = currentChannelUsername) {
         const data = await api(`/pastes/by-user/${encodeURIComponent(username)}?limit=30&sort=${sort}`);
         const pastes = data.pastes || [];
         if (!pastes.length) {
-            if (header) header.style.display = 'none';
-            grid.style.display = 'none'; grid.innerHTML = '';
+            // Tab context: keep the panel readable with an empty state.
+            grid.style.display = ''; grid.innerHTML = '<p class="muted">No pastes yet</p>';
             if (pager) { pager.style.display = 'none'; pager.innerHTML = ''; }
             return;
         }
@@ -2235,7 +2237,11 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
 
         renderChannelMediaStrip(ch, mediaData);
 
-        // Load weather widget (non-blocking)
+        // Reset the channel tabs to Videos on (re)load + render the About tab.
+        _resetChannelTabs();
+        _renderChannelAbout(ch);
+
+        // Load weather widget (non-blocking) — now lives at the top of the About tab
         loadChannelWeather(username);
 
         // Follow button helper
@@ -2387,8 +2393,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
             offset: data.clipsOfOffset || 0,
         });
 
-        // Load channel analytics (non-blocking)
-        loadChannelAnalytics(username);
+        // Analytics is loaded lazily when its tab is first opened (see switchChannelTab).
 
     } catch (e) {
         console.error('Channel load error:', e);
@@ -2896,7 +2901,8 @@ function toggleWeatherUnit() {
 }
 
 async function loadChannelWeather(username) {
-    const widgets = [document.getElementById('ch-weather-widget'), document.getElementById('ch-weather-widget-offline')];
+    // Weather now lives at the top of the About tab.
+    const widgets = [document.getElementById('ch-weather-widget-about')];
     widgets.forEach(w => { if (w) w.style.display = 'none'; });
 
     try {
@@ -3290,6 +3296,67 @@ function _renderChStreamAi(overview, short) {
     const html = _cardAiHTML(shortTxt, longTxt);
     el.innerHTML = html;
     el.style.display = html ? '' : 'none';
+}
+
+// ── Channel below-fold tabs ──────────────────────────────────
+let _channelTab = 'videos';
+function switchChannelTab(tab, btn) {
+    _channelTab = tab;
+    document.querySelectorAll('#ch-tabs .ch-tab').forEach(b => {
+        const on = b.dataset.tab === tab;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.ch-tab-panel').forEach(p => p.classList.remove('active'));
+    const panel = document.getElementById('ch-panel-' + tab);
+    if (panel) panel.classList.add('active');
+    // Lazy-load the heavier tabs the first time they're opened.
+    if (tab === 'analytics' && currentChannelUsername && !_chTabLoaded.analytics) {
+        _chTabLoaded.analytics = true;
+        try { loadChannelAnalytics(currentChannelUsername, _chAnalyticsDays || 7); } catch {}
+    }
+}
+let _chTabLoaded = {};
+let _chAnalyticsDays = 7;
+function _resetChannelTabs() {
+    _chTabLoaded = {};
+    const btn = document.querySelector('#ch-tabs .ch-tab[data-tab="videos"]');
+    switchChannelTab('videos', btn);
+    // Controls tab starts hidden; loadStreamControls reveals it when applicable.
+    const ctlBtn = document.getElementById('ch-tab-btn-controls');
+    if (ctlBtn) ctlBtn.style.display = 'none';
+}
+
+// Render the About tab: bio + streamer-defined info panels. (Weather is injected
+// separately at the top of the panel by loadChannelWeather.)
+function _renderChannelAbout(ch) {
+    const host = document.getElementById('ch-about-content');
+    if (!host || !ch) return;
+    let panels = [];
+    try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
+    const bio = (ch.bio || ch.description || '').trim();
+    let html = '';
+    if (bio) html += `<div class="ch-about-bio">${_linkify(esc(bio))}</div>`;
+    if (Array.isArray(panels) && panels.length) {
+        html += '<div class="ch-about-panels">' + panels.map(p => {
+            const img = p.image || p.image_url || '';
+            const link = p.link || p.url || '';
+            const title = p.title || '';
+            const body = p.body || p.text || p.description || '';
+            const imgTag = img ? (link
+                ? `<a href="${esc(link)}" target="_blank" rel="noopener"><img src="${esc(img)}" alt="${esc(title)}" loading="lazy"></a>`
+                : `<img src="${esc(img)}" alt="${esc(title)}" loading="lazy">`) : '';
+            const bodyHtml = body ? `<div class="ch-about-panel-text">${_linkify(esc(body))}</div>` : '';
+            const titleHtml = title ? `<div class="ch-about-panel-title">${esc(title)}</div>` : '';
+            return `<div class="ch-about-panel">${imgTag}<div class="ch-about-panel-body">${titleHtml}${bodyHtml}</div></div>`;
+        }).join('') + '</div>';
+    }
+    if (!html) html = `<div class="ch-about-empty"><i class="fa-solid fa-circle-info"></i> This streamer hasn't added an About section yet.</div>`;
+    host.innerHTML = html;
+}
+// Minimal, safe linkifier for already-HTML-escaped text.
+function _linkify(escaped) {
+    return String(escaped).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 }
 
 function startStreamStatusPoll(stream) {

@@ -6038,6 +6038,48 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 /* Staff badge sits outside the clipping h2 so it stays visible + tooltip shows. */
 .ch-info-bar-top .ch-staff-badge { display: inline-flex; align-self: center; }
 .ch-staff-badge:empty { display: none; }
+
+/* ── Channel below-fold tabs (Videos / Clips / Pastes / Analytics / About …) ── */
+.ch-tabs {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    border-bottom: 1px solid var(--border); margin: 4px 0 18px; padding-bottom: 0;
+}
+.ch-tab {
+    appearance: none; background: transparent; border: none; cursor: pointer;
+    color: var(--text-muted); font-size: 0.9rem; font-weight: 650;
+    padding: 10px 14px; border-radius: 8px 8px 0 0; position: relative;
+    display: inline-flex; align-items: center; gap: 7px;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+.ch-tab i { font-size: 0.85em; opacity: 0.85; }
+.ch-tab:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ch-tab.active { color: var(--accent); }
+.ch-tab.active::after {
+    content: ''; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2.5px;
+    background: var(--accent); border-radius: 2px;
+}
+.ch-tab-panel { display: none; }
+.ch-tab-panel.active { display: block; animation: chTabFade 0.2s ease; }
+@keyframes chTabFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.ch-panel-title { font-size: 1.05rem; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
+.ch-panel-title i { color: var(--accent); opacity: 0.9; }
+.ch-about-content { display: flex; flex-direction: column; gap: 14px; }
+.ch-about-bio {
+    background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; line-height: 1.6; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
+}
+.ch-about-panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.ch-about-panel {
+    background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    display: flex; flex-direction: column;
+}
+.ch-about-panel img { width: 100%; display: block; max-height: 220px; object-fit: cover; }
+.ch-about-panel-body { padding: 12px 14px; }
+.ch-about-panel-title { font-weight: 700; margin-bottom: 5px; }
+.ch-about-panel-text { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.ch-about-panel-text a { color: var(--accent); }
+.ch-about-empty { color: var(--text-muted); padding: 24px; text-align: center; }
+@media (max-width: 640px) { .ch-tab { padding: 9px 11px; font-size: 0.84rem; } }
 .ch-info-bar-top .ch-category-badge {
     font-size: 0.72rem; padding: 1px 8px;
 }
