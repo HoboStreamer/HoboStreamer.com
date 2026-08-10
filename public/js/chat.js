@@ -2615,16 +2615,9 @@ function handleChatMessage(msg) {
             break;
         }
         case 'delete-messages': {
-            // Remove specific messages from the DOM by their IDs
-            if (msg.ids && msg.ids.length > 0) {
-                const idSet = new Set(msg.ids.map(String));
-                document.querySelectorAll('.chat-msg[data-msg-id]').forEach(el => {
-                    if (idSet.has(el.dataset.msgId)) {
-                        el.classList.add('chat-msg-deleted');
-                        setTimeout(() => el.remove(), 300);
-                    }
-                });
-            }
+            // Remove specific messages from the DOM by their IDs (for other viewers;
+            // the acting moderator already removed them optimistically).
+            removeMessagesFromDom(msg.ids);
             break;
         }
         case 'purge': {
@@ -4262,11 +4255,39 @@ function ctxGlobalBanAnon(anonName) {
 
 /* ── Message deletion actions ─────────────────────────────────── */
 
+// ── Optimistic DOM removal ───────────────────────────────────
+// Delete/ban actions relied solely on the server's WS broadcast to remove
+// messages from the DOM, which doesn't reliably round-trip to the acting
+// moderator's own chat connection — so their view didn't update until refresh.
+// These helpers remove matching messages locally the moment the API confirms.
+function _fadeRemoveMsg(el) {
+    el.classList.add('chat-msg-deleted');
+    setTimeout(() => el.remove(), 300);
+}
+function removeMessagesFromDom(ids) {
+    if (!ids || !ids.length) return;
+    const idSet = new Set(ids.map(String));
+    document.querySelectorAll('.chat-msg[data-msg-id]').forEach(el => {
+        if (idSet.has(el.dataset.msgId)) _fadeRemoveMsg(el);
+    });
+}
+function removeUserMessagesFromDom({ username = null, userId = null } = {}) {
+    if (!username && !userId) return;
+    document.querySelectorAll('.chat-msg').forEach(el => {
+        const nameEl = el.querySelector('[data-username]');
+        if (!nameEl) return;
+        if ((username && nameEl.dataset.username === username) ||
+            (userId && nameEl.dataset.userId === String(userId))) {
+            _fadeRemoveMsg(el);
+        }
+    });
+}
+
 function ctxDeleteMessage(msgId) {
     dismissContextMenu();
     if (!msgId) return;
     api('/mod/delete-message', { method: 'POST', body: { message_id: msgId, stream_id: chatStreamId || null } })
-        .then(() => toast('Message deleted', 'success'))
+        .then(() => { removeMessagesFromDom([msgId]); toast('Message deleted', 'success'); })
         .catch(e => toast(e.message || 'Delete failed', 'error'));
 }
 
@@ -4278,7 +4299,7 @@ function ctxDeleteAllUserMessages(userId) {
     const body = { user_id: userId };
     if (chatStreamId) body.stream_id = chatStreamId;
     api('/mod/delete-user-messages', { method: 'POST', body })
-        .then(r => toast(`Deleted ${r.count || 0} message(s)`, 'success'))
+        .then(r => { removeUserMessagesFromDom({ userId }); toast(`Deleted ${r.count || 0} message(s)`, 'success'); })
         .catch(e => toast(e.message || 'Delete failed', 'error'));
 }
 
@@ -4290,7 +4311,7 @@ function ctxDeleteAllAnonMessages(anonId) {
     const body = { anon_id: anonId };
     if (chatStreamId) body.stream_id = chatStreamId;
     api('/mod/delete-user-messages', { method: 'POST', body })
-        .then(r => toast(`Deleted ${r.count || 0} message(s)`, 'success'))
+        .then(r => { removeUserMessagesFromDom({ username: anonId }); toast(`Deleted ${r.count || 0} message(s)`, 'success'); })
         .catch(e => toast(e.message || 'Delete failed', 'error'));
 }
 
@@ -4302,7 +4323,7 @@ function ctxDeleteRelayMessages(relayUsername) {
     const body = { relay_username: relayUsername };
     if (chatStreamId) body.stream_id = chatStreamId;
     api('/mod/delete-user-messages', { method: 'POST', body })
-        .then(r => toast(`Deleted ${r.count || 0} message(s)`, 'success'))
+        .then(r => { removeUserMessagesFromDom({ username: relayUsername }); toast(`Deleted ${r.count || 0} message(s)`, 'success'); })
         .catch(e => toast(e.message || 'Delete failed', 'error'));
 }
 
@@ -4365,7 +4386,7 @@ function ctxBanRelayUser(prefixedUsername) {
             if (chatStreamId) deleteBody.stream_id = chatStreamId;
             return api('/mod/delete-user-messages', { method: 'POST', body: deleteBody });
         })
-        .then(r => toast(`[${platform}] ${externalUsername} banned — ${r?.count || 0} message(s) deleted`, 'success'))
+        .then(r => { removeUserMessagesFromDom({ username: prefixedUsername }); toast(`[${platform}] ${externalUsername} banned — ${r?.count || 0} message(s) deleted`, 'success'); })
         .catch(e => toast(e.message || 'Ban failed', 'error'));
 }
 
