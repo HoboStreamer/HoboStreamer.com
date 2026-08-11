@@ -3755,6 +3755,7 @@ main#app { position: relative; z-index: 1; }
     display: flex; gap: 8px; flex-wrap: wrap;
 }
 .control-btn {
+    position: relative; /* anchor the absolutely-positioned .control-keybind badge */
     display: flex; flex-direction: column; align-items: center; gap: 2px;
     padding: 10px 14px; background: var(--bg-hover);
     border: 1px solid var(--border); border-radius: var(--radius);
