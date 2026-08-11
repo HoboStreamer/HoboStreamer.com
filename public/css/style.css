@@ -12100,27 +12100,65 @@ body.theme-light .user-dropdown {
 .streamer-group-card .card-ai-overview { margin: 5px 5px -2px 5px; }
 
 /* ═══════════════ Donation Goals ═══════════════ */
-/* Widget at the top of chat (live + offline) */
+/* Compact, image-forward widget at the top of chat (live + offline). The goal image
+   fills the whole card (cover); a gradient keeps the title/amount readable. Click a
+   goal to open a popover with a larger image. */
 .ch-goal-widget {
     flex-shrink: 0; border-bottom: 1px solid var(--border);
-    background: var(--bg-tertiary); padding: 8px 10px;
-    display: flex; flex-direction: column; gap: 8px; max-height: 40%; overflow-y: auto;
+    background: var(--bg-tertiary); padding: 6px 8px;
+    display: flex; flex-direction: column; gap: 6px; max-height: 46%; overflow-y: auto;
 }
-.cgw-goal { display: flex; gap: 9px; align-items: center; position: relative; }
-.cgw-media { width: 42px; height: 42px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: #000; }
-.cgw-body { flex: 1; min-width: 0; }
+.cgw-goal {
+    position: relative; height: 56px; border-radius: 10px; overflow: hidden; cursor: pointer;
+    background: var(--bg-card); border: 1px solid var(--border);
+    transition: transform .12s ease, box-shadow .12s ease;
+}
+.cgw-goal:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+.cgw-goal.has-img { border-color: rgba(255,255,255,.08); }
+.cgw-media {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; background-size: cover; background-position: center; background-repeat: no-repeat;
+}
+.cgw-overlay { position: absolute; inset: 0; }
+/* Left-to-right + bottom scrim only over the image, so the object stays visible on the right. */
+.cgw-goal.has-img .cgw-overlay {
+    background: linear-gradient(90deg, rgba(8,8,10,.9) 0%, rgba(8,8,10,.6) 42%, rgba(8,8,10,.1) 100%),
+                linear-gradient(0deg, rgba(8,8,10,.78) 0%, rgba(8,8,10,0) 55%);
+}
+.cgw-body {
+    position: relative; z-index: 2; height: 100%;
+    display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 6px 11px;
+}
 .cgw-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.cgw-title { font-weight: 700; font-size: 0.82rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cgw-pct { font-size: 0.74rem; color: var(--accent); font-weight: 700; flex-shrink: 0; }
-.cgw-bar { height: 8px; border-radius: 999px; background: var(--bg-card); overflow: hidden; margin: 3px 0; border: 1px solid var(--border); }
-.cgw-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), #f0b64b); transition: width 0.5s cubic-bezier(.2,.8,.2,1); }
-.cgw-amt { font-size: 0.72rem; color: var(--text-muted); }
+.cgw-title { font-weight: 800; font-size: 0.84rem; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cgw-pct { font-size: 0.76rem; color: #ffcf6b; font-weight: 800; flex-shrink: 0; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
+.cgw-amt { font-size: 0.7rem; color: #e9e9ea; text-shadow: 0 1px 2px rgba(0,0,0,.95); }
+/* No image → plain themed card text (no shadow needed). */
+.cgw-goal:not(.has-img) .cgw-title { color: var(--text-primary); text-shadow: none; }
+.cgw-goal:not(.has-img) .cgw-amt { color: var(--text-muted); text-shadow: none; }
+.cgw-goal:not(.has-img) .cgw-pct { color: var(--accent); text-shadow: none; }
+.cgw-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0,0,0,.45); z-index: 2; }
+.cgw-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #f0b64b); transition: width 0.5s cubic-bezier(.2,.8,.2,1); }
 .cgw-goal.reached .cgw-fill { background: linear-gradient(90deg, #38c172, #6ee7a8); }
-.cgw-goal.reached .cgw-title { color: #6ee7a8; }
 .cgw-goal.reached { animation: cgwGlow 2.4s ease-in-out infinite; }
-@keyframes cgwGlow { 0%,100% { filter: none; } 50% { filter: drop-shadow(0 0 6px rgba(110,231,168,.5)); } }
-.cgw-pop { animation: cgwPop 0.6s ease; }
-@keyframes cgwPop { 0% { transform: scale(1); } 40% { transform: scale(1.06); } 100% { transform: scale(1); } }
+@keyframes cgwGlow { 0%,100% { box-shadow: 0 0 0 rgba(110,231,168,0); } 50% { box-shadow: 0 0 12px rgba(110,231,168,.55); } }
+.cgw-pulse { animation: cgwPulse 0.6s ease; }
+@keyframes cgwPulse { 0% { transform: scale(1); } 40% { transform: scale(1.05); } 100% { transform: scale(1); } }
+
+/* Goal popover — click a widget goal to see a larger image + full progress. */
+.cgw-pop-overlay { position: fixed; inset: 0; z-index: 4000; background: rgba(0,0,0,.72); display: flex; align-items: center; justify-content: center; padding: 20px; animation: cgwFade .15s ease; }
+@keyframes cgwFade { from { opacity: 0; } to { opacity: 1; } }
+.cgw-pop { position: relative; width: min(440px, 94vw); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.6); animation: cgwPopIn .18s cubic-bezier(.2,.9,.3,1.15); }
+@keyframes cgwPopIn { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
+.cgw-pop.reached { border-color: #38c172; }
+.cgw-pop-media { width: 100%; max-height: 320px; object-fit: cover; display: block; background: #000; }
+.cgw-pop-info { padding: 15px 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.cgw-pop-title { font-size: 1.2rem; font-weight: 800; color: var(--text-primary); }
+.cgw-pop-bar { position: static; height: 11px; width: 100%; border-radius: 999px; background: var(--bg-card); border: 1px solid var(--border); overflow: hidden; }
+.cgw-pop-bar .cgw-fill { border-radius: 999px; }
+.cgw-pop-amt { font-size: 0.9rem; color: var(--text-secondary); }
+.cgw-pop-close { position: absolute; top: 8px; right: 10px; z-index: 3; background: rgba(0,0,0,.55); color: #fff; border: none; width: 30px; height: 30px; border-radius: 50%; font-size: 1.4rem; line-height: 1; cursor: pointer; }
+.cgw-pop-close:hover { background: rgba(0,0,0,.85); }
 
 /* Dashboard goal manager cards */
 .dash-goal { display: flex; gap: 12px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; background: var(--bg-secondary); }

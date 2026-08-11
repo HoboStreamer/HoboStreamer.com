@@ -3536,19 +3536,65 @@ function renderGoalWidget() {
 function _goalWidgetItemHTML(g) {
     const pct = g.target_amount ? Math.min(100, Math.round((g.current_amount / g.target_amount) * 100)) : 0;
     const reached = (!g.is_active && g.reached_at) || pct >= 100;
-    const media = g.image_url
+    const hasImg = !!g.image_url;
+    // Image/video fills the whole card (cover); a gradient keeps the text readable.
+    const media = hasImg
         ? (g.media_type === 'video'
             ? `<video class="cgw-media" src="${esc(g.image_url)}" muted loop autoplay playsinline></video>`
-            : `<img class="cgw-media" src="${esc(g.image_url)}" alt="">`)
+            : `<div class="cgw-media" style="background-image:url('${esc(g.image_url)}')"></div>`)
         : '';
-    return `<div class="cgw-goal ${reached ? 'reached' : ''}" data-goal-id="${g.id}">
+    return `<div class="cgw-goal ${reached ? 'reached' : ''} ${hasImg ? 'has-img' : ''}" data-goal-id="${g.id}" onclick="openGoalPopover(${g.id})" title="View goal">
             ${media}
+            <div class="cgw-overlay"></div>
             <div class="cgw-body">
                 <div class="cgw-top"><span class="cgw-title">${reached ? '🎉 ' : ''}${esc(g.title)}</span><span class="cgw-pct">${pct}%</span></div>
-                <div class="cgw-bar"><div class="cgw-fill" style="width:${pct}%"></div></div>
-                <div class="cgw-amt">$${g.current_amount} / $${g.target_amount}${reached ? ' · Goal reached!' : ''}</div>
+                <div class="cgw-amt">$${g.current_amount} / $${g.target_amount}${reached ? ' · reached!' : ''}</div>
+            </div>
+            <div class="cgw-bar"><div class="cgw-fill" style="width:${pct}%"></div></div>
+        </div>`;
+}
+
+// Click a goal in the widget → popover with a bigger image + full progress detail.
+let _goalPopEsc = null;
+function openGoalPopover(id) {
+    const g = (_goalWidget.goals || []).find(x => x.id === id);
+    if (!g) return;
+    closeGoalPopover();
+    const pct = g.target_amount ? Math.min(100, Math.round((g.current_amount / g.target_amount) * 100)) : 0;
+    const reached = (!g.is_active && g.reached_at) || pct >= 100;
+    const media = g.image_url
+        ? (g.media_type === 'video'
+            ? `<video class="cgw-pop-media" src="${esc(g.image_url)}" autoplay muted loop playsinline></video>`
+            : `<img class="cgw-pop-media" src="${esc(g.image_url)}" alt="">`)
+        : '';
+    const ov = document.createElement('div');
+    ov.className = 'cgw-pop-overlay';
+    ov.id = 'cgw-pop-overlay';
+    ov.onclick = (e) => { if (e.target === ov) closeGoalPopover(); };
+    ov.innerHTML = `<div class="cgw-pop ${reached ? 'reached' : ''}">
+            <button class="cgw-pop-close" onclick="closeGoalPopover()" aria-label="Close">&times;</button>
+            ${media}
+            <div class="cgw-pop-info">
+                <div class="cgw-pop-title">${reached ? '🎉 ' : ''}${esc(g.title)}</div>
+                <div class="cgw-bar cgw-pop-bar"><div class="cgw-fill" style="width:${pct}%"></div></div>
+                <div class="cgw-pop-amt">$${g.current_amount} / $${g.target_amount} Hobo Bucks · ${pct}%${reached ? ' · Goal reached!' : ''}</div>
+                ${(!reached && typeof currentUser !== 'undefined' && currentUser) ? `<button class="btn btn-primary" onclick="_donateToGoal(${g.id})"><i class="fa-solid fa-gift"></i> Donate to this goal</button>` : ''}
             </div>
         </div>`;
+    document.body.appendChild(ov);
+    _goalPopEsc = (e) => { if (e.key === 'Escape') closeGoalPopover(); };
+    document.addEventListener('keydown', _goalPopEsc);
+}
+function closeGoalPopover() {
+    const ov = document.getElementById('cgw-pop-overlay');
+    if (ov) ov.remove();
+    if (_goalPopEsc) { document.removeEventListener('keydown', _goalPopEsc); _goalPopEsc = null; }
+}
+// Open the donate modal pre-targeted at this goal.
+function _donateToGoal(id) {
+    window._pendingDonateGoalId = id;
+    closeGoalPopover();
+    if (typeof showModal === 'function') showModal('donate');
 }
 // Live updates pushed over the chat websocket (goal-update / goal-reached).
 function updateGoalInWidget(goal) {
@@ -3562,7 +3608,7 @@ function goalReachedInWidget(goal) {
     // Briefly pulse the reached goal in the widget.
     setTimeout(() => {
         document.querySelectorAll(`.cgw-goal[data-goal-id="${goal && goal.id}"]`).forEach(el => {
-            el.classList.add('cgw-pop'); setTimeout(() => el.classList.remove('cgw-pop'), 2000);
+            el.classList.add('cgw-pulse'); setTimeout(() => el.classList.remove('cgw-pulse'), 2000);
         });
     }, 60);
 }

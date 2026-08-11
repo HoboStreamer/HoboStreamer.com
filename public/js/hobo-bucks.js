@@ -215,6 +215,12 @@ async function _loadDonateGoals() {
         sel.innerHTML = `<option value="">General support (no specific goal)</option>` +
             goals.map(g => `<option value="${g.id}">${escHb(g.title)} — $${g.current_amount}/$${g.target_amount}</option>`).join('');
         wrap.style.display = '';
+        // Pre-select a goal if the donate modal was opened from a goal popover.
+        if (window._pendingDonateGoalId) {
+            const pid = String(window._pendingDonateGoalId);
+            if ([...sel.options].some(o => o.value === pid)) sel.value = pid;
+            window._pendingDonateGoalId = null;
+        }
     } catch { wrap.style.display = 'none'; }
 }
 function escHb(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
