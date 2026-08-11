@@ -4009,6 +4009,12 @@ window.addEventListener('hobo:stream-live', (e) => {
         const d = e && e.detail;
         if (!d || !d.username || !currentChannelUsername) return;
         if (String(d.username).toLowerCase() !== String(currentChannelUsername).toLowerCase()) return;
+        // ONLY act when the channel page is actually the active page — otherwise
+        // (e.g. watching one of the streamer's VODs/clips) reloading the channel would
+        // tear down the player the viewer is on. currentChannelUsername lingers after
+        // navigating away, so the page check is essential.
+        const page = document.getElementById('page-channel');
+        if (!page || !page.classList.contains('active')) return;
         // Already showing the live area? nothing to do.
         const liveArea = document.getElementById('ch-live-area');
         if (liveArea && liveArea.style.display !== 'none') return;
