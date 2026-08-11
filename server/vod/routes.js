@@ -2092,5 +2092,96 @@ router.get('/clips/stream/:streamId', optionalAuth, (req, res) => {
     }
 });
 
+// ══════════════════════════════════════════════════════
+//  Trim an existing clip down to a final range (server-side)
+//  Re-cuts from the stored clip file, replaces it, and shifts
+//  the source offsets so the VOD deep-link stays accurate.
+// ══════════════════════════════════════════════════════
+router.post('/clips/:id/trim', requireAuth, async (req, res) => {
+    try {
+        const clip = db.getClipById(req.params.id);
+        if (!clip) return res.status(404).json({ error: 'Clip not found' });
+        if (clip.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'You can only trim your own clips' });
+        }
+        if (!clip.file_path || !fs.existsSync(clip.file_path)) {
+            return res.status(404).json({ error: 'Clip file is missing' });
+        }
+
+        const clipDur = clip.duration_seconds || 0;
+        let start = parseFloat(req.body.start);
+        let end = parseFloat(req.body.end);
+        if (!Number.isFinite(start) || start < 0) start = 0;
+        if (!Number.isFinite(end) || end <= start) {
+            return res.status(400).json({ error: 'Invalid trim range' });
+        }
+        if (clipDur > 0) { start = Math.min(start, clipDur); end = Math.min(end, clipDur); }
+        const newDur = end - start;
+        if (newDur < 1) {
+            return res.status(400).json({ error: 'Trimmed clip must be at least 1 second long' });
+        }
+
+        const newTitle = sanitizeClipTitle(req.body.title);
+
+        // Effectively unchanged range → just apply the title (if any), skip re-encode.
+        if (start < 0.15 && clipDur > 0 && Math.abs(end - clipDur) < 0.15) {
+            if (newTitle) db.run('UPDATE clips SET title = ? WHERE id = ?', [newTitle, clip.id]);
+            return res.json({ clip: db.getClipById(clip.id), unchanged: true });
+        }
+
+        if (_activeFFmpegJobs >= CLIP_MAX_CONCURRENT_FFMPEG) {
+            return res.status(503).json({ error: 'Server is busy processing clips — try again in a moment.' });
+        }
+
+        const dir = path.dirname(clip.file_path);
+        const outName = `clip-${req.user.id}-${req.params.id}-trim-${process.hrtime.bigint().toString(36)}.webm`;
+        const outPath = path.join(dir, outName);
+
+        _activeFFmpegJobs++;
+        let ffErr = '', ffTo = false;
+        const ff = spawn('ffmpeg', [
+            '-y', '-ss', String(start), '-i', clip.file_path, '-t', String(newDur),
+            '-c:v', 'libvpx', '-b:v', '2000k', '-crf', '18', '-deadline', 'realtime', '-cpu-used', '4',
+            '-force_key_frames', 'expr:gte(t,n_forced*2)', '-c:a', 'libopus', '-b:a', '128k',
+            '-avoid_negative_ts', 'make_zero', '-f', 'webm', outPath,
+        ]);
+        ff.stderr?.on('data', d => { ffErr += d; if (ffErr.length > 10000) ffErr = ffErr.slice(-5000); });
+        const toMs = Math.max(CLIP_FFMPEG_TIMEOUT_MS, Math.round(newDur) * 2000 + 15000);
+        const timer = setTimeout(() => { ffTo = true; try { ff.kill('SIGKILL'); } catch {} }, toMs);
+        ff.on('error', () => {
+            _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1); clearTimeout(timer); cleanupTempFile(outPath);
+            if (!res.headersSent) res.status(500).json({ error: 'FFmpeg not available' });
+        });
+        ff.on('exit', (code) => {
+            _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1); clearTimeout(timer);
+            if (ffTo) { cleanupTempFile(outPath); if (!res.headersSent) res.status(504).json({ error: 'Trim timed out. Try again.' }); return; }
+            if (code !== 0) { cleanupTempFile(outPath); console.warn('[Clips] trim ffmpeg failed:', ffErr.slice(-400)); if (!res.headersSent) res.status(500).json({ error: 'Failed to trim clip' }); return; }
+            try { const st = fs.statSync(outPath); if (!st.size) { cleanupTempFile(outPath); if (!res.headersSent) res.status(500).json({ error: 'Trim produced an empty file' }); return; } }
+            catch { cleanupTempFile(outPath); if (!res.headersSent) res.status(500).json({ error: 'Failed to verify trimmed clip' }); return; }
+
+            const oldPath = clip.file_path;
+            const newStart = (clip.start_time || 0) + start;
+            const newEnd = newStart + newDur;
+            if (newTitle) {
+                db.run('UPDATE clips SET file_path = ?, duration_seconds = ?, start_time = ?, end_time = ?, title = ? WHERE id = ?',
+                    [outPath, newDur, newStart, newEnd, newTitle, clip.id]);
+            } else {
+                db.run('UPDATE clips SET file_path = ?, duration_seconds = ?, start_time = ?, end_time = ? WHERE id = ?',
+                    [outPath, newDur, newStart, newEnd, clip.id]);
+            }
+            try { if (oldPath && oldPath !== outPath && fs.existsSync(oldPath)) fs.unlinkSync(oldPath); } catch { /* */ }
+
+            const updated = db.getClipById(clip.id);
+            console.log(`[Clips] trimmed clip ${clip.id} → ${outName} (${start.toFixed(1)}-${end.toFixed(1)}s of source, new dur ${newDur.toFixed(1)}s)`);
+            try { thumbService.generateClipThumbnail(clip.id, outPath).catch(() => {}); } catch { /* */ }
+            try { require('../ai/ai-analysis').generateClipOverview(updated).catch(() => {}); } catch { /* */ }
+            res.json({ clip: updated, file: outName });
+        });
+    } catch (err) {
+        console.error('[Clips] trim error:', err.message);
+        if (!res.headersSent) res.status(500).json({ error: 'Failed to trim clip' });
+    }
+});
+
 router.isFinalizingStream = isFinalizingStream;
 module.exports = router;

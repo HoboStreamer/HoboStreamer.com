@@ -3195,11 +3195,11 @@ async function createLiveClip() {
 
         const data = await resp.json();
         const clipId = data.clip?.id;
-        toast(`Clip created! (${Math.round(duration)}s) — Give it a title`, 'success');
+        toast(`Clip created! (${Math.round(duration)}s) — Trim & title it`, 'success');
 
-        // Prompt user to title the clip
+        // Let the user trim and title the clip (only the final cut is stored)
         if (clipId) {
-            promptClipTitle(clipId);
+            openClipTrimEditor(clipId);
         }
     } catch (err) {
         toast('Failed to create clip: ' + err.message, 'error');
@@ -3225,8 +3225,8 @@ async function _createServerLiveClip() {
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) { toast(data.error || 'Failed to create clip', data.no_recording ? 'warning' : 'error'); return; }
         const clipId = data.clip && data.clip.id;
-        toast('Clip created! — Give it a title', 'success');
-        if (clipId) promptClipTitle(clipId);
+        toast('Clip created! — Trim & title it', 'success');
+        if (clipId) openClipTrimEditor(clipId);
     } catch (err) {
         toast('Failed to create clip: ' + (err.message || 'error'), 'error');
     } finally {
@@ -3306,6 +3306,148 @@ function _buildClipTitleModal(overlay, clipId) {
     document.getElementById('live-clip-title-skip').onclick = skip;
     input.onkeydown = (e) => { if (e.key === 'Enter') saveTitle(); if (e.key === 'Escape') skip(); };
     overlay.onclick = (e) => { if (e.target === overlay) skip(); };
+}
+
+// After a clip is created, let the user preview it and trim the start/end further.
+// Only the final cut is stored (the server re-encodes and replaces the file).
+// Falls back to the plain title prompt if the clip can't be loaded for preview.
+async function openClipTrimEditor(clipId) {
+    let clip;
+    try {
+        const token = localStorage.getItem('token');
+        const resp = await fetch(`/api/clips/${clipId}`, token ? { headers: { 'Authorization': `Bearer ${token}` } } : undefined);
+        const data = await resp.json().catch(() => ({}));
+        clip = data.clip;
+    } catch { /* */ }
+    if (!clip || !clip.file_path || !(clip.duration_seconds > 0)) {
+        // Can't preview — fall back to the simple title prompt.
+        return promptClipTitle(clipId);
+    }
+    const fileName = String(clip.file_path).split('/').pop();
+    const dur = Number(clip.duration_seconds);
+
+    const show = () => _buildClipTrimModal(clipId, fileName, dur, clip.title || '');
+    if (document.fullscreenElement) document.exitFullscreen().then(show).catch(show);
+    else show();
+}
+
+function _buildClipTrimModal(clipId, fileName, dur, defaultTitle) {
+    const fmt = (s) => {
+        s = Math.max(0, s);
+        const m = Math.floor(s / 60);
+        const sec = (s % 60).toFixed(1).padStart(4, '0');
+        return `${m}:${sec}`;
+    };
+
+    let startT = 0, endT = dur;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'clip-trim-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:var(--card-bg,#1a1a2e);border:1px solid var(--border,#333);border-radius:14px;padding:22px;max-width:600px;width:100%;box-sizing:border-box;max-height:92vh;overflow:auto;';
+    modal.innerHTML = `
+        <h3 style="margin:0 0 4px 0"><i class="fa-solid fa-scissors"></i> Trim &amp; Name Your Clip</h3>
+        <p style="margin:0 0 14px 0;opacity:0.7;font-size:0.88rem">Drag the handles to trim the start and end. Only the final cut is saved.</p>
+        <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;margin-bottom:14px">
+            <video id="clip-trim-video" src="/api/vods/file/${fileName}" muted playsinline autoplay
+                   style="width:100%;max-height:46vh;display:block;background:#000"></video>
+        </div>
+        <div style="margin-bottom:10px">
+            <div id="clip-trim-track" style="position:relative;height:8px;border-radius:6px;background:var(--border,#333);margin:6px 2px 4px">
+                <div id="clip-trim-region" style="position:absolute;top:0;bottom:0;left:0;right:0;background:var(--accent,#8b5cf6);border-radius:6px;opacity:0.65"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.8rem;opacity:0.85;margin-bottom:8px">
+                <span>Start: <strong id="clip-trim-start-lbl">0:00.0</strong></span>
+                <span>Length: <strong id="clip-trim-len-lbl">${fmt(dur)}</strong></span>
+                <span>End: <strong id="clip-trim-end-lbl">${fmt(dur)}</strong></span>
+            </div>
+            <label style="display:block;font-size:0.78rem;opacity:0.7;margin:2px 0">Start</label>
+            <input type="range" id="clip-trim-start" min="0" max="${dur}" step="0.1" value="0" style="width:100%">
+            <label style="display:block;font-size:0.78rem;opacity:0.7;margin:6px 0 2px">End</label>
+            <input type="range" id="clip-trim-end" min="0" max="${dur}" step="0.1" value="${dur}" style="width:100%">
+        </div>
+        <input type="text" id="clip-trim-title" class="form-input" placeholder="Give your clip a title..."
+               maxlength="200" style="width:100%;box-sizing:border-box;margin:10px 0 14px;font-size:1rem;padding:10px 12px">
+        <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+            <button id="clip-trim-skip" class="btn" style="opacity:0.7">Skip</button>
+            <button id="clip-trim-save" class="btn btn-primary"><i class="fa-solid fa-check"></i> Save Clip</button>
+        </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const video = modal.querySelector('#clip-trim-video');
+    const startSl = modal.querySelector('#clip-trim-start');
+    const endSl = modal.querySelector('#clip-trim-end');
+    const region = modal.querySelector('#clip-trim-region');
+    const startLbl = modal.querySelector('#clip-trim-start-lbl');
+    const endLbl = modal.querySelector('#clip-trim-end-lbl');
+    const lenLbl = modal.querySelector('#clip-trim-len-lbl');
+    const titleInput = modal.querySelector('#clip-trim-title');
+    const saveBtn = modal.querySelector('#clip-trim-save');
+    const skipBtn = modal.querySelector('#clip-trim-skip');
+    if (defaultTitle && defaultTitle !== 'Clip from stream') titleInput.value = defaultTitle;
+
+    const MIN_LEN = 1;
+    const refresh = () => {
+        startLbl.textContent = fmt(startT);
+        endLbl.textContent = fmt(endT);
+        lenLbl.textContent = fmt(endT - startT);
+        region.style.left = (dur > 0 ? (startT / dur) * 100 : 0) + '%';
+        region.style.right = (dur > 0 ? (1 - endT / dur) * 100 : 0) + '%';
+    };
+    refresh();
+
+    startSl.addEventListener('input', () => {
+        startT = parseFloat(startSl.value);
+        if (startT > endT - MIN_LEN) { startT = Math.max(0, endT - MIN_LEN); startSl.value = startT; }
+        try { video.currentTime = startT; } catch { /* */ }
+        refresh();
+    });
+    endSl.addEventListener('input', () => {
+        endT = parseFloat(endSl.value);
+        if (endT < startT + MIN_LEN) { endT = Math.min(dur, startT + MIN_LEN); endSl.value = endT; }
+        try { video.currentTime = Math.max(startT, endT - 0.15); } catch { /* */ }
+        refresh();
+    });
+
+    // Loop playback within the selected [start, end] window.
+    video.addEventListener('timeupdate', () => {
+        if (video.currentTime >= endT - 0.04 || video.currentTime < startT - 0.4) {
+            try { video.currentTime = startT; } catch { /* */ }
+        }
+    });
+    video.play().catch(() => {});
+
+    const close = () => { try { video.pause(); } catch {} overlay.remove(); };
+
+    const doSave = async () => {
+        const title = titleInput.value.trim();
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+        try {
+            const token = localStorage.getItem('token');
+            const resp = await fetch(`/api/vods/clips/${clipId}/trim`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ start: startT, end: endT, title }),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(data.error || 'Failed to save');
+            toast(data.unchanged ? 'Clip saved!' : 'Clip trimmed & saved!', 'success');
+            close();
+        } catch (err) {
+            toast('Failed to save clip: ' + (err.message || 'error'), 'error');
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="fa-solid fa-check"></i> Save Clip';
+        }
+    };
+
+    saveBtn.onclick = doSave;
+    skipBtn.onclick = close;
+    titleInput.onkeydown = (e) => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') close(); };
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
 }
 
 function setVolume(v) {

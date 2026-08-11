@@ -132,6 +132,16 @@ router.get('/:id', optionalAuth, (req, res) => {
         // Get comment count
         clip.comment_count = db.getCommentCount('clip', clip.id);
 
+        // Whether the source VOD is still available (exists, not private, not mid-recording)
+        // so the client can offer a "watch in the full VOD at this timestamp" deep link.
+        clip.vod_available = false;
+        if (clip.vod_id) {
+            try {
+                const v = db.get('SELECT visibility, is_recording FROM vods WHERE id = ?', [clip.vod_id]);
+                if (v && v.visibility !== 'private' && !v.is_recording) clip.vod_available = true;
+            } catch { /* */ }
+        }
+
         res.json({ clip });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get clip' });

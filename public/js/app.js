@@ -878,9 +878,10 @@ function routeFromURL() {
         showPage('clips');
         loadClipsPage();
     } else if (segments[0] === 'vod' && segments[1]) {
-        // VOD player: /vod/:id
+        // VOD player: /vod/:id  (optional ?t=<seconds> to auto-seek, e.g. from a clip link)
         showPage('vod-player');
-        loadVodPlayer(segments[1]);
+        const _t = parseFloat(new URLSearchParams(window.location.search).get('t'));
+        loadVodPlayer(segments[1], Number.isFinite(_t) && _t > 0 ? _t : null);
     } else if (segments[0] === 'clip' && segments[1]) {
         // Clip player: /clip/:id
         showPage('clip-player');
@@ -4444,7 +4445,7 @@ async function loadClipsPage() {
 }
 
 /* ── VOD Player ───────────────────────────────────────────────── */
-async function loadVodPlayer(vodId) {
+async function loadVodPlayer(vodId, seekTo) {
     try {
         // Clean up any previous live VOD poll
         if (window._liveVodPollTimer) {
@@ -4615,6 +4616,20 @@ async function loadVodPlayer(vodId) {
             }
 
             setupCustomVideoControls('vp');
+
+            // Deep-link seek — e.g. arriving from a clip's "watch the source VOD at
+            // this timestamp" link. Only for completed VODs (live VODs manage their own seek).
+            if (seekTo && seekTo > 0 && !v.is_recording) {
+                const _target = seekTo;
+                const _seekOnce = function () {
+                    video.removeEventListener('loadedmetadata', _seekOnce);
+                    const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : (serverDur || 0);
+                    try { video.currentTime = dur > 0 ? Math.min(_target, Math.max(0, dur - 0.5)) : _target; } catch { /* */ }
+                    video.play().catch(() => {});
+                };
+                if (video.readyState >= 1) _seekOnce();
+                else video.addEventListener('loadedmetadata', _seekOnce);
+            }
 
             // Load chat replay data for this VOD
             if (v.stream_id && v.stream_started_at) {
@@ -5146,10 +5161,14 @@ async function loadClipPlayer(clipId) {
         const clpSource = document.getElementById('clp-stream-source');
         if (clpSource) {
             let sourceHtml = '';
+            // Deep-link into the source VOD at the exact moment this clip starts,
+            // but only when that VOD is still up and public/unlisted.
+            const seekT = Math.max(0, Math.floor(cl.start_time || 0));
+            const vodJumpUrl = (cl.vod_id && cl.vod_available) ? `/vod/${cl.vod_id}?t=${seekT}` : null;
             if (cl.stream_title) {
                 const titleText = esc(cl.stream_title);
-                if (cl.vod_id) {
-                    sourceHtml += `<i class="fa-solid fa-tower-broadcast"></i> From stream: <a href="/vod/${cl.vod_id}" onclick="return handleLinkClick(event, '/vod/${cl.vod_id}')" style="color:var(--accent);text-decoration:none;font-weight:600">${titleText}</a>`;
+                if (vodJumpUrl) {
+                    sourceHtml += `<i class="fa-solid fa-tower-broadcast"></i> From stream: <a href="${vodJumpUrl}" onclick="return handleLinkClick(event, '${vodJumpUrl}')" style="color:var(--accent);text-decoration:none;font-weight:600">${titleText}</a>`;
                 } else {
                     sourceHtml += `<i class="fa-solid fa-tower-broadcast"></i> From stream: <strong>${titleText}</strong>`;
                 }
@@ -5158,6 +5177,9 @@ async function loadClipPlayer(clipId) {
                 }
             } else if (cl.start_time > 0) {
                 sourceHtml += `<i class="fa-solid fa-clock"></i> Clipped at <strong>${formatDuration(cl.start_time)}</strong> into the stream`;
+            }
+            if (vodJumpUrl) {
+                sourceHtml += ` <a href="${vodJumpUrl}" onclick="return handleLinkClick(event, '${vodJumpUrl}')" class="clip-vod-jump" title="Watch this moment in the full VOD" style="display:inline-flex;align-items:center;gap:5px;margin-left:8px;padding:3px 10px;border-radius:999px;background:var(--accent);color:#fff;font-size:0.8rem;font-weight:600;text-decoration:none"><i class="fa-solid fa-forward"></i> Watch in full VOD</a>`;
             }
             if (sourceHtml) {
                 clpSource.innerHTML = sourceHtml;
