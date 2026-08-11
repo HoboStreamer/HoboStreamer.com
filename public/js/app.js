@@ -3545,8 +3545,11 @@ function _goalWidgetItemHTML(g) {
             ${media}
             <div class="cgw-overlay"></div>
             <div class="cgw-body">
-                <div class="cgw-top"><span class="cgw-title">${reached ? '🎉 ' : ''}${esc(g.title)}</span><span class="cgw-pct">${pct}%</span></div>
-                <div class="cgw-amt">$${g.current_amount} / $${g.target_amount}${reached ? ' · reached!' : ''}</div>
+                <div class="cgw-top">
+                    <span class="cgw-title">${reached ? '🎉 ' : ''}${esc(g.title)}</span>
+                    <span class="cgw-amt">$${g.current_amount} / $${g.target_amount}</span>
+                    <span class="cgw-pct">${reached ? '✓' : pct + '%'}</span>
+                </div>
             </div>
             <div class="cgw-bar"><div class="cgw-fill" style="width:${pct}%"></div></div>
         </div>`;
