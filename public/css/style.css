@@ -12382,14 +12382,26 @@ body.theme-light .user-dropdown {
 .ct-badge.active .ct-count { opacity: 0.95; }
 
 /* ═══════════════ Channel panels: titles removed (tab = title) ═══════════════ */
-.ch-panel-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
-.ch-panel-actions .sel-all-btn { margin: 4px 0 8px; }
-#ch-analytics-header { margin: 2px 0 14px; }
+/* One consistent top bar per tab: filters flow from the left, action buttons (Select
+   all / period toggles) sit at the right edge — all on a single line. */
+.ch-panel-bar {
+    display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap;
+    margin: 12px 0 14px;
+}
+/* Right-align the action controls; the filter block keeps the left. */
+.ch-panel-bar > .sel-all-btn,
+.ch-panel-bar > .ch-analytics-period-btns { margin-left: auto; }
+/* The filter blocks bring their own margins normally — drop them inside the bar. */
+.ch-panel-bar > .ch-vods-filter-bar,
+.ch-panel-bar > .clips-taken-filters { margin: 0; }
+/* Collapse the bar entirely when it has no visible children (filters + button hidden),
+   so an empty row never wastes vertical space. */
+.ch-panel-bar:not(:has(> :not([style*="display:none"]):not([style*="display: none"]))) { margin: 0; }
 .ch-panel-hint { margin: 14px 0 12px; color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; gap: 7px; line-height: 1.4; }
 .ch-panel-hint i { color: var(--accent); }
 .ch-panel-hint b { color: var(--text-secondary); font-weight: 700; }
-.ch-panel-topline { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.ch-panel-topline .ch-panel-hint { margin: 12px 0; }
+/* Keep legacy .ch-panel-actions working (still used by the Controls header). */
+.ch-panel-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 
 /* Controls tab header (compact status + dock button) */
 .controls-header { justify-content: space-between; }

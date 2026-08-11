@@ -37,7 +37,7 @@
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=69">
+    <link rel="stylesheet" href="/css/style.css?v=70">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -991,10 +991,10 @@
 
                 <!-- Videos -->
                 <div class="ch-tab-panel active" id="ch-panel-videos" role="tabpanel">
-                    <div class="ch-panel-actions">
+                    <div class="ch-panel-bar">
+                        <div id="ch-vods-filter-bar" class="ch-vods-filter-bar" style="display:none"></div>
                         <button class="btn btn-small btn-outline sel-all-btn" data-sel-container="ch-vods-grid" style="display:none" onclick="_selAllToggle(this.dataset.selContainer)"><i class="fa-solid fa-check-double"></i> <span class="sel-all-label">Select all</span></button>
                     </div>
-                    <div id="ch-vods-filter-bar" class="ch-vods-filter-bar" style="display:none"></div>
                     <div class="stream-grid" id="ch-vods-grid"><p class="muted">No videos yet</p></div>
                     <div id="ch-vods-pagination" class="pastes-pagination" style="display:none"></div>
                 </div>
@@ -1008,18 +1008,18 @@
 
                 <!-- Clips Taken (clips this streamer made of others) -->
                 <div class="ch-tab-panel" id="ch-panel-clips-taken" role="tabpanel">
-                    <div class="ch-panel-topline">
-                        <p class="ch-panel-hint"><i class="fa-solid fa-film"></i> Clips <b>this streamer</b> has taken — clipped from other streamers' content.</p>
+                    <p class="ch-panel-hint"><i class="fa-solid fa-film"></i> Clips <b>this streamer</b> has taken — clipped from other streamers' content.</p>
+                    <div class="ch-panel-bar">
+                        <div class="clips-taken-filters" id="clips-taken-filters" style="display:none"></div>
                         <button class="btn btn-small btn-outline sel-all-btn" data-sel-container="ch-clips-grid" style="display:none" onclick="_selAllToggle(this.dataset.selContainer)"><i class="fa-solid fa-check-double"></i> <span class="sel-all-label">Select all</span></button>
                     </div>
-                    <div class="clips-taken-filters" id="clips-taken-filters" style="display:none"></div>
                     <div class="stream-grid" id="ch-clips-grid"><p class="muted">No clips yet</p></div>
                     <div id="ch-clips-pagination" class="pastes-pagination" style="display:none"></div>
                 </div>
 
                 <!-- Pastes -->
                 <div class="ch-tab-panel" id="ch-panel-pastes" role="tabpanel">
-                    <div class="ch-panel-actions" id="ch-pastes-header">
+                    <div class="ch-panel-bar" id="ch-pastes-header">
                         <button class="btn btn-small btn-outline sel-all-btn" data-sel-container="ch-pastes-grid" style="display:none" onclick="_selAllToggle(this.dataset.selContainer)"><i class="fa-solid fa-check-double"></i> <span class="sel-all-label">Select all</span></button>
                     </div>
                     <div id="ch-pastes-grid" class="pastes-grid"><p class="muted">No pastes yet</p></div>
@@ -1033,7 +1033,7 @@
 
                 <!-- Analytics -->
                 <div class="ch-tab-panel" id="ch-panel-analytics" role="tabpanel">
-                    <div class="ch-panel-actions" id="ch-analytics-header">
+                    <div class="ch-panel-bar" id="ch-analytics-header">
                         <div class="ch-analytics-period-btns" id="ch-analytics-period-btns">
                             <button class="btn btn-sm btn-ghost active" data-days="7">7d</button>
                             <button class="btn btn-sm btn-ghost" data-days="30">30d</button>
