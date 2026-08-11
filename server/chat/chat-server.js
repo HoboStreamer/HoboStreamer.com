@@ -1849,7 +1849,9 @@ class ChatServer {
     broadcastGlobal(data) {
         const msg = JSON.stringify(data);
         for (const [ws, client] of this.clients) {
-            if (!client.streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+            // Pure global clients only (see forwardToGlobal) — channel/stream viewers get
+            // global activity via their dedicated cross-feed socket, not their main one.
+            if (!client.streamId && !client.channelUserId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
                 ws.send(msg);
             }
         }
@@ -1909,7 +1911,12 @@ class ChatServer {
             source_is_live: 1, // this path only fires for a live send
         });
         for (const [ws, client] of this.clients) {
-            if (!client.streamId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
+            // Only PURE global clients (no stream AND no channel) — otherwise an
+            // offline-channel viewer's main socket (streamId null, channelUserId set)
+            // would render this via addChatMessage AND get it again as a cross-feed on
+            // its dedicated global socket → duplicate. Channel/stream viewers receive the
+            // cross-feed exclusively through their separate global-feed connection.
+            if (!client.streamId && !client.channelUserId && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_SEND_BACKPRESSURE) {
                 ws.send(globalMsg);
             }
         }
