@@ -784,6 +784,30 @@ function initDb() {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
 
+        // Rolling AI summaries of chat activity — for the global chat overview/timeline
+        // and per-user "today vs all-time" insights. scope='global' uses subject_id=0.
+        // window: 'rolling' (canonical processing state + condensed memory + timeline),
+        // 'recent'/'24h'/'alltime' (rendered overviews). One incremental LLM call folds
+        // new messages into memory + refreshes overviews, so cost stays flat with volume.
+        database.exec(`CREATE TABLE IF NOT EXISTS chat_ai_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            subject_id INTEGER NOT NULL DEFAULT 0,
+            window TEXT NOT NULL,
+            overview TEXT DEFAULT '',
+            memory_json TEXT DEFAULT '',
+            timeline_json TEXT DEFAULT '[]',
+            message_count INTEGER DEFAULT 0,
+            window_message_count INTEGER DEFAULT 0,
+            last_message_id INTEGER DEFAULT 0,
+            window_label TEXT DEFAULT '',
+            window_start DATETIME,
+            window_end DATETIME,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(scope, subject_id, window)
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_chat_ai_scope ON chat_ai_summaries(scope, subject_id, window)`);
+
         const pcols = database.prepare('PRAGMA table_info(pastes)').all().map(c => c.name);
         if (!pcols.includes('ai_summary')) database.exec('ALTER TABLE pastes ADD COLUMN ai_summary TEXT');
         if (!pcols.includes('ai_tags')) database.exec('ALTER TABLE pastes ADD COLUMN ai_tags TEXT');
@@ -3013,6 +3037,109 @@ function getUserChatHistory(userId, limit = 50, offset = 0) {
         [userId]
     )?.c || 0;
     return { messages, total };
+}
+
+// ── Chat AI summaries (global overview/timeline + per-user insights) ──────────
+// Messages worth analyzing: real chat, exclude system noise + deleted + expired.
+const _CHAT_AI_WHERE = `cm.is_deleted = 0 AND cm.message_type != 'system'
+    AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
+
+function getMaxChatMessageId() {
+    return get('SELECT MAX(id) AS m FROM chat_messages')?.m || 0;
+}
+
+// Count analyzable messages newer than a high-water id (optionally for one user).
+function countChatMessagesSince(afterId, userId = null) {
+    let sql = `SELECT COUNT(*) AS c FROM chat_messages cm WHERE ${_CHAT_AI_WHERE} AND cm.id > ?`;
+    const params = [afterId || 0];
+    if (userId) { sql += ' AND cm.user_id = ?'; params.push(userId); }
+    return get(sql, params)?.c || 0;
+}
+
+// Fetch analyzable messages for AI batching (with the channel/broadcaster label).
+// order 'asc' for chronological batches; 'desc'+limit for "most recent N".
+function getChatMessagesForAi({ afterId = null, sinceTs = null, userId = null, limit = 400, order = 'asc' } = {}) {
+    let sql = `SELECT cm.id, cm.user_id, cm.username, cm.message, cm.message_type, cm.timestamp,
+                      cm.stream_id, cm.channel_user_id, cm.is_global,
+                      ch.username AS channel_username, ch.display_name AS channel_display
+               FROM chat_messages cm
+               LEFT JOIN users ch ON cm.channel_user_id = ch.id
+               WHERE ${_CHAT_AI_WHERE}`;
+    const params = [];
+    if (afterId != null) { sql += ' AND cm.id > ?'; params.push(afterId); }
+    if (sinceTs != null) { sql += ' AND cm.timestamp >= ?'; params.push(sinceTs); }
+    if (userId) { sql += ' AND cm.user_id = ?'; params.push(userId); }
+    sql += ` ORDER BY cm.id ${order === 'desc' ? 'DESC' : 'ASC'} LIMIT ?`;
+    params.push(Math.max(1, Math.min(2000, limit)));
+    const rows = all(sql, params);
+    return order === 'desc' ? rows.reverse() : rows;
+}
+
+// Timestamp of the Nth-most-recent analyzable message — drives the adaptive
+// overview window (busy chat → short window, quiet → wide). Optionally per-user.
+function getNthRecentChatTs(n, userId = null) {
+    let sql = `SELECT cm.timestamp AS ts FROM chat_messages cm WHERE ${_CHAT_AI_WHERE}`;
+    const params = [];
+    if (userId) { sql += ' AND cm.user_id = ?'; params.push(userId); }
+    sql += ' ORDER BY cm.id DESC LIMIT 1 OFFSET ?';
+    params.push(Math.max(0, (n | 0) - 1));
+    return get(sql, params)?.ts || null;
+}
+
+function getChatAiSummary(scope, subjectId, window) {
+    return get('SELECT * FROM chat_ai_summaries WHERE scope = ? AND subject_id = ? AND window = ?',
+        [scope, subjectId || 0, window]) || null;
+}
+function getChatAiSummaries(scope, subjectId) {
+    return all('SELECT * FROM chat_ai_summaries WHERE scope = ? AND subject_id = ? ORDER BY window',
+        [scope, subjectId || 0]);
+}
+function upsertChatAiSummary(sfx) {
+    const {
+        scope, subject_id = 0, window, overview = '', memory_json = '', timeline_json = '[]',
+        message_count = 0, window_message_count = 0, last_message_id = 0,
+        window_label = '', window_start = null, window_end = null,
+    } = sfx;
+    return run(
+        `INSERT INTO chat_ai_summaries
+            (scope, subject_id, window, overview, memory_json, timeline_json, message_count,
+             window_message_count, last_message_id, window_label, window_start, window_end, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(scope, subject_id, window) DO UPDATE SET
+            overview = excluded.overview,
+            memory_json = excluded.memory_json,
+            timeline_json = excluded.timeline_json,
+            message_count = excluded.message_count,
+            window_message_count = excluded.window_message_count,
+            last_message_id = excluded.last_message_id,
+            window_label = excluded.window_label,
+            window_start = excluded.window_start,
+            window_end = excluded.window_end,
+            updated_at = CURRENT_TIMESTAMP`,
+        [scope, subject_id || 0, window, overview, memory_json, timeline_json, message_count,
+         window_message_count, last_message_id, window_label, window_start, window_end]
+    );
+}
+
+// Users with enough new chat activity (or a stale summary) to warrant an AI refresh.
+// Bounded to recent messages so the GROUP BY stays cheap; caps rows returned.
+function getUsersNeedingChatAi({ threshold = 15, staleCutoffIso, sinceTs, limit = 3 } = {}) {
+    const sql = `
+        SELECT cm.user_id AS uid,
+               MAX(cm.id) AS max_id,
+               SUM(CASE WHEN cm.id > COALESCE(cs.last_message_id, 0) THEN 1 ELSE 0 END) AS new_msgs,
+               COALESCE(cs.last_message_id, 0) AS hw,
+               cs.updated_at AS last_update
+        FROM chat_messages cm
+        LEFT JOIN chat_ai_summaries cs
+          ON cs.scope = 'user' AND cs.subject_id = cm.user_id AND cs.window = 'rolling'
+        WHERE ${_CHAT_AI_WHERE} AND cm.user_id IS NOT NULL AND cm.timestamp >= ?
+        GROUP BY cm.user_id
+        HAVING new_msgs > 0
+           AND ( new_msgs >= ? OR cs.last_message_id IS NULL OR cs.updated_at IS NULL OR cs.updated_at < ? )
+        ORDER BY (cs.updated_at IS NULL) DESC, new_msgs DESC
+        LIMIT ?`;
+    return all(sql, [sinceTs, threshold, staleCutoffIso, Math.max(1, limit)]);
 }
 
 // Record a chat-relay (external platform) user's activity; keeps the earliest
@@ -5830,6 +5957,9 @@ module.exports = {
     getRestreamDestinationsByManagedStream,
     // Chat
     saveChatMessage, searchChatMessages, getUserChatHistory,
+    // Chat AI summaries
+    getMaxChatMessageId, countChatMessagesSince, getChatMessagesForAi, getNthRecentChatTs,
+    getChatAiSummary, getChatAiSummaries, upsertChatAiSummary, getUsersNeedingChatAi,
     // Profiles
     getUserProfile, updateUserAvatar, resetAvatarsForPaste, getUserAvatarPastes,
     getKickChannelCache, setKickChannelCache,

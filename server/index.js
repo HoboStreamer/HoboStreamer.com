@@ -434,6 +434,7 @@ app.use('/api/payments', require('./monetization/payments-routes'));
 app.use('/api/cosmetics', cosmeticsRoutes);
 app.use('/api/vods', vodRoutes);
 app.use('/api/clips', clipRoutes);
+app.use('/api/chat-ai', require('./ai/chat-ai-routes'));
 app.use('/api/comments', commentRoutes);
 app.use('/api/controls', controlRoutes);
 app.use('/api/onvif', onvifRoutes);
@@ -899,6 +900,7 @@ async function start() {
         try { require('./ai/stream-memory-job').start(); } catch (e) { console.warn('[AI] memory job not started:', e.message); }
         try { require('./ai/backfill-job').start(); } catch (e) { console.warn('[AI] backfill job not started:', e.message); }
         try { require('./ai/streamer-overview-job').start(); } catch (e) { console.warn('[AI] streamer-overview job not started:', e.message); }
+        try { require('./ai/chat-ai').start(); } catch (e) { console.warn('[AI] chat-ai job not started:', e.message); }
 
         // Broadcast recent git changes to all chat clients after startup.
         // Uses a retry loop — clients reconnect with backoff after a restart,
