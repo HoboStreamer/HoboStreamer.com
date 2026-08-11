@@ -811,8 +811,13 @@ function createClipRecorder(stream) {
     throw lastError || new Error('Unable to initialize MediaRecorder');
 }
 
+// Client-side clip recording is only needed when the SERVER can't cut clips itself.
+// When streamRef.server_clip is true, the browser skips the continuous MediaRecorder
+// rolling buffer (and the JSMPEG/HLS canvas capture) entirely — a big CPU/battery win.
+function _clientClipRecordingEnabled() { return !(streamRef && streamRef.server_clip); }
 function startClipRecordingIfNeeded(stream, streamId) {
     if (!stream) return;
+    if (!_clientClipRecordingEnabled()) return;
     if (clipRecorder && clipSourceStream === stream && clipStreamId === streamId) return;
     clipSourceStream = stream;
     startClipRecording(stream, streamId);
@@ -973,6 +978,9 @@ function startJSMPEG(wsUrl, canvas, placeholder, bufferProfile = getJsmpegBuffer
                 // frames. Using an offscreen 2D canvas avoids WebGL captureStream issues.
                 _jsmpegClipSetupTimer = setTimeout(() => {
                     _jsmpegClipSetupTimer = null;
+                    // Server cuts clips from its own recording → skip the CPU-heavy 30fps
+                    // canvas capture + rolling MediaRecorder on the viewer's machine.
+                    if (!_clientClipRecordingEnabled()) return;
                     try {
                         const offCanvas = document.createElement('canvas');
                         offCanvas.width = canvas.width || 640;
@@ -2164,7 +2172,9 @@ function initHLS(endpoint, stream) {
             slowAfterMs: 0,
         });
         _hidePlayerPlaceholder('video');
-        try {
+        // Skip all client-side clip capture (captureStream + the 30fps canvas fallback)
+        // when the server records this stream and cuts clips itself.
+        if (_clientClipRecordingEnabled()) try {
             const capturedStream = video.captureStream ? video.captureStream() :
                                    video.mozCaptureStream ? video.mozCaptureStream() : null;
             if (capturedStream) {
@@ -3091,6 +3101,10 @@ async function createLiveClip() {
         return;
     }
 
+    // SERVER-SIDE clip: when the stream is recorded server-side, the browser never
+    // encodes/uploads anything — the server cuts the clip from its own recording.
+    if (streamRef && streamRef.server_clip) return _createServerLiveClip();
+
     // Use current cycle if it has enough data, otherwise fall back to previous
     let header = clipHeaderChunk;
     let chunks = clipChunks;
@@ -3189,6 +3203,32 @@ async function createLiveClip() {
         }
     } catch (err) {
         toast('Failed to create clip: ' + err.message, 'error');
+    } finally {
+        liveClipRequestInFlight = false;
+        setClipButtonBusy(false);
+    }
+}
+
+// Ask the server to cut a clip from its live recording (no client-side encoding).
+async function _createServerLiveClip() {
+    if (!streamRef || !streamRef.id) { toast('No stream selected', 'error'); return; }
+    liveClipRequestInFlight = true;
+    setClipButtonBusy(true);
+    toast('Creating clip...', 'info');
+    try {
+        const token = localStorage.getItem('token');
+        const resp = await fetch('/api/vods/clips', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stream_id: streamRef.id, live: true, duration: CLIP_BUFFER_SECONDS, title: 'Clip from stream' }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) { toast(data.error || 'Failed to create clip', data.no_recording ? 'warning' : 'error'); return; }
+        const clipId = data.clip && data.clip.id;
+        toast('Clip created! — Give it a title', 'success');
+        if (clipId) promptClipTitle(clipId);
+    } catch (err) {
+        toast('Failed to create clip: ' + (err.message || 'error'), 'error');
     } finally {
         liveClipRequestInFlight = false;
         setClipButtonBusy(false);

@@ -266,6 +266,9 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
                     flvUrl: `/api/streams/rtmp-proxy/${liveStream.id}.flv`,
                 };
             }
+            // Whether this live slot is being recorded server-side — if so, the client can
+            // cut clips on the SERVER (no CPU-heavy client-side MediaRecorder buffer).
+            try { liveStream.server_clip = !!db.getActiveVodByStream(liveStream.id); } catch { liveStream.server_clip = false; }
             delete liveStream.stream_key;
             delete liveStream.managed_stream_key;
         }
@@ -541,6 +544,9 @@ router.get('/channel/:username/live', (req, res) => {
                     flvUrl: `/api/streams/rtmp-proxy/${liveStream.id}.flv`,
                 };
             }
+            // Whether this live slot is being recorded server-side — if so, the client can
+            // cut clips on the SERVER (no CPU-heavy client-side MediaRecorder buffer).
+            try { liveStream.server_clip = !!db.getActiveVodByStream(liveStream.id); } catch { liveStream.server_clip = false; }
             delete liveStream.stream_key;
             delete liveStream.managed_stream_key;
         }

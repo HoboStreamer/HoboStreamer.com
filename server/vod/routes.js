@@ -1803,6 +1803,89 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
         }
 
         // ══════════════════════════════════════════════════════
+        //  LIVE Clip — cut SERVER-SIDE from the stream's active recording
+        //  (no client-side MediaRecorder). The browser just asks for a window; the server
+        //  cuts it from the growing VOD recording, capped + re-encoded like VOD clips.
+        // ══════════════════════════════════════════════════════
+        const wantLive = (req.body.live === true || req.body.live === 'true' || req.body.live === '1');
+        if (wantLive && parsedStreamId && !parsedVodId) {
+            const stream = db.getStreamById(parsedStreamId);
+            if (!stream) return res.status(404).json({ error: 'Stream not found' });
+            if (!db.isStreamClipRecordingEnabled(stream)) return res.status(403).json({ error: 'Clipping is disabled for this stream.' });
+            const rec = db.getActiveVodByStream(parsedStreamId);
+            if (!rec || !rec.file_path || !fs.existsSync(rec.file_path)) {
+                return res.status(409).json({ error: 'This stream is not being recorded, so live clips are unavailable.', no_recording: true });
+            }
+            const maxDur = db.getSetting('max_clip_duration') || 60;
+            let dur = parseFloat(req.body.duration);
+            if (!Number.isFinite(dur) || dur < 1) dur = 30;
+            dur = Math.min(dur, maxDur);
+            // Cut the last `dur` seconds of the recording (live edge), or up to the viewer's
+            // position `at` if they're DVR-rewound. 1.5s safety margin keeps us inside the
+            // bytes ffmpeg has actually flushed to disk.
+            const recStartMs = new Date(String(rec.created_at).replace(' ', 'T') + 'Z').getTime();
+            let recElapsed = (Date.now() - recStartMs) / 1000;
+            if (!Number.isFinite(recElapsed) || recElapsed < 0) recElapsed = dur;
+            let clipEnd = parseFloat(req.body.at);
+            if (!Number.isFinite(clipEnd) || clipEnd <= 0 || clipEnd > recElapsed) clipEnd = recElapsed;
+            clipEnd = Math.max(dur, clipEnd - 1.5);
+            const liveStart = Math.max(0, clipEnd - dur);
+            const liveDur = Math.min(dur, clipEnd - liveStart);
+            if (liveDur < 1) return res.status(400).json({ error: 'Not enough recorded footage yet — try again in a moment.' });
+
+            if (_activeFFmpegJobs >= CLIP_MAX_CONCURRENT_FFMPEG) {
+                return res.status(503).json({ error: 'Server is busy processing other clips. Please try again in a few seconds.' });
+            }
+            const clipsDirL = path.resolve(config.vod.clipsPath);
+            if (!fs.existsSync(clipsDirL)) fs.mkdirSync(clipsDirL, { recursive: true });
+            const clipFilenameL = `clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.webm`;
+            const clipPathL = path.join(clipsDirL, clipFilenameL);
+
+            _activeFFmpegJobs++;
+            let ffErrL = '', ffToL = false;
+            const ffL = spawn('ffmpeg', [
+                '-y', '-ss', String(liveStart), '-i', rec.file_path, '-t', String(liveDur),
+                '-c:v', 'libvpx', '-b:v', '2000k', '-crf', '18', '-deadline', 'realtime', '-cpu-used', '4',
+                '-force_key_frames', 'expr:gte(t,n_forced*2)', '-c:a', 'libopus', '-b:a', '128k',
+                '-avoid_negative_ts', 'make_zero', '-f', 'webm', clipPathL,
+            ]);
+            ffL.stderr?.on('data', d => { ffErrL += d; if (ffErrL.length > 10000) ffErrL = ffErrL.slice(-5000); });
+            const toMsL = Math.max(CLIP_FFMPEG_TIMEOUT_MS, Math.round(liveDur) * 2000 + 15000);
+            const timerL = setTimeout(() => { ffToL = true; try { ffL.kill('SIGKILL'); } catch {} }, toMsL);
+            ffL.on('error', () => {
+                _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1); clearTimeout(timerL); cleanupTempFile(clipPathL);
+                if (!res.headersSent) res.status(500).json({ error: 'FFmpeg not available' });
+            });
+            ffL.on('exit', (code) => {
+                _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1); clearTimeout(timerL);
+                if (ffToL) { cleanupTempFile(clipPathL); if (!res.headersSent) res.status(504).json({ error: 'Clip timed out. Try again.' }); return; }
+                if (code !== 0) { cleanupTempFile(clipPathL); console.warn('[Clips] live clip ffmpeg failed:', ffErrL.slice(-400)); if (!res.headersSent) res.status(500).json({ error: 'Failed to create clip' }); return; }
+                try { const st = fs.statSync(clipPathL); if (!st.size) { cleanupTempFile(clipPathL); if (!res.headersSent) res.status(500).json({ error: 'Clip extraction produced an empty file' }); return; } }
+                catch { cleanupTempFile(clipPathL); if (!res.headersSent) res.status(500).json({ error: 'Failed to verify clip file' }); return; }
+                const clipVis = db.resolveStreamClipVisibility(stream);
+                const result = db.createClip({
+                    vod_id: rec.id, stream_id: parsedStreamId, user_id: req.user.id,
+                    title: defaultClipTitle(sanitizedTitle, stream.title),
+                    file_path: clipPathL, start_time: liveStart, end_time: liveStart + liveDur,
+                    duration_seconds: liveDur, description: '', is_public: clipVis === 'public' ? 1 : 0,
+                });
+                try { db.setClipVisibility(result.lastInsertRowid, clipVis); } catch { /* */ }
+                const clip = db.getClipById(result.lastInsertRowid);
+                console.log(`[Clips] LIVE clip cut server-side: ${clipFilenameL} (stream ${parsedStreamId}, ${liveStart.toFixed(1)}-${(liveStart + liveDur).toFixed(1)}s)`);
+                try { require('../ai/ai-analysis').generateClipOverview(clip).catch(() => {}); } catch { /* */ }
+                try {
+                    if (stream.user_id !== req.user.id) {
+                        const { pushNotification, actorInfo } = require('../utils/notify');
+                        pushNotification({ user_id: stream.user_id, type: 'CLIP_CREATED', title: 'New Clip', message: `${req.user.display_name || req.user.username} clipped your stream${sanitizedTitle ? `: ${sanitizedTitle}` : ''}`, url: `https://hobostreamer.com/clip/${clip.id}`, ...actorInfo(req.user) });
+                    }
+                } catch { /* */ }
+                thumbService.generateClipThumbnail(clip.id, clipPathL).catch(() => {});
+                res.status(201).json({ clip, file: clipFilenameL });
+            });
+            return;
+        }
+
+        // ══════════════════════════════════════════════════════
         //  VOD Clip Extraction (server-side FFmpeg)
         // ══════════════════════════════════════════════════════
 

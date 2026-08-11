@@ -1406,6 +1406,7 @@ function initDb() {
         // VOD/clip listings: filter by owner + visibility, ORDER BY created_at / view_count.
         database.exec('CREATE INDEX IF NOT EXISTS idx_vods_user_created ON vods(user_id, is_public, created_at)');
         database.exec('CREATE INDEX IF NOT EXISTS idx_vods_public_created ON vods(is_public, created_at)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_vods_stream_recording ON vods(stream_id, is_recording)');
         database.exec('CREATE INDEX IF NOT EXISTS idx_clips_user_created ON clips(user_id, is_public, created_at)');
     } catch (e) { console.warn('[DB] performance index migration:', e.message); }
 
