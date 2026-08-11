@@ -6550,7 +6550,7 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .btn-follow.following { background: var(--text-muted); }
 .btn-follow.following:hover { background: var(--danger); }
 
-.channel-below-fold { padding-top: 16px; }
+.channel-below-fold { padding-top: 6px; }
 
 /* ── Channel Analytics ───────────────────────────────────── */
 .ch-analytics-period-btns { display:flex; gap:4px; margin-left:auto; }
