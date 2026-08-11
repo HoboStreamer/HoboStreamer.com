@@ -12267,26 +12267,23 @@ body.theme-light .user-dropdown {
     background: var(--bg-tertiary); padding: 6px 8px 0;
     position: relative;
 }
-/* Track holds the goal cards; each card carries its own bottom margin (not flex gap)
-   so the marquee's duplicated copy tiles seamlessly. */
+/* Track holds the goal cards; each carries its own bottom margin so the JS cycle can
+   translate by whole-row strides. */
 .cgw-track { display: block; }
 .cgw-track .cgw-goal { margin-bottom: 6px; }
-.cgw-track-static .cgw-goal:last-child { margin-bottom: 6px; }
+.cgw-track-cycle { will-change: transform; }
 .ch-goal-widget:not(.cgw-multi) { padding-bottom: 0; }
-.ch-goal-widget:not(.cgw-multi) .cgw-track-static .cgw-goal:last-child { margin-bottom: 6px; }
 
-/* Multiple goals: a short auto-scrolling viewport (stays compact) + fade + caret. */
-.cgw-viewport { overflow: hidden; max-height: 60px; }
+/* Multiple goals: a compact viewport that RESTS on the first goal and scrolls through
+   the rest 3× per half hour (see _playGoalCycle). Shows one goal + a faded peek. */
+.cgw-viewport { overflow: hidden; max-height: 66px; }
 .cgw-viewport-expanded { overflow-y: auto; max-height: 42vh; scrollbar-width: thin; }
-.cgw-track-marquee { animation: cgwMarquee var(--cgw-dur, 12s) linear infinite; will-change: transform; }
-.ch-goal-widget.cgw-multi:hover .cgw-track-marquee { animation-play-state: paused; }
-@keyframes cgwMarquee { from { transform: translateY(0); } to { transform: translateY(-50%); } }
 
 /* Faded bottom + animated caret to expand the full list. */
 .cgw-more {
-    position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+    position: absolute; left: 0; right: 0; bottom: 0; height: 24px;
     display: flex; align-items: flex-end; justify-content: center; padding-bottom: 3px;
-    background: linear-gradient(180deg, rgba(0,0,0,0), var(--bg-tertiary) 78%);
+    background: linear-gradient(180deg, rgba(0,0,0,0), var(--bg-tertiary) 80%);
     border: none; cursor: pointer; color: var(--accent); font-size: 0.85rem; z-index: 4;
 }
 .cgw-more i { animation: cgwCaretBounce 1.4s ease-in-out infinite; }
@@ -12297,10 +12294,7 @@ body.theme-light .user-dropdown {
     position: static; height: auto; background: none; padding: 4px 0 6px;
 }
 .cgw-more.expanded i { animation: none; }
-@media (prefers-reduced-motion: reduce) {
-    .cgw-track-marquee { animation: none; }
-    .cgw-more i { animation: none; }
-}
+@media (prefers-reduced-motion: reduce) { .cgw-more i { animation: none; } }
 .cgw-goal {
     position: relative; height: 42px; border-radius: 9px; overflow: hidden; cursor: pointer;
     background: var(--bg-card); border: 1px solid var(--border);
@@ -12486,18 +12480,24 @@ body.theme-light .user-dropdown {
 /* ═══════════════ Controls section under the player + collapse toggle ═══════════════ */
 .ch-controls-section .controls-panel { border-top: 1px solid var(--border); }
 /* Small collapse/expand toggle in the streamer info bar (top-right) */
+/* Header holds the hide-toggle + dock button, grouped at the right. */
+.controls-header-btns { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+/* Hide/expand toggle — visually DISTINCT from the dock button: a soft accent-tinted
+   pill (vs the dock button's plain outline), so you can tell them apart at a glance. */
 .ch-controls-toggle {
     display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
-    background: var(--bg-hover); border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
     color: var(--accent); cursor: pointer;
-    padding: 5px 9px; border-radius: 8px; font-size: 0.85rem;
+    padding: 5px 10px; border-radius: 8px; font-size: 0.85rem; line-height: 1;
     transition: all 0.15s;
 }
-.ch-controls-toggle:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.ch-controls-toggle-caret { font-size: 0.66rem; transition: transform 0.2s; }
-.ch-controls-toggle.collapsed .ch-controls-toggle-caret { transform: rotate(180deg); }
-/* Dock button is icon-only now */
-.controls-dock-btn { padding: 5px 9px; }
+.ch-controls-toggle:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 26%, transparent); color: #ffcf6b; }
+.ch-controls-toggle-caret { font-size: 0.64rem; }
+/* When it lives in the info bar (collapsed), keep it snug next to the follower count. */
+.ch-info-bar-right .ch-controls-toggle { order: -1; }
+/* Dock button: plain outline icon (distinct from the tinted toggle). */
+.controls-dock-btn { padding: 5px 9px; flex-shrink: 0; }
 .controls-dock-btn i { font-size: 0.9rem; }
 /* Keep the DMs FAB BEHIND the docked controls bar so it doesn't cover the buttons */
 body.controls-docked .messenger-toggle { z-index: 1100; }

@@ -3540,17 +3540,57 @@ function _renderGoalWidgetInto(el, goals) {
         return;
     }
     el.classList.add('cgw-multi');
+    el.dataset.goalCount = goals.length;
     if (el.classList.contains('cgw-expanded')) {
         el.innerHTML = `
             <div class="cgw-viewport cgw-viewport-expanded"><div class="cgw-track cgw-track-static">${items}</div></div>
             <button class="cgw-more expanded" onclick="toggleGoalWidgetExpand(this)" title="Collapse goals" aria-label="Collapse goals"><i class="fa-solid fa-chevron-up"></i></button>`;
     } else {
-        // Duplicate the items so the vertical marquee loops seamlessly (translateY -50%).
-        const dur = Math.max(9, goals.length * 3.5);
+        // Collapsed: RESTS on the streamer's first goal. The full list scrolls past just
+        // once every ~30 min (constant motion is distracting), then settles back on the
+        // first goal — so a streamer can put their most-important goal first. Append a
+        // clone of the first goal so the single scroll pass loops back to it seamlessly.
+        const firstItem = _goalWidgetItemHTML(goals[0]);
         el.innerHTML = `
-            <div class="cgw-viewport"><div class="cgw-track cgw-track-marquee" style="--cgw-dur:${dur}s">${items}${items}</div></div>
+            <div class="cgw-viewport"><div class="cgw-track cgw-track-cycle">${items}${firstItem}</div></div>
             <button class="cgw-more" onclick="toggleGoalWidgetExpand(this)" title="Show all goals" aria-label="Show all goals"><i class="fa-solid fa-chevron-down"></i></button>`;
+        _ensureGoalCycleScheduler();
     }
+}
+
+// A gentle scroll-through of all goals 3× per half hour (every 10 min), then rest on
+// the first goal — enough to surface every goal without constant distracting motion.
+const GOAL_CYCLE_INTERVAL_MS = 10 * 60 * 1000;
+const GOAL_CYCLE_ROW_MS = 2600; // scroll time per goal during the once-per-30-min pass
+let _goalCycleTimer = null;
+function _ensureGoalCycleScheduler() {
+    if (_goalCycleTimer) return;
+    // A single 30-min ticker that re-queries the DOM each time — survives widget
+    // re-renders (goal updates / periodic refresh) without resetting the schedule.
+    _goalCycleTimer = setInterval(() => {
+        document.querySelectorAll('.ch-goal-widget.cgw-multi:not(.cgw-expanded)').forEach(_playGoalCycle);
+    }, GOAL_CYCLE_INTERVAL_MS);
+}
+function _playGoalCycle(el) {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const track = el && el.querySelector('.cgw-track-cycle');
+    if (!track || track.children.length < 2) return;
+    const n = parseInt(el.dataset.goalCount || '0', 10);
+    if (n < 2) return;
+    const first = track.children[0];
+    const stride = first.offsetHeight + 6; // row height + margin
+    // Start from rest (first goal), scroll through all N to the appended first-clone.
+    track.style.transition = 'none';
+    track.style.transform = 'translateY(0)';
+    void track.offsetHeight; // reflow so the next transition animates
+    track.style.transition = `transform ${n * GOAL_CYCLE_ROW_MS}ms ease-in-out`;
+    track.style.transform = `translateY(-${stride * n}px)`;
+    const onEnd = () => {
+        track.removeEventListener('transitionend', onEnd);
+        track.style.transition = 'none';
+        track.style.transform = 'translateY(0)'; // snap back to the real first goal
+    };
+    track.addEventListener('transitionend', onEnd);
 }
 function toggleGoalWidgetExpand(btn) {
     const el = btn && btn.closest('.ch-goal-widget');

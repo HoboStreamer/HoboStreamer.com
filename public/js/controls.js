@@ -25,29 +25,55 @@ let _controlsHaveOnvif = false;   // Panel has ONVIF camera controls (work witho
  */
 let _controlsCollapsed = false;
 function _applyControlsVisibility() {
-    // Controls live in a section directly under the player (above the streamer info).
-    // Show it — plus the collapse toggle in the info bar — only when the watched stream
-    // has usable controls (buttons need the hardware bridge online; ONVIF cameras don't).
+    // Controls live in a section directly under the player (above the streamer info),
+    // shown only when the watched stream has usable controls (buttons need the hardware
+    // bridge online; ONVIF cameras don't).
     const show = _controlsHaveContent && !(_hardwareStatusKnown && !_hardwareConnected && !_controlsHaveOnvif);
     const section = document.getElementById('ch-controls-section');
     const toggle = document.getElementById('ch-controls-toggle');
     if (toggle) toggle.style.display = show ? '' : 'none';
     if (section) section.style.display = (show && !_controlsCollapsed) ? '' : 'none';
     if (!show) _undockControls();
+    _positionControlsToggle();
     _syncControlsToggleUI();
+}
+// The collapse/expand toggle lives NEXT TO the dock button (in the controls header)
+// while the section is open, and only relocates into the info bar once the section is
+// hidden — so there's always a visible way to bring the controls back.
+function _positionControlsToggle() {
+    const toggle = document.getElementById('ch-controls-toggle');
+    if (!toggle) return;
+    const btns = document.querySelector('#ch-controls-section .controls-header-btns');
+    const infoRight = document.querySelector('#ch-info-bar .ch-info-bar-right');
+    if (_controlsCollapsed) {
+        if (infoRight && toggle.parentElement !== infoRight) infoRight.insertBefore(toggle, infoRight.firstChild);
+    } else {
+        if (btns && toggle.parentElement !== btns) btns.insertBefore(toggle, btns.firstChild);
+    }
 }
 function _syncControlsToggleUI() {
     const toggle = document.getElementById('ch-controls-toggle');
     if (!toggle) return;
     toggle.classList.toggle('collapsed', _controlsCollapsed);
-    toggle.title = _controlsCollapsed ? 'Show controls' : 'Hide controls';
+    if (_controlsCollapsed) {
+        // In the info bar: a clear "show controls" affordance (distinct from the dock arrow).
+        toggle.innerHTML = '<i class="fa-solid fa-gamepad"></i><i class="fa-solid fa-chevron-down ch-controls-toggle-caret"></i>';
+        toggle.title = 'Show controls';
+        toggle.setAttribute('aria-label', 'Show controls');
+    } else {
+        // In the header next to the dock button: a "hide/collapse" chevron.
+        toggle.innerHTML = '<i class="fa-solid fa-chevron-up"></i>';
+        toggle.title = 'Hide controls';
+        toggle.setAttribute('aria-label', 'Hide controls');
+    }
 }
-// Collapse/expand the under-player controls section (toggle lives in the info bar).
+// Collapse/expand the under-player controls section.
 function toggleControlsSection() {
     _controlsCollapsed = !_controlsCollapsed;
+    _positionControlsToggle();   // relocate the toggle BEFORE hiding the section
+    _syncControlsToggleUI();
     const section = document.getElementById('ch-controls-section');
     if (section) section.style.display = _controlsCollapsed ? 'none' : '';
-    _syncControlsToggleUI();
 }
 
 /* ── Docked controls: fixed compact bottom bar ──────────────────
