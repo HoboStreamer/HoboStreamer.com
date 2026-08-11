@@ -228,6 +228,8 @@ async function _transcribeSpan(src, duration) {
  */
 async function analyzeMedia(src, { streamId = null, userId = null, numFrames = null, storeMemories = false, offsetBase = 0 } = {}) {
     if (!src) return { overview: null, transcript: '', frames: [], duration: 0 };
+    // Lazy require (avoids a load-time circular dep with ai-analysis, which pulls us in).
+    const ai = require('./ai-analysis');
     const duration = await _ffprobeDuration(src);
     let frames = [];
     if (duration <= 2) {
