@@ -1256,18 +1256,25 @@ main#app { position: relative; z-index: 1; }
     white-space: nowrap;
 }
 .hero-note {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.6ch;
+    display: block;
     margin: -4px auto 20px;
     color: var(--text-muted);
-    font-size: 0.82rem;
-    line-height: 1.4;
-    max-width: 80vw;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    max-width: 640px;
+    text-align: center;
+    text-wrap: pretty;
 }
 .hero-note i {
     color: var(--accent);
+    margin-right: 0.3em;
+}
+.hero-note strong {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.hero-note strong i {
+    margin-left: 0.15em;
 }
 .hero-philosophy-links {
     display: flex;
