@@ -236,6 +236,8 @@
         $toggle.innerHTML = '<i class="fa-solid fa-comment-dots"></i><span class="msg-badge" id="msg-badge"></span><span class="fab-label">DM</span>';
         $toggle.addEventListener('click', togglePanel);
         document.body.appendChild($toggle);
+        // Make the toggle drag-and-droppable (position persists; drag ≠ click).
+        if (window.makeFabDraggable) window.makeFabDraggable($toggle, 'fabpos:messenger-toggle');
 
         $badge = document.getElementById('msg-badge');
 

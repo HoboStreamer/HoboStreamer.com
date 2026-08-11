@@ -9983,6 +9983,22 @@ body.theme-light .user-dropdown {
     transform: scale(1.08);
     background: var(--accent-hover, #4f46e5);
 }
+
+/* ── Draggable floating buttons (messenger toggle + chat FAB) ── */
+.fab-dragging {
+    cursor: grabbing !important;
+    opacity: 0.92;
+    transition: none !important;
+    box-shadow: 0 8px 26px rgba(0,0,0,0.5) !important;
+}
+.fab-dragging:hover { transform: none; }
+@keyframes fabBounceBack {
+    0%   { transform: scale(0.82); }
+    45%  { transform: scale(1.12); }
+    70%  { transform: scale(0.96); }
+    100% { transform: scale(1); }
+}
+.fab-bounce { animation: fabBounceBack 0.5s cubic-bezier(.34,1.56,.64,1); }
 .fcw-unread-badge {
     position: absolute;
     top: -4px;
