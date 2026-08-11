@@ -239,26 +239,68 @@ async function _mediaSource(row) {
  * extracts a spread of frames + sampled audio from the VOD file itself (creating
  * memories) so pre-existing VODs get real overviews.
  */
+const _overviewInFlight = new Set();
 async function generateVodOverview(vod) {
     if (!vod) return null;
     if (!isEnabled() || !withinBudget()) return null;
+    // Guard against the on-finalize trigger and the backfill poller processing the same
+    // VOD at once (that would double-extract frames + duplicate timeline memories).
+    if (_overviewInFlight.has(vod.id)) return null;
+    _overviewInFlight.add(vod.id);
+    try {
+        return await _generateVodOverviewInner(vod);
+    } finally {
+        _overviewInFlight.delete(vod.id);
+    }
+}
+async function _generateVodOverviewInner(vod) {
+    const ma = require('./media-analysis');
+
+    // Ensure the timeline BRACKETS the VOD: a memory at the very start, right before the
+    // end, and (for >5min) the middle — extracting only the anchors not already covered
+    // by live-captured memories. This runs even when the VOD already has live memories,
+    // so start/end coverage is guaranteed without re-analyzing the whole thing.
+    if (vod.stream_id) {
+        try { await ensureVodTimeline(vod); } catch { /* */ }
+    }
+
     const existing = vod.stream_id ? (db.getStreamMemories(vod.stream_id) || []) : [];
-    if (existing.length >= 3) {
+    if (existing.length >= 2) {
         const overview = await summarizeStreamMemories(existing);
         if (overview) { try { db.setVodAiOverview(vod.id, overview); } catch { /* */ } }
         return overview;
     }
+    // No stream_id (or still sparse) — analyze the media directly (smart frame selection).
     const src = await _mediaSource(vod);
     if (!src) { try { db.setVodAiOverview(vod.id, ' '); } catch { /* */ } return null; } // unprocessable — mark done
-    const r = await require('./media-analysis').analyzeMedia(src, {
+    const r = await ma.analyzeMedia(src, {
         streamId: vod.stream_id || null, userId: vod.user_id || null,
-        numFrames: 6, storeMemories: !!vod.stream_id, offsetBase: 0,
+        storeMemories: !!vod.stream_id, offsetBase: 0,
     });
     const overview = r && r.overview ? r.overview : ' '; // ' ' = tried, nothing to say
     try { db.setVodAiOverview(vod.id, overview); } catch { /* */ }
     // Persist the whisper transcript (+ timestamped segments) for the VOD page.
     try { const t = r ? r.transcript : ''; if (t) db.setVodTranscript(vod.id, t, r ? r.segments : null); } catch { /* */ }
     return r ? r.overview : null;
+}
+
+/**
+ * Guarantee timeline coverage for a stream-backed VOD: analyze frames at the required
+ * anchors (start / end / mid>5min) that aren't already covered, plus a few active-moment
+ * frames if the VOD is sparse — cost-scaled by length. Stores the results as memories.
+ */
+async function ensureVodTimeline(vod) {
+    if (!vod || !vod.stream_id) return;
+    if (!isEnabled() || !withinBudget()) return;
+    const ma = require('./media-analysis');
+    const src = await _mediaSource(vod);
+    if (!src) return;
+    const duration = await ma.probeDuration(src);
+    if (!duration || duration < 2) return;
+    const existingOffsets = (db.getStreamMemories(vod.stream_id) || []).map((m) => m.offset_seconds);
+    const times = await ma.pickFrameTimes(src, duration, { existingOffsets });
+    if (!times.length) return;
+    await ma.captureFrameMemories(src, times, { streamId: vod.stream_id, userId: vod.user_id, offsetBase: 0, store: true });
 }
 
 // Transcription retries: a transient failure (killed by a restart, ffmpeg/whisper
@@ -385,8 +427,8 @@ async function testStatus({ probe = true } = {}) {
 }
 
 module.exports = {
-    isEnabled, pasteAnalysisEnabled, streamMemoryEnabled, transcriptionEnabled, captureIntervalSec,
+    isEnabled, withinBudget, pasteAnalysisEnabled, streamMemoryEnabled, transcriptionEnabled, captureIntervalSec,
     analyzeImagePaste, analyzeTextPaste, analyzeStreamFrame, summarizeStreamMemories,
-    generateStreamerOverview, generateVodOverview, generateClipOverview,
+    generateStreamerOverview, generateVodOverview, generateClipOverview, ensureVodTimeline,
     generateVodTranscript, generateClipTranscript, summarizeText, testStatus,
 };

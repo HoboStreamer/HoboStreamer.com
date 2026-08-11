@@ -793,6 +793,17 @@ async function finalizeVodRecording(streamId) {
     if (_finalizingStreams.has(streamId)) {
         return null;
     }
+    // If the recorder is still actively recording this stream, DON'T finalize the open,
+    // still-growing file (that locks in a truncated duration). Stop it gracefully instead
+    // — its ffmpeg exit handler will finalize the fully-flushed file.
+    try {
+        const recorder = require('./recorder');
+        if (recorder.isActivelyRecording && recorder.isActivelyRecording(streamId)) {
+            console.log(`[VOD] finalize requested for stream ${streamId} while still recording — stopping gracefully first`);
+            recorder.stopRecording(streamId);
+            return null;
+        }
+    } catch { /* proceed to finalize */ }
     _finalizingStreams.add(streamId);
 
     try {
@@ -804,6 +815,33 @@ async function finalizeVodRecording(streamId) {
 
 function isFinalizingStream(streamId) {
     return _finalizingStreams.has(streamId);
+}
+
+// Re-encode the lossless master into the served WebM format. Heavy (a real transcode),
+// so it only runs on the recovery path when the primary webm came out truncated.
+function rebuildWebmFromMaster(masterPath, webmPath) {
+    return new Promise((resolve) => {
+        const tmp = webmPath + '.recover.webm';
+        const args = ['-y', '-i', masterPath,
+            '-c:v', 'libvpx', '-b:v', '1500k', '-crf', '20', '-deadline', 'good', '-cpu-used', '2',
+            '-force_key_frames', 'expr:gte(t,n_forced*2)', '-g', '240',
+            '-c:a', 'libvorbis', '-b:a', '128k', '-f', 'webm', tmp];
+        let ff;
+        try { ff = spawn('ffmpeg', args, { stdio: 'ignore' }); } catch { return resolve(false); }
+        const to = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } }, 45 * 60 * 1000);
+        ff.on('close', (code) => {
+            clearTimeout(to);
+            try {
+                if (code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 1024) {
+                    fs.renameSync(tmp, webmPath);
+                    return resolve(true);
+                }
+            } catch { /* fall through */ }
+            try { fs.existsSync(tmp) && fs.unlinkSync(tmp); } catch { /* */ }
+            resolve(false);
+        });
+        ff.on('error', () => { clearTimeout(to); try { fs.existsSync(tmp) && fs.unlinkSync(tmp); } catch { /* */ } resolve(false); });
+    });
 }
 
 async function _doFinalize(streamId) {
@@ -865,6 +903,31 @@ async function _doFinalize(streamId) {
         console.warn(`[VOD] ffprobe failed for vod ${vodId}:`, probeErr.message);
     }
 
+    // ── Recover from the lossless master if the served webm came out truncated ──
+    // (e.g. force-kill during trailer flush, or a container hiccup). This is the fix for
+    // "VOD cut off short": the master holds the full recording, so we rebuild the webm.
+    const masterPath = (rec && rec.masterFilePath)
+        || (db.getVodById(vodId) || {}).master_file_path
+        || filePath.replace(/\.webm$/, '.master.mkv');
+    let masterDur = 0;
+    if (masterPath && fs.existsSync(masterPath)) {
+        try { const mi = await probeVodInfo(masterPath); masterDur = mi.duration || 0; } catch { /* */ }
+        if (masterDur > 0 && masterDur > durationSeconds + 15 && masterDur > durationSeconds * 1.15) {
+            console.warn(`[VOD] vod ${vodId}: webm ${durationSeconds}s is short vs master ${masterDur}s — rebuilding webm from master`);
+            const ok = await rebuildWebmFromMaster(masterPath, filePath);
+            if (ok) {
+                try { await remuxForSeeking(filePath); cleanupSeekableFile(filePath); } catch { /* */ }
+                try {
+                    const mi2 = await probeVodInfo(filePath);
+                    if (mi2.duration > durationSeconds) { durationSeconds = mi2.duration; probeFormatJson = JSON.stringify(mi2.format || {}); }
+                } catch { /* */ }
+                console.log(`[VOD] vod ${vodId}: recovered from master → ${durationSeconds}s`);
+            } else {
+                console.warn(`[VOD] vod ${vodId}: master recovery failed — keeping master for manual recovery`);
+            }
+        }
+    }
+
     if (rec?._ffmpegCorrupted) {
         console.warn(`[VOD] Finalized VOD ${vodId} (stream ${streamId}) marked corrupt by FFmpeg diagnostics; quarantining without deletion`);
         db.run(`UPDATE vods SET is_recording = 0, health_status = ?, health_issues_json = ?, probe_duration_seconds = ?, probe_format_json = ?, last_health_scan_at = datetime('now'), quarantined_at = datetime('now'), is_public = 0 WHERE id = ?`,
@@ -894,17 +957,23 @@ async function _doFinalize(streamId) {
 
     console.log(`[VOD] Finalized: vod ${vodId} (stream ${streamId}), ${durationSeconds}s, ${(stat.size / 1024 / 1024).toFixed(1)}MB`);
 
-    // The lossless .master.mkv archive is never served or offloaded — it's only a fallback
-    // if the webm finalize fails. Now that the webm finalized OK, delete the master so these
-    // multi-GB files don't accumulate and fill the disk. (Kept when the webm is bad/short,
-    // since those paths return earlier.)
+    // The lossless .master.mkv archive is only a fallback. Delete it ONLY once the served
+    // webm is confirmed complete (its duration matches the master within tolerance) — so a
+    // truncated webm never destroys the one good copy. If the webm is still short (recovery
+    // failed), KEEP the master so the footage can be recovered manually/by the health scan.
     try {
-        const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
+        const webmComplete = !masterDur || durationSeconds >= masterDur - 8;
         if (fs.existsSync(masterPath)) {
-            fs.unlinkSync(masterPath);
-            console.log(`[VOD] Removed master archive for vod ${vodId} (${path.basename(masterPath)})`);
+            if (webmComplete) {
+                fs.unlinkSync(masterPath);
+                console.log(`[VOD] Removed master archive for vod ${vodId} (${path.basename(masterPath)})`);
+                db.run('UPDATE vods SET master_file_path = NULL WHERE id = ?', [vodId]);
+            } else {
+                console.warn(`[VOD] vod ${vodId}: KEEPING master (webm ${durationSeconds}s still < master ${masterDur}s)`);
+            }
+        } else {
+            db.run('UPDATE vods SET master_file_path = NULL WHERE id = ?', [vodId]);
         }
-        db.run('UPDATE vods SET master_file_path = NULL WHERE id = ?', [vodId]);
     } catch (e) {
         console.warn(`[VOD] Master cleanup failed for vod ${vodId}:`, e.message);
     }
@@ -915,13 +984,16 @@ async function _doFinalize(streamId) {
         console.warn(`[VOD] Thumbnail generation failed for vod ${vodId}:`, err.message);
     });
 
-    // Kick off transcription right away (serialized with the backfill poller so they
-    // never overlap). Fire-and-forget — the poller is the safety net if this is missed.
+    // Kick off transcription + AI timeline/overview right away (both fire-and-forget and
+    // internally guarded against overlapping with the backfill poller). This is the
+    // "process the VOD after the stream ends" step — it guarantees the timeline brackets
+    // the VOD (start + end, +mid for >5min) and picks active frames to keep cost down.
     try {
         const ai = require('../ai/ai-analysis');
-        if (ai.transcriptionEnabled && ai.transcriptionEnabled()) {
-            const finalVod = db.getVodById(vodId);
-            if (finalVod) ai.generateVodTranscript(finalVod).catch(() => {});
+        const finalVod = db.getVodById(vodId);
+        if (finalVod) {
+            if (ai.transcriptionEnabled && ai.transcriptionEnabled()) ai.generateVodTranscript(finalVod).catch(() => {});
+            if (ai.isEnabled && ai.isEnabled() && ai.withinBudget && ai.withinBudget()) ai.generateVodOverview(finalVod).catch(() => {});
         }
     } catch { /* poller will pick it up */ }
 

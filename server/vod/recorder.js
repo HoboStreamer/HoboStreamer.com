@@ -27,6 +27,11 @@ const WebSocket = require('ws');
 const db = require('../db/database');
 const config = require('../config');
 
+// Grace period for ffmpeg to flush the WebM trailer/cues after SIGINT before we
+// force-kill. Generous on purpose — a long recording's trailer flush must not be cut
+// short (that truncates the VOD). Cleared the instant ffmpeg exits cleanly.
+const STOP_GRACE_MS = parseInt(process.env.VOD_STOP_GRACE_MS, 10) || 60000;
+
 // RTP port range for recording PlainRTP consumers.
 // Distinct from mediasoup (10000-10999) and restream-manager (20000-30000).
 let _nextRecordRtpPort = 25100;
@@ -303,10 +308,16 @@ class StreamRecorder {
                 return;
         }
 
+        // Lossless master archive written ALONGSIDE the served webm. If the webm ends up
+        // truncated (e.g. force-kill during trailer flush, or a container issue), finalize
+        // recovers the full recording from this master. Cheap: it's a stream copy, no
+        // re-encode. Deleted once the webm is confirmed complete.
+        const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
+
         const ffmpegArgs = [
             '-y',
             ...inputArgs,
-            // Encode to VP8/Vorbis WebM (same format as client-side recordings)
+            // ── Output 1: served VP8/Vorbis WebM ──
             '-c:v', 'libvpx',
             '-b:v', '1500k',
             '-crf', '20',
@@ -320,6 +331,11 @@ class StreamRecorder {
             '-b:a', '128k',
             '-f', 'webm',
             filePath,
+            // ── Output 2: lossless copy master (recovery fallback) ──
+            '-map', '0:v:0', '-map', '0:a?',
+            '-c', 'copy',
+            '-f', 'matroska',
+            masterPath,
         ];
 
         try {
@@ -341,6 +357,7 @@ class StreamRecorder {
                 console.log(`[VOD] FFmpeg exited for stream ${streamId} (code: ${code}, signal: ${signal})`);
                 const rec = this.activeRecordings.get(streamId);
                 if (rec) {
+                    if (rec._killTimer) { clearTimeout(rec._killTimer); rec._killTimer = null; }
                     if (rec.remuxTimer) clearInterval(rec.remuxTimer);
                     if (rec.ws) try { rec.ws.close(); } catch {}
                 }
@@ -375,6 +392,7 @@ class StreamRecorder {
             const recording = {
                 process: proc,
                 filePath,
+                masterFilePath: masterPath,
                 vodId,
                 startTime: timestamp,
                 ws: null,
@@ -383,6 +401,13 @@ class StreamRecorder {
                 ffmpegCorruptionWarnings: 0,
                 _ffmpegCorrupted: false,
             };
+            // Track the master on the vod row + finalize registry so it's found on restart.
+            try { db.run('UPDATE vods SET master_file_path = ? WHERE id = ?', [masterPath, vodId]); } catch { /* */ }
+            try {
+                const vodRoutes = require('./routes');
+                const areg = vodRoutes.activeRecordings.get(streamId);
+                if (areg) areg.masterFilePath = masterPath;
+            } catch { /* */ }
 
             // For JSMPEG: connect to the relay WebSocket and pipe data to FFmpeg stdin
             if (useStdinPipe && endpoint.videoPort) {
@@ -492,14 +517,27 @@ class StreamRecorder {
             try { recording.process.kill('SIGTERM'); } catch { /* ignore */ }
         }
 
-        // Safety net: force-kill after 10s if FFmpeg hangs
-        setTimeout(() => {
+        // Safety net: force-kill only if FFmpeg is REALLY stuck. A long libvpx WebM can
+        // take many seconds to flush its trailer/cues — force-killing too early (the old
+        // 10s) truncated the file and produced short/unseekable VODs. We give it a
+        // generous window and clear the timer the moment ffmpeg exits cleanly (see the
+        // exit handler), so this only ever fires on a genuine hang.
+        recording._killTimer = setTimeout(() => {
             try {
                 if (recording.process && !recording.process.killed) {
+                    console.warn(`[VOD] FFmpeg didn't exit within grace for stream ${streamId} — force-killing (VOD may be truncated; master fallback will be used if present)`);
                     recording.process.kill('SIGKILL');
                 }
             } catch { /* ignore */ }
-        }, 10000);
+        }, STOP_GRACE_MS);
+    }
+
+    /**
+     * True while a stream's ffmpeg/webrtc recording is still live (in the active map).
+     * Used to stop finalize from touching an open, still-growing file.
+     */
+    isActivelyRecording(streamId) {
+        return this.activeRecordings.has(streamId);
     }
 
     /**

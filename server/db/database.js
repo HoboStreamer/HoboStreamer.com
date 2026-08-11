@@ -2115,6 +2115,15 @@ function getStreamMemoriesInRange(streamId, startSec, endSec) {
 function getVodsNeedingOverview(limit = 4) {
     return all("SELECT * FROM vods WHERE (ai_overview IS NULL OR ai_overview = '') AND stream_id IS NOT NULL ORDER BY created_at DESC LIMIT ?", [limit]);
 }
+// Finished VODs whose AI timeline has fewer than 2 points — used to backfill the
+// start/end coverage guarantee onto existing VODs (not just newly finalized ones).
+function getVodsNeedingTimeline(limit = 1) {
+    return all(`SELECT v.* FROM vods v
+        WHERE v.stream_id IS NOT NULL AND COALESCE(v.is_recording,0)=0
+          AND COALESCE(v.duration_seconds,0) >= 2
+          AND (SELECT COUNT(*) FROM stream_memories m WHERE m.stream_id = v.stream_id) < 2
+        ORDER BY v.created_at DESC LIMIT ?`, [limit]);
+}
 function getClipsNeedingOverview(limit = 4) {
     return all("SELECT * FROM clips WHERE (ai_overview IS NULL OR ai_overview = '') ORDER BY created_at DESC LIMIT ?", [limit]);
 }
@@ -5756,7 +5765,7 @@ module.exports = {
     createStream, endStream, endOtherLiveStreamsForSlot, updateViewerCount,
     addStreamMemory, getStreamMemories, getLatestStreamMemory, updateStreamAiOverview,
     setVodAiOverview, setClipAiOverview, setVodTranscript, setClipTranscript, getStreamMemoriesInRange,
-    getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
+    getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTimeline, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiUsageSummary,
     getStreamMemoriesByUser, getUserPastesForAi,

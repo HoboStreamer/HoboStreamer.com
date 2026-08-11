@@ -64,6 +64,134 @@ async function _extractFrame(src, t) {
     return null;
 }
 
+// Detect the "most active" moments cheaply via AUDIO loudness (ebur128 momentary
+// loudness). Audio-only decode is far lighter than full video scene-detection, and
+// loud moments are a good proxy for exciting/active parts. Returns timestamps (seconds)
+// sorted loudest-first. Gated by a duration cap so we never heavy-decode huge VODs.
+const ACTIVE_MAX_DURATION = 3 * 3600; // 3h — beyond this we skip detection and space uniformly
+function _detectActiveTimes(src) {
+    return new Promise((resolve) => {
+        // ametadata prints, per frame: "pts_time:<t>" then "lavfi.r128.M=<loudness>".
+        const args = ['-hide_banner', '-nostats', '-vn', '-i', src,
+            '-af', 'ebur128=metadata=1,ametadata=mode=print:key=lavfi.r128.M',
+            '-f', 'null', '-'];
+        let ff;
+        try { ff = _track(spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })); }
+        catch { return resolve([]); }
+        const points = [];
+        let pending = null;
+        let buf = '';
+        ff.stderr.on('data', (d) => {
+            buf += d.toString();
+            const lines = buf.split('\n');
+            buf = lines.pop() || '';
+            for (const line of lines) {
+                const pm = line.match(/pts_time:([0-9.]+)/);
+                if (pm) { pending = parseFloat(pm[1]); continue; }
+                const lm = line.match(/lavfi\.r128\.M=(-?[0-9.]+)/);
+                if (lm && pending != null) { points.push({ t: pending, loud: parseFloat(lm[1]) }); pending = null; }
+            }
+            if (points.length > 20000) { try { ff.kill('SIGKILL'); } catch { /* */ } } // safety cap
+        });
+        const timer = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } }, 180000);
+        const done = () => { clearTimeout(timer); resolve(points); };
+        ff.on('close', done);
+        ff.on('error', () => { clearTimeout(timer); resolve([]); });
+    });
+}
+
+// Pick up to `count` "active" timestamps spread across the timeline, avoiding anything
+// within `minGap` of an already-chosen time. Falls back to uniform spacing when audio
+// activity is unavailable (silent stream, detection skipped, etc.).
+async function pickActiveTimes(src, duration, count, avoid = [], minGap = 20) {
+    if (count <= 0 || !(duration > 0)) return [];
+    const chosen = [];
+    const tooClose = (t) => avoid.concat(chosen).some((x) => Math.abs(x - t) < minGap);
+    if (duration <= ACTIVE_MAX_DURATION) {
+        let pts = [];
+        try { pts = await _detectActiveTimes(src); } catch { pts = []; }
+        // Sort loudest-first; greedily take well-separated peaks.
+        pts.sort((a, b) => b.loud - a.loud);
+        for (const p of pts) {
+            if (chosen.length >= count) break;
+            const t = Math.max(1, Math.floor(p.t));
+            if (t < 1 || t > duration - 1) continue;
+            if (!tooClose(t)) chosen.push(t);
+        }
+    }
+    // Fill any remainder with uniform points (covers silent/undetected media).
+    if (chosen.length < count) {
+        const need = count - chosen.length;
+        for (let i = 1; i <= need + 1 && chosen.length < count; i++) {
+            const t = Math.floor((duration * i) / (need + 2));
+            if (t >= 1 && t <= duration - 1 && !tooClose(t)) chosen.push(t);
+        }
+    }
+    return chosen.sort((a, b) => a - b);
+}
+
+// Extract a frame at each timestamp, vision-analyze it, and (optionally) store a stream
+// memory. Returns [{t, description, tags}]. This is the shared frame→memory pipeline.
+async function captureFrameMemories(src, times, { streamId = null, userId = null, offsetBase = 0, store = true } = {}) {
+    const ai = require('./ai-analysis');
+    const out = [];
+    for (const t of times) {
+        const fp = await _extractFrame(src, t);
+        if (!fp) continue;
+        let r = null;
+        try { r = await ai.analyzeStreamFrame(fp); } catch { /* */ }
+        try { fs.unlinkSync(fp); } catch { /* */ }
+        if (r && r.description) {
+            out.push({ t, description: r.description, tags: r.tags });
+            if (store && streamId) {
+                try {
+                    db.addStreamMemory({
+                        stream_id: streamId, user_id: userId,
+                        offset_seconds: Math.round(offsetBase + t),
+                        description: r.description, tags: r.tags, thumbnail_url: null,
+                    });
+                } catch { /* */ }
+            }
+        }
+    }
+    return out;
+}
+
+// How many frames a VOD of this length is worth analyzing — scaled so short clips are
+// cheap (2 calls) and long streams get proportionally more coverage (capped at 8).
+function targetFrameCount(duration) {
+    if (duration <= 300) return 2;    // ≤5 min: start + end
+    if (duration <= 1200) return 4;   // ≤20 min
+    if (duration <= 3600) return 6;   // ≤1 h
+    return 8;                          // > 1 h
+}
+
+// The REQUIRED anchor timestamps: the very start, right before the end, and (for VODs
+// over 5 minutes) the middle. These guarantee the timeline always brackets the VOD.
+function anchorTimes(duration) {
+    const start = 1;
+    const end = Math.max(2, Math.floor(duration - 2));
+    const anchors = [start, end];
+    if (duration > 300) anchors.push(Math.floor(duration / 2));
+    return [...new Set(anchors)].sort((a, b) => a - b);
+}
+
+// Build the full set of frame timestamps for a VOD: guaranteed anchors + active-moment
+// fills up to the target, skipping anything already covered by `existingOffsets`.
+async function pickFrameTimes(src, duration, { existingOffsets = [], maxFrames = null } = {}) {
+    const target = maxFrames || targetFrameCount(duration);
+    const tol = Math.min(30, Math.max(8, Math.floor(duration * 0.06)));
+    const covered = (t) => existingOffsets.some((o) => Math.abs(o - t) <= tol);
+    const picks = [];
+    for (const a of anchorTimes(duration)) if (!covered(a)) picks.push(a);
+    const remaining = target - existingOffsets.length - picks.length;
+    if (remaining > 0) {
+        const active = await pickActiveTimes(src, duration, remaining, existingOffsets.concat(picks), tol);
+        for (const t of active) picks.push(t);
+    }
+    return [...new Set(picks)].sort((a, b) => a - b);
+}
+
 // Transcribe the audio: full for short media, else 3 spread 60s windows. Returns
 // { text, segments:[{start,end,text}] } with segment times relative to the recording.
 async function _transcribeSpan(src, duration) {
@@ -98,32 +226,18 @@ async function _transcribeSpan(src, duration) {
  * descriptions (optionally stored as memories) + sampled transcript → overview.
  * @returns {{ overview, transcript, frames, duration }}
  */
-async function analyzeMedia(src, { streamId = null, userId = null, numFrames = 5, storeMemories = false, offsetBase = 0 } = {}) {
-    const ai = require('./ai-analysis');
+async function analyzeMedia(src, { streamId = null, userId = null, numFrames = null, storeMemories = false, offsetBase = 0 } = {}) {
     if (!src) return { overview: null, transcript: '', frames: [], duration: 0 };
     const duration = await _ffprobeDuration(src);
-    const n = Math.max(1, numFrames);
-    const frames = [];
-    for (let i = 0; i < n; i++) {
-        const t = duration > 2 ? Math.max(1, Math.floor(duration * (i + 0.5) / n)) : 1;
-        const fp = await _extractFrame(src, t);
-        if (!fp) { if (duration <= 2) break; continue; }
-        let r = null;
-        try { r = await ai.analyzeStreamFrame(fp); } catch { /* */ }
-        try { fs.unlinkSync(fp); } catch { /* */ }
-        if (r && r.description) {
-            frames.push({ t, description: r.description, tags: r.tags });
-            if (storeMemories && streamId) {
-                try {
-                    db.addStreamMemory({
-                        stream_id: streamId, user_id: userId,
-                        offset_seconds: Math.round(offsetBase + t),
-                        description: r.description, tags: r.tags, thumbnail_url: null,
-                    });
-                } catch { /* */ }
-            }
-        }
-        if (duration <= 2) break;
+    let frames = [];
+    if (duration <= 2) {
+        // Tiny media — one frame.
+        const one = await captureFrameMemories(src, [1], { streamId, userId, offsetBase, store: storeMemories });
+        frames = one;
+    } else {
+        // Guaranteed start/end (+mid for >5min) plus active-moment fills, cost-scaled.
+        const times = await pickFrameTimes(src, duration, { maxFrames: numFrames });
+        frames = await captureFrameMemories(src, times, { streamId, userId, offsetBase, store: storeMemories });
     }
 
     const { text: transcript, segments } = await _transcribeSpan(src, duration);
@@ -150,4 +264,8 @@ async function transcribeOnly(src) {
     try { return await _transcribeSpan(src, duration); } catch (e) { return { text: '', segments: [], ok: false, error: e.message }; }
 }
 
-module.exports = { analyzeMedia, transcribeOnly, killActive };
+module.exports = {
+    analyzeMedia, transcribeOnly, killActive,
+    probeDuration: _ffprobeDuration,
+    pickFrameTimes, pickActiveTimes, captureFrameMemories, anchorTimes, targetFrameCount,
+};

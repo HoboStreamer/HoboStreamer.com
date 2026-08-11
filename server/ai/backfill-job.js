@@ -53,6 +53,11 @@ async function tick() {
         try { for (const v of db.getVodsNeedingOverview(1)) await ai.generateVodOverview(v); }
         catch (e) { console.warn('[AI backfill] vod:', e.message); }
 
+        // Timeline coverage: backfill the start/end (+mid) guarantee onto existing VODs
+        // that have fewer than 2 timeline points (gated by AI enabled + daily budget).
+        try { for (const v of db.getVodsNeedingTimeline(1)) await ai.ensureVodTimeline(v); }
+        catch (e) { console.warn('[AI backfill] timeline:', e.message); }
+
         // Clip overviews + local transcripts (frames + audio; self-marks).
         try { for (const c of db.getClipsNeedingOverview(1)) await ai.generateClipOverview(c); }
         catch (e) { console.warn('[AI backfill] clip:', e.message); }
