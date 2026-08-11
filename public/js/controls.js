@@ -30,11 +30,45 @@ function _applyControlsVisibility() {
     const show = _controlsHaveContent && !(_hardwareStatusKnown && !_hardwareConnected && !_controlsHaveOnvif);
     const tabBtn = document.getElementById('ch-tab-btn-controls');
     if (tabBtn) tabBtn.style.display = show ? '' : 'none';
-    // If controls vanished while the Controls tab was open, fall back to Videos.
-    if (!show && typeof _channelTab !== 'undefined' && _channelTab === 'controls' && typeof switchChannelTab === 'function') {
-        switchChannelTab('videos', document.querySelector('#ch-tabs .ch-tab[data-tab="videos"]'));
+    // If controls vanished, close the docked bar and fall back to Videos.
+    if (!show) {
+        _undockControls();
+        if (typeof _channelTab !== 'undefined' && _channelTab === 'controls' && typeof switchChannelTab === 'function') {
+            switchChannelTab('videos', document.querySelector('#ch-tabs .ch-tab[data-tab="videos"]'));
+        }
     }
 }
+
+/* ── Docked controls: fixed compact bottom bar ──────────────────
+   Moves the live #controls-grid into a fixed bottom bar so viewers can drive controls
+   while still watching + chatting (great on mobile). The grid NODE is moved (not
+   re-created), so all button handlers + live re-renders keep working. */
+let _controlsDocked = false;
+function toggleControlsDock() {
+    const dock = document.getElementById('controls-dock');
+    const dockBody = document.getElementById('controls-dock-body');
+    const panel = document.getElementById('controls-panel');
+    const grid = document.getElementById('controls-grid');
+    const btn = document.getElementById('controls-dock-btn');
+    if (!dock || !dockBody || !panel || !grid) return;
+    _controlsDocked = !_controlsDocked;
+    if (_controlsDocked) {
+        dockBody.appendChild(grid);
+        dock.style.display = '';
+        document.body.classList.add('controls-docked');
+        let ph = document.getElementById('controls-dock-ph');
+        if (!ph) { ph = document.createElement('div'); ph.id = 'controls-dock-ph'; ph.className = 'controls-dock-ph'; panel.appendChild(ph); }
+        ph.innerHTML = '<i class="fa-solid fa-arrow-down"></i> Controls are docked at the bottom of your screen so you can use them while you watch. <button class="btn btn-sm btn-outline" onclick="toggleControlsDock()"><i class="fa-solid fa-up-to-line"></i> Bring back here</button>';
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-up-to-line"></i> Undock';
+    } else {
+        panel.appendChild(grid);
+        dock.style.display = 'none';
+        document.body.classList.remove('controls-docked');
+        const ph = document.getElementById('controls-dock-ph'); if (ph) ph.remove();
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-down-to-line"></i> Dock to bottom';
+    }
+}
+function _undockControls() { if (_controlsDocked) toggleControlsDock(); }
 
 /**
  * Load and display interactive controls for a stream.
@@ -473,15 +507,15 @@ function destroyControlWs() {
  * Update the controls panel header to show connection + hardware status.
  */
 function _updateControlConnectionUI(wsConnected) {
-    const header = document.querySelector('.controls-header h3');
-    if (!header) return;
-
+    // Compact status indicator (no redundant "Controls" label — the tab is the title).
+    const el = document.getElementById('controls-status');
+    if (!el) return;
     if (!wsConnected) {
-        header.innerHTML = '<i class="fa-solid fa-gamepad"></i> Controls <span class="control-dot control-dot-disconnected" title="Reconnecting…">⚫</span>';
+        el.innerHTML = '<span class="control-dot control-dot-disconnected" title="Reconnecting…">⚫</span> <span class="controls-status-txt">Reconnecting…</span>';
     } else if (_hardwareConnected) {
-        header.innerHTML = '<i class="fa-solid fa-gamepad"></i> Controls <span class="control-dot control-dot-online" title="Hardware connected">🟢</span>';
+        el.innerHTML = '<span class="control-dot control-dot-online" title="Hardware connected">🟢</span> <span class="controls-status-txt">Hardware connected</span>';
     } else {
-        header.innerHTML = '<i class="fa-solid fa-gamepad"></i> Controls <span class="control-dot control-dot-waiting" title="Waiting for hardware bridge">🟡</span>';
+        el.innerHTML = '<span class="control-dot control-dot-waiting" title="Waiting for hardware bridge">🟡</span> <span class="controls-status-txt">Waiting for hardware…</span>';
     }
 }
 

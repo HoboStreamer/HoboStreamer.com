@@ -12380,3 +12380,56 @@ body.theme-light .user-dropdown {
 .ct-badge.ct-self { font-style: italic; }
 .ct-count { font-size: 0.72rem; opacity: 0.7; background: rgba(255,255,255,.08); border-radius: 999px; padding: 0 6px; }
 .ct-badge.active .ct-count { opacity: 0.95; }
+
+/* ═══════════════ Channel panels: titles removed (tab = title) ═══════════════ */
+.ch-panel-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.ch-panel-actions .sel-all-btn { margin: 4px 0 8px; }
+#ch-analytics-header { margin: 2px 0 14px; }
+.ch-panel-hint { margin: 14px 0 12px; color: var(--text-muted); font-size: 0.85rem; display: flex; align-items: center; gap: 7px; line-height: 1.4; }
+.ch-panel-hint i { color: var(--accent); }
+.ch-panel-hint b { color: var(--text-secondary); font-weight: 700; }
+.ch-panel-topline { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ch-panel-topline .ch-panel-hint { margin: 12px 0; }
+
+/* Controls tab header (compact status + dock button) */
+.controls-header { justify-content: space-between; }
+.controls-status { display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.controls-status-txt { color: var(--text-muted); }
+.controls-dock-btn { flex-shrink: 0; }
+.controls-dock-ph { color: var(--text-muted); font-size: 0.9rem; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 2px; }
+.controls-dock-ph i { color: var(--accent); }
+
+/* ═══════════════ Docked controls (fixed compact bottom bar) ═══════════════ */
+.controls-dock {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 1200;
+    padding: 0 8px calc(8px + env(safe-area-inset-bottom, 0px));
+    display: flex; justify-content: center; pointer-events: none;
+    animation: dockUp .2s ease;
+}
+@keyframes dockUp { from { transform: translateY(110%); opacity: 0; } to { transform: none; opacity: 1; } }
+.controls-dock-bar {
+    pointer-events: auto;
+    display: flex; align-items: center; gap: 8px;
+    max-width: 100%; width: max-content;
+    padding: 7px 9px;
+    background: color-mix(in srgb, var(--bg-card) 92%, transparent);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 14px 38px rgba(0,0,0,.55);
+}
+.controls-dock-grip { flex-shrink: 0; color: var(--accent); font-size: 0.95rem; padding: 0 2px; }
+.controls-dock-body { display: flex; align-items: center; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.controls-dock-body::-webkit-scrollbar { height: 5px; }
+.controls-dock-close { flex-shrink: 0; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text-muted); width: 30px; height: 30px; border-radius: 9px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .15s; }
+.controls-dock-close:hover { color: var(--text-primary); border-color: var(--accent); }
+/* Compact, single-row buttons inside the dock */
+.controls-dock .controls-grid { flex-wrap: nowrap; gap: 6px; }
+.controls-dock .control-btn { flex-direction: row; min-width: 0; padding: 7px 11px; font-size: 0.78rem; gap: 6px; white-space: nowrap; }
+.controls-dock .control-btn i { font-size: 0.98rem; }
+@media (max-width: 560px) {
+    /* Icon-only on phones to stay out of the way of the video + chat (keep the keybind badge) */
+    .controls-dock .control-btn > span:not(.control-keybind) { display: none; }
+    .controls-dock .control-btn { padding: 9px 11px; }
+    .controls-dock-bar { gap: 6px; padding: 6px 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .controls-dock { animation: none; } }
