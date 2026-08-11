@@ -1658,7 +1658,9 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
         const parsedStreamId = stream_id ? parseInt(stream_id, 10) : null;
         const parsedVodId = vod_id ? parseInt(vod_id, 10) : null;
         const { startTime, endTime } = parseClipWindow(req.body);
-        const isLiveClip = !!req.file;
+        // Live clips arrive either as an uploaded MediaRecorder blob (req.file) OR as a
+        // JSON body with live:true (server-side cut). Both get the gentler live cooldown.
+        const isLiveClip = !!req.file || (req.body.live === true || req.body.live === 'true' || req.body.live === '1');
         const sanitizedTitle = sanitizeClipTitle(title);
 
         // ── Anti-abuse: account age check ────────────────────
@@ -1814,7 +1816,25 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             if (!db.isStreamClipRecordingEnabled(stream)) return res.status(403).json({ error: 'Clipping is disabled for this stream.' });
             const rec = db.getActiveVodByStream(parsedStreamId);
             if (!rec || !rec.file_path || !fs.existsSync(rec.file_path)) {
-                return res.status(409).json({ error: 'This stream is not being recorded, so live clips are unavailable.', no_recording: true });
+                // No active recording (e.g. it died on a restart). Try to heal it now so the
+                // next attempt works, and tell the client it's spinning up so it can retry.
+                let starting = false;
+                try {
+                    const recorder = require('./recorder');
+                    if (recorder.isActivelyRecording(parsedStreamId)) {
+                        starting = true; // already healing — the file just isn't on disk yet
+                    } else if (stream.is_live && typeof recorder.reconcileLiveRecordings === 'function') {
+                        recorder.reconcileLiveRecordings();
+                        starting = recorder.isActivelyRecording(parsedStreamId);
+                    }
+                } catch { /* */ }
+                return res.status(409).json({
+                    error: starting
+                        ? 'Recording is starting up — try clipping again in a few seconds.'
+                        : 'This stream is not being recorded, so live clips are unavailable.',
+                    no_recording: true,
+                    recording_starting: starting,
+                });
             }
             const maxDur = db.getSetting('max_clip_duration') || 60;
             let dur = parseFloat(req.body.duration);

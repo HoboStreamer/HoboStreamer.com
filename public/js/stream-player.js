@@ -3100,11 +3100,27 @@ async function createLiveClip() {
         toast('A clip is already being created — please wait a moment', 'info');
         return;
     }
+    if (!streamRef || !streamRef.id) { toast('No stream selected', 'error'); return; }
+    liveClipRequestInFlight = true;
+    setClipButtonBusy(true);
+    try {
+        // Server-side first: works whenever the stream is being recorded (the default, and
+        // self-healing). Only if the server truly has no recording do we fall back to the
+        // browser's rolling MediaRecorder buffer. This makes clipping robust even if the
+        // client's cached `server_clip` flag is stale (e.g. recording healed after page load).
+        const result = await _serverLiveClipAttempt(false);
+        if (result === 'no_recording') await _clientLiveClip();
+    } catch (err) {
+        toast('Failed to create clip: ' + (err.message || 'error'), 'error');
+    } finally {
+        liveClipRequestInFlight = false;
+        setClipButtonBusy(false);
+    }
+}
 
-    // SERVER-SIDE clip: when the stream is recorded server-side, the browser never
-    // encodes/uploads anything — the server cuts the clip from its own recording.
-    if (streamRef && streamRef.server_clip) return _createServerLiveClip();
-
+// Fallback: assemble a clip from the browser's rolling MediaRecorder buffer and upload it.
+// Used only when the server has no recording for this stream. Caller owns busy/in-flight state.
+async function _clientLiveClip() {
     // Use current cycle if it has enough data, otherwise fall back to previous
     let header = clipHeaderChunk;
     let chunks = clipChunks;
@@ -3153,9 +3169,7 @@ async function createLiveClip() {
         return;
     }
 
-    toast('Creating clip...', 'info');
-    liveClipRequestInFlight = true;
-    setClipButtonBusy(true);
+    toast('Creating clip…', 'info');
 
     try {
         // Assemble: header chunk first, then rolling buffer chunks.
@@ -3203,18 +3217,22 @@ async function createLiveClip() {
         }
     } catch (err) {
         toast('Failed to create clip: ' + err.message, 'error');
-    } finally {
-        liveClipRequestInFlight = false;
-        setClipButtonBusy(false);
     }
 }
 
-// Ask the server to cut a clip from its live recording (no client-side encoding).
-async function _createServerLiveClip() {
-    if (!streamRef || !streamRef.id) { toast('No stream selected', 'error'); return; }
-    liveClipRequestInFlight = true;
-    setClipButtonBusy(true);
-    toast('Creating clip...', 'info');
+// Server cuts the clip from its own live recording — no client encoding/upload.
+// Returns 'ok' | 'no_recording' | 'handled'. Shows escalating progress while the cut is
+// slow, and auto-retries once when the recording is just spinning back up (e.g. after a
+// server restart). Caller owns busy/in-flight state.
+async function _serverLiveClipAttempt(isRetry) {
+    let slow1, slow2;
+    const startProgress = (label) => {
+        toast(label, 'info');
+        slow1 = setTimeout(() => toast('Still processing your clip… hang tight', 'info'), 6000);
+        slow2 = setTimeout(() => toast('Almost there — finalizing the clip…', 'info'), 14000);
+    };
+    const clearSlow = () => { clearTimeout(slow1); clearTimeout(slow2); };
+    startProgress(isRetry ? 'Retrying clip…' : 'Creating clip…');
     try {
         const token = localStorage.getItem('token');
         const resp = await fetch('/api/vods/clips', {
@@ -3223,15 +3241,28 @@ async function _createServerLiveClip() {
             body: JSON.stringify({ stream_id: streamRef.id, live: true, duration: CLIP_BUFFER_SECONDS, title: 'Clip from stream' }),
         });
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) { toast(data.error || 'Failed to create clip', data.no_recording ? 'warning' : 'error'); return; }
+        clearSlow();
+        if (!resp.ok) {
+            // Recording is warming back up (post-restart heal) — auto-retry once.
+            if (data.recording_starting && !isRetry) {
+                toast('Recording is warming up — retrying in a few seconds…', 'info');
+                await new Promise(r => setTimeout(r, 5000));
+                return _serverLiveClipAttempt(true);
+            }
+            if (data.no_recording) return 'no_recording'; // caller falls back to the browser buffer
+            if (resp.status === 429) { toast(data.error || 'You are clipping too fast — wait a moment', 'warning'); return 'handled'; }
+            toast(data.error || 'Failed to create clip', 'error');
+            return 'handled';
+        }
         const clipId = data.clip && data.clip.id;
-        toast('Clip created! — Trim & title it', 'success');
+        if (data.deduplicated) toast('That moment is already clipped — opening it', 'info');
+        else toast('Clip created! — Trim & title it', 'success');
         if (clipId) openClipTrimEditor(clipId);
+        return 'ok';
     } catch (err) {
+        clearSlow();
         toast('Failed to create clip: ' + (err.message || 'error'), 'error');
-    } finally {
-        liveClipRequestInFlight = false;
-        setClipButtonBusy(false);
+        return 'handled';
     }
 }
 

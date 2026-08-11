@@ -541,6 +541,63 @@ class StreamRecorder {
     }
 
     /**
+     * Heal recordings for live streams that should be recording but aren't — e.g. after a
+     * server restart (deploy) or if a recording ffmpeg died mid-stream. This is what keeps
+     * SERVER-SIDE clipping working across streaming methods: live clips are cut from the
+     * growing recording, so there must always be one while a stream is live.
+     *
+     * webrtc/whip/browser/screen → re-create PlainRTP consumers (waits for the SFU producer).
+     * rtmp                       → re-attach ffmpeg to the still-connected publisher.
+     * jsmpeg                     → fed by the browser relay WS; can't be resumed server-side.
+     */
+    reconcileLiveRecordings() {
+        let streams;
+        try { streams = db.getLiveStreams(); } catch { return; }
+        const now = Date.now();
+        if (!this._healAttempts) this._healAttempts = new Map();
+
+        for (const stream of streams) {
+            const sid = stream.id;
+            if (this.isActivelyRecording(sid)) continue;
+
+            // Respect the channel's recording policy — never force a VOD on a stream that opted out.
+            let policy = null;
+            try { policy = db.getChannelVodRecordingPolicyByUserId(stream.user_id, stream.managed_stream_id); } catch { /* */ }
+            if (!policy || !policy.recordingEnabled) continue;
+
+            // Per-stream cooldown so a stream that can't heal isn't retried every tick.
+            if (now - (this._healAttempts.get(sid) || 0) < 60000) continue;
+
+            const proto = stream.protocol;
+            if (WEBRTC_PROTOCOLS.has(proto)) {
+                this._healAttempts.set(sid, now);
+                console.log(`[VOD] Auto-healing recording for live ${proto} stream ${sid}`);
+                try { this.startRecording(sid, proto, {}); }
+                catch (e) { console.warn(`[VOD] heal failed for stream ${sid}:`, e.message); }
+            } else if (proto === 'rtmp') {
+                // Need the live RTMP publish key (what ffmpeg reads from); only heal if the
+                // publisher is still connected.
+                let streamKey = null;
+                try {
+                    const rtmp = require('../streaming/rtmp-server');
+                    if (rtmp && rtmp.activeStreams) {
+                        for (const [key, info] of rtmp.activeStreams) { if (info && info.streamId === sid) { streamKey = key; break; } }
+                    }
+                } catch { /* */ }
+                if (!streamKey) continue; // publisher gone → not truly live; leave it for stale cleanup
+                this._healAttempts.set(sid, now);
+                console.log(`[VOD] Auto-healing RTMP recording for live stream ${sid}`);
+                try { this.startRecording(sid, 'rtmp', { streamKey }); }
+                catch (e) { console.warn(`[VOD] heal failed for stream ${sid}:`, e.message); }
+            }
+        }
+
+        // Forget cooldowns for streams that are no longer live.
+        const liveIds = new Set(streams.map(s => s.id));
+        for (const id of Array.from(this._healAttempts.keys())) if (!liveIds.has(id)) this._healAttempts.delete(id);
+    }
+
+    /**
      * Start recording a WebRTC/WHIP/browser stream via mediasoup PlainRTP consumers → FFmpeg.
      * Waits up to 60s for producers to appear in the SFU room, then starts FFmpeg.
      */

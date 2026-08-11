@@ -901,6 +901,14 @@ async function start() {
         try { require('./ai/backfill-job').start(); } catch (e) { console.warn('[AI] backfill job not started:', e.message); }
         try { require('./ai/streamer-overview-job').start(); } catch (e) { console.warn('[AI] streamer-overview job not started:', e.message); }
         try { require('./ai/chat-ai').start(); } catch (e) { console.warn('[AI] chat-ai job not started:', e.message); }
+        // Heal server-side recordings for live streams (resume after restart / ffmpeg death)
+        // so clipping always has a source. First pass delayed to let broadcasters reconnect.
+        try {
+            const _recorder = require('./vod/recorder');
+            setTimeout(() => { try { _recorder.reconcileLiveRecordings(); } catch (e) { console.warn('[VOD] reconcile:', e.message); } }, 20000);
+            setInterval(() => { try { _recorder.reconcileLiveRecordings(); } catch (e) { console.warn('[VOD] reconcile:', e.message); } }, 45000);
+            console.log('[VOD] Recording reconciler started (heals live recordings for clipping)');
+        } catch (e) { console.warn('[VOD] recording reconciler not started:', e.message); }
 
         // Broadcast recent git changes to all chat clients after startup.
         // Uses a retry loop — clients reconnect with backoff after a restart,
