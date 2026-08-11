@@ -915,6 +915,16 @@ async function _doFinalize(streamId) {
         console.warn(`[VOD] Thumbnail generation failed for vod ${vodId}:`, err.message);
     });
 
+    // Kick off transcription right away (serialized with the backfill poller so they
+    // never overlap). Fire-and-forget — the poller is the safety net if this is missed.
+    try {
+        const ai = require('../ai/ai-analysis');
+        if (ai.transcriptionEnabled && ai.transcriptionEnabled()) {
+            const finalVod = db.getVodById(vodId);
+            if (finalVod) ai.generateVodTranscript(finalVod).catch(() => {});
+        }
+    } catch { /* poller will pick it up */ }
+
     return db.getVodById(vodId);
 }
 

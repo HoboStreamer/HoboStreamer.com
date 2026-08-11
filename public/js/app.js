@@ -618,6 +618,7 @@ function showModal(id) {
     content.innerHTML = typeof templates[id] === 'function' ? templates[id]() : (templates[id] || `<p>Unknown modal: ${id}</p>`);
     overlay.classList.add('show');
     if (id === 'buy-funds' && typeof _initBuyBucks === 'function') _initBuyBucks();
+    if (id === 'donate' && typeof _loadDonateGoals === 'function') _loadDonateGoals();
 }
 
 function closeModal() {
@@ -2235,6 +2236,9 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         // Stable chat-room key for this channel (used by all initChat calls below).
         _activeChannelUserId = ch.user_id || null;
 
+        // Donation goal widget at the top of chat (works live + offline).
+        initGoalWidget(ch.user_id);
+
         // Reset the channel tabs + render the About tab (About is default/first when set).
         // Weather is rendered on demand inside weather panels (see _fillWeatherPanels).
         _renderChannelAbout(ch);
@@ -3406,6 +3410,70 @@ async function _fillWeatherPanels() {
     } catch {
         nodes.forEach(n => { const b = n.querySelector('.ch-weather-panel-body'); if (b) b.innerHTML = ''; });
     }
+}
+
+// ── Donation goal widget (top of chat, live + offline) ───────
+let _goalWidget = { userId: null, goals: [], timer: null };
+async function initGoalWidget(userId) {
+    stopGoalWidget();
+    if (!userId) return;
+    _goalWidget.userId = userId;
+    try { const data = await api(`/funds/goals/${userId}`); _goalWidget.goals = data.goals || []; }
+    catch { _goalWidget.goals = []; }
+    renderGoalWidget();
+    // Refresh periodically so a reached goal's celebration auto-clears after the
+    // server's 1-hour window. Only polls while the channel page is visible.
+    _goalWidget.timer = setInterval(async () => {
+        const page = document.getElementById('page-channel');
+        if (!page || !page.classList.contains('active') || !_goalWidget.userId) return;
+        try { const d = await api(`/funds/goals/${_goalWidget.userId}`); _goalWidget.goals = d.goals || []; renderGoalWidget(); } catch { /* */ }
+    }, 120000);
+}
+function stopGoalWidget() {
+    if (_goalWidget.timer) { clearInterval(_goalWidget.timer); _goalWidget.timer = null; }
+    _goalWidget.goals = []; _goalWidget.userId = null;
+    document.querySelectorAll('#ch-goal-widget, #ch-goal-widget-offline').forEach(el => { el.style.display = 'none'; el.innerHTML = ''; });
+}
+function renderGoalWidget() {
+    const goals = _goalWidget.goals || [];
+    const html = goals.length ? goals.map(_goalWidgetItemHTML).join('') : '';
+    document.querySelectorAll('#ch-goal-widget, #ch-goal-widget-offline').forEach(el => {
+        el.innerHTML = html;
+        el.style.display = html ? '' : 'none';
+    });
+}
+function _goalWidgetItemHTML(g) {
+    const pct = g.target_amount ? Math.min(100, Math.round((g.current_amount / g.target_amount) * 100)) : 0;
+    const reached = (!g.is_active && g.reached_at) || pct >= 100;
+    const media = g.image_url
+        ? (g.media_type === 'video'
+            ? `<video class="cgw-media" src="${esc(g.image_url)}" muted loop autoplay playsinline></video>`
+            : `<img class="cgw-media" src="${esc(g.image_url)}" alt="">`)
+        : '';
+    return `<div class="cgw-goal ${reached ? 'reached' : ''}" data-goal-id="${g.id}">
+            ${media}
+            <div class="cgw-body">
+                <div class="cgw-top"><span class="cgw-title">${reached ? '🎉 ' : ''}${esc(g.title)}</span><span class="cgw-pct">${pct}%</span></div>
+                <div class="cgw-bar"><div class="cgw-fill" style="width:${pct}%"></div></div>
+                <div class="cgw-amt">$${g.current_amount} / $${g.target_amount}${reached ? ' · Goal reached!' : ''}</div>
+            </div>
+        </div>`;
+}
+// Live updates pushed over the chat websocket (goal-update / goal-reached).
+function updateGoalInWidget(goal) {
+    if (!goal) return;
+    const i = _goalWidget.goals.findIndex(x => x.id === goal.id);
+    if (i >= 0) _goalWidget.goals[i] = goal; else _goalWidget.goals.push(goal);
+    renderGoalWidget();
+}
+function goalReachedInWidget(goal) {
+    updateGoalInWidget(goal);
+    // Briefly pulse the reached goal in the widget.
+    setTimeout(() => {
+        document.querySelectorAll(`.cgw-goal[data-goal-id="${goal && goal.id}"]`).forEach(el => {
+            el.classList.add('cgw-pop'); setTimeout(() => el.classList.remove('cgw-pop'), 2000);
+        });
+    }, 60);
 }
 
 // ── Media Request tab ────────────────────────────────────────
@@ -5600,20 +5668,85 @@ function discoverCamerasModal() {
         </div>`;
 }
 
+// Working media state for the goal editor modal.
+let _goalMediaUrl = '';
+let _goalMediaType = '';
+window._editingGoal = null;
+
+function openAddGoal() { window._editingGoal = null; showModal('add-goal'); }
+function editGoalModal(id) {
+    const g = (window._dashGoals || []).find(x => x.id === id);
+    window._editingGoal = g || null;
+    showModal('add-goal');
+}
+
 function addGoalModal() {
+    const g = window._editingGoal;
+    _goalMediaUrl = g && g.image_url ? g.image_url : '';
+    _goalMediaType = g && g.media_type ? g.media_type : '';
     return `
-        <h3><i class="fa-solid fa-bullseye"></i> Add Donation Goal</h3>
+        <h3><i class="fa-solid fa-bullseye"></i> ${g ? 'Edit' : 'Add'} Donation Goal</h3>
         <div class="form-group">
             <label>Goal Title</label>
-            <input type="text" id="modal-goal-title" class="form-input" placeholder="e.g. New tent!">
+            <input type="text" id="modal-goal-title" class="form-input" placeholder="e.g. New tent!" value="${g ? esc(g.title) : ''}">
         </div>
         <div class="form-group">
             <label>Target (Hobo Bucks)</label>
-            <input type="number" id="modal-goal-target" class="form-input" placeholder="5000" min="1">
+            <input type="number" id="modal-goal-target" class="form-input" placeholder="500" min="1" value="${g ? g.target_amount : ''}">
         </div>
-        <button class="btn btn-primary btn-lg" onclick="doAddGoal()" style="width:100%;margin-top:8px">
-            <i class="fa-solid fa-plus"></i> Create Goal
+        <div class="form-group">
+            <label>Image / Video (optional)</label>
+            <div id="goal-media-preview">${_goalMediaPreviewHTML()}</div>
+            <input type="file" id="modal-goal-media" accept="image/*,video/*" onchange="uploadGoalMedia(this)" style="margin-top:6px">
+            <div class="muted" style="font-size:0.78rem;margin-top:4px">Shown in the goal widget + celebrated in chat when reached. Videos/GIFs auto-convert to an optimized WebM.</div>
+        </div>
+        <button class="btn btn-primary btn-lg" onclick="saveGoal()" style="width:100%;margin-top:8px" id="goal-save-btn">
+            <i class="fa-solid fa-floppy-disk"></i> ${g ? 'Save Goal' : 'Create Goal'}
         </button>`;
+}
+function _goalMediaPreviewHTML() {
+    if (!_goalMediaUrl) return '<div class="muted" style="font-size:0.8rem">No media</div>';
+    const media = _goalMediaType === 'video'
+        ? `<video src="${esc(_goalMediaUrl)}" muted loop autoplay playsinline style="max-width:160px;max-height:100px;border-radius:8px"></video>`
+        : `<img src="${esc(_goalMediaUrl)}" alt="" style="max-width:160px;max-height:100px;border-radius:8px">`;
+    return `<div style="display:flex;align-items:center;gap:10px">${media}<button class="btn btn-xs btn-outline" onclick="removeGoalMediaSel()">Remove</button></div>`;
+}
+function removeGoalMediaSel() {
+    _goalMediaUrl = ''; _goalMediaType = '';
+    const p = document.getElementById('goal-media-preview'); if (p) p.innerHTML = _goalMediaPreviewHTML();
+}
+async function uploadGoalMedia(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const preview = document.getElementById('goal-media-preview');
+    if (preview) preview.innerHTML = '<div class="muted" style="font-size:0.8rem"><i class="fa-solid fa-spinner fa-spin"></i> Uploading…</div>';
+    try {
+        const fd = new FormData(); fd.append('file', file);
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API}/api/streams/goal-media`, { method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {}, body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+        _goalMediaUrl = data.url; _goalMediaType = data.type;
+        if (preview) preview.innerHTML = _goalMediaPreviewHTML();
+    } catch (e) {
+        toast(e.message || 'Media upload failed', 'error');
+        if (preview) preview.innerHTML = _goalMediaPreviewHTML();
+    }
+    input.value = '';
+}
+async function saveGoal() {
+    const title = (document.getElementById('modal-goal-title').value || '').trim();
+    const target = parseInt(document.getElementById('modal-goal-target').value, 10);
+    if (!title || !target) return toast('Fill in title and target', 'error');
+    const body = { title, target_amount: target, image_url: _goalMediaUrl || null, media_type: _goalMediaType || null };
+    const btn = document.getElementById('goal-save-btn'); if (btn) btn.disabled = true;
+    try {
+        if (window._editingGoal) await api(`/funds/goals/${window._editingGoal.id}`, { method: 'PUT', body });
+        else await api('/funds/goals', { method: 'POST', body });
+        closeModal();
+        if (typeof loadDashGoals === 'function') loadDashGoals();
+        toast('Goal saved!', 'success');
+    } catch (e) { toast(e.message, 'error'); if (btn) btn.disabled = false; }
 }
 
 /* Stream key modal helpers */

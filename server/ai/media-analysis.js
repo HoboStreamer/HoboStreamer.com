@@ -16,10 +16,26 @@ function _tmp(ext) {
     return path.join(os.tmpdir(), `hobo-ma-${Date.now()}-${Math.floor(Math.random() * 1e6)}.${ext}`);
 }
 
+// Track spawned ffmpeg/ffprobe children so a shutdown can kill them (see killActive).
+const _active = new Set();
+function _track(ff) {
+    if (!ff) return ff;
+    _active.add(ff);
+    const drop = () => _active.delete(ff);
+    ff.on('close', drop); ff.on('error', drop); ff.on('exit', drop);
+    return ff;
+}
+function killActive() {
+    let n = 0;
+    for (const ff of _active) { try { ff.kill('SIGKILL'); n++; } catch { /* */ } }
+    _active.clear();
+    return n;
+}
+
 function _runFf(bin, args, killMs) {
     return new Promise((resolve) => {
         let ff;
-        try { ff = spawn(bin, args, { stdio: 'ignore' }); } catch { return resolve(false); }
+        try { ff = _track(spawn(bin, args, { stdio: 'ignore' })); } catch { return resolve(false); }
         const t = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } }, killMs);
         ff.on('close', (c) => { clearTimeout(t); resolve(c === 0); });
         ff.on('error', () => { clearTimeout(t); resolve(false); });
@@ -30,7 +46,7 @@ function _ffprobeDuration(src) {
     return new Promise((resolve) => {
         let out = '';
         let ff;
-        try { ff = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', src], { stdio: ['ignore', 'pipe', 'ignore'] }); }
+        try { ff = _track(spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', src], { stdio: ['ignore', 'pipe', 'ignore'] })); }
         catch { return resolve(0); }
         ff.stdout.on('data', (d) => { out += d; });
         const t = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } resolve(0); }, 45000);
@@ -52,24 +68,29 @@ async function _extractFrame(src, t) {
 // { text, segments:[{start,end,text}] } with segment times relative to the recording.
 async function _transcribeSpan(src, duration) {
     const transcribe = require('./transcribe');
-    if (!transcribe.available()) return { text: '', segments: [] };
+    if (!transcribe.available()) return { text: '', segments: [], ok: false, error: 'whisper unavailable' };
     if (duration > 0 && duration <= 200) {
         return await transcribe.transcribeMediaDetailed(src, { seconds: 0, timeoutMs: 300000 });
     }
     const parts = [];
     const segments = [];
+    let anyOk = false, lastErr = null;
     for (const frac of [0.1, 0.45, 0.8]) {
         const start = Math.floor((duration || 0) * frac);
         const wav = _tmp('wav');
-        const ok = await _runFf('ffmpeg', ['-y', '-ss', String(start), '-i', src, '-t', '60', '-vn', '-ac', '1', '-ar', '16000', '-f', 'wav', wav], 120000);
-        if (ok) {
+        const ffOk = await _runFf('ffmpeg', ['-y', '-ss', String(start), '-i', src, '-t', '60', '-vn', '-ac', '1', '-ar', '16000', '-f', 'wav', wav], 120000);
+        if (ffOk) {
             const r = await transcribe.transcribeWavDetailed(wav, { timeoutMs: 150000, offsetSec: start });
+            if (r.ok) anyOk = true; else lastErr = r.error || lastErr;
             if (r.text) parts.push(r.text);
             if (r.segments && r.segments.length) segments.push(...r.segments);
-        }
+        } else { lastErr = 'ffmpeg window extract failed'; }
         try { fs.existsSync(wav) && fs.unlinkSync(wav); } catch { /* */ }
     }
-    return { text: parts.join(' … '), segments };
+    // ok=true only if at least one window ran the full ffmpeg+whisper pipeline cleanly.
+    // If every window failed (unreadable source, etc.) we return ok=false so the caller
+    // retries instead of marking the VOD permanently silent.
+    return { text: parts.join(' … '), segments, ok: anyOk, error: anyOk ? null : lastErr };
 }
 
 /**
@@ -124,9 +145,9 @@ async function analyzeMedia(src, { streamId = null, userId = null, numFrames = 5
  * @returns {Promise<{text:string, segments:Array}>}
  */
 async function transcribeOnly(src) {
-    if (!src) return { text: '', segments: [] };
+    if (!src) return { text: '', segments: [], ok: false, error: 'no source' };
     const duration = await _ffprobeDuration(src);
-    try { return await _transcribeSpan(src, duration); } catch { return { text: '', segments: [] }; }
+    try { return await _transcribeSpan(src, duration); } catch (e) { return { text: '', segments: [], ok: false, error: e.message }; }
 }
 
-module.exports = { analyzeMedia, transcribeOnly };
+module.exports = { analyzeMedia, transcribeOnly, killActive };

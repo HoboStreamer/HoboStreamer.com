@@ -661,6 +661,40 @@ router.post('/panel-image', requireAuth, offlineUpload.single('file'), async (re
     }
 });
 
+// Upload a donation-goal image OR video/gif. Videos/gifs → optimized muted looping
+// WebM; images → WebP. Returns { url, type } for the dashboard to attach to a goal.
+router.post('/goal-media', requireAuth, offlineUpload.single('file'), async (req, res) => {
+    const tmp = req.file?.path;
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file' });
+        const mime = (req.file.mimetype || '').toLowerCase();
+        const isPlainImage = /^image\/(png|jpe?g|webp|avif)$/.test(mime);
+        const isVideoish = /^video\//.test(mime) || mime === 'image/gif';
+        if (!isPlainImage && !isVideoish) { fs.unlink(tmp, () => {}); return res.status(400).json({ error: 'Unsupported file type' }); }
+        const stamp = Date.now().toString(36);
+        let outName, type;
+        if (isVideoish) {
+            outName = `goal-${req.user.id}-${stamp}.webm`;
+            await transcodeOfflineWebm(tmp, path.join(OFFLINE_DIR, outName));
+            type = 'video';
+        } else {
+            outName = `goal-${req.user.id}-${stamp}.webp`;
+            if (sharp) {
+                await sharp(tmp).rotate().resize({ width: 960, height: 960, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toFile(path.join(OFFLINE_DIR, outName));
+            } else {
+                fs.copyFileSync(tmp, path.join(OFFLINE_DIR, outName));
+            }
+            type = 'image';
+        }
+        fs.unlink(tmp, () => {});
+        res.json({ url: `/data/offline/${outName}`, type });
+    } catch (err) {
+        if (tmp) fs.unlink(tmp, () => {});
+        console.error('[GoalMedia] upload error:', err.message);
+        res.status(500).json({ error: 'Failed to process goal media: ' + err.message });
+    }
+});
+
 // Upload an offline-screen asset (image OR video/gif). Videos/gifs are transcoded
 // to an optimized muted looping WebM served just for this channel. Images are
 // re-encoded to WebP. Sets channels.offline_screen_url + type.

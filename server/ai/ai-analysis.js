@@ -261,42 +261,75 @@ async function generateVodOverview(vod) {
     return r ? r.overview : null;
 }
 
+// Transcription retries: a transient failure (killed by a restart, ffmpeg/whisper
+// error, unreadable source) is retried up to this many times before giving up. Only a
+// clean run that finds no speech (r.ok && !r.text) marks a VOD terminally silent.
+const MAX_TX_ATTEMPTS = 5;
+// Serialize ALL transcription so the finalize-trigger and the backfill poller can never
+// run two whisper passes at once (they'd starve each other + the live encoders).
+let _txChain = Promise.resolve();
+function _txRun(fn) {
+    const p = _txChain.then(fn, fn);
+    _txChain = p.catch(() => {});
+    return p;
+}
+
 /**
  * Transcript-only pass for a VOD — FREE local whisper (no vision, no API/budget).
- * Used to backfill transcripts for existing VODs whose overview was generated
- * before transcripts were stored. Marks ' ' when there's nothing to transcribe.
+ * Uses transcript_status for real job-state: on failure it retries (bounded), and only
+ * a clean silent run is marked terminal — so an interrupted run is never lost.
  */
 async function generateVodTranscript(vod) {
-    if (!vod) return null;
-    if (!transcriptionEnabled()) return null;
-    const src = await _mediaSource(vod);
-    const existing = (vod.ai_transcript || '').trim();
-    if (!src) { try { if (!existing) db.setVodTranscript(vod.id, ' '); } catch { /* */ } return null; }
-    let r = { text: '', segments: [] };
-    try { r = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
-    try {
-        if (r.text) db.setVodTranscript(vod.id, r.text, r.segments || []);     // got speech → store it (+segments)
-        else if (!existing) db.setVodTranscript(vod.id, ' ');                  // nothing, and none before → mark tried
-        else db.setVodTranscript(vod.id, vod.ai_transcript, []);              // keep existing text, mark segments-checked
-    } catch { /* */ }
-    return r.text;
+    if (!vod || !transcriptionEnabled()) return null;
+    return _txRun(async () => {
+        const src = await _mediaSource(vod);
+        if (!src) {
+            const n = db.bumpVodTranscriptAttempt(vod.id);
+            db.setVodTranscriptStatus(vod.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', 'no media source');
+            return null;
+        }
+        db.setVodTranscriptStatus(vod.id, 'processing');
+        let r = { text: '', segments: [], ok: false, error: 'unknown' };
+        try { r = await require('./media-analysis').transcribeOnly(src); } catch (e) { r = { text: '', segments: [], ok: false, error: e.message }; }
+        if (r.text) {                                            // got speech → store it (+segments)
+            try { db.setVodTranscript(vod.id, r.text, r.segments || []); } catch { /* */ }
+            db.setVodTranscriptStatus(vod.id, 'done');
+        } else if (r.ok) {                                       // ran clean, genuinely no speech → terminal
+            try { db.setVodTranscript(vod.id, ' ', []); } catch { /* */ }
+            db.setVodTranscriptStatus(vod.id, 'empty');
+        } else {                                                 // failure → retry (bounded), never poison
+            const n = db.bumpVodTranscriptAttempt(vod.id);
+            db.setVodTranscriptStatus(vod.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', r.error || 'transcription failed');
+        }
+        return r.text;
+    });
 }
 
 /** Transcript-only pass for a clip — FREE local whisper (see generateVodTranscript). */
 async function generateClipTranscript(clip) {
-    if (!clip) return null;
-    if (!transcriptionEnabled()) return null;
-    const src = await _mediaSource(clip);
-    const existing = (clip.ai_transcript || '').trim();
-    if (!src) { try { if (!existing) db.setClipTranscript(clip.id, ' '); } catch { /* */ } return null; }
-    let r = { text: '', segments: [] };
-    try { r = await require('./media-analysis').transcribeOnly(src); } catch { /* */ }
-    try {
-        if (r.text) db.setClipTranscript(clip.id, r.text, r.segments || []);
-        else if (!existing) db.setClipTranscript(clip.id, ' ');
-        else db.setClipTranscript(clip.id, clip.ai_transcript, []);           // keep existing text, mark segments-checked
-    } catch { /* */ }
-    return r.text;
+    if (!clip || !transcriptionEnabled()) return null;
+    return _txRun(async () => {
+        const src = await _mediaSource(clip);
+        if (!src) {
+            const n = db.bumpClipTranscriptAttempt(clip.id);
+            db.setClipTranscriptStatus(clip.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', 'no media source');
+            return null;
+        }
+        db.setClipTranscriptStatus(clip.id, 'processing');
+        let r = { text: '', segments: [], ok: false, error: 'unknown' };
+        try { r = await require('./media-analysis').transcribeOnly(src); } catch (e) { r = { text: '', segments: [], ok: false, error: e.message }; }
+        if (r.text) {
+            try { db.setClipTranscript(clip.id, r.text, r.segments || []); } catch { /* */ }
+            db.setClipTranscriptStatus(clip.id, 'done');
+        } else if (r.ok) {
+            try { db.setClipTranscript(clip.id, ' ', []); } catch { /* */ }
+            db.setClipTranscriptStatus(clip.id, 'empty');
+        } else {
+            const n = db.bumpClipTranscriptAttempt(clip.id);
+            db.setClipTranscriptStatus(clip.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', r.error || 'transcription failed');
+        }
+        return r.text;
+    });
 }
 
 /**

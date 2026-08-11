@@ -39,10 +39,22 @@ router.post('/purchase', requireAuth, (req, res) => {
     }
 });
 
+// Serialize a goal for the client (no private fields to leak).
+function publicGoal(g) {
+    if (!g) return null;
+    return {
+        id: g.id, user_id: g.user_id, title: g.title,
+        target_amount: g.target_amount, current_amount: g.current_amount,
+        is_active: g.is_active, reached_at: g.reached_at || null,
+        image_url: g.image_url || null, media_type: g.media_type || null,
+        sort_order: g.sort_order || 0,
+    };
+}
+
 // ── Donate to Streamer ───────────────────────────────────────
 router.post('/donate', requireAuth, (req, res) => {
     try {
-        let { streamer_id, stream_id, amount, message } = req.body;
+        let { streamer_id, stream_id, amount, message, goal_id } = req.body;
         if (!amount || amount <= 0) {
             return res.status(400).json({ error: 'Invalid donation' });
         }
@@ -55,21 +67,61 @@ router.post('/donate', requireAuth, (req, res) => {
         if (!streamer_id) {
             return res.status(400).json({ error: 'Could not determine streamer' });
         }
+        streamer_id = Number(streamer_id);
 
-        const result = hoboBucks.donate(req.user.id, streamer_id, stream_id, amount, message);
+        const result = hoboBucks.donate(req.user.id, streamer_id, stream_id, amount, message, goal_id || null);
 
-        // Broadcast donation to chat
         const chatServer = require('../chat/chat-server');
-        chatServer.broadcastToStream(stream_id, {
-            type: 'donation',
-            username: req.user.display_name,
-            amount,
-            message: message || '',
-            timestamp: new Date().toISOString(),
+        const alerts = require('./alerts');
+        const donorUser = db.getUserById(req.user.id);
+        const donor = donorUser?.display_name || donorUser?.username || 'Someone';
+        const ts = new Date().toISOString();
+
+        // 1) Donation chat message — broadcast live AND persist to channel history so
+        //    late-joiners see it. Channel-room broadcast reaches all slots + offline.
+        chatServer.broadcastToChannelRoom(streamer_id, stream_id || null, {
+            type: 'donation', username: donor, user_id: req.user.id,
+            avatar_url: donorUser?.avatar_url || null,
+            amount: result.amount, message: message || '', timestamp: ts,
         });
+        try {
+            db.saveChatMessage({
+                stream_id: stream_id || null, channel_user_id: streamer_id, user_id: req.user.id,
+                username: donor,
+                message: `${donor} donated $${result.amount} Hobo Bucks${message ? ': ' + message : ''}`,
+                message_type: 'donation',
+                metadata: { kind: 'donation', amount: result.amount, message: message || '', username: donor, user_id: req.user.id, avatar_url: donorUser?.avatar_url || null },
+            });
+        } catch { /* non-critical */ }
+
+        // 2) Donation sound (streamer-configured).
+        alerts.playAlertSound(chatServer, streamer_id, stream_id, 'donation');
+
+        // 3) Live goal progress → widget.
+        if (result.goal) {
+            chatServer.broadcastToChannelRoom(streamer_id, stream_id || null, { type: 'goal-update', goal: publicGoal(result.goal) });
+        }
+
+        // 4) Goal reached → flashy animated chat event (persisted) + goal sound.
+        if (result.goalReached) {
+            const g = result.goalReached;
+            chatServer.broadcastToChannelRoom(streamer_id, stream_id || null, {
+                type: 'goal-reached', goal: publicGoal(g), by: donor, timestamp: ts,
+            });
+            try {
+                db.saveChatMessage({
+                    stream_id: stream_id || null, channel_user_id: streamer_id, user_id: null,
+                    username: 'Donation Goal',
+                    message: `🎉 Goal reached: ${g.title} ($${g.target_amount})`,
+                    message_type: 'donation',
+                    metadata: { kind: 'goal-reached', goal_id: g.id, title: g.title, target: g.target_amount, image: g.image_url || null, media_type: g.media_type || null, by: donor },
+                });
+            } catch { /* non-critical */ }
+            alerts.playAlertSound(chatServer, streamer_id, stream_id, 'goal');
+        }
 
         const user = db.getUserById(req.user.id);
-        res.json({ ...result, balance: user.hobo_bucks_balance });
+        res.json({ success: true, amount: result.amount, balance: user.hobo_bucks_balance, goal_reached: !!result.goalReached });
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
@@ -112,24 +164,55 @@ router.get('/leaderboard/:streamId', (req, res) => {
     res.json({ leaderboard });
 });
 
+// ── Manage own goals (dashboard) — all goals incl. completed ──
+router.get('/goals/manage/mine', requireAuth, (req, res) => {
+    res.json({ goals: hoboBucks.getManageGoals(req.user.id).map(publicGoal) });
+});
+
 // ── Create Donation Goal ─────────────────────────────────────
 router.post('/goals', requireAuth, (req, res) => {
     try {
-        const { title, target_amount } = req.body;
+        const { title, target_amount, image_url, media_type } = req.body;
         if (!title || !target_amount) {
             return res.status(400).json({ error: 'Title and target amount required' });
         }
-        hoboBucks.createGoal(req.user.id, title, target_amount);
-        const goals = hoboBucks.getGoals(req.user.id);
-        res.status(201).json({ goals });
+        hoboBucks.createGoal(req.user.id, { title, target_amount, image_url, media_type });
+        res.status(201).json({ goals: hoboBucks.getManageGoals(req.user.id).map(publicGoal) });
     } catch (err) {
         res.status(400).json({ error: err.message });
     }
 });
 
-// ── Get User Goals ───────────────────────────────────────────
+// ── Update a Donation Goal ───────────────────────────────────
+router.put('/goals/:id', requireAuth, (req, res) => {
+    try {
+        hoboBucks.updateGoal(parseInt(req.params.id, 10), req.user.id, req.body);
+        res.json({ goals: hoboBucks.getManageGoals(req.user.id).map(publicGoal) });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// ── Delete a Donation Goal (+ best-effort media cleanup) ─────
+router.delete('/goals/:id', requireAuth, (req, res) => {
+    try {
+        const g = hoboBucks.deleteGoal(parseInt(req.params.id, 10), req.user.id);
+        if (g && g.image_url && /^\/data\/offline\//.test(g.image_url)) {
+            try {
+                const fs = require('fs'); const path = require('path');
+                const p = path.join(process.env.OFFLINE_SCREEN_PATH || './data/offline', path.basename(g.image_url));
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+            } catch { /* orphan is harmless */ }
+        }
+        res.json({ goals: hoboBucks.getManageGoals(req.user.id).map(publicGoal) });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// ── Get User Goals (public widget set: active + recently reached) ──
 router.get('/goals/:userId', (req, res) => {
-    const goals = hoboBucks.getGoals(req.params.userId);
+    const goals = hoboBucks.getGoals(req.params.userId).map(publicGoal);
     res.json({ goals });
 });
 

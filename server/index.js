@@ -1139,6 +1139,12 @@ function shutdown() {
         });
     } catch { /* non-critical */ }
 
+    // Kill any in-flight whisper/ffmpeg transcription children so they don't orphan
+    // (and so their temp files get cleaned by the close handlers). The interrupted VOD
+    // is left in 'processing' → re-queued to 'pending' on next boot (crash recovery).
+    try { const n = require('./ai/transcribe').killActive(); if (n) console.log(`[Server] Killed ${n} transcription child(ren)`); } catch { /* */ }
+    try { require('./ai/media-analysis').killActive(); } catch { /* */ }
+
     // Small delay to let the message reach clients before closing sockets
     setTimeout(() => {
         restreamManager.stopViewerCountPolling();

@@ -854,6 +854,60 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] transcript-json migration:', e.message); }
 
+    // Transcription reliability: real job-state so an interrupted or failed run is
+    // RETRIED (with a bounded attempt counter) instead of being poisoned to
+    // "permanently silent". transcript_status: NULL/'pending'/'retry' = needs work;
+    // 'processing' = in flight; 'done' = has speech; 'empty' = ran clean, no speech
+    // (terminal); 'failed' = exhausted retries (terminal).
+    try {
+        for (const t of ['vods', 'clips']) {
+            const cols = database.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+            if (!cols.includes('transcript_status')) database.exec(`ALTER TABLE ${t} ADD COLUMN transcript_status TEXT`);
+            if (!cols.includes('transcript_attempts')) database.exec(`ALTER TABLE ${t} ADD COLUMN transcript_attempts INTEGER DEFAULT 0`);
+            if (!cols.includes('transcript_error')) database.exec(`ALTER TABLE ${t} ADD COLUMN transcript_error TEXT`);
+            // Seed status from the legacy sentinels so the new queue is consistent:
+            database.exec(`UPDATE ${t} SET transcript_status='done'
+                WHERE transcript_status IS NULL AND ai_transcript IS NOT NULL AND TRIM(ai_transcript) != ''`);
+            // Recover RECENTLY-poisoned items (the abruptly-interrupted VODs the user hit):
+            // clear the ' ' poison so they re-transcribe with the hardened, retrying pipeline.
+            database.exec(`UPDATE ${t} SET transcript_status=NULL, ai_transcript=NULL, ai_transcript_json=NULL
+                WHERE transcript_status IS NULL AND ai_transcript = ' ' AND created_at >= datetime('now','-60 days')`);
+            // Older poisoned items: assume genuinely silent (terminal) so we don't churn the whole archive.
+            database.exec(`UPDATE ${t} SET transcript_status='empty' WHERE transcript_status IS NULL AND ai_transcript = ' '`);
+        }
+        // Crash/deploy recovery: anything left mid-flight is re-queued on every boot.
+        database.exec(`UPDATE vods SET transcript_status=NULL WHERE transcript_status='processing'`);
+        database.exec(`UPDATE clips SET transcript_status=NULL WHERE transcript_status='processing'`);
+    } catch (e) { console.warn('[DB] transcript-status migration:', e.message); }
+
+    // Donation goals: optional media (image/video → optimized webm/webp), a 1-hour
+    // "reached" celebration window (reached_at), and explicit ordering.
+    try {
+        const cols = database.prepare('PRAGMA table_info(donation_goals)').all().map(c => c.name);
+        if (!cols.includes('image_url')) database.exec('ALTER TABLE donation_goals ADD COLUMN image_url TEXT');
+        if (!cols.includes('media_type')) database.exec('ALTER TABLE donation_goals ADD COLUMN media_type TEXT');
+        if (!cols.includes('reached_at')) database.exec('ALTER TABLE donation_goals ADD COLUMN reached_at DATETIME');
+        if (!cols.includes('sort_order')) database.exec('ALTER TABLE donation_goals ADD COLUMN sort_order INTEGER DEFAULT 0');
+    } catch (e) { console.warn('[DB] donation_goals media migration:', e.message); }
+
+    // Streamer alert sounds (per channel): a sound played on every donation, plus an
+    // optional override that plays when a donation goal is reached.
+    try {
+        const cols = database.prepare('PRAGMA table_info(channel_moderation_settings)').all().map(c => c.name);
+        if (!cols.includes('donation_sound_url')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN donation_sound_url TEXT');
+        if (!cols.includes('donation_sound_mime')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN donation_sound_mime TEXT');
+        if (!cols.includes('goal_sound_url')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN goal_sound_url TEXT');
+        if (!cols.includes('goal_sound_mime')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN goal_sound_mime TEXT');
+    } catch (e) { console.warn('[DB] alert-sound settings migration:', e.message); }
+
+    // chat_messages.metadata — JSON sidecar for rich/animated events (donations + goal
+    // reached) so they persist in history WITH their structured payload (image, amount,
+    // goal title, animation kind) while `message` stays human-readable.
+    try {
+        const cols = database.prepare('PRAGMA table_info(chat_messages)').all().map(c => c.name);
+        if (!cols.includes('metadata')) database.exec('ALTER TABLE chat_messages ADD COLUMN metadata TEXT');
+    } catch (e) { console.warn('[DB] chat metadata migration:', e.message); }
+
     // Migrate: extend the subscriptions table for real recurring billing.
     try {
         const cols = database.pragma('table_info(subscriptions)').map(c => c.name);
@@ -2039,6 +2093,21 @@ function setVodTranscript(vodId, transcript, segments) {
 function setClipTranscript(clipId, transcript, segments) {
     return run('UPDATE clips SET ai_transcript = ?, ai_transcript_json = ? WHERE id = ?', [transcript || null, _segJson(segments), clipId]);
 }
+// ── Streamer alert sounds (donation / goal-reached) ──────────
+// Stored on channel_moderation_settings; url is the on-disk path (read server-side and
+// broadcast as base64 to viewers, so it isn't publicly served).
+function setChannelAlertSound(channelId, kind, url, mime) {
+    if (!get('SELECT 1 FROM channel_moderation_settings WHERE channel_id = ?', [channelId])) {
+        run('INSERT INTO channel_moderation_settings (channel_id) VALUES (?)', [channelId]);
+    }
+    const col = kind === 'goal' ? 'goal_sound' : 'donation_sound';
+    return run(`UPDATE channel_moderation_settings SET ${col}_url = ?, ${col}_mime = ? WHERE channel_id = ?`, [url || null, mime || null, channelId]);
+}
+function getChannelAlertSoundsByUser(userId) {
+    const ch = getChannelByUserId(userId);
+    if (!ch) return {};
+    return get('SELECT donation_sound_url, donation_sound_mime, goal_sound_url, goal_sound_mime FROM channel_moderation_settings WHERE channel_id = ?', [ch.id]) || {};
+}
 function getStreamMemoriesInRange(streamId, startSec, endSec) {
     return all('SELECT * FROM stream_memories WHERE stream_id = ? AND offset_seconds BETWEEN ? AND ? ORDER BY offset_seconds ASC', [streamId, startSec, endSec]);
 }
@@ -2049,23 +2118,36 @@ function getVodsNeedingOverview(limit = 4) {
 function getClipsNeedingOverview(limit = 4) {
     return all("SELECT * FROM clips WHERE (ai_overview IS NULL OR ai_overview = '') ORDER BY created_at DESC LIMIT ?", [limit]);
 }
-// Transcript backfill queues — items with no transcript yet (NULL/'' = pending;
-// a single space ' ' means "tried, nothing to transcribe" so we don't loop forever).
-// Needs a transcript pass: never transcribed, OR has plain text but no timestamped
-// segments yet (so existing transcripts get upgraded to the timestamped pipeline).
-// The ' ' sentinel ("tried, no speech") is excluded so it isn't reprocessed forever.
+// Transcript backfill queues — driven by transcript_status (see the migration above).
+// Pending = NULL/'pending'/'retry'. 'processing'/'done'/'empty'/'failed' are excluded.
+// VODs still recording are skipped.
 function getVodsNeedingTranscript(limit = 2) {
     return all(`SELECT * FROM vods
-        WHERE ((ai_transcript IS NULL OR ai_transcript = '')
-               OR (ai_transcript_json IS NULL AND LENGTH(TRIM(COALESCE(ai_transcript,''))) > 3))
-          AND COALESCE(is_recording,0)=0
+        WHERE COALESCE(is_recording,0)=0
+          AND (transcript_status IS NULL OR transcript_status IN ('pending','retry'))
         ORDER BY created_at DESC LIMIT ?`, [limit]);
 }
 function getClipsNeedingTranscript(limit = 2) {
     return all(`SELECT * FROM clips
-        WHERE (ai_transcript IS NULL OR ai_transcript = '')
-           OR (ai_transcript_json IS NULL AND LENGTH(TRIM(COALESCE(ai_transcript,''))) > 3)
+        WHERE (transcript_status IS NULL OR transcript_status IN ('pending','retry'))
         ORDER BY created_at DESC LIMIT ?`, [limit]);
+}
+function setVodTranscriptStatus(id, status, error = null) {
+    return run('UPDATE vods SET transcript_status = ?, transcript_error = ? WHERE id = ?', [status, error ? String(error).slice(0, 300) : null, id]);
+}
+function setClipTranscriptStatus(id, status, error = null) {
+    return run('UPDATE clips SET transcript_status = ?, transcript_error = ? WHERE id = ?', [status, error ? String(error).slice(0, 300) : null, id]);
+}
+// Increment the attempt counter and return the new count (drives retry-vs-fail).
+function bumpVodTranscriptAttempt(id) {
+    run('UPDATE vods SET transcript_attempts = COALESCE(transcript_attempts,0)+1 WHERE id = ?', [id]);
+    const r = get('SELECT transcript_attempts AS a FROM vods WHERE id = ?', [id]);
+    return r ? r.a : 0;
+}
+function bumpClipTranscriptAttempt(id) {
+    run('UPDATE clips SET transcript_attempts = COALESCE(transcript_attempts,0)+1 WHERE id = ?', [id]);
+    const r = get('SELECT transcript_attempts AS a FROM clips WHERE id = ?', [id]);
+    return r ? r.a : 0;
 }
 function getPastesNeedingAnalysis(limit = 5) {
     return all("SELECT * FROM pastes WHERE ai_summary IS NULL AND type IN ('paste','screenshot') ORDER BY created_at DESC LIMIT ?", [limit]);
@@ -2793,16 +2875,17 @@ function deletePlatformConnection(userId, platform) {
 
 // ── Chat helpers ─────────────────────────────────────────────
 
-function saveChatMessage({ stream_id, channel_user_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at }) {
+function saveChatMessage({ stream_id, channel_user_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at, metadata }) {
     // channel_user_id = the broadcaster's user id — set for all channel/stream
     // messages so a streamer's chat history survives across sessions AND offline
     // periods (independent of the live-session stream row's lifetime).
     let chanUid = channel_user_id || null;
     if (!chanUid && stream_id) { try { chanUid = getStreamById(stream_id)?.user_id || null; } catch { /* ignore */ } }
+    const metaStr = metadata == null ? null : (typeof metadata === 'string' ? metadata : JSON.stringify(metadata));
     return run(
-        `INSERT INTO chat_messages (stream_id, channel_user_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [stream_id, chanUid, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null, source_platform || null, auto_delete_at || null]
+        `INSERT INTO chat_messages (stream_id, channel_user_id, user_id, anon_id, username, message, message_type, is_global, reply_to_id, source_platform, auto_delete_at, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [stream_id, chanUid, user_id || null, anon_id || null, username, message, message_type || 'chat', is_global ? 1 : 0, reply_to_id || null, source_platform || null, auto_delete_at || null, metaStr]
     );
 }
 
@@ -5521,8 +5604,54 @@ function validateApiToken(rawToken) {
     };
 }
 
+// ── Donation goals ───────────────────────────────────────────
+// Widget set: active goals + goals reached within the celebration window (default 1h),
+// so a met goal celebrates then auto-clears from the viewer widget.
+function getDonationGoalsForWidget(userId, windowHours = 1) {
+    return all(`SELECT * FROM donation_goals
+        WHERE user_id = ?
+          AND (is_active = 1 OR (reached_at IS NOT NULL AND reached_at > datetime('now', ?)))
+        ORDER BY sort_order ASC, created_at ASC`, [userId, `-${windowHours} hours`]);
+}
+// Management set: everything the streamer owns (active + completed) for the dashboard.
+function getAllDonationGoals(userId) {
+    return all('SELECT * FROM donation_goals WHERE user_id = ? ORDER BY is_active DESC, sort_order ASC, created_at ASC', [userId]);
+}
+function getActiveDonationGoals(userId) {
+    return all('SELECT * FROM donation_goals WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC, created_at ASC', [userId]);
+}
+function getDonationGoalById(id) { return get('SELECT * FROM donation_goals WHERE id = ?', [id]); }
+function createDonationGoal(userId, { title, target_amount, image_url = null, media_type = null }) {
+    const r = get('SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM donation_goals WHERE user_id = ?', [userId]);
+    return run('INSERT INTO donation_goals (user_id, title, target_amount, image_url, media_type, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+        [userId, title, target_amount, image_url, media_type, r ? r.n : 0]);
+}
+function updateDonationGoal(id, userId, fields) {
+    const allow = ['title', 'target_amount', 'image_url', 'media_type', 'is_active', 'sort_order', 'current_amount'];
+    const sets = [], params = [];
+    for (const k of allow) if (fields[k] !== undefined) { sets.push(`${k} = ?`); params.push(fields[k]); }
+    if (!sets.length) return null;
+    params.push(id, userId);
+    return run(`UPDATE donation_goals SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`, params);
+}
+function deleteDonationGoal(id, userId) { return run('DELETE FROM donation_goals WHERE id = ? AND user_id = ?', [id, userId]); }
+// Apply an amount to a specific goal; flips it reached (with reached_at) when the
+// target is hit. Returns { goal, reached }.
+function addToDonationGoal(id, amount) {
+    const g = getDonationGoalById(id);
+    if (!g || !g.is_active) return { goal: g || null, reached: false };
+    const newAmount = Math.min(Math.round((g.current_amount || 0) + amount), g.target_amount);
+    const reached = newAmount >= g.target_amount;
+    if (reached) run("UPDATE donation_goals SET current_amount = ?, is_active = 0, reached_at = CURRENT_TIMESTAMP WHERE id = ?", [newAmount, id]);
+    else run('UPDATE donation_goals SET current_amount = ? WHERE id = ?', [newAmount, id]);
+    return { goal: getDonationGoalById(id), reached };
+}
+
 module.exports = {
     getDb, initDb, run, get, all, close,
+    getDonationGoalsForWidget, getAllDonationGoals, getActiveDonationGoals, getDonationGoalById,
+    createDonationGoal, updateDonationGoal, deleteDonationGoal, addToDonationGoal,
+    setChannelAlertSound, getChannelAlertSoundsByUser,
     // Users
     getUserById, getUserByUsername, getUserByStreamKey, createUser, getOrCreateAnonGameUser,
     // Managed Streams
@@ -5539,6 +5668,7 @@ module.exports = {
     addStreamMemory, getStreamMemories, getLatestStreamMemory, updateStreamAiOverview,
     setVodAiOverview, setClipAiOverview, setVodTranscript, setClipTranscript, getStreamMemoriesInRange,
     getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
+    setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiUsageSummary,
     getStreamMemoriesByUser, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,

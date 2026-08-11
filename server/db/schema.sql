@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     username TEXT,
     message TEXT NOT NULL,
     message_type TEXT DEFAULT 'chat' CHECK(message_type IN ('chat', 'system', 'donation', 'command', 'tts')),
+    metadata TEXT,                         -- JSON sidecar for rich events (donation/goal-reached)
     is_global INTEGER DEFAULT 0,
     is_deleted INTEGER DEFAULT 0,
     is_filtered INTEGER DEFAULT 0,
@@ -264,9 +265,13 @@ CREATE TABLE IF NOT EXISTS donation_goals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     title TEXT NOT NULL,
-    target_amount INTEGER NOT NULL,        -- in bits
+    target_amount INTEGER NOT NULL,        -- in Hobo Bucks (dollars)
     current_amount INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
+    image_url TEXT,                        -- optional goal media (webp image / webm video)
+    media_type TEXT,                       -- 'image' | 'video'
+    reached_at DATETIME,                   -- set when target hit; drives the ~1h celebration window
+    sort_order INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -536,6 +541,10 @@ CREATE TABLE IF NOT EXISTS channel_moderation_settings (
     max_sound_seconds INTEGER DEFAULT 10,      -- max duration of an uploaded channel sound
     uploads_mods_only INTEGER DEFAULT 0,       -- restrict emote/sound uploads to channel mods
     mods_can_edit_about INTEGER DEFAULT 0,     -- allow channel mods to edit the streamer's About/panels
+    donation_sound_url TEXT,                   -- on-disk path to the streamer's donation alert sound
+    donation_sound_mime TEXT,
+    goal_sound_url TEXT,                       -- optional override sound for goal-reached
+    goal_sound_mime TEXT,
     emote_scale INTEGER DEFAULT 100,           -- emote display size in chat, percent (50-300)
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE

@@ -16,14 +16,17 @@ async function tick() {
     try {
         // Transcripts — FREE local whisper (no API/cost), so they run independent of
         // the AI master switch. Backfills existing VODs/clips that have no transcript.
-        // Skipped while anything is live: heavy whisper would starve the live encoders
-        // (and live streams have their own real-time transcription anyway).
+        // We DON'T stop while streams are live anymore (that's why an active channel's
+        // recent VODs never got transcribed) — instead we drop to low-power (fewer
+        // whisper threads) and a smaller batch so we never starve the live encoders.
         let anyLive = false;
         try { anyLive = ((db.getLiveStreams && db.getLiveStreams()) || []).length > 0; } catch { /* */ }
-        if (!anyLive && ai.transcriptionEnabled && ai.transcriptionEnabled()) {
-            try { for (const v of db.getVodsNeedingTranscript(1)) await ai.generateVodTranscript(v); }
+        if (ai.transcriptionEnabled && ai.transcriptionEnabled()) {
+            try { require('./transcribe').setLowPower(anyLive); } catch { /* */ }
+            const batch = anyLive ? 1 : 2;   // throttle while live, catch up faster when idle
+            try { for (const v of db.getVodsNeedingTranscript(batch)) await ai.generateVodTranscript(v); }
             catch (e) { console.warn('[AI backfill] vod transcript:', e.message); }
-            try { for (const c of db.getClipsNeedingTranscript(1)) await ai.generateClipTranscript(c); }
+            try { for (const c of db.getClipsNeedingTranscript(batch)) await ai.generateClipTranscript(c); }
             catch (e) { console.warn('[AI backfill] clip transcript:', e.message); }
         }
 

@@ -224,6 +224,23 @@
                     <div class="cu-hint">Off by default. When on, your channel moderators get the pencil edit button on your About tab and can update your bio &amp; panels for you.</div>
                 </div>
                 <div class="cu-set-group">
+                    <div class="cu-set-group-title">Alert Sounds</div>
+                    <div class="cu-set-row"><span>Donation sound <span class="cu-alert-state" id="cu-alert-donation-state">—</span></span>
+                        <span style="display:flex;gap:6px;align-items:center">
+                            <button class="cu-btn cu-btn-sm" type="button" id="cu-alert-donation-btn">Upload</button>
+                            <button class="cu-btn cu-btn-sm cu-btn-ghost" type="button" id="cu-alert-donation-clear" style="display:none">Clear</button>
+                        </span>
+                    </div>
+                    <div class="cu-set-row"><span>Goal-reached sound <span class="muted" style="font-size:0.72rem">(override; falls back to donation sound)</span> <span class="cu-alert-state" id="cu-alert-goal-state">—</span></span>
+                        <span style="display:flex;gap:6px;align-items:center">
+                            <button class="cu-btn cu-btn-sm" type="button" id="cu-alert-goal-btn">Upload</button>
+                            <button class="cu-btn cu-btn-sm cu-btn-ghost" type="button" id="cu-alert-goal-clear" style="display:none">Clear</button>
+                        </span>
+                    </div>
+                    <input type="file" accept="audio/*" id="cu-alert-file" style="display:none">
+                    <div class="cu-hint">Plays for viewers (who have chat sounds on) whenever someone donates Hobo Bucks. MP3/WAV/OGG, up to 15s.</div>
+                </div>
+                <div class="cu-set-group">
                     <div class="cu-set-group-title">Channel Points</div>
                     <label class="cu-set-row"><span>Name</span><input type="text" id="cu-cp-name" maxlength="32" value="${ev(cp.name || 'Channel Points')}"></label>
                     <label class="cu-set-row"><span>Icon (Font Awesome, e.g. fa-coins)</span><input type="text" id="cu-cp-icon" value="${ev(cp.icon || 'fa-coins')}"></label>
@@ -255,6 +272,53 @@
             } catch (e) { notify(e.message, 'error'); }
             finally { btn.disabled = false; }
         };
+        wireAlertSounds();
+    }
+
+    // ── Alert sounds (donation / goal-reached) ───────────────────
+    let _alertKind = 'donation';
+    async function loadAlertSounds() {
+        try {
+            const r = await fetch('/api/sounds/alert/mine', { headers: { Authorization: `Bearer ${token()}` } });
+            const d = await r.json();
+            for (const k of ['donation', 'goal']) {
+                const st = overlay.querySelector(`#cu-alert-${k}-state`);
+                const clr = overlay.querySelector(`#cu-alert-${k}-clear`);
+                const set = d[k] && d[k].set;
+                if (st) { st.textContent = set ? '✓ set' : '(none)'; st.style.color = set ? 'var(--success, #4caf50)' : ''; }
+                if (clr) clr.style.display = set ? '' : 'none';
+            }
+        } catch { /* */ }
+    }
+    function wireAlertSounds() {
+        const fileInput = overlay.querySelector('#cu-alert-file');
+        if (!fileInput) return;
+        overlay.querySelector('#cu-alert-donation-btn').onclick = () => { _alertKind = 'donation'; fileInput.click(); };
+        overlay.querySelector('#cu-alert-goal-btn').onclick = () => { _alertKind = 'goal'; fileInput.click(); };
+        overlay.querySelector('#cu-alert-donation-clear').onclick = () => clearAlertSound('donation');
+        overlay.querySelector('#cu-alert-goal-clear').onclick = () => clearAlertSound('goal');
+        fileInput.onchange = async () => {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) return;
+            const fd = new FormData(); fd.append('sound', file);
+            try {
+                const r = await fetch(`/api/sounds/alert/${_alertKind}`, { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: fd });
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.error || 'Upload failed');
+                notify(`${_alertKind === 'goal' ? 'Goal-reached' : 'Donation'} sound saved`, 'success');
+                loadAlertSounds();
+            } catch (e) { notify(e.message, 'error'); }
+            fileInput.value = '';
+        };
+        loadAlertSounds();
+    }
+    async function clearAlertSound(kind) {
+        try {
+            const r = await fetch(`/api/sounds/alert/${kind}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token()}` } });
+            if (!r.ok) throw new Error('Failed');
+            notify('Sound cleared', 'success');
+            loadAlertSounds();
+        } catch (e) { notify(e.message, 'error'); }
     }
 
     async function saveChannelSettings(channelId) {

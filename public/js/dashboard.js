@@ -624,45 +624,54 @@ async function downloadControlBridgeScript() {
 async function loadDashGoals() {
     if (!currentUser) return;
     const list = document.getElementById('dash-goals-list');
+    if (!list) return;
     try {
-        const data = await api(`/funds/goals/${currentUser.id}`);
+        const data = await api('/funds/goals/manage/mine');
         const goals = data.goals || [];
+        window._dashGoals = goals;
         if (!goals.length) {
-            list.innerHTML = '<p class="muted">No goals set</p>';
+            list.innerHTML = '<p class="muted">No goals yet — add one for viewers to donate toward.</p>';
             return;
         }
-        list.innerHTML = goals.map(g => {
-            const pct = g.target_amount ? Math.min(100, Math.round((g.current_amount / g.target_amount) * 100)) : 0;
-            return `
-                <div style="margin-bottom:12px">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                        <strong>${esc(g.title)}</strong>
-                        <span class="muted">${pct}%</span>
-                    </div>
-                    <div class="goal-bar">
-                        <div class="goal-fill" style="width:${pct}%"></div>
-                    </div>
-                    <div class="muted" style="font-size:0.8rem;margin-top:2px">
-                        $${g.current_amount} / $${g.target_amount} Hobo Bucks
-                    </div>
-                </div>
-            `;
-        }).join('');
+        list.innerHTML = goals.map(dashGoalCardHTML).join('');
     } catch { list.innerHTML = '<p class="muted">Failed to load goals</p>'; }
 }
 
-async function doAddGoal() {
-    const title = document.getElementById('modal-goal-title').value.trim();
-    const target = parseInt(document.getElementById('modal-goal-target').value);
+function dashGoalCardHTML(g) {
+    const pct = g.target_amount ? Math.min(100, Math.round((g.current_amount / g.target_amount) * 100)) : 0;
+    const reached = !g.is_active && g.reached_at;
+    const media = g.image_url
+        ? (g.media_type === 'video'
+            ? `<video class="dash-goal-thumb" src="${esc(g.image_url)}" muted loop autoplay playsinline></video>`
+            : `<img class="dash-goal-thumb" src="${esc(g.image_url)}" alt="">`)
+        : '<div class="dash-goal-thumb dash-goal-thumb-ph"><i class="fa-solid fa-bullseye"></i></div>';
+    return `
+        <div class="dash-goal ${reached ? 'reached' : ''}">
+            ${media}
+            <div class="dash-goal-body">
+                <div class="dash-goal-top">
+                    <strong>${esc(g.title)}</strong>
+                    <span class="muted">${pct}%${reached ? ' · ✓ reached' : (g.is_active ? '' : ' · closed')}</span>
+                </div>
+                <div class="goal-bar"><div class="goal-fill" style="width:${pct}%"></div></div>
+                <div class="muted" style="font-size:0.8rem;margin-top:2px">$${g.current_amount} / $${g.target_amount} Hobo Bucks</div>
+                <div class="dash-goal-actions">
+                    <button class="btn btn-xs btn-outline" onclick="editGoalModal(${g.id})"><i class="fa-solid fa-pen"></i> Edit</button>
+                    ${g.is_active ? '' : `<button class="btn btn-xs btn-outline" onclick="reactivateGoal(${g.id})"><i class="fa-solid fa-rotate-left"></i> Reopen</button>`}
+                    <button class="btn btn-xs btn-danger" onclick="deleteGoal(${g.id})"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </div>
+        </div>`;
+}
 
-    if (!title || !target) return toast('Fill in all fields', 'error');
-
-    try {
-        await api('/funds/goals', { method: 'POST', body: { title, targetAmount: target } });
-        toast('Goal created!', 'success');
-        closeModal();
-        loadDashGoals();
-    } catch (e) { toast(e.message, 'error'); }
+async function deleteGoal(id) {
+    if (!confirm('Delete this donation goal?')) return;
+    try { await api(`/funds/goals/${id}`, { method: 'DELETE' }); loadDashGoals(); }
+    catch (e) { toast(e.message, 'error'); }
+}
+async function reactivateGoal(id) {
+    try { await api(`/funds/goals/${id}`, { method: 'PUT', body: { is_active: true } }); loadDashGoals(); }
+    catch (e) { toast(e.message, 'error'); }
 }
 
 /* ── VODs ──────────────────────────────────────────────────────── */

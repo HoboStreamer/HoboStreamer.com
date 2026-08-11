@@ -2531,6 +2531,13 @@ function handleChatMessage(msg) {
         case 'donation':
             addDonationMessage(msg);
             break;
+        case 'goal-update':
+            if (typeof updateGoalInWidget === 'function' && msg.goal) updateGoalInWidget(msg.goal);
+            break;
+        case 'goal-reached':
+            addDonationGoalMessage(msg);
+            if (typeof goalReachedInWidget === 'function' && msg.goal) goalReachedInWidget(msg.goal);
+            break;
         case 'user-count':
             updateViewerCount(msg.count);
             updateTabViewerCount(msg.stream_id, msg.count);
@@ -3213,6 +3220,45 @@ function addDonationMessage(msg) {
     }
 }
 
+// Flashy animated "donation goal reached" celebration card (with the streamer's goal
+// image/video if set). Persisted to history so late-joiners see it too.
+function addDonationGoalMessage(msg) {
+    const { messages: container } = getChatEl();
+    if (!container) return;
+    const g = msg.goal || {};
+    const by = esc(msg.by || 'the community');
+    const title = esc(g.title || 'Goal');
+    const target = (g.target_amount != null && g.target_amount !== '') ? `$${g.target_amount}` : '';
+    const media = g.image_url
+        ? (g.media_type === 'video'
+            ? `<video class="cgr-media" src="${esc(g.image_url)}" muted loop autoplay playsinline></video>`
+            : `<img class="cgr-media" src="${esc(g.image_url)}" alt="">`)
+        : '';
+    const el = document.createElement('div');
+    el.className = 'chat-msg goal-reached-msg';
+    el.innerHTML = `
+        <div class="cgr-card">
+            <div class="cgr-shine"></div>
+            ${media}
+            <div class="cgr-inner">
+                <div class="cgr-badge"><i class="fa-solid fa-trophy"></i> GOAL REACHED!</div>
+                <div class="cgr-title">${title}</div>
+                <div class="cgr-sub">${target ? target + ' raised — ' : ''}thanks to ${by}!</div>
+            </div>
+        </div>`;
+    container.appendChild(el);
+    try { spawnChatParticles(el.querySelector('.cgr-card') || el, '🎉🎊✨💰⭐'); } catch { /* */ }
+    scrollChat();
+    if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
+    queueFullscreenChatEntry({
+        kind: 'goal-reached',
+        html: `<div class="fullscreen-chat-text">🎉 <strong>Goal reached:</strong> ${title}${target ? ' (' + target + ')' : ''} — thanks to ${by}!</div>`,
+    });
+    if (document.getElementById('tts-checkbox')?.checked) {
+        speakTTS(`Donation goal reached! ${g.title || ''}`);
+    }
+}
+
 /* ── Slow Mode Indicator ───────────────────────────────────── */
 function getOrCreateSlowModeBanner(inputArea) {
     let banner = inputArea.querySelector('.chat-slowmode-banner');
@@ -3720,6 +3766,21 @@ function _renderChatHistoryData(data) {
         const { messages } = getChatEl();
         if (messages) messages.innerHTML = '';
         msgs.forEach(m => {
+            // Rich events (donations + goal-reached) persist as message_type='donation'
+            // with a JSON `metadata` payload — re-render them richly so late-joiners see
+            // the same thing live viewers did, instead of a plain text line.
+            if (m.message_type === 'donation' && m.metadata) {
+                let meta = null;
+                try { meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata; } catch { meta = null; }
+                if (meta && meta.kind === 'goal-reached') {
+                    addDonationGoalMessage({ goal: { title: meta.title, target_amount: meta.target, image_url: meta.image, media_type: meta.media_type }, by: meta.by });
+                    return;
+                }
+                if (meta && meta.kind === 'donation') {
+                    addDonationMessage({ username: meta.username, amount: meta.amount, message: meta.message, avatar_url: meta.avatar_url, user_id: meta.user_id });
+                    return;
+                }
+            }
             addChatMessage({
                 id: m.id,
                 username: m.username || m.display_name || `anon${m.user_id || ''}`,

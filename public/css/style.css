@@ -12098,3 +12098,59 @@ body.theme-light .user-dropdown {
 .ch-stream-ai { margin-top: 8px; max-width: 760px; }
 /* Streamer overview on Recently Online cards */
 .streamer-group-card .card-ai-overview { margin: 5px 5px -2px 5px; }
+
+/* ═══════════════ Donation Goals ═══════════════ */
+/* Widget at the top of chat (live + offline) */
+.ch-goal-widget {
+    flex-shrink: 0; border-bottom: 1px solid var(--border);
+    background: var(--bg-tertiary); padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 8px; max-height: 40%; overflow-y: auto;
+}
+.cgw-goal { display: flex; gap: 9px; align-items: center; position: relative; }
+.cgw-media { width: 42px; height: 42px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: #000; }
+.cgw-body { flex: 1; min-width: 0; }
+.cgw-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cgw-title { font-weight: 700; font-size: 0.82rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cgw-pct { font-size: 0.74rem; color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.cgw-bar { height: 8px; border-radius: 999px; background: var(--bg-card); overflow: hidden; margin: 3px 0; border: 1px solid var(--border); }
+.cgw-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), #f0b64b); transition: width 0.5s cubic-bezier(.2,.8,.2,1); }
+.cgw-amt { font-size: 0.72rem; color: var(--text-muted); }
+.cgw-goal.reached .cgw-fill { background: linear-gradient(90deg, #38c172, #6ee7a8); }
+.cgw-goal.reached .cgw-title { color: #6ee7a8; }
+.cgw-goal.reached { animation: cgwGlow 2.4s ease-in-out infinite; }
+@keyframes cgwGlow { 0%,100% { filter: none; } 50% { filter: drop-shadow(0 0 6px rgba(110,231,168,.5)); } }
+.cgw-pop { animation: cgwPop 0.6s ease; }
+@keyframes cgwPop { 0% { transform: scale(1); } 40% { transform: scale(1.06); } 100% { transform: scale(1); } }
+
+/* Dashboard goal manager cards */
+.dash-goal { display: flex; gap: 12px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; background: var(--bg-secondary); }
+.dash-goal.reached { border-color: #38c172; }
+.dash-goal-thumb { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: #000; }
+.dash-goal-thumb-ph { display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 1.3rem; background: var(--bg-tertiary); }
+.dash-goal-body { flex: 1; min-width: 0; }
+.dash-goal-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.dash-goal-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+/* Flashy "goal reached" chat celebration */
+.goal-reached-msg { margin: 8px 4px; }
+.cgr-card {
+    position: relative; overflow: hidden; border-radius: 12px; padding: 14px;
+    background: linear-gradient(135deg, #1c1206, #2a1c08 55%, #12200f);
+    border: 1px solid rgba(240,182,75,.5);
+    box-shadow: 0 0 0 1px rgba(240,182,75,.15), 0 8px 26px rgba(0,0,0,.45);
+    display: flex; align-items: center; gap: 14px;
+    animation: cgrIn 0.5s cubic-bezier(.2,.9,.3,1.2);
+}
+@keyframes cgrIn { 0% { transform: scale(.85) translateY(8px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+.cgr-media { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; flex-shrink: 0; background: #000; box-shadow: 0 3px 10px rgba(0,0,0,.5); }
+.cgr-inner { flex: 1; min-width: 0; position: relative; z-index: 2; }
+.cgr-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; color: #ffd781; text-transform: uppercase; }
+.cgr-title { font-size: 1.02rem; font-weight: 800; color: #fff; margin: 2px 0; word-break: break-word; }
+.cgr-sub { font-size: 0.8rem; color: #d9c9a4; }
+.cgr-shine { position: absolute; inset: 0; z-index: 1; background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.16) 50%, transparent 70%); transform: translateX(-120%); animation: cgrShine 2.6s ease-in-out infinite; }
+@keyframes cgrShine { 0% { transform: translateX(-120%); } 60%,100% { transform: translateX(120%); } }
+
+/* Small buttons in the channel Settings alert-sounds group */
+.cu-btn-sm { padding: 4px 10px; font-size: 0.78rem; }
+.cu-btn-ghost { background: transparent; border: 1px solid var(--border); }
+.cu-alert-state { font-size: 0.74rem; color: var(--text-muted); margin-left: 4px; }

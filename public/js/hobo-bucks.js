@@ -184,10 +184,40 @@ function hoboBucksDonateModal() {
             <input type="text" id="modal-donate-message" class="form-input" placeholder="Say something nice..." maxlength="200">
         </div>
 
+        <div class="form-group" id="donate-goal-wrap" style="display:none">
+            <label>Put it toward a goal</label>
+            <select id="modal-donate-goal" class="form-input"></select>
+        </div>
+
         <button class="btn btn-primary btn-lg" onclick="doDonate()" style="width:100%;margin-top:8px">
             <i class="fa-solid fa-coins"></i> Donate
         </button>`;
 }
+
+// Resolve the streamer being viewed (live stream data, else the channel page owner).
+function _donateStreamerId() {
+    if (typeof currentStreamData !== 'undefined' && currentStreamData && currentStreamData.user_id) return currentStreamData.user_id;
+    if (typeof _activeChannelUserId !== 'undefined' && _activeChannelUserId) return _activeChannelUserId;
+    return null;
+}
+
+// Populate the goal picker when the donate modal opens (called from showModal).
+async function _loadDonateGoals() {
+    const wrap = document.getElementById('donate-goal-wrap');
+    const sel = document.getElementById('modal-donate-goal');
+    if (!wrap || !sel) return;
+    const streamerId = _donateStreamerId();
+    if (!streamerId) { wrap.style.display = 'none'; return; }
+    try {
+        const data = await api(`/funds/goals/${streamerId}`);
+        const goals = (data.goals || []).filter(g => g.is_active);
+        if (!goals.length) { wrap.style.display = 'none'; return; }
+        sel.innerHTML = `<option value="">General support (no specific goal)</option>` +
+            goals.map(g => `<option value="${g.id}">${escHb(g.title)} — $${g.current_amount}/$${g.target_amount}</option>`).join('');
+        wrap.style.display = '';
+    } catch { wrap.style.display = 'none'; }
+}
+function escHb(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
 
 function setDonateAmount(amount) {
     document.getElementById('modal-donate-amount').value = amount;
@@ -195,18 +225,20 @@ function setDonateAmount(amount) {
 
 async function doDonate() {
     if (!currentUser) return showModal('login');
-    if (!currentStreamId) return toast('No stream selected', 'error');
+    const streamerId = _donateStreamerId();
+    if (!streamerId) return toast('No streamer selected', 'error');
 
     const amount = parseFloat(document.getElementById('modal-donate-amount').value);
     const message = document.getElementById('modal-donate-message').value.trim();
+    const goalSel = document.getElementById('modal-donate-goal');
+    const goalId = goalSel && goalSel.value ? parseInt(goalSel.value, 10) : null;
 
     if (!amount || amount < 1) return toast('Enter a valid amount', 'error');
 
     try {
-        const streamerId = currentStreamData ? currentStreamData.user_id : null;
         await api('/funds/donate', {
             method: 'POST',
-            body: { streamer_id: streamerId, stream_id: currentStreamId, amount, message }
+            body: { streamer_id: streamerId, stream_id: (typeof currentStreamId !== 'undefined' ? currentStreamId : null) || null, amount, message, goal_id: goalId }
         });
         toast(`Donated $${amount.toFixed(2)} Hobo Bucks!`, 'success');
         loadBalance();

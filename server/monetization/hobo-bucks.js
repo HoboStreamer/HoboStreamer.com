@@ -75,7 +75,7 @@ class HoboBucks {
      * @param {number} amount - Hobo Bucks to donate
      * @param {string} message - Donation message
      */
-    donate(fromUserId, toUserId, streamId, amount, message) {
+    donate(fromUserId, toUserId, streamId, amount, message, goalId = null) {
         amount = normalizeMoneyAmount(amount);
         message = normalizeText(message, 300);
 
@@ -98,30 +98,35 @@ class HoboBucks {
             message: message || null,
         });
 
-        // Update donation goals
-        this.updateGoals(toUserId, amount);
+        // Apply toward a donation goal (the donor's pick, else the sole active goal).
+        const goalResult = this.applyDonationToGoal(toUserId, amount, goalId);
 
-        return { success: true, amount };
+        return {
+            success: true,
+            amount,
+            goal: goalResult ? goalResult.goal : null,      // the goal that advanced (for the widget)
+            goalReached: goalResult && goalResult.reached ? goalResult.goal : null,
+        };
     }
 
     /**
-     * Update active donation goals for a user
+     * Route a donation toward a single goal: the donor's chosen goal if valid+active,
+     * otherwise the streamer's sole active goal (if exactly one). Returns
+     * { goal, reached } for the goal that advanced, or null if none applied.
      */
-    updateGoals(userId, amount) {
-        const goals = db.all(
-            'SELECT * FROM donation_goals WHERE user_id = ? AND is_active = 1 ORDER BY created_at',
-            [userId]
-        );
-
-        for (const goal of goals) {
-            const newAmount = Math.min(goal.current_amount + amount, goal.target_amount);
-            db.run('UPDATE donation_goals SET current_amount = ? WHERE id = ?',
-                [newAmount, goal.id]);
-
-            if (newAmount >= goal.target_amount) {
-                db.run('UPDATE donation_goals SET is_active = 0 WHERE id = ?', [goal.id]);
-            }
+    applyDonationToGoal(userId, amount, goalId = null) {
+        const uid = Number(userId);
+        let target = null;
+        if (goalId) {
+            const g = db.getDonationGoalById(goalId);
+            if (g && Number(g.user_id) === uid && g.is_active) target = g;
         }
+        if (!target) {
+            const active = db.getActiveDonationGoals(uid);
+            if (active.length === 1) target = active[0];
+        }
+        if (!target) return null;
+        return db.addToDonationGoal(target.id, amount);
     }
 
     /**
@@ -211,26 +216,55 @@ class HoboBucks {
     }
 
     /**
-     * Get active donation goals for a user
+     * Goals shown to viewers in the on-stream widget: active goals + any reached in the
+     * last hour (so a completed goal celebrates, then auto-clears).
      */
     getGoals(userId) {
-        return db.all(
-            'SELECT * FROM donation_goals WHERE user_id = ? AND is_active = 1 ORDER BY created_at',
-            [userId]
-        );
+        return db.getDonationGoalsForWidget(userId, 1);
+    }
+
+    /** All of a streamer's goals (active + completed) for the dashboard manager. */
+    getManageGoals(userId) {
+        return db.getAllDonationGoals(userId);
     }
 
     /**
-     * Create a donation goal
+     * Create a donation goal (optionally with an uploaded image/video already
+     * transcoded to a served URL).
      */
-    createGoal(userId, title, targetAmount) {
+    createGoal(userId, { title, target_amount, image_url = null, media_type = null } = {}) {
         const safeTitle = normalizeText(title, 120);
-        const safeAmount = normalizeMoneyAmount(targetAmount);
+        const safeAmount = Math.round(normalizeMoneyAmount(target_amount));
         if (!safeTitle) throw new Error('Title is required');
-        return db.run(
-            'INSERT INTO donation_goals (user_id, title, target_amount) VALUES (?, ?, ?)',
-            [userId, safeTitle, safeAmount]
-        );
+        const mt = ['image', 'video'].includes(media_type) ? media_type : null;
+        return db.createDonationGoal(userId, { title: safeTitle, target_amount: safeAmount, image_url: image_url || null, media_type: mt });
+    }
+
+    /** Update a goal the user owns. */
+    updateGoal(id, userId, patch = {}) {
+        const g = db.getDonationGoalById(id);
+        if (!g || Number(g.user_id) !== Number(userId)) throw new Error('Goal not found');
+        const fields = {};
+        if (patch.title !== undefined) { const t = normalizeText(patch.title, 120); if (!t) throw new Error('Title is required'); fields.title = t; }
+        if (patch.target_amount !== undefined) fields.target_amount = Math.round(normalizeMoneyAmount(patch.target_amount));
+        if (patch.image_url !== undefined) fields.image_url = patch.image_url || null;
+        if (patch.media_type !== undefined) fields.media_type = ['image', 'video'].includes(patch.media_type) ? patch.media_type : null;
+        if (patch.is_active !== undefined) {
+            fields.is_active = patch.is_active ? 1 : 0;
+            // Re-activating a goal clears its reached_at so it isn't stuck in the celebration window.
+            if (patch.is_active) fields.current_amount = Math.min(g.current_amount, g.target_amount - 1 < 0 ? 0 : g.target_amount);
+        }
+        if (patch.sort_order !== undefined) fields.sort_order = parseInt(patch.sort_order, 10) || 0;
+        db.updateDonationGoal(id, userId, fields);
+        return db.getDonationGoalById(id);
+    }
+
+    /** Delete a goal the user owns; returns the removed row (for media cleanup). */
+    deleteGoal(id, userId) {
+        const g = db.getDonationGoalById(id);
+        if (!g || Number(g.user_id) !== Number(userId)) throw new Error('Goal not found');
+        db.deleteDonationGoal(id, userId);
+        return g;
     }
 }
 

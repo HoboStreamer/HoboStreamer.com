@@ -41,6 +41,30 @@ function available() {
     try { return !!whisperBin() && fs.existsSync(MODEL); } catch { return false; }
 }
 
+// ── Reliability plumbing ──────────────────────────────────────────────────
+// Every spawned whisper/ffmpeg child is tracked so a shutdown/restart can kill it
+// (otherwise it orphans + leaks its temp WAV/JSON). killActive() is called from the
+// server's graceful-shutdown handler.
+const _active = new Set();
+function _track(ff) {
+    if (!ff) return ff;
+    _active.add(ff);
+    const drop = () => _active.delete(ff);
+    ff.on('close', drop); ff.on('error', drop); ff.on('exit', drop);
+    return ff;
+}
+function killActive() {
+    let n = 0;
+    for (const ff of _active) { try { ff.kill('SIGKILL'); n++; } catch { /* */ } }
+    _active.clear();
+    return n;
+}
+// While a stream is live we lower the whisper thread count so VOD transcription can
+// still make progress without starving the live encoders.
+let _lowPower = false;
+function setLowPower(v) { _lowPower = !!v; }
+function _threads() { return _lowPower ? Math.max(1, Math.min(2, THREADS)) : THREADS; }
+
 // Phrases whisper commonly hallucinates over silence / music / non-speech.
 const HALLUCINATIONS = new Set([
     'you', 'thank you', 'thank you.', 'thanks for watching', 'thanks for watching!',
@@ -86,14 +110,19 @@ function _joinSegments(segments) {
 function transcribeWavDetailed(wavPath, { timeoutMs = 180000, offsetSec = 0 } = {}) {
     return new Promise((resolve) => {
         const bin = whisperBin();
-        if (!bin || !available() || !wavPath || !fs.existsSync(wavPath)) return resolve({ text: '', segments: [] });
+        // ok=false only for genuine FAILURES (missing binary, spawn/exec error, timeout,
+        // non-zero exit, unparseable output). A clean run that finds no speech is ok=true
+        // with empty text — the caller must NOT treat that as a failure to retry.
+        if (!bin || !available() || !wavPath || !fs.existsSync(wavPath)) {
+            return resolve({ text: '', segments: [], ok: false, error: 'whisper unavailable' });
+        }
         const outBase = `${wavPath}.out`;
         const jsonPath = `${outBase}.json`;
-        const args = ['-m', MODEL, '-f', wavPath, '-oj', '-of', outBase, '-t', String(THREADS), '-l', 'en'];
+        const args = ['-m', MODEL, '-f', wavPath, '-oj', '-of', outBase, '-t', String(_threads()), '-l', 'en'];
         if (BEAM > 1) args.push('-bs', String(BEAM));
         let ff;
-        try { ff = spawn(bin, args, { stdio: 'ignore' }); }
-        catch { return resolve({ text: '', segments: [] }); }
+        try { ff = _track(spawn(bin, args, { stdio: 'ignore' })); }
+        catch (e) { return resolve({ text: '', segments: [], ok: false, error: e.message }); }
         let done = false;
         const finish = (result) => {
             if (done) return; done = true;
@@ -101,10 +130,11 @@ function transcribeWavDetailed(wavPath, { timeoutMs = 180000, offsetSec = 0 } = 
             try { fs.existsSync(jsonPath) && fs.unlinkSync(jsonPath); } catch { /* */ }
             resolve(result);
         };
-        const timer = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } finish({ text: '', segments: [] }); }, timeoutMs);
-        ff.on('close', () => {
+        const timer = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } finish({ text: '', segments: [], ok: false, error: 'timeout' }); }, timeoutMs);
+        ff.on('close', (code) => {
+            if (code !== 0) return finish({ text: '', segments: [], ok: false, error: `whisper exited ${code}` });
             let parsed;
-            try { parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf8')); } catch { return finish({ text: '', segments: [] }); }
+            try { parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf8')); } catch (e) { return finish({ text: '', segments: [], ok: false, error: 'parse: ' + e.message }); }
             const items = Array.isArray(parsed && parsed.transcription) ? parsed.transcription : [];
             const segsRaw = items.map(it => ({
                 start: offsetSec + ((it.offsets && it.offsets.from) || 0) / 1000,
@@ -112,9 +142,9 @@ function transcribeWavDetailed(wavPath, { timeoutMs = 180000, offsetSec = 0 } = 
                 text: it.text || '',
             }));
             const segments = _cleanSegments(segsRaw);
-            finish({ text: _joinSegments(segments), segments });
+            finish({ text: _joinSegments(segments), segments, ok: true });
         });
-        ff.on('error', () => finish({ text: '', segments: [] }));
+        ff.on('error', (e) => finish({ text: '', segments: [], ok: false, error: e.message }));
     });
 }
 
@@ -131,22 +161,25 @@ async function transcribeWav(wavPath, opts = {}) {
 function transcribeMediaDetailed(mediaPath, { seconds = 0, offsetSec = 0, timeoutMs = 300000 } = {}) {
     return new Promise((resolve) => {
         const isUrl = /^https?:/i.test(mediaPath || '');
-        if (!available() || !mediaPath || (!isUrl && !fs.existsSync(mediaPath))) return resolve({ text: '', segments: [] });
+        if (!available() || !mediaPath || (!isUrl && !fs.existsSync(mediaPath))) return resolve({ text: '', segments: [], ok: false, error: 'source unavailable' });
         const wav = path.join(os.tmpdir(), `hobo-tx-${Date.now()}-${Math.floor(Math.random() * 1e6)}.wav`);
         const args = ['-y', '-i', mediaPath];
         if (seconds > 0) args.push('-t', String(seconds));
         args.push('-vn', '-ac', '1', '-ar', '16000', '-f', 'wav', wav);
         let ff;
-        try { ff = spawn('ffmpeg', args, { stdio: 'ignore' }); }
-        catch { return resolve({ text: '', segments: [] }); }
+        try { ff = _track(spawn('ffmpeg', args, { stdio: 'ignore' })); }
+        catch (e) { return resolve({ text: '', segments: [], ok: false, error: e.message }); }
         const cleanup = () => { try { fs.existsSync(wav) && fs.unlinkSync(wav); } catch { /* */ } };
-        ff.on('close', async () => {
-            let r = { text: '', segments: [] };
-            try { r = await transcribeWavDetailed(wav, { timeoutMs, offsetSec }); } catch { /* */ }
+        const ffTimer = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } }, timeoutMs);
+        ff.on('close', async (code) => {
+            clearTimeout(ffTimer);
+            if (code !== 0) { cleanup(); return resolve({ text: '', segments: [], ok: false, error: `ffmpeg exited ${code}` }); }
+            let r = { text: '', segments: [], ok: false, error: 'unknown' };
+            try { r = await transcribeWavDetailed(wav, { timeoutMs, offsetSec }); } catch (e) { r = { text: '', segments: [], ok: false, error: e.message }; }
             cleanup();
             resolve(r);
         });
-        ff.on('error', () => { cleanup(); resolve({ text: '', segments: [] }); });
+        ff.on('error', (e) => { clearTimeout(ffTimer); cleanup(); resolve({ text: '', segments: [], ok: false, error: e.message }); });
     });
 }
 
@@ -156,4 +189,4 @@ async function transcribeMedia(mediaPath, opts = {}) {
     return r.text;
 }
 
-module.exports = { available, transcribeWav, transcribeWavDetailed, transcribeMedia, transcribeMediaDetailed };
+module.exports = { available, transcribeWav, transcribeWavDetailed, transcribeMedia, transcribeMediaDetailed, killActive, setLowPower };
