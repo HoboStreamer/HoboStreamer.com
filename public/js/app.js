@@ -3525,11 +3525,38 @@ function stopGoalWidget() {
 }
 function renderGoalWidget() {
     const goals = _goalWidget.goals || [];
-    const html = goals.length ? goals.map(_goalWidgetItemHTML).join('') : '';
-    document.querySelectorAll('#ch-goal-widget, #ch-goal-widget-offline').forEach(el => {
-        el.innerHTML = html;
-        el.style.display = html ? '' : 'none';
-    });
+    document.querySelectorAll('#ch-goal-widget, #ch-goal-widget-offline').forEach(el => _renderGoalWidgetInto(el, goals));
+}
+// One goal → plain. Multiple goals → a short, auto-scrolling (marquee) viewport that
+// stays compact, with a faded bottom + animated caret to expand the full list.
+function _renderGoalWidgetInto(el, goals) {
+    if (!el) return;
+    if (!goals.length) { el.style.display = 'none'; el.innerHTML = ''; el.classList.remove('cgw-multi', 'cgw-expanded'); return; }
+    el.style.display = '';
+    const items = goals.map(_goalWidgetItemHTML).join('');
+    if (goals.length <= 1) {
+        el.classList.remove('cgw-multi', 'cgw-expanded');
+        el.innerHTML = `<div class="cgw-track cgw-track-static">${items}</div>`;
+        return;
+    }
+    el.classList.add('cgw-multi');
+    if (el.classList.contains('cgw-expanded')) {
+        el.innerHTML = `
+            <div class="cgw-viewport cgw-viewport-expanded"><div class="cgw-track cgw-track-static">${items}</div></div>
+            <button class="cgw-more expanded" onclick="toggleGoalWidgetExpand(this)" title="Collapse goals" aria-label="Collapse goals"><i class="fa-solid fa-chevron-up"></i></button>`;
+    } else {
+        // Duplicate the items so the vertical marquee loops seamlessly (translateY -50%).
+        const dur = Math.max(9, goals.length * 3.5);
+        el.innerHTML = `
+            <div class="cgw-viewport"><div class="cgw-track cgw-track-marquee" style="--cgw-dur:${dur}s">${items}${items}</div></div>
+            <button class="cgw-more" onclick="toggleGoalWidgetExpand(this)" title="Show all goals" aria-label="Show all goals"><i class="fa-solid fa-chevron-down"></i></button>`;
+    }
+}
+function toggleGoalWidgetExpand(btn) {
+    const el = btn && btn.closest('.ch-goal-widget');
+    if (!el) return;
+    el.classList.toggle('cgw-expanded');
+    _renderGoalWidgetInto(el, _goalWidget.goals || []);
 }
 function _goalWidgetItemHTML(g) {
     const pct = g.target_amount ? Math.min(100, Math.round((g.current_amount / g.target_amount) * 100)) : 0;

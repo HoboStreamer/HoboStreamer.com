@@ -12264,8 +12264,42 @@ body.theme-light .user-dropdown {
    goal to open a popover with a larger image. */
 .ch-goal-widget {
     flex-shrink: 0; border-bottom: 1px solid var(--border);
-    background: var(--bg-tertiary); padding: 6px 8px;
-    display: flex; flex-direction: column; gap: 6px; max-height: 46%; overflow-y: auto;
+    background: var(--bg-tertiary); padding: 6px 8px 0;
+    position: relative;
+}
+/* Track holds the goal cards; each card carries its own bottom margin (not flex gap)
+   so the marquee's duplicated copy tiles seamlessly. */
+.cgw-track { display: block; }
+.cgw-track .cgw-goal { margin-bottom: 6px; }
+.cgw-track-static .cgw-goal:last-child { margin-bottom: 6px; }
+.ch-goal-widget:not(.cgw-multi) { padding-bottom: 0; }
+.ch-goal-widget:not(.cgw-multi) .cgw-track-static .cgw-goal:last-child { margin-bottom: 6px; }
+
+/* Multiple goals: a short auto-scrolling viewport (stays compact) + fade + caret. */
+.cgw-viewport { overflow: hidden; max-height: 60px; }
+.cgw-viewport-expanded { overflow-y: auto; max-height: 42vh; scrollbar-width: thin; }
+.cgw-track-marquee { animation: cgwMarquee var(--cgw-dur, 12s) linear infinite; will-change: transform; }
+.ch-goal-widget.cgw-multi:hover .cgw-track-marquee { animation-play-state: paused; }
+@keyframes cgwMarquee { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+
+/* Faded bottom + animated caret to expand the full list. */
+.cgw-more {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+    display: flex; align-items: flex-end; justify-content: center; padding-bottom: 3px;
+    background: linear-gradient(180deg, rgba(0,0,0,0), var(--bg-tertiary) 78%);
+    border: none; cursor: pointer; color: var(--accent); font-size: 0.85rem; z-index: 4;
+}
+.cgw-more i { animation: cgwCaretBounce 1.4s ease-in-out infinite; }
+.cgw-more:hover i { color: #ffcf6b; }
+@keyframes cgwCaretBounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(3px); } }
+/* Expanded: caret becomes a normal collapse button under the list (no fade/bounce). */
+.cgw-more.expanded {
+    position: static; height: auto; background: none; padding: 4px 0 6px;
+}
+.cgw-more.expanded i { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+    .cgw-track-marquee { animation: none; }
+    .cgw-more i { animation: none; }
 }
 .cgw-goal {
     position: relative; height: 42px; border-radius: 9px; overflow: hidden; cursor: pointer;

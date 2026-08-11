@@ -69,14 +69,14 @@ function toggleControlsDock() {
         document.body.classList.add('controls-docked');
         let ph = document.getElementById('controls-dock-ph');
         if (!ph) { ph = document.createElement('div'); ph.id = 'controls-dock-ph'; ph.className = 'controls-dock-ph'; panel.appendChild(ph); }
-        ph.innerHTML = '<i class="fa-solid fa-arrow-down"></i> Controls are docked at the bottom of your screen so you can use them while you watch. <button class="btn btn-sm btn-outline" onclick="toggleControlsDock()"><i class="fa-solid fa-up-to-line"></i> Bring back here</button>';
-        if (btn) btn.innerHTML = '<i class="fa-solid fa-up-to-line"></i> Undock';
+        ph.innerHTML = '<i class="fa-solid fa-arrow-down"></i> Controls are docked at the bottom of your screen so you can use them while you watch. <button class="btn btn-sm btn-outline" onclick="toggleControlsDock()"><i class="fa-solid fa-arrow-up"></i> Bring back here</button>';
+        if (btn) { btn.innerHTML = '<i class="fa-solid fa-arrow-up"></i>'; btn.title = 'Undock controls (bring back under the player)'; }
     } else {
         panel.appendChild(grid);
         dock.style.display = 'none';
         document.body.classList.remove('controls-docked');
         const ph = document.getElementById('controls-dock-ph'); if (ph) ph.remove();
-        if (btn) btn.innerHTML = '<i class="fa-solid fa-down-to-line"></i> Dock to bottom';
+        if (btn) { btn.innerHTML = '<i class="fa-solid fa-arrow-down"></i>'; btn.title = 'Dock controls to the bottom of the screen'; }
     }
 }
 function _undockControls() { if (_controlsDocked) toggleControlsDock(); }
