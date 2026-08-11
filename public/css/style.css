@@ -12424,7 +12424,7 @@ body.theme-light .user-dropdown {
 .controls-dock-close:hover { color: var(--text-primary); border-color: var(--accent); }
 /* Compact, single-row buttons inside the dock */
 .controls-dock .controls-grid { flex-wrap: nowrap; gap: 6px; }
-.controls-dock .control-btn { flex-direction: row; min-width: 0; padding: 7px 11px; font-size: 0.78rem; gap: 6px; white-space: nowrap; }
+.controls-dock .control-btn { position:relative; flex-direction: row; min-width: 0; padding: 7px 11px; font-size: 0.78rem; gap: 6px; white-space: nowrap; }
 .controls-dock .control-btn i { font-size: 0.98rem; }
 @media (max-width: 560px) {
     /* Icon-only on phones to stay out of the way of the video + chat (keep the keybind badge) */
