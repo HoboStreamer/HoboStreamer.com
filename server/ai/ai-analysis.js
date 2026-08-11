@@ -273,6 +273,15 @@ function _txRun(fn) {
     _txChain = p.catch(() => {});
     return p;
 }
+// Drop whisper to low-power (fewer threads) whenever any stream is live, so VOD
+// transcription keeps progressing without starving the live encoders — applied on
+// EVERY transcription path (backfill poller + the on-finalize trigger).
+function _applyTxLowPower() {
+    try {
+        const anyLive = ((db.getLiveStreams && db.getLiveStreams()) || []).length > 0;
+        require('./transcribe').setLowPower(anyLive);
+    } catch { /* */ }
+}
 
 /**
  * Transcript-only pass for a VOD — FREE local whisper (no vision, no API/budget).
@@ -282,6 +291,7 @@ function _txRun(fn) {
 async function generateVodTranscript(vod) {
     if (!vod || !transcriptionEnabled()) return null;
     return _txRun(async () => {
+        _applyTxLowPower();
         const src = await _mediaSource(vod);
         if (!src) {
             const n = db.bumpVodTranscriptAttempt(vod.id);
@@ -309,6 +319,7 @@ async function generateVodTranscript(vod) {
 async function generateClipTranscript(clip) {
     if (!clip || !transcriptionEnabled()) return null;
     return _txRun(async () => {
+        _applyTxLowPower();
         const src = await _mediaSource(clip);
         if (!src) {
             const n = db.bumpClipTranscriptAttempt(clip.id);
