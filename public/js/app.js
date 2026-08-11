@@ -830,6 +830,10 @@ function navigate(urlPath, replace = false) {
         window._liveVodPollTimer = null;
         window._liveVodIsLive = false;
     }
+    if (window._globalAiPollTimer) {
+        clearInterval(window._globalAiPollTimer);
+        window._globalAiPollTimer = null;
+    }
 
     // Normalize path
     if (!urlPath.startsWith('/')) urlPath = '/' + urlPath;
@@ -2267,7 +2271,132 @@ function loadChatPage() {
     initChat(null);
     // Load global history
     loadGlobalChatHistory();
+    // Global chat AI overview + timeline (refreshed periodically)
+    loadGlobalChatAi();
+    if (window._globalAiPollTimer) clearInterval(window._globalAiPollTimer);
+    window._globalAiPollTimer = setInterval(loadGlobalChatAi, 90000);
 }
+
+// Turn a UTC SQL timestamp ("YYYY-MM-DD HH:MM:SS") or ISO string into "x ago".
+function _aiTimeAgo(ts) {
+    if (!ts) return '';
+    let s = String(ts);
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) s = s.replace(' ', 'T') + 'Z';
+    try { return (typeof timeAgo === 'function') ? timeAgo(s) : new Date(s).toLocaleString(); }
+    catch { return ''; }
+}
+
+async function loadGlobalChatAi() {
+    const strip = document.getElementById('global-ai-strip');
+    const panel = document.getElementById('global-ai-panel');
+    if (!strip || !panel) return;
+    let insight = null;
+    try { insight = (await api('/chat-ai/global')).insight; } catch { /* silent */ }
+    if (!insight || !insight.overview) {
+        strip.style.display = 'none';
+        // Keep the panel only if the user had already opened it.
+        if (!panel.classList.contains('gai-user-opened')) panel.style.display = 'none';
+        return;
+    }
+    // Header strip (compact)
+    const stripText = document.getElementById('global-ai-strip-text');
+    if (stripText) stripText.textContent = insight.overview;
+    strip.style.display = 'flex';
+
+    // Full panel
+    const ov = document.getElementById('global-ai-overview');
+    if (ov) ov.textContent = insight.overview;
+    const meta = document.getElementById('global-ai-meta');
+    if (meta) {
+        const bits = [];
+        if (insight.window_label) bits.push(insight.window_label);
+        if (insight.updated_at) bits.push('updated ' + _aiTimeAgo(insight.updated_at));
+        meta.textContent = bits.join(' · ');
+    }
+    const tl = document.getElementById('global-ai-timeline');
+    if (tl) {
+        const items = (insight.timeline || []).slice().reverse();
+        tl.innerHTML = items.length ? items.map(t => `
+            <div class="gai-tl-item">
+                <div class="gai-tl-when">${_aiTimeAgo(t.ts)}</div>
+                <div class="gai-tl-label">${esc(t.label || '')}</div>
+                ${t.detail ? `<div class="gai-tl-detail">${esc(t.detail)}</div>` : ''}
+            </div>`).join('') : '<div class="gai-empty">No standout moments logged yet.</div>';
+    }
+    const mem = document.getElementById('global-ai-memory');
+    if (mem) mem.textContent = insight.memory || '';
+    if (mem && !insight.memory) { mem.innerHTML = '<span class="gai-empty">Still building a picture of the community…</span>'; }
+}
+
+function toggleGlobalAiPanel() {
+    const panel = document.getElementById('global-ai-panel');
+    const strip = document.getElementById('global-ai-strip');
+    if (!panel) return;
+    const showing = panel.style.display !== 'none' && panel.style.display !== '';
+    if (showing) {
+        panel.style.display = 'none';
+        panel.classList.remove('gai-user-opened');
+        if (strip) strip.classList.remove('open');
+    } else {
+        panel.style.display = 'block';
+        panel.classList.add('gai-user-opened');
+        if (strip) strip.classList.add('open');
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+// Per-user chat insight — "today vs all-time" read of a chatter. Opened from a
+// username's context (chat, profile). Fetches on demand.
+async function openUserChatInsight(userId, username) {
+    if (!userId) return;
+    document.getElementById('user-ai-modal-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'user-ai-modal-overlay';
+    overlay.className = 'user-ai-modal-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+        <div class="user-ai-modal">
+            <div class="user-ai-modal-head">
+                <h3><i class="fa-solid fa-user-tag"></i> ${esc(username || 'User')}</h3>
+                <span class="gai-badge"><i class="fa-solid fa-wand-magic-sparkles"></i> AI</span>
+                <button class="uai-close" onclick="document.getElementById('user-ai-modal-overlay').remove()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p class="uai-sub">How they chat today vs. overall — from their public chat messages.</p>
+            <div id="user-ai-modal-body"><div class="gai-empty">Loading insight…</div></div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    let data = null;
+    try { data = await api(`/chat-ai/user/${userId}`); } catch { /* */ }
+    const body = document.getElementById('user-ai-modal-body');
+    if (!body) return;
+    const ins = data && data.insight;
+    if (!ins || (!ins.overview_24h && !ins.overview_alltime)) {
+        body.innerHTML = '<div class="gai-empty">No AI insight yet — this user hasn\'t chatted enough recently. Check back soon.</div>';
+        return;
+    }
+    const tl = (ins.timeline || []).slice().reverse();
+    body.innerHTML = `
+        <div class="uai-section">
+            <h4><i class="fa-solid fa-bolt"></i> Today <span class="uai-tag uai-tag-today">last 24h</span></h4>
+            <div class="uai-body">${ins.has_24h ? esc(ins.overview_24h) : '<span class="gai-empty">' + esc(ins.overview_24h || 'Quiet in the last 24 hours.') + '</span>'}</div>
+        </div>
+        <div class="uai-section">
+            <h4><i class="fa-solid fa-infinity"></i> Overall <span class="uai-tag uai-tag-all">all-time</span></h4>
+            <div class="uai-body">${esc(ins.overview_alltime || '')}</div>
+        </div>
+        ${tl.length ? `<div class="uai-section">
+            <h4><i class="fa-solid fa-timeline"></i> Notable moments</h4>
+            <div class="gai-timeline">${tl.map(t => `
+                <div class="gai-tl-item">
+                    <div class="gai-tl-when">${_aiTimeAgo(t.ts)}</div>
+                    <div class="gai-tl-label">${esc(t.label || '')}</div>
+                    ${t.detail ? `<div class="gai-tl-detail">${esc(t.detail)}</div>` : ''}
+                </div>`).join('')}</div>
+        </div>` : ''}
+        <p class="uai-sub" style="margin:14px 0 0">${ins.updated_at ? 'Updated ' + _aiTimeAgo(ins.updated_at) : ''}${ins.message_count ? ' · ~' + ins.message_count + ' messages analyzed' : ''}</p>`;
+}
+window.openUserChatInsight = openUserChatInsight;
 
 async function loadChannelPage(username, managedStreamRef = null, legacySessionId = null) {
     try {

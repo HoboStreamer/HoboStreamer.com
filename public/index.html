@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=75">
+    <link rel="stylesheet" href="/css/style.css?v=76">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -3336,6 +3336,11 @@ WantedBy=multi-user.target</code>
                         </button>
                     </div>
                 </div>
+                <div class="global-ai-strip" id="global-ai-strip" style="display:none" onclick="toggleGlobalAiPanel()" title="AI read of the chat — click for the full insight &amp; timeline">
+                    <span class="gai-badge"><i class="fa-solid fa-wand-magic-sparkles"></i> AI</span>
+                    <span class="gai-strip-text" id="global-ai-strip-text"></span>
+                    <i class="fa-solid fa-chevron-down gai-strip-caret" id="global-ai-strip-caret"></i>
+                </div>
                 <div class="chat-users-panel"></div>
                 <div class="global-chat-messages" id="global-chat-messages"></div>
                 <div class="chat-input-area">
@@ -3373,6 +3378,26 @@ WantedBy=multi-user.target</code>
                 </div>
             </div>
         </div>
+
+        <!-- ── Global Chat AI insight + timeline (below the layout) ── -->
+        <section class="global-ai-panel" id="global-ai-panel" style="display:none">
+            <div class="gai-panel-head">
+                <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Global Chat &mdash; AI Insight</h3>
+                <span class="gai-meta" id="global-ai-meta"></span>
+                <button class="gai-collapse-btn" onclick="toggleGlobalAiPanel()" title="Collapse"><i class="fa-solid fa-chevron-up"></i></button>
+            </div>
+            <div class="gai-overview" id="global-ai-overview"></div>
+            <div class="gai-cols">
+                <div class="gai-col">
+                    <h4><i class="fa-solid fa-timeline"></i> Timeline</h4>
+                    <div class="gai-timeline" id="global-ai-timeline"></div>
+                </div>
+                <div class="gai-col">
+                    <h4><i class="fa-solid fa-brain"></i> Community Memory</h4>
+                    <div class="gai-memory" id="global-ai-memory"></div>
+                </div>
+            </div>
+        </section>
 
         <!-- Create Channel Modal -->
         <div class="vc-modal-overlay" id="vc-create-modal" style="display:none" onclick="if(event.target===this)vcHideCreateModal()">
@@ -4685,11 +4710,11 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=2" defer></script>
-<script src="/js/app.js?v=63" defer></script>
+<script src="/js/app.js?v=64" defer></script>
 <script src="/js/stream-player.js?v=11" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>
-<script src="/js/chat.js?v=43" defer></script>
+<script src="/js/chat.js?v=44" defer></script>
 <script src="/js/chat-autocomplete.js?v=1" defer></script>
 <script src="/js/channel-uploads.js?v=9" defer></script>
 <script src="/js/controls.js?v=8" defer></script>

@@ -6500,6 +6500,62 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .global-chat-header { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; }
 .global-chat-header h2 { margin: 0 0 4px; font-size: 1.2rem; }
 .global-chat-header .muted { margin: 0; font-size: 0.85rem; }
+
+/* ── Global chat AI: header strip + insight panel ── */
+.global-ai-strip {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 8px 16px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent);
+    font-size: 0.82rem; color: var(--text-secondary); transition: background 0.15s;
+}
+.global-ai-strip:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent), transparent); }
+.gai-badge {
+    flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px; background: var(--accent); color: #fff;
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.02em;
+}
+.gai-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gai-strip-caret { flex-shrink: 0; opacity: 0.6; transition: transform 0.2s; }
+.global-ai-strip.open .gai-strip-caret { transform: rotate(180deg); }
+
+.global-ai-panel {
+    margin: 14px 0 0; padding: 18px 20px 20px;
+    background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.gai-panel-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.gai-panel-head h3 { margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 8px; }
+.gai-panel-head h3 .fa-wand-magic-sparkles { color: var(--accent); }
+.gai-meta { font-size: 0.78rem; color: var(--text-muted); margin-right: auto; }
+.gai-collapse-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+.gai-collapse-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.gai-overview { font-size: 0.92rem; line-height: 1.55; color: var(--text-primary); margin-bottom: 16px; }
+.gai-cols { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; }
+@media (max-width: 720px) { .gai-cols { grid-template-columns: 1fr; } }
+.gai-col h4 { margin: 0 0 10px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+.gai-timeline { display: flex; flex-direction: column; gap: 0; position: relative; }
+.gai-tl-item { position: relative; padding: 0 0 14px 20px; border-left: 2px solid var(--border); }
+.gai-tl-item:last-child { border-left-color: transparent; padding-bottom: 0; }
+.gai-tl-item::before { content: ''; position: absolute; left: -6px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.gai-tl-when { font-size: 0.72rem; color: var(--text-muted); }
+.gai-tl-label { font-size: 0.88rem; font-weight: 600; color: var(--text-primary); margin: 1px 0; }
+.gai-tl-detail { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.45; }
+.gai-memory { font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary); white-space: pre-wrap; }
+.gai-empty { font-size: 0.83rem; color: var(--text-muted); font-style: italic; }
+
+/* ── Per-user chat insight modal ── */
+.user-ai-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.user-ai-modal { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 14px; max-width: 560px; width: 100%; max-height: 90vh; overflow: auto; padding: 22px; }
+.user-ai-modal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.user-ai-modal-head h3 { margin: 0; font-size: 1.1rem; }
+.user-ai-modal-head .gai-badge { margin-left: auto; }
+.uai-sub { font-size: 0.78rem; color: var(--text-muted); margin: 0 0 16px; }
+.uai-section { margin-bottom: 16px; }
+.uai-section h4 { margin: 0 0 6px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+.uai-section h4 .uai-tag { margin-left: auto; font-size: 0.68rem; padding: 1px 7px; border-radius: 999px; text-transform: none; letter-spacing: 0; }
+.uai-tag-today { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.uai-tag-all { background: var(--bg-tertiary); color: var(--text-secondary); }
+.uai-body { font-size: 0.9rem; line-height: 1.55; color: var(--text-primary); }
+.uai-close { background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; }
 .global-chat-messages {
     flex: 1; overflow-y: auto; padding: 8px 12px;
     overscroll-behavior-y: contain;

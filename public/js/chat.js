@@ -4221,6 +4221,7 @@ function renderContextMenu(menu, profile, username) {
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
             ${currentUser?.id && currentUser.id !== profile.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxCallUser(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-phone"></i> Call this user</button>` : ''}
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
+            ${profile.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="dismissContextMenu();window.openUserChatInsight&&openUserChatInsight(this.dataset.uid, this.dataset.username)"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Insight</button>` : ''}
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
             ${currentUser?.capabilities?.manage_users ? `<div class="ctx-rename-group">
                 <button class="ctx-btn" onclick="this.parentElement.classList.toggle('open')" type="button"><i class="fa-solid fa-pen"></i> Rename <i class="fa-solid fa-chevron-right ctx-rename-arrow"></i></button>
