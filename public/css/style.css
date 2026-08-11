@@ -1249,32 +1249,62 @@ main#app { position: relative; z-index: 1; }
     margin: 0 auto 24px;
     max-width: 640px;
 }
-.hero-tagline {
+.hero .hero-tagline {
     display: block;
     text-align: center;
-    line-height: 1.4;
+    line-height: 1.25;
     white-space: nowrap;
-}
-.hero-note {
-    display: block;
-    margin: -4px auto 20px;
-    color: var(--text-muted);
-    font-size: 0.92rem;
-    line-height: 1.6;
-    max-width: 640px;
-    text-align: center;
-    text-wrap: pretty;
-}
-.hero-note i {
-    color: var(--accent);
-    margin-right: 0.3em;
-}
-.hero-note strong {
-    color: var(--text-secondary);
+    font-size: clamp(1.5rem, 3.8vw, 2.35rem);
     font-weight: 600;
+    color: var(--text);
+    margin: 2px auto 22px;
 }
-.hero-note strong i {
-    margin-left: 0.15em;
+/* Two standout callouts under the tagline */
+.hero-standouts {
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    gap: 14px;
+    flex-wrap: wrap;
+    max-width: 720px;
+    margin: 0 auto 24px;
+}
+.hero-standout {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    flex: 1 1 260px;
+    max-width: 340px;
+    text-align: left;
+    padding: 13px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(192,150,92,0.22);
+    background: rgba(192,150,92,0.06);
+    transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+.hero-standout:hover {
+    border-color: rgba(192,150,92,0.45);
+    background: rgba(192,150,92,0.11);
+    transform: translateY(-2px);
+}
+.hero-standout > i {
+    font-size: 1.35rem;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+.hero-standout strong {
+    display: block;
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 3px;
+}
+.hero-standout span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.4;
 }
 .hero-philosophy-links {
     display: flex;
@@ -2545,8 +2575,9 @@ main#app { position: relative; z-index: 1; }
 }
 
 @media (max-width: 640px) {
-    .hero-tagline { white-space: normal; }
+    .hero .hero-tagline { white-space: normal; font-size: clamp(1.35rem, 6vw, 1.9rem); }
     .hero-rotate-wrap { min-width: 0; }
+    .hero-standout { flex: 1 1 100%; max-width: 420px; }
     .founder-timeline { margin-left: 0; padding-left: clamp(16px, 3vw, 24px); padding-right: clamp(16px, 3vw, 24px); }
     .founder-timeline::before { left: clamp(16px, 3vw, 24px); }
     .timeline-chapter { grid-template-columns: 40px 1fr; gap: 0 14px; }
