@@ -23,20 +23,31 @@ let _controlsHaveOnvif = false;   // Panel has ONVIF camera controls (work witho
  * bridge is online (buttons do nothing otherwise) — but ONVIF camera controls
  * don't need the bridge, so a panel with cameras stays visible.
  */
+let _controlsCollapsed = false;
 function _applyControlsVisibility() {
-    // Controls now live in the channel "Controls" tab. Show the TAB only when the
-    // watched stream actually has usable controls (buttons need the hardware bridge
-    // online; ONVIF cameras don't).
+    // Controls live in a section directly under the player (above the streamer info).
+    // Show it — plus the collapse toggle in the info bar — only when the watched stream
+    // has usable controls (buttons need the hardware bridge online; ONVIF cameras don't).
     const show = _controlsHaveContent && !(_hardwareStatusKnown && !_hardwareConnected && !_controlsHaveOnvif);
-    const tabBtn = document.getElementById('ch-tab-btn-controls');
-    if (tabBtn) tabBtn.style.display = show ? '' : 'none';
-    // If controls vanished, close the docked bar and fall back to Videos.
-    if (!show) {
-        _undockControls();
-        if (typeof _channelTab !== 'undefined' && _channelTab === 'controls' && typeof switchChannelTab === 'function') {
-            switchChannelTab('videos', document.querySelector('#ch-tabs .ch-tab[data-tab="videos"]'));
-        }
-    }
+    const section = document.getElementById('ch-controls-section');
+    const toggle = document.getElementById('ch-controls-toggle');
+    if (toggle) toggle.style.display = show ? '' : 'none';
+    if (section) section.style.display = (show && !_controlsCollapsed) ? '' : 'none';
+    if (!show) _undockControls();
+    _syncControlsToggleUI();
+}
+function _syncControlsToggleUI() {
+    const toggle = document.getElementById('ch-controls-toggle');
+    if (!toggle) return;
+    toggle.classList.toggle('collapsed', _controlsCollapsed);
+    toggle.title = _controlsCollapsed ? 'Show controls' : 'Hide controls';
+}
+// Collapse/expand the under-player controls section (toggle lives in the info bar).
+function toggleControlsSection() {
+    _controlsCollapsed = !_controlsCollapsed;
+    const section = document.getElementById('ch-controls-section');
+    if (section) section.style.display = _controlsCollapsed ? 'none' : '';
+    _syncControlsToggleUI();
 }
 
 /* ── Docked controls: fixed compact bottom bar ──────────────────

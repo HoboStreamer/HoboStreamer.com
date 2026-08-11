@@ -3405,10 +3405,8 @@ function _resetChannelTabs(ch) {
     // Default to About only when it actually has content; otherwise Videos.
     const defTab = hasAbout ? 'about' : 'videos';
     switchChannelTab(defTab, document.querySelector(`#ch-tabs .ch-tab[data-tab="${defTab}"]`));
-    // Controls + Media tabs start hidden; revealed by loadStreamControls /
-    // _initMediaRequestTab when applicable.
-    const ctlBtn = document.getElementById('ch-tab-btn-controls');
-    if (ctlBtn) ctlBtn.style.display = 'none';
+    // Media tab starts hidden; revealed by _initMediaRequestTab when applicable.
+    // (Controls are no longer a tab — they render in a section under the player.)
     const medBtn = document.getElementById('ch-tab-btn-media');
     if (medBtn) medBtn.style.display = 'none';
 }

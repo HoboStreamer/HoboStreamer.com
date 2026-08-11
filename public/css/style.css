@@ -12440,9 +12440,29 @@ body.theme-light .user-dropdown {
 .controls-dock .control-btn { position:relative; flex-direction: row; min-width: 0; padding: 7px 11px; font-size: 0.78rem; gap: 6px; white-space: nowrap; }
 .controls-dock .control-btn i { font-size: 0.98rem; }
 @media (max-width: 560px) {
-    /* Icon-only on phones to stay out of the way of the video + chat (keep the keybind badge) */
-    .controls-dock .control-btn > span:not(.control-keybind) { display: none; }
-    .controls-dock .control-btn { padding: 9px 11px; }
+    /* On phones show the LABEL and hide the icon — the label tells you what the button
+       does, which matters more than the glyph (keep the keybind badge). */
+    .controls-dock .control-btn > i { display: none; }
+    .controls-dock .control-btn { padding: 9px 12px; }
     .controls-dock-bar { gap: 6px; padding: 6px 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .controls-dock { animation: none; } }
+
+/* ═══════════════ Controls section under the player + collapse toggle ═══════════════ */
+.ch-controls-section .controls-panel { border-top: 1px solid var(--border); }
+/* Small collapse/expand toggle in the streamer info bar (top-right) */
+.ch-controls-toggle {
+    display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+    background: var(--bg-hover); border: 1px solid var(--border);
+    color: var(--accent); cursor: pointer;
+    padding: 5px 9px; border-radius: 8px; font-size: 0.85rem;
+    transition: all 0.15s;
+}
+.ch-controls-toggle:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ch-controls-toggle-caret { font-size: 0.66rem; transition: transform 0.2s; }
+.ch-controls-toggle.collapsed .ch-controls-toggle-caret { transform: rotate(180deg); }
+/* Dock button is icon-only now */
+.controls-dock-btn { padding: 5px 9px; }
+.controls-dock-btn i { font-size: 0.9rem; }
+/* Keep the DMs FAB BEHIND the docked controls bar so it doesn't cover the buttons */
+body.controls-docked .messenger-toggle { z-index: 1100; }
