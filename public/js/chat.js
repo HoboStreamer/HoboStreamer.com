@@ -222,6 +222,8 @@ for (const cat of CHAT_CORE_SLUR_CATEGORIES) {
 const FULLSCREEN_CHAT_IDLE_MS = 2600;
 const FULLSCREEN_CHAT_FADE_MS = 9000;
 const FULLSCREEN_CHAT_MAX_MESSAGES = 7;
+// Cap on the main chat container so a busy session doesn't accumulate unbounded nodes.
+const MAIN_CHAT_MAX_MESSAGES = 500;
 let _fullscreenChatIdleTimer = null;
 let _fullscreenChatRecent = [];
 
@@ -3052,6 +3054,12 @@ function addChatMessage(msg) {
     }
 
     container.appendChild(el);
+    // Cap the main chat DOM so a long/busy session doesn't accumulate thousands of heavy
+    // message nodes (memory + scroll/layout thrash). Mirrors the caps the cross-feed /
+    // widget containers already have. Don't trim mid history-hydration.
+    if (!_loadingHistory) {
+        while (container.children.length > MAIN_CHAT_MAX_MESSAGES) container.removeChild(container.firstChild);
+    }
     if (chatSettings.autoScroll) {
         if (_loadingHistory) {
             // During history loading, force-scroll without the nearBottom guard

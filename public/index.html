@@ -35,7 +35,8 @@
     <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
     <link rel="apple-touch-icon" href="/assets/logo.svg">
     <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
-    
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+
     <!-- Stylesheets -->
     <link rel="stylesheet" href="/css/style.css?v=75">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
@@ -4684,17 +4685,17 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=2" defer></script>
-<script src="/js/app.js?v=61"></script>
-<script src="/js/stream-player.js?v=9"></script>
-<script src="/js/emotes.js?v=8"></script>
-<script src="/js/gif-picker.js?v=1"></script>
-<script src="/js/chat.js?v=42"></script>
-<script src="/js/chat-autocomplete.js?v=1"></script>
-<script src="/js/channel-uploads.js?v=9"></script>
-<script src="/js/controls.js?v=8"></script>
-<script src="/js/onvif-dashboard.js?v=5"></script>
-<script src="/js/dashboard.js?v=5"></script>
-<script src="/js/admin.js?v=5"></script>
+<script src="/js/app.js?v=62" defer></script>
+<script src="/js/stream-player.js?v=9" defer></script>
+<script src="/js/emotes.js?v=8" defer></script>
+<script src="/js/gif-picker.js?v=1" defer></script>
+<script src="/js/chat.js?v=43" defer></script>
+<script src="/js/chat-autocomplete.js?v=1" defer></script>
+<script src="/js/channel-uploads.js?v=9" defer></script>
+<script src="/js/controls.js?v=8" defer></script>
+<script src="/js/onvif-dashboard.js?v=5" defer></script>
+<script src="/js/dashboard.js?v=5" defer></script>
+<script src="/js/admin.js?v=5" defer></script>
 <!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
 <div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
     <div class="fcw-header" onmousedown="fcwStartDrag(event)">
@@ -4738,31 +4739,33 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
     </div>
 </div>
 
-<script src="/js/hobo-bucks.js?v=5"></script>
-<script src="/js/hobo-coins.js?v=4"></script>
-<script src="/js/cosmetics-ui.js?v=2"></script>
+<script src="/js/hobo-bucks.js?v=5" defer></script>
+<script src="/js/hobo-coins.js?v=4" defer></script>
+<script src="/js/cosmetics-ui.js?v=2" defer></script>
 <!-- Broadcast modules — load order matters: state → devices → vods → workspace → core -->
-<script src="/js/broadcast-state.js?v=1"></script>
-<script src="/js/broadcast-devices.js?v=2"></script>
-<script src="/js/broadcast-vods.js?v=2"></script>
-<script src="/js/broadcast-workspace.js?v=9"></script>
-<script src="/js/broadcast.js?v=22"></script>
-<script src="/js/call.js?v=3"></script>
-<script src="/js/voice-channels.js?v=2"></script>
-<script src="/js/settings.js?v=8"></script>
-<script src="/js/staff-console.js?v=1"></script>
-<script src="/js/dashboard-moderation.js?v=2"></script>
-<script src="/js/ai-chatbot-settings.js?v=8"></script>
-<script src="/js/pastes.js?v=9"></script>
-<script src="/js/messenger.js?v=1"></script>
+<script src="/js/broadcast-state.js?v=1" defer></script>
+<script src="/js/broadcast-devices.js?v=2" defer></script>
+<script src="/js/broadcast-vods.js?v=2" defer></script>
+<script src="/js/broadcast-workspace.js?v=9" defer></script>
+<script src="/js/broadcast.js?v=22" defer></script>
+<script src="/js/call.js?v=3" defer></script>
+<script src="/js/voice-channels.js?v=2" defer></script>
+<script src="/js/settings.js?v=8" defer></script>
+<script src="/js/staff-console.js?v=1" defer></script>
+<script src="/js/dashboard-moderation.js?v=2" defer></script>
+<script src="/js/ai-chatbot-settings.js?v=8" defer></script>
+<script src="/js/pastes.js?v=9" defer></script>
+<script src="/js/messenger.js?v=1" defer></script>
 
 <!-- ── Hobo Network shared libs (notifications, account sync, themes) ── -->
-<script src="/shared/theme-loader.js"></script>
-<script src="/shared/notification-ui.js"></script>
-<script src="/shared/account-switcher.js"></script>
+<script src="/shared/theme-loader.js" defer></script>
+<script src="/shared/notification-ui.js" defer></script>
+<script src="/shared/account-switcher.js" defer></script>
 <script>
-// Initialize Hobo Network notifications and theme sync (navbar is handled natively by hobostreamer)
-(function initHoboNetwork() {
+// Initialize Hobo Network notifications and theme sync (navbar is handled natively by hobostreamer).
+// Runs on DOMContentLoaded so the now-deferred shared libs (HoboThemeLoader / HoboNotifications)
+// have executed first.
+document.addEventListener('DOMContentLoaded', function initHoboNetwork() {
     const token = localStorage.getItem('token') || (document.cookie.match(/(?:^|; )hobo_token=([^;]*)/) || [])[1] || null;
 
     if (window.HoboThemeLoader && typeof HoboThemeLoader.init === 'function') {
@@ -4785,7 +4788,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
         });
         mount.appendChild(HoboNotifications.createBell());
     }
-})();
+});
 </script>
 </body>
 </html>

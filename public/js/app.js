@@ -3942,7 +3942,9 @@ function startStreamStatusPoll(stream) {
         // Stop polling if user navigated away from the channel page
         if (currentChannelUsername !== username) { stopStreamStatusPoll(); return; }
         try {
-            const data = await api(`/streams/channel/${username}`);
+            // pollOnly=1 skips the heavy VOD/clip listing queries — the poll only needs
+            // live status + viewer counts + restream info.
+            const data = await api(`/streams/channel/${username}?pollOnly=1`);
             const streams = data.streams || (data.stream ? [data.stream] : []);
             const liveStreams = streams.filter(s => s && s.is_live);
 
@@ -4033,9 +4035,10 @@ function startOfflineStatusPoll(username) {
     _streamPollTimer = setInterval(async () => {
         if (currentChannelUsername !== username) { stopStreamStatusPoll(); return; }
         try {
-            const data = await api(`/streams/channel/${username}`);
-            const streams = data.streams || (data.stream ? [data.stream] : []);
-            const liveStreams = streams.filter(s => s && s.is_live);
+            // Lightweight live-only endpoint — offline viewers only need to detect go-live,
+            // not refetch VODs/clips/counts every 15s (the heavy channel endpoint).
+            const data = await api(`/streams/channel/${username}/live`);
+            const liveStreams = (data.streams || []).filter(s => s && s.is_live);
             if (liveStreams.length > 0) {
                 stopStreamStatusPoll();
                 loadChannelPage(username);

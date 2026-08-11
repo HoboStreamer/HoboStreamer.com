@@ -296,15 +296,18 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         }
         const clipLimit = Math.min(Math.max(parseInt(req.query.clipLimit || '12', 10), 1), 48);
         const clipOffset = Math.max(parseInt(req.query.clipOffset || '0', 10), 0);
-        const vods = db.getVodsByUserFiltered(channel.user_id, { includePrivate: canSeeHidden, managedStreamId: vodManagedStreamId, orderBy: vodOrderBy, limit: vodLimit, offset: vodOffset }) || [];
-        const vodTotal = db.countVodsByUserFiltered(channel.user_id, { includePrivate: canSeeHidden, managedStreamId: vodManagedStreamId });
-        const clips = db.getClipsByUser(channel.user_id, canSeeHidden, clipLimit, clipOffset) || [];
-        const clipTotal = db.countClipsByUser(channel.user_id, canSeeHidden);
-        // Clips of this user's streams (by others)
         const clipsOfLimit = Math.min(Math.max(parseInt(req.query.clipsOfLimit || '12', 10), 1), 48);
         const clipsOfOffset = Math.max(parseInt(req.query.clipsOfOffset || '0', 10), 0);
-        const clipsOfStreams = db.getClipsOfUserStreamsPaginated(channel.user_id, clipsOfLimit, clipsOfOffset) || [];
-        const clipsOfTotal = db.countClipsOfUserStreams(channel.user_id);
+        // The 15s live/offline status poll passes ?pollOnly=1 — it only reads live streams
+        // + viewer counts, so skip the 6 heavy VOD/clip listing+count queries entirely.
+        const pollOnly = req.query.pollOnly === '1' || req.query.pollOnly === 'true';
+        const vods = pollOnly ? [] : (db.getVodsByUserFiltered(channel.user_id, { includePrivate: canSeeHidden, managedStreamId: vodManagedStreamId, orderBy: vodOrderBy, limit: vodLimit, offset: vodOffset }) || []);
+        const vodTotal = pollOnly ? 0 : db.countVodsByUserFiltered(channel.user_id, { includePrivate: canSeeHidden, managedStreamId: vodManagedStreamId });
+        const clips = pollOnly ? [] : (db.getClipsByUser(channel.user_id, canSeeHidden, clipLimit, clipOffset) || []);
+        const clipTotal = pollOnly ? 0 : db.countClipsByUser(channel.user_id, canSeeHidden);
+        // Clips of this user's streams (by others)
+        const clipsOfStreams = pollOnly ? [] : (db.getClipsOfUserStreamsPaginated(channel.user_id, clipsOfLimit, clipsOfOffset) || []);
+        const clipsOfTotal = pollOnly ? 0 : db.countClipsOfUserStreams(channel.user_id);
         const followerCount = db.getFollowerCount(channel.user_id);
         const isFollowing = req.user ? db.isFollowing(req.user.id, channel.user_id) : false;
         // Managed streams for this channel
@@ -959,8 +962,9 @@ router.get('/', optionalAuth, (req, res) => {
     try {
         const restreamManager = require('./restream-manager');
         const streams = db.getLiveStreams();
+        const channelMap = db.getChannelsByUserIds(streams.map(s => s.user_id)); // one query, not N
         const enriched = streams.map(s => {
-            const channel = db.getChannelByUserId(s.user_id);
+            const channel = channelMap[s.user_id] || null;
             // Per-slot external viewer counts (Kick/Twitch/YouTube + RS) for THIS stream slot
             const slotId = s.managed_stream_id || null;
             const ext = restreamManager.getExternalViewerCountsForUser(s.user_id, slotId);

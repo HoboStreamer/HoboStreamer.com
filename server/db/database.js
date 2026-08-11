@@ -97,6 +97,16 @@ function getDb() {
         db.pragma('journal_mode = WAL');
         db.pragma('foreign_keys = ON');
         db.pragma('busy_timeout = 5000');
+        // Perf tuning: under WAL, synchronous=NORMAL is still crash-safe (only risks the
+        // last txn on a power/OS crash) and avoids an fsync on every one of the many small
+        // writes (chat inserts, viewer-count updates). Bigger page cache + in-memory temp
+        // tables + mmap cut disk I/O for the hot read paths.
+        try {
+            db.pragma('synchronous = NORMAL');
+            db.pragma('cache_size = -65536');   // ~64 MB page cache
+            db.pragma('temp_store = MEMORY');
+            db.pragma('mmap_size = 268435456'); // 256 MB
+        } catch (e) { console.warn('[DB] pragma tuning:', e.message); }
     }
     return db;
 }
@@ -1381,10 +1391,23 @@ function initDb() {
         if (!cols.includes('channel_user_id')) {
             database.exec("ALTER TABLE chat_messages ADD COLUMN channel_user_id INTEGER");
             database.exec("UPDATE chat_messages SET channel_user_id = (SELECT s.user_id FROM streams s WHERE s.id = chat_messages.stream_id) WHERE stream_id IS NOT NULL AND channel_user_id IS NULL");
-            database.exec("CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_user ON chat_messages(channel_user_id, created_at)");
             console.log('[DB] Added channel_user_id to chat_messages + backfilled');
         }
     } catch (e) { console.warn('[DB] chat_messages channel_user_id migration:', e.message); }
+
+    // Performance indexes — runs EVERY boot (CREATE INDEX IF NOT EXISTS is idempotent), so
+    // it also fixes the previously-broken chat index (it referenced a non-existent
+    // `created_at` column, so it never got created) and covers hot listing queries whose
+    // WHERE + ORDER BY (created_at / view_count) previously did full scans + filesorts.
+    try {
+        // Chat history: filter by channel_user_id / stream_id, ORDER BY timestamp DESC.
+        database.exec('CREATE INDEX IF NOT EXISTS idx_chat_channel_user_ts ON chat_messages(channel_user_id, timestamp)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_chat_stream_ts ON chat_messages(stream_id, timestamp)');
+        // VOD/clip listings: filter by owner + visibility, ORDER BY created_at / view_count.
+        database.exec('CREATE INDEX IF NOT EXISTS idx_vods_user_created ON vods(user_id, is_public, created_at)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_vods_public_created ON vods(is_public, created_at)');
+        database.exec('CREATE INDEX IF NOT EXISTS idx_clips_user_created ON clips(user_id, is_public, created_at)');
+    } catch (e) { console.warn('[DB] performance index migration:', e.message); }
 
     // Migrate: add force_nsfw column to channels (admin-set, overrides user toggle)
     try {
@@ -2577,6 +2600,16 @@ function getClipsByUserPaginated(userId, includePrivate = false, limit = 12, off
 
 function getChannelByUserId(userId) {
     return get('SELECT * FROM channels WHERE user_id = ?', [userId]);
+}
+// Batched lookup → { userId: channelRow }. Avoids the N+1 in the live-streams list
+// (one query for all channels instead of one per stream).
+function getChannelsByUserIds(userIds) {
+    const ids = [...new Set((userIds || []).filter(v => v != null))];
+    if (!ids.length) return {};
+    const rows = all(`SELECT * FROM channels WHERE user_id IN (${ids.map(() => '?').join(',')})`, ids);
+    const map = {};
+    for (const r of rows) map[r.user_id] = r;
+    return map;
 }
 
 // A streamer's Channel Points config (custom name/icon + earn/game intervals), with defaults.
@@ -5778,7 +5811,7 @@ module.exports = {
     getClipsOfUserStreamsPaginated, countClipsOfUserStreams,
     getClipsByUserPaginated,
     // Channels
-    getChannelByUserId, getChannelByUsername, createChannel, updateChannel, ensureChannel, setUserBio,
+    getChannelByUserId, getChannelsByUserIds, getChannelByUsername, createChannel, updateChannel, ensureChannel, setUserBio,
     getChannelPointsConfig, setChannelPointsConfig,
     getChannelVodRecordingPolicyByUserId, resolveStreamVodVisibility, resolveStreamClipVisibility, isStreamClipRecordingEnabled,
     // RobotStreamer integration
