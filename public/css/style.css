@@ -12154,3 +12154,33 @@ body.theme-light .user-dropdown {
 .cu-btn-sm { padding: 4px 10px; font-size: 0.78rem; }
 .cu-btn-ghost { background: transparent; border: 1px solid var(--border); }
 .cu-alert-state { font-size: 0.74rem; color: var(--text-muted); margin-left: 4px; }
+
+/* ═══════════════ Offline screen "explore" cards ═══════════════ */
+.ch-offline-default { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 22px 16px; width: 100%; box-sizing: border-box; }
+/* When the default (with cards) is shown, size to content instead of forcing 16/9. */
+.ch-offline-screen:has(.ch-offline-default) { aspect-ratio: auto; height: auto; min-height: 300px; max-height: none; }
+.ch-offline-explore { width: 100%; margin-top: 12px; }
+.ch-offline-explore-cards { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.ch-offline-card { width: 240px; max-width: 44%; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; text-decoration: none; transition: border-color .15s, transform .15s; }
+.ch-offline-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.ch-offline-card .stream-card-title { color: var(--text-primary); font-size: 0.85rem; }
+.ch-offline-card-kind { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,.72); color: #fff; font-size: 0.64rem; padding: 2px 7px; border-radius: 999px; font-weight: 700; letter-spacing: .02em; }
+@media (max-width: 640px) { .ch-offline-card { width: 44%; } .ch-offline-default { padding: 14px 8px; } }
+
+/* ═══════════════ Clips Taken filters ═══════════════ */
+.clips-taken-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 4px 0 14px; }
+.ct-sort-wrap { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.82rem; }
+.ct-sort { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font-size: 0.82rem; cursor: pointer; }
+.ct-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.ct-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-tertiary); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 4px 11px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+    transition: all 0.15s;
+}
+.ct-badge:hover { color: var(--text-primary); border-color: var(--accent); }
+.ct-badge.active { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--text-primary); border-color: var(--accent); }
+.ct-badge.ct-self { font-style: italic; }
+.ct-count { font-size: 0.72rem; opacity: 0.7; background: rgba(255,255,255,.08); border-radius: 999px; padding: 0 6px; }
+.ct-badge.active .ct-count { opacity: 0.95; }

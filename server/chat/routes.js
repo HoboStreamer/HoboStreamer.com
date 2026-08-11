@@ -416,7 +416,7 @@ router.get('/global/history', optionalAuth, (req, res) => {
 
         let sql = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
                           u.username AS core_username,
-                          su.username AS stream_channel,
+                          COALESCE(su.username, cu.username) AS stream_channel,
                           s.is_live AS source_is_live,
                           s.managed_stream_id AS source_managed_id,
                           COALESCE(ms.title, s.title) AS source_stream_title,
@@ -425,13 +425,14 @@ router.get('/global/history', optionalAuth, (req, res) => {
                    LEFT JOIN users u ON cm.user_id = u.id
                    LEFT JOIN streams s ON cm.stream_id = s.id
                    LEFT JOIN users su ON s.user_id = su.id
+                   LEFT JOIN users cu ON cm.channel_user_id = cu.id
                    LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
                    WHERE cm.is_deleted = 0 AND cm.message_type IN ('chat', 'system')
                      AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
         const params = [];
 
         if (channelUsername) {
-            sql += ` AND cm.stream_id IS NOT NULL AND LOWER(su.username) = LOWER(?)`;
+            sql += ` AND LOWER(COALESCE(su.username, cu.username)) = LOWER(?)`;
             params.push(channelUsername);
         }
 
@@ -484,21 +485,28 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
         const broadcasterId = stream ? stream.user_id : null;
         const spanStreamer = scope !== 'stream' && broadcasterId;
 
+        // COALESCE the channel name from the source stream's owner (live rows) OR the
+        // message's channel_user_id (offline rows) so the streamer/channel tag renders
+        // in history for both. cu = the broadcaster resolved from channel_user_id.
         const select = `SELECT cm.*, u.avatar_url, u.profile_color, u.role, u.display_name,
                           u.username AS core_username,
                           s.title AS source_stream_title, s.managed_stream_id AS source_managed_id,
                           s.is_live AS source_is_live, ms.slug AS source_slug,
-                          bu.username AS source_channel`;
+                          COALESCE(bu.username, cu.username) AS source_channel`;
         let sql;
         const params = [];
         if (spanStreamer) {
+            // Span by channel_user_id (LEFT JOIN streams) so OFFLINE messages
+            // (stream_id NULL) survive when the streamer goes live — the old INNER
+            // JOIN on streams dropped them.
             sql = `${select}
                    FROM chat_messages cm
                    LEFT JOIN users u ON cm.user_id = u.id
-                   JOIN streams s ON cm.stream_id = s.id
+                   LEFT JOIN streams s ON cm.stream_id = s.id
                    LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
                    LEFT JOIN users bu ON s.user_id = bu.id
-                   WHERE s.user_id = ? AND cm.is_deleted = 0
+                   LEFT JOIN users cu ON cm.channel_user_id = cu.id
+                   WHERE cm.channel_user_id = ? AND cm.is_deleted = 0
                      AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
             params.push(broadcasterId);
         } else {
@@ -508,6 +516,7 @@ router.get('/:streamId/history', optionalAuth, (req, res) => {
                    LEFT JOIN streams s ON cm.stream_id = s.id
                    LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
                    LEFT JOIN users bu ON s.user_id = bu.id
+                   LEFT JOIN users cu ON cm.channel_user_id = cu.id
                    WHERE cm.stream_id = ? AND cm.is_deleted = 0
                      AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
             params.push(req.params.streamId);
@@ -564,13 +573,14 @@ router.get('/channel/:userId/history', optionalAuth, (req, res) => {
                           u.username AS core_username,
                           s.title AS source_stream_title, s.managed_stream_id AS source_managed_id,
                           s.is_live AS source_is_live, ms.slug AS source_slug,
-                          bu.username AS source_channel`;
+                          COALESCE(bu.username, cu.username) AS source_channel`;
         let sql = `${select}
                    FROM chat_messages cm
                    LEFT JOIN users u ON cm.user_id = u.id
                    LEFT JOIN streams s ON cm.stream_id = s.id
                    LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
                    LEFT JOIN users bu ON s.user_id = bu.id
+                   LEFT JOIN users cu ON cm.channel_user_id = cu.id
                    WHERE cm.channel_user_id = ? AND cm.is_deleted = 0
                      AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
         const params = [userId];

@@ -17,6 +17,15 @@
         return null;
     }
 
+    // The streamer/channel-owner user id for the channel being viewed — set live AND
+    // offline (from the channel page's _activeChannelUserId), so the modal works when
+    // the streamer isn't live.
+    function resolveChannelOwnerId() {
+        try { if (typeof _activeChannelUserId !== 'undefined' && _activeChannelUserId) return _activeChannelUserId; } catch { /* */ }
+        if (window.currentStreamData && window.currentStreamData.user_id) return window.currentStreamData.user_id;
+        return null;
+    }
+
     function notify(msg, type) {
         if (typeof toast === 'function') toast(msg, type || 'info');
         else if (type === 'error') alert(msg);
@@ -30,6 +39,7 @@
 
     let overlay = null;
     let curStreamId = null;
+    let curChannelOwnerId = null;  // streamer's user id — works even when offline (no live stream)
     let _soundPreviewUrl = null;   // object URL for the attached-sound preview
     let _emotePreviewUrl = null;   // object URL for the emote upload preview
     let curTab = 'emote';
@@ -192,7 +202,8 @@
             const r = await fetch('/api/channels/moderation/mine', { headers: { Authorization: `Bearer ${token()}` } });
             const data = await r.json();
             const list = data.channels || [];
-            const ownerId = (window.currentStreamData && window.currentStreamData.user_id) || (window.currentUser && window.currentUser.id) || null;
+            // Prefer the channel currently being viewed (works offline), else own channel.
+            const ownerId = curChannelOwnerId || (window.currentStreamData && window.currentStreamData.user_id) || (window.currentUser && window.currentUser.id) || null;
             ch = list.find((c) => c.user_id === ownerId) || list[0] || null;
         } catch { /* */ }
         if (!ch) { body.innerHTML = '<div class="cu-empty">Could not load your channel settings.</div>'; return; }
@@ -351,7 +362,8 @@
         const box = overlay && overlay.querySelector('#cu-emote-list');
         if (!box) return;
         try {
-            const r = await fetch(`/api/emotes/all/${curStreamId}`);
+            const url = curStreamId ? `/api/emotes/all/${curStreamId}` : `/api/emotes/channel/${curChannelOwnerId}`;
+            const r = await fetch(url);
             const data = await r.json();
             const list = (data.channel || data.emotes || []).filter((e) => e.source === 'channel');
             if (!list.length) { box.innerHTML = '<span class="cu-empty">No channel emotes yet — be the first!</span>'; return; }
@@ -368,7 +380,8 @@
         const box = overlay && overlay.querySelector('#cu-sound-list');
         if (!box) return;
         try {
-            const r = await fetch(`/api/sounds/all/${curStreamId}`);
+            const url = curStreamId ? `/api/sounds/all/${curStreamId}` : `/api/sounds/channel/${curChannelOwnerId}`;
+            const r = await fetch(url);
             const data = await r.json();
             const list = data.sounds || [];
             if (!list.length) { box.innerHTML = '<span class="cu-empty">No channel sounds yet — be the first!</span>'; return; }
@@ -406,7 +419,8 @@
         try {
             const fd = new FormData();
             fd.append('code', code);
-            fd.append('stream_id', curStreamId);
+            if (curStreamId) fd.append('stream_id', curStreamId);
+            if (curChannelOwnerId) fd.append('channel_id', curChannelOwnerId);
             fd.append('image', file);
             const sizeEl = overlay.querySelector('#cu-emote-size');
             if (sizeEl) fd.append('size', sizeEl.value || '100');
@@ -439,7 +453,8 @@
             for (let i = 0; i < files.length; i++) {
                 const fd = new FormData();
                 fd.append('command', cmd);
-                fd.append('stream_id', curStreamId);
+                if (curStreamId) fd.append('stream_id', curStreamId);
+                if (curChannelOwnerId) fd.append('channel_id', curChannelOwnerId);
                 fd.append('sound', files[i]);
                 if (emoteCode) fd.append('emote_code', emoteCode); // apply the emote to the command
                 const r = await fetch('/api/sounds', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: fd });
@@ -504,7 +519,8 @@
 
     window.openChannelUploadModal = function (streamId) {
         curStreamId = resolveStreamId(streamId);
-        if (!curStreamId) { notify('Open a live channel first to add emotes or sounds.', 'error'); return; }
+        curChannelOwnerId = resolveChannelOwnerId();
+        if (!curStreamId && !curChannelOwnerId) { notify('Open a channel first to add emotes or sounds.', 'error'); return; }
         ensureStyles();
         close();
         overlay = document.createElement('div');

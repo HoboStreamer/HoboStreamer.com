@@ -2479,6 +2479,34 @@ function getVodsByUserFiltered(userId, { includePrivate = false, managedStreamId
     `, params);
 }
 
+// Most-popular RECENT VOD/clip for a streamer — highest view_count within the last
+// week, else the last month, else all-time. Powers the offline-screen "explore" cards.
+function getPopularVodForUser(userId) {
+    const base = `SELECT v.*, u.username, u.display_name, u.avatar_url, u.profile_color
+                  FROM vods v JOIN users u ON v.user_id = u.id
+                  WHERE v.user_id = ? AND v.is_public = 1 AND COALESCE(v.is_recording,0)=0`;
+    for (const win of ['-7 days', '-1 month', null]) {
+        const sql = base + (win ? ` AND v.created_at >= datetime('now', ?)` : '') + ` ORDER BY v.view_count DESC, v.created_at DESC LIMIT 1`;
+        const row = get(sql, win ? [userId, win] : [userId]);
+        if (row) return row;
+    }
+    return null;
+}
+function getPopularClipForUser(userId) {
+    // Clips taken OF this streamer's streams (regardless of who clipped them).
+    const base = `SELECT c.*, su.username, su.display_name, su.avatar_url, su.profile_color
+                  FROM clips c
+                  JOIN streams s ON c.stream_id = s.id
+                  JOIN users su ON s.user_id = su.id
+                  WHERE s.user_id = ? AND c.is_public = 1`;
+    for (const win of ['-7 days', '-1 month', null]) {
+        const sql = base + (win ? ` AND c.created_at >= datetime('now', ?)` : '') + ` ORDER BY c.view_count DESC, c.created_at DESC LIMIT 1`;
+        const row = get(sql, win ? [userId, win] : [userId]);
+        if (row) return row;
+    }
+    return null;
+}
+
 function countVodsByUserFiltered(userId, { includePrivate = false, managedStreamId = null } = {}) {
     const conditions = ['v.user_id = ?', 'COALESCE(v.is_recording, 0) = 0'];
     const params = [userId];
@@ -3376,6 +3404,67 @@ function getClipsByUser(userId, includePrivate = false, limit = null, offset = 0
         WHERE c.user_id = ? ${publicFilter}
         ORDER BY c.created_at DESC${pagingSql}
     `, params);
+}
+
+// ── "Clips Taken" tab: clips a user CREATED, of various source streamers ──
+// Each clip's "source streamer" is the owner of the clipped stream (or VOD). Supports
+// sort, filtering by source streamer, and hiding self-clips (of one's own content).
+const _CLIPS_TAKEN_ORDER = {
+    newest: 'c.created_at DESC',
+    oldest: 'c.created_at ASC',
+    views: 'c.view_count DESC, c.created_at DESC',
+};
+function _clipsTakenWhere(userId, { includePrivate = false, sourceStreamerId = null, hideSelf = false }) {
+    const conds = ['c.user_id = ?'];
+    const params = [userId];
+    if (!includePrivate) conds.push('c.is_public = 1');
+    if (sourceStreamerId) { conds.push('COALESCE(s.user_id, v.user_id) = ?'); params.push(sourceStreamerId); }
+    else if (hideSelf) { conds.push('COALESCE(s.user_id, v.user_id) IS NOT NULL'); conds.push('COALESCE(s.user_id, v.user_id) != ?'); params.push(userId); }
+    return { where: conds.join(' AND '), params };
+}
+const _CLIPS_TAKEN_JOINS = `
+    FROM clips c
+    JOIN users u ON c.user_id = u.id
+    LEFT JOIN streams s ON c.stream_id = s.id
+    LEFT JOIN vods v ON c.vod_id = v.id
+    LEFT JOIN users su ON s.user_id = su.id
+    LEFT JOIN users vu ON v.user_id = vu.id`;
+function getClipsTakenByUser(userId, { includePrivate = false, orderBy = 'newest', sourceStreamerId = null, hideSelf = true, limit = 12, offset = 0 } = {}) {
+    const order = _CLIPS_TAKEN_ORDER[orderBy] || _CLIPS_TAKEN_ORDER.newest;
+    const { where, params } = _clipsTakenWhere(userId, { includePrivate, sourceStreamerId, hideSelf });
+    params.push(limit, offset);
+    return all(`
+        SELECT c.*, u.username, u.display_name, u.avatar_url,
+               s.title AS stream_title, s.protocol AS stream_protocol,
+               COALESCE(s.user_id, v.user_id) AS source_streamer_id,
+               COALESCE(su.username, vu.username) AS source_streamer_username,
+               COALESCE(su.display_name, vu.display_name) AS source_streamer_display_name,
+               COALESCE(su.avatar_url, vu.avatar_url) AS source_streamer_avatar
+        ${_CLIPS_TAKEN_JOINS}
+        WHERE ${where}
+        ORDER BY ${order}
+        LIMIT ? OFFSET ?
+    `, params);
+}
+function countClipsTakenByUser(userId, { includePrivate = false, sourceStreamerId = null, hideSelf = true } = {}) {
+    const { where, params } = _clipsTakenWhere(userId, { includePrivate, sourceStreamerId, hideSelf });
+    return get(`SELECT COUNT(*) AS count ${_CLIPS_TAKEN_JOINS} WHERE ${where}`, params)?.count || 0;
+}
+// Facets for the filter badges — every source streamer this user has clipped, with counts.
+function getClipsTakenFacets(userId, { includePrivate = false } = {}) {
+    const publicFilter = includePrivate ? '' : 'AND c.is_public = 1';
+    return all(`
+        SELECT COALESCE(s.user_id, v.user_id) AS streamer_id,
+               COALESCE(su.username, vu.username) AS username,
+               COALESCE(su.display_name, vu.display_name) AS display_name,
+               COALESCE(su.avatar_url, vu.avatar_url) AS avatar_url,
+               COUNT(*) AS count
+        ${_CLIPS_TAKEN_JOINS}
+        WHERE c.user_id = ? ${publicFilter}
+        GROUP BY streamer_id
+        HAVING streamer_id IS NOT NULL
+        ORDER BY count DESC, display_name ASC
+    `, [userId]);
 }
 
 function countClipsByUser(userId, includePrivate = false) {
@@ -5676,7 +5765,7 @@ module.exports = {
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
     getRecentVods, countRecentVods,
     // Filtered VODs/clips
-    getVodsByUserFiltered, countVodsByUserFiltered,
+    getVodsByUserFiltered, countVodsByUserFiltered, getPopularVodForUser, getPopularClipForUser,
     getClipsOfUserStreamsPaginated, countClipsOfUserStreams,
     getClipsByUserPaginated,
     // Channels
@@ -5727,6 +5816,7 @@ module.exports = {
     updateVodHealth, repairVodDuration, getVodHealthById, getVodScanCandidates,
     // Clips
     createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, listClipStreamers, getClipsByStream, setClipPublic, setVodVisibility, setClipVisibility, getClipsOfUserStreams, findDuplicateClip,
+    getClipsTakenByUser, countClipsTakenByUser, getClipsTakenFacets,
     // Controls
     getStreamControls, createControl, bindStreamToControlConfig,
     // ONVIF Cameras

@@ -1838,6 +1838,93 @@ function renderChannelClipsSection(username, clips, meta = {}) {
     _selSyncAllBtns();
 }
 
+// ── "Clips Taken" tab: filterable clips this streamer created ──
+let _clipsTaken = { username: null, sort: 'newest', of: null, includeSelf: false, page: 1, facets: [], total: 0 };
+const CLIPS_TAKEN_PAGE_SIZE = 12;
+
+async function loadClipsTaken(username = currentChannelUsername, { reset = false } = {}) {
+    if (!username) return;
+    if (reset || _clipsTaken.username !== username) {
+        _clipsTaken = { username, sort: 'newest', of: null, includeSelf: false, page: 1, facets: [], total: 0 };
+    }
+    const st = _clipsTaken;
+    const grid = document.getElementById('ch-clips-grid');
+    const offset = (st.page - 1) * CLIPS_TAKEN_PAGE_SIZE;
+    const params = new URLSearchParams({ sort: st.sort, limit: String(CLIPS_TAKEN_PAGE_SIZE), offset: String(offset) });
+    if (st.of) params.set('of', String(st.of));
+    if (st.includeSelf) params.set('includeSelf', '1');
+    if (grid) grid.innerHTML = '<p class="muted">Loading…</p>';
+    let data;
+    try { data = await api(`/streams/channel/${encodeURIComponent(username)}/clips-taken?${params.toString()}`); }
+    catch { if (grid) grid.innerHTML = '<p class="muted">Failed to load clips</p>'; return; }
+    if (_clipsTaken.username !== username) return; // navigated away mid-fetch
+    st.facets = data.facets || [];
+    st.total = data.total || 0;
+    _renderClipsTakenBar();
+    _renderClipsTakenGrid(username, data);
+}
+
+function _renderClipsTakenBar() {
+    const bar = document.getElementById('clips-taken-filters');
+    if (!bar) return;
+    const st = _clipsTaken;
+    if (!st.facets.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+    bar.style.display = '';
+    const sortSel = `<select class="ct-sort" onchange="setClipsTakenSort(this.value)">
+            <option value="newest" ${st.sort === 'newest' ? 'selected' : ''}>Newest</option>
+            <option value="oldest" ${st.sort === 'oldest' ? 'selected' : ''}>Oldest</option>
+            <option value="views" ${st.sort === 'views' ? 'selected' : ''}>Most viewed</option>
+        </select>`;
+    const allActive = !st.of;
+    let badges = `<button class="ct-badge ${allActive ? 'active' : ''}" onclick="setClipsTakenFilter(null,false)">All others</button>`;
+    for (const f of st.facets) {
+        const active = st.of === f.streamer_id;
+        const label = f.is_self ? 'Yourself' : esc(f.display_name || f.username || 'Unknown');
+        badges += `<button class="ct-badge ${active ? 'active' : ''} ${f.is_self ? 'ct-self' : ''}" onclick="setClipsTakenFilter(${f.streamer_id}, ${f.is_self ? 'true' : 'false'})">${label} <span class="ct-count">${f.count}</span></button>`;
+    }
+    bar.innerHTML = `<div class="ct-sort-wrap"><i class="fa-solid fa-arrow-down-wide-short"></i> ${sortSel}</div><div class="ct-badges">${badges}</div>`;
+}
+
+function _renderClipsTakenGrid(username, data) {
+    const grid = document.getElementById('ch-clips-grid');
+    if (!grid) return;
+    const clips = data.clips || [];
+    const canManage = _channelCanManage(username);
+    _selSetContext(canManage, () => loadClipsTaken(username));
+    if (!clips.length) {
+        grid.innerHTML = '<p class="muted">No clips found for this filter.</p>';
+        renderVodsPagination('ch-clips-pagination', 1, 0, CLIPS_TAKEN_PAGE_SIZE, 'setClipsTakenPage', 'clips');
+        return;
+    }
+    grid.innerHTML = clips.map(cl => _selWrap('clip', cl.id, `
+            <a class="stream-card" href="/clip/${cl.id}" onclick="return handleLinkClick(event, '/clip/${cl.id}')">
+                <div class="stream-card-thumb">
+                    ${thumbImg(cl.thumbnail_url, 'fa-scissors', cl.title, `/api/thumbnails/generate/clip/${cl.id}`)}
+                    ${_visBadge(cl.visibility, cl.is_public, canManage)}
+                    <span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${cl.view_count || 0}</span>
+                    <span class="stream-card-duration">${formatDuration(cl.duration_seconds)}</span>
+                </div>
+                <div class="stream-card-info">
+                    <div class="stream-card-title">${esc(cl.title || 'Clip')}</div>
+                    <div class="stream-card-streamer muted">${cl.source_streamer_username ? 'of ' + esc(cl.source_streamer_display_name || cl.source_streamer_username) + ' · ' : ''}${formatDateTime(cl.created_at)}</div>
+                    ${_cardAiHTML(cl.ai_overview_short, cl.ai_overview)}
+                </div>
+            </a>
+        `, _activeChannelIsOwnerRank || !!(cl.owner_is_owner || cl.streamer_is_owner))).join('');
+    const page = Math.floor((data.offset || 0) / CLIPS_TAKEN_PAGE_SIZE) + 1;
+    renderVodsPagination('ch-clips-pagination', page, data.total || 0, CLIPS_TAKEN_PAGE_SIZE, 'setClipsTakenPage', 'clips');
+    _selSyncAllBtns();
+}
+
+function setClipsTakenSort(sort) { _clipsTaken.sort = sort; _clipsTaken.page = 1; loadClipsTaken(_clipsTaken.username); }
+function setClipsTakenFilter(of, isSelf) {
+    _clipsTaken.of = of || null;
+    _clipsTaken.includeSelf = !!isSelf;
+    _clipsTaken.page = 1;
+    loadClipsTaken(_clipsTaken.username);
+}
+function setClipsTakenPage(page) { _clipsTaken.page = page; loadClipsTaken(_clipsTaken.username); }
+
 function renderChannelClipsOfSection(username, clips, meta = {}) {
     const grid = document.getElementById('ch-clips-of-grid');
     const header = document.getElementById('ch-clips-of-header');
@@ -3284,6 +3371,10 @@ function switchChannelTab(tab, btn) {
         _chTabLoaded.pastes = true;
         try { loadChannelPastes(currentChannelUsername); _startChannelPastesAutoRefresh(currentChannelUsername); } catch {}
     }
+    if (tab === 'clips-taken' && currentChannelUsername && !_chTabLoaded.clipsTaken) {
+        _chTabLoaded.clipsTaken = true;
+        try { loadClipsTaken(currentChannelUsername, { reset: true }); } catch {}
+    }
     // Media queue changes constantly — reload every time the tab opens.
     if (tab === 'media' && currentChannelUsername) {
         try { loadChannelMedia(currentChannelUsername); } catch {}
@@ -3682,8 +3773,50 @@ function _renderOfflineScreen(ch) {
         host.appendChild(iframe);
     } else {
         const av = _avatarInner(ch && ch.avatar_url, ch && (ch.display_name || ch.username));
-        host.innerHTML = `<div class="ch-offline-default"><div class="ch-offline-default-avatar">${av}</div><div class="ch-offline-default-name">${esc((ch && (ch.display_name || ch.username)) || 'Streamer')}</div><div class="ch-offline-default-sub">is offline — chat's still open below</div></div>`;
+        const name = esc((ch && (ch.display_name || ch.username)) || 'Streamer');
+        host.innerHTML = `<div class="ch-offline-default">
+            <div class="ch-offline-default-avatar">${av}</div>
+            <div class="ch-offline-default-name">${name}</div>
+            <div class="ch-offline-default-sub">is offline — explore their top content, or say hi in chat</div>
+            <div class="ch-offline-explore" id="ch-offline-explore"></div>
+        </div>`;
+        _fillOfflineExplore(ch && ch.username);
     }
+}
+
+// Fill the offline screen with the streamer's most-popular recent VOD + clip cards.
+async function _fillOfflineExplore(username) {
+    if (!username) return;
+    let data;
+    try { data = await api(`/streams/channel/${encodeURIComponent(username)}/popular`); }
+    catch { return; }
+    const host = document.getElementById('ch-offline-explore');
+    if (!host) return; // navigated away / offline screen re-rendered
+    const cards = [];
+    if (data.vod) cards.push(_offlineExploreCard('vod', data.vod));
+    if (data.clip) cards.push(_offlineExploreCard('clip', data.clip));
+    host.innerHTML = cards.length
+        ? `<div class="ch-offline-explore-cards">${cards.join('')}</div>`
+        : '';
+}
+function _offlineExploreCard(kind, item) {
+    const isVod = kind === 'vod';
+    const href = isVod ? `/vod/${item.id}` : `/clip/${item.id}`;
+    const icon = isVod ? 'fa-video' : 'fa-scissors';
+    const label = isVod ? 'Top VOD' : 'Top Clip';
+    const thumbGen = isVod ? `/api/thumbnails/generate/vod/${item.id}` : `/api/thumbnails/generate/clip/${item.id}`;
+    return `<a class="stream-card ch-offline-card" href="${href}" onclick="return handleLinkClick(event, '${href}')">
+        <div class="stream-card-thumb">
+            ${thumbImg(item.thumbnail_url, icon, item.title, thumbGen)}
+            ${item.duration_seconds ? `<span class="stream-card-duration">${formatDuration(item.duration_seconds)}</span>` : ''}
+            <span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${item.view_count || 0}</span>
+            <span class="ch-offline-card-kind"><i class="fa-solid ${icon}"></i> ${label}</span>
+        </div>
+        <div class="stream-card-info">
+            <div class="stream-card-title">${esc(item.title || (isVod ? 'VOD' : 'Clip'))}</div>
+            <div class="muted" style="font-size:0.74rem;margin-top:2px">${timeAgo(item.created_at)}</div>
+        </div>
+    </a>`;
 }
 
 function startStreamStatusPoll(stream) {
@@ -3753,6 +3886,28 @@ function startStreamStatusPoll(stream) {
 }
 
 // Start offline poll — detects when a channel comes online
+// Fast-load: when a LIVE-NOW notification (SSE, via live-notify.js) names the channel
+// the viewer is currently on and it's showing offline, reload immediately instead of
+// waiting up to 15s for the offline poll. The poll stays as a fallback.
+let _lastFastLiveLoad = 0;
+window.addEventListener('hobo:stream-live', (e) => {
+    try {
+        const d = e && e.detail;
+        if (!d || !d.username || !currentChannelUsername) return;
+        if (String(d.username).toLowerCase() !== String(currentChannelUsername).toLowerCase()) return;
+        // Already showing the live area? nothing to do.
+        const liveArea = document.getElementById('ch-live-area');
+        if (liveArea && liveArea.style.display !== 'none') return;
+        // Debounce against duplicate SSE + the poll firing together.
+        const now = Date.now();
+        if (now - _lastFastLiveLoad < 4000) return;
+        _lastFastLiveLoad = now;
+        stopStreamStatusPoll();
+        loadChannelPage(currentChannelUsername, d.slug || d.managed_id || null);
+        if (typeof toast === 'function') toast(`${d.display_name || d.username} is now live!`, 'success');
+    } catch { /* non-critical accelerator */ }
+});
+
 function startOfflineStatusPoll(username) {
     stopStreamStatusPoll();
     _streamPollTimer = setInterval(async () => {

@@ -475,6 +475,48 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
     }
 });
 
+// ── Most-popular recent VOD + clip (offline-screen "explore" cards) ──
+router.get('/channel/:username/popular', (req, res) => {
+    try {
+        const user = db.getUserByUsername(req.params.username);
+        if (!user) return res.status(404).json({ error: 'Not found' });
+        res.json({
+            vod: db.getPopularVodForUser(user.id) || null,
+            clip: db.getPopularClipForUser(user.id) || null,
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get popular content' });
+    }
+});
+
+// ── "Clips Taken" tab: clips this streamer created, filterable by source streamer,
+// sortable, self-clips hidden by default. optionalAuth so owners can see their private.
+router.get('/channel/:username/clips-taken', optionalAuth, (req, res) => {
+    try {
+        const user = db.getUserByUsername(req.params.username);
+        if (!user) return res.status(404).json({ error: 'Not found' });
+        const isOwner = req.user && req.user.id === user.id;
+        const canSeeHidden = !!(isOwner || (req.user && (req.user.role === 'admin' || req.user.capabilities?.moderate_global)));
+        const ALLOWED_SORT = new Set(['newest', 'oldest', 'views']);
+        const orderBy = ALLOWED_SORT.has(req.query.sort) ? req.query.sort : 'newest';
+        const sourceStreamerId = parseInt(req.query.of, 10) || null;
+        // Default hides self-clips unless a specific streamer is chosen or includeSelf=1.
+        const includeSelf = req.query.includeSelf === '1' || req.query.includeSelf === 'true';
+        const hideSelf = !sourceStreamerId && !includeSelf;
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '12', 10), 1), 48);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const opts = { includePrivate: canSeeHidden, orderBy, sourceStreamerId, hideSelf, limit, offset };
+        const clips = db.getClipsTakenByUser(user.id, opts) || [];
+        const total = db.countClipsTakenByUser(user.id, { includePrivate: canSeeHidden, sourceStreamerId, hideSelf });
+        const facets = (db.getClipsTakenFacets(user.id, { includePrivate: canSeeHidden }) || [])
+            .map(f => ({ ...f, is_self: f.streamer_id === user.id }));
+        res.json({ clips, total, facets, limit, offset, hasMore: offset + clips.length < total, sort: orderBy, of: sourceStreamerId, includeSelf });
+    } catch (err) {
+        console.error('[Channels] clips-taken error:', err.message);
+        res.status(500).json({ error: 'Failed to get clips' });
+    }
+});
+
 // ── Lightweight live-only channel endpoint (fast player init) ──
 // Returns ONLY the data needed to start the player — no VODs, clips, or heavy queries
 router.get('/channel/:username/live', (req, res) => {

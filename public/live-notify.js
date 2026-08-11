@@ -102,6 +102,9 @@
             if (seen[key] && now - seen[key] < DEDUPE_MS) return;
             seen[key] = now;
             show(d);
+            // Let the app (if loaded) fast-load the stream when the viewer is already
+            // on this streamer's channel page — instead of waiting for the 15s poll.
+            try { window.dispatchEvent(new CustomEvent('hobo:stream-live', { detail: d })); } catch (_) {}
         });
         // EventSource auto-reconnects on error; nothing to do.
     }

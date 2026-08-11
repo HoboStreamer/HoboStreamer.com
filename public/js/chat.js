@@ -3737,11 +3737,22 @@ let chatLiveSlots = [];   // [{managed_stream_id, slug, title, live_session_id}]
 let chatChannel = null;   // broadcaster username (for building hop links)
 let chatCurrentManagedId = null; // watched slot's managed_stream_id (fallback for badge keying)
 
+// Fetch global/cross-feed history to merge into a stream/channel timeline — only when
+// the viewer has "Show Global Chat" (or "Show All Streams") enabled.
+async function _fetchGlobalHistoryForMerge() {
+    if (!(chatSettings.showGlobalInStream || chatSettings.showAllStreamsInStream)) return [];
+    try { const g = await api('/chat/global/history?limit=500'); return g.messages || []; }
+    catch { return []; }
+}
+
 async function loadChatHistory(streamId) {
     if (!streamId) return; // Use loadGlobalChatHistory() for global
     try {
-        const data = await api(`/chat/${streamId}/history?limit=500`);
-        _renderChatHistoryData(data);
+        const [data, globalMsgs] = await Promise.all([
+            api(`/chat/${streamId}/history?limit=500`),
+            _fetchGlobalHistoryForMerge(),
+        ]);
+        _renderChatHistoryData(data, globalMsgs);
     } catch { /* silent */ }
 }
 
@@ -3750,67 +3761,92 @@ async function loadChatHistory(streamId) {
 async function loadChannelChatHistory(userId) {
     if (!userId) return;
     try {
-        const data = await api(`/chat/channel/${userId}/history?limit=500`);
-        _renderChatHistoryData(data);
+        const [data, globalMsgs] = await Promise.all([
+            api(`/chat/channel/${userId}/history?limit=500`),
+            _fetchGlobalHistoryForMerge(),
+        ]);
+        _renderChatHistoryData(data, globalMsgs);
     } catch { /* silent */ }
 }
 
-function _renderChatHistoryData(data) {
-    {
-        const msgs = data.messages || [];
-        chatLiveSlots = data.liveSlots || [];
-        chatCurrentManagedId = data.activeManagedId != null ? data.activeManagedId : chatCurrentManagedId;
-        chatChannel = data.channel || null;
-        renderChatStreamHops();
-        // Clear any loading skeleton / stale messages before inserting history
-        const { messages } = getChatEl();
-        if (messages) messages.innerHTML = '';
-        msgs.forEach(m => {
-            // Rich events (donations + goal-reached) persist as message_type='donation'
-            // with a JSON `metadata` payload — re-render them richly so late-joiners see
-            // the same thing live viewers did, instead of a plain text line.
-            if (m.message_type === 'donation' && m.metadata) {
-                let meta = null;
-                try { meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata; } catch { meta = null; }
-                if (meta && meta.kind === 'goal-reached') {
-                    addDonationGoalMessage({ goal: { title: meta.title, target_amount: meta.target, image_url: meta.image, media_type: meta.media_type }, by: meta.by });
-                    return;
-                }
-                if (meta && meta.kind === 'donation') {
-                    addDonationMessage({ username: meta.username, amount: meta.amount, message: meta.message, avatar_url: meta.avatar_url, user_id: meta.user_id });
-                    return;
-                }
-            }
-            addChatMessage({
-                id: m.id,
-                username: m.username || m.display_name || `anon${m.user_id || ''}`,
-                core_username: m.core_username || null,
-                message: m.message,
-                message_type: m.message_type,
-                sound: m.sound,
-                role: m.role || 'user',
-                color: m.color,
-                avatar_url: m.avatar_url,
-                profile_color: m.profile_color,
-                user_id: m.user_id,
-                timestamp: m.timestamp,
-                reply_to: m.reply_to || null,
-                source_platform: m.source_platform || undefined,
-                // Cosmetics (name/particle/hat effects + tag) so history matches live
-                nameFX: m.nameFX || undefined,
-                particleFX: m.particleFX || undefined,
-                hatFX: m.hatFX || undefined,
-                tag: m.tag || undefined,
-                // Source-stream context (for the per-message origin badge)
-                stream_id: m.stream_id,
-                source_stream_title: m.source_stream_title,
-                source_managed_id: m.source_managed_id,
-                source_is_live: m.source_is_live,
-                source_slug: m.source_slug,
-                source_channel: m.source_channel,
-            });
-        });
+function _renderChatHistoryData(data, globalMsgs = []) {
+    const msgs = data.messages || [];
+    chatLiveSlots = data.liveSlots || [];
+    chatCurrentManagedId = data.activeManagedId != null ? data.activeManagedId : chatCurrentManagedId;
+    chatChannel = data.channel || null;
+    renderChatStreamHops();
+    // Clear any loading skeleton / stale messages before inserting history
+    const { messages: container } = getChatEl();
+    if (container) container.innerHTML = '';
+
+    // Merge in global / cross-feed history when the viewer has it enabled — mirrors the
+    // live global-feed filter so reloading/going-offline keeps global messages visible.
+    const mainIds = new Set(msgs.map(m => m.id).filter(v => v != null));
+    const curChan = (data.channel || '').toString().trim().toLowerCase();
+    const cross = [];
+    for (const g of (globalMsgs || [])) {
+        if (!g) continue;
+        if (g.id != null && mainIds.has(g.id)) continue;                                   // already in main history
+        const hasStreamChannel = !!g.stream_channel;
+        if (!chatSettings.showAllStreamsInStream && hasStreamChannel) continue;            // pure-global only when "all streams" off
+        if (hasStreamChannel && curChan && String(g.stream_channel).trim().toLowerCase() === curChan) continue; // our own channel (already in main)
+        cross.push(g);
     }
+
+    // Interleave by timestamp so the reloaded timeline reads chronologically.
+    const combined = msgs.map(m => ({ m, cf: false })).concat(cross.map(m => ({ m, cf: true })));
+    const tOf = (x) => { const d = Date.parse(String(x.m.timestamp || '').replace(' ', 'T')); return isNaN(d) ? 0 : d; };
+    combined.sort((a, b) => tOf(a) - tOf(b));
+
+    for (const it of combined) {
+        if (it.cf) { if (container) container.appendChild(_buildCrossfeedEl(it.m)); }
+        else _renderHistoryMainMsg(it.m);
+    }
+}
+
+// Render a single stream/channel history row (donation/goal events render richly).
+function _renderHistoryMainMsg(m) {
+    if (m.message_type === 'donation' && m.metadata) {
+        let meta = null;
+        try { meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata; } catch { meta = null; }
+        if (meta && meta.kind === 'goal-reached') {
+            addDonationGoalMessage({ goal: { title: meta.title, target_amount: meta.target, image_url: meta.image, media_type: meta.media_type }, by: meta.by });
+            return;
+        }
+        if (meta && meta.kind === 'donation') {
+            addDonationMessage({ username: meta.username, amount: meta.amount, message: meta.message, avatar_url: meta.avatar_url, user_id: meta.user_id });
+            return;
+        }
+    }
+    addChatMessage({
+        id: m.id,
+        username: m.username || m.display_name || `anon${m.user_id || ''}`,
+        core_username: m.core_username || null,
+        message: m.message,
+        message_type: m.message_type,
+        sound: m.sound,
+        role: m.role || 'user',
+        color: m.color,
+        avatar_url: m.avatar_url,
+        profile_color: m.profile_color,
+        user_id: m.user_id,
+        timestamp: m.timestamp,
+        reply_to: m.reply_to || null,
+        source_platform: m.source_platform || undefined,
+        // Cosmetics (name/particle/hat effects + tag) so history matches live
+        nameFX: m.nameFX || undefined,
+        particleFX: m.particleFX || undefined,
+        hatFX: m.hatFX || undefined,
+        tag: m.tag || undefined,
+        // Source-stream context (for the per-message origin/channel badge)
+        stream_id: m.stream_id,
+        source_stream_title: m.source_stream_title,
+        source_managed_id: m.source_managed_id,
+        source_is_live: m.source_is_live,
+        source_slug: m.source_slug,
+        source_channel: m.source_channel,
+        stream_channel: m.stream_channel || m.source_channel || undefined,
+    });
 }
 
 // Navigate to another of the streamer's live slots (from an origin badge or hop bar).
@@ -4316,6 +4352,9 @@ function canModerateCurrentStream() {
     if (currentUser.capabilities?.moderate_global) return true;
     // Stream owner can moderate their own stream
     if (currentStreamData && currentStreamData.user_id === currentUser.id) return true;
+    // Channel owner viewing their own channel while OFFLINE (no live stream data) —
+    // so the streamer can still manage emotes/sounds/settings from the [+] modal.
+    try { if (typeof _activeChannelUserId !== 'undefined' && _activeChannelUserId && _activeChannelUserId === currentUser.id) return true; } catch { /* */ }
     // Channel mods — if the server told us we can moderate, the chatStreamId will match
     // For now, channel mods use /ban command in chat. Context menu covers global mods + owners.
     return false;
@@ -5033,7 +5072,9 @@ function _onNewChatMessageWhileScrolledUp() {
  * and has enabled showGlobalInStream or showAllStreamsInStream.
  */
 function _syncGlobalFeed() {
-    const wantFeed = chatStreamId && (chatSettings.showGlobalInStream || chatSettings.showAllStreamsInStream);
+    // Run on any channel context — a live stream OR an offline channel page (channelUserId)
+    // — so global messages keep arriving live even while the streamer is offline.
+    const wantFeed = (chatStreamId || chatChannelUserId) && (chatSettings.showGlobalInStream || chatSettings.showAllStreamsInStream);
     if (wantFeed && !_globalFeedWs) {
         _openGlobalFeed();
     } else if (!wantFeed && _globalFeedWs) {
@@ -5117,9 +5158,9 @@ function _handleGlobalFeedMessage(msg) {
         return; // only global messages when showAllStreams is off
     }
 
-    // Don't duplicate messages from our own stream
-    // stream_channel matches a username; skip it when we are already viewing that stream chat
-    if (hasStreamChannel && chatStreamId) {
+    // Don't duplicate messages from the channel we're currently viewing (its own
+    // messages already render in the main timeline). Works live AND offline.
+    if (hasStreamChannel) {
         const currentStreamChannel = (currentStreamData && currentStreamData.username)
             || (typeof currentChannelUsername !== 'undefined' && currentChannelUsername)
             || null;
@@ -5132,44 +5173,11 @@ function _handleGlobalFeedMessage(msg) {
         }
     }
 
-    // Render into the stream chat container with a source badge
-    const container = document.getElementById('chat-messages')
-        || document.getElementById('bc-chat-messages');
+    // Render into the ACTIVE chat container (live sidebar, offline chat, or broadcast).
+    const { messages: container } = getChatEl();
     if (!container) return;
 
-    const el = document.createElement('div');
-    el.className = 'chat-msg chat-msg-crossfeed';
-
-    // Source badge
-    let sourceBadge = '';
-    if (hasStreamChannel) {
-        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-stream" title="From ${esc(msg.stream_channel)}'s stream" style="cursor:pointer" onclick="navigate('/@' + this.dataset.channel)" data-channel="${esc(msg.stream_channel)}"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</span> `;
-    } else {
-        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-global" title="Open Global Chat" style="cursor:pointer" onclick="navigate('/chat')"><i class="fa-solid fa-globe"></i> Global</span> `;
-    }
-
-    const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
-    let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
-    if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
-
-    const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
-    const _relayPlatform = (msg.source_platform || parseRelayUsername(msg.username || msg.displayName || '').platform || '').toLowerCase();
-    const _relayBadge = relayBadgeHTML(_relayPlatform);
-    const _visibleName = _relayBadge ? esc((msg.username || msg.displayName || '').replace(/^\[[^\]]+\]\s*/, '')) : displayName;
-    const rawText = msg.message || msg.text || '';
-    const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
-
-    // Timestamp
-    let tsHtml = '';
-    if (chatSettings.showTimestamps) {
-        const tsSource = msg.timestamp ? new Date(msg.timestamp) : new Date();
-        const tsOpts = chatSettings.timestampFormat === '24h'
-            ? { hour: '2-digit', minute: '2-digit', hour12: false }
-            : { hour: '2-digit', minute: '2-digit' };
-        tsHtml = `<span class="chat-time-inline">${tsSource.toLocaleTimeString([], tsOpts)}</span> `;
-    }
-
-    el.innerHTML = `${tsHtml}${sourceBadge}${badge}${_relayBadge}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}">${_visibleName}</span>: <span class="chat-text">${text}</span>`;
+    const el = _buildCrossfeedEl(msg);
 
     // Auto-scroll management
     if (!_chatUserScrolledUp) {
@@ -5181,6 +5189,39 @@ function _handleGlobalFeedMessage(msg) {
     }
     // Trim old messages
     while (container.children.length > 500) container.removeChild(container.firstChild);
+}
+
+// Build a cross-feed (.chat-msg-crossfeed) element — shared by the live global feed
+// AND history rehydration so global messages look identical whether live or reloaded.
+function _buildCrossfeedEl(msg) {
+    const hasStreamChannel = !!msg.stream_channel;
+    const el = document.createElement('div');
+    el.className = 'chat-msg chat-msg-crossfeed';
+    let sourceBadge = '';
+    if (hasStreamChannel) {
+        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-stream" title="From ${esc(msg.stream_channel)}'s stream" style="cursor:pointer" onclick="navigate('/@' + this.dataset.channel)" data-channel="${esc(msg.stream_channel)}"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</span> `;
+    } else {
+        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-global" title="Open Global Chat" style="cursor:pointer" onclick="navigate('/chat')"><i class="fa-solid fa-globe"></i> Global</span> `;
+    }
+    const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
+    let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);
+    if (chatSettings.readableColors) nameColor = ensureReadableColor(nameColor);
+    const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
+    const _relayPlatform = (msg.source_platform || parseRelayUsername(msg.username || msg.displayName || '').platform || '').toLowerCase();
+    const _relayBadge = relayBadgeHTML(_relayPlatform);
+    const _visibleName = _relayBadge ? esc((msg.username || msg.displayName || '').replace(/^\[[^\]]+\]\s*/, '')) : displayName;
+    const rawText = msg.message || msg.text || '';
+    const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
+    let tsHtml = '';
+    if (chatSettings.showTimestamps) {
+        const tsSource = msg.timestamp ? new Date(msg.timestamp) : new Date();
+        const tsOpts = chatSettings.timestampFormat === '24h'
+            ? { hour: '2-digit', minute: '2-digit', hour12: false }
+            : { hour: '2-digit', minute: '2-digit' };
+        tsHtml = `<span class="chat-time-inline">${tsSource.toLocaleTimeString([], tsOpts)}</span> `;
+    }
+    el.innerHTML = `${tsHtml}${sourceBadge}${badge}${_relayBadge}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}">${_visibleName}</span>: <span class="chat-text">${text}</span>`;
+    return el;
 }
 
 /**
