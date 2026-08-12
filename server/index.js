@@ -909,6 +909,9 @@ async function start() {
             setInterval(() => { try { _recorder.reconcileLiveRecordings(); } catch (e) { console.warn('[VOD] reconcile:', e.message); } }, 45000);
             console.log('[VOD] Recording reconciler started (heals live recordings for clipping)');
         } catch (e) { console.warn('[VOD] recording reconciler not started:', e.message); }
+        // Background VOD health: scan for corruption, repair from master, quarantine +
+        // clean up the unrecoverable so broken VODs don't accumulate.
+        try { require('./vod/health-job').start(); } catch (e) { console.warn('[VOD] health job not started:', e.message); }
 
         // Broadcast recent git changes to all chat clients after startup.
         // Uses a retry loop — clients reconnect with backoff after a restart,

@@ -104,6 +104,57 @@ function remuxForSeeking(filePath) {
     });
 }
 
+// Re-encode a served .webm from the lossless .master.mkv archive (kept alongside each
+// recording as a corruption fallback). Returns { ok, duration }. Used by the health job to
+// REPAIR a broken VOD before resorting to quarantine.
+function _rebuildWebmFromMaster(masterPath, webmPath) {
+    return new Promise((resolve) => {
+        const tmp = webmPath + '.recover.webm';
+        const args = ['-y', '-i', masterPath,
+            '-c:v', 'libvpx', '-b:v', '1500k', '-crf', '20', '-deadline', 'good', '-cpu-used', '2',
+            '-force_key_frames', 'expr:gte(t,n_forced*2)', '-g', '240',
+            '-c:a', 'libvorbis', '-b:a', '128k', '-f', 'webm', tmp];
+        let ff;
+        try { ff = spawn('ffmpeg', args, { stdio: 'ignore' }); } catch { return resolve(false); }
+        const to = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } }, 45 * 60 * 1000);
+        ff.on('close', (code) => {
+            clearTimeout(to);
+            try {
+                if (code === 0 && fs.existsSync(tmp) && fs.statSync(tmp).size > 1024) {
+                    fs.renameSync(tmp, webmPath);
+                    return resolve(true);
+                }
+            } catch { /* fall through */ }
+            try { fs.existsSync(tmp) && fs.unlinkSync(tmp); } catch { /* */ }
+            resolve(false);
+        });
+        ff.on('error', () => { clearTimeout(to); try { fs.existsSync(tmp) && fs.unlinkSync(tmp); } catch { /* */ } resolve(false); });
+    });
+}
+
+// Attempt to recover a broken VOD from its master archive. Rebuilds the webm, remuxes it
+// for seeking, re-probes, and (if longer) repairs the stored duration. Returns
+// { recovered: bool, duration }.
+async function recoverFromMaster(vod) {
+    const masterPath = vod.master_file_path
+        || (vod.file_path ? vod.file_path.replace(/\.webm$/, '.master.mkv') : null);
+    if (!masterPath || !fs.existsSync(masterPath) || !vod.file_path) return { recovered: false, duration: 0 };
+    let masterDur = 0;
+    try { const mi = await probeMediaInfo(masterPath); masterDur = mi.ok ? mi.duration : 0; } catch { /* */ }
+    if (!(masterDur > 1)) return { recovered: false, duration: 0 };
+    const ok = await _rebuildWebmFromMaster(masterPath, vod.file_path);
+    if (!ok) return { recovered: false, duration: 0 };
+    try { await remuxForSeeking(vod.file_path); } catch { /* */ }
+    let dur = masterDur;
+    try { const mi2 = await probeMediaInfo(vod.file_path); if (mi2.ok && mi2.duration > 0) dur = mi2.duration; } catch { /* */ }
+    try {
+        const stat = fs.statSync(vod.file_path);
+        db.repairVodDuration(vod.id, Math.round(dur), stat.size);
+        db.updateVodHealth(vod.id, { status: 'ok', issues: ['recovered_from_master'], probeDuration: dur });
+    } catch { /* */ }
+    return { recovered: true, duration: dur };
+}
+
 function extractThumbnails(filePath, outputDir, duration) {
     const offsets = [0.05, 0.5, 0.95].map(r => Math.max(0.1, Math.min(duration * r, duration - 0.1)));
     const files = [];
@@ -268,6 +319,7 @@ module.exports = {
     decodeVodFile,
     remuxForSeeking,
     extractThumbnails,
+    recoverFromMaster,
     scanVod,
     selectVods,
 };

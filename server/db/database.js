@@ -3434,6 +3434,31 @@ function getVodScanCandidates({ userId, since, limit }) {
     return all(sql, params);
 }
 
+// VODs the periodic health job should scan: finished (not recording), and either never
+// scanned or last scanned longer ago than `staleDays`. Recently-quarantined rows are
+// skipped (they were just assessed). Never-scanned + oldest-scanned first.
+function getVodsNeedingHealthScan({ staleDays = 30, limit = 3 } = {}) {
+    return all(`SELECT * FROM vods
+        WHERE COALESCE(is_recording, 0) = 0
+          AND (health_status IS NULL OR health_status NOT IN ('corrupt','zero_byte','missing_file'))
+          AND (last_health_scan_at IS NULL OR last_health_scan_at <= datetime('now', ?))
+        ORDER BY (last_health_scan_at IS NULL) DESC, last_health_scan_at ASC
+        LIMIT ?`, [`-${Math.max(1, staleDays)} days`, limit]);
+}
+
+// Genuinely-broken VODs quarantined long enough that they should be cleaned up (files
+// freed). Only unrecoverably-dead states — never 'needs_review'/'short_duration', which
+// may still be watchable.
+function getQuarantinedVodsForCleanup({ graceDays = 14, limit = 5 } = {}) {
+    return all(`SELECT * FROM vods
+        WHERE quarantined_at IS NOT NULL
+          AND quarantined_at <= datetime('now', ?)
+          AND health_status IN ('corrupt','zero_byte','missing_file')
+          AND COALESCE(is_recording, 0) = 0
+        ORDER BY quarantined_at ASC
+        LIMIT ?`, [`-${Math.max(1, graceDays)} days`, limit]);
+}
+
 function getVodById(id) {
     return get(`
         SELECT v.*, COALESCE(v.duration_seconds, v.probe_duration_seconds, 0) AS duration_seconds,
@@ -6001,6 +6026,7 @@ module.exports = {
     // VODs
     createVod, getVodById, getVodsByUser, countVodsByUser, getPublicVods, countPublicVods, listVodStreamers, getActiveVodByStream, getOrphanedRecordingVods,
     updateVodHealth, repairVodDuration, getVodHealthById, getVodScanCandidates,
+    getVodsNeedingHealthScan, getQuarantinedVodsForCleanup,
     // Clips
     createClip, getClipById, getClipsByUser, countClipsByUser, getPublicClips, countPublicClips, listClipStreamers, getClipsByStream, setClipPublic, setVodVisibility, setClipVisibility, getClipsOfUserStreams, findDuplicateClip,
     getClipsTakenByUser, countClipsTakenByUser, getClipsTakenFacets,
