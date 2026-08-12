@@ -16,7 +16,9 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const db = require('../db/database');
+const config = require('../config');
 const scanner = require('./health-scanner');
 
 const TICK_MS = 5 * 60 * 1000;      // scan pass every 5 minutes
@@ -159,13 +161,59 @@ async function _cleanupPass(deep) {
     }
 }
 
+// Filesystem sweep for orphaned .master.mkv files: reclaim masters whose VOD is gone or
+// finished-and-healthy. PROTECTS masters that are still needed — anything recording, and
+// any broken/quarantined VOD whose master is a recovery source — plus a 30-min mtime grace
+// so a just-finished finalize is never raced. This catches the cases the per-VOD scan can't
+// (masters left behind after the VOD row was deleted).
+function _masterSweep() {
+    let dir, files;
+    try {
+        dir = path.resolve(config.vod.path);
+        files = fs.readdirSync(dir).filter(f => f.endsWith('.master.mkv'));
+    } catch { return; }
+    if (!files.length) return;
+
+    const protectedNames = new Set();
+    try {
+        const rows = db.all(`SELECT file_path, master_file_path FROM vods
+            WHERE COALESCE(is_recording,0)=1
+               OR quarantined_at IS NOT NULL
+               OR health_status IN ('corrupt','zero_byte','needs_review')`);
+        for (const v of rows) {
+            if (v.master_file_path) protectedNames.add(path.basename(v.master_file_path));
+            if (v.file_path) protectedNames.add(path.basename(v.file_path.replace(/\.webm$/, '.master.mkv')));
+        }
+    } catch { /* on error, protect nothing extra — the mtime guard still applies */ }
+    // Belt-and-suspenders: never touch a master an active recording holds right now.
+    try {
+        const rec = require('./recorder');
+        for (const [, r] of (rec.activeRecordings || new Map())) if (r && r.masterFilePath) protectedNames.add(path.basename(r.masterFilePath));
+    } catch { /* */ }
+
+    const now = Date.now();
+    let n = 0, freed = 0;
+    for (const f of files) {
+        if (protectedNames.has(f)) continue;
+        const fp = path.join(dir, f);
+        try {
+            const st = fs.statSync(fp);
+            if (now - st.mtimeMs < 30 * 60 * 1000) continue;   // too fresh — finalize may still need it
+            fs.unlinkSync(fp);
+            freed += st.size; n++;
+            if (n >= 25) break;                                 // cap per sweep
+        } catch { /* */ }
+    }
+    if (n) console.log(`[VOD-Health] Master sweep: removed ${n} orphaned master(s), freed ${(freed / 1024 / 1024).toFixed(0)}MB`);
+}
+
 async function _tick() {
     if (_busy) return;
     _busy = true;
     try {
         const deep = !_anyLive();     // full decode + recovery only while idle
         await _scanPass(deep);
-        if (deep) await _cleanupPass(deep);
+        if (deep) { await _cleanupPass(deep); _masterSweep(); }
     } catch (e) {
         console.warn('[VOD-Health] tick error:', e.message);
     } finally {
