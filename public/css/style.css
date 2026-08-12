@@ -3401,19 +3401,25 @@ main#app { position: relative; z-index: 1; }
 }
 .volume-slider::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
-    width: 12px; height: 12px; border-radius: 50%;
+    width: 13px; height: 13px; border-radius: 50%;
     background: var(--accent); cursor: pointer;
     border: 2px solid #fff;
-    box-shadow: 0 0 4px rgba(0,0,0,0.4);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    /* Center the thumb on the 4px track: (track - thumb) / 2 = (4 - 13) / 2. */
+    margin-top: -4.5px;
+    transition: transform 0.12s ease;
 }
+.volume-slider::-webkit-slider-thumb:hover,
+.volume-slider:active::-webkit-slider-thumb { transform: scale(1.15); }
 .volume-slider::-moz-range-thumb {
-    width: 12px; height: 12px; border-radius: 50%;
+    width: 13px; height: 13px; border-radius: 50%;
     background: var(--accent); cursor: pointer;
-    border: 2px solid #fff;
+    border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
 }
 .volume-slider::-webkit-slider-runnable-track {
     height: 4px; border-radius: 2px;
 }
+.volume-slider::-moz-range-track { height: 4px; border-radius: 2px; }
 
 /* Badges */
 .viewer-badge, .uptime-badge {
@@ -3427,7 +3433,7 @@ main#app { position: relative; z-index: 1; }
 
 /* ── DVR Progress Bar (Live Stream Seeking) ─────────────────── */
 .dvr-progress-wrap {
-    width: 100%; padding: 4px 12px 0;
+    width: 100%; padding: 8px 12px;
     cursor: pointer;
 }
 .dvr-progress-bar {
@@ -3446,15 +3452,16 @@ main#app { position: relative; z-index: 1; }
 }
 .dvr-progress-fill::after {
     content: '';
-    position: absolute; right: -6px; top: 50%;
-    transform: translateY(-50%) scale(0);
-    width: 12px; height: 12px; border-radius: 50%;
-    background: #e53e3e; border: 2px solid #fff;
-    box-shadow: 0 0 4px rgba(0,0,0,0.4);
-    transition: transform 0.15s;
-}
-.dvr-progress-wrap:hover .dvr-progress-fill::after {
+    position: absolute; right: -7px; top: 50%;
     transform: translateY(-50%) scale(1);
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #e53e3e; border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    transition: transform 0.12s ease;
+}
+.dvr-progress-wrap:hover .dvr-progress-fill::after,
+.dvr-progress-wrap:active .dvr-progress-fill::after {
+    transform: translateY(-50%) scale(1.28);
 }
 .dvr-progress-buffer {
     position: absolute; top: 0; left: 0;
@@ -3488,7 +3495,7 @@ main#app { position: relative; z-index: 1; }
 
 /* Progress bar (for VOD/clip players) */
 .vc-progress-wrap {
-    width: 100%; padding: 4px 12px 0;
+    width: 100%; padding: 8px 12px;
     cursor: pointer;
 }
 .vc-progress-bar {
@@ -3507,15 +3514,16 @@ main#app { position: relative; z-index: 1; }
 }
 .vc-progress-fill::after {
     content: '';
-    position: absolute; right: -6px; top: 50%;
-    transform: translateY(-50%) scale(0);
-    width: 12px; height: 12px; border-radius: 50%;
-    background: var(--accent); border: 2px solid #fff;
-    box-shadow: 0 0 4px rgba(0,0,0,0.4);
-    transition: transform 0.15s;
-}
-.vc-progress-wrap:hover .vc-progress-fill::after {
+    position: absolute; right: -7px; top: 50%;
     transform: translateY(-50%) scale(1);
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    transition: transform 0.12s ease;
+}
+.vc-progress-wrap:hover .vc-progress-fill::after,
+.vc-progress-wrap:active .vc-progress-fill::after {
+    transform: translateY(-50%) scale(1.28);
 }
 .vc-progress-buffer {
     position: absolute; top: 0; left: 0;
@@ -11905,14 +11913,21 @@ body.theme-light .user-dropdown {
     /* Volume slider can't be hover-revealed on touch → keep it visible + sized. */
     .vc-volume-group .volume-slider { width: 84px !important; opacity: 1 !important; }
     .volume-slider { height: 6px; }
-    .volume-slider::-webkit-slider-thumb { width: 20px; height: 20px; }
+    .volume-slider::-webkit-slider-runnable-track { height: 6px; }
+    .volume-slider::-moz-range-track { height: 6px; }
+    /* Bigger touch thumb, re-centered on the 6px track: (6 - 20) / 2 = -7px. */
+    .volume-slider::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -7px; }
     .volume-slider::-moz-range-thumb { width: 20px; height: 20px; }
 
-    /* Bigger, always-visible scrub thumbs + taller hit area on all seek bars. */
+    /* Bigger, always-visible scrub thumbs + taller hit area on all seek bars.
+       IMPORTANT: keep translateY(-50%) so the thumb stays vertically centered on the
+       bar — dropping it (a past bug) let the thumb fall below the track. */
     .vc-progress-bar, .dvr-progress-bar { height: 7px; }
-    .vc-progress-wrap, .dvr-progress-wrap { padding-top: 10px; padding-bottom: 10px; }
-    .vc-progress-bar::after, .dvr-progress-bar::after,
-    .vc-progress-fill::after, .dvr-progress-fill::after { transform: scale(1) !important; width: 18px !important; height: 18px !important; }
+    .vc-progress-wrap, .dvr-progress-wrap { padding-top: 11px; padding-bottom: 11px; }
+    .vc-progress-fill::after, .dvr-progress-fill::after {
+        transform: translateY(-50%) scale(1) !important;
+        width: 18px !important; height: 18px !important; right: -9px !important;
+    }
 
     /* Larger tap targets for the control buttons. */
     .vc-btn { min-width: 40px; min-height: 40px; font-size: 1.1rem; }
