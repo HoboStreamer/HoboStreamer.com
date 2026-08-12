@@ -501,10 +501,16 @@ class RestreamManager extends EventEmitter {
             '-loglevel', 'warning',
             '-protocol_whitelist', 'file,rtp,udp',
             '-thread_queue_size', '2048',      // Prevent input queue blocking (video+audio demux interleave)
-            '-analyzeduration', '5000000',     // 5s — give more time for jittery RTP to stabilize
-            '-probesize', '5000000',           // 5MB — handle missed packets and late arrivals
-            '-max_delay', '500000',            // 500ms max delay for packet reordering
-            '-reorder_queue_size', '200',      // Allow reordering up to 200 packets before stalling
+            // These input flags MUST stay in line with the (proven-working) VOD recorder's
+            // RTP input. A previous, tighter config here — `-max_delay 500000` +
+            // `-reorder_queue_size 200` — made ffmpeg drop the first VP8 keyframe as an
+            // "old packet received too late". Without that keyframe VP8 size is never
+            // resolved ("unspecified size"), every interframe is discarded, the input EOFs,
+            // and the encoder can't open — so the restream never goes live (all platforms,
+            // most visibly YouTube). Give VP8 plenty of time + reorder room to catch a keyframe.
+            '-analyzeduration', '10000000',    // 10s — match the recorder; VP8 needs a keyframe to size
+            '-probesize', '10000000',          // 10MB — tolerate missed packets / late arrivals
+            '-reorder_queue_size', '2048',     // large reorder buffer so a slightly-late keyframe isn't dropped
             '-use_wallclock_as_timestamps', '1',
             '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
             '-err_detect', 'ignore_err',       // Don't bail on corrupt RTP packets (missed packets → partial frames)
