@@ -49,6 +49,18 @@ async function _scanOne(vod, { deep }) {
     if (!broken) {
         // Healthy (or duration just repaired) — record the clean scan so we don't re-check soon.
         try { db.updateVodHealth(vod.id, { status: 'ok', issues: scan.issues || [] }); } catch { /* */ }
+        // The lossless .master.mkv is only a finalize-time recovery fallback. This VOD probed
+        // healthy and is long finished, so a lingering master is pure wasted disk — reclaim it.
+        // (Finalize normally deletes it; this cleans up ones orphaned by an old crash/bug.)
+        try {
+            const master = vod.master_file_path || (vod.file_path ? vod.file_path.replace(/\.webm$/, '.master.mkv') : null);
+            if (master && fs.existsSync(master)) {
+                const freedMb = (fs.statSync(master).size / 1024 / 1024).toFixed(0);
+                fs.unlinkSync(master);
+                if (vod.master_file_path) { try { db.run('UPDATE vods SET master_file_path = NULL WHERE id = ?', [vod.id]); } catch { /* */ } }
+                console.log(`[VOD-Health] Reclaimed orphaned master for vod ${vod.id} (${freedMb}MB)`);
+            }
+        } catch { /* */ }
         return { id: vod.id, status: 'ok' };
     }
 

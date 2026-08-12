@@ -32,6 +32,19 @@ const config = require('../config');
 // short (that truncates the VOD). Cleared the instant ffmpeg exits cleanly.
 const STOP_GRACE_MS = parseInt(process.env.VOD_STOP_GRACE_MS, 10) || 60000;
 
+// ── VOD rotation + disk protection ───────────────────────────────────────────
+// A single continuous recording is rotated into a fresh VOD "part" once it gets too
+// long or too big, so neither the served .webm nor its lossless .master.mkv can grow
+// unbounded and fill the disk on a marathon stream. Recording is decoupled from live
+// delivery (a separate SFU consumer / RTMP puller), so rotating never interrupts viewers.
+const VOD_MAX_DURATION_MS = (parseFloat(process.env.VOD_MAX_HOURS) || 4) * 3600 * 1000;
+const VOD_MAX_BYTES = (parseFloat(process.env.VOD_MAX_GB) || 10) * 1024 * 1024 * 1024; // webm+master combined
+const VOD_ROTATE_MIN_MS = 5 * 60 * 1000;          // never rotate a recording younger than this (anti-churn)
+// Disk guardian thresholds (free bytes on the VOD volume).
+const DISK_WARN_BYTES = (parseFloat(process.env.VOD_DISK_WARN_GB) || 15) * 1024 * 1024 * 1024;
+const DISK_CRIT_BYTES = (parseFloat(process.env.VOD_DISK_CRIT_GB) || 5) * 1024 * 1024 * 1024;
+const FORCE_ROTATE_COOLDOWN_MS = 10 * 60 * 1000;  // don't force-rotate the same stream more than this often
+
 // RTP port range for recording PlainRTP consumers.
 // Distinct from mediasoup (10000-10999) and restream-manager (20000-30000).
 let _nextRecordRtpPort = 25100;
@@ -182,6 +195,9 @@ class StreamRecorder {
     constructor() {
         /** @type {Map<number, { process: ChildProcess|null, filePath: string, vodId: number, startTime: number, ws?: WebSocket, remuxTimer?: NodeJS.Timeout, webrtcState?: object, _cancelWebrtc?: boolean }>} */
         this.activeRecordings = new Map();
+        this._rotating = new Set();          // streamIds mid-rotation (reconciler must skip)
+        this._forceRotatedAt = new Map();    // streamId → last force-rotate time (cooldown)
+        this._diskState = 'ok';              // 'ok' | 'warning' | 'critical' — set by checkDisk()
 
         // Ensure VOD directory exists
         const vodDir = path.resolve(config.vod.path);
@@ -220,9 +236,17 @@ class StreamRecorder {
      * @param {string} protocol - 'rtmp', 'jsmpeg', 'webrtc', 'browser', 'screen', 'whip'
      * @param {{ streamKey?: string, videoPort?: number }} endpoint
      */
-    startRecording(streamId, protocol, endpoint) {
+    startRecording(streamId, protocol, endpoint, opts = {}) {
         if (this.activeRecordings.has(streamId)) {
             console.log(`[VOD] Already recording stream ${streamId}`);
+            return;
+        }
+
+        // Disk guardian: when the VOD volume is critically low, keep the stream LIVE but
+        // skip recording rather than risk filling the disk (which would corrupt every
+        // active recording and can take down the whole server).
+        if (this._diskState === 'critical') {
+            console.warn(`[VOD] Disk critically low — NOT starting recording for stream ${streamId} (stream stays live, no VOD)`);
             return;
         }
 
@@ -236,11 +260,20 @@ class StreamRecorder {
         const filename = `vod-${streamId}-${timestamp}.webm`;
         const filePath = path.resolve(config.vod.path, filename);
 
+        // Rotation metadata: a marathon stream is split into "Part N" VODs so no single
+        // file (or its master) grows without bound.
+        const part = opts.part || 1;
+        const baseTitle = opts.baseTitle || stream.title || 'Stream Recording';
+        const title = part > 1 ? `${baseTitle} (Part ${part})` : baseTitle;
+        // Skip the lossless master when it was explicitly requested OR the disk is under
+        // pressure — the master is a recovery aid and the first thing to sacrifice.
+        const skipMaster = !!opts.skipMaster || this._diskState !== 'ok';
+
         // Create VOD record in DB first so it's tracked even if FFmpeg dies early
         const result = db.createVod({
             stream_id: streamId,
             user_id: stream.user_id,
-            title: stream.title || 'Stream Recording',
+            title,
             file_path: filePath,
             file_size: 0,
             duration_seconds: 0,
@@ -274,8 +307,9 @@ class StreamRecorder {
                 webrtcState: null,
                 _cancelWebrtc: false,
                 _expectedShutdown: false,
+                protocol, endpoint, part, baseTitle, skipMaster,
             });
-            this._startWebrtcRecording(streamId, vodId, filePath, timestamp, protocol).catch(err => {
+            this._startWebrtcRecording(streamId, vodId, filePath, timestamp, protocol, { skipMaster }).catch(err => {
                 console.error(`[VOD] WebRTC recording startup failed for stream ${streamId}:`, err.message);
                 this.activeRecordings.delete(streamId);
                 db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
@@ -311,8 +345,9 @@ class StreamRecorder {
         // Lossless master archive written ALONGSIDE the served webm. If the webm ends up
         // truncated (e.g. force-kill during trailer flush, or a container issue), finalize
         // recovers the full recording from this master. Cheap: it's a stream copy, no
-        // re-encode. Deleted once the webm is confirmed complete.
-        const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
+        // re-encode. Deleted once the webm is confirmed complete. Skipped when the disk is
+        // under pressure (webm-only) to halve the recording's footprint.
+        const masterPath = skipMaster ? null : filePath.replace(/\.webm$/, '.master.mkv');
 
         const ffmpegArgs = [
             '-y',
@@ -331,12 +366,11 @@ class StreamRecorder {
             '-b:a', '128k',
             '-f', 'webm',
             filePath,
-            // ── Output 2: lossless copy master (recovery fallback) ──
-            '-map', '0:v:0', '-map', '0:a?',
-            '-c', 'copy',
-            '-f', 'matroska',
-            masterPath,
         ];
+        if (masterPath) {
+            // ── Output 2: lossless copy master (recovery fallback) ──
+            ffmpegArgs.push('-map', '0:v:0', '-map', '0:a?', '-c', 'copy', '-f', 'matroska', masterPath);
+        }
 
         try {
             const proc = spawn('ffmpeg', ffmpegArgs, {
@@ -400,9 +434,11 @@ class StreamRecorder {
                 _expectedShutdown: false,
                 ffmpegCorruptionWarnings: 0,
                 _ffmpegCorrupted: false,
+                // Rotation metadata — lets the watchdog restart this recording as a new part.
+                protocol, endpoint, part, baseTitle, skipMaster,
             };
             // Track the master on the vod row + finalize registry so it's found on restart.
-            try { db.run('UPDATE vods SET master_file_path = ? WHERE id = ?', [masterPath, vodId]); } catch { /* */ }
+            if (masterPath) try { db.run('UPDATE vods SET master_file_path = ? WHERE id = ?', [masterPath, vodId]); } catch { /* */ }
             try {
                 const vodRoutes = require('./routes');
                 const areg = vodRoutes.activeRecordings.get(streamId);
@@ -474,6 +510,104 @@ class StreamRecorder {
                 vodRoutes.remuxForLiveSeeking(rec.filePath).catch(() => {});
             }
         } catch {}
+
+        // ── Rotation check: split into a new "Part N" VOD before this one gets too big ──
+        // Bounds both the served .webm and its lossless .master.mkv so a marathon stream
+        // can't fill the disk. Only after a minimum age (anti-churn).
+        try {
+            if ((Date.now() - rec.startTime) < VOD_ROTATE_MIN_MS) return;
+            let combined = 0;
+            try { combined += fs.statSync(rec.filePath).size; } catch { /* */ }
+            if (rec.masterFilePath) { try { combined += fs.statSync(rec.masterFilePath).size; } catch { /* */ } }
+            const tooLong = (Date.now() - rec.startTime) >= VOD_MAX_DURATION_MS;
+            const tooBig = combined >= VOD_MAX_BYTES;
+            if (tooLong || tooBig) {
+                console.log(`[VOD] Rotating stream ${streamId} recording — ${tooLong ? 'max duration' : 'max size'} reached (part ${rec.part || 1} → ${(rec.part || 1) + 1})`);
+                this.rotateRecording(streamId, { reason: tooLong ? 'duration' : 'size' });
+            }
+        } catch { /* */ }
+    }
+
+    /**
+     * Rotate a stream's recording into a fresh VOD "part": cleanly finalize the current
+     * recording (freeing its master), then start a new one. Recording is decoupled from
+     * live delivery, so viewers are unaffected — the VOD just gains a Part N. Serialized
+     * via this._rotating so the reconciler can't double-start during the brief gap.
+     */
+    async rotateRecording(streamId, opts = {}) {
+        if (this._rotating.has(streamId)) return false;
+        const rec = this.activeRecordings.get(streamId);
+        if (!rec) return false;
+        // Only rotate server-pulled recordings that can cleanly restart (same set the
+        // reconciler heals). jsmpeg is fed by the browser relay WS — leave it be.
+        if (!(WEBRTC_PROTOCOLS.has(rec.protocol) || rec.protocol === 'rtmp')) return false;
+        this._rotating.add(streamId);
+        const protocol = rec.protocol;
+        const endpoint = rec.endpoint || {};
+        const baseTitle = rec.baseTitle;
+        const nextPart = (rec.part || 1) + 1;
+        try {
+            // Finalize the current part (normal path → remux, master→webm recovery, master delete).
+            this.stopRecording(streamId);
+            // Wait for ffmpeg to exit (activeRecordings entry cleared by the exit handler).
+            const deadline = Date.now() + STOP_GRACE_MS + 15000;
+            while (this.activeRecordings.has(streamId) && Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 500));
+            }
+            // Small settle so the delayed finalize has started before we reuse the streamId key.
+            await new Promise(r => setTimeout(r, 3500));
+            // Confirm the stream is still live before starting the next part.
+            const stream = db.getStreamById(streamId);
+            if (!stream || !stream.is_live) { console.log(`[VOD] Stream ${streamId} no longer live — not starting next part`); return false; }
+            const skipMaster = opts.skipMaster || this._diskState !== 'ok';
+            this.startRecording(streamId, protocol, endpoint, { part: nextPart, baseTitle, skipMaster });
+            return true;
+        } catch (e) {
+            console.warn(`[VOD] Rotation failed for stream ${streamId}:`, e.message);
+            return false;
+        } finally {
+            this._rotating.delete(streamId);
+        }
+    }
+
+    /**
+     * Disk guardian: sample free space on the VOD volume and protect against exhaustion.
+     *  - warning  → new/rotated recordings drop the lossless master (webm-only); nudge offload.
+     *  - critical → also force-rotate active recordings to shed their masters NOW, and refuse
+     *               to start new recordings (streams stay live, just no VOD) until it recovers.
+     * Called on an interval from the server bootstrap. Cheap (`df` + a few size checks).
+     */
+    checkDisk() {
+        let free = 0;
+        try { free = require('./vod-storage').diskUsage(config.vod.path).available || 0; } catch { return; }
+        if (!free) return;
+        const prev = this._diskState;
+        const state = free < DISK_CRIT_BYTES ? 'critical' : free < DISK_WARN_BYTES ? 'warning' : 'ok';
+        this._diskState = state;
+        if (state !== prev) {
+            const gb = (free / 1024 / 1024 / 1024).toFixed(1);
+            if (state === 'ok') console.log(`[VOD] Disk recovered — ${gb}GB free (recordings back to normal)`);
+            else console.warn(`[VOD] Disk ${state.toUpperCase()} — only ${gb}GB free on the VOD volume`);
+        }
+        if (state === 'ok') return;
+
+        // Under pressure: nudge the storage sweep to offload cold VODs and free local space.
+        try { const vs = require('./vod-storage'); if (typeof vs.runSweep === 'function') vs.runSweep().catch(() => {}); } catch { /* */ }
+
+        // Critical: force-rotate active recordings that still carry a master, so the master
+        // is finalized+deleted and the next part is webm-only. Cooldown-guarded to avoid churn.
+        if (state === 'critical') {
+            const now = Date.now();
+            for (const [sid, rec] of this.activeRecordings) {
+                if (this._rotating.has(sid)) continue;
+                if (!rec.masterFilePath) continue;                              // already webm-only
+                if (now - (this._forceRotatedAt.get(sid) || 0) < FORCE_ROTATE_COOLDOWN_MS) continue;
+                if ((now - rec.startTime) < VOD_ROTATE_MIN_MS) continue;        // too young
+                this._forceRotatedAt.set(sid, now);
+                console.warn(`[VOD] Disk critical — force-rotating stream ${sid} to shed its master`);
+                this.rotateRecording(sid, { reason: 'disk', skipMaster: true });
+            }
+        }
     }
 
     /**
@@ -559,6 +693,7 @@ class StreamRecorder {
         for (const stream of streams) {
             const sid = stream.id;
             if (this.isActivelyRecording(sid)) continue;
+            if (this._rotating.has(sid)) continue;   // mid-rotation: a new part is about to start
 
             // Respect the channel's recording policy — never force a VOD on a stream that opted out.
             let policy = null;
@@ -601,7 +736,7 @@ class StreamRecorder {
      * Start recording a WebRTC/WHIP/browser stream via mediasoup PlainRTP consumers → FFmpeg.
      * Waits up to 60s for producers to appear in the SFU room, then starts FFmpeg.
      */
-    async _startWebrtcRecording(streamId, vodId, filePath, startTime, protocol) {
+    async _startWebrtcRecording(streamId, vodId, filePath, startTime, protocol, wopts = {}) {
         let webrtcSFU;
         try {
             webrtcSFU = require('../streaming/webrtc-sfu');
@@ -712,7 +847,8 @@ class StreamRecorder {
         writeDiagnostics('rtp.json', JSON.stringify(_sanitizeDiagnosticJson(diagnostics), null, 2));
         writeDiagnostics('sdp', sdpContent);
 
-        const isMasterRecording = _isH264MasterRecordingSupported(videoConsumer, audioConsumer);
+        // Skip the master under disk pressure (webm-only) — halves the recording footprint.
+        const isMasterRecording = !wopts.skipMaster && _isH264MasterRecordingSupported(videoConsumer, audioConsumer);
         const webrtcState = {
             videoTransportId: videoConsumer.transportId,
             audioTransportId: audioConsumer?.transportId || null,

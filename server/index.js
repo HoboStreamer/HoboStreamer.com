@@ -907,7 +907,13 @@ async function start() {
             const _recorder = require('./vod/recorder');
             setTimeout(() => { try { _recorder.reconcileLiveRecordings(); } catch (e) { console.warn('[VOD] reconcile:', e.message); } }, 20000);
             setInterval(() => { try { _recorder.reconcileLiveRecordings(); } catch (e) { console.warn('[VOD] reconcile:', e.message); } }, 45000);
-            console.log('[VOD] Recording reconciler started (heals live recordings for clipping)');
+            // Disk guardian: sample free space and protect against exhaustion (skip masters /
+            // refuse new recordings / force-rotate to shed masters when low).
+            if (typeof _recorder.checkDisk === 'function') {
+                setTimeout(() => { try { _recorder.checkDisk(); } catch (e) { console.warn('[VOD] disk check:', e.message); } }, 15000);
+                setInterval(() => { try { _recorder.checkDisk(); } catch (e) { console.warn('[VOD] disk check:', e.message); } }, 30000);
+            }
+            console.log('[VOD] Recording reconciler + disk guardian started');
         } catch (e) { console.warn('[VOD] recording reconciler not started:', e.message); }
         // Background VOD health: scan for corruption, repair from master, quarantine +
         // clean up the unrecoverable so broken VODs don't accumulate.
