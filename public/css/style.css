@@ -11932,18 +11932,44 @@ body.theme-light .user-dropdown {
     border: 1px solid var(--border, rgba(255,255,255,0.1)); border-radius: 10px; padding: 10px 12px;
     background: rgba(255,255,255,0.02);
 }
-.vod-ai-timeline-title { font-weight: 700; font-size: 0.85rem; margin-bottom: 4px; color: var(--accent, #c0965c); }
+.vod-ai-timeline-title { font-weight: 700; font-size: 0.85rem; margin-bottom: 4px; color: var(--accent, #c0965c); display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .vod-ai-timeline-title i { margin-right: 4px; }
+.vod-ai-timeline-hint {
+    font-weight: 500; font-size: 0.72rem; color: var(--text-muted, #999);
+    background: rgba(192,150,92,0.1); border: 1px solid rgba(192,150,92,0.2);
+    padding: 1px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px;
+}
+.vod-ai-timeline-hint i { margin: 0; }
 .vod-ai-memory {
     display: flex; align-items: flex-start; gap: 10px; text-align: left; width: 100%;
-    background: none; border: none; color: inherit; cursor: pointer; padding: 5px 6px; border-radius: 7px;
+    background: none; border: 1px solid transparent; color: inherit; cursor: pointer; padding: 6px 8px; border-radius: 7px;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
 }
-.vod-ai-memory:hover { background: rgba(255,255,255,0.06); }
+.vod-ai-memory:hover { background: rgba(192,150,92,0.1); border-color: rgba(192,150,92,0.28); }
+.vod-ai-memory:active { transform: scale(0.99); }
 .vod-ai-memory-t {
     flex-shrink: 0; font-variant-numeric: tabular-nums; color: var(--accent, #c0965c);
-    font-weight: 700; font-size: 0.78rem; min-width: 52px;
+    font-weight: 700; font-size: 0.78rem; min-width: 58px; display: inline-flex; align-items: center; gap: 5px;
 }
+.vod-ai-memory-play { font-size: 0.62rem; opacity: 0.55; transition: opacity 0.15s, transform 0.15s; }
+.vod-ai-memory:hover .vod-ai-memory-play { opacity: 1; transform: scale(1.15); }
 .vod-ai-memory-d { font-size: 0.82rem; color: var(--text-secondary, #bbb); line-height: 1.35; }
+
+/* Flash the player briefly when a timeline/transcript jump lands. */
+@keyframes vpSeekFlash {
+    0% { box-shadow: 0 0 0 0 rgba(192,150,92,0.7); }
+    100% { box-shadow: 0 0 0 6px rgba(192,150,92,0); }
+}
+.vp-seek-flash { animation: vpSeekFlash 0.7s ease-out; }
+
+/* VOD owner visibility control on the player page */
+.vp-visibility-control {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 3px 6px 3px 10px; border-radius: 8px;
+    border: 1px solid var(--border, rgba(255,255,255,0.12)); background: rgba(255,255,255,0.03);
+}
+.vp-visibility-icon { color: var(--accent, #c0965c); font-size: 0.85rem; }
+.vp-visibility-control select { border: none; background: transparent; padding: 4px 6px; }
 
 .paste-ai-analysis {
     margin: 14px 0; padding: 12px 14px; border-radius: 10px;

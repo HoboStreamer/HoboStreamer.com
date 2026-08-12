@@ -279,8 +279,12 @@ async function _generateVodOverviewInner(vod) {
     });
     const overview = r && r.overview ? r.overview : ' '; // ' ' = tried, nothing to say
     try { db.setVodAiOverview(vod.id, overview); } catch { /* */ }
-    // Persist the whisper transcript (+ timestamped segments) for the VOD page.
-    try { const t = r ? r.transcript : ''; if (t) db.setVodTranscript(vod.id, t, r ? r.segments : null); } catch { /* */ }
+    // Persist the whisper transcript (+ timestamped segments) for the VOD page, and mark
+    // the transcript job done so the transcript poller doesn't re-run whisper on this VOD.
+    try {
+        const t = r ? r.transcript : '';
+        if (t && t.trim()) { db.setVodTranscript(vod.id, t, r ? r.segments : null); db.setVodTranscriptStatus(vod.id, 'done'); }
+    } catch { /* */ }
     return r ? r.overview : null;
 }
 
@@ -306,7 +310,14 @@ async function ensureVodTimeline(vod) {
 // Transcription retries: a transient failure (killed by a restart, ffmpeg/whisper
 // error, unreadable source) is retried up to this many times before giving up. Only a
 // clean run that finds no speech (r.ok && !r.text) marks a VOD terminally silent.
-const MAX_TX_ATTEMPTS = 5;
+// Retries are now time-spaced (see _txBackoffMin) so the ladder covers hours, not minutes,
+// and boot resets any 'failed' rows so nothing is stuck permanently.
+const MAX_TX_ATTEMPTS = 8;
+// Exponential-ish backoff (minutes) before the Nth retry attempt. Clamped to the last
+// value for higher N. Spaces retries so a transient issue has time to clear and a
+// persistently-bad source doesn't exhaust its attempts in one poll storm.
+const TX_BACKOFF_MIN = [1, 3, 10, 30, 90, 240, 360];
+function _txBackoffMin(attempt) { return TX_BACKOFF_MIN[Math.min(attempt, TX_BACKOFF_MIN.length) - 1] || 360; }
 // Serialize ALL transcription so the finalize-trigger and the backfill poller can never
 // run two whisper passes at once (they'd starve each other + the live encoders).
 let _txChain = Promise.resolve();
@@ -337,7 +348,7 @@ async function generateVodTranscript(vod) {
         const src = await _mediaSource(vod);
         if (!src) {
             const n = db.bumpVodTranscriptAttempt(vod.id);
-            db.setVodTranscriptStatus(vod.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', 'no media source');
+            db.setVodTranscriptStatus(vod.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', 'no media source', _txBackoffMin(n));
             return null;
         }
         db.setVodTranscriptStatus(vod.id, 'processing');
@@ -349,9 +360,9 @@ async function generateVodTranscript(vod) {
         } else if (r.ok) {                                       // ran clean, genuinely no speech → terminal
             try { db.setVodTranscript(vod.id, ' ', []); } catch { /* */ }
             db.setVodTranscriptStatus(vod.id, 'empty');
-        } else {                                                 // failure → retry (bounded), never poison
+        } else {                                                 // failure → retry (bounded + backoff), never poison
             const n = db.bumpVodTranscriptAttempt(vod.id);
-            db.setVodTranscriptStatus(vod.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', r.error || 'transcription failed');
+            db.setVodTranscriptStatus(vod.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', r.error || 'transcription failed', _txBackoffMin(n));
         }
         return r.text;
     });
@@ -365,7 +376,7 @@ async function generateClipTranscript(clip) {
         const src = await _mediaSource(clip);
         if (!src) {
             const n = db.bumpClipTranscriptAttempt(clip.id);
-            db.setClipTranscriptStatus(clip.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', 'no media source');
+            db.setClipTranscriptStatus(clip.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', 'no media source', _txBackoffMin(n));
             return null;
         }
         db.setClipTranscriptStatus(clip.id, 'processing');
@@ -379,7 +390,7 @@ async function generateClipTranscript(clip) {
             db.setClipTranscriptStatus(clip.id, 'empty');
         } else {
             const n = db.bumpClipTranscriptAttempt(clip.id);
-            db.setClipTranscriptStatus(clip.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', r.error || 'transcription failed');
+            db.setClipTranscriptStatus(clip.id, n >= MAX_TX_ATTEMPTS ? 'failed' : 'retry', r.error || 'transcription failed', _txBackoffMin(n));
         }
         return r.text;
     });
@@ -402,6 +413,10 @@ async function generateClipOverview(clip) {
     const overview = (r && r.overview) ? r.overview : ' ';
     const transcript = r ? r.transcript : '';
     try { db.setClipAiOverview(clip.id, { overview, transcript: transcript || null, segments: r ? r.segments : null }); } catch { /* */ }
+    // The overview pass already ran whisper — record it as done so the transcript poller
+    // doesn't re-transcribe the same clip. (Only when we actually got speech; a blank
+    // result is left for the dedicated, retrying transcript path to handle properly.)
+    try { if (transcript && transcript.trim()) db.setClipTranscriptStatus(clip.id, 'done'); } catch { /* */ }
     return { overview: r ? r.overview : null, transcript };
 }
 

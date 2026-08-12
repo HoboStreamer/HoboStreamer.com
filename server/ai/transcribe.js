@@ -32,10 +32,17 @@ const THREADS = Math.max(2, Math.min(8, parseInt(process.env.WHISPER_THREADS, 10
 const BEAM = Math.max(1, Math.min(8, parseInt(process.env.WHISPER_BEAM, 10) || 1));
 
 let _binCache;
+let _binMissSince = 0;
 function whisperBin() {
-    if (_binCache !== undefined) return _binCache;
-    _binCache = CANDIDATE_BINS.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
-    return _binCache;
+    // Cache a FOUND binary for the process lifetime (it won't move). But if it wasn't
+    // found, only cache the miss briefly (30s) and then re-probe — so installing whisper
+    // while the server is running is picked up without a restart.
+    if (_binCache) return _binCache;
+    if (_binMissSince && (Date.now() - _binMissSince) < 30000) return null;
+    const found = CANDIDATE_BINS.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+    if (found) { _binCache = found; _binMissSince = 0; }
+    else { _binMissSince = Date.now(); }
+    return found;
 }
 function available() {
     try { return !!whisperBin() && fs.existsSync(MODEL); } catch { return false; }

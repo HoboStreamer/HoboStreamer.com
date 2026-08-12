@@ -899,6 +899,9 @@ function initDb() {
             if (!cols.includes('transcript_status')) database.exec(`ALTER TABLE ${t} ADD COLUMN transcript_status TEXT`);
             if (!cols.includes('transcript_attempts')) database.exec(`ALTER TABLE ${t} ADD COLUMN transcript_attempts INTEGER DEFAULT 0`);
             if (!cols.includes('transcript_error')) database.exec(`ALTER TABLE ${t} ADD COLUMN transcript_error TEXT`);
+            // Retry backoff: earliest time a 'retry' row may be attempted again, so a
+            // persistently-unreadable source doesn't burn all its attempts in minutes.
+            if (!cols.includes('transcript_next_at')) database.exec(`ALTER TABLE ${t} ADD COLUMN transcript_next_at DATETIME`);
             // Seed status from the legacy sentinels so the new queue is consistent:
             database.exec(`UPDATE ${t} SET transcript_status='done'
                 WHERE transcript_status IS NULL AND ai_transcript IS NOT NULL AND TRIM(ai_transcript) != ''`);
@@ -908,10 +911,13 @@ function initDb() {
                 WHERE transcript_status IS NULL AND ai_transcript = ' ' AND created_at >= datetime('now','-60 days')`);
             // Older poisoned items: assume genuinely silent (terminal) so we don't churn the whole archive.
             database.exec(`UPDATE ${t} SET transcript_status='empty' WHERE transcript_status IS NULL AND ai_transcript = ' '`);
+            // Crash/deploy recovery: anything left mid-flight is re-queued on every boot.
+            database.exec(`UPDATE ${t} SET transcript_status=NULL, transcript_next_at=NULL WHERE transcript_status='processing'`);
+            // Give previously-'failed' rows a fresh chance after a deploy — transient issues
+            // (whisper temporarily missing, storage hiccup, a bad build) shouldn't be permanent.
+            // Reset the attempt counter so the bounded retry ladder starts over.
+            database.exec(`UPDATE ${t} SET transcript_status='retry', transcript_attempts=0, transcript_next_at=NULL WHERE transcript_status='failed'`);
         }
-        // Crash/deploy recovery: anything left mid-flight is re-queued on every boot.
-        database.exec(`UPDATE vods SET transcript_status=NULL WHERE transcript_status='processing'`);
-        database.exec(`UPDATE clips SET transcript_status=NULL WHERE transcript_status='processing'`);
     } catch (e) { console.warn('[DB] transcript-status migration:', e.message); }
 
     // Donation goals: optional media (image/video → optimized webm/webp), a 1-hour
@@ -2182,18 +2188,26 @@ function getVodsNeedingTranscript(limit = 2) {
     return all(`SELECT * FROM vods
         WHERE COALESCE(is_recording,0)=0
           AND (transcript_status IS NULL OR transcript_status IN ('pending','retry'))
-        ORDER BY created_at DESC LIMIT ?`, [limit]);
+          AND (transcript_next_at IS NULL OR transcript_next_at <= CURRENT_TIMESTAMP)
+        ORDER BY (transcript_status='retry'), created_at DESC LIMIT ?`, [limit]);
 }
 function getClipsNeedingTranscript(limit = 2) {
     return all(`SELECT * FROM clips
         WHERE (transcript_status IS NULL OR transcript_status IN ('pending','retry'))
-        ORDER BY created_at DESC LIMIT ?`, [limit]);
+          AND (transcript_next_at IS NULL OR transcript_next_at <= CURRENT_TIMESTAMP)
+        ORDER BY (transcript_status='retry'), created_at DESC LIMIT ?`, [limit]);
 }
-function setVodTranscriptStatus(id, status, error = null) {
-    return run('UPDATE vods SET transcript_status = ?, transcript_error = ? WHERE id = ?', [status, error ? String(error).slice(0, 300) : null, id]);
+// status setter. On a 'retry', pass retryDelayMin to schedule the next eligible attempt
+// (exponential backoff); any other status clears the schedule.
+function setVodTranscriptStatus(id, status, error = null, retryDelayMin = 0) {
+    const nextExpr = (status === 'retry' && retryDelayMin > 0) ? `datetime('now','+${Math.round(retryDelayMin)} minutes')` : 'NULL';
+    return run(`UPDATE vods SET transcript_status = ?, transcript_error = ?, transcript_next_at = ${nextExpr} WHERE id = ?`,
+        [status, error ? String(error).slice(0, 300) : null, id]);
 }
-function setClipTranscriptStatus(id, status, error = null) {
-    return run('UPDATE clips SET transcript_status = ?, transcript_error = ? WHERE id = ?', [status, error ? String(error).slice(0, 300) : null, id]);
+function setClipTranscriptStatus(id, status, error = null, retryDelayMin = 0) {
+    const nextExpr = (status === 'retry' && retryDelayMin > 0) ? `datetime('now','+${Math.round(retryDelayMin)} minutes')` : 'NULL';
+    return run(`UPDATE clips SET transcript_status = ?, transcript_error = ?, transcript_next_at = ${nextExpr} WHERE id = ?`,
+        [status, error ? String(error).slice(0, 300) : null, id]);
 }
 // Increment the attempt counter and return the new count (drives retry-vs-fail).
 function bumpVodTranscriptAttempt(id) {

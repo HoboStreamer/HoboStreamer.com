@@ -2798,11 +2798,11 @@ async function loadVodAiTimeline(vodId) {
         const data = await api(`/vods/${vodId}/memories`);
         const mems = data.memories || [];
         if (!mems.length) return;
-        el.innerHTML = `<div class="vod-ai-timeline-title"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Timeline</div>` +
+        el.innerHTML = `<div class="vod-ai-timeline-title"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Timeline <span class="vod-ai-timeline-hint"><i class="fa-solid fa-hand-pointer"></i> click a moment to jump the video</span></div>` +
             mems.map(m => {
                 const t = formatDuration(m.offset_seconds || 0);
-                return `<button class="vod-ai-memory" onclick="seekVodTo(${Number(m.offset_seconds) || 0})">
-                    <span class="vod-ai-memory-t">${t}</span>
+                return `<button class="vod-ai-memory" title="Jump to ${t}" onclick="seekVodTo(${Number(m.offset_seconds) || 0})">
+                    <span class="vod-ai-memory-t"><i class="fa-solid fa-play vod-ai-memory-play"></i> ${t}</span>
                     <span class="vod-ai-memory-d">${esc(m.description || '')}</span></button>`;
             }).join('');
         el.style.display = '';
@@ -2810,7 +2810,65 @@ async function loadVodAiTimeline(vodId) {
 }
 function seekVodTo(seconds) {
     const v = document.getElementById('vp-video');
-    if (v && Number.isFinite(seconds)) { v.currentTime = Math.max(0, seconds); if (v.play) v.play().catch(() => {}); }
+    if (v && Number.isFinite(seconds)) {
+        v.currentTime = Math.max(0, seconds);
+        if (v.play) v.play().catch(() => {});
+        // Bring the viewer back up to the player so the jump is visible.
+        try { v.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* */ }
+        // Briefly flash the player to signal the jump landed.
+        const container = document.getElementById('vp-container') || v.closest('.video-container');
+        if (container) { container.classList.remove('vp-seek-flash'); void container.offsetWidth; container.classList.add('vp-seek-flash'); setTimeout(() => container.classList.remove('vp-seek-flash'), 700); }
+    }
+}
+
+/* ── VOD watch progress (localStorage, per-vod) ───────────────── */
+const VOD_PROGRESS_KEY = 'vodProgress';
+const VOD_PROGRESS_MAX = 200;        // cap stored entries (LRU-ish by write time)
+
+function _readVodProgressMap() {
+    try { return JSON.parse(localStorage.getItem(VOD_PROGRESS_KEY)) || {}; } catch { return {}; }
+}
+function _getVodProgress(vodId) {
+    const m = _readVodProgressMap();
+    const e = m[String(vodId)];
+    return e && Number.isFinite(e.t) ? e.t : null;
+}
+function _saveVodProgress(vodId, seconds) {
+    const m = _readVodProgressMap();
+    m[String(vodId)] = { t: Math.max(0, Math.floor(seconds)), at: Date.now() };
+    // Trim oldest if we exceed the cap.
+    const keys = Object.keys(m);
+    if (keys.length > VOD_PROGRESS_MAX) {
+        keys.sort((a, b) => (m[a].at || 0) - (m[b].at || 0));
+        for (const k of keys.slice(0, keys.length - VOD_PROGRESS_MAX)) delete m[k];
+    }
+    try { localStorage.setItem(VOD_PROGRESS_KEY, JSON.stringify(m)); } catch { /* quota */ }
+}
+function _clearVodProgress(vodId) {
+    const m = _readVodProgressMap();
+    if (m[String(vodId)]) { delete m[String(vodId)]; try { localStorage.setItem(VOD_PROGRESS_KEY, JSON.stringify(m)); } catch { /* */ } }
+}
+// Save currentTime periodically while watching; clear it once effectively finished.
+function _attachVodProgressTracking(video, vodId) {
+    if (!video || video._progressTracked === vodId) return;
+    video._progressTracked = vodId;
+    let last = 0;
+    video.addEventListener('timeupdate', () => {
+        const now = Date.now();
+        if (now - last < 4000) return;      // throttle writes to ~every 4s
+        last = now;
+        const dur = isFinite(video.duration) ? video.duration : 0;
+        const t = video.currentTime || 0;
+        if (dur > 0 && t > dur - 10) _clearVodProgress(vodId);  // near the end → don't resume next time
+        else if (t > 3) _saveVodProgress(vodId, t);
+    });
+    video.addEventListener('ended', () => _clearVodProgress(vodId));
+    // Best-effort flush on navigate away / tab close.
+    window.addEventListener('pagehide', () => {
+        const dur = isFinite(video.duration) ? video.duration : 0;
+        const t = video.currentTime || 0;
+        if (t > 3 && !(dur > 0 && t > dur - 10)) _saveVodProgress(vodId, t);
+    }, { once: true });
 }
 
 function formatDurationShort(seconds) {
@@ -4746,18 +4804,35 @@ async function loadVodPlayer(vodId, seekTo) {
 
             setupCustomVideoControls('vp');
 
-            // Deep-link seek — e.g. arriving from a clip's "watch the source VOD at
-            // this timestamp" link. Only for completed VODs (live VODs manage their own seek).
-            if (seekTo && seekTo > 0 && !v.is_recording) {
-                const _target = seekTo;
-                const _seekOnce = function () {
-                    video.removeEventListener('loadedmetadata', _seekOnce);
-                    const dur = isFinite(video.duration) && video.duration > 0 ? video.duration : (serverDur || 0);
-                    try { video.currentTime = dur > 0 ? Math.min(_target, Math.max(0, dur - 0.5)) : _target; } catch { /* */ }
-                    video.play().catch(() => {});
+            // Resume position: an explicit deep-link timestamp (?t=) wins; otherwise
+            // restore the viewer's last saved watch position for THIS vod. This also
+            // fixes VODs that would otherwise load parked at the very end (a WebM whose
+            // container reports the full duration as the initial currentTime).
+            if (!v.is_recording) {
+                const saved = _getVodProgress(v.id);
+                const _dur0 = () => (isFinite(video.duration) && video.duration > 0 ? video.duration : (serverDur || 0));
+                let target = null;
+                if (seekTo && seekTo > 0) {
+                    target = seekTo;                 // deep link (from a clip / timeline share)
+                } else if (saved && saved > 3) {
+                    target = saved;                  // resume where they left off
+                } else {
+                    target = 0;                      // start from the beginning
+                }
+                const _applyStart = function () {
+                    video.removeEventListener('loadedmetadata', _applyStart);
+                    const dur = _dur0();
+                    // Never resume within the last ~10s (counts as "finished" → restart).
+                    let t = target;
+                    if (dur > 0 && t > dur - 10) t = (seekTo && seekTo > 0) ? Math.max(0, dur - 0.5) : 0;
+                    try { video.currentTime = Math.max(0, t); } catch { /* */ }
+                    if (seekTo && seekTo > 0) video.play().catch(() => {});
                 };
-                if (video.readyState >= 1) _seekOnce();
-                else video.addEventListener('loadedmetadata', _seekOnce);
+                if (video.readyState >= 1) _applyStart();
+                else video.addEventListener('loadedmetadata', _applyStart);
+
+                // Persist progress as they watch (throttled) and clear it when finished.
+                _attachVodProgressTracking(video, v.id);
             }
 
             // Load chat replay data for this VOD
@@ -4774,13 +4849,27 @@ async function loadVodPlayer(vodId, seekTo) {
             streamerLink.onclick = (event) => handleLinkClick(event, targetUrl);
         }
 
-        // Show delete button if user is the VOD owner or admin
+        // Owner/admin controls: change visibility (public/unlisted/private) + delete.
         const vpActions = document.getElementById('vp-actions');
         if (vpActions && currentUser) {
-            let canDelete = (v.user_id === currentUser.id) || currentUser.capabilities?.moderate_global;
-            if (canDelete) {
+            let canManage = (v.user_id === currentUser.id) || currentUser.capabilities?.moderate_global;
+            if (canManage && !v.is_recording) {
+                const vis = v.visibility || (v.is_public ? 'public' : 'private');
                 vpActions.style.display = '';
-                vpActions.innerHTML = `<button class="btn btn-danger btn-small" onclick="deleteVodFromPlayer(${v.id})"><i class="fa-solid fa-trash"></i> Delete Video</button>`;
+                vpActions.innerHTML = `
+                    <div class="vp-visibility-control" title="Who can see this video">
+                        <i class="fa-solid ${vis === 'public' ? 'fa-globe' : vis === 'unlisted' ? 'fa-link' : 'fa-lock'} vp-visibility-icon" id="vp-visibility-icon"></i>
+                        <select id="vp-visibility-select" class="form-input form-input-sm" onchange="setVodVisibilityFromPlayer(${v.id}, this.value)">
+                            <option value="public"${vis === 'public' ? ' selected' : ''}>Public</option>
+                            <option value="unlisted"${vis === 'unlisted' ? ' selected' : ''}>Unlisted</option>
+                            <option value="private"${vis === 'private' ? ' selected' : ''}>Private</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-danger btn-small" onclick="deleteVodFromPlayer(${v.id})"><i class="fa-solid fa-trash"></i> Delete</button>`;
+            } else if (canManage) {
+                // Still recording — only allow delete once finished; show nothing intrusive.
+                vpActions.style.display = '';
+                vpActions.innerHTML = `<button class="btn btn-danger btn-small" onclick="deleteVodFromPlayer(${v.id})"><i class="fa-solid fa-trash"></i> Delete</button>`;
             } else {
                 vpActions.style.display = 'none';
             }
@@ -6210,6 +6299,25 @@ async function deleteVodFromPlayer(vodId) {
         toast('Video deleted', 'success');
         navigate('/vods');
     } catch (e) { toast(e.message || 'Delete failed', 'error'); }
+}
+
+// Change a VOD's visibility (public/unlisted/private) from its player page.
+async function setVodVisibilityFromPlayer(vodId, visibility) {
+    const sel = document.getElementById('vp-visibility-select');
+    const icon = document.getElementById('vp-visibility-icon');
+    if (sel) sel.disabled = true;
+    try {
+        await api(`/vods/${vodId}`, { method: 'PUT', body: { visibility } });
+        if (icon) icon.className = `fa-solid ${visibility === 'public' ? 'fa-globe' : visibility === 'unlisted' ? 'fa-link' : 'fa-lock'} vp-visibility-icon`;
+        const label = visibility === 'public' ? 'Public — anyone can find it'
+            : visibility === 'unlisted' ? 'Unlisted — only people with the link'
+            : 'Private — only you can see it';
+        toast(`Video is now ${label}`, 'success');
+    } catch (e) {
+        toast(e.message || 'Failed to update visibility', 'error');
+    } finally {
+        if (sel) sel.disabled = false;
+    }
 }
 
 async function editClipTitle(clipId) {
