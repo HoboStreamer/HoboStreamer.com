@@ -8676,22 +8676,27 @@ body.theme-light .user-dropdown {
     display: flex;
     gap: 6px;
 }
+/* ONE scroll container (both axes). The <pre> must NOT scroll independently or we get a
+   second horizontal scrollbar; the line-number column and code must share identical font
+   metrics or the rows drift and you can "scroll past" the shorter column. */
 .paste-code-body {
     display: flex;
-    overflow-x: auto;
+    align-items: flex-start;
+    overflow: auto;
     max-height: 70vh;
 }
 .paste-line-numbers {
     display: flex;
     flex-direction: column;
+    flex-shrink: 0;
     padding: 14px 12px;
     text-align: right;
     user-select: none;
     color: var(--text-secondary);
     opacity: 0.35;
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     line-height: 1.55;
-    font-family: 'Fira Code', 'Cascadia Code', monospace;
+    font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
     border-right: 1px solid var(--border);
     min-width: 42px;
     background: var(--bg-secondary);
@@ -8705,8 +8710,8 @@ body.theme-light .user-dropdown {
     line-height: 1.55;
     font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
     color: var(--text);
-    flex: 1;
-    overflow-x: auto;
+    flex: 1 0 auto;
+    overflow: visible;
     tab-size: 4;
     white-space: pre;
 }

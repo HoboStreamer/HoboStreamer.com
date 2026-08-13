@@ -8,6 +8,20 @@
 
     function $(id) { return document.getElementById(id); }
 
+    // When a token is already saved, the field shows this masked sentinel (so it clearly
+    // reads as "a key is set" instead of an empty box that looks unsaved). We only send a
+    // new api_token when the user actually types one — the sentinel means "keep existing".
+    const TOKEN_SENTINEL = '••••••••••••••••';
+
+    // The literal text the user typed into the token field, or '' to mean "no change".
+    function currentTokenInput() {
+        const el = $('aibot-token');
+        if (!el) return '';
+        const v = el.value;
+        if (v === TOKEN_SENTINEL) return '';        // unchanged → preserve stored token
+        return String(v || '').trim();
+    }
+
     function collect() {
         const body = {
             enabled: !!$('aibot-enabled')?.checked,
@@ -20,8 +34,8 @@
             transcribe_model: $('aibot-transcribe-model')?.value.trim() || '',
             vision_enabled: !!$('aibot-vision')?.checked,
         };
-        const token = $('aibot-token')?.value.trim();
-        if (token) body.api_token = token;   // only send when non-blank
+        const token = currentTokenInput();
+        if (token) body.api_token = token;   // only send when the user typed a NEW key
         return body;
     }
 
@@ -40,15 +54,27 @@
             if ($('aibot-transcribe-model')) $('aibot-transcribe-model').value = c.transcribe_model || 'whisper-1';
             if ($('aibot-vision')) $('aibot-vision').checked = !!c.vision_enabled;
             const status = $('aibot-token-status');
+            const selfHosted = !!(c.base_url && !/api\.openai\.com/i.test(c.base_url));
             if (status) {
-                const selfHosted = !!(c.base_url && !/api\.openai\.com/i.test(c.base_url));
-                status.textContent = c.has_token
-                    ? `A token is saved (${c.api_token_masked}). Leave blank to keep it, or paste a new one to replace.`
+                status.innerHTML = c.has_token
+                    ? `<span style="color:#53fc18">✓ Key saved</span> (${c.api_token_masked}). The dots below mean it's stored — leave them to keep it, or type a new key to replace.`
                     : selfHosted
-                        ? 'No token needed for a self-hosted server (Ollama/LM Studio). Leave blank.'
-                        : 'No token saved yet — paste your API key.';
+                        ? 'No token needed for a self-hosted server (Ollama / LM Studio) — leave this blank.'
+                        : 'No key saved yet — paste your API key above.';
             }
-            if ($('aibot-token')) $('aibot-token').value = '';
+            // Show a masked sentinel when a key exists so the field never looks "empty/unsaved".
+            const tokenEl = $('aibot-token');
+            if (tokenEl) {
+                tokenEl.value = c.has_token ? TOKEN_SENTINEL : '';
+                tokenEl.dataset.hasToken = c.has_token ? '1' : '';
+                if (!tokenEl._sentinelWired) {
+                    tokenEl._sentinelWired = true;
+                    // Clear the placeholder-dots when the user goes to type a real key…
+                    tokenEl.addEventListener('focus', () => { if (tokenEl.value === TOKEN_SENTINEL) tokenEl.value = ''; });
+                    // …and restore them if they left it untouched (so it still reads as "saved").
+                    tokenEl.addEventListener('blur', () => { if (!tokenEl.value && tokenEl.dataset.hasToken === '1') tokenEl.value = TOKEN_SENTINEL; });
+                }
+            }
         } catch (err) {
             // Not logged in / no dashboard — silently ignore
         }
