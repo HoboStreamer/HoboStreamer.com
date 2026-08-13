@@ -92,24 +92,31 @@ router.get('/oauth/callback', async (req, res) => {
 
         const tokens = await oauth.exchangeCode(String(code), stateData.codeVerifier);
         const userId = stateData.userId;
-        let username = stateData.username || oauth.getConfig().sandboxUsername;
 
-        // Store the grant first (so getValidAccessToken works), then enrich via profile.
+        // Derive the streamer's PowerChat identity from the access-token JWT — OAuth already
+        // tells us who authorized, so we never ask them to type their own username. Only if
+        // the token carries no usable username claim do we fall back to the sandbox username.
+        const ident = oauth.identityFromToken(tokens.access_token);
+        let username = ident.username || stateData.username || oauth.getConfig().sandboxUsername;
+
+        // Store the grant first (so getValidAccessToken works), then confirm via profile.
         db.upsertPowerchatConnection(userId, {
             powerchat_username: username,
+            powerchat_user_id: ident.id || null,
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
             token_expires_at: tokens.token_expires_at,
             scope: tokens.scope,
             last_error: null,
         });
-        // Best-effort profile fetch to confirm identity + capture the tip page URL.
+        // Best-effort profile fetch to confirm identity + capture the canonical username +
+        // tip page URL (authoritative over the JWT claim).
         try {
             const prof = await oauth.fetchProfile(userId, username);
             const p = prof.profile || prof;
             db.upsertPowerchatConnection(userId, {
                 powerchat_username: p.username || username,
-                powerchat_user_id: p.id ? String(p.id) : null,
+                powerchat_user_id: (p.id != null ? String(p.id) : ident.id) || null,
                 tip_page_url: p.tipPageUrl || p.tip_page_url || null,
             });
             if (p.username) username = p.username;

@@ -45,16 +45,11 @@
     };
 
     window.powerchatConnect = function powerchatConnect() {
-        // Ask for the streamer's PowerChat username (their profile handle).
-        const suggested = ($('pc-status')?.dataset.sandbox) || '';
-        let username = prompt('Your PowerChat username (the handle in your PowerChat profile URL):', suggested || '');
-        if (username === null) return;
-        username = username.trim();
-        const qs = username ? ('?username=' + encodeURIComponent(username)) : '';
+        // No username prompt — OAuth identifies the streamer from the token itself.
         const w = 560, h = 720;
         const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
         const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
-        const popup = window.open('/api/powerchat/oauth/start' + qs, 'powerchat_oauth', `width=${w},height=${h},left=${left},top=${top}`);
+        const popup = window.open('/api/powerchat/oauth/start', 'powerchat_oauth', `width=${w},height=${h},left=${left},top=${top}`);
 
         const done = (msg) => {
             if (!msg || msg.type !== 'powerchat-oauth') return;

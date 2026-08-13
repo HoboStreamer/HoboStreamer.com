@@ -111,6 +111,25 @@ function normalizeToken(json) {
     };
 }
 
+// Access tokens are JWTs — decode the (unverified) payload to read the streamer identity
+// the grant is for, so we never have to ask the streamer for their own username.
+function decodeJwtPayload(token) {
+    try {
+        const part = String(token || '').split('.')[1];
+        if (!part) return null;
+        return JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+    } catch { return null; }
+}
+// Pull a username + id out of whatever claim shape PowerChat uses. We check the common
+// OAuth/OIDC identity claims rather than assuming one exact name.
+function identityFromToken(accessToken) {
+    const c = decodeJwtPayload(accessToken) || {};
+    const username = c.username || c.preferred_username || c.streamer_username
+        || c.streamer || c.slug || c.name || (typeof c.sub === 'string' && /[a-z]/i.test(c.sub) ? c.sub : null) || null;
+    const id = (c.streamer_id != null ? c.streamer_id : (c.user_id != null ? c.user_id : c.sub)) ?? null;
+    return { username: username ? String(username) : null, id: id != null ? String(id) : null };
+}
+
 async function _postToken(form) {
     const c = getConfig();
     const res = await fetch(c.tokenUrl, {
@@ -226,4 +245,5 @@ module.exports = {
     getConfig, isConfigured, redirectUri,
     buildAuthorize, verifyState, exchangeCode, refreshToken, revokeToken,
     getValidAccessToken, apiRequest, fetchProfile, normalizeToken,
+    decodeJwtPayload, identityFromToken,
 };
