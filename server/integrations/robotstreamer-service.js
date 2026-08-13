@@ -628,6 +628,10 @@ class RobotStreamerService {
                     }
                 } catch { /* non-critical — allow message through on error */ }
 
+                // Record this relay user (first message = join date) so RobotStreamer
+                // chatters get the same chat logs + AI insight as other relay users.
+                try { db.recordRelayUser('rs', rawUsername); } catch { /* non-critical */ }
+
                 // Let RobotStreamer viewers trigger channel !sound commands too. If the
                 // message is a registered !sound, play it (attributed to the RS user) and
                 // don't also mirror the raw "!cmd" text — same as native chatters.
