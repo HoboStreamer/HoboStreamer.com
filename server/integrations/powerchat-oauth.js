@@ -132,13 +132,34 @@ function identityFromToken(accessToken) {
 
 async function _postToken(form) {
     const c = getConfig();
-    const res = await fetch(c.tokenUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams(form).toString(),
-    });
+    let res;
+    try {
+        res = await fetch(c.tokenUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+                // A browser-like UA so PowerChat's bot protection is less likely to 404 us.
+                'User-Agent': 'HoboStreamer/1.0 (+https://hobostreamer.com)',
+            },
+            body: new URLSearchParams(form).toString(),
+        });
+    } catch (e) {
+        const err = new Error(`Could not reach PowerChat's token endpoint (${c.tokenUrl}): ${e.message}`);
+        err.oauthError = 'network'; throw err;
+    }
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
+        // 404 here is not a normal OAuth error — the endpoint IS correct (per PowerChat's
+        // own metadata) and works from a browser. Getting 404 from our server almost always
+        // means PowerChat's edge (Cloudflare) is blocking server-to-server / datacenter
+        // requests to its OAuth+API paths. Surface that clearly so it isn't mistaken for a
+        // HoboStreamer bug.
+        if (res.status === 404) {
+            const ray = res.headers.get('cf-ray') || '';
+            const err = new Error(`PowerChat returned 404 for its token endpoint when called from our server (the same endpoint works from a browser). This is a PowerChat-side block on server-to-server requests — ask PowerChat support to allow the Developer API from HoboStreamer's server${ray ? ` (cf-ray ${ray})` : ''}.`);
+            err.oauthError = 'blocked_404'; err.status = 404; throw err;
+        }
         const err = new Error((json.error_description || json.error || `token endpoint ${res.status}`));
         err.oauthError = json.error || `http_${res.status}`;
         err.status = res.status;
