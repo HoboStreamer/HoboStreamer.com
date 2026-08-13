@@ -448,6 +448,7 @@ app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
 app.use('/api/sounds', require('./chat/sounds-routes'));
 app.use('/api/ai-chatbot', require('./integrations/ai-chatbot-routes'));
+app.use('/api/powerchat', require('./integrations/powerchat-routes'));
 // Game & Canvas — migrated to hobo.quest
 app.get('/game', (req, res) => res.redirect(301, 'https://hobo.quest/game'));
 app.get('/canvas', (req, res) => res.redirect(301, 'https://hobo.quest/canvas'));
@@ -918,6 +919,12 @@ async function start() {
         // Background VOD health: scan for corruption, repair from master, quarantine +
         // clean up the unrecoverable so broken VODs don't accumulate.
         try { require('./vod/health-job').start(); } catch (e) { console.warn('[VOD] health job not started:', e.message); }
+        // PowerChat: prune the webhook-dedupe log daily so it can't grow unbounded.
+        try {
+            const _pcClean = () => { try { db.cleanupPowerchatDeliveries(3); } catch { /* */ } };
+            setTimeout(_pcClean, 120000);
+            const _pcT = setInterval(_pcClean, 24 * 60 * 60 * 1000); if (_pcT.unref) _pcT.unref();
+        } catch { /* */ }
 
         // Broadcast recent git changes to all chat clients after startup.
         // Uses a retry loop — clients reconnect with backoff after a restart,

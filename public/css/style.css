@@ -5037,6 +5037,12 @@ main#app { position: relative; z-index: 1; }
 .chat-emote-animated { image-rendering: auto; }
 
 /* AI chat viewers dashboard card */
+/* PowerChat dashboard card */
+.pc-status { font-size: 0.92rem; display: flex; align-items: center; gap: 8px; }
+.pc-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+.pc-dot-on { background: #53fc18; box-shadow: 0 0 6px rgba(83,252,24,0.6); }
+.pc-dot-off { background: var(--text-muted, #888); }
+
 .ai-bot-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
 .ai-bot-grid > label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }
 .ai-bot-grid > label > span:first-child { font-weight: 600; }

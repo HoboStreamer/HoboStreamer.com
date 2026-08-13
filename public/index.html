@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=82">
+    <link rel="stylesheet" href="/css/style.css?v=83">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -1603,6 +1603,15 @@
                     <button class="btn btn-outline" onclick="openAddGoal()">
                         <i class="fa-solid fa-plus"></i> Add Goal
                     </button>
+                </div>
+
+                <!-- PowerChat donations -->
+                <div class="dash-card" id="dash-powerchat-card" style="display:none">
+                    <h3><i class="fa-solid fa-hand-holding-dollar"></i> PowerChat Tips <span class="muted">real donations</span></h3>
+                    <p class="muted" style="font-size:0.9rem">Connect your <a href="https://powerchatlive.dev" target="_blank" rel="noopener">PowerChat</a> account to take real tips. Confirmed donations fire your alert sound, credit your donation goals, and pop a chat celebration — automatically.</p>
+                    <div id="pc-status" class="pc-status"></div>
+                    <div id="pc-actions" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"></div>
+                    <p class="muted" id="pc-hint" style="font-size:0.82rem;margin-top:10px"></p>
                 </div>
 
                 <!-- AI Chat Bots -->
@@ -4795,6 +4804,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/staff-console.js?v=1" defer></script>
 <script src="/js/dashboard-moderation.js?v=2" defer></script>
 <script src="/js/ai-chatbot-settings.js?v=9" defer></script>
+<script src="/js/powerchat.js?v=1" defer></script>
 <script src="/js/pastes.js?v=9" defer></script>
 <script src="/js/draggable-fab.js?v=1" defer></script>
 <script src="/js/messenger.js?v=2" defer></script>

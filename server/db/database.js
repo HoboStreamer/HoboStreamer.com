@@ -442,6 +442,34 @@ function initDb() {
         )`);
     } catch (e) { console.warn('[DB] platform_connections migration:', e.message); }
 
+    // PowerChat integration: per-streamer OAuth grant (one grant per streamer) + a
+    // dedupe log for at-least-once webhook deliveries. Tokens stored plaintext like
+    // platform_connections; refresh tokens ROTATE on every use (never reuse an old one).
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS powerchat_connections (
+            user_id INTEGER PRIMARY KEY,
+            powerchat_username TEXT,
+            powerchat_user_id TEXT,
+            access_token TEXT,
+            refresh_token TEXT,
+            token_expires_at INTEGER,          -- epoch ms
+            scope TEXT,
+            tip_page_url TEXT,
+            last_error TEXT,
+            connected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_powerchat_conn_username ON powerchat_connections(powerchat_username)`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_powerchat_conn_pcuid ON powerchat_connections(powerchat_user_id)`);
+        // Webhook delivery dedupe (X-PowerChat-Delivery-Id is at-least-once).
+        database.exec(`CREATE TABLE IF NOT EXISTS powerchat_webhook_deliveries (
+            delivery_id TEXT PRIMARY KEY,
+            event_type TEXT,
+            received_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+    } catch (e) { console.warn('[DB] powerchat migration:', e.message); }
+
     // Per-streamer channel points ("Hobo Nickels"). A viewer holds a separate
     // Nickels balance for each streamer they watch (Twitch-channel-points style),
     // spent only on that streamer's rewards. The global users.hobo_coins_balance
@@ -745,6 +773,22 @@ function initDb() {
         ];
         const seedAi = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
         for (const [k, v, d, t] of aiSeeds) seedAi.run(k, v, d, t);
+
+        // PowerChat monetization (donations/tips). App-level OAuth client + webhook secret
+        // are configured here by the owner; each streamer then connects their own PowerChat
+        // account from their dashboard. client_id/secret + webhook_secret are auto-treated as
+        // secrets (owner-only) by the sensitive-key rules. OFF by default.
+        const powerchatSeeds = [
+            ['powerchat_enabled', 'false', 'Master switch: enable PowerChat donation/tip integration', 'boolean'],
+            ['powerchat_base_url', 'https://powerchatlive.dev', 'PowerChat base URL', 'string'],
+            ['powerchat_client_id', '', 'PowerChat OAuth client_id (pca_…) from the PowerChat Developer dashboard', 'string'],
+            ['powerchat_client_secret', '', 'PowerChat OAuth client_secret (pcs_…) — shown once; owner-only', 'string'],
+            ['powerchat_webhook_secret', '', 'PowerChat webhook signing secret (pcw_…) — shown once; owner-only', 'string'],
+            ['powerchat_scopes', 'profile:read webhooks:events checkout:attribute paid_messages:read', 'OAuth scopes requested from each streamer (space-delimited)', 'string'],
+            ['powerchat_sandbox_username', 'n8admin', 'Sandbox streamer username the app can act on until approved (the app owner’s PowerChat username)', 'string'],
+        ];
+        const seedPc = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
+        for (const [k, v, d, t] of powerchatSeeds) seedPc.run(k, v, d, t);
     } catch (e) { console.warn('[DB] Settings seed:', e.message); }
 
     // AI subsystem tables + columns.
@@ -2980,6 +3024,65 @@ function updatePlatformConnectionTokens(id, { access_token, refresh_token, token
 
 function deletePlatformConnection(userId, platform) {
     return run('DELETE FROM platform_connections WHERE user_id = ? AND platform = ?', [userId, platform]);
+}
+
+// ── PowerChat connections (per-streamer OAuth grant) ─────────
+function getPowerchatConnection(userId) {
+    return get('SELECT * FROM powerchat_connections WHERE user_id = ?', [userId]) || null;
+}
+function getPowerchatConnectionByUsername(username) {
+    if (!username) return null;
+    return get('SELECT * FROM powerchat_connections WHERE LOWER(powerchat_username) = LOWER(?)', [String(username)]) || null;
+}
+function getPowerchatConnectionByPcUserId(pcUserId) {
+    if (!pcUserId) return null;
+    return get('SELECT * FROM powerchat_connections WHERE powerchat_user_id = ?', [String(pcUserId)]) || null;
+}
+function upsertPowerchatConnection(userId, fields = {}) {
+    const cols = ['powerchat_username', 'powerchat_user_id', 'access_token', 'refresh_token', 'token_expires_at', 'scope', 'tip_page_url', 'last_error'];
+    const set = {};
+    for (const c of cols) if (fields[c] !== undefined) set[c] = fields[c];
+    const existing = getPowerchatConnection(userId);
+    if (existing) {
+        const keys = Object.keys(set);
+        if (!keys.length) return existing;
+        run(`UPDATE powerchat_connections SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`,
+            [...keys.map(k => set[k]), userId]);
+    } else {
+        const keys = Object.keys(set);
+        run(`INSERT INTO powerchat_connections (user_id${keys.length ? ', ' + keys.join(', ') : ''}) VALUES (?${keys.map(() => ', ?').join('')})`,
+            [userId, ...keys.map(k => set[k])]);
+    }
+    return getPowerchatConnection(userId);
+}
+// Atomically persist a rotated token pair. Reuse of an old refresh token revokes the
+// whole family, so we always overwrite with the newest pair in one statement.
+function updatePowerchatTokens(userId, { access_token, refresh_token, token_expires_at, scope }) {
+    return run(
+        `UPDATE powerchat_connections
+         SET access_token = ?, refresh_token = COALESCE(?, refresh_token),
+             token_expires_at = ?, scope = COALESCE(?, scope), last_error = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`,
+        [access_token, refresh_token || null, token_expires_at || null, scope || null, userId]
+    );
+}
+function setPowerchatConnectionError(userId, err) {
+    return run('UPDATE powerchat_connections SET last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
+        [err ? String(err).slice(0, 300) : null, userId]);
+}
+function deletePowerchatConnection(userId) {
+    return run('DELETE FROM powerchat_connections WHERE user_id = ?', [userId]);
+}
+// Webhook dedupe: returns true the FIRST time a delivery id is seen, false on repeats.
+function powerchatDeliveryIsNew(deliveryId, eventType) {
+    if (!deliveryId) return true; // no id → can't dedupe; process (rare)
+    const r = run('INSERT OR IGNORE INTO powerchat_webhook_deliveries (delivery_id, event_type) VALUES (?, ?)', [String(deliveryId), eventType || null]);
+    return r.changes > 0;
+}
+function cleanupPowerchatDeliveries(days = 3) {
+    try { return run(`DELETE FROM powerchat_webhook_deliveries WHERE received_at < datetime('now', ?)`, [`-${Math.max(1, days)} days`]); }
+    catch { return null; }
 }
 
 // ── Chat helpers ─────────────────────────────────────────────
@@ -5990,6 +6093,10 @@ module.exports = {
     createRestreamDestination, updateRestreamDestination, deleteRestreamDestination,
     getPlatformConnection, getPlatformConnectionById, getPlatformConnectionsByUserId,
     upsertPlatformConnection, updatePlatformConnectionTokens, deletePlatformConnection,
+    // PowerChat
+    getPowerchatConnection, getPowerchatConnectionByUsername, getPowerchatConnectionByPcUserId,
+    upsertPowerchatConnection, updatePowerchatTokens, setPowerchatConnectionError,
+    deletePowerchatConnection, powerchatDeliveryIsNew, cleanupPowerchatDeliveries,
     createPaymentOrder, getPaymentOrderById, getPaymentOrderByRef, updatePaymentOrder,
     upsertSubscription, getSubscriptionByProviderRef, getActiveSubscription, isActiveSubscriber,
     getSubscriptionsByStreamer, getSubscriptionsBySubscriber, getActiveSubscriberCount, setSubscriptionStatus,
