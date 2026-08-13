@@ -39,6 +39,14 @@ const SCENE_REACT_MIN_GAP_MS = 20000;   // min gap between bots reacting to on-s
 const LIVENESS_CHECK_MS = 12000;        // each worker self-checks the stream is still live
 const ORPHAN_SWEEP_MS = 30000;          // service-wide sweep to kill workers for dead streams
 
+// Bots are usable if there's an API token OR the endpoint is self-hosted (Ollama / LM
+// Studio / llama.cpp are OpenAI-compatible but keyless). This lets keyless local setups run.
+function _hasUsableCreds(config) {
+    if (!config) return false;
+    if (String(config.api_token || '').trim()) return true;
+    try { return aiProvider.isSelfHostedBaseUrl(config.base_url); } catch { return false; }
+}
+
 // ── Output pacing ──────────────────────────────────────────────────────────
 // ALL messages funnel through one pacer so chat comes out one-at-a-time with
 // natural gaps — never a clump of bot messages at once.
@@ -256,7 +264,7 @@ class AiChatbotService {
             if (this.workers.has(stream.id)) return;
 
             const config = db.getAiChatbotConfig(stream.user_id);
-            if (!config || !config.enabled || !String(config.api_token || '').trim()) return;
+            if (!config || !config.enabled || !_hasUsableCreds(config)) return;
 
             const numBots = Math.min(12, Math.max(1, config.num_bots || 3));
             const worker = {
@@ -368,7 +376,7 @@ class AiChatbotService {
         let liveStreams = [];
         try { liveStreams = db.getLiveStreamsByUserId(userId) || []; } catch { liveStreams = []; }
         const config = db.getAiChatbotConfig(userId);
-        const wantEnabled = !!(config && config.enabled && String(config.api_token || '').trim());
+        const wantEnabled = !!(config && config.enabled && _hasUsableCreds(config));
         for (const stream of liveStreams) {
             const running = this.workers.has(stream.id);
             if (wantEnabled) {

@@ -74,10 +74,18 @@ router.post('/validate', requireAuth, async (req, res) => {
     try {
         const stored = db.getAiChatbotConfig(req.user.id);
         const b = req.body || {};
-        const apiKey = (b.api_token && String(b.api_token).trim()) || stored.api_token;
-        if (!apiKey) return res.status(400).json({ ok: false, error: 'No API token provided' });
+        const baseUrl = b.base_url || stored.base_url;
+        const apiKey = (b.api_token && String(b.api_token).trim()) || stored.api_token || '';
+        // A token is only required for hosted OpenAI; self-hosted servers (Ollama etc.) need none.
+        if (!apiKey && !aiProvider.isSelfHostedBaseUrl(baseUrl)) {
+            return res.status(400).json({ ok: false, error: 'Enter your API token, or set a self-hosted Base URL (Ollama/LM Studio need no token).' });
+        }
+        // Fail fast with a helpful message before even trying an unreachable local address.
+        if (aiProvider.isLocalOrPrivateHost(baseUrl)) {
+            return res.json({ ok: false, error: `That Base URL points at a local/private address, which HoboStreamer's servers can't reach (the AI viewers run server-side, not in your browser). Expose your AI server publicly — e.g. a tunnel like ngrok or cloudflared — and use that URL.` });
+        }
         const result = await aiProvider.testConnection({
-            baseUrl: b.base_url || stored.base_url,
+            baseUrl,
             apiKey,
             model: b.model || stored.model,
         });
@@ -94,8 +102,14 @@ router.post('/preview', requireAuth, async (req, res) => {
     try {
         const stored = db.getAiChatbotConfig(req.user.id);
         const b = req.body || {};
-        const apiKey = (b.api_token && String(b.api_token).trim()) || stored.api_token;
-        if (!apiKey) return res.status(400).json({ error: 'Save or enter an API token first' });
+        const baseUrl = b.base_url || stored.base_url;
+        const apiKey = (b.api_token && String(b.api_token).trim()) || stored.api_token || '';
+        if (!apiKey && !aiProvider.isSelfHostedBaseUrl(baseUrl)) {
+            return res.status(400).json({ error: 'Save or enter an API token first (or use a self-hosted Base URL).' });
+        }
+        if (aiProvider.isLocalOrPrivateHost(baseUrl)) {
+            return res.status(400).json({ error: `That Base URL is a local/private address our servers can't reach. Use a publicly-reachable URL (e.g. an ngrok/cloudflared tunnel to your Ollama).` });
+        }
         const persona = b.persona !== undefined ? String(b.persona) : stored.persona;
         const messages = [
             {
@@ -109,7 +123,7 @@ router.post('/preview', requireAuth, async (req, res) => {
             { role: 'user', content: 'The streamer is playing a game and chat is dead. Type your one chat message:' },
         ];
         const raw = await aiProvider.chatCompletion({
-            baseUrl: b.base_url || stored.base_url,
+            baseUrl,
             apiKey,
             model: b.model || stored.model,
             messages,

@@ -1608,7 +1608,8 @@
                 <!-- AI Chat Bots -->
                 <div class="dash-card dash-card-wide" id="dash-aibot-card">
                     <h3><i class="fa-solid fa-robot"></i> AI Chat Viewers <span class="muted">keep chat alive</span></h3>
-                    <p class="muted">Spin up AI-driven "viewers" that troll and argue in your chat so there's always something to react to — even when the stream is dead. Bring your own AI API key (OpenAI-compatible). Optionally let them hear your stream (transcription) so they react to what you're actually doing. Your key is stored securely and never shown again.</p>
+                    <p class="muted">Spin up AI-driven "viewers" that troll and argue in your chat so there's always something to react to — even when the stream is dead. Bring your own AI API key (OpenAI-compatible), or point it at a self-hosted server like Ollama / LM Studio (no token needed). Optionally let them hear your stream (transcription) so they react to what you're actually doing. Your key is stored securely and never shown again.</p>
+                    <p class="muted" style="font-size:0.82rem;background:rgba(192,150,92,0.1);border:1px solid rgba(192,150,92,0.25);border-radius:8px;padding:8px 12px"><i class="fa-solid fa-circle-info"></i> The viewers run on HoboStreamer's servers, so a self-hosted API must be reachable from the public internet. A local address like <code>localhost:11434</code> or a home/LAN IP won't work — expose it with a public URL or a tunnel (ngrok, cloudflared) and use that as the Base URL.</p>
                     <div class="ai-bot-grid">
                         <label class="staff-inline-toggle"><input type="checkbox" id="aibot-enabled"> <b>Enable AI chat viewers</b></label>
                         <label>
@@ -1617,8 +1618,8 @@
                             <span class="ai-bot-hint">OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, a local model, etc.)</span>
                         </label>
                         <label>
-                            <span>API token</span>
-                            <input type="password" id="aibot-token" class="form-input" placeholder="sk-..." autocomplete="off">
+                            <span>API token <span class="muted" style="font-weight:400">(optional for self-hosted)</span></span>
+                            <input type="password" id="aibot-token" class="form-input" placeholder="sk-…  (leave blank for Ollama/LM Studio)" autocomplete="off">
                             <span class="ai-bot-hint" id="aibot-token-status"></span>
                         </label>
                         <label>
@@ -4793,7 +4794,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/settings.js?v=8" defer></script>
 <script src="/js/staff-console.js?v=1" defer></script>
 <script src="/js/dashboard-moderation.js?v=2" defer></script>
-<script src="/js/ai-chatbot-settings.js?v=8" defer></script>
+<script src="/js/ai-chatbot-settings.js?v=9" defer></script>
 <script src="/js/pastes.js?v=9" defer></script>
 <script src="/js/draggable-fab.js?v=1" defer></script>
 <script src="/js/messenger.js?v=2" defer></script>

@@ -41,9 +41,12 @@
             if ($('aibot-vision')) $('aibot-vision').checked = !!c.vision_enabled;
             const status = $('aibot-token-status');
             if (status) {
+                const selfHosted = !!(c.base_url && !/api\.openai\.com/i.test(c.base_url));
                 status.textContent = c.has_token
                     ? `A token is saved (${c.api_token_masked}). Leave blank to keep it, or paste a new one to replace.`
-                    : 'No token saved yet — paste your API key.';
+                    : selfHosted
+                        ? 'No token needed for a self-hosted server (Ollama/LM Studio). Leave blank.'
+                        : 'No token saved yet — paste your API key.';
             }
             if ($('aibot-token')) $('aibot-token').value = '';
         } catch (err) {
