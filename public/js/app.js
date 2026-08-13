@@ -4405,8 +4405,10 @@ function _selToggle(type, id, checked) {
     _selRenderBar(); _selSyncAllBtns();
 }
 
-// Shift+click anywhere on a selectable card toggles/range-selects it (so you don't
-// have to aim at the tiny checkbox). Capture phase so it beats the card's link nav.
+// Modifier-click anywhere on a selectable card (so you don't have to aim at the tiny
+// checkbox). Capture phase so it beats the card's link nav.
+//   • Shift+click     → select the contiguous RANGE from the last-clicked anchor to here.
+//   • Ctrl/Cmd+click  → TOGGLE just this one card (build up a selection of scattered items).
 let _selLastIdx = null, _selLastContainer = null;
 function _selSetCard(wrap, checked) {
     const cb = wrap.querySelector('input[type="checkbox"]');
@@ -4415,19 +4417,24 @@ function _selSetCard(wrap, checked) {
     if (type && id) _selToggle(type, id, checked);
 }
 document.addEventListener('click', (e) => {
-    if (!e.shiftKey || !window._selCtx || !window._selCtx.enabled) return;
+    if (!window._selCtx || !window._selCtx.enabled) return;
+    const isRange = e.shiftKey;
+    const isToggle = e.ctrlKey || e.metaKey;
+    if (!isRange && !isToggle) return;
     const wrap = e.target.closest && e.target.closest('.sel-card-wrap');
     if (!wrap) return;
     e.preventDefault(); e.stopPropagation();
     const container = wrap.parentElement;
     const cards = Array.from(container.children).filter(c => c.classList && c.classList.contains('sel-card-wrap'));
     const idx = cards.indexOf(wrap);
-    if (_selLastIdx != null && _selLastContainer === container && idx >= 0) {
+    // Range needs an anchor in the same container; otherwise (and for Ctrl/Cmd) toggle one.
+    if (isRange && !isToggle && _selLastIdx != null && _selLastContainer === container && idx >= 0) {
         for (let i = Math.min(_selLastIdx, idx); i <= Math.max(_selLastIdx, idx); i++) _selSetCard(cards[i], true);
     } else {
         const cb = wrap.querySelector('input[type="checkbox"]');
         _selSetCard(wrap, !(cb && cb.checked));
     }
+    // Both gestures update the anchor, so a Ctrl+click can seed the next Shift+click range.
     _selLastIdx = idx; _selLastContainer = container;
 }, true);
 
@@ -4462,6 +4469,9 @@ function _selSyncAllBtns() {
         const allSel = wraps.length && wraps.every(w => window._sel[w.dataset.selType]?.has(w.dataset.selId));
         const span = btn.querySelector('.sel-all-label');
         if (span) span.textContent = allSel ? 'Deselect all' : 'Select all';
+        // Discoverability: surface both modifier gestures on hover.
+        const mod = (navigator.platform || '').toLowerCase().includes('mac') ? 'Cmd' : 'Ctrl';
+        btn.title = `Tip: Shift+click a card selects a range · ${mod}+click toggles one`;
     });
 }
 
