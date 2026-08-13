@@ -3387,17 +3387,26 @@ main#app { position: relative; z-index: 1; }
     display: flex; align-items: center; gap: 2px;
 }
 .vc-volume-group .volume-slider {
+    /* Collapse by width only — NOT overflow:hidden, which would clip the round thumb. */
     width: 0; opacity: 0; transition: width 0.3s, opacity 0.3s;
-    overflow: hidden;
 }
 .vc-volume-group:hover .volume-slider,
 .vc-volume-group .volume-slider:focus {
     width: 80px; opacity: 1;
 }
+/* The input box is intentionally taller than the visible track so the round thumb has
+   room to sit fully inside it — a 4px-tall input would clip the 13px thumb top & bottom.
+   The thin visible bar is painted by the track pseudo-elements, not the input itself. */
 .volume-slider {
     -webkit-appearance: none; appearance: none;
-    height: 4px; background: rgba(255,255,255,0.3);
-    border-radius: 2px; outline: none; cursor: pointer;
+    height: 18px; background: transparent;
+    outline: none; cursor: pointer; margin: 0;
+}
+.volume-slider::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 2px; background: rgba(255,255,255,0.3);
+}
+.volume-slider::-moz-range-track {
+    height: 4px; border-radius: 2px; background: rgba(255,255,255,0.3);
 }
 .volume-slider::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
@@ -3416,10 +3425,6 @@ main#app { position: relative; z-index: 1; }
     background: var(--accent); cursor: pointer;
     border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
 }
-.volume-slider::-webkit-slider-runnable-track {
-    height: 4px; border-radius: 2px;
-}
-.volume-slider::-moz-range-track { height: 4px; border-radius: 2px; }
 
 /* Badges */
 .viewer-badge, .uptime-badge {
@@ -11912,7 +11917,9 @@ body.theme-light .user-dropdown {
 @media (hover: none), (pointer: coarse) {
     /* Volume slider can't be hover-revealed on touch → keep it visible + sized. */
     .vc-volume-group .volume-slider { width: 84px !important; opacity: 1 !important; }
-    .volume-slider { height: 6px; }
+    /* Keep the input tall enough for the bigger touch thumb (no clipping); the visible
+       bar is the 6px track pseudo. */
+    .volume-slider { height: 24px; }
     .volume-slider::-webkit-slider-runnable-track { height: 6px; }
     .volume-slider::-moz-range-track { height: 6px; }
     /* Bigger touch thumb, re-centered on the 6px track: (6 - 20) / 2 = -7px. */
