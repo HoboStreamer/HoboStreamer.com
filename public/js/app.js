@@ -2347,8 +2347,9 @@ function toggleGlobalAiPanel() {
 
 // Per-user chat insight — "today vs all-time" read of a chatter. Opened from a
 // username's context (chat, profile). Fetches on demand.
-async function openUserChatInsight(userId, username) {
-    if (!userId) return;
+// Shared "today vs all-time" chat-insight modal. `opts`: { title, iconClass, subtitle,
+// fetchUrl }. Used for both native users and bridged relay users.
+async function _openChatInsightModal(opts) {
     document.getElementById('user-ai-modal-overlay')?.remove();
     const overlay = document.createElement('div');
     overlay.id = 'user-ai-modal-overlay';
@@ -2357,22 +2358,22 @@ async function openUserChatInsight(userId, username) {
     overlay.innerHTML = `
         <div class="user-ai-modal">
             <div class="user-ai-modal-head">
-                <h3><i class="fa-solid fa-user-tag"></i> ${esc(username || 'User')}</h3>
+                <h3><i class="fa-solid ${opts.iconClass || 'fa-user-tag'}"></i> ${esc(opts.title || 'User')}</h3>
                 <span class="gai-badge"><i class="fa-solid fa-wand-magic-sparkles"></i> AI</span>
                 <button class="uai-close" onclick="document.getElementById('user-ai-modal-overlay').remove()"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <p class="uai-sub">How they chat today vs. overall — from their public chat messages.</p>
+            <p class="uai-sub">${esc(opts.subtitle || 'How they chat today vs. overall — from their public chat messages.')}</p>
             <div id="user-ai-modal-body"><div class="gai-empty">Loading insight…</div></div>
         </div>`;
     document.body.appendChild(overlay);
 
     let data = null;
-    try { data = await api(`/chat-ai/user/${userId}`); } catch { /* */ }
+    try { data = await api(opts.fetchUrl); } catch { /* */ }
     const body = document.getElementById('user-ai-modal-body');
     if (!body) return;
     const ins = data && data.insight;
     if (!ins || (!ins.overview_24h && !ins.overview_alltime)) {
-        body.innerHTML = '<div class="gai-empty">No AI insight yet — this user hasn\'t chatted enough recently. Check back soon.</div>';
+        body.innerHTML = '<div class="gai-empty">No AI insight yet — this user hasn\'t chatted enough recently. The analysis builds up over time; check back soon.</div>';
         return;
     }
     const tl = (ins.timeline || []).slice().reverse();
@@ -2396,7 +2397,25 @@ async function openUserChatInsight(userId, username) {
         </div>` : ''}
         <p class="uai-sub" style="margin:14px 0 0">${ins.updated_at ? 'Updated ' + _aiTimeAgo(ins.updated_at) : ''}${ins.message_count ? ' · ~' + ins.message_count + ' messages analyzed' : ''}</p>`;
 }
+
+async function openUserChatInsight(userId, username) {
+    if (!userId) return;
+    return _openChatInsightModal({ title: username || 'User', iconClass: 'fa-user-tag', fetchUrl: `/chat-ai/user/${userId}` });
+}
 window.openUserChatInsight = openUserChatInsight;
+
+// Relay (external-platform) chatter insight.
+async function openRelayUserChatInsight(platform, username, displayPlatform) {
+    if (!platform || !username) return;
+    const plat = (displayPlatform || platform);
+    return _openChatInsightModal({
+        title: `${username}`,
+        iconClass: 'fa-link',
+        subtitle: `Bridged ${plat} chatter — how they chat today vs. overall, from their relayed messages.`,
+        fetchUrl: `/chat-ai/relay/${encodeURIComponent(platform)}/${encodeURIComponent(username)}`,
+    });
+}
+window.openRelayUserChatInsight = openRelayUserChatInsight;
 
 async function loadChannelPage(username, managedStreamRef = null, legacySessionId = null) {
     try {

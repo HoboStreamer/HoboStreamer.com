@@ -407,6 +407,20 @@ router.get('/relay-user/:platform/:username', optionalAuth, (req, res) => {
     }
 });
 
+// A relay (external-platform) user's chat-message history — same gate as native logs.
+router.get('/relay-user/:platform/:username/logs', requireAuth, (req, res) => {
+    try {
+        if (!permissions.canViewOtherUserLogs(req.user)) return res.status(403).json({ error: 'Not authorized' });
+        const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const query = String(req.query.q || '').trim();
+        const r = db.getRelayUserChatHistory(req.params.platform, req.params.username, { limit, offset, query });
+        res.json(r);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get relay user logs' });
+    }
+});
+
 // ── Global Chat History (all streams) ────────────────────────
 router.get('/global/history', optionalAuth, (req, res) => {
     try {

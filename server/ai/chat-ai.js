@@ -256,6 +256,77 @@ async function _userPass() {
     }
 }
 
+// ── PER RELAY-USER (external platform chatters bridged in) ────────────────────
+// Same "today vs all-time" insight as a native user, keyed by the relay_users rowid.
+async function _refreshRelayUser(ru) {
+    const ai = _ai();
+    const prior = db.getChatAiSummary('relay', ru.id, 'rolling');
+    const now = Date.now();
+    const dayStart = _sqlTime(now - 24 * 60 * 60 * 1000);
+
+    let dayRows = db.getRelayChatMessagesForAi({ platform: ru.platform, rawUsername: ru.username, sinceTs: dayStart, order: 'asc', limit: MAX_BATCH_MESSAGES });
+    let has24h = dayRows.length > 0;
+    if (!dayRows.length) dayRows = db.getRelayChatMessagesForAi({ platform: ru.platform, rawUsername: ru.username, order: 'desc', limit: 80 });
+    if (!dayRows.length) return false;
+
+    const uname = ru.display_name || ru.username;
+    const priorMemory = prior ? (prior.memory_json || '') : '';
+
+    const prompt =
+`You profile an external chatter ("${uname}", bridged in from ${ru.platform}) on a live-streaming site, contrasting who they are TODAY vs OVERALL. Base everything only on the evidence below — do not invent.
+
+Return ONLY a JSON object, no prose, with exactly these keys:
+{
+  "overview_24h": "${has24h ? '2-3 sentences on what this user chatted about and their mood/energy in the LAST 24 HOURS.' : 'They have not chatted in the last 24h; 1 sentence noting they have been quiet recently.'}",
+  "overview_alltime": "2-3 sentences on who this user is as a chatter OVERALL: style, recurring interests, tone.",
+  "memory": "Condensed running notes carried forward (interests, catchphrases, patterns). Update the PRIOR notes; keep under ~1000 chars.",
+  "timeline": [ {"label":"short title","detail":"one sentence"} ]  // 0-2 NEW notable moments, or [].
+}
+
+PRIOR running notes:
+"""${_clip(priorMemory, USER_MEMORY_MAX_CHARS)}"""
+
+${has24h ? 'MESSAGES FROM THIS USER IN THE LAST 24H' : "THIS USER'S MOST RECENT MESSAGES"} (oldest first):
+${_fmtMessages(dayRows)}`;
+
+    const text = await ai.summarizeText(prompt, 600, 'chat_relay');
+    if (!text) return false;
+    const parsed = _parseJson(text);
+    if (!parsed) { console.warn(`[ChatAI] relay ${ru.id}: unparseable model output`); return false; }
+
+    const nowIso = _sqlTime(now);
+    db.upsertChatAiSummary({
+        scope: 'relay', subject_id: ru.id, window: 'rolling',
+        overview: JSON.stringify({
+            today: _clip(parsed.overview_24h || '', 1200),
+            alltime: _clip(parsed.overview_alltime || '', 1200),
+            has_24h: has24h,
+        }),
+        memory_json: _clip(parsed.memory || priorMemory, USER_MEMORY_MAX_CHARS),
+        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso),
+        message_count: ru.message_count || 0,
+        window_message_count: dayRows.length,
+        last_message_id: db.getMaxChatMessageId(),
+        window_label: has24h ? 'past 24h' : 'recent',
+        window_start: has24h ? dayStart : null,
+        window_end: nowIso,
+    });
+    console.log(`[ChatAI] relay ${ru.platform}:${ru.username} refreshed (24h=${has24h}, ${dayRows.length} msgs)`);
+    return true;
+}
+
+async function _relayPass() {
+    const lookbackIso = _sqlTime(Date.now() - USER_DISCOVERY_LOOKBACK_DAYS * 86400000);
+    let candidates = [];
+    try { candidates = db.getRelayUsersNeedingChatAi({ lookbackIso, threshold: 8, limit: USER_MAX_PER_TICK }); }
+    catch (e) { console.warn('[ChatAI] relay discovery failed:', e.message); return; }
+    for (const ru of candidates) {
+        if (!ru.id) continue;
+        try { await _refreshRelayUser(ru); }
+        catch (e) { console.warn(`[ChatAI] relay ${ru.id} refresh failed:`, e.message); }
+    }
+}
+
 // ── Poller ───────────────────────────────────────────────────────────────────
 async function _tick() {
     if (_tickInFlight) return;
@@ -269,6 +340,7 @@ async function _tick() {
         if (Date.now() - _lastUserPass >= USER_PASS_EVERY_MS) {
             _lastUserPass = Date.now();
             if (ai.withinBudget()) await _userPass();
+            if (ai.withinBudget()) await _relayPass();
         }
     } catch (e) {
         console.warn('[ChatAI] tick error:', e.message);
@@ -325,4 +397,22 @@ function getUserInsight(userId) {
     };
 }
 
-module.exports = { start, stop, getGlobalInsight, getUserInsight, _tick };
+function getRelayUserInsight(relayId) {
+    const row = db.getChatAiSummary('relay', relayId, 'rolling');
+    if (!row) return null;
+    let overviews = { today: '', alltime: '', has_24h: false };
+    try { overviews = { ...overviews, ...JSON.parse(row.overview || '{}') }; } catch { /* */ }
+    let timeline = [];
+    try { timeline = JSON.parse(row.timeline_json || '[]'); } catch { /* */ }
+    return {
+        overview_24h: overviews.today || '',
+        overview_alltime: overviews.alltime || '',
+        has_24h: !!overviews.has_24h,
+        memory: row.memory_json || '',
+        timeline,
+        message_count: row.message_count || 0,
+        updated_at: row.updated_at || null,
+    };
+}
+
+module.exports = { start, stop, getGlobalInsight, getUserInsight, getRelayUserInsight, _tick };

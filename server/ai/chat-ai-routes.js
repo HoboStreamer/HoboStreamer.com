@@ -35,4 +35,19 @@ router.get('/user/:id', (req, res) => {
     }
 });
 
+// A bridged external (relay) chatter's insight, keyed by platform + username.
+router.get('/relay/:platform/:username', (req, res) => {
+    try {
+        const ru = db.getRelayUser(req.params.platform, req.params.username);
+        if (!ru) return res.json({ insight: null, user: null });
+        const insight = chatAi.getRelayUserInsight(ru.id);
+        res.json({
+            insight: insight || null,
+            user: { platform: ru.platform, username: ru.display_name || ru.username, message_count: ru.message_count || 0, first_seen: ru.first_seen || null },
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load relay chat insight' });
+    }
+});
+
 module.exports = router;

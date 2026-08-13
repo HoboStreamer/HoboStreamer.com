@@ -4328,6 +4328,12 @@ function ctxViewLogs(username, userId) {
     openChatLogsModal(username, userId);
 }
 
+// Chat logs for a bridged external (relay) chatter — keyed by platform + username.
+function ctxViewRelayLogs(platform, username) {
+    dismissContextMenu();
+    openChatLogsModal(username, null, { platform, username });
+}
+
 async function ctxRenameUsername(username, userId) {
     dismissContextMenu();
     const newUsername = prompt(`Rename username for @${username}:`, username);
@@ -4602,6 +4608,8 @@ function renderRelayContextMenu(menu, username, sourcePlatform) {
         </div>
         <div class="ctx-actions">
             ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
+            <button class="ctx-btn" onclick="dismissContextMenu();window.openRelayUserChatInsight&&openRelayUserChatInsight('${esc(platform)}','${esc(externalUsername)}','${esc(displayPlatform)}')"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Insight</button>
+            ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" onclick="dismissContextMenu();ctxViewRelayLogs('${esc(platform)}','${esc(externalUsername)}')"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
             ${modBtns ? '<div class="ctx-divider"></div>' + modBtns : ''}
         </div>
     `;
@@ -4864,7 +4872,7 @@ async function adminToolsIpBanAll(ip, username) {
    CHAT LOGS MODAL
    ═══════════════════════════════════════════════════════════════ */
 
-function openChatLogsModal(username, userId) {
+function openChatLogsModal(username, userId, relay) {
     // Close existing modal overlay if open
     closeModal();
 
@@ -4891,7 +4899,7 @@ function openChatLogsModal(username, userId) {
     overlay.classList.add('show');
 
     // Store context on the modal for pagination
-    content._logsCtx = { username, userId, offset: 0, query: '' };
+    content._logsCtx = { username, userId, relay: relay || null, offset: 0, query: '' };
 
     loadChatLogs();
 }
@@ -4908,7 +4916,13 @@ async function loadChatLogs() {
 
     try {
         let url, result;
-        if (ctx.userId && !ctx.query) {
+        if (ctx.relay) {
+            // Relay (external-platform) user history — matched by platform + username.
+            const params = new URLSearchParams({ limit: '50', offset: String(ctx.offset) });
+            if (ctx.query) params.set('q', ctx.query);
+            url = `/chat/relay-user/${encodeURIComponent(ctx.relay.platform)}/${encodeURIComponent(ctx.relay.username)}/logs?${params}`;
+            result = await api(url);
+        } else if (ctx.userId && !ctx.query) {
             // User history mode
             url = `/chat/user/${ctx.userId}/history?limit=50&offset=${ctx.offset}`;
             result = await api(url);

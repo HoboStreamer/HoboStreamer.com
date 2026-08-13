@@ -3276,8 +3276,68 @@ function recordRelayUser(platform, username) {
 }
 function getRelayUser(platform, username) {
     if (!platform || !username) return null;
-    return get('SELECT * FROM relay_users WHERE platform = ? AND username = ?',
-        [String(platform).toLowerCase(), String(username).toLowerCase()]);
+    // rowid is a stable integer id for a relay user (no dedicated id column); used to key
+    // their chat-AI insight in chat_ai_summaries.
+    return get('SELECT rowid AS id, * FROM relay_users WHERE platform = ? AND username = ?',
+        [String(platform).toLowerCase(), String(username).toLowerCase()]) || null;
+}
+function getRelayUserByRowid(id) {
+    return get('SELECT rowid AS id, * FROM relay_users WHERE rowid = ?', [id]) || null;
+}
+
+// Relay chat messages are stored with a "[Label] name" username + source_platform and a
+// NULL user_id. Match a specific relay user by the trailing "] name" (LIKE is
+// case-insensitive for ASCII in SQLite), scoped to their platform.
+function _likeEscape(s) { return String(s).replace(/[\\%_]/g, '\\$&'); }
+const _RELAY_MATCH = `cm.user_id IS NULL AND cm.source_platform = ? AND cm.username LIKE ? ESCAPE '\\'`;
+function _relayMatchParams(platform, rawUsername) {
+    return [String(platform).toLowerCase(), '%] ' + _likeEscape(String(rawUsername))];
+}
+
+// A relay user's message history (for the "Chat Logs" viewer).
+function getRelayUserChatHistory(platform, rawUsername, { limit = 50, offset = 0, query = '' } = {}) {
+    let where = `${_RELAY_MATCH} AND cm.is_deleted = 0`;
+    const params = _relayMatchParams(platform, rawUsername);
+    if (query) { where += ' AND cm.message LIKE ?'; params.push('%' + query + '%'); }
+    const total = get(`SELECT COUNT(*) AS c FROM chat_messages cm WHERE ${where}`, params)?.c || 0;
+    const rows = all(
+        `SELECT cm.id, cm.username, cm.message, cm.message_type, cm.timestamp, cm.stream_id,
+                cm.source_platform, s.title AS stream_title
+         FROM chat_messages cm LEFT JOIN streams s ON cm.stream_id = s.id
+         WHERE ${where} ORDER BY cm.timestamp DESC LIMIT ? OFFSET ?`,
+        [...params, Math.max(1, Math.min(200, limit)), Math.max(0, offset)]
+    );
+    return { messages: rows, total };
+}
+
+// Relay messages for AI batching (mirrors getChatMessagesForAi).
+function getRelayChatMessagesForAi({ platform, rawUsername, sinceTs = null, limit = 300, order = 'asc' } = {}) {
+    let sql = `SELECT cm.id, cm.username, cm.message, cm.message_type, cm.timestamp, cm.source_platform
+               FROM chat_messages cm
+               WHERE ${_CHAT_AI_WHERE} AND ${_RELAY_MATCH}`;
+    const params = _relayMatchParams(platform, rawUsername);
+    if (sinceTs != null) { sql += ' AND cm.timestamp >= ?'; params.push(sinceTs); }
+    sql += ` ORDER BY cm.id ${order === 'desc' ? 'DESC' : 'ASC'} LIMIT ?`;
+    params.push(Math.max(1, Math.min(2000, limit)));
+    const rows = all(sql, params);
+    return order === 'desc' ? rows.reverse() : rows;
+}
+
+// Relay users with new activity since their last AI summary (or never summarised).
+// last_seen advances on every message (see recordRelayUser), so last_seen > summary
+// updated_at means "chatted since we last analysed them".
+function getRelayUsersNeedingChatAi({ lookbackIso, threshold = 8, limit = 2 } = {}) {
+    return all(`
+        SELECT r.rowid AS id, r.platform, r.username, r.display_name, r.message_count, r.last_seen,
+               cs.updated_at AS last_update
+        FROM relay_users r
+        LEFT JOIN chat_ai_summaries cs
+          ON cs.scope = 'relay' AND cs.window = 'rolling' AND cs.subject_id = r.rowid
+        WHERE r.last_seen >= ?
+          AND r.message_count >= ?
+          AND (cs.updated_at IS NULL OR cs.updated_at < r.last_seen)
+        ORDER BY (cs.updated_at IS NULL) DESC, r.last_seen DESC
+        LIMIT ?`, [lookbackIso, threshold, Math.max(1, limit)]);
 }
 
 function getUserProfile(userId) {
@@ -6196,6 +6256,7 @@ module.exports = {
     approveAllFromIp, denyAllFromIp,
     // Hidden Relay Users
     hideRelayUser, isRelayUserHidden, unhideRelayUser, unhideRelayUserByIdentity, getHiddenRelayUsers, recordRelayUser, getRelayUser,
+    getRelayUserByRowid, getRelayUserChatHistory, getRelayChatMessagesForAi, getRelayUsersNeedingChatAi,
     // IP Tracking
     logIp, getIpsByUser, getUsersByIp, getLinkedAccounts, getLinkedAccountsByAnon,
     getLatestIpForUser, getLatestIpForAnon, getIpLog, banAllAccountsOnIp,
