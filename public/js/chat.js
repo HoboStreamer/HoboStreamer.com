@@ -4148,7 +4148,8 @@ function renderSystemContextMenu(menu, username) {
             </div>
         </div>
         <div class="ctx-actions">
-            <div class="ctx-system-note">Automated site account — it can't be messaged, moderated, or analyzed.</div>
+            <a class="ctx-btn" href="/updates" style="text-decoration:none" onclick="dismissContextMenu();return handleLinkClick(event, '/updates')"><i class="fa-solid fa-rss"></i> View all updates</a>
+            <div class="ctx-system-note">Automated site account — its posts are the changelog. It can't be messaged, moderated, or analyzed.</div>
         </div>`;
 }
 
