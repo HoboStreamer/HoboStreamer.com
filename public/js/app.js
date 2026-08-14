@@ -2410,30 +2410,59 @@ async function _openChatInsightModal(opts) {
     const body = document.getElementById('user-ai-modal-body');
     if (!body) return;
     const ins = data && data.insight;
-    if (!ins || (!ins.overview_24h && !ins.overview_alltime)) {
+    const st = data && data.streamer;
+    const hasChat = !!(ins && (ins.overview_24h || ins.overview_alltime));
+    const hasStreamer = !!(st && (st.overview || st.overview_short));
+    if (!hasChat && !hasStreamer) {
         body.innerHTML = '<div class="gai-empty">No AI insight yet — this user hasn\'t chatted enough recently. The analysis builds up over time; check back soon.</div>';
         return;
     }
-    const tl = (ins.timeline || []).slice().reverse();
-    body.innerHTML = `
-        <div class="uai-section">
-            <h4><i class="fa-solid fa-bolt"></i> Today <span class="uai-tag uai-tag-today">last 24h</span></h4>
-            <div class="uai-body">${ins.has_24h ? esc(ins.overview_24h) : '<span class="gai-empty">' + esc(ins.overview_24h || 'Quiet in the last 24 hours.') + '</span>'}</div>
-        </div>
-        <div class="uai-section">
-            <h4><i class="fa-solid fa-infinity"></i> Overall <span class="uai-tag uai-tag-all">all-time</span></h4>
-            <div class="uai-body">${esc(ins.overview_alltime || '')}</div>
-        </div>
-        ${tl.length ? `<div class="uai-section">
-            <h4><i class="fa-solid fa-timeline"></i> Notable moments</h4>
-            <div class="gai-timeline">${tl.map(t => `
+
+    let html = '';
+
+    // Streamer section first — who they are as a streamer + recent on-stream context.
+    if (hasStreamer) {
+        const mems = st.memories || [];
+        html += `<div class="uai-section uai-streamer">
+            <h4><i class="fa-solid fa-tower-broadcast"></i> As a streamer <span class="uai-tag uai-tag-streamer">channel</span></h4>
+            <div class="uai-body">${esc(st.overview || st.overview_short || '')}</div>
+            ${mems.length ? `<div class="gai-timeline" style="margin-top:10px">${mems.map(m => `
                 <div class="gai-tl-item">
-                    <div class="gai-tl-when">${_aiTimeAgo(t.ts)}</div>
-                    <div class="gai-tl-label">${esc(t.label || '')}</div>
-                    ${t.detail ? `<div class="gai-tl-detail">${esc(t.detail)}</div>` : ''}
-                </div>`).join('')}</div>
-        </div>` : ''}
-        <p class="uai-sub" style="margin:14px 0 0">${ins.updated_at ? 'Updated ' + _aiTimeAgo(ins.updated_at) : ''}${ins.message_count ? ' · ~' + ins.message_count + ' messages analyzed' : ''}</p>`;
+                    <div class="gai-tl-when">${_aiTimeAgo(m.created_at)}</div>
+                    <div class="gai-tl-detail">${esc(m.description || '')}</div>
+                </div>`).join('')}</div>` : ''}
+            ${st.generated_at ? `<p class="uai-sub" style="margin:8px 0 0">Streamer overview updated ${_aiTimeAgo(st.generated_at)}</p>` : ''}
+        </div>`;
+    }
+
+    // Chat-behavior insight.
+    if (hasChat) {
+        const tl = (ins.timeline || []).slice().reverse();
+        if (hasStreamer) html += `<div class="uai-group-label"><i class="fa-solid fa-comments"></i> In chat</div>`;
+        html += `
+            <div class="uai-section">
+                <h4><i class="fa-solid fa-bolt"></i> Today <span class="uai-tag uai-tag-today">last 24h</span></h4>
+                <div class="uai-body">${ins.has_24h ? esc(ins.overview_24h) : '<span class="gai-empty">' + esc(ins.overview_24h || 'Quiet in the last 24 hours.') + '</span>'}</div>
+            </div>
+            <div class="uai-section">
+                <h4><i class="fa-solid fa-infinity"></i> Overall <span class="uai-tag uai-tag-all">all-time</span></h4>
+                <div class="uai-body">${esc(ins.overview_alltime || '')}</div>
+            </div>
+            ${tl.length ? `<div class="uai-section">
+                <h4><i class="fa-solid fa-timeline"></i> Notable moments</h4>
+                <div class="gai-timeline">${tl.map(t => `
+                    <div class="gai-tl-item">
+                        <div class="gai-tl-when">${_aiTimeAgo(t.ts)}</div>
+                        <div class="gai-tl-label">${esc(t.label || '')}</div>
+                        ${t.detail ? `<div class="gai-tl-detail">${esc(t.detail)}</div>` : ''}
+                    </div>`).join('')}</div>
+            </div>` : ''}
+            <p class="uai-sub" style="margin:14px 0 0">${ins.updated_at ? 'Updated ' + _aiTimeAgo(ins.updated_at) : ''}${ins.message_count ? ' · ~' + ins.message_count + ' messages analyzed' : ''}</p>`;
+    } else if (hasStreamer) {
+        html += `<p class="uai-sub" style="margin:6px 0 0">No chat insight yet — this user hasn't chatted enough recently.</p>`;
+    }
+
+    body.innerHTML = html;
 }
 
 async function openUserChatInsight(userId, username) {

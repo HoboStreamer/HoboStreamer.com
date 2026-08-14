@@ -6827,7 +6827,12 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .uai-section h4 .uai-tag { margin-left: auto; font-size: 0.68rem; padding: 1px 7px; border-radius: 999px; text-transform: none; letter-spacing: 0; }
 .uai-tag-today { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
 .uai-tag-all { background: var(--bg-tertiary); color: var(--text-secondary); }
+.uai-tag-streamer { background: color-mix(in srgb, var(--live-red, #e05a5a) 20%, transparent); color: var(--live-red, #e05a5a); }
 .uai-body { font-size: 0.9rem; line-height: 1.55; color: var(--text-primary); }
+/* Streamer overview leads the popover, set apart from the chat insight below it. */
+.uai-streamer { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
+.uai-streamer h4 { color: var(--text); }
+.uai-group-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 4px 0 10px; display: flex; align-items: center; gap: 6px; }
 .uai-close { background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; }
 .global-chat-messages {
     flex: 1; overflow-y: auto; padding: 8px 12px;
