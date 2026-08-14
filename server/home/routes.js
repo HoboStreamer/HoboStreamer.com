@@ -88,18 +88,31 @@ function heroMedia() {
     return _shuffle(items).slice(0, 28);
 }
 
+// An audience must be JUST the noun phrase that completes "Live streaming for ___" — strip any
+// baked-in "(live) streaming for" / "for" prefix (some LLM outputs include it → "Live streaming
+// for live streaming for nomads") and trailing punctuation.
+function _cleanAudience(raw) {
+    return String(raw == null ? '' : raw)
+        .replace(/^\s*(live\s+)?streaming\s+for\s+/i, '')
+        .replace(/^\s*for\s+/i, '')
+        .replace(/^["'‘’“”\-\s]+|["'‘’“”\s]+$/g, '')
+        .replace(/[.!,;:]+$/, '')
+        .trim();
+}
+
 function heroSlogans() {
     let s = null;
     try {
         s = db.getSetting('home_hero_slogans');
         if (typeof s === 'string') s = JSON.parse(s);
     } catch { s = null; }
-    const audiences = (s && Array.isArray(s.audiences) && s.audiences.length) ? s.audiences : FALLBACK_AUDIENCES;
+    const rawAud = (s && Array.isArray(s.audiences) && s.audiences.length) ? s.audiences : FALLBACK_AUDIENCES;
     const quips = (s && Array.isArray(s.quips) && s.quips.length) ? s.quips : FALLBACK_QUIPS;
+    const audiences = rawAud.map(_cleanAudience).filter(a => a && a.length <= 60);
     // Always keep a few evergreen ones mixed in, then shuffle.
     return {
-        audiences: _shuffle(Array.from(new Set([...audiences, ...FALLBACK_AUDIENCES]))).slice(0, 40),
-        quips: _shuffle(Array.from(new Set([...quips, ...FALLBACK_QUIPS]))).slice(0, 40),
+        audiences: _shuffle(Array.from(new Set([...audiences, ...FALLBACK_AUDIENCES]))).slice(0, 44),
+        quips: _shuffle(Array.from(new Set([...quips, ...FALLBACK_QUIPS]))).slice(0, 44),
         ai: !!(s && (s.audiences || s.quips)),
     };
 }

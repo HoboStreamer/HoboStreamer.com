@@ -1994,20 +1994,33 @@ main#app { position: relative; z-index: 1; }
 .hero { min-height: clamp(560px, 78vh, 760px); display: flex; align-items: center; justify-content: center; }
 .hero-content { position: relative; z-index: 2; }
 
-/* Floating thumbnail collage (decorative, click-through cards) */
-.hero-collage { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+/* Floating thumbnail collage — a 3D, mouse-parallax scene of drifting media cards */
+.hero-collage {
+    position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    perspective: 1200px; perspective-origin: 50% 42%; transform-style: preserve-3d;
+    transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+    transition: transform 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
 .hero-float {
     position: absolute; display: block; width: var(--w, 120px); aspect-ratio: 16 / 10;
-    border-radius: 12px; overflow: hidden; pointer-events: auto; text-decoration: none;
+    border-radius: 13px; overflow: hidden; pointer-events: auto; text-decoration: none;
+    transform-style: preserve-3d; transform-origin: center;
     background: color-mix(in srgb, var(--bg-secondary) 88%, #000);
     border: 1px solid rgba(192, 150, 92, 0.28);
-    box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(0, 0, 0, 0.2) inset;
-    opacity: 0; transform: translateY(10px) scale(0.96);
-    animation: heroFloatIn 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) var(--in-delay, 0s) forwards,
-               heroFloatBob var(--dur, 13s) ease-in-out var(--delay, 0s) infinite alternate;
+    box-shadow: 0 18px 40px -14px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(0, 0, 0, 0.22) inset;
+    filter: blur(var(--blur, 0px));
+    opacity: 0; transform: translate3d(0, 12px, var(--z, 0px)) scale(0.96);
+    animation: heroFloatIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) var(--in-delay, 0s) forwards,
+               heroFloat3d var(--dur, 14s) ease-in-out var(--delay, 0s) infinite alternate;
     will-change: transform, opacity;
 }
-.hero-float.swapping { opacity: 0.05 !important; transition: opacity 0.5s ease; }
+/* Glossy sheen sweeping across each card for a glassy 3D feel */
+.hero-float::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: 3;
+    background: linear-gradient(135deg, transparent 30%, rgba(255, 255, 255, 0.10) 45%, transparent 60%);
+    background-size: 250% 250%; animation: heroSheen var(--dur, 14s) ease-in-out var(--delay, 0s) infinite alternate;
+}
+.hero-float.swapping { opacity: 0.16 !important; transition: opacity 0.7s ease; }
 .hero-float img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .hero-float-body {
     position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
@@ -2031,8 +2044,9 @@ main#app { position: relative; z-index: 1; }
 .hero-float--clip .hero-float-badge { background: #2ecc71; border-color: #6fe0a2; color: #05130a; }
 .hero-float--paste .hero-float-badge { background: var(--accent); border-color: var(--accent-light); color: var(--on-accent, #0b0d10); }
 .hero-float { transition: transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease, opacity 0.45s ease; }
-.hero-float:hover { z-index: 5; box-shadow: 0 18px 44px -8px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--accent) inset;
-    animation-play-state: paused; filter: brightness(1.08); }
+.hero-float:hover { z-index: 5; box-shadow: 0 26px 60px -10px rgba(0, 0, 0, 0.85), 0 0 0 1px var(--accent) inset;
+    animation-play-state: paused; filter: none;
+    transform: translate3d(0, -4px, 90px) scale(1.05) !important; opacity: 1 !important; }
 
 /* Scrim over the collage so the centered hero copy stays readable */
 .hero-scrim {
@@ -2042,20 +2056,34 @@ main#app { position: relative; z-index: 1; }
         linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 55%, transparent) 0%, transparent 22%, transparent 78%, var(--bg-primary) 100%);
 }
 
-@keyframes heroFloatIn { to { opacity: 0.62; transform: translateY(0) scale(1); } }
-@keyframes heroFloatBob {
-    0%   { transform: translateY(-9px) rotate(var(--rot, -2deg)); }
-    100% { transform: translateY(9px) rotate(calc(var(--rot, -2deg) * -0.6)); }
+@keyframes heroFloatIn { to { opacity: var(--op, 0.6); } }
+/* 3D drift: translate in x/y + slow z-tilt so cards feel like they float in space. */
+@keyframes heroFloat3d {
+    0%   { transform: translate3d(-4px, -9px, var(--z, 0px)) rotateX(var(--rx, 5deg)) rotateY(var(--ry, -6deg)) rotate(var(--rot, -2deg)); }
+    50%  { transform: translate3d(5px, 3px, var(--z, 0px)) rotateX(calc(var(--rx, 5deg) * -0.7)) rotateY(calc(var(--ry, -6deg) * 0.35)) rotate(calc(var(--rot, -2deg) * 0.3)); }
+    100% { transform: translate3d(3px, 9px, var(--z, 0px)) rotateX(var(--rx, 5deg)) rotateY(calc(var(--ry, -6deg) * -0.85)) rotate(calc(var(--rot, -2deg) * -0.6)); }
 }
+@keyframes heroSheen { 0% { background-position: 0% 0%; } 100% { background-position: 100% 100%; } }
 
-/* Rotating AI quip line */
+/* Rotating tagline + AI quip — FIXED heights + centered so swapping copy never reflows the
+   page (no scroll jump) and long lines don't blow out the layout. */
+.hero .hero-tagline {
+    white-space: normal; text-align: center; margin: 0 auto 2px; max-width: 860px;
+    display: grid; place-items: center; min-height: 2.6em;
+    text-wrap: balance; overflow-wrap: break-word;
+}
 .hero-quip {
-    min-height: 1.6em; margin: 4px 0 20px; font-size: clamp(0.98rem, 1.9vw, 1.18rem);
+    height: 2.8em; margin: 2px auto 18px; max-width: 640px; overflow: hidden;
+    display: grid; place-items: center; text-align: center; text-wrap: balance;
+    font-size: clamp(0.98rem, 1.9vw, 1.16rem);
     font-style: italic; color: var(--accent-light, #dbb077); opacity: 0;
-    transform: translateY(5px); transition: opacity 0.4s ease, transform 0.4s ease;
-    text-shadow: 0 1px 10px rgba(0, 0, 0, 0.5);
+    transform: translateY(5px); transition: opacity 0.5s ease, transform 0.5s ease;
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.55); line-height: 1.35;
 }
 .hero-quip.visible { opacity: 0.92; transform: translateY(0); }
+/* keep the whole content column centered even when a card's nowrap text is wide */
+.hero-content { min-width: 0; max-width: min(860px, 92vw); margin: 0 auto; }
+.hero-philosophy-links { margin-top: 24px; }
 
 /* Stats bar */
 .hero-stats { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 4px 0 26px; }
@@ -2080,6 +2108,8 @@ main#app { position: relative; z-index: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
     .hero-float { animation: heroFloatIn 0.01s forwards; opacity: 0.5; }
+    .hero-float::after { animation: none; display: none; }
+    .hero-collage { transition: none; transform: none; }
     .hero-quip { transition: none; }
     .hero-stat--live > i { animation: none; }
 }

@@ -1237,14 +1237,25 @@ function renderHeroCollage(media) {
     const cards = [];
     for (let i = 0; i < count; i++) {
         const el = document.createElement('a');
-        const size = 96 + Math.round(Math.random() * 76);
+        // Depth: z in [-260, 120]. Far cards (negative z) are smaller, dimmer, softly blurred;
+        // near cards are bigger, brighter, crisp — with mouse-parallax on the whole scene this
+        // reads as real 3D depth.
+        const z = Math.round(-260 + Math.random() * 380);
+        const depth = (z + 260) / 380;                 // 0 = far, 1 = near
+        const op = (0.32 + depth * 0.44).toFixed(2);
+        const blur = (Math.max(0, -z) / 130 * 1.7).toFixed(2);
+        const size = Math.round(84 + depth * 98);
+        const rx = (Math.random() * 10 - 5).toFixed(1);
+        const ry = (Math.random() * 14 - 7).toFixed(1);
         const rot = (Math.random() * 6 - 3).toFixed(1);
-        el.style.cssText = `left:${positions[i].left}%;top:${positions[i].top}%;--w:${size}px;--rot:${rot}deg;`
-            + `--dur:${(10 + Math.random() * 8).toFixed(1)}s;--delay:${(Math.random() * -6).toFixed(1)}s;--in-delay:${(i * 0.06).toFixed(2)}s;`;
+        el.style.cssText = `left:${positions[i].left}%;top:${positions[i].top}%;`
+            + `--w:${size}px;--z:${z}px;--op:${op};--blur:${blur}px;--rx:${rx}deg;--ry:${ry}deg;--rot:${rot}deg;`
+            + `--dur:${(11 + Math.random() * 9).toFixed(1)}s;--delay:${(Math.random() * -8).toFixed(1)}s;--in-delay:${(i * 0.05).toFixed(2)}s;`;
         _heroFloatFill(el, media[i % media.length]);
         wrap.appendChild(el);
         cards.push(el);
     }
+    _heroParallaxInit();
     if (reduce || media.length <= count) return;
     let ptr = count;
     _heroCollageTimer = setInterval(() => {
@@ -1252,15 +1263,45 @@ function renderHeroCollage(media) {
         const card = cards[Math.floor(Math.random() * cards.length)];
         const item = media[ptr % media.length]; ptr++;
         card.classList.add('swapping');
-        setTimeout(() => { _heroFloatFill(card, item); card.classList.remove('swapping'); }, 520);
-    }, 3600);
+        setTimeout(() => { _heroFloatFill(card, item); card.classList.remove('swapping'); }, 720);
+    }, 5200);
+}
+
+// Mouse-parallax: gently tilt the whole 3D collage toward the cursor (desktop only).
+let _heroParallaxBound = false;
+function _heroParallaxInit() {
+    if (_heroParallaxBound) return;
+    const hero = document.querySelector('#page-home .hero');
+    const collage = document.getElementById('hero-collage');
+    if (!hero || !collage) return;
+    if (window.matchMedia && (window.matchMedia('(prefers-reduced-motion: reduce)').matches || window.matchMedia('(pointer: coarse)').matches)) return;
+    _heroParallaxBound = true;
+    let raf = 0, ry = 0, rx = 0;
+    const apply = () => { raf = 0; collage.style.setProperty('--tilt-y', ry.toFixed(2) + 'deg'); collage.style.setProperty('--tilt-x', rx.toFixed(2) + 'deg'); };
+    hero.addEventListener('pointermove', (e) => {
+        const r = hero.getBoundingClientRect();
+        ry = (((e.clientX - r.left) / r.width) * 2 - 1) * 7;
+        rx = -(((e.clientY - r.top) / r.height) * 2 - 1) * 5;
+        if (!raf) raf = requestAnimationFrame(apply);
+    }, { passive: true });
+    hero.addEventListener('pointerleave', () => { ry = 0; rx = 0; if (!raf) raf = requestAnimationFrame(apply); });
 }
 
 // ── Hero data: stats + collage + AI slogans (falls back gracefully) ──
+function _cleanAudiences(arr) {
+    if (!Array.isArray(arr)) return arr;
+    return arr
+        .map(s => String(s == null ? '' : s)
+            .replace(/^\s*(live\s+)?streaming\s+for\s+/i, '')  // strip a baked-in "live streaming for"
+            .replace(/^\s*for\s+/i, '')
+            .replace(/^["'‘’“”\-\s]+|["'‘’“”\s]+$/g, '')
+            .replace(/[.!,;:]+$/, ''))
+        .filter(s => s && s.length <= 60);
+}
 async function loadHeroData() {
     let data = null;
     try { data = await api('/home/hero'); } catch { /* static hero fallback below */ }
-    startHeroRotation(data && data.slogans && data.slogans.audiences);
+    startHeroRotation(_cleanAudiences(data && data.slogans && data.slogans.audiences));
     startHeroQuips(data && data.slogans && data.slogans.quips);
     if (data && data.stats) renderHeroStats(data.stats);
     if (data && data.media) renderHeroCollage(data.media);
