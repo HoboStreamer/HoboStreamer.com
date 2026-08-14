@@ -205,10 +205,13 @@ async function revokeToken(token) {
 // Returns a usable access token for the streamer, refreshing + persisting the rotated
 // pair when near expiry. On a reuse/invalid_grant failure the family is dead → we clear
 // the tokens so the streamer is prompted to re-authorize. Throws on unrecoverable states.
-async function getValidAccessToken(userId) {
+async function getValidAccessToken(userId, { force = false } = {}) {
     const conn = db.getPowerchatConnection(userId);
     if (!conn || !conn.access_token) throw new Error('PowerChat not connected');
-    if (conn.token_expires_at && (conn.token_expires_at - Date.now()) > 60000) {
+    // Normally reuse the stored token until it's near expiry. `force` (used after a 401)
+    // refreshes regardless — the stored token may be valid by our clock yet rejected as
+    // "an older credential generation" because PowerChat rotated the token family.
+    if (!force && conn.token_expires_at && (conn.token_expires_at - Date.now()) > 60000) {
         return conn.access_token;
     }
     if (!conn.refresh_token) throw new Error('PowerChat token expired — reconnect required');
@@ -236,18 +239,32 @@ async function apiRequest(userId, { method = 'GET', path, username, body, query 
     const c = getConfig();
     const conn = db.getPowerchatConnection(userId);
     const uname = username || (conn && conn.powerchat_username) || c.sandboxUsername;
-    const token = await getValidAccessToken(userId);
     let url = `${c.apiBase}/streamers/${encodeURIComponent(uname)}${path}`;
     if (query) { const qs = new URLSearchParams(query).toString(); if (qs) url += `?${qs}`; }
-    const res = await fetch(url, {
-        method,
-        headers: {
-            Authorization: `Bearer ${token}`,
-            ...(body ? { 'Content-Type': 'application/json' } : {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = await res.json().catch(() => ({}));
+
+    // One authenticated attempt; on a 401 (expired / rotated / "older credential
+    // generation") force a token refresh and retry exactly once.
+    const attempt = async (force) => {
+        const token = await getValidAccessToken(userId, { force });
+        const res = await fetch(url, {
+            method,
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Accept': 'application/json',
+                ...(body ? { 'Content-Type': 'application/json' } : {}),
+            },
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        const json = await res.json().catch(() => ({}));
+        return { res, json };
+    };
+
+    let { res, json } = await attempt(false);
+    if (res.status === 401) {
+        // Refresh-and-retry. If the refresh itself is rejected, getValidAccessToken
+        // clears the tokens (reconnect needed) and throws.
+        ({ res, json } = await attempt(true));
+    }
     if (!res.ok) {
         const e = new Error((json.error && json.error.message) || `PowerChat API ${res.status}`);
         e.status = res.status;
