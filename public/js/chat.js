@@ -5255,6 +5255,7 @@ function _buildCrossfeedEl(msg) {
     const displayName = esc(msg.username || msg.displayName || `anon${msg.anonId || ''}`);
     const _relayPlatform = (msg.source_platform || parseRelayUsername(msg.username || msg.displayName || '').platform || '').toLowerCase();
     const _relayBadge = relayBadgeHTML(_relayPlatform);
+    const _aiBadge = (msg.is_ai || msg.source_platform === 'ai') ? '<span class="chat-ai-badge">AI</span>' : '';
     const _visibleName = _relayBadge ? esc((msg.username || msg.displayName || '').replace(/^\[[^\]]+\]\s*/, '')) : displayName;
     const rawText = msg.message || msg.text || '';
     const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
@@ -5266,7 +5267,16 @@ function _buildCrossfeedEl(msg) {
             : { hour: '2-digit', minute: '2-digit' };
         tsHtml = `<span class="chat-time-inline">${tsSource.toLocaleTimeString([], tsOpts)}</span> `;
     }
-    el.innerHTML = `${tsHtml}${sourceBadge}${badge}${_relayBadge}${(msg.is_ai || msg.source_platform === 'ai') ? '<span class="chat-ai-badge">AI</span>' : ''}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}">${_visibleName}</span>: <span class="chat-text">${text}</span>`;
+    // Make crossfeed names clickable like normal chat: flag relay messages so they
+    // get the relay context menu (AI insight / chat logs / mod), and carry the ids
+    // real + anon users need for their menus.
+    const isRelayMsg = msg.role === 'external' || isRelayPlatform(msg.source_platform) || !!_relayBadge;
+    if (isRelayMsg) { el.dataset.isRelay = '1'; el.dataset.sourcePlatform = _relayPlatform || msg.source_platform || ''; }
+    if (msg.id) el.dataset.msgId = String(msg.id);
+    const cfUserId = msg.user_id || '';
+    const cfIsAnon = !cfUserId && !isRelayMsg;
+    const cfCore = msg.core_username || (isRelayMsg ? '' : (msg.username || ''));
+    el.innerHTML = `${tsHtml}${sourceBadge}${badge}${_relayBadge}${_aiBadge}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}" data-core-username="${esc(cfCore)}" data-user-id="${esc(String(cfUserId))}" data-anon="${cfIsAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${_visibleName}</span>: <span class="chat-text">${text}</span>`;
     return el;
 }
 
