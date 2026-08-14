@@ -809,14 +809,22 @@ function initDb() {
 
         database.exec(`CREATE TABLE IF NOT EXISTS ai_usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kind TEXT,                              -- paste_image | paste_text | stream_memory
+            kind TEXT,                              -- paste_image | paste_text | stream_memory | ai_viewers | ...
             model TEXT,
             input_tokens INTEGER DEFAULT 0,
             output_tokens INTEGER DEFAULT 0,
             cost_usd REAL DEFAULT 0,
+            owner_user_id INTEGER,                  -- streamer this spend is attributed to (NULL = platform/global)
+            source TEXT,                            -- feature bucket, e.g. 'ai_viewers' (NULL = legacy/global)
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
         database.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at)');
+        try {
+            const usageCols = database.prepare('PRAGMA table_info(ai_usage)').all().map((c) => c.name);
+            if (!usageCols.includes('owner_user_id')) database.exec('ALTER TABLE ai_usage ADD COLUMN owner_user_id INTEGER');
+            if (!usageCols.includes('source')) database.exec('ALTER TABLE ai_usage ADD COLUMN source TEXT');
+            database.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_owner_day ON ai_usage(owner_user_id, created_at)');
+        } catch (e) { console.warn('[DB] ai_usage attribution migration:', e.message); }
 
         // AI-generated per-streamer overview (aggregated across their streams/vods/pastes/memories).
         database.exec(`CREATE TABLE IF NOT EXISTS streamer_overviews (
@@ -1228,6 +1236,71 @@ function initDb() {
         const aiCols = database.prepare('PRAGMA table_info(ai_chatbot_configs)').all().map((c) => c.name);
         if (!aiCols.includes('vision_enabled')) database.exec('ALTER TABLE ai_chatbot_configs ADD COLUMN vision_enabled INTEGER DEFAULT 0');
     } catch (e) { console.warn('[DB] ai_chatbot_configs migration:', e.message); }
+
+    // ── AI Chat Viewers 2.0 ──────────────────────────────────────
+    // Persistent per-channel bot roster ("brains"): one durable identity per row that
+    // survives across every stream on that channel.
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS channel_ai_bots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_user_id INTEGER NOT NULL,       -- the streamer (owner)
+            username TEXT NOT NULL,
+            display_name TEXT,
+            avatar_color TEXT DEFAULT '#8a8aff',
+            source TEXT DEFAULT 'ambient',          -- 'ambient' | 'clone'
+            cloned_from_kind TEXT,                   -- 'user' | 'relay' | NULL
+            cloned_from_ref TEXT,                    -- user_id (string) or "platform:username"
+            persona_json TEXT DEFAULT '{}',          -- character + typing style + identity
+            brain_json TEXT DEFAULT '{}',            -- rolling condensed memory + short timeline
+            is_active INTEGER DEFAULT 1,
+            msg_count INTEGER DEFAULT 0,
+            last_active_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (channel_user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        database.exec('CREATE INDEX IF NOT EXISTS idx_channel_ai_bots_channel ON channel_ai_bots(channel_user_id, is_active)');
+        database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_ai_bots_uname ON channel_ai_bots(channel_user_id, username)');
+    } catch (e) { console.warn('[DB] channel_ai_bots migration:', e.message); }
+
+    // Per-streamer AI-viewer settings (supersedes ai_chatbot_configs; adds budget + BYO key).
+    try {
+        database.exec(`CREATE TABLE IF NOT EXISTS channel_ai_config (
+            user_id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 0,
+            num_ambient_bots INTEGER DEFAULT 3,
+            pacing_seconds INTEGER DEFAULT 45,
+            persona TEXT DEFAULT '',
+            transcribe_enabled INTEGER DEFAULT 0,
+            vision_enabled INTEGER DEFAULT 0,
+            use_shared_key INTEGER DEFAULT 1,        -- 1 = HoboStreamer shared key (capped), 0 = BYO
+            daily_budget_cents INTEGER DEFAULT 20,   -- shared-key daily cap
+            byo_key TEXT DEFAULT '',
+            byo_base_url TEXT DEFAULT '',
+            byo_model TEXT DEFAULT 'gpt-4o-mini',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+        // One-time migration of existing ai_chatbot_configs rows into the new table.
+        const migrated = database.prepare('SELECT COUNT(*) AS c FROM channel_ai_config').get().c;
+        if (!migrated) {
+            const old = database.prepare('SELECT * FROM ai_chatbot_configs').all();
+            const ins = database.prepare(`INSERT OR IGNORE INTO channel_ai_config
+                (user_id, enabled, num_ambient_bots, pacing_seconds, persona, transcribe_enabled, vision_enabled,
+                 use_shared_key, daily_budget_cents, byo_key, byo_base_url, byo_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+            for (const r of old) {
+                const hasByo = !!(r.api_token && String(r.api_token).trim());
+                ins.run(
+                    r.user_id, r.enabled ? 1 : 0, r.num_bots || 3, r.post_interval_seconds || 45,
+                    r.persona || '', r.transcribe_enabled ? 1 : 0, r.vision_enabled ? 1 : 0,
+                    hasByo ? 0 : 1, 20, r.api_token || '', r.base_url || '', r.model || 'gpt-4o-mini'
+                );
+            }
+            if (old.length) console.log(`[DB] Migrated ${old.length} ai_chatbot_configs → channel_ai_config`);
+        }
+    } catch (e) { console.warn('[DB] channel_ai_config migration:', e.message); }
 
     // Migrate: create moderation_actions table for audit logging
     try {
@@ -2288,12 +2361,21 @@ function updatePasteAi(pasteId, { ai_summary = null, ai_tags = null }) {
     return run('UPDATE pastes SET ai_summary = ?, ai_tags = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?',
         [ai_summary, ai_tags ? (typeof ai_tags === 'string' ? ai_tags : JSON.stringify(ai_tags)) : null, pasteId]);
 }
-function recordAiUsage({ kind, model, input_tokens = 0, output_tokens = 0, cost_usd = 0 }) {
-    return run('INSERT INTO ai_usage (kind, model, input_tokens, output_tokens, cost_usd) VALUES (?, ?, ?, ?, ?)',
-        [kind || null, model || null, input_tokens || 0, output_tokens || 0, cost_usd || 0]);
+function recordAiUsage({ kind, model, input_tokens = 0, output_tokens = 0, cost_usd = 0, owner_user_id = null, source = null }) {
+    return run('INSERT INTO ai_usage (kind, model, input_tokens, output_tokens, cost_usd, owner_user_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [kind || null, model || null, input_tokens || 0, output_tokens || 0, cost_usd || 0, owner_user_id || null, source || null]);
 }
 function getAiCostToday() {
     const r = get("SELECT COALESCE(SUM(cost_usd),0) AS c FROM ai_usage WHERE created_at >= date('now')");
+    return r ? r.c : 0;
+}
+// Today's spend attributed to one streamer (optionally within a single feature bucket).
+function getAiCostTodayForUser(userId, source = null) {
+    if (!userId) return 0;
+    let sql = "SELECT COALESCE(SUM(cost_usd),0) AS c FROM ai_usage WHERE owner_user_id = ? AND created_at >= date('now')";
+    const params = [userId];
+    if (source) { sql += ' AND source = ?'; params.push(source); }
+    const r = get(sql, params);
     return r ? r.c : 0;
 }
 function getAiUsageSummary(days = 30) {
@@ -3176,6 +3258,7 @@ function getUserChatHistory(userId, limit = 50, offset = 0) {
 // ── Chat AI summaries (global overview/timeline + per-user insights) ──────────
 // Messages worth analyzing: real chat, exclude system noise + deleted + expired.
 const _CHAT_AI_WHERE = `cm.is_deleted = 0 AND cm.message_type != 'system'
+    AND COALESCE(cm.source_platform,'') != 'ai'
     AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
 
 function getMaxChatMessageId() {
@@ -4487,6 +4570,122 @@ function upsertAiChatbotConfig(userId, fields) {
         );
     }
     return getAiChatbotConfig(userId);
+}
+
+// ── AI Chat Viewers 2.0: config + roster ─────────────────────
+const CHANNEL_AI_CONFIG_DEFAULTS = {
+    enabled: 0, num_ambient_bots: 3, pacing_seconds: 45, persona: '',
+    transcribe_enabled: 0, vision_enabled: 0, use_shared_key: 1,
+    daily_budget_cents: 20, byo_key: '', byo_base_url: '', byo_model: 'gpt-4o-mini',
+};
+
+function getChannelAiConfig(userId) {
+    const row = get('SELECT * FROM channel_ai_config WHERE user_id = ?', [userId]);
+    return row || { user_id: userId, ...CHANNEL_AI_CONFIG_DEFAULTS };
+}
+
+function upsertChannelAiConfig(userId, fields) {
+    const allowed = {
+        enabled: (v) => (v ? 1 : 0),
+        num_ambient_bots: (v) => Math.min(12, Math.max(0, parseInt(v, 10) || 0)),
+        pacing_seconds: (v) => Math.min(600, Math.max(10, parseInt(v, 10) || 45)),
+        persona: (v) => String(v || '').slice(0, 4000),
+        transcribe_enabled: (v) => (v ? 1 : 0),
+        vision_enabled: (v) => (v ? 1 : 0),
+        use_shared_key: (v) => (v ? 1 : 0),
+        daily_budget_cents: (v) => Math.min(100000, Math.max(0, parseInt(v, 10) || 0)),
+        byo_key: (v) => String(v || '').trim().slice(0, 400),
+        byo_base_url: (v) => String(v || '').trim().slice(0, 500),
+        byo_model: (v) => String(v || '').trim().slice(0, 120) || 'gpt-4o-mini',
+    };
+    const existing = get('SELECT 1 FROM channel_ai_config WHERE user_id = ?', [userId]);
+    if (existing) {
+        const sets = [];
+        const params = [];
+        for (const [col, coerce] of Object.entries(allowed)) {
+            if (fields[col] !== undefined) { sets.push(`${col} = ?`); params.push(coerce(fields[col])); }
+        }
+        if (sets.length) {
+            sets.push('updated_at = CURRENT_TIMESTAMP');
+            params.push(userId);
+            run(`UPDATE channel_ai_config SET ${sets.join(', ')} WHERE user_id = ?`, params);
+        }
+    } else {
+        const merged = { ...CHANNEL_AI_CONFIG_DEFAULTS };
+        for (const [col, coerce] of Object.entries(allowed)) {
+            if (fields[col] !== undefined) merged[col] = coerce(fields[col]);
+        }
+        run(
+            `INSERT INTO channel_ai_config
+                (user_id, enabled, num_ambient_bots, pacing_seconds, persona, transcribe_enabled, vision_enabled,
+                 use_shared_key, daily_budget_cents, byo_key, byo_base_url, byo_model)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [userId, merged.enabled, merged.num_ambient_bots, merged.pacing_seconds, merged.persona,
+             merged.transcribe_enabled, merged.vision_enabled, merged.use_shared_key,
+             merged.daily_budget_cents, merged.byo_key, merged.byo_base_url, merged.byo_model]
+        );
+    }
+    return getChannelAiConfig(userId);
+}
+
+// Persistent per-channel bot roster ("brains").
+function createChannelAiBot({ channel_user_id, username, display_name, avatar_color, source = 'ambient',
+                             cloned_from_kind = null, cloned_from_ref = null, persona_json = {}, brain_json = {} }) {
+    const info = run(
+        `INSERT INTO channel_ai_bots
+            (channel_user_id, username, display_name, avatar_color, source, cloned_from_kind, cloned_from_ref, persona_json, brain_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [channel_user_id, username, display_name || username, avatar_color || '#8a8aff', source,
+         cloned_from_kind, cloned_from_ref,
+         typeof persona_json === 'string' ? persona_json : JSON.stringify(persona_json || {}),
+         typeof brain_json === 'string' ? brain_json : JSON.stringify(brain_json || {})]
+    );
+    return getChannelAiBot(info.lastInsertRowid);
+}
+
+function getChannelAiBot(id) {
+    return get('SELECT * FROM channel_ai_bots WHERE id = ?', [id]);
+}
+
+function getChannelAiBots(channelUserId, { activeOnly = false } = {}) {
+    let sql = 'SELECT * FROM channel_ai_bots WHERE channel_user_id = ?';
+    if (activeOnly) sql += ' AND is_active = 1';
+    sql += ' ORDER BY last_active_at DESC, created_at ASC';
+    return all(sql, [channelUserId]);
+}
+
+function getChannelAiBotByUsername(channelUserId, username) {
+    return get('SELECT * FROM channel_ai_bots WHERE channel_user_id = ? AND username = ?', [channelUserId, username]);
+}
+
+function updateChannelAiBot(id, fields) {
+    const allowed = {
+        display_name: (v) => String(v || '').slice(0, 60),
+        avatar_color: (v) => String(v || '').slice(0, 20),
+        persona_json: (v) => (typeof v === 'string' ? v : JSON.stringify(v || {})),
+        brain_json: (v) => (typeof v === 'string' ? v : JSON.stringify(v || {})),
+        is_active: (v) => (v ? 1 : 0),
+        source: (v) => String(v || '').slice(0, 20),
+    };
+    const sets = [];
+    const params = [];
+    for (const [col, coerce] of Object.entries(allowed)) {
+        if (fields[col] !== undefined) { sets.push(`${col} = ?`); params.push(coerce(fields[col])); }
+    }
+    if (sets.length) {
+        sets.push('updated_at = CURRENT_TIMESTAMP');
+        params.push(id);
+        run(`UPDATE channel_ai_bots SET ${sets.join(', ')} WHERE id = ?`, params);
+    }
+    return getChannelAiBot(id);
+}
+
+function touchChannelAiBot(id) {
+    return run('UPDATE channel_ai_bots SET msg_count = msg_count + 1, last_active_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+}
+
+function deleteChannelAiBot(id) {
+    return run('DELETE FROM channel_ai_bots WHERE id = ?', [id]);
 }
 
 // ── Hobo Coins helpers ───────────────────────────────────────
@@ -6147,7 +6346,7 @@ module.exports = {
     setVodAiOverview, setClipAiOverview, setVodTranscript, setClipTranscript, getStreamMemoriesInRange,
     getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTimeline, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
-    updatePasteAi, recordAiUsage, getAiCostToday, getAiUsageSummary,
+    updatePasteAi, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     // Homepage helpers
@@ -6233,6 +6432,9 @@ module.exports = {
     createChannelSound, setChannelSoundEmote, getChannelSounds, getChannelSoundByCommand, getChannelSoundById,
     countChannelSounds, countChannelSoundsByUploader, deleteChannelSound,
     getAiChatbotConfig, upsertAiChatbotConfig,
+    getChannelAiConfig, upsertChannelAiConfig,
+    createChannelAiBot, getChannelAiBot, getChannelAiBots, getChannelAiBotByUsername,
+    updateChannelAiBot, touchChannelAiBot, deleteChannelAiBot,
     // Site Settings
     getSetting, getSettingRow, getAllSettings, setSetting, deleteSetting,
     // Verification Keys
