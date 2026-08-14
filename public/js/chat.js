@@ -4018,8 +4018,11 @@ function showChatContextMenu(event) {
     positionContextMenu(menu, event.clientX, event.clientY);
     activeContextMenu = menu;
 
-    // Fetch user profile (or render simplified menu for relay/anon users)
-    if (isRelay) {
+    // The official system account (changelog / server messages) is not a real user —
+    // show a locked-down info menu: no AI/logs/moderation/ban, no profile fetch.
+    if (isSystemUsername(username)) {
+        renderSystemContextMenu(menu, username);
+    } else if (isRelay) {
         renderRelayContextMenu(menu, username, sourcePlatform);
     } else {
         loadContextMenuProfile(menu, coreUsername, userId, isAnon);
@@ -4128,6 +4131,25 @@ async function loadContextMenuProfile(menu, username, userId, isAnon) {
             </div>
         `;
     }
+}
+
+// Reserved usernames that represent the site itself (system/changelog messages), not a
+// real user. They get a locked-down context menu and can't be registered by anyone.
+const SYSTEM_USERNAMES = new Set(['hobostreamer']);
+function isSystemUsername(name) { return SYSTEM_USERNAMES.has(String(name || '').trim().toLowerCase()); }
+
+function renderSystemContextMenu(menu, username) {
+    menu.innerHTML = `
+        <div class="ctx-header">
+            <span class="ctx-avatar-letter" style="background:var(--accent)"><i class="fa-solid fa-tower-broadcast"></i></span>
+            <div class="ctx-info">
+                <span class="ctx-name">${esc(username)}</span>
+                <span class="ctx-meta"><i class="fa-solid fa-circle-check"></i> Official system account</span>
+            </div>
+        </div>
+        <div class="ctx-actions">
+            <div class="ctx-system-note">Automated site account — it can't be messaged, moderated, or analyzed.</div>
+        </div>`;
 }
 
 function renderAnonContextMenu(menu, username, userId) {
