@@ -5073,7 +5073,35 @@ main#app { position: relative; z-index: 1; }
 .pc-success-text { color: #53fc18; font-weight: 600; }
 @keyframes pcFlash { 0% { box-shadow: 0 0 0 0 rgba(83,252,24,0); } 25% { box-shadow: 0 0 0 2px rgba(83,252,24,0.55), 0 0 26px rgba(83,252,24,0.35); } 100% { box-shadow: 0 0 0 0 rgba(83,252,24,0); } }
 #dash-powerchat-card.pc-flash { animation: pcFlash 1s ease-out; }
-.pc-disconnect-btn { opacity: .8; }
+.pc-disconnect-btn { opacity: .85; }
+
+/* Connected-state action groups — clean, uniform rows */
+#pc-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.pc-action-group { display: flex; flex-direction: column; gap: 6px; }
+.pc-action-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted, #888); display: flex; align-items: center; gap: 6px; }
+.pc-action-label i { color: var(--accent, #c0965c); font-size: 0.72rem; }
+.pc-btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.pc-btn-row .btn { flex: 0 1 auto; }
+
+/* Connecting box — centered, roomy, branded */
+.pc-status.pc-status-block { display: block; }
+.pc-connecting-box {
+    border: 1px solid rgba(192,150,92,0.28); border-radius: 12px;
+    background: linear-gradient(180deg, rgba(192,150,92,0.08), transparent);
+    padding: 16px; text-align: center;
+}
+.pc-connecting-head { font-size: 0.98rem; font-weight: 600; color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+.pc-connecting-box .pc-progress { display: block; width: 100%; max-width: 260px; height: 5px; margin: 14px auto 12px; }
+.pc-manual { font-size: 0.82rem; color: var(--text-muted, #999); display: flex; align-items: center; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.pc-manual a { color: var(--accent-light, #d8b98a); text-decoration: none; font-weight: 600; }
+.pc-manual a:hover { text-decoration: underline; }
+.pc-copy-btn {
+    background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text-secondary);
+    border-radius: 6px; padding: 3px 9px; font-size: 0.78rem; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+    transition: background .15s, border-color .15s;
+}
+.pc-copy-btn:hover { background: rgba(192,150,92,0.14); border-color: rgba(192,150,92,0.4); color: var(--text); }
+.pc-cancel-btn { opacity: .85; }
 
 .ai-bot-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
 .ai-bot-grid > label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }

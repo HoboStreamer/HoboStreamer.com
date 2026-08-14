@@ -175,4 +175,34 @@ function processEvent(envelope) {
     }
 }
 
-module.exports = { verifySignature, processEvent, publicGoal };
+// Fire a fake tip through the LIVE pipeline so a streamer can verify their alert sound +
+// chat celebration render, WITHOUT touching PowerChat (no scope needed) and WITHOUT
+// permanently crediting a goal. Broadcasts the donation chat event + plays the alert sound;
+// if there's an active goal it also sends a transient goal-update preview (not persisted).
+function simulateDonation(userId, { amountUsd = 5, donor = 'Test Tipper', message = 'Test tip ✨' } = {}) {
+    const chatServer = require('../chat/chat-server');
+    const alerts = require('../monetization/alerts');
+    const amount = Math.max(1, Math.round(amountUsd));
+    const ts = new Date().toISOString();
+    let streamId = null;
+    try { const live = db.getLiveStreamsByUserId(userId) || []; if (live.length) streamId = live[0].id; } catch { /* */ }
+
+    chatServer.broadcastToChannelRoom(userId, streamId, {
+        type: 'donation', username: donor, user_id: null, avatar_url: null,
+        amount, message, source: 'powerchat-test', timestamp: ts,
+    });
+    try { alerts.playAlertSound(chatServer, userId, streamId, 'donation'); } catch { /* */ }
+
+    // Transient goal-progress preview (does NOT persist — reload restores the real number).
+    try {
+        const active = db.getActiveDonationGoals(userId) || [];
+        if (active.length === 1) {
+            const g = active[0];
+            const preview = { ...g, current_amount: Math.min((g.current_amount || 0) + amount, g.target_amount) };
+            chatServer.broadcastToChannelRoom(userId, streamId, { type: 'goal-update', goal: publicGoal(preview), preview: true });
+        }
+    } catch { /* */ }
+    return { amount, live: !!streamId };
+}
+
+module.exports = { verifySignature, processEvent, publicGoal, simulateDonation };

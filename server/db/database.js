@@ -784,7 +784,7 @@ function initDb() {
             ['powerchat_client_id', '', 'PowerChat OAuth client_id (pca_…) from the PowerChat Developer dashboard', 'string'],
             ['powerchat_client_secret', '', 'PowerChat OAuth client_secret (pcs_…) — shown once; owner-only', 'string'],
             ['powerchat_webhook_secret', '', 'PowerChat webhook signing secret (pcw_…) — shown once; owner-only', 'string'],
-            ['powerchat_scopes', 'profile:read webhooks:events checkout:attribute paid_messages:read', 'OAuth scopes requested from each streamer (space-delimited)', 'string'],
+            ['powerchat_scopes', 'profile:read webhooks:events checkout:attribute paid_messages:read alerts:trigger', 'OAuth scopes requested from each streamer (space-delimited)', 'string'],
             ['powerchat_sandbox_username', 'n8admin', 'Sandbox streamer username the app can act on until approved (the app owner’s PowerChat username)', 'string'],
         ];
         const seedPc = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");

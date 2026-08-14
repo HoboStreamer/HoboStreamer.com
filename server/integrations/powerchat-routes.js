@@ -177,14 +177,36 @@ router.get('/tip-link', requireAuth, (req, res) => {
     }
 });
 
-// ── POST /test-alert — fire the PowerChat dashboard test-alert (alerts:trigger) ─
+// ── POST /test-tip — simulate a tip through the LOCAL pipeline (no PowerChat call) ─
+// The most useful test: confirms the streamer's alert sound + chat celebration render.
+router.post('/test-tip', requireAuth, (req, res) => {
+    try {
+        const amount = Math.max(1, Math.min(999, parseInt(req.body.amount, 10) || 5));
+        const donor = req.user.display_name || req.user.username || 'Test Tipper';
+        const r = webhook.simulateDonation(req.user.id, { amountUsd: amount, donor, message: 'Test tip — this is what a real PowerChat tip looks like ✨' });
+        res.json({ ok: true, ...r });
+    } catch (err) {
+        res.status(500).json({ error: 'Test tip failed' });
+    }
+});
+
+// ── POST /test-alert — fire PowerChat's own overlay test-alert (needs alerts:trigger) ─
 router.post('/test-alert', requireAuth, async (req, res) => {
     try {
         await oauth.apiRequest(req.user.id, { method: 'POST', path: '/test-alerts', body: {} });
         res.json({ ok: true });
     } catch (err) {
+        // Missing scope → tell the user to reconnect to grant it (friendly, actionable).
+        if (err.status === 403 && /alerts:trigger/i.test(err.message || '')) {
+            return res.status(403).json({ error: 'reconnect_required', message: 'Reconnect your PowerChat account to enable overlay test alerts (the "trigger alerts" permission was added).' });
+        }
         res.status(err.status === 403 ? 403 : 502).json({ error: err.message });
     }
+});
+
+// ── GET /authorize-url — the OAuth start URL, for a manual copy/paste fallback ─
+router.get('/authorize-url', requireAuth, (req, res) => {
+    res.json({ url: `${String(config.baseUrl).replace(/\/+$/, '')}/api/powerchat/oauth/start` });
 });
 
 // ── POST /webhook — signed event receiver ────────────────────────────────────

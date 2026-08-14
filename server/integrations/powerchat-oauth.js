@@ -36,7 +36,7 @@ function getConfig() {
         clientId: s('powerchat_client_id'),
         clientSecret: s('powerchat_client_secret'),
         webhookSecret: s('powerchat_webhook_secret'),
-        scopes: s('powerchat_scopes') || 'profile:read webhooks:events checkout:attribute paid_messages:read',
+        scopes: s('powerchat_scopes') || 'profile:read webhooks:events checkout:attribute paid_messages:read alerts:trigger',
         sandboxUsername: s('powerchat_sandbox_username') || 'n8admin',
         authorizeUrl: `${baseUrl}/oauth/authorize`,
         tokenUrl: `${baseUrl}/oauth/token`,

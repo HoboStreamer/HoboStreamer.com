@@ -1,24 +1,24 @@
 /**
  * powerchat.js — dashboard panel to connect a PowerChat account for real tips.
- * Connection is per-streamer OAuth; the card is hidden unless the site admin has
- * enabled + configured the PowerChat app. The connect flow is a small state machine
- * (idle → connecting → success | error | cancelled) with live animation + auto-refresh.
+ * Connect flow is a small state machine (idle → connecting → success | error | cancelled)
+ * with live animation, auto-refresh, a COOP-safe close check, and a manual copy/paste link
+ * fallback for when the popup is blocked.
  */
 (function () {
     'use strict';
     function $(id) { return document.getElementById(id); }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-
-    // Fade the status content on each swap so state changes feel smooth, not janky.
     function _swap(el, html) { if (!el) return; el.innerHTML = html; el.classList.remove('pc-fade-in'); void el.offsetWidth; el.classList.add('pc-fade-in'); }
 
-    let _pcActive = null;   // the in-flight connect session (so Cancel can reach it)
+    const START_URL = '/api/powerchat/oauth/start';
+    function authUrl() { return window.location.origin + START_URL; }
+
+    let _pcActive = null;   // in-flight connect session
 
     window.loadPowerchatStatus = async function loadPowerchatStatus() {
         const card = $('dash-powerchat-card');
         if (!card) return;
-        // Don't clobber the live connecting animation with a stale status render.
-        if (_pcActive) return;
+        if (_pcActive) return;   // don't clobber the live connecting animation
         let st;
         try { st = await api('/powerchat/status'); }
         catch { card.style.display = 'none'; return; }
@@ -28,7 +28,7 @@
         else card.style.display = '';
 
         const statusEl = $('pc-status'), actionsEl = $('pc-actions'), hintEl = $('pc-hint');
-        if (statusEl && st.sandbox_username) statusEl.dataset.sandbox = st.sandbox_username;
+        if (statusEl) statusEl.classList.remove('pc-status-block');
 
         if (!st.configured) {
             _swap(statusEl, '<span class="pc-dot pc-dot-off"></span> PowerChat isn\'t fully set up by the site owner yet.');
@@ -40,9 +40,20 @@
         if (st.connected) {
             _swap(statusEl, `<span class="pc-dot pc-dot-on"></span> Connected as <strong>${esc(st.username || 'your account')}</strong>`);
             if (actionsEl) actionsEl.innerHTML = `
-                <button class="btn btn-outline btn-small" onclick="powerchatTestAlert(this)"><i class="fa-solid fa-bell"></i> Test alert</button>
-                ${st.tip_page_url ? `<a class="btn btn-outline btn-small" href="${esc(st.tip_page_url)}" target="_blank" rel="noopener"><i class="fa-solid fa-up-right-from-square"></i> My tip page</a>` : ''}
-                <button class="btn btn-small pc-disconnect-btn" onclick="powerchatDisconnect(this)"><i class="fa-solid fa-link-slash"></i> Disconnect</button>`;
+                <div class="pc-action-group">
+                    <span class="pc-action-label"><i class="fa-solid fa-flask"></i> Test your setup</span>
+                    <div class="pc-btn-row">
+                        <button class="btn btn-primary btn-small" onclick="powerchatTestTip(this)"><i class="fa-solid fa-gift"></i> Send test tip</button>
+                        <button class="btn btn-outline btn-small" onclick="powerchatTestAlert(this)"><i class="fa-solid fa-bell"></i> Test overlay alert</button>
+                    </div>
+                </div>
+                <div class="pc-action-group">
+                    <span class="pc-action-label"><i class="fa-solid fa-gear"></i> Connection</span>
+                    <div class="pc-btn-row">
+                        ${st.tip_page_url ? `<a class="btn btn-outline btn-small" href="${esc(st.tip_page_url)}" target="_blank" rel="noopener"><i class="fa-solid fa-up-right-from-square"></i> My tip page</a>` : ''}
+                        <button class="btn btn-outline btn-small pc-disconnect-btn" onclick="powerchatDisconnect(this)"><i class="fa-solid fa-link-slash"></i> Disconnect</button>
+                    </div>
+                </div>`;
             if (hintEl) hintEl.textContent = st.last_error ? ('Note: ' + st.last_error) : 'Tips confirmed on PowerChat now flow into your goals, alerts, and chat automatically.';
         } else {
             _swap(statusEl, '<span class="pc-dot pc-dot-off"></span> Not connected.');
@@ -51,66 +62,76 @@
         }
     };
 
-    // ── Connect flow (state machine) ──────────────────────────────────────────
+    // ── Connect flow ──────────────────────────────────────────────────────────
     function _renderConnecting() {
         const card = $('dash-powerchat-card'); if (card) card.classList.add('pc-busy');
-        _swap($('pc-status'), `<span class="pc-spinner"></span> <span class="pc-connecting-text">Waiting for you to authorize in PowerChat<span class="pc-ellipsis"><span>.</span><span>.</span><span>.</span></span></span>`);
+        const s = $('pc-status');
+        if (s) s.classList.add('pc-status-block');
+        _swap(s, `
+            <div class="pc-connecting-box">
+                <div class="pc-connecting-head"><span class="pc-spinner"></span> Waiting for you to authorize in PowerChat<span class="pc-ellipsis"><span>.</span><span>.</span><span>.</span></span></div>
+                <div class="pc-progress"><span class="pc-progress-bar"></span></div>
+                <div class="pc-manual">
+                    <span>Popup didn't open?</span>
+                    <a href="${esc(authUrl())}" onclick="return powerchatOpenManual(event)">Open the login page</a>
+                    <button type="button" class="pc-copy-btn" onclick="powerchatCopyAuthUrl(this)"><i class="fa-solid fa-copy"></i> Copy link</button>
+                </div>
+            </div>`);
         const a = $('pc-actions');
         if (a) a.innerHTML = `<button class="btn btn-small pc-cancel-btn" onclick="powerchatCancelConnect()"><i class="fa-solid fa-xmark"></i> Cancel</button>`;
         const h = $('pc-hint');
-        if (h) h.innerHTML = `<span class="pc-progress"><span class="pc-progress-bar"></span></span> Finish the login in the popup — this page updates automatically the moment you're done.`;
+        if (h) h.textContent = 'This page updates automatically the moment you finish.';
     }
     function _renderSuccess(username) {
         const card = $('dash-powerchat-card');
         if (card) { card.classList.remove('pc-busy'); card.classList.add('pc-flash'); setTimeout(() => card.classList.remove('pc-flash'), 1000); }
-        _swap($('pc-status'), `<span class="pc-check-pop">✓</span> <span class="pc-success-text">Connected${username ? ' as <strong>' + esc(username) + '</strong>' : ''}!</span>`);
+        const s = $('pc-status'); if (s) s.classList.remove('pc-status-block');
+        _swap(s, `<span class="pc-check-pop">✓</span> <span class="pc-success-text">Connected${username ? ' as <strong>' + esc(username) + '</strong>' : ''}!</span>`);
         const a = $('pc-actions'); if (a) a.innerHTML = '';
-        const h = $('pc-hint'); if (h) h.textContent = 'Linking your tip settings…';
+        const h = $('pc-hint'); if (h) h.textContent = 'Setting things up…';
     }
     function _renderCancelled() {
         const card = $('dash-powerchat-card'); if (card) card.classList.remove('pc-busy');
-        _swap($('pc-status'), '<span class="pc-dot pc-dot-off"></span> Connection cancelled — the window closed before finishing.');
+        const s = $('pc-status'); if (s) s.classList.remove('pc-status-block');
+        _swap(s, '<span class="pc-dot pc-dot-off"></span> Connection cancelled.');
         const a = $('pc-actions'); if (a) a.innerHTML = `<button class="btn btn-primary btn-small pc-connect-btn" onclick="powerchatConnect()"><i class="fa-solid fa-plug"></i> Try again</button>`;
         const h = $('pc-hint'); if (h) h.textContent = '';
     }
     function _renderError(msg) {
         const card = $('dash-powerchat-card'); if (card) card.classList.remove('pc-busy');
-        _swap($('pc-status'), '<span class="pc-dot pc-dot-off"></span> Couldn\'t connect.');
+        const s = $('pc-status'); if (s) s.classList.remove('pc-status-block');
+        _swap(s, '<span class="pc-dot pc-dot-off"></span> Couldn\'t connect.');
         const a = $('pc-actions'); if (a) a.innerHTML = `<button class="btn btn-primary btn-small pc-connect-btn" onclick="powerchatConnect()"><i class="fa-solid fa-plug"></i> Try again</button>`;
         const h = $('pc-hint'); if (h) h.innerHTML = `<span class="pc-warn">${esc(msg || 'Connection failed. Please try again.')}</span>`;
     }
 
-    window.powerchatConnect = function powerchatConnect() {
-        if (_pcActive) return; // already connecting
-
+    function _openPopup() {
         const w = 560, h = 720;
         const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
         const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
-        const popup = window.open('/api/powerchat/oauth/start', 'powerchat_oauth', `width=${w},height=${h},left=${left},top=${top}`);
-        if (!popup) { toast('Please allow popups for this site, then click Connect again.', 'error'); return; }
+        return window.open(START_URL, 'powerchat_oauth', `width=${w},height=${h},left=${left},top=${top}`);
+    }
 
-        _renderConnecting();
+    window.powerchatConnect = function powerchatConnect() {
+        if (_pcActive) return;
 
+        // Set up completion listeners BEFORE opening, so a manual/copy-link completion in any
+        // window still updates the dashboard (BroadcastChannel + localStorage survive COOP).
         let settled = false;
         const finish = (result, msg, username) => {
             if (settled) return;
             settled = true;
-            cleanup();
-            _pcActive = null;
-            try { if (popup && !popup.closed) popup.close(); } catch { /* */ }
+            cleanup(); _pcActive = null;
+            try { if (_pcActive && _pcActive.popup && !_pcActive.popup.closed) _pcActive.popup.close(); } catch { /* */ }
             if (result === 'ok') {
                 _renderSuccess(username);
                 toast('PowerChat connected ✓', 'success');
-                // Auto-refresh the card/widget once the server has stored the grant.
                 setTimeout(() => window.loadPowerchatStatus(), 1100);
             } else if (result === 'error') {
                 toast('PowerChat: ' + (msg || 'connection failed'), 'error');
                 _renderError(msg);
-            } else {
-                _renderCancelled();
-            }
+            } else { _renderCancelled(); }
         };
-
         const done = (m) => { if (!m || m.type !== 'powerchat-oauth') return; finish(m.ok ? 'ok' : 'error', m.error, m.username); };
         const onMsg = (e) => { if (e.origin === window.location.origin) done(e.data); };
         let bc = null;
@@ -119,24 +140,22 @@
         window.addEventListener('message', onMsg);
         window.addEventListener('storage', onStorage);
 
-        // Detecting a real "user closed the popup" is unreliable across browsers: once the
-        // popup navigates to PowerChat's cross-origin page, COOP severs the opener handle and
-        // `popup.closed` starts reporting TRUE even though the window is still open (this is
-        // the Firefox false "cancelled" bug). So: the completion message (BroadcastChannel /
-        // localStorage — both survive COOP) is the source of truth for success/error, and the
-        // Cancel button is the explicit way to abort. We only treat `popup.closed` as a REAL
-        // close if it happens well after opening (COOP severance is near-instant), and even
-        // then only after a grace period with no completion message.
+        _renderConnecting();
+        const popup = _openPopup();
+        if (!popup) toast('Popup blocked — use the “Open the login page” link below to connect.', 'warning');
+
         const openedAt = Date.now();
         const poll = setInterval(() => {
-            let closed = false;
-            try { closed = popup.closed; } catch { closed = false; }
+            const p = _pcActive && _pcActive.popup;
+            if (!p) return;
+            let closed = false; try { closed = p.closed; } catch { closed = false; }
             if (!closed) return;
             clearInterval(poll);
-            if (Date.now() - openedAt < 8000) return;   // near-instant "closed" = COOP severance, ignore
-            setTimeout(() => finish('cancelled'), 1000); // genuine late close (no message) → cancelled
+            // COOP severs the opener handle the instant the popup goes cross-origin, making
+            // `closed` report true even though it's open — so only a LATE close is a real one.
+            if (Date.now() - openedAt < 8000) return;
+            setTimeout(() => finish('cancelled'), 1000);
         }, 500);
-        // Absolute safety net if the flow is simply abandoned.
         const to = setTimeout(() => finish('cancelled'), 5 * 60 * 1000);
 
         function cleanup() {
@@ -145,8 +164,23 @@
             try { bc && bc.close(); } catch { /* */ }
             clearInterval(poll); clearTimeout(to);
         }
-
         _pcActive = { finish, popup };
+    };
+
+    // Manual fallback: (re)open the login window on a user gesture (beats popup blockers).
+    window.powerchatOpenManual = function powerchatOpenManual(e) {
+        if (e) e.preventDefault();
+        const p = _openPopup();
+        if (p) { if (_pcActive) _pcActive.popup = p; }
+        else { window.location.href = START_URL; }   // last resort: same-tab navigation
+        return false;
+    };
+    window.powerchatCopyAuthUrl = async function powerchatCopyAuthUrl(btn) {
+        const url = authUrl();
+        try { await navigator.clipboard.writeText(url); }
+        catch { try { const t = document.createElement('textarea'); t.value = url; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); } catch { /* */ } }
+        if (btn) { const o = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied'; setTimeout(() => { btn.innerHTML = o; }, 1600); }
+        toast('Login link copied — paste it into a new tab if the popup is blocked', 'success');
     };
 
     window.powerchatCancelConnect = function powerchatCancelConnect() {
@@ -164,11 +198,26 @@
         finally { if (card) card.classList.remove('pc-busy'); window.loadPowerchatStatus(); }
     };
 
+    // Local pipeline test — verifies the streamer's alert sound + chat celebration.
+    window.powerchatTestTip = async function powerchatTestTip(btn) {
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending…'; }
+        try {
+            const r = await api('/powerchat/test-tip', { method: 'POST', body: { amount: 5 } });
+            toast(r && r.live ? 'Test tip sent — watch your channel/overlay! 🎉' : 'Test tip sent — open your channel or overlay to see the alert 🎉', 'success');
+        } catch (e) { toast('Test tip failed: ' + (e.message || 'error'), 'error'); }
+        finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-gift"></i> Send test tip'; } }
+    };
+
+    // PowerChat's own overlay test alert (requires the alerts:trigger scope).
     window.powerchatTestAlert = async function powerchatTestAlert(btn) {
-        if (btn) btn.disabled = true;
-        try { await api('/powerchat/test-alert', { method: 'POST' }); toast('Test alert sent to PowerChat ✓', 'success'); }
-        catch (e) { toast('Test alert failed: ' + (e.message || 'error'), 'error'); }
-        finally { if (btn) btn.disabled = false; }
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending…'; }
+        try { await api('/powerchat/test-alert', { method: 'POST' }); toast('Overlay test alert sent to PowerChat ✓', 'success'); }
+        catch (e) {
+            const m = (e && e.message) || '';
+            if (/reconnect/i.test(m) || /alerts:trigger/i.test(m)) toast('Reconnect PowerChat to enable overlay test alerts (a new permission was added).', 'warning');
+            else toast('Overlay alert failed: ' + (m || 'error'), 'error');
+        }
+        finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bell"></i> Test overlay alert'; } }
     };
 
     // Chain into the dashboard load.
