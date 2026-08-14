@@ -201,9 +201,15 @@ router.post('/test-tip', requireAuth, async (req, res) => {
 });
 
 // ── POST /test-alert — fire PowerChat's own overlay test-alert (needs alerts:trigger) ─
+// /test-alerts requires a `kind` discriminator (tip|subscribe|follow|host|emote-wall|
+// view-count|channel_points) + kind-specific fields; an empty body 400s.
 router.post('/test-alert', requireAuth, async (req, res) => {
     try {
-        await oauth.apiRequest(req.user.id, { method: 'POST', path: '/test-alerts', body: {} });
+        const actorName = req.user.display_name || req.user.username || 'Test';
+        await oauth.apiRequest(req.user.id, {
+            method: 'POST', path: '/test-alerts',
+            body: { kind: 'tip', actorName, amountCents: 500, message: 'Test overlay alert from HoboStreamer ✨' },
+        });
         res.json({ ok: true });
     } catch (err) {
         // Missing scope → tell the user to reconnect to grant it (friendly, actionable).
