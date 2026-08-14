@@ -2059,6 +2059,7 @@ function _channelPasteCardHTML(p, canManage) {
         <div class="ch-paste-info">
             <div class="ch-paste-title">${esc(p.title || 'Untitled')} ${vis}</div>
             <div class="ch-paste-meta muted"><span>${timeAgo(p.created_at)}</span> · <span><i class="fa-solid fa-eye"></i> ${p.views || 0}</span></div>
+            ${(typeof _cardAiHTML === 'function') ? _cardAiHTML(p.ai_summary) : ((p.ai_summary && p.ai_summary.trim()) ? `<div class="card-ai-overview"><i class="fa-solid fa-wand-magic-sparkles"></i> ${esc(p.ai_summary)}</div>` : '')}
         </div>
     </a>`;
 }

@@ -3981,7 +3981,7 @@ function getUserPastesForChannel(userId, { includeHidden = false, sort = 'newest
     const visClause = includeHidden ? '' : "AND p.visibility = 'public'";
     return all(`
         SELECT p.id, p.slug, p.type, p.title, p.language, p.visibility, p.pinned, p.views, p.copies, p.likes, p.created_at,
-               p.screenshot_path, substr(p.content, 1, 300) AS content
+               p.screenshot_path, p.ai_summary, substr(p.content, 1, 300) AS content
         FROM pastes p
         WHERE p.user_id = ? ${visClause}
         ORDER BY p.pinned DESC, p.created_at ${dir}
