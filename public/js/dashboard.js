@@ -11,7 +11,7 @@ let activeStreams = [];
    (so the dashboard paints instantly and only does the work you look at). Other
    modules (e.g. moderation) register their loader on window._dashTabLoaders. */
 const _DASH_TAB_CARDS = {
-    home:       ['dash-card-broadcast', 'dash-card-bucks', 'dash-card-nickels'],
+    home:       ['dash-card-broadcast', 'dash-card-profile', 'dash-card-offline', 'dash-card-bucks', 'dash-card-nickels'],
     chatai:     ['dash-aibot-card', 'dash-card-overlay', 'dash-card-chatlogs'],
     moderation: [],  // injected by dashboard-moderation.js into #dash-grid-moderation
     controls:   ['dash-card-controls', 'dash-card-cameras', 'dash-card-tokens'],
@@ -54,7 +54,7 @@ window.switchDashTab = switchDashTab;
 
 // Per-tab loaders (guarded so a missing fn never breaks the tab).
 function _call(name) { try { if (typeof window[name] === 'function') window[name](); } catch (e) { console.warn('[dash]', name, e); } }
-window._dashTabLoaders.home = () => { _call('loadDashActiveStreams'); _call('loadDashFunds'); _call('loadDashCoins'); };
+window._dashTabLoaders.home = () => { _call('loadDashActiveStreams'); _call('loadDashFunds'); _call('loadDashCoins'); _call('loadSettingsProfile'); _call('loadSettingsOffline'); };
 window._dashTabLoaders.chatai = () => { _call('updateDashObsOverlayUrl'); _call('loadAiViewers'); };
 window._dashTabLoaders.controls = () => { _call('loadDashConfigs'); _call('loadControlSettings'); _call('loadDashboardCameras'); _call('loadDashTokens'); };
 window._dashTabLoaders.money = () => { _call('loadDashGoals'); _call('loadPowerchatStatus'); _call('loadDashRewards'); _call('loadDashRedemptions'); };

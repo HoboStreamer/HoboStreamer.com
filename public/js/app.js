@@ -893,8 +893,9 @@ function routeFromURL() {
         showPage('dashboard');
         loadDashboard();
     } else if (segments[0] === 'settings') {
-        showPage('settings');
-        loadSettingsPage();
+        // /settings was merged into the dashboard — redirect there.
+        navigate('/dashboard', true);
+        return;
     } else if (segments[0] === 'broadcast') {
         showPage('broadcast');
         loadBroadcastPage();

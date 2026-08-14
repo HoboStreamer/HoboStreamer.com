@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=88">
+    <link rel="stylesheet" href="/css/style.css?v=89">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -146,10 +146,8 @@
                 <i class="fa-solid fa-caret-down"></i>
             </div>
             <div class="user-dropdown" id="user-dropdown">
-                <a href="/settings" onclick="return handleLinkClick(event, '/settings')"><i class="fa-solid fa-gear"></i> Settings</a>
-                <hr>
-                <a href="#" onclick="return handleLinkClick(event, channelPath(currentUser?.username))"><i class="fa-solid fa-user"></i> My Channel</a>
                 <a href="/dashboard" onclick="return handleLinkClick(event, '/dashboard')"><i class="fa-solid fa-gauge-high"></i> My Dashboard</a>
+                <a href="#" onclick="return handleLinkClick(event, channelPath(currentUser?.username))"><i class="fa-solid fa-user"></i> My Channel</a>
                 <a href="https://hobo.tools/admin" target="_blank" rel="noopener" id="user-dropdown-admin" style="display:none"><i class="fa-solid fa-shield-halved"></i> Admin Panel</a>
                 <hr>
                 <a href="https://my.hobo.tools" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
@@ -1768,6 +1766,103 @@
                     <p class="muted">Viewers who redeemed rewards. Fulfill or reject them.</p>
                     <div id="dash-redemptions-list"></div>
                 </div>
+
+                <!-- Profile / Account (migrated from /settings) -->
+                <div class="dash-card dash-card-wide" id="dash-card-profile">
+                    <h3><i class="fa-solid fa-id-card"></i> Profile</h3>
+                    <div class="dash-profile-head">
+                        <div class="settings-banner-avatar" id="settings-banner-initial" title="Change avatar" onclick="document.getElementById('set-avatar-file').click()" style="cursor:pointer;position:relative">
+                            ?
+                            <span class="settings-avatar-edit"><i class="fa-solid fa-camera"></i></span>
+                        </div>
+                        <input type="file" id="set-avatar-file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" style="display:none" onchange="uploadSettingsAvatar(this)">
+                        <div class="dash-profile-head-info">
+                            <div class="settings-banner-name" id="settings-banner-name">User</div>
+                            <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:0.82rem;margin-top:6px">
+                                <input type="checkbox" id="avatar-public-check" checked>
+                                <span class="muted">Show this avatar image in my public Pastes</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="settings-avatar-history-card" style="display:none;margin-top:14px">
+                        <div class="settings-row-hint" style="margin-bottom:8px">Every avatar you upload is saved here. Click one to use it again.</div>
+                        <div id="settings-avatar-history" class="settings-avatar-history"></div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-row-label">Username</span>
+                        <div class="settings-row-content">
+                            <input type="text" id="set-username" disabled>
+                            <div class="settings-row-hint"><i class="fa-solid fa-lock"></i> Cannot be changed</div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-row-label">Display Name</span>
+                        <div class="settings-row-content">
+                            <input type="text" id="set-display-name" placeholder="Display name">
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-row-label">Email</span>
+                        <div class="settings-row-content">
+                            <input type="email" id="set-email" placeholder="email@example.com">
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-row-label">Bio</span>
+                        <div class="settings-row-content">
+                            <textarea id="set-bio" rows="3" placeholder="Tell us about yourself..."></textarea>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-row-label">Profile Color</span>
+                        <div class="settings-row-content">
+                            <input type="color" id="set-profile-color" value="#c0965c" style="width:60px;height:36px;border:1px solid var(--border);background:var(--bg-input);cursor:pointer">
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+                        <button class="btn btn-primary btn-small" onclick="saveSettingsProfile()"><i class="fa-solid fa-floppy-disk"></i> Save Profile</button>
+                        <a href="https://my.hobo.tools" target="_blank" rel="noopener" class="btn btn-outline btn-small" style="text-decoration:none"><i class="fa-solid fa-arrow-up-right-from-square"></i> Manage account on hobo.tools</a>
+                    </div>
+                </div>
+
+                <!-- Offline Screen (migrated from /settings) -->
+                <div class="dash-card dash-card-wide" id="dash-card-offline">
+                    <h3><i class="fa-solid fa-image"></i> Offline Screen</h3>
+                    <p class="muted" style="margin-bottom:14px">What viewers see in the video area when you're offline. Your chat stays open below it either way.</p>
+                    <div class="settings-row">
+                        <span class="settings-row-label">Mode</span>
+                        <div class="settings-row-content">
+                            <select id="offline-screen-type" onchange="onOfflineTypeChange()">
+                                <option value="none">Default (avatar + name)</option>
+                                <option value="image">Image / video</option>
+                                <option value="html">Custom HTML / CSS</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="offline-media-row" style="display:none">
+                        <div class="settings-row" style="flex-direction:column;align-items:stretch">
+                            <span class="settings-row-label">Upload image or video</span>
+                            <div class="settings-row-content">
+                                <input type="file" id="offline-file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif,video/mp4,video/webm,video/quicktime" onchange="uploadOfflineScreen(this)">
+                                <p class="muted" style="font-size:0.8rem;margin-top:5px">Images (PNG/JPG/WebP) or video/GIF (MP4/WebM/MOV/GIF) — video is auto-converted to an optimized muted loop.</p>
+                                <div id="offline-preview" style="margin-top:12px"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="offline-html-row" style="display:none">
+                        <div class="settings-row" style="flex-direction:column;align-items:stretch">
+                            <span class="settings-row-label">HTML</span>
+                            <textarea id="offline-html" rows="8" placeholder="&lt;div class=&quot;card&quot;&gt;Back soon! Follow me on ...&lt;/div&gt;" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem"></textarea>
+                        </div>
+                        <div class="settings-row" style="flex-direction:column;align-items:stretch">
+                            <span class="settings-row-label">CSS</span>
+                            <textarea id="offline-css" rows="6" placeholder=".card{padding:20px;background:#222;border-radius:12px;text-align:center}" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem"></textarea>
+                        </div>
+                        <p class="muted" style="font-size:0.8rem"><i class="fa-solid fa-shield-halved"></i> Runs sandboxed (isolated from the site). Great for a links library, embeds, or animated flair.</p>
+                    </div>
+                    <button class="btn btn-primary btn-small" onclick="saveOfflineScreen()"><i class="fa-solid fa-floppy-disk"></i> Save offline screen</button>
+                    <span id="offline-save-status" style="margin-left:10px"></span>
+                </div>
             </div>
         </div>
     </section>
@@ -3022,192 +3117,6 @@ WantedBy=multi-user.target</code>
     </section>
 
     <!-- ── SETTINGS ──────────────────────────────────────── -->
-    <section id="page-settings" class="page">
-        <div class="container">
-            <div class="settings-layout">
-                <!-- Banner -->
-                <div class="settings-banner">
-                    <div class="settings-banner-overlay"></div>
-                    <div class="settings-banner-content">
-                        <div class="settings-banner-avatar" id="settings-banner-initial" title="Change avatar" onclick="document.getElementById('set-avatar-file').click()" style="cursor:pointer;position:relative">
-                            ?
-                            <span class="settings-avatar-edit"><i class="fa-solid fa-camera"></i></span>
-                        </div>
-                        <input type="file" id="set-avatar-file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" style="display:none" onchange="uploadSettingsAvatar(this)">
-                        <div class="settings-banner-name" id="settings-banner-name">User</div>
-                    </div>
-                </div>
-
-                <!-- Tab Nav -->
-                <div class="settings-nav">
-                    <button class="settings-nav-btn active" data-tab="profile" onclick="switchSettingsTab('profile')">
-                        <i class="fa-solid fa-user"></i> Profile
-                    </button>
-                    <button class="settings-nav-btn" data-tab="appearance" onclick="switchSettingsTab('appearance')">
-                        <i class="fa-solid fa-palette"></i> Appearance
-                    </button>
-                    <button class="settings-nav-btn" data-tab="offline" onclick="switchSettingsTab('offline')">
-                        <i class="fa-solid fa-image"></i> Offline Screen
-                    </button>
-                </div>
-
-                <!-- Profile Panel -->
-                <div class="settings-panel active" id="settings-profile">
-                    <div class="settings-card">
-                        <h3><i class="fa-solid fa-image-portrait"></i> Avatar</h3>
-                        <p class="muted" style="margin-bottom:10px">Click your avatar above to upload a new one.</p>
-                        <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
-                            <input type="checkbox" id="avatar-public-check" checked>
-                            <span>Public Paste — show this avatar image in my public Pastes</span>
-                        </label>
-                    </div>
-                    <div class="settings-card" id="settings-avatar-history-card" style="display:none">
-                        <h3><i class="fa-solid fa-clock-rotate-left"></i> Avatar History</h3>
-                        <div class="settings-row-hint" style="margin-bottom:10px">Every avatar you upload is saved here. Click one to use it again.</div>
-                        <div id="settings-avatar-history" class="settings-avatar-history"></div>
-                    </div>
-                    <div class="settings-card">
-                        <h3><i class="fa-solid fa-id-card"></i> Account Info</h3>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Username</span>
-                            <div class="settings-row-content">
-                                <input type="text" id="set-username" disabled>
-                                <div class="settings-row-hint"><i class="fa-solid fa-lock"></i> Cannot be changed</div>
-                            </div>
-                        </div>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Display Name</span>
-                            <div class="settings-row-content">
-                                <input type="text" id="set-display-name" placeholder="Display name">
-                            </div>
-                        </div>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Email</span>
-                            <div class="settings-row-content">
-                                <input type="email" id="set-email" placeholder="email@example.com">
-                            </div>
-                        </div>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Bio</span>
-                            <div class="settings-row-content">
-                                <textarea id="set-bio" rows="3" placeholder="Tell us about yourself..."></textarea>
-                            </div>
-                        </div>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Profile Color</span>
-                            <div class="settings-row-content">
-                                <input type="color" id="set-profile-color" value="#c0965c" style="width:60px;height:36px;border:1px solid var(--border);background:var(--bg-input);cursor:pointer">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="settings-card">
-                        <h3><i class="fa-solid fa-lock"></i> Password &amp; Security</h3>
-                        <p style="color:var(--text-muted);margin:8px 0 12px">Your account is managed by the Hobo Network.</p>
-                        <a href="https://my.hobo.tools" class="btn btn-outline" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none">
-                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Manage Account on hobo.tools
-                        </a>
-                    </div>
-                    <div class="settings-save-bar">
-                        <button class="btn btn-primary" onclick="saveSettingsProfile()">
-                            <i class="fa-solid fa-floppy-disk"></i> Save Profile
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Appearance Panel -->
-                <div class="settings-panel" id="settings-appearance">
-                    <div class="settings-card">
-                        <h3><i class="fa-solid fa-swatchbook"></i> Theme</h3>
-                        <p class="muted" style="margin-bottom:12px">Choose a built-in theme or create your own.</p>
-                        <div class="theme-mode-toggle">
-                            <button class="btn btn-small theme-mode-btn active" data-mode="" onclick="filterThemes('')">All</button>
-                            <button class="btn btn-small theme-mode-btn" data-mode="dark" onclick="filterThemes('dark')"><i class="fa-solid fa-moon"></i> Dark</button>
-                            <button class="btn btn-small theme-mode-btn" data-mode="light" onclick="filterThemes('light')"><i class="fa-solid fa-sun"></i> Light</button>
-                        </div>
-                        <div id="theme-grid" class="theme-grid">Loading themes...</div>
-                    </div>
-                    <div class="settings-card">
-                        <h3><i class="fa-solid fa-sliders"></i> Custom Theme Editor</h3>
-                        <p class="muted" style="margin-bottom:12px">Tweak individual colors. Changes preview live.</p>
-                        <div id="theme-editor-groups"></div>
-                        <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
-                            <button class="btn btn-primary" onclick="saveCustomTheme();toast('Custom theme saved','success')">
-                                <i class="fa-solid fa-floppy-disk"></i> Save Custom
-                            </button>
-                            <button class="btn btn-outline" onclick="resetTheme();loadSettingsAppearance();toast('Theme reset to Campfire','success')">
-                                <i class="fa-solid fa-rotate-left"></i> Reset
-                            </button>
-                        </div>
-                    </div>
-                    <div class="settings-card">
-                        <h3><i class="fa-solid fa-upload"></i> Share Your Theme</h3>
-                        <p class="muted" style="margin-bottom:12px">Submit your current colors to the community Theme Directory.</p>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Theme Name</span>
-                            <div class="settings-row-content">
-                                <input type="text" id="submit-theme-name" placeholder="My Awesome Theme" maxlength="50">
-                            </div>
-                        </div>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Description</span>
-                            <div class="settings-row-content">
-                                <input type="text" id="submit-theme-desc" placeholder="Describe your theme..." maxlength="200">
-                            </div>
-                        </div>
-                        <button class="btn btn-primary" onclick="submitCurrentTheme()">
-                            <i class="fa-solid fa-paper-plane"></i> Submit to Directory
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Offline Screen Panel -->
-                <div class="settings-panel" id="settings-offline">
-                    <div class="settings-card">
-                        <h3><i class="fa-solid fa-image"></i> Offline Screen</h3>
-                        <p class="muted" style="margin-bottom:14px">What viewers see in the video area when you're offline. Your chat stays open below it either way.</p>
-                        <div class="settings-row">
-                            <span class="settings-row-label">Mode</span>
-                            <div class="settings-row-content">
-                                <select id="offline-screen-type" onchange="onOfflineTypeChange()">
-                                    <option value="none">Default (avatar + name)</option>
-                                    <option value="image">Image / video</option>
-                                    <option value="html">Custom HTML / CSS</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div id="offline-media-row" style="display:none">
-                            <div class="settings-row" style="flex-direction:column;align-items:stretch">
-                                <span class="settings-row-label">Upload image or video</span>
-                                <div class="settings-row-content">
-                                    <input type="file" id="offline-file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif,video/mp4,video/webm,video/quicktime" onchange="uploadOfflineScreen(this)">
-                                    <p class="muted" style="font-size:0.8rem;margin-top:5px">Images (PNG/JPG/WebP) or video/GIF (MP4/WebM/MOV/GIF) — video is auto-converted to an optimized muted loop.</p>
-                                    <div id="offline-preview" style="margin-top:12px"></div>
-                                </div>
-                            </div>
-                        </div>
-                        <div id="offline-html-row" style="display:none">
-                            <div class="settings-row" style="flex-direction:column;align-items:stretch">
-                                <span class="settings-row-label">HTML</span>
-                                <textarea id="offline-html" rows="8" placeholder="&lt;div class=&quot;card&quot;&gt;Back soon! Follow me on ...&lt;/div&gt;" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem"></textarea>
-                            </div>
-                            <div class="settings-row" style="flex-direction:column;align-items:stretch">
-                                <span class="settings-row-label">CSS</span>
-                                <textarea id="offline-css" rows="6" placeholder=".card{padding:20px;background:#222;border-radius:12px;text-align:center}" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem"></textarea>
-                            </div>
-                            <p class="muted" style="font-size:0.8rem"><i class="fa-solid fa-shield-halved"></i> Runs sandboxed (isolated from the site). Great for a links library, embeds, or animated flair.</p>
-                        </div>
-                        <button class="btn btn-primary" onclick="saveOfflineScreen()"><i class="fa-solid fa-floppy-disk"></i> Save offline screen</button>
-                        <span id="offline-save-status" style="margin-left:10px"></span>
-                    </div>
-                </div>
-
-                <!-- About editing moved to an inline live editor on the channel's About tab -->
-
-                <!-- Broadcaster and My Streams panels removed — functionality moved to per-slot workspace -->
-            </div>
-        </div>
-    </section>
-
     <!-- ── GLOBAL CHAT + VOICE CHANNELS PAGE ──────────────── -->
     <section id="page-chat" class="page">
         <div class="chat-voice-layout">
@@ -4704,7 +4613,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=2" defer></script>
-<script src="/js/app.js?v=68" defer></script>
+<script src="/js/app.js?v=69" defer></script>
 <script src="/js/stream-player.js?v=12" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>
@@ -4713,7 +4622,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/channel-uploads.js?v=9" defer></script>
 <script src="/js/controls.js?v=8" defer></script>
 <script src="/js/onvif-dashboard.js?v=5" defer></script>
-<script src="/js/dashboard.js?v=7" defer></script>
+<script src="/js/dashboard.js?v=8" defer></script>
 <script src="/js/admin.js?v=5" defer></script>
 <!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
 <div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
