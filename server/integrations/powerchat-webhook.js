@@ -149,6 +149,19 @@ function _handleSubscription(userId, data) {
     } catch { /* */ }
 }
 
+// A lightweight chat notice for non-money events (follow / host / points redeem).
+function _handleNotice(userId, message, kind) {
+    try {
+        const chatServer = require('../chat/chat-server');
+        const ts = new Date().toISOString();
+        chatServer.broadcastToChannelRoom(userId, null, { type: 'system', message, source: 'powerchat', kind, timestamp: ts });
+        db.saveChatMessage({
+            stream_id: null, channel_user_id: userId, user_id: null, username: 'PowerChat',
+            message, message_type: 'system', metadata: { kind: kind || 'powerchat', source: 'powerchat' },
+        });
+    } catch { /* */ }
+}
+
 // ── Entry point: process a verified, deduped envelope ────────────────────────
 function processEvent(envelope) {
     if (!envelope || !envelope.type) return;
@@ -165,8 +178,18 @@ function processEvent(envelope) {
             case 'subscription.created':
                 _handleSubscription(userId, data);
                 break;
-            // goal.updated / goal.completed reflect PowerChat's own goals; HoboStreamer runs
-            // its own goals credited by donations above, so we intentionally ignore them.
+            case 'follow.created':
+                _handleNotice(userId, `${String(data.followerName || 'Someone').slice(0, 80)} followed on PowerChat`, 'follow');
+                break;
+            case 'host.received':
+                _handleNotice(userId, `${String(data.hostChannel || 'Someone').slice(0, 80)} hosted with ${data.viewers || 0} viewers (PowerChat)`, 'host');
+                break;
+            case 'channel_points.redeemed':
+                _handleNotice(userId, `${String(data.redeemerName || 'Someone').slice(0, 80)} redeemed ${String(data.rewardName || 'a reward').slice(0, 80)} (PowerChat)`, 'points');
+                break;
+            // paid_message.created → display twin of donation.completed (ignored to avoid
+            // double-counting). goal.updated/completed reflect PowerChat's own goals;
+            // HoboStreamer runs its own goals credited by donations above, so we ignore them.
             default:
                 break;
         }

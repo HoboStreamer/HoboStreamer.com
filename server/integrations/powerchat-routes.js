@@ -61,13 +61,19 @@ router.get('/status', requireAuth, (req, res) => {
         const cfg = oauth.getConfig();
         const conn = db.getPowerchatConnection(req.user.id);
         const connected = !!(conn && conn.access_token);
+        // Distinguish a real OAuth app connection (mints refresh tokens) from a
+        // sandbox self-connect (no tokens) so the card can say which it is.
+        const connection_kind = connected ? (conn.refresh_token ? 'app' : 'testing') : null;
+        const scopes = conn && conn.scope ? String(conn.scope).split(/\s+/).filter(Boolean) : [];
         res.json({
             enabled: cfg.enabled,
             configured: oauth.isConfigured(),
             connected,
+            connection_kind,
             username: conn ? conn.powerchat_username : null,
             tip_page_url: conn ? conn.tip_page_url : null,
             scope: conn ? conn.scope : null,
+            scopes,
             last_error: conn ? conn.last_error : null,
             sandbox_username: cfg.sandboxUsername,
         });
@@ -179,12 +185,16 @@ router.get('/tip-link', requireAuth, (req, res) => {
 
 // ── POST /test-tip — simulate a tip through the LOCAL pipeline (no PowerChat call) ─
 // The most useful test: confirms the streamer's alert sound + chat celebration render.
-router.post('/test-tip', requireAuth, (req, res) => {
+router.post('/test-tip', requireAuth, async (req, res) => {
     try {
         const amount = Math.max(1, Math.min(999, parseInt(req.body.amount, 10) || 5));
         const donor = req.user.display_name || req.user.username || 'Test Tipper';
         const r = webhook.simulateDonation(req.user.id, { amountUsd: amount, donor, message: 'Test tip — this is what a real PowerChat tip looks like ✨' });
-        res.json({ ok: true, ...r });
+        // Also render it on the streamer's actual PowerChat overlay (display-only custom
+        // alert) when connected, so the test shows up on PowerChat too — not just here.
+        let powerchat = false;
+        try { powerchat = await require('./powerchat-platform').sendCustomAlert(req.user.id, { actorName: donor, message: 'Test tip from HoboStreamer ✨', amountCents: amount * 100 }); } catch { /* */ }
+        res.json({ ok: true, powerchat, ...r });
     } catch (err) {
         res.status(500).json({ error: 'Test tip failed' });
     }

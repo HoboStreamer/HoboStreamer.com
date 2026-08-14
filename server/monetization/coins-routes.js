@@ -224,6 +224,18 @@ router.post('/redeem', requireAuth, (req, res) => {
             });
         } catch { /* chat broadcast optional */ }
 
+        // Feed the redemption into PowerChat as a virtual-currency event (alerts + leaderboard).
+        try {
+            const reward = result.redemption.reward;
+            require('../integrations/powerchat-platform').sendCurrencyRedemption(result.streamerId, {
+                amount: reward.cost,
+                redeemerName: req.user.display_name || req.user.username,
+                rewardName: reward.title,
+                message: userInput || '',
+                externalId: 'redemption:' + result.redemption.id,
+            });
+        } catch { /* optional */ }
+
         res.json({
             message: `Redeemed "${result.redemption.reward.title}"`,
             remaining: result.remaining,

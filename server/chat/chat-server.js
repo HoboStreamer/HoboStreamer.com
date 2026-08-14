@@ -886,6 +886,18 @@ class ChatServer {
                     userId: client.user?.id || null,
                 });
             } catch { /* non-critical */ }
+
+            // Merge real chat into the streamer's PowerChat unified overlay (chat:write).
+            try {
+                if (client.channelUserId) {
+                    require('../integrations/powerchat-platform').forwardChat(client.channelUserId, {
+                        chatterName: username,
+                        externalChatterId: client.user?.id ? ('u' + client.user.id) : ('a' + (client.anonId || 'anon')),
+                        message: text,
+                        avatarUrl: client.user?.avatar_url || undefined,
+                    });
+                }
+            } catch { /* non-critical */ }
         } else if (!client.channelUserId) {
             // Pure global chat (homepage) — offline channel messages were already
             // delivered to the channel room above.

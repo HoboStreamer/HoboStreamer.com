@@ -38,7 +38,12 @@
         }
 
         if (st.connected) {
-            _swap(statusEl, `<span class="pc-dot pc-dot-on"></span> Connected as <strong>${esc(st.username || 'your account')}</strong>`);
+            const kindLabel = st.connection_kind === 'app'
+                ? '<span class="pc-kind pc-kind-app" title="Full OAuth connection — events flow both ways">Connected via app</span>'
+                : (st.connection_kind === 'testing'
+                    ? '<span class="pc-kind pc-kind-test" title="Sandbox self-connect (no app tokens)">Enabled for testing</span>'
+                    : '');
+            _swap(statusEl, `<span class="pc-dot pc-dot-on"></span> Connected as <strong>${esc(st.username || 'your account')}</strong> ${kindLabel}`);
             if (actionsEl) actionsEl.innerHTML = `
                 <div class="pc-action-group">
                     <span class="pc-action-label"><i class="fa-solid fa-flask"></i> Test your setup</span>
@@ -203,7 +208,9 @@
         if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending…'; }
         try {
             const r = await api('/powerchat/test-tip', { method: 'POST', body: { amount: 5 } });
-            toast(r && r.live ? 'Test tip sent — watch your channel/overlay! 🎉' : 'Test tip sent — open your channel or overlay to see the alert 🎉', 'success');
+            toast(r && r.powerchat
+                ? 'Test tip sent — it should render on both HoboStreamer and PowerChat 🎉'
+                : 'Test tip sent — shown here on HoboStreamer. (Connect the app for it to also fire on PowerChat.)', 'success');
         } catch (e) { toast('Test tip failed: ' + (e.message || 'error'), 'error'); }
         finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-gift"></i> Send test tip'; } }
     };

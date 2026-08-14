@@ -921,6 +921,8 @@ async function start() {
         try { require('./vod/health-job').start(); } catch (e) { console.warn('[VOD] health job not started:', e.message); }
         // Announce newly-created clips in the source channel's chat (after a title grace period).
         try { require('./vod/clip-notify').startClipNotifySweeper(); } catch (e) { console.warn('[ClipNotify] not started:', e.message); }
+        // Feed connected streamers' viewer counts into PowerChat overlays (platform mode).
+        try { require('./integrations/powerchat-platform').startViewerCountSweeper(); } catch (e) { console.warn('[PowerChat] viewer sweeper not started:', e.message); }
         // PowerChat: prune the webhook-dedupe log daily so it can't grow unbounded.
         try {
             const _pcClean = () => { try { db.cleanupPowerchatDeliveries(3); } catch { /* */ } };
