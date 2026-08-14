@@ -5245,9 +5245,11 @@ function _buildCrossfeedEl(msg) {
     el.className = 'chat-msg chat-msg-crossfeed';
     let sourceBadge = '';
     if (hasStreamChannel) {
-        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-stream" title="From ${esc(msg.stream_channel)}'s stream" style="cursor:pointer" onclick="navigate('/@' + this.dataset.channel)" data-channel="${esc(msg.stream_channel)}"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</span> `;
+        // Real anchor so middle-click / ctrl-click opens the stream in a new tab; left-click stays SPA.
+        const chUrl = '/@' + esc(msg.stream_channel);
+        sourceBadge = `<a class="chat-crossfeed-badge chat-crossfeed-stream" style="text-decoration:none" title="From ${esc(msg.stream_channel)}'s stream" href="${chUrl}" onclick="return handleLinkClick(event, '${chUrl}')"><i class="fa-solid fa-tower-broadcast"></i> ${esc(msg.stream_channel)}</a> `;
     } else {
-        sourceBadge = `<span class="chat-crossfeed-badge chat-crossfeed-global" title="Open Global Chat" style="cursor:pointer" onclick="navigate('/chat')"><i class="fa-solid fa-globe"></i> Global</span> `;
+        sourceBadge = `<a class="chat-crossfeed-badge chat-crossfeed-global" style="text-decoration:none" title="Open Global Chat" href="/chat" onclick="return handleLinkClick(event, '/chat')"><i class="fa-solid fa-globe"></i> Global</a> `;
     }
     const badge = chatSettings.showBadges ? getBadgeHTML(msg.role) : '';
     let nameColor = relayColorFor(msg) || msg.color || msg.profile_color || getRoleColor(msg.role);

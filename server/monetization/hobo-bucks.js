@@ -222,9 +222,14 @@ class HoboBucks {
      */
     getHistory(userId, limit = 50) {
         return db.all(`
-            SELECT * FROM transactions
-            WHERE from_user_id = ? OR to_user_id = ?
-            ORDER BY created_at DESC LIMIT ?
+            SELECT t.*,
+                   fu.username AS from_username, fu.display_name AS from_display,
+                   tu.username AS to_username, tu.display_name AS to_display
+            FROM transactions t
+            LEFT JOIN users fu ON t.from_user_id = fu.id
+            LEFT JOIN users tu ON t.to_user_id = tu.id
+            WHERE t.from_user_id = ? OR t.to_user_id = ?
+            ORDER BY t.created_at DESC LIMIT ?
         `, [userId, userId, limit]);
     }
 

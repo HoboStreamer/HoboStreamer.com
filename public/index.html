@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=95">
+    <link rel="stylesheet" href="/css/style.css?v=96">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -1744,28 +1744,18 @@
                     <div id="dash-pastes-list" class="pastes-grid"></div>
                 </div>
 
-                <!-- Hobo Bucks -->
+                <!-- Cashout (Hobo Bucks received) -->
                 <div class="dash-card" id="dash-card-bucks">
-                    <h3><i class="fa-solid fa-coins"></i> Hobo Bucks</h3>
+                    <h3><i class="fa-solid fa-hand-holding-dollar"></i> Cashout</h3>
                     <div class="funds-display">
-                        <span class="funds-amount" id="dash-funds-amount">0</span>
-                        <span class="funds-usd" id="dash-funds-usd">($0.00)</span>
+                        <span class="funds-amount coins-color" id="dash-cashout-amount">0</span>
+                        <span class="funds-usd" id="dash-cashout-usd">($0.00)</span>
                     </div>
-                    <p class="muted" style="font-size:0.8rem;margin-bottom:14px">Your spendable balance — tip other streamers with it. Bought Hobo Bucks can't be cashed out.</p>
-
-                    <div class="dash-cashout-box">
-                        <div class="dash-cashout-label"><i class="fa-solid fa-hand-holding-dollar"></i> Cashout balance</div>
-                        <div class="funds-display">
-                            <span class="funds-amount coins-color" id="dash-cashout-amount">0</span>
-                            <span class="funds-usd" id="dash-cashout-usd">($0.00)</span>
-                        </div>
-                        <p class="muted" style="font-size:0.8rem;margin-bottom:12px">Only Hobo Bucks <strong>sent to you</strong> land here — the only balance you can cash out. Or recycle it into your spendable balance to give back.</p>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap">
-                            <button class="btn btn-primary btn-small" onclick="showModal('cashout')"><i class="fa-solid fa-money-bill-transfer"></i> Cash Out</button>
-                            <button class="btn btn-outline btn-small" onclick="dashRecycleBucks()"><i class="fa-solid fa-recycle"></i> Move to spendable</button>
-                        </div>
+                    <p class="muted" style="font-size:0.82rem;margin-bottom:12px">Only Hobo Bucks <strong>sent to you</strong> land here — the only balance you can cash out. Or recycle it into your spendable balance to give back to the community.</p>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <button class="btn btn-primary btn-small" onclick="showModal('cashout')"><i class="fa-solid fa-money-bill-transfer"></i> Cash Out</button>
+                        <button class="btn btn-outline btn-small" onclick="dashRecycleBucks()"><i class="fa-solid fa-recycle"></i> Move to spendable</button>
                     </div>
-                    <div id="dash-tx-history"></div>
                 </div>
 
 
@@ -1805,7 +1795,12 @@
 
                 <!-- Profile / Account (migrated from /settings) -->
                 <div class="dash-card dash-card-wide" id="dash-card-profile">
-                    <h3><i class="fa-solid fa-id-card"></i> Profile</h3>
+                    <h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                        <span><i class="fa-solid fa-id-card"></i> Profile</span>
+                        <button class="dash-bucks-badge" onclick="showBucksLogs()" title="Your spendable Hobo Bucks — click to see your history">
+                            <i class="fa-solid fa-coins"></i> <span id="dash-funds-amount">0</span>
+                        </button>
+                    </h3>
                     <div class="dash-profile-head">
                         <div class="settings-banner-avatar" id="settings-banner-initial" title="Change avatar" onclick="document.getElementById('set-avatar-file').click()" style="cursor:pointer;position:relative">
                             ?
@@ -1847,12 +1842,6 @@
                         <span class="settings-row-label">Bio</span>
                         <div class="settings-row-content">
                             <textarea id="set-bio" rows="3" placeholder="Tell us about yourself..."></textarea>
-                        </div>
-                    </div>
-                    <div class="settings-row">
-                        <span class="settings-row-label">Profile Color</span>
-                        <div class="settings-row-content">
-                            <input type="color" id="set-profile-color" value="#c0965c" style="width:60px;height:36px;border:1px solid var(--border);background:var(--bg-input);cursor:pointer">
                         </div>
                     </div>
                     <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
@@ -4653,12 +4642,12 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/stream-player.js?v=12" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>
-<script src="/js/chat.js?v=48" defer></script>
+<script src="/js/chat.js?v=49" defer></script>
 <script src="/js/chat-autocomplete.js?v=1" defer></script>
 <script src="/js/channel-uploads.js?v=11" defer></script>
 <script src="/js/controls.js?v=8" defer></script>
 <script src="/js/onvif-dashboard.js?v=5" defer></script>
-<script src="/js/dashboard.js?v=13" defer></script>
+<script src="/js/dashboard.js?v=14" defer></script>
 <script src="/js/admin.js?v=5" defer></script>
 <!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
 <div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
@@ -4714,7 +4703,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/broadcast.js?v=22" defer></script>
 <script src="/js/call.js?v=3" defer></script>
 <script src="/js/voice-channels.js?v=2" defer></script>
-<script src="/js/settings.js?v=8" defer></script>
+<script src="/js/settings.js?v=9" defer></script>
 <script src="/js/staff-console.js?v=1" defer></script>
 <script src="/js/dashboard-moderation.js?v=3" defer></script>
 <script src="/js/ai-viewers.js?v=1" defer></script>

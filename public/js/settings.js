@@ -108,11 +108,12 @@ async function loadSettingsProfile() {
         _loadAvatarHistory();
         document.getElementById('settings-banner-name').textContent = u.display_name || u.username;
 
-        document.getElementById('set-username').value = u.username || '';
-        document.getElementById('set-display-name').value = u.display_name || '';
-        document.getElementById('set-email').value = u.email || '';
-        document.getElementById('set-bio').value = u.bio || '';
-        document.getElementById('set-profile-color').value = u.profile_color || '#c0965c';
+        const _sv = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+        _sv('set-username', u.username || '');
+        _sv('set-display-name', u.display_name || '');
+        _sv('set-email', u.email || '');
+        _sv('set-bio', u.bio || '');
+        _sv('set-profile-color', u.profile_color || '#c0965c'); // removed from UI; harmless if absent
     } catch (e) {
         toast('Failed to load profile', 'error');
     }
@@ -196,8 +197,11 @@ async function saveSettingsProfile() {
         display_name: dname,
         email: document.getElementById('set-email').value.trim() || null,
         bio: document.getElementById('set-bio').value.trim(),
-        profile_color: document.getElementById('set-profile-color').value,
     };
+    // Profile color is managed centrally at hobo.tools now (its SSO sync overrides any
+    // local value on every login) — only send it if the field is still present.
+    const _pc = document.getElementById('set-profile-color');
+    if (_pc) data.profile_color = _pc.value;
 
     try {
         await api('/auth/profile', { method: 'PUT', body: data });

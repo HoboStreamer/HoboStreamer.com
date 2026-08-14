@@ -93,7 +93,7 @@ window.switchDashTab = switchDashTab;
 
 // Per-tab loaders (guarded so a missing fn never breaks the tab).
 function _call(name) { try { if (typeof window[name] === 'function') window[name](); } catch (e) { console.warn('[dash]', name, e); } }
-window._dashTabLoaders.home = () => { _call('loadSettingsProfile'); _call('loadSettingsOffline'); };
+window._dashTabLoaders.home = () => { _call('loadSettingsProfile'); _call('loadSettingsOffline'); _call('loadDashFunds'); };
 window._dashTabLoaders.chatai = () => { _call('updateDashObsOverlayUrl'); _call('loadAiViewers'); };
 window._dashTabLoaders.controls = () => { _call('loadDashConfigs'); _call('loadControlSettings'); _call('loadDashboardCameras'); _call('loadDashTokens'); };
 window._dashTabLoaders.money = () => { _call('loadDashFunds'); _call('loadDashGoals'); _call('loadPowerchatStatus'); };
@@ -981,6 +981,48 @@ async function loadDashFunds() {
         set('dash-cashout-amount', cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
         set('dash-cashout-usd', `($${cash.toFixed(2)})`);
     } catch { /* silent */ }
+}
+
+// Spendable Hobo Bucks history — opened from the badge on the profile card.
+function _bucksTxRow(t) {
+    const me = currentUser?.id;
+    const dt = new Date(t.created_at + (String(t.created_at).includes('Z') ? '' : 'Z'));
+    const when = isNaN(dt) ? (t.created_at || '') : dt.toLocaleString();
+    const amt = parseFloat(t.amount || 0);
+    let icon = 'fa-coins', label = t.type || 'transaction', sign = '', cls = '';
+    if (t.type === 'purchase') { icon = 'fa-cart-shopping'; label = 'Purchased Hobo Bucks'; sign = '+'; cls = 'pos'; }
+    else if (t.type === 'donation' && t.from_user_id === me) { icon = 'fa-hand-holding-heart'; label = `Tipped ${esc(t.to_display || t.to_username || 'a streamer')}`; sign = '−'; cls = 'neg'; }
+    else if (t.type === 'donation') { icon = 'fa-gift'; label = `Received from ${esc(t.from_display || t.from_username || 'someone')}`; sign = '+'; cls = 'pos'; }
+    else if (t.type === 'cashout') { icon = 'fa-money-bill-transfer'; label = 'Cashout requested'; sign = '−'; cls = 'neg'; }
+    else if (t.type === 'refund') { icon = 'fa-rotate-left'; label = 'Cashout refunded'; sign = '+'; cls = 'pos'; }
+    else if (t.type === 'recycle') { icon = 'fa-recycle'; label = 'Moved cashout → spendable'; sign = ''; cls = ''; }
+    const note = t.message ? `<div class="bucks-log-note">${esc(t.message)}</div>` : '';
+    return `<div class="bucks-log-row">
+        <div class="bucks-log-icon"><i class="fa-solid ${icon}"></i></div>
+        <div class="bucks-log-main"><div class="bucks-log-label">${label}</div><div class="bucks-log-when">${esc(when)}</div>${note}</div>
+        <div class="bucks-log-amt ${cls}">${sign}$${amt.toFixed(2)}</div>
+    </div>`;
+}
+
+async function showBucksLogs() {
+    let rows = '<p class="muted">Loading…</p>';
+    const overlay = document.createElement('div');
+    overlay.className = 'bucks-log-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `<div class="bucks-log-modal">
+        <div class="bucks-log-head"><h3><i class="fa-solid fa-coins"></i> Hobo Bucks history</h3>
+        <button class="bucks-log-close" onclick="this.closest('.bucks-log-overlay').remove()"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="bucks-log-body" id="bucks-log-body">${rows}</div></div>`;
+    document.body.appendChild(overlay);
+    try {
+        const data = await api('/funds/history?limit=100');
+        const txs = data.transactions || [];
+        const body = document.getElementById('bucks-log-body');
+        if (body) body.innerHTML = txs.length ? txs.map(_bucksTxRow).join('') : '<p class="muted">No Hobo Bucks activity yet.</p>';
+    } catch {
+        const body = document.getElementById('bucks-log-body');
+        if (body) body.innerHTML = '<p class="muted">Failed to load history.</p>';
+    }
 }
 
 // Move cashout balance → spendable Hobo Bucks (recycle / give back).
