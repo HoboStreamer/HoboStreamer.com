@@ -30,6 +30,24 @@ function pushNotification(payload) {
     });
 }
 
+// Register this user as having a linked HoboStreamer account on hobo.tools so it
+// appears under their Linked Services. Fire-and-forget + deduped per process.
+const _linkedReported = new Set();
+function reportLinkedAccount(user) {
+    if (!user?.id || _linkedReported.has(user.id) || !INTERNAL_API_KEY) return;
+    _linkedReported.add(user.id);
+    fetch(`${HOBO_TOOLS_INTERNAL_URL}/internal/link-account`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Internal-Key': INTERNAL_API_KEY },
+        body: JSON.stringify({
+            user_id: user.id,
+            service: 'hobostreamer',
+            service_user_id: String(user.id),
+            service_username: user.username || user.display_name || null,
+        }),
+    }).catch(() => { _linkedReported.delete(user.id); });
+}
+
 /**
  * Push bulk notifications to multiple users.
  * @param {number[]} userIds - Array of user IDs
@@ -86,4 +104,4 @@ function markNotificationsRead(userId, type, urlPattern) {
     });
 }
 
-module.exports = { pushNotification, pushBulkNotification, actorInfo, markNotificationsRead };
+module.exports = { pushNotification, pushBulkNotification, actorInfo, markNotificationsRead, reportLinkedAccount };

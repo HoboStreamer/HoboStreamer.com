@@ -401,6 +401,9 @@ router.get('/callback', async (req, res) => {
             console.log(`[Auth/SSO] New local account created for hobo.tools user ${ssoUser.username} (hobo-tools id:${hoboToolsId}, local id:${localUser.id})`);
         }
 
+        // Register this account under the user's hobo.tools Linked Services.
+        try { require('../utils/notify').reportLinkedAccount(localUser); } catch { /* */ }
+
         // Use the hobo.tools token directly (no more local tokens)
         const hoboToolsToken = tokenData.access_token;
         const hoboRefreshToken = tokenData.refresh_token;
