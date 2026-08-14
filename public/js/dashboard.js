@@ -5,46 +5,74 @@
 let activeStreamData = null;
 let activeStreams = [];
 
+/* ── Tabbed dashboard ──────────────────────────────────────────────
+   Cards are authored in a hidden #dash-staging grid, then relocated by id
+   into their tab panel. Each tab's data loads lazily the first time it's opened
+   (so the dashboard paints instantly and only does the work you look at). Other
+   modules (e.g. moderation) register their loader on window._dashTabLoaders. */
+const _DASH_TAB_CARDS = {
+    home:       ['dash-card-broadcast', 'dash-card-bucks', 'dash-card-nickels'],
+    chatai:     ['dash-aibot-card', 'dash-card-overlay', 'dash-card-chatlogs'],
+    moderation: [],  // injected by dashboard-moderation.js into #dash-grid-moderation
+    controls:   ['dash-card-controls', 'dash-card-cameras', 'dash-card-tokens'],
+    money:      ['dash-card-goals', 'dash-powerchat-card', 'dash-card-rewards', 'dash-card-redemptions'],
+    content:    ['dash-my-videos-card', 'dash-card-myclips', 'dash-card-streamclips'],
+};
+window._dashTabLoaders = window._dashTabLoaders || {};
+let _dashRelocated = false;
+const _dashLoadedTabs = new Set();
+
+function _dashRelocateCards() {
+    if (_dashRelocated) return;
+    _dashRelocated = true;
+    for (const [tab, ids] of Object.entries(_DASH_TAB_CARDS)) {
+        const grid = document.getElementById('dash-grid-' + tab);
+        if (!grid) continue;
+        for (const id of ids) {
+            const card = document.getElementById(id);
+            if (card && card.parentElement !== grid) grid.appendChild(card);
+        }
+    }
+}
+
+function switchDashTab(tab, btn) {
+    document.querySelectorAll('#dash-tabs .ch-tab').forEach(b => {
+        const on = b === btn || b.dataset.dtab === tab;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('#page-dashboard .dash-tab-panel').forEach(p => p.classList.remove('active'));
+    const panel = document.getElementById('dash-panel-' + tab);
+    if (panel) panel.classList.add('active');
+    // Lazy-load this tab's data once.
+    if (!_dashLoadedTabs.has(tab)) {
+        _dashLoadedTabs.add(tab);
+        try { (window._dashTabLoaders[tab] || (() => {}))(); } catch (e) { console.warn('[dash] tab loader', tab, e); }
+    }
+}
+window.switchDashTab = switchDashTab;
+
+// Per-tab loaders (guarded so a missing fn never breaks the tab).
+function _call(name) { try { if (typeof window[name] === 'function') window[name](); } catch (e) { console.warn('[dash]', name, e); } }
+window._dashTabLoaders.home = () => { _call('loadDashActiveStreams'); _call('loadDashFunds'); _call('loadDashCoins'); };
+window._dashTabLoaders.chatai = () => { _call('updateDashObsOverlayUrl'); _call('loadAiChatbotConfig'); };
+window._dashTabLoaders.controls = () => { _call('loadDashConfigs'); _call('loadControlSettings'); _call('loadDashboardCameras'); _call('loadDashTokens'); };
+window._dashTabLoaders.money = () => { _call('loadDashGoals'); _call('loadPowerchatStatus'); _call('loadDashRewards'); _call('loadDashRedemptions'); };
+window._dashTabLoaders.content = () => { _call('loadDashVods'); _call('loadDashMyClips'); _call('loadDashStreamClips'); };
+// moderation loader is registered by dashboard-moderation.js
+
 /**
- * Load the dashboard page.
+ * Load the dashboard page — build the tab layout, then load only the default (Home) tab.
  */
 async function loadDashboard() {
     if (!currentUser) {
         toast('Login required', 'error');
         return navigate('/');
     }
-
-    updateDashObsOverlayUrl();
-
-    // Load channel info
     loadDashChannel();
-    // Load stream key
-    loadDashStreamKey();
-    // Load goals
-    loadDashGoals();
-    // Load VODs
-    loadDashVods();
-    // Load funds
-    loadDashFunds();
-    // Load active streams list
-    loadDashActiveStreams();
-    // Load controls
-    loadDashControls();
-    // Load control configs
-    loadDashConfigs();
-    // Load custom emotes
-    if (typeof loadDashEmotes === 'function') loadDashEmotes();
-    // Load clips
-    loadDashMyClips();
-    loadDashStreamClips();
-    // Load Hobo Coins
-    loadDashCoins();
-    // Load coin rewards
-    if (typeof loadDashRewards === 'function') loadDashRewards();
-    // Load redemption queue
-    if (typeof loadDashRedemptions === 'function') loadDashRedemptions();
-    // Load API tokens
-    loadDashTokens();
+    _dashRelocateCards();
+    _dashLoadedTabs.clear();
+    switchDashTab('home', document.querySelector('#dash-tabs .ch-tab[data-dtab="home"]'));
 }
 
 /* ── Channel Info ──────────────────────────────────────────────── */

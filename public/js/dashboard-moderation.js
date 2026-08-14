@@ -1,8 +1,8 @@
-const originalLoadDashboard = window.loadDashboard;
 let dashModerationChannels = [];
 
 function ensureDashModerationCard() {
-    const grid = document.querySelector('#page-dashboard .dash-grid');
+    // Lives in the Moderation tab panel's grid.
+    const grid = document.getElementById('dash-grid-moderation') || document.querySelector('#page-dashboard .dash-grid');
     if (!grid) return null;
 
     let card = document.getElementById('dash-moderation-card');
@@ -15,10 +15,9 @@ function ensureDashModerationCard() {
             <p class="muted">Owner and channel-mod tools for managing chat, moderators, and logs.</p>
             <div id="dash-moderation-body"><p class="muted">Loading moderation tools...</p></div>
         `;
-        // Insert before My Videos section so moderation appears first
-        const myVideosCard = document.getElementById('dash-my-videos-card');
-        if (myVideosCard) grid.insertBefore(card, myVideosCard);
-        else grid.appendChild(card);
+        grid.appendChild(card);
+    } else if (card.parentElement !== grid) {
+        grid.appendChild(card);
     }
 
     return document.getElementById('dash-moderation-body');
@@ -461,11 +460,7 @@ window.dashDenyIp = async function dashDenyIp(channelId, ip) {
     }
 };
 
-window.loadDashboard = async function loadDashboardWithModeration() {
-    if (typeof originalLoadDashboard === 'function') {
-        await originalLoadDashboard();
-    }
-    await loadDashModeration();
-};
-
-loadDashboard = window.loadDashboard;
+// Moderation loads lazily when its dashboard tab is first opened (registered on the
+// tab-loader registry set up in dashboard.js), so it no longer runs on every dashboard load.
+window._dashTabLoaders = window._dashTabLoaders || {};
+window._dashTabLoaders.moderation = function () { try { loadDashModeration(); } catch (e) { console.warn('[dash] moderation', e); } };

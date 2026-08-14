@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=86">
+    <link rel="stylesheet" href="/css/style.css?v=87">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -1368,9 +1368,25 @@
         <div class="container">
             <h2><i class="fa-solid fa-gauge-high"></i> Streamer Dashboard</h2>
 
-            <div class="dash-grid">
+            <div class="ch-tabs dash-tabs" id="dash-tabs" role="tablist">
+                <button class="ch-tab active" role="tab" aria-selected="true" data-dtab="home" onclick="switchDashTab('home', this)"><i class="fa-solid fa-house"></i> Home</button>
+                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="chatai" onclick="switchDashTab('chatai', this)"><i class="fa-solid fa-comments"></i> Chat &amp; AI</button>
+                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="moderation" onclick="switchDashTab('moderation', this)"><i class="fa-solid fa-shield-halved"></i> Moderation</button>
+                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="controls" onclick="switchDashTab('controls', this)"><i class="fa-solid fa-gamepad"></i> Controls</button>
+                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="money" onclick="switchDashTab('money', this)"><i class="fa-solid fa-hand-holding-dollar"></i> Monetization</button>
+                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="content" onclick="switchDashTab('content', this)"><i class="fa-solid fa-photo-film"></i> Content</button>
+            </div>
+
+            <div class="ch-tab-panel dash-tab-panel active" id="dash-panel-home" role="tabpanel"><div class="dash-grid" id="dash-grid-home"></div></div>
+            <div class="ch-tab-panel dash-tab-panel" id="dash-panel-chatai" role="tabpanel"><div class="dash-grid" id="dash-grid-chatai"></div></div>
+            <div class="ch-tab-panel dash-tab-panel" id="dash-panel-moderation" role="tabpanel"><div class="dash-grid" id="dash-grid-moderation"></div></div>
+            <div class="ch-tab-panel dash-tab-panel" id="dash-panel-controls" role="tabpanel"><div class="dash-grid" id="dash-grid-controls"></div></div>
+            <div class="ch-tab-panel dash-tab-panel" id="dash-panel-money" role="tabpanel"><div class="dash-grid" id="dash-grid-money"></div></div>
+            <div class="ch-tab-panel dash-tab-panel" id="dash-panel-content" role="tabpanel"><div class="dash-grid" id="dash-grid-content"></div></div>
+
+            <div class="dash-grid" id="dash-staging" style="display:none">
                 <!-- Stream Control -->
-                <div class="dash-card">
+                <div class="dash-card" id="dash-card-broadcast">
                     <h3><i class="fa-solid fa-broadcast-tower"></i> Broadcast</h3>
                     <p style="margin-bottom:12px">Create and manage streams, configure your broadcast setup, and go live from the dedicated Broadcast page.</p>
                     <a href="/broadcast" class="btn btn-primary btn-lg" onclick="navigate('/broadcast');return false;">
@@ -1379,28 +1395,7 @@
                     <div id="dash-active-streams" style="margin-top:16px"></div>
                 </div>
 
-                <!-- Stream Key / Connection Info -->
-                <div class="dash-card">
-                    <h3><i class="fa-solid fa-key"></i> Connection</h3>
-                    <div class="form-group">
-                        <label>Stream Key</label>
-                        <div class="key-display">
-                            <input type="password" id="dash-stream-key" readonly class="form-input">
-                            <button class="btn btn-small" onclick="toggleKeyVisibility()">
-                                <i class="fa-solid fa-eye"></i>
-                            </button>
-                            <button class="btn btn-small" onclick="copyStreamKey()">
-                                <i class="fa-solid fa-copy"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="dash-endpoint-info" class="endpoint-info" style="display:none"></div>
-                    <button class="btn btn-outline" onclick="regenerateStreamKey()">
-                        <i class="fa-solid fa-rotate"></i> Regenerate Key
-                    </button>
-                </div>
-
-                <div class="dash-card">
+                <div class="dash-card" id="dash-card-overlay">
                     <h3><i class="fa-solid fa-layer-group"></i> Chat Overlay</h3>
                     <p class="muted" style="margin-bottom:12px">Use this as a Browser Source in OBS to show your live chat on stream. This global URL shows chat from any of your live stream slots.</p>
                     <div class="form-group">
@@ -1419,7 +1414,7 @@
                 </div>
 
                 <!-- Controls Manager -->
-                <div class="dash-card">
+                <div class="dash-card" id="dash-card-controls">
                     <h3><i class="fa-solid fa-gamepad"></i> Interactive Controls</h3>
 
                     <!-- Control Config Profiles -->
@@ -1476,19 +1471,6 @@
 
                     <hr style="border-color:var(--border);margin:12px 0">
 
-                    <!-- Legacy per-stream controls -->
-                    <details style="margin-bottom:8px">
-                        <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-list"></i> Per-Stream Controls (Live)</summary>
-                        <div style="margin-top:8px">
-                            <div id="dash-controls-list"></div>
-                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-                                <button class="btn btn-outline btn-small" onclick="showModal('add-control')">
-                                    <i class="fa-solid fa-plus"></i> Add Control Button
-                                </button>
-                            </div>
-                        </div>
-                    </details>
-
                     <!-- Control Settings -->
                     <details class="dash-control-settings" style="margin-top:12px;">
                         <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-secondary)"><i class="fa-solid fa-sliders"></i> Control Settings</summary>
@@ -1501,11 +1483,6 @@
                                     <option value="disabled">Disabled</option>
                                 </select>
                             </div>
-                            <div class="form-group" style="margin:0">
-                                <label style="font-size:0.85rem">Rate Limit (ms)</label>
-                                <input type="number" id="dash-control-rate-limit" class="form-input form-input-sm" min="100" max="30000" step="100" value="500" onchange="updateControlSettings()">
-                                <span class="bc-field-hint">Minimum time between commands per user</span>
-                            </div>
                             <label class="bc-toggle-label" style="font-size:0.85rem;gap:8px">
                                 <input type="checkbox" id="dash-anon-controls" checked onchange="updateControlSettings()">
                                 Allow anonymous users to use controls
@@ -1514,11 +1491,7 @@
                                 <input type="checkbox" id="dash-video-click" onchange="updateControlSettings()">
                                 Enable video click (viewers click on stream to send coordinates)
                             </label>
-                            <div class="form-group" style="margin:0">
-                                <label style="font-size:0.85rem">Video Click Rate Limit (ms)</label>
-                                <input type="number" id="dash-video-click-rate-limit" class="form-input form-input-sm" min="0" max="30000" step="50" value="0" onchange="updateControlSettings()">
-                                <span class="bc-field-hint">Per-user minimum time between video clicks. 0 = follow global command rate limit.</span>
-                            </div>
+                            <p class="bc-field-hint" style="margin:2px 0 0">Command rate limits are per-button (set each control's cooldown in its profile). A high global burst cap prevents floods automatically.</p>
                         </div>
                     </details>
 
@@ -1551,7 +1524,7 @@
                 </div>
 
                 <!-- API Tokens (Bot / Integration) -->
-                <div class="dash-card">
+                <div class="dash-card" id="dash-card-tokens">
                     <h3><i class="fa-solid fa-key"></i> API Tokens</h3>
                     <p class="muted" style="font-size:0.85rem;margin-bottom:8px">Create long-lived API tokens for bots and integrations. Tokens can authenticate against the REST API and authenticated WebSocket integrations without an OAuth login.</p>
                     <p class="muted" style="font-size:0.8rem;margin-bottom:12px" id="dash-token-summary"></p>
@@ -1562,7 +1535,7 @@
                 </div>
 
                 <!-- Chat Logs (Streamer Self-Service) -->
-                <div class="dash-card dash-card-wide">
+                <div class="dash-card dash-card-wide" id="dash-card-chatlogs">
                     <h3><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</h3>
                     <p class="muted" style="font-size:0.85rem;margin-bottom:12px">View and manage chat messages from your streams. Search, filter, and purge messages by time range.</p>
                     <div class="dash-chat-log-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
@@ -1582,7 +1555,7 @@
                 </div>
 
                 <!-- ONVIF Camera Controls -->
-                <div class="dash-card">
+                <div class="dash-card" id="dash-card-cameras">
                     <h3><i class="fa-solid fa-video"></i> Camera Controls (ONVIF PTZ)</h3>
                     <p class="muted" style="font-size: 0.85rem;">Add ONVIF-compatible cameras (Hikvision, Axis, Dahua, etc.) for pan/tilt/zoom viewer control.</p>
                     <div id="dash-cameras-list"></div>
@@ -1597,7 +1570,7 @@
                 </div>
 
                 <!-- Donation Goals -->
-                <div class="dash-card">
+                <div class="dash-card" id="dash-card-goals">
                     <h3><i class="fa-solid fa-bullseye"></i> Donation Goals</h3>
                     <div id="dash-goals-list"></div>
                     <button class="btn btn-outline" onclick="openAddGoal()">
@@ -1665,45 +1638,6 @@
                     </div>
                 </div>
 
-                <!-- Emotes -->
-                <div class="dash-card dash-card-wide">
-                    <h3><i class="fa-solid fa-face-smile"></i> My Emotes <span class="muted" id="dash-emote-count"></span></h3>
-                    <p class="muted">Upload custom emotes for your channel. Supported: PNG, GIF (animated), WebP, AVIF. Max 256 KB each.</p>
-
-                    <!-- Emote Source Toggles -->
-                    <div class="dash-emote-sources" id="dash-emote-sources">
-                        <label class="emote-source-toggle">
-                            <input type="checkbox" id="emote-src-defaults" checked onchange="saveEmoteSources()">
-                            <span class="emote-src-label"><i class="fa-solid fa-star"></i> Defaults</span>
-                        </label>
-                        <label class="emote-source-toggle">
-                            <input type="checkbox" id="emote-src-custom" checked onchange="saveEmoteSources()">
-                            <span class="emote-src-label"><i class="fa-solid fa-palette"></i> Custom</span>
-                        </label>
-                        <label class="emote-source-toggle">
-                            <input type="checkbox" id="emote-src-ffz" checked onchange="saveEmoteSources()">
-                            <span class="emote-src-label">FFZ</span>
-                        </label>
-                        <label class="emote-source-toggle">
-                            <input type="checkbox" id="emote-src-bttv" checked onchange="saveEmoteSources()">
-                            <span class="emote-src-label">BTTV</span>
-                        </label>
-                        <label class="emote-source-toggle">
-                            <input type="checkbox" id="emote-src-7tv" checked onchange="saveEmoteSources()">
-                            <span class="emote-src-label">7TV</span>
-                        </label>
-                    </div>
-
-                    <div class="dash-emote-upload">
-                        <input type="text" id="emote-upload-code" class="form-input" placeholder="Emote code (e.g. hoboHype)" maxlength="32">
-                        <input type="file" id="emote-upload-file" accept="image/png,image/gif,image/webp,image/avif,image/jpeg">
-                        <button class="btn btn-primary" onclick="uploadDashEmote()">
-                            <i class="fa-solid fa-upload"></i> Upload
-                        </button>
-                    </div>
-                    <div id="dash-emotes-list" class="dash-emotes-grid"></div>
-                </div>
-
                 <!-- My Videos -->
                 <div id="dash-my-videos-card" class="dash-card dash-card-wide">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
@@ -1739,7 +1673,7 @@
                 </div>
 
                 <!-- My Clips (clips I created) -->
-                <div class="dash-card dash-card-wide">
+                <div class="dash-card dash-card-wide" id="dash-card-myclips">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
                         <h3 style="margin:0"><i class="fa-solid fa-scissors"></i> My Clips</h3>
                         <button class="btn btn-small btn-outline sel-all-btn" data-sel-container="dash-my-clips" style="display:none" onclick="_selAllToggle(this.dataset.selContainer)"><i class="fa-solid fa-check-double"></i> <span class="sel-all-label">Select all</span></button>
@@ -1749,7 +1683,7 @@
                 </div>
 
                 <!-- Clips of My Stream -->
-                <div class="dash-card dash-card-wide">
+                <div class="dash-card dash-card-wide" id="dash-card-streamclips">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
                         <h3 style="margin:0"><i class="fa-solid fa-clapperboard"></i> Clips of My Stream</h3>
                         <button class="btn btn-small btn-outline sel-all-btn" data-sel-container="dash-stream-clips" style="display:none" onclick="_selAllToggle(this.dataset.selContainer)"><i class="fa-solid fa-check-double"></i> <span class="sel-all-label">Select all</span></button>
@@ -1759,7 +1693,7 @@
                 </div>
 
                 <!-- Hobo Bucks -->
-                <div class="dash-card">
+                <div class="dash-card" id="dash-card-bucks">
                     <h3><i class="fa-solid fa-coins"></i> Hobo Bucks</h3>
                     <div class="funds-display">
                         <span class="funds-amount" id="dash-funds-amount">0</span>
@@ -1772,7 +1706,7 @@
                 </div>
 
                 <!-- Hobo Coins -->
-                <div class="dash-card">
+                <div class="dash-card" id="dash-card-nickels">
                     <h3><i class="fa-solid fa-coins"></i> Hobo Nickels</h3>
                     <div class="funds-display">
                         <span class="funds-amount coins-color" id="dash-coins-amount">0</span>
@@ -1784,7 +1718,7 @@
                 </div>
 
                 <!-- Coin Rewards (Streamer Configuration) -->
-                <div class="dash-card dash-card-wide">
+                <div class="dash-card dash-card-wide" id="dash-card-rewards">
                     <h3><i class="fa-solid fa-gift"></i> Coin Rewards</h3>
                     <p class="muted">Create rewards your viewers can redeem with Hobo Nickels. Think TTS, sound effects, chat highlights, streamer challenges, etc.</p>
                     <div id="dash-rewards-list" class="dash-rewards-grid"></div>
@@ -1794,7 +1728,7 @@
                 </div>
 
                 <!-- Redemption Queue -->
-                <div class="dash-card dash-card-wide">
+                <div class="dash-card dash-card-wide" id="dash-card-redemptions">
                     <h3><i class="fa-solid fa-bell"></i> Redemption Queue</h3>
                     <p class="muted">Viewers who redeemed rewards. Fulfill or reject them.</p>
                     <div id="dash-redemptions-list"></div>
@@ -4744,7 +4678,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/channel-uploads.js?v=9" defer></script>
 <script src="/js/controls.js?v=8" defer></script>
 <script src="/js/onvif-dashboard.js?v=5" defer></script>
-<script src="/js/dashboard.js?v=5" defer></script>
+<script src="/js/dashboard.js?v=6" defer></script>
 <script src="/js/admin.js?v=5" defer></script>
 <!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
 <div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
@@ -4802,7 +4736,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/voice-channels.js?v=2" defer></script>
 <script src="/js/settings.js?v=8" defer></script>
 <script src="/js/staff-console.js?v=1" defer></script>
-<script src="/js/dashboard-moderation.js?v=2" defer></script>
+<script src="/js/dashboard-moderation.js?v=3" defer></script>
 <script src="/js/ai-chatbot-settings.js?v=10" defer></script>
 <script src="/js/powerchat.js?v=5" defer></script>
 <script src="/js/pastes.js?v=9" defer></script>

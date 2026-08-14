@@ -5227,7 +5227,13 @@ main#app { position: relative; z-index: 1; }
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 350px), 1fr));
     gap: 20px; margin-top: 20px;
+    align-items: start;   /* short cards no longer stretch to a tall neighbour → no dead gaps */
 }
+/* Dashboard tabs (reuse the channel-tab look) + panels */
+.dash-tabs { margin-top: 18px; flex-wrap: wrap; }
+.dash-tab-panel { display: none; }
+.dash-tab-panel.active { display: block; }
+.dash-tab-panel > .dash-grid { margin-top: 16px; }
 .dash-card {
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: 18px; padding: 20px;
@@ -10857,6 +10863,7 @@ body.theme-light .user-dropdown {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
     margin-bottom: 16px;
+    align-items: start;   /* short Moderators column no longer stretches to the tall Chat-Settings form */
 }
 
 .dash-mod-section {
@@ -10903,15 +10910,24 @@ body.theme-light .user-dropdown {
 
 .dash-mod-list-row {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 10px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    font-size: 0.9rem;
+    line-height: 1.3;
 }
+.dash-mod-list-row .btn,
+.dash-mod-list-row button { padding: 3px 10px; font-size: 0.8rem; }
 
 .dash-mod-settings {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 12px 16px;
     margin-bottom: 12px;
+    align-items: start;
 }
 
 /* Staff + moderation responsive */
