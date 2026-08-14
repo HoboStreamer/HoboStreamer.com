@@ -919,6 +919,8 @@ async function start() {
         // Background VOD health: scan for corruption, repair from master, quarantine +
         // clean up the unrecoverable so broken VODs don't accumulate.
         try { require('./vod/health-job').start(); } catch (e) { console.warn('[VOD] health job not started:', e.message); }
+        // Announce newly-created clips in the source channel's chat (after a title grace period).
+        try { require('./vod/clip-notify').startClipNotifySweeper(); } catch (e) { console.warn('[ClipNotify] not started:', e.message); }
         // PowerChat: prune the webhook-dedupe log daily so it can't grow unbounded.
         try {
             const _pcClean = () => { try { db.cleanupPowerchatDeliveries(3); } catch { /* */ } };

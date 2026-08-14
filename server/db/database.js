@@ -880,6 +880,10 @@ function initDb() {
         if (!ccols.includes('ai_overview')) database.exec('ALTER TABLE clips ADD COLUMN ai_overview TEXT');
         if (!ccols.includes('ai_transcript')) database.exec('ALTER TABLE clips ADD COLUMN ai_transcript TEXT');
         if (!ccols.includes('ai_analyzed_at')) database.exec('ALTER TABLE clips ADD COLUMN ai_analyzed_at DATETIME');
+        // Clip-published chat notification: a deferred "send at" time (grace period so the
+        // creator can title it first) + a sent flag so the sweeper fires each clip once.
+        if (!ccols.includes('clip_notified')) database.exec('ALTER TABLE clips ADD COLUMN clip_notified INTEGER DEFAULT 0');
+        if (!ccols.includes('clip_notify_at')) database.exec('ALTER TABLE clips ADD COLUMN clip_notify_at DATETIME');
     } catch (e) { console.warn('[DB] AI subsystem migration:', e.message); }
 
     // Visibility (public | unlisted | private) on VODs/clips. `is_public` is kept as
@@ -899,6 +903,10 @@ function initDb() {
         const msCols = database.prepare('PRAGMA table_info(managed_streams)').all().map(c => c.name);
         if (!msCols.includes('slot_clip_recording_enabled')) {
             database.exec('ALTER TABLE managed_streams ADD COLUMN slot_clip_recording_enabled INTEGER DEFAULT 1');
+        }
+        // Per-slot toggle: announce newly-created clips in the channel's chat (default on).
+        if (!msCols.includes('slot_clip_notify_enabled')) {
+            database.exec('ALTER TABLE managed_streams ADD COLUMN slot_clip_notify_enabled INTEGER DEFAULT 1');
         }
     } catch (e) { console.warn('[DB] visibility migration:', e.message); }
 
@@ -2517,6 +2525,7 @@ function updateManagedStream(managedStreamId, userId, fields) {
         'is_nsfw', 'control_config_id', 'sort_order',
         'streaming_method', 'browser_mode',
         'default_vod_visibility', 'default_clip_visibility', 'slot_vod_recording_enabled', 'slot_clip_recording_enabled',
+        'slot_clip_notify_enabled',
         'weather_zip', 'weather_detail', 'weather_show_location', 'mic_only_image',
     ]);
     const updates = [];

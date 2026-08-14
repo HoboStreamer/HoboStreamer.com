@@ -213,6 +213,8 @@ router.put('/:id/title', requireAuth, (req, res) => {
         }
 
         db.run('UPDATE clips SET title = ? WHERE id = ?', [title, clip.id]);
+        // If the clip's chat announcement is still pending, fire it now with this title.
+        try { require('./clip-notify').bumpClipNotifyNow(clip.id); } catch { /* */ }
         res.json({ message: 'Clip title updated', title });
     } catch (err) {
         console.error('[Clips] Title update error:', err.message);

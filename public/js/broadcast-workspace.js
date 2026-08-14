@@ -928,6 +928,15 @@ function _wsRenderPanel() {
                         </div>
                         <div class="bc-ws-row">
                             <div class="form-group" style="flex:1">
+                                <label class="bc-toggle-label">
+                                    <input type="checkbox" id="bc-ws-clip-notify" ${ms.slot_clip_notify_enabled !== 0 ? 'checked' : ''}
+                                        onchange="_wsSlotSettingChanged()">
+                                    Announce new clips in chat
+                                </label>
+                            </div>
+                        </div>
+                        <div class="bc-ws-row">
+                            <div class="form-group" style="flex:1">
                                 <label>Default VOD Visibility</label>
                                 <select id="bc-ws-vod-visibility" class="form-input" onchange="_wsSlotSettingChanged()">
                                     <option value="public" ${(ms.default_vod_visibility || 'public') === 'public' ? 'selected' : ''}>Public</option>
@@ -1847,6 +1856,7 @@ async function _wsSaveAll() {
             default_clip_visibility: ms.default_clip_visibility || 'public',
             slot_vod_recording_enabled: ms.slot_vod_recording_enabled !== undefined ? ms.slot_vod_recording_enabled : 1,
             slot_clip_recording_enabled: ms.slot_clip_recording_enabled !== undefined ? ms.slot_clip_recording_enabled : 1,
+            slot_clip_notify_enabled: ms.slot_clip_notify_enabled !== undefined ? ms.slot_clip_notify_enabled : 1,
             weather_zip: ms.weather_zip || null,
             weather_detail: ms.weather_detail || 'basic',
             weather_show_location: ms.weather_show_location || 0,
@@ -1987,6 +1997,7 @@ function _wsSlotSettingChanged() {
     ms.default_clip_visibility = document.getElementById('bc-ws-clip-visibility')?.value || 'public';
     ms.slot_vod_recording_enabled = document.getElementById('bc-ws-vod-recording')?.checked ? 1 : 0;
     ms.slot_clip_recording_enabled = document.getElementById('bc-ws-clip-recording')?.checked ? 1 : 0;
+    ms.slot_clip_notify_enabled = document.getElementById('bc-ws-clip-notify')?.checked ? 1 : 0;
     ms.weather_zip = document.getElementById('bc-ws-weather-zip')?.value.trim() || null;
     ms.weather_detail = document.getElementById('bc-ws-weather-detail')?.value || 'basic';
     ms.weather_show_location = document.getElementById('bc-ws-weather-location')?.checked ? 1 : 0;

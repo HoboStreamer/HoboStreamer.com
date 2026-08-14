@@ -1474,6 +1474,9 @@ router.put('/managed/:id', requireAuth, (req, res) => {
         if (hasOwn(req.body, 'slot_clip_recording_enabled')) {
             fields.slot_clip_recording_enabled = cleanBooleanFlag(req.body.slot_clip_recording_enabled) ? 1 : 0;
         }
+        if (hasOwn(req.body, 'slot_clip_notify_enabled')) {
+            fields.slot_clip_notify_enabled = cleanBooleanFlag(req.body.slot_clip_notify_enabled) ? 1 : 0;
+        }
         if (hasOwn(req.body, 'weather_zip')) {
             fields.weather_zip = req.body.weather_zip ? String(req.body.weather_zip).trim().slice(0, 20) : null;
         }

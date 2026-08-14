@@ -1773,6 +1773,7 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
 
             const clipId = result.lastInsertRowid;
             try { db.setClipVisibility(clipId, clipVis); } catch { /* */ }
+            try { require('./clip-notify').scheduleClipNotify(clipId); } catch { /* */ }
             const clip = db.getClipById(clipId);
             console.log(`[Clips] Direct upload: ${req.file.filename} for user ${req.user.username} (${stat.size} bytes)`);
             // AI overview + local transcript for this clip (fire-and-forget).
@@ -1890,6 +1891,7 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
                     duration_seconds: liveDur, description: '', is_public: clipVis === 'public' ? 1 : 0,
                 });
                 try { db.setClipVisibility(result.lastInsertRowid, clipVis); } catch { /* */ }
+                try { require('./clip-notify').scheduleClipNotify(result.lastInsertRowid); } catch { /* */ }
                 const clip = db.getClipById(result.lastInsertRowid);
                 console.log(`[Clips] LIVE clip cut server-side: ${clipFilenameL} (stream ${parsedStreamId}, ${liveStart.toFixed(1)}-${(liveStart + liveDur).toFixed(1)}s)`);
                 try { require('../ai/ai-analysis').generateClipOverview(clip).catch(() => {}); } catch { /* */ }
@@ -2065,6 +2067,7 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
                 is_public: clipVis === 'public' ? 1 : 0,
             });
             try { db.setClipVisibility(result.lastInsertRowid, clipVis); } catch { /* */ }
+            try { require('./clip-notify').scheduleClipNotify(result.lastInsertRowid); } catch { /* */ }
 
             const clip = db.getClipById(result.lastInsertRowid);
             console.log(`[Clips] VOD clip extracted: ${clipFilename} for user ${req.user.username} (VOD ${parsedVodId}, ${startTime.toFixed(1)}s-${endTime.toFixed(1)}s)`);

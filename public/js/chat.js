@@ -2925,6 +2925,25 @@ function addChatMessage(msg) {
     if (msg.message_type === 'news' && msg.url) {
         text += ` <a href="${esc(msg.url)}" target="_blank" rel="noopener" class="news-link"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>`;
     }
+    // Clip-published announcement — render a clickable clip card (thumbnail + title).
+    if (msg.message_type === 'clip') {
+        let clip = msg.clip;
+        if (!clip && msg.metadata) { try { clip = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata; } catch { clip = null; } }
+        if (clip && clip.clip_id) {
+            const dur = (clip.duration && typeof formatDuration === 'function') ? formatDuration(clip.duration) : '';
+            const thumb = clip.thumbnail_url
+                ? `<div class="clip-chat-thumb"><img src="${esc(clip.thumbnail_url)}" alt="" loading="lazy">${dur ? `<span class="clip-chat-dur">${esc(dur)}</span>` : ''}<span class="clip-chat-play"><i class="fa-solid fa-play"></i></span></div>`
+                : `<div class="clip-chat-thumb clip-chat-thumb-ph"><i class="fa-solid fa-scissors"></i></div>`;
+            text = `<div class="clip-chat-card" onclick="navigate('/clip/${clip.clip_id}')" title="Watch clip">
+                ${thumb}
+                <div class="clip-chat-info">
+                    <div class="clip-chat-label"><i class="fa-solid fa-scissors"></i> New clip</div>
+                    <div class="clip-chat-title">${esc(clip.title || 'Untitled Clip')}</div>
+                    <div class="clip-chat-meta">by ${esc(clip.creator || msg.username || 'someone')}</div>
+                </div>
+            </div>`;
+        }
+    }
     if (msg.message_type === 'soundboard' && msg.soundboard) {
         const title = esc(msg.soundboard.title || `Sound ${msg.soundboard.soundId || ''}`);
         const sourceUrl = esc(msg.soundboard.sourceUrl || '#');
@@ -3834,6 +3853,7 @@ function _renderHistoryMainMsg(m) {
         message: m.message,
         message_type: m.message_type,
         sound: m.sound,
+        metadata: m.metadata,
         role: m.role || 'user',
         color: m.color,
         avatar_url: m.avatar_url,
