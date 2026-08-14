@@ -153,7 +153,7 @@
                 <a href="https://my.hobo.tools" target="_blank"><i class="fa-solid fa-network-wired"></i> Hobo Network</a>
                 <a href="#" onclick="event.preventDefault();showModal('buy-funds')"><i class="fa-solid fa-coins"></i> Support Us</a>
                 <a href="#" onclick="event.preventDefault();if(typeof openCosmeticsModal==='function')openCosmeticsModal()"><i class="fa-solid fa-shirt"></i> Cosmetics</a>
-                <a href="/themes" onclick="return handleLinkClick(event, '/themes')"><i class="fa-solid fa-palette"></i> Themes</a>
+                <a href="https://my.hobo.tools/themes" target="_blank" rel="noopener"><i class="fa-solid fa-palette"></i> Themes</a>
                 <hr>
                 <a href="#" onclick="event.preventDefault();captureScreenshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
                 <a href="/documentation" onclick="return handleLinkClick(event, '/documentation')"><i class="fa-solid fa-book"></i> Documentation</a>
@@ -4657,7 +4657,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=2" defer></script>
-<script src="/js/app.js?v=72" defer></script>
+<script src="/js/app.js?v=73" defer></script>
 <script src="/js/stream-player.js?v=12" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>
@@ -4743,7 +4743,9 @@ document.addEventListener('DOMContentLoaded', function initHoboNetwork() {
     const token = localStorage.getItem('token') || (document.cookie.match(/(?:^|; )hobo_token=([^;]*)/) || [])[1] || null;
 
     if (window.HoboThemeLoader && typeof HoboThemeLoader.init === 'function') {
-        HoboThemeLoader.init({ apiBase: window.location.origin });
+        // Themes are owned centrally by hobo.tools and synced everywhere — pull the
+        // user's active theme from there (configured at my.hobo.tools/themes).
+        HoboThemeLoader.init({ apiBase: 'https://hobo.tools' });
     }
 
     // Notifications bell

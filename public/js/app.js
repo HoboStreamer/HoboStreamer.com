@@ -903,8 +903,9 @@ function routeFromURL() {
         window.location.href = `${getHoboToolsUrl()}/admin`;
         return;
     } else if (segments[0] === 'themes') {
-        showPage('themes');
-        loadThemesPage();
+        // Theme management moved to the central hobo.tools account app.
+        window.location.href = 'https://my.hobo.tools/themes';
+        return;
     } else if (segments[0] === 'chat') {
         showPage('chat');
         loadChatPage();
@@ -6744,10 +6745,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Start proactive token refresh timer
     startTokenRefreshTimer();
 
-    // Load theme from server if logged in (localStorage already applied instantly)
-    if (currentUser && typeof loadThemeFromServer === 'function') {
-        loadThemeFromServer();
-    }
+    // Theme is owned centrally by hobo.tools and applied by the shared HoboThemeLoader
+    // (which syncs from hobo.tools after paint). We no longer read HoboStreamer's local
+    // theme store, so the theme chosen at my.hobo.tools/themes is authoritative here.
 
     // Route from current URL instead of always going home — but not in the popout
     // chat window, which drives its own chat UI and has no SPA pages to route to.
