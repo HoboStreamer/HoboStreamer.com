@@ -112,6 +112,9 @@ function normalizeToken(json) {
         refresh_token: json.refresh_token || null,
         token_expires_at: Date.now() + expiresIn * 1000,
         scope: json.scope || null,
+        // The token response carries the authorizing streamer — the documented, stable
+        // identity source (the access token is opaque and must NOT be parsed).
+        streamer: json.streamer || null,
     };
 }
 

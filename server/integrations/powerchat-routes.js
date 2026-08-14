@@ -113,10 +113,12 @@ router.get('/oauth/callback', async (req, res) => {
         const tokens = await oauth.exchangeCode(String(code), stateData.codeVerifier);
         const userId = stateData.userId;
 
-        // Derive the streamer's PowerChat identity from the access-token JWT — OAuth already
-        // tells us who authorized, so we never ask them to type their own username. Only if
-        // the token carries no usable username claim do we fall back to the sandbox username.
-        const ident = oauth.identityFromToken(tokens.access_token);
+        // Identity comes from the token response's `streamer` field (the documented source);
+        // the access token itself is opaque and must not be parsed. Fall back to the JWT
+        // claim only if `streamer` is somehow absent, then to the sandbox username.
+        const ident = (tokens.streamer && (tokens.streamer.username || tokens.streamer.id))
+            ? { username: tokens.streamer.username || null, id: tokens.streamer.id != null ? String(tokens.streamer.id) : null }
+            : oauth.identityFromToken(tokens.access_token);
         let username = ident.username || stateData.username || oauth.getConfig().sandboxUsername;
 
         // Store the grant first (so getValidAccessToken works), then confirm via profile.
