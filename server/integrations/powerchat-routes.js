@@ -103,8 +103,14 @@ router.get('/oauth/start', requireAuth, (req, res) => {
 router.get('/oauth/callback', async (req, res) => {
     const send = (p) => res.set('Content-Type', 'text/html').send(resultPage(p));
     try {
-        const { code, state, error } = req.query;
-        if (error) return send({ ok: false, error: String(error) });
+        const { code, state, error, error_description } = req.query;
+        // Surface PowerChat's full RFC-6749 error: error_description carries the actionable
+        // diagnosis (e.g. "Not registered for this app: follows:write … add them to the app
+        // registration first"), which the bare error code alone hides.
+        if (error) {
+            const desc = error_description ? String(error_description) : '';
+            return send({ ok: false, error: desc ? `${desc} (${error})` : String(error) });
+        }
         const stateData = oauth.verifyState(req.cookies ? req.cookies[STATE_COOKIE] : null);
         res.clearCookie(STATE_COOKIE, { path: '/api/powerchat/oauth' });
         if (!stateData) return send({ ok: false, error: 'OAuth session expired — please try again.' });
