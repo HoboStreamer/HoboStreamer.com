@@ -3627,6 +3627,9 @@ let _aboutBio = '';
 let _aboutIsOwner = false;    // is the viewer the streamer?
 let _aboutCanEdit = false;    // can the viewer edit (streamer, or an allowed mod)?
 let _aboutEditMode = false;
+let _aboutDirty = false;      // has anything changed since entering edit mode?
+let _aboutModsCanEdit = false;// owner setting: may channel mods edit About?
+let _aboutChannelId = null;   // owner's channel id (for saving the mods setting)
 const ABOUT_WIDTHS = ['sm', 'md', 'lg', 'full'];
 
 function _normalizeAboutPanel(p) {
@@ -3966,58 +3969,107 @@ function toggleAboutEdit() {
 function _renderAboutEdit() {
     const host = document.getElementById('ch-about-content');
     if (!host) return;
+    _aboutDirty = false;
+    const modsToggle = _aboutIsOwner ? `
+            <label class="ch-about-mods-toggle" title="Let your channel moderators edit your About section & panels">
+                <input type="checkbox" id="ch-about-mods-edit" ${_aboutModsCanEdit ? 'checked' : ''} onchange="_setAboutModsCanEdit(this.checked)">
+                <span>Mods can edit</span>
+            </label>` : '';
     host.innerHTML = `
         <div class="ch-about-toolbar">
-            <button class="btn btn-sm btn-primary" onclick="saveAboutInline()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
-            <button class="btn btn-sm btn-outline" onclick="cancelAboutEdit()">Cancel</button>
-            <span class="muted" style="font-size:0.82rem;margin-left:6px"><i class="fa-solid fa-arrows-up-down-left-right"></i> Drag panels to reorder</span>
+            <div class="ch-about-toolbar-left">
+                <button class="btn btn-sm btn-outline" onclick="addAboutPanel('info')"><i class="fa-solid fa-plus"></i> Add panel</button>
+                <button class="btn btn-sm btn-outline" onclick="addAboutPanel('weather')"><i class="fa-solid fa-cloud-sun"></i> Add weather panel</button>
+                <span class="muted ch-about-drag-hint"><i class="fa-solid fa-arrows-up-down-left-right"></i> Drag to reorder</span>
+            </div>
+            <div class="ch-about-toolbar-right">
+                ${modsToggle}
+                <button class="btn btn-sm btn-primary ch-about-save-btn" id="ch-about-save-btn" onclick="saveAboutInline()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                <button class="btn btn-sm btn-outline" onclick="cancelAboutEdit()"><i class="fa-solid fa-xmark"></i> Cancel</button>
+            </div>
         </div>
         <div class="ch-about-edit-bio">
             <label class="ch-edit-label">Bio</label>
-            <textarea id="ch-about-bio-edit" rows="3" placeholder="Tell viewers about yourself…" oninput="_aboutBio=this.value">${esc(_aboutBio)}</textarea>
+            <textarea id="ch-about-bio-edit" rows="3" placeholder="Tell viewers about yourself…" oninput="_aboutBio=this.value;_markAboutDirty()">${esc(_aboutBio)}</textarea>
         </div>
         <div class="ch-about-panels ch-about-panels-edit" id="ch-about-panels-edit">
             ${_aboutPanels.map((p, i) => _aboutPanelEditHTML(p, i)).join('')}
-        </div>
-        <div class="ch-about-add-row">
-            <button class="btn btn-sm btn-outline" onclick="addAboutPanel('info')"><i class="fa-solid fa-plus"></i> Add panel</button>
-            <button class="btn btn-sm btn-outline" onclick="addAboutPanel('weather')"><i class="fa-solid fa-cloud-sun"></i> Add weather panel</button>
         </div>`;
     _wireAboutDrag();
+    _updateAboutSaveBtn();
+    if (_aboutIsOwner && _aboutChannelId === null) _loadAboutModsSetting();
+}
+function _markAboutDirty() { _aboutDirty = true; _updateAboutSaveBtn(); }
+function _updateAboutSaveBtn() {
+    const btn = document.getElementById('ch-about-save-btn');
+    if (btn) btn.classList.toggle('is-visible', !!_aboutDirty);
+}
+// Apply a panel's width live (no full re-render, so inputs keep focus/value).
+function _setAboutPanelWidth(i, w, sel) {
+    _aboutPanels[i].width = w;
+    const panel = sel && sel.closest ? sel.closest('.ch-about-panel') : null;
+    if (panel) {
+        panel.classList.remove('ch-panel-w-sm', 'ch-panel-w-md', 'ch-panel-w-lg', 'ch-panel-w-full');
+        panel.classList.add('ch-panel-w-' + w);
+    }
+    _markAboutDirty();
+}
+async function _loadAboutModsSetting() {
+    if (!currentUser) return;
+    try {
+        const data = await api('/channels/moderation/mine');
+        const mine = (data.channels || []).find(c => c.user_id === currentUser.id) || (data.channels || [])[0];
+        if (mine) {
+            _aboutChannelId = mine.id;
+            _aboutModsCanEdit = !!(mine.moderation_settings && mine.moderation_settings.mods_can_edit_about);
+            const cb = document.getElementById('ch-about-mods-edit');
+            if (cb) cb.checked = _aboutModsCanEdit;
+        }
+    } catch { /* silent */ }
+}
+async function _setAboutModsCanEdit(v) {
+    _aboutModsCanEdit = !!v;
+    if (!_aboutChannelId) { await _loadAboutModsSetting(); }
+    if (!_aboutChannelId) return;
+    try {
+        await api(`/channels/${_aboutChannelId}/moderation`, { method: 'PUT', body: { mods_can_edit_about: v ? 1 : 0 } });
+        toast(v ? 'Mods can now edit your About' : 'Mods can no longer edit your About', 'success');
+    } catch (e) { toast(e.message || 'Save failed', 'error'); }
 }
 function _aboutPanelEditHTML(p, i) {
     const widthSel = ABOUT_WIDTHS.map(w => `<option value="${w}" ${p.width === w ? 'selected' : ''}>${{ sm: 'Small', md: 'Medium', lg: 'Large', full: 'Full' }[w]}</option>`).join('');
     const head = `<div class="ch-panel-edit-head">
             <span class="ch-panel-drag" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span>
             <span class="ch-panel-type">${p.type === 'weather' ? '<i class="fa-solid fa-cloud-sun"></i> Weather' : '<i class="fa-solid fa-window-maximize"></i> Panel'}</span>
-            <select onchange="_aboutPanels[${i}].width=this.value" title="Width">${widthSel}</select>
+            <select onchange="_setAboutPanelWidth(${i}, this.value, this)" title="Width">${widthSel}</select>
             <button class="ch-panel-del" onclick="removeAboutPanel(${i})" title="Delete"><i class="fa-solid fa-trash"></i></button>
         </div>`;
     if (p.type === 'weather') {
         return `<div class="ch-about-panel ch-panel-w-${p.width} ch-panel-edit" draggable="true" data-idx="${i}">
             ${head}
-            <input type="text" placeholder="Panel title (optional)" value="${esc(p.title)}" oninput="_aboutPanels[${i}].title=this.value">
+            <input type="text" placeholder="Panel title (optional)" value="${esc(p.title)}" oninput="_aboutPanels[${i}].title=this.value;_markAboutDirty()">
             <p class="muted" style="font-size:0.8rem;margin:6px 0 0"><i class="fa-solid fa-location-dot"></i> Shows the weather for the slot the viewer is watching (set each slot's zip in the slot's broadcast settings).</p>
         </div>`;
     }
     return `<div class="ch-about-panel ch-panel-w-${p.width} ch-panel-edit" draggable="true" data-idx="${i}">
         ${head}
-        <input type="text" placeholder="Title" value="${esc(p.title)}" oninput="_aboutPanels[${i}].title=this.value">
+        <input type="text" placeholder="Title" value="${esc(p.title)}" oninput="_aboutPanels[${i}].title=this.value;_markAboutDirty()">
         <div class="ch-panel-img-row">
             <img class="ch-panel-img-preview" src="${p.image ? esc(p.image) : ''}" style="${p.image ? '' : 'display:none'}">
             <input type="file" accept="image/*" onchange="uploadAboutPanelImage(${i}, this)">
-            ${p.image ? `<button class="btn btn-xs btn-outline" onclick="_aboutPanels[${i}].image='';_renderAboutEdit()">Remove image</button>` : ''}
+            ${p.image ? `<button class="btn btn-xs btn-outline" onclick="_aboutPanels[${i}].image='';_markAboutDirty();_renderAboutEdit()">Remove image</button>` : ''}
         </div>
-        <textarea rows="2" placeholder="Text (URLs become links)" oninput="_aboutPanels[${i}].body=this.value">${esc(p.body)}</textarea>
-        <input type="text" placeholder="Link URL (optional)" value="${esc(p.link)}" oninput="_aboutPanels[${i}].link=this.value">
+        <textarea rows="2" placeholder="Text (URLs become links)" oninput="_aboutPanels[${i}].body=this.value;_markAboutDirty()">${esc(p.body)}</textarea>
+        <input type="text" placeholder="Link URL (optional)" value="${esc(p.link)}" oninput="_aboutPanels[${i}].link=this.value;_markAboutDirty()">
     </div>`;
 }
 function addAboutPanel(type) {
     _aboutPanels.push(_normalizeAboutPanel({ type, width: type === 'weather' ? 'md' : 'md' }));
     _renderAboutEdit();
+    _markAboutDirty();
 }
-function removeAboutPanel(i) { _aboutPanels.splice(i, 1); _renderAboutEdit(); }
-function cancelAboutEdit() { _aboutEditMode = false; _renderAboutView(); }
+function removeAboutPanel(i) { _aboutPanels.splice(i, 1); _renderAboutEdit(); _markAboutDirty(); }
+function cancelAboutEdit() { _aboutEditMode = false; _aboutDirty = false; _renderAboutView(); }
 async function uploadAboutPanelImage(i, input) {
     const file = input.files && input.files[0];
     if (!file) return;
@@ -4062,6 +4114,7 @@ function _wireAboutDrag() {
             _aboutPanels.splice(to, 0, moved);
             _aboutDragIdx = null;
             _renderAboutEdit();
+            _markAboutDirty();
         });
     });
 }

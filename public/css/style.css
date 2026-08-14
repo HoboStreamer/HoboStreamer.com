@@ -6410,7 +6410,15 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .ch-panel-title { font-size: 1.05rem; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
 .ch-panel-title i { color: var(--accent); opacity: 0.9; }
 .ch-about-content { display: flex; flex-direction: column; gap: 14px; }
-.ch-about-toolbar { display: flex; align-items: center; gap: 10px; }
+.ch-about-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.ch-about-toolbar-left, .ch-about-toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ch-about-drag-hint { font-size: 0.8rem; }
+@media (max-width: 560px) { .ch-about-drag-hint { display: none; } }
+.ch-about-mods-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text-secondary); cursor: pointer; margin-right: 4px; }
+.ch-about-mods-toggle input { accent-color: var(--accent); }
+/* Save fades in only once something changes. */
+.ch-about-save-btn { opacity: 0; transform: translateY(-2px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+.ch-about-save-btn.is-visible { opacity: 1; transform: none; pointer-events: auto; }
 .ch-about-bio {
     background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px;
     padding: 16px 18px; line-height: 1.6; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
@@ -6440,17 +6448,43 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .ch-about-empty p { margin: 6px 0; }
 /* ── Edit mode ── */
 .ch-edit-label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin-bottom: 5px; }
-.ch-about-edit-bio textarea { width: 100%; }
+.ch-about-edit-bio { margin-bottom: 16px; }
+/* Theme-matched form controls (were browser-default white boxes). */
+.ch-about-edit-bio textarea,
+.ch-panel-edit input:not([type="file"]),
+.ch-panel-edit textarea,
+.ch-panel-edit select {
+    width: 100%;
+    background: var(--bg-input, var(--bg-primary));
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 0.88rem;
+    transition: border-color .15s, box-shadow .15s;
+}
+.ch-about-edit-bio textarea:focus,
+.ch-panel-edit input:focus,
+.ch-panel-edit textarea:focus,
+.ch-panel-edit select:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.ch-about-edit-bio textarea::placeholder,
+.ch-panel-edit input::placeholder,
+.ch-panel-edit textarea::placeholder { color: var(--text-muted); opacity: 0.8; }
+.ch-panel-edit input[type="file"] { color: var(--text-secondary); font-size: 0.82rem; max-width: 100%; }
 .ch-about-add-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.ch-panel-edit { padding: 10px 12px 12px; gap: 8px; cursor: default; }
+.ch-panel-edit { padding: 12px; gap: 9px; cursor: default; background: var(--bg-secondary); border: 1px solid var(--border); }
 .ch-panel-edit.dragging { opacity: 0.45; outline: 2px dashed var(--accent); }
-.ch-panel-edit input, .ch-panel-edit textarea, .ch-panel-edit select { width: 100%; }
 .ch-panel-edit-head { display: flex; align-items: center; gap: 8px; }
-.ch-panel-edit-head .ch-panel-type { font-weight: 700; font-size: 0.85rem; flex: 1; }
-.ch-panel-edit-head select { width: auto; }
+.ch-panel-edit-head .ch-panel-type { font-weight: 700; font-size: 0.85rem; flex: 1; color: var(--text-secondary); }
+.ch-panel-edit-head select { width: auto; padding: 4px 8px; font-size: 0.8rem; }
 .ch-panel-drag { cursor: grab; color: var(--text-muted); }
 .ch-panel-drag:active { cursor: grabbing; }
-.ch-panel-del { background: none; border: none; color: var(--live-red, #e05a5a); cursor: pointer; padding: 4px; }
+.ch-panel-del { background: none; border: none; color: var(--live-red, #e05a5a); cursor: pointer; padding: 4px; border-radius: 6px; }
+.ch-panel-del:hover { background: color-mix(in srgb, var(--live-red, #e05a5a) 15%, transparent); }
 .ch-panel-img-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ch-panel-img-preview { width: 64px; height: 44px; object-fit: cover; border-radius: 6px; background: var(--bg-primary); }
 .btn-xs { padding: 3px 8px; font-size: 0.75rem; }
