@@ -740,6 +740,10 @@ class ChatRelayService {
         const token = await platformOAuth.getValidAccessToken(conn);
         if (!token) return false;
         const H = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        // These reads share the SAME per-project YouTube quota as broadcast creation, so meter
+        // them into the global governor and back off (slower re-resolve + poll) as it fills up.
+        const noteUnit = (n) => { try { platformOAuth.ytQuotaNote && platformOAuth.ytQuotaNote(n); } catch { /* */ } };
+        const quotaPressure = () => { try { return (platformOAuth.ytQuotaPressure && platformOAuth.ytQuotaPressure()) || 0; } catch { return 0; } };
 
         // Resolve the CURRENT live broadcast's liveChatId. A reconnect (or a flaky stream)
         // makes YouTube spin up a FRESH broadcast + chat each time, so pick the most
@@ -750,6 +754,7 @@ class ChatRelayService {
             let best = null; // { liveChatId, started }
             for (const status of ['active', 'upcoming']) {
                 try {
+                    noteUnit(1);
                     const r = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&broadcastStatus=${status}&broadcastType=all&maxResults=20`, { headers: H });
                     if (r.ok) {
                         const j = await r.json();
@@ -792,19 +797,26 @@ class ChatRelayService {
         clearTimeout(bridge._ytResolveTimer);
         const scheduleResolve = () => {
             if (bridge.stopped) return;
+            // Slow the re-resolve as quota fills (it's just rotation-following, not latency
+            // critical): 90s normally, 5m when quota's getting tight, and skip the list entirely
+            // near the ceiling.
+            const pr = quotaPressure();
+            const delay = pr >= 0.85 ? 600000 : pr >= 0.6 ? 300000 : 90000;
             bridge._ytResolveTimer = setTimeout(async () => {
                 if (bridge.stopped) return;
-                try {
-                    const current = await findLiveChatId();
-                    if (current && current !== liveChatId) {
-                        console.log(`[ChatRelay] YouTube: live chat rotated for stream ${bridge.streamId} → ${current}`);
-                        liveChatId = current;
-                        bridge._ytPageToken = undefined;
-                        bridge._ytFirstPoll = true; // don't dump the new chat's backlog
-                    }
-                } catch { /* keep the current chat */ }
+                if (quotaPressure() < 0.85) {
+                    try {
+                        const current = await findLiveChatId();
+                        if (current && current !== liveChatId) {
+                            console.log(`[ChatRelay] YouTube: live chat rotated for stream ${bridge.streamId} → ${current}`);
+                            liveChatId = current;
+                            bridge._ytPageToken = undefined;
+                            bridge._ytFirstPoll = true; // don't dump the new chat's backlog
+                        }
+                    } catch { /* keep the current chat */ }
+                }
                 scheduleResolve();
-            }, 90000);
+            }, delay);
         };
         scheduleResolve();
 
@@ -816,6 +828,7 @@ class ChatRelayService {
                 url.searchParams.set('part', 'snippet,authorDetails');
                 url.searchParams.set('maxResults', '200');
                 if (bridge._ytPageToken) url.searchParams.set('pageToken', bridge._ytPageToken);
+                noteUnit(1);
                 const r = await fetch(url, { headers: H });
                 if (!r.ok) {
                     if (r.status === 403 || r.status === 404) {
@@ -837,7 +850,13 @@ class ChatRelayService {
                     }
                 }
                 bridge._ytFirstPoll = false;
-                const interval = Math.max(2500, Math.min(15000, j.pollingIntervalMillis || 5000));
+                // Poll cadence follows YouTube's hint, but we RAISE the floor as quota fills so a
+                // long-running chat poll can't drain the shared project quota. Slightly laggier
+                // relayed chat under pressure beats the relay 403ing for everyone.
+                const pr = quotaPressure();
+                const floor = pr >= 0.85 ? 20000 : pr >= 0.6 ? 12000 : 2500;
+                const cap = pr >= 0.6 ? 30000 : 15000;
+                const interval = Math.max(floor, Math.min(cap, j.pollingIntervalMillis || 5000));
                 if (!bridge.stopped) bridge.pollTimer = setTimeout(poll, interval);
             } catch (e) {
                 if (!bridge.stopped) bridge.pollTimer = setTimeout(poll, 6000);

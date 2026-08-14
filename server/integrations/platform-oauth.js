@@ -397,6 +397,33 @@ const _ytBroadcastState = new Map(); // userKey → { broadcastId, ytStreamId, l
 const _YT_USABLE_LIFE = ['live', 'liveStarting', 'testing', 'testStarting', 'ready', 'created'];
 const _YT_ACTIVE_LIFE = ['live', 'liveStarting', 'testing', 'testStarting'];
 
+// ── Global YouTube Data API quota governor ───────────────────────────────────
+// YouTube quota is per Google-Cloud PROJECT (our app credentials) and therefore SHARED across
+// EVERY streamer restreaming to YouTube through HoboStreamer — so one flaky streamer's reconnect
+// churn can exhaust it for everyone. YouTube returns no remaining-quota header, so we ESTIMATE
+// spend client-side (reset per Pacific day, matching YouTube's reset) and, as it creeps up, get
+// progressively more reuse-happy: skip the pricey create/bind/delete ops and lean on the already
+// live broadcast, so we glide under the ceiling instead of slamming into a 403.
+const YT_DAILY_QUOTA = parseInt(process.env.YT_DAILY_QUOTA || '', 10) || 10000;
+const YT_QUOTA_SOFT = parseFloat(process.env.YT_QUOTA_SOFT || '') || 0.6;   // ≥ this: aggressive reuse — skip cleanup, widen create floor
+const YT_QUOTA_HARD = parseFloat(process.env.YT_QUOTA_HARD || '') || 0.85;  // ≥ this: reuse-only — never create/bind-new/delete
+const YT_COST = { list: 1, insert: 50, bind: 50, delete: 50 };
+let _ytQuota = { day: '', spent: 0 };
+function _ytPtDay() {
+    try { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); }
+    catch { return new Date().toISOString().slice(0, 10); }
+}
+function ytQuotaNote(units) {
+    const day = _ytPtDay();
+    if (day !== _ytQuota.day) _ytQuota = { day, spent: 0 };
+    _ytQuota.spent += Math.max(0, Number(units) || 0);
+}
+function ytQuotaPressure() {
+    const day = _ytPtDay();
+    if (day !== _ytQuota.day) _ytQuota = { day, spent: 0 };
+    return YT_DAILY_QUOTA > 0 ? _ytQuota.spent / YT_DAILY_QUOTA : 0;
+}
+
 /** Get the reusable YouTube ingest and reuse/create+bind an auto-start broadcast. */
 async function youtubeGoLive(token, title, connection) {
     const H = { Authorization: `Bearer ${token}` };
@@ -405,19 +432,44 @@ async function youtubeGoLive(token, title, connection) {
     const now = Date.now();
     const saveState = (patch) => { if (userKey != null) _ytBroadcastState.set(userKey, { ...st, ...patch }); };
 
-    let stream = null;
-    const list = await getJson('https://www.googleapis.com/youtube/v3/liveStreams?part=cdn,snippet&mine=true', H);
-    if (list.items && list.items.length) stream = list.items.find(s => s.cdn && s.cdn.ingestionType === 'rtmp') || list.items[0];
-    if (!stream) stream = await createYouTubeStream(H);
-    const ingest = stream && stream.cdn && stream.cdn.ingestionInfo;
-    if (!ingest || !ingest.streamName) return null;
-    const ret = { server_url: ingest.ingestionAddress, stream_key: ingest.streamName };
+    const pressure = ytQuotaPressure();
+    const aggressive = pressure >= YT_QUOTA_SOFT;   // skip cleanup deletes, widen the create floor
+    const reuseOnly = pressure >= YT_QUOTA_HARD;    // don't spend ANY broadcast create/list quota
+
+    // Ingest key: YouTube's persistent stream key is stable, so under pressure we reuse the
+    // cached one (fresh < 6h) instead of spending a liveStreams.list on every reconnect.
+    let ingest = null, ytStreamId = st.ytStreamId || null;
+    const cacheFresh = st.ingest && st.ingestAt && (now - st.ingestAt) < 6 * 3600 * 1000;
+    if (aggressive && cacheFresh) {
+        ingest = st.ingest;
+    } else {
+        ytQuotaNote(YT_COST.list);
+        const list = await getJson('https://www.googleapis.com/youtube/v3/liveStreams?part=cdn,snippet&mine=true', H);
+        let stream = null;
+        if (list.items && list.items.length) stream = list.items.find(s => s.cdn && s.cdn.ingestionType === 'rtmp') || list.items[0];
+        if (!stream) { ytQuotaNote(YT_COST.insert); stream = await createYouTubeStream(H); }
+        const info = stream && stream.cdn && stream.cdn.ingestionInfo;
+        if (info && info.streamName) {
+            ingest = { server_url: info.ingestionAddress, stream_key: info.streamName };
+            ytStreamId = stream.id;
+            saveState({ ingest, ingestAt: now, ytStreamId });
+        }
+    }
+    if (!ingest || !ingest.stream_key) return null;
+    const ret = { server_url: ingest.server_url, stream_key: ingest.stream_key };
 
     // Anti-spam: if broadcast creation recently hit the API quota, stop hammering it (each
     // attempt burns more of the already-exhausted quota). Return the ingest key — ffmpeg
     // reconnecting continues whatever broadcast is already live on YouTube.
     if (st.quotaCooldownUntil && now < st.quotaCooldownUntil) {
         console.warn(`[PlatformOAuth] YouTube: broadcast create in quota cooldown (${Math.round((st.quotaCooldownUntil - now) / 60000)}m left) — reusing existing, no new broadcast`);
+        return ret;
+    }
+    // Proactive quota guard: at HARD pressure spend NO broadcast list/create/delete quota —
+    // trust the already-live broadcast (ffmpeg reconnect keeps it going). Glide under the
+    // ceiling instead of hitting a 403, and let it recover at the daily reset.
+    if (reuseOnly) {
+        console.warn(`[PlatformOAuth] YouTube quota pressure ${Math.round(pressure * 100)}% ≥ ${Math.round(YT_QUOTA_HARD * 100)}% — reuse-only, skipping broadcast API${st.broadcastId ? ` (broadcast ${st.broadcastId})` : ''}`);
         return ret;
     }
 
@@ -428,8 +480,12 @@ async function youtubeGoLive(token, title, connection) {
         let reuse = null;
         try {
             const items = [];
-            for (const status of ['active', 'upcoming']) {
+            // At aggressive pressure only the LIVE (active) broadcast matters for reuse — skip
+            // the extra 'upcoming' list call.
+            const statuses = aggressive ? ['active'] : ['active', 'upcoming'];
+            for (const status of statuses) {
                 try {
+                    ytQuotaNote(YT_COST.list);
                     const bl = await getJson(`https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,status,contentDetails&broadcastStatus=${status}&broadcastType=all&maxResults=50`, H);
                     for (const b of (bl.items || [])) items.push(b);
                 } catch { /* try next status */ }
@@ -437,14 +493,17 @@ async function youtubeGoLive(token, title, connection) {
             const life = b => b.status && b.status.lifeCycleStatus;
             const usable = items.filter(b => _YT_USABLE_LIFE.includes(life(b)));
             reuse = usable.find(b => st.broadcastId && b.id === st.broadcastId)
-                || usable.find(b => b.contentDetails && b.contentDetails.boundStreamId === stream.id)
+                || usable.find(b => b.contentDetails && b.contentDetails.boundStreamId === ytStreamId)
                 || usable.find(b => !_YT_ACTIVE_LIFE.includes(life(b)))   // an upcoming one we can safely (re)bind
                 || null;
             // Clear the ghost "Upcoming" pileup: delete leftover UPCOMING (never live) broadcasts
-            // we're not reusing. Never touch live ones.
-            for (const b of usable) {
-                if (!_YT_ACTIVE_LIFE.includes(life(b)) && (!reuse || b.id !== reuse.id)) {
-                    try { await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts?id=${b.id}`, { method: 'DELETE', headers: H }); } catch { /* */ }
+            // we're not reusing. Never touch live ones. Skip under quota pressure — each DELETE
+            // costs 50 units, and letting a few ghosts linger is cheaper than draining the quota.
+            if (!aggressive) {
+                for (const b of usable) {
+                    if (!_YT_ACTIVE_LIFE.includes(life(b)) && (!reuse || b.id !== reuse.id)) {
+                        try { ytQuotaNote(YT_COST.delete); await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts?id=${b.id}`, { method: 'DELETE', headers: H }); } catch { /* */ }
+                    }
                 }
             }
         } catch { /* listing failed — fall through to create */ }
@@ -456,10 +515,12 @@ async function youtubeGoLive(token, title, connection) {
             console.log(`[PlatformOAuth] Reusing YouTube broadcast ${broadcastId} (${reuseIsLive ? 'live' : 'upcoming'}) — no new broadcast`);
         } else {
             // Rate floor: don't mint another fresh broadcast within the min interval of the last
-            // one (a reconnect storm). Return the key and let ffmpeg continue the existing live
-            // broadcast rather than churning new ones + burning quota.
-            if (st.lastCreateAt && (now - st.lastCreateAt) < YT_MIN_CREATE_INTERVAL_MS) {
-                console.log(`[PlatformOAuth] YouTube: skipping new broadcast — one was created ${Math.round((now - st.lastCreateAt) / 1000)}s ago (< ${Math.round(YT_MIN_CREATE_INTERVAL_MS / 1000)}s floor)`);
+            // one (a reconnect storm). Widen the floor sharply under quota pressure so we lean on
+            // reuse instead of churning new broadcasts. Return the key and let ffmpeg continue the
+            // existing live broadcast rather than burning quota.
+            const createFloor = aggressive ? Math.max(YT_MIN_CREATE_INTERVAL_MS, 30 * 60 * 1000) : YT_MIN_CREATE_INTERVAL_MS;
+            if (st.lastCreateAt && (now - st.lastCreateAt) < createFloor) {
+                console.log(`[PlatformOAuth] YouTube: skipping new broadcast — one was created ${Math.round((now - st.lastCreateAt) / 1000)}s ago (< ${Math.round(createFloor / 1000)}s floor${aggressive ? `, quota ${Math.round(pressure * 100)}%` : ''})`);
                 return ret;
             }
             const body = {
@@ -467,6 +528,7 @@ async function youtubeGoLive(token, title, connection) {
                 status: { privacyStatus: 'public', selfDeclaredMadeForKids: false },
                 contentDetails: { enableAutoStart: true, enableAutoStop: true },
             };
+            ytQuotaNote(YT_COST.insert);
             const res = await fetch('https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet,status,contentDetails', {
                 method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
             });
@@ -485,11 +547,12 @@ async function youtubeGoLive(token, title, connection) {
         // Bind broadcast → stream. Skip when reusing an already-LIVE broadcast — it's bound and
         // streaming, and YouTube rejects a bind on an active broadcast.
         if (!reuseIsLive) {
-            const bindRes = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${broadcastId}&part=id,contentDetails&streamId=${stream.id}`, { method: 'POST', headers: H });
+            ytQuotaNote(YT_COST.bind);
+            const bindRes = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${broadcastId}&part=id,contentDetails&streamId=${ytStreamId}`, { method: 'POST', headers: H });
             if (!bindRes.ok) { const j = await bindRes.json().catch(() => ({})); throw new Error(j.error?.message || `bind ${bindRes.status}`); }
         }
         // Remember what we're on so reconnects reuse it (and the rate floor applies to fresh mints).
-        saveState({ broadcastId, ytStreamId: stream.id, lastCreateAt: reuse ? (st.lastCreateAt || now) : now, quotaCooldownUntil: 0 });
+        saveState({ broadcastId, ytStreamId, lastCreateAt: reuse ? (st.lastCreateAt || now) : now, quotaCooldownUntil: 0 });
     } catch (e) {
         // Still return the key — if the user has auto-start enabled in YT Studio it works anyway.
         console.warn('[PlatformOAuth] YouTube broadcast setup failed (key still returned):', e.message);
@@ -509,4 +572,6 @@ module.exports = {
     fetchConnection,
     getValidAccessToken,
     resolveIngestForConnection,
+    ytQuotaNote,
+    ytQuotaPressure,
 };
