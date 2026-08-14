@@ -16,11 +16,19 @@ const _DASH_TAB_CARDS = {
     moderation: [],  // injected by dashboard-moderation.js into #dash-grid-moderation
     controls:   ['dash-card-controls', 'dash-card-cameras', 'dash-card-tokens'],
     money:      ['dash-card-goals', 'dash-powerchat-card', 'dash-card-rewards', 'dash-card-redemptions'],
-    content:    ['dash-my-videos-card', 'dash-card-myclips', 'dash-card-streamclips'],
+    content:    [],  // content cards go into sub-grids (see _DASH_CONTENT_SUBCARDS)
+};
+// Content tab has its own sub-tabs; each card relocates into a sub-grid.
+const _DASH_CONTENT_SUBCARDS = {
+    videos:      ['dash-my-videos-card'],
+    streamclips: ['dash-card-streamclips'],
+    myclips:     ['dash-card-myclips'],
+    pastes:      ['dash-card-pastes'],
 };
 window._dashTabLoaders = window._dashTabLoaders || {};
 let _dashRelocated = false;
 const _dashLoadedTabs = new Set();
+const _dashLoadedContentSubs = new Set();
 
 function _dashRelocateCards() {
     if (_dashRelocated) return;
@@ -33,7 +41,37 @@ function _dashRelocateCards() {
             if (card && card.parentElement !== grid) grid.appendChild(card);
         }
     }
+    // Content sub-tabs.
+    for (const [sub, ids] of Object.entries(_DASH_CONTENT_SUBCARDS)) {
+        const grid = document.getElementById('dash-grid-content-' + sub);
+        if (!grid) continue;
+        for (const id of ids) {
+            const card = document.getElementById(id);
+            if (card && card.parentElement !== grid) grid.appendChild(card);
+        }
+    }
 }
+
+// Content sub-tab loaders (lazy per sub-tab).
+const _DASH_CONTENT_LOADERS = {
+    videos:      () => _call('loadDashVods'),
+    streamclips: () => _call('loadDashStreamClips'),
+    myclips:     () => _call('loadDashMyClips'),
+    pastes:      () => _call('loadDashPastes'),
+};
+function switchDashContentTab(sub, btn) {
+    document.querySelectorAll('#dash-content-subtabs .ch-tab').forEach(b => {
+        b.classList.toggle('active', b === btn || b.dataset.cdtab === sub);
+    });
+    document.querySelectorAll('#dash-panel-content .dash-subpanel').forEach(p => p.classList.remove('active'));
+    const panel = document.getElementById('dash-content-' + sub);
+    if (panel) panel.classList.add('active');
+    if (!_dashLoadedContentSubs.has(sub)) {
+        _dashLoadedContentSubs.add(sub);
+        try { (_DASH_CONTENT_LOADERS[sub] || (() => {}))(); } catch (e) { console.warn('[dash] content sub', sub, e); }
+    }
+}
+window.switchDashContentTab = switchDashContentTab;
 
 function switchDashTab(tab, btn) {
     document.querySelectorAll('#dash-tabs .ch-tab').forEach(b => {
@@ -58,7 +96,7 @@ window._dashTabLoaders.home = () => { _call('loadDashActiveStreams'); _call('loa
 window._dashTabLoaders.chatai = () => { _call('updateDashObsOverlayUrl'); _call('loadAiViewers'); };
 window._dashTabLoaders.controls = () => { _call('loadDashConfigs'); _call('loadControlSettings'); _call('loadDashboardCameras'); _call('loadDashTokens'); };
 window._dashTabLoaders.money = () => { _call('loadDashGoals'); _call('loadPowerchatStatus'); _call('loadDashRewards'); _call('loadDashRedemptions'); };
-window._dashTabLoaders.content = () => { _call('loadDashVods'); _call('loadDashMyClips'); _call('loadDashStreamClips'); };
+window._dashTabLoaders.content = () => { switchDashContentTab('videos', document.querySelector('#dash-content-subtabs .ch-tab[data-cdtab="videos"]')); };
 // moderation loader is registered by dashboard-moderation.js
 
 /**
@@ -874,6 +912,19 @@ async function loadDashStreamClips() {
 }
 
 function dashStreamClipsGoPage(page) { dashStreamClipsPage = page; loadDashStreamClips(); }
+
+async function loadDashPastes() {
+    const list = document.getElementById('dash-pastes-list');
+    if (!list || !currentUser?.username) return;
+    try {
+        const data = await api(`/pastes/by-user/${encodeURIComponent(currentUser.username)}?limit=30`);
+        const pastes = data.pastes || [];
+        if (!pastes.length) { list.innerHTML = '<p class="muted">You haven\'t shared any pastes yet.</p>'; return; }
+        list.innerHTML = (typeof renderPasteCard === 'function')
+            ? pastes.map(p => renderPasteCard(p)).join('')
+            : '<p class="muted">Paste renderer unavailable</p>';
+    } catch { list.innerHTML = '<p class="muted">Failed to load pastes</p>'; }
+}
 
 async function dashToggleClipVisibility(clipId, makePublic, source) {
     try {

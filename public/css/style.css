@@ -5278,6 +5278,12 @@ main#app { position: relative; z-index: 1; }
 .dash-tab-panel { display: none; }
 .dash-tab-panel.active { display: block; }
 .dash-tab-panel > .dash-grid { margin-top: 16px; }
+/* Content sub-tabs */
+.dash-subtabs { margin: 16px 0 4px; flex-wrap: wrap; }
+.dash-subpanel { display: none; }
+.dash-subpanel.active { display: block; }
+.dash-subpanel > .dash-grid { margin-top: 14px; }
+#dash-pastes-list.pastes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 14px; }
 .dash-card {
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: 18px; padding: 20px;
