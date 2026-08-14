@@ -13,9 +13,36 @@
 'use strict';
 const db = require('../db/database');
 const oauth = require('./powerchat-oauth');
+const config = require('../config');
 
 // The virtual-currency key the app declares in the PowerChat dashboard for channel points.
 const CURRENCY_KEY = 'hobo_points';
+
+// PowerChat's /chat avatarUrl only renders when it's a full absolute http(s) URL — relative
+// paths, data:/blob:, or bare values are silently treated as "no avatar" (an initial-letter
+// placeholder shows instead). HoboStreamer stores avatars as site-relative paths
+// (e.g. /data/pastes/screenshots/..), so we resolve them against the public base URL and
+// prefer https so the avatar actually displays on the overlay.
+function _absoluteAvatarUrl(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    const url = raw.trim();
+    if (!url) return null;
+    if (/^https:\/\//i.test(url)) return url;                 // already displayable
+    if (/^http:\/\//i.test(url)) {                            // absolute but http
+        try {
+            const u = new URL(url);
+            const baseHost = new URL(config.baseUrl).host;
+            if (u.host === baseHost) { u.protocol = 'https:'; return u.toString(); } // upgrade our own host
+        } catch { /* fall through */ }
+        return url;                                           // foreign http — best effort
+    }
+    if (url.startsWith('/')) {                                // site-relative → absolutise
+        const base = String(config.baseUrl || '').replace(/\/+$/, '');
+        if (!base) return null;
+        return (base + url).replace(/^http:\/\//i, 'https://'); // public base is https in prod
+    }
+    return null;                                              // data:/blob:/bare — not displayable
+}
 
 // Only a real OAuth app connection (has tokens) with the needed scope may push.
 function _connFor(userId, scopeNeeded) {
@@ -39,6 +66,7 @@ async function forwardChat(streamerUserId, { chatterName, externalChatterId, mes
     if (!b || now > b.resetAt) { b = { count: 0, resetAt: now + 60000 }; _chatBuckets.set(streamerUserId, b); }
     if (b.count >= 100) return;
     b.count++;
+    const absAvatar = _absoluteAvatarUrl(avatarUrl);
     try {
         await oauth.apiRequest(streamerUserId, {
             method: 'POST', path: '/chat',
@@ -48,7 +76,7 @@ async function forwardChat(streamerUserId, { chatterName, externalChatterId, mes
                 chatterName: String(chatterName).slice(0, 48),
                 externalChatterId: String(externalChatterId || chatterName).slice(0, 128),
                 message: String(message).slice(0, 500),
-                ...(avatarUrl ? { avatarUrl } : {}),
+                ...(absAvatar ? { avatarUrl: absAvatar } : {}),
                 ...(isModerator ? { isModerator: true } : {}),
             },
         });
