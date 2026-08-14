@@ -2713,6 +2713,21 @@ function countRecentVods() {
     `)?.count || 0;
 }
 
+// Public-facing site totals for the home hero stats bar.
+function getHomeStats() {
+    const c = (sql, p = []) => (get(sql, p)?.count || 0);
+    return {
+        vods: c(`SELECT COUNT(*) AS count FROM vods WHERE is_public = 1 AND COALESCE(is_recording, 0) = 0`),
+        liveSessions: c(`SELECT COUNT(*) AS count FROM streams`),
+        chatMessages: c(`SELECT COUNT(*) AS count FROM chat_messages`),
+        users: c(`SELECT COUNT(*) AS count FROM users WHERE COALESCE(is_banned, 0) = 0`),
+        weeklyActive: c(`SELECT COUNT(DISTINCT user_id) AS count FROM chat_messages
+                         WHERE user_id IS NOT NULL AND COALESCE(is_deleted, 0) = 0
+                           AND timestamp >= datetime('now', '-7 days')`),
+        liveNow: c(`SELECT COUNT(*) AS count FROM streams WHERE is_live = 1`),
+    };
+}
+
 function getVodsByUserFiltered(userId, { includePrivate = false, managedStreamId = null, orderBy = 'newest', limit = 12, offset = 0 } = {}) {
     // COALESCE(v.clips_only,0)=0 hides ephemeral clips-only recordings (they're deleted on
     // stream end; this guards against a rare orphan surviving a crash before cleanup).
@@ -6519,7 +6534,7 @@ module.exports = {
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     // Homepage helpers
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
-    getRecentVods, countRecentVods,
+    getRecentVods, countRecentVods, getHomeStats,
     // Filtered VODs/clips
     getVodsByUserFiltered, countVodsByUserFiltered, getPopularVodForUser, getPopularClipForUser,
     getClipsOfUserStreamsPaginated, countClipsOfUserStreams,

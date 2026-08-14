@@ -1989,6 +1989,102 @@ main#app { position: relative; z-index: 1; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   HERO 2.0 — floating thumbnail collage, rotating quip, stats bar
+   ═══════════════════════════════════════════════════════════════ */
+.hero { min-height: clamp(560px, 78vh, 760px); display: flex; align-items: center; justify-content: center; }
+.hero-content { position: relative; z-index: 2; }
+
+/* Floating thumbnail collage (decorative, click-through cards) */
+.hero-collage { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.hero-float {
+    position: absolute; display: block; width: var(--w, 120px); aspect-ratio: 16 / 10;
+    border-radius: 12px; overflow: hidden; pointer-events: auto; text-decoration: none;
+    background: color-mix(in srgb, var(--bg-secondary) 88%, #000);
+    border: 1px solid rgba(192, 150, 92, 0.28);
+    box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(0, 0, 0, 0.2) inset;
+    opacity: 0; transform: translateY(10px) scale(0.96);
+    animation: heroFloatIn 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) var(--in-delay, 0s) forwards,
+               heroFloatBob var(--dur, 13s) ease-in-out var(--delay, 0s) infinite alternate;
+    will-change: transform, opacity;
+}
+.hero-float.swapping { opacity: 0.05 !important; transition: opacity 0.5s ease; }
+.hero-float img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hero-float-body {
+    position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
+    padding: 7px 8px; gap: 2px; background: linear-gradient(180deg, transparent 35%, rgba(0, 0, 0, 0.72) 100%);
+}
+.hero-float-text {
+    position: absolute; inset: 0; padding: 9px 10px; display: flex; flex-direction: column; gap: 4px;
+    font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.62rem; line-height: 1.25;
+    color: var(--text-secondary); overflow: hidden;
+    background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 12%, var(--bg-secondary)) 0%, var(--bg-primary) 100%);
+}
+.hero-float-title { font-size: 0.64rem; font-weight: 650; color: #fff; line-height: 1.2; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
+.hero-float-badge {
+    align-self: flex-start; font-size: 0.54rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 999px; color: #fff; margin-bottom: 2px;
+    background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(255, 255, 255, 0.18); backdrop-filter: blur(4px);
+}
+.hero-float--live .hero-float-badge { background: #e0245e; border-color: #ff6088; }
+.hero-float--vod .hero-float-badge { background: #5865f2; border-color: #8b93ff; }
+.hero-float--clip .hero-float-badge { background: #2ecc71; border-color: #6fe0a2; color: #05130a; }
+.hero-float--paste .hero-float-badge { background: var(--accent); border-color: var(--accent-light); color: var(--on-accent, #0b0d10); }
+.hero-float { transition: transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease, opacity 0.45s ease; }
+.hero-float:hover { z-index: 5; box-shadow: 0 18px 44px -8px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--accent) inset;
+    animation-play-state: paused; filter: brightness(1.08); }
+
+/* Scrim over the collage so the centered hero copy stays readable */
+.hero-scrim {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background:
+        radial-gradient(ellipse 62% 60% at 50% 46%, var(--bg-primary) 0%, color-mix(in srgb, var(--bg-primary) 82%, transparent) 42%, transparent 78%),
+        linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 55%, transparent) 0%, transparent 22%, transparent 78%, var(--bg-primary) 100%);
+}
+
+@keyframes heroFloatIn { to { opacity: 0.62; transform: translateY(0) scale(1); } }
+@keyframes heroFloatBob {
+    0%   { transform: translateY(-9px) rotate(var(--rot, -2deg)); }
+    100% { transform: translateY(9px) rotate(calc(var(--rot, -2deg) * -0.6)); }
+}
+
+/* Rotating AI quip line */
+.hero-quip {
+    min-height: 1.6em; margin: 4px 0 20px; font-size: clamp(0.98rem, 1.9vw, 1.18rem);
+    font-style: italic; color: var(--accent-light, #dbb077); opacity: 0;
+    transform: translateY(5px); transition: opacity 0.4s ease, transform 0.4s ease;
+    text-shadow: 0 1px 10px rgba(0, 0, 0, 0.5);
+}
+.hero-quip.visible { opacity: 0.92; transform: translateY(0); }
+
+/* Stats bar */
+.hero-stats { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 4px 0 26px; }
+.hero-stat {
+    display: flex; align-items: center; gap: 9px; padding: 9px 15px; border-radius: 14px;
+    background: color-mix(in srgb, var(--bg-secondary) 78%, transparent);
+    border: 1px solid rgba(192, 150, 92, 0.24); backdrop-filter: blur(8px);
+    box-shadow: 0 6px 20px -12px rgba(0, 0, 0, 0.7);
+}
+.hero-stat > i { color: var(--accent); font-size: 1.05rem; }
+.hero-stat-meta { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.05; }
+.hero-stat-num { font-size: 1.22rem; font-weight: 800; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.hero-stat-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.hero-stat--live > i { color: #e0245e; animation: heroLivePulse 1.6s ease-in-out infinite; }
+@keyframes heroLivePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+@media (max-width: 640px) {
+    .hero { min-height: clamp(480px, 82vh, 620px); }
+    .hero-stat { padding: 7px 11px; gap: 7px; }
+    .hero-stat-num { font-size: 1.05rem; }
+    .hero-float { border-radius: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .hero-float { animation: heroFloatIn 0.01s forwards; opacity: 0.5; }
+    .hero-quip { transition: none; }
+    .hero-stat--live > i { animation: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
    STREAM CARD EXTRAS (duration, ago badge)
    ═══════════════════════════════════════════════════════════════ */
 .stream-card-duration {

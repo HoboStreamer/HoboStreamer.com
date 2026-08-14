@@ -455,6 +455,7 @@ app.get('/canvas', (req, res) => res.redirect(301, 'https://hobo.quest/canvas'))
 app.use('/api/game', (req, res) => res.status(410).json({ error: 'Game has moved to https://hobo.quest/game' }));
 app.use('/api/meta', metaRoutes);
 app.use('/api/pastes', pasteRoutes);
+app.use('/api/home', require('./home/routes'));
 app.use('/api/media', mediaRoutes);
 app.use('/api/vibe-coding', vibeCodingRoutes);
 const ttsRoutes = require('./chat/tts-routes');
@@ -902,6 +903,7 @@ async function start() {
         try { require('./ai/backfill-job').start(); } catch (e) { console.warn('[AI] backfill job not started:', e.message); }
         try { require('./ai/streamer-overview-job').start(); } catch (e) { console.warn('[AI] streamer-overview job not started:', e.message); }
         try { require('./ai/chat-ai').start(); } catch (e) { console.warn('[AI] chat-ai job not started:', e.message); }
+        try { require('./ai/slogan-job').start(); } catch (e) { console.warn('[AI] slogan job not started:', e.message); }
         // Heal server-side recordings for live streams (resume after restart / ffmpeg death)
         // so clipping always has a source. First pass delayed to let broadcasters reconnect.
         try {

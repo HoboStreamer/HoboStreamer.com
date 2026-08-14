@@ -1117,26 +1117,159 @@ const HERO_ROTATE_WORDS = [
 let _heroRotateIdx = 0;
 let _heroRotateTimer = null;
 
-function startHeroRotation() {
+function startHeroRotation(words) {
+    const list = (Array.isArray(words) && words.length) ? words : HERO_ROTATE_WORDS;
     const el = document.getElementById('hero-rotate');
     if (!el) return;
     _heroRotateIdx = 0;
-    el.textContent = HERO_ROTATE_WORDS[0];
+    el.textContent = list[0];
     el.classList.add('visible');
     if (_heroRotateTimer) clearInterval(_heroRotateTimer);
     _heroRotateTimer = setInterval(() => {
         el.classList.remove('visible');
         setTimeout(() => {
-            _heroRotateIdx = (_heroRotateIdx + 1) % HERO_ROTATE_WORDS.length;
-            el.textContent = HERO_ROTATE_WORDS[_heroRotateIdx];
+            _heroRotateIdx = (_heroRotateIdx + 1) % list.length;
+            el.textContent = list[_heroRotateIdx];
             el.classList.add('visible');
         }, 400);
     }, 3000);
 }
 
+// ── Hero quip rotator (funny AI-generated slogans) ──────────────
+const HERO_FALLBACK_QUIPS = [
+    'No ads. No investors. No suits. Just vibes.',
+    'Built by hobos, for hobos.',
+    "Corporate streaming? We don't know her.",
+    'Open source and proud of it.',
+    'Low latency, high chaos.',
+    'The internet campfire you forgot you wanted.',
+];
+let _heroQuipIdx = 0, _heroQuipTimer = null;
+function startHeroQuips(quips) {
+    const el = document.getElementById('hero-quip');
+    if (!el) return;
+    const list = (Array.isArray(quips) && quips.length) ? quips : HERO_FALLBACK_QUIPS;
+    _heroQuipIdx = 0;
+    el.textContent = list[0];
+    el.classList.add('visible');
+    if (_heroQuipTimer) clearInterval(_heroQuipTimer);
+    _heroQuipTimer = setInterval(() => {
+        el.classList.remove('visible');
+        setTimeout(() => {
+            _heroQuipIdx = (_heroQuipIdx + 1) % list.length;
+            el.textContent = list[_heroQuipIdx];
+            el.classList.add('visible');
+        }, 400);
+    }, 5000);
+}
+
+// ── Hero stats bar (animated count-up) ──────────────────────────
+function _heroStatFmt(n) {
+    n = Math.max(0, Math.round(n || 0));
+    if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1).replace(/\.0$/, '') + 'M';
+    if (n >= 100000) return Math.round(n / 1000) + 'k';
+    return n.toLocaleString();
+}
+function _heroCountUp(el, target) {
+    const dur = 1100, start = performance.now();
+    const step = (now) => {
+        const t = Math.min(1, (now - start) / dur);
+        el.textContent = _heroStatFmt(target * (1 - Math.pow(1 - t, 3)));
+        if (t < 1) requestAnimationFrame(step); else el.textContent = _heroStatFmt(target);
+    };
+    requestAnimationFrame(step);
+}
+function renderHeroStats(stats) {
+    const wrap = document.getElementById('hero-stats');
+    if (!wrap || !stats) return;
+    const rows = [];
+    if (stats.liveNow > 0) rows.push({ cls: 'hero-stat--live', icon: 'fa-circle', num: stats.liveNow, label: 'Live now' });
+    rows.push({ icon: 'fa-users', num: stats.users, label: 'Campers' });
+    rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active this week' });
+    rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Stream sessions' });
+    rows.push({ icon: 'fa-video', num: stats.vods, label: 'VODs' });
+    rows.push({ icon: 'fa-comments', num: stats.chatMessages, label: 'Chat messages' });
+    wrap.innerHTML = rows.map(r =>
+        `<div class="hero-stat ${r.cls || ''}"><i class="fa-solid ${r.icon}"></i><div class="hero-stat-meta"><span class="hero-stat-num" data-n="${r.num || 0}">0</span><span class="hero-stat-label">${r.label}</span></div></div>`
+    ).join('');
+    wrap.querySelectorAll('.hero-stat-num').forEach(el => _heroCountUp(el, parseInt(el.dataset.n, 10) || 0));
+}
+
+// ── Hero floating thumbnail collage ─────────────────────────────
+const _HERO_BADGE = { live: 'LIVE', vod: 'VOD', clip: 'CLIP', paste: 'PASTE' };
+let _heroCollageTimer = null;
+function _heroFloatFill(el, item) {
+    const badge = `<span class="hero-float-badge">${_HERO_BADGE[item.kind] || ''}</span>`;
+    if (item.thumbnail) {
+        el.innerHTML = `<img src="${esc(item.thumbnail)}" alt="" loading="lazy" onerror="this.remove()">`
+            + `<span class="hero-float-body">${badge}<span class="hero-float-title">${esc(item.title || '')}</span></span>`;
+    } else {
+        const snippet = item.text ? esc(item.text) : '';
+        el.innerHTML = `<span class="hero-float-text">${badge}<span class="hero-float-title">${esc(item.title || 'Paste')}</span><span>${snippet}</span></span>`;
+    }
+    el.setAttribute('href', item.href || '#');
+    el.onclick = (e) => handleLinkClick(e, item.href || '/');
+    el.classList.remove('hero-float--live', 'hero-float--vod', 'hero-float--clip', 'hero-float--paste');
+    el.classList.add('hero-float', 'hero-float--' + (item.kind || 'vod'));
+}
+function _heroCollagePositions(n) {
+    const pos = [];
+    let guard = 0;
+    while (pos.length < n && guard++ < 500) {
+        const left = Math.random() * 90 + 2;
+        const top = Math.random() * 80 + 2;
+        if (left > 25 && left < 75 && top > 20 && top < 78) continue; // keep the center clear for the copy
+        if (pos.some(p => Math.hypot(p.left - left, (p.top - top) * 0.65) < 13)) continue;
+        pos.push({ left, top });
+    }
+    while (pos.length < n) pos.push({ left: Math.random() * 88 + 3, top: Math.random() * 82 + 2 });
+    return pos;
+}
+function renderHeroCollage(media) {
+    const wrap = document.getElementById('hero-collage');
+    if (!wrap || !Array.isArray(media) || !media.length) return;
+    if (_heroCollageTimer) { clearInterval(_heroCollageTimer); _heroCollageTimer = null; }
+    wrap.innerHTML = '';
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const w = window.innerWidth || 1200;
+    const count = Math.min(media.length, w < 640 ? 5 : w < 1024 ? 8 : 12);
+    const positions = _heroCollagePositions(count);
+    const cards = [];
+    for (let i = 0; i < count; i++) {
+        const el = document.createElement('a');
+        const size = 96 + Math.round(Math.random() * 76);
+        const rot = (Math.random() * 6 - 3).toFixed(1);
+        el.style.cssText = `left:${positions[i].left}%;top:${positions[i].top}%;--w:${size}px;--rot:${rot}deg;`
+            + `--dur:${(10 + Math.random() * 8).toFixed(1)}s;--delay:${(Math.random() * -6).toFixed(1)}s;--in-delay:${(i * 0.06).toFixed(2)}s;`;
+        _heroFloatFill(el, media[i % media.length]);
+        wrap.appendChild(el);
+        cards.push(el);
+    }
+    if (reduce || media.length <= count) return;
+    let ptr = count;
+    _heroCollageTimer = setInterval(() => {
+        if (document.hidden) return;
+        const card = cards[Math.floor(Math.random() * cards.length)];
+        const item = media[ptr % media.length]; ptr++;
+        card.classList.add('swapping');
+        setTimeout(() => { _heroFloatFill(card, item); card.classList.remove('swapping'); }, 520);
+    }, 3600);
+}
+
+// ── Hero data: stats + collage + AI slogans (falls back gracefully) ──
+async function loadHeroData() {
+    let data = null;
+    try { data = await api('/home/hero'); } catch { /* static hero fallback below */ }
+    startHeroRotation(data && data.slogans && data.slogans.audiences);
+    startHeroQuips(data && data.slogans && data.slogans.quips);
+    if (data && data.stats) renderHeroStats(data.stats);
+    if (data && data.media) renderHeroCollage(data.media);
+}
+
 async function loadHome() {
     void loadHomeChangelog();
-    startHeroRotation();
+    startHeroRotation();      // instant static rotation; loadHeroData upgrades it with AI slogans
+    void loadHeroData();      // stats bar, floating-thumbnail collage, AI slogans
 
     // Reset homepage pagination on fresh load
     _homeRecentOnlinePage = 1;

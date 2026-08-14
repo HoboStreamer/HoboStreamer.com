@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=100">
+    <link rel="stylesheet" href="/css/style.css?v=101">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -176,35 +176,13 @@
     <section id="page-home" class="page active">
         <div class="hero">
             <div class="hero-aurora" aria-hidden="true"></div>
+            <div class="hero-collage" id="hero-collage" aria-hidden="true"></div>
+            <div class="hero-scrim" aria-hidden="true"></div>
             <div class="hero-content">
                 <h1><i class="fa-solid fa-campground"></i> HoboStreamer</h1>
                 <p class="hero-tagline">Live streaming for <span class="hero-rotate-wrap"><span class="hero-rotate" id="hero-rotate"></span></span></p>
-                <div class="hero-standouts">
-                    <div class="hero-standout">
-                        <i class="fa-solid fa-bolt"></i>
-                        <div>
-                            <strong>Go live in seconds</strong>
-                            <span>Ultra&#8209;low&#8209;latency WebRTC, OBS/RTMP, or right in your browser.</span>
-                        </div>
-                    </div>
-                    <div class="hero-standout">
-                        <i class="fa-solid fa-heart"></i>
-                        <div>
-                            <strong>Free &amp; truly yours</strong>
-                            <span>Open source, no ads or investors &mdash; with a full API to build on.</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="hero-philosophy-links">
-                    <a href="#founder-story" class="hero-philosophy-btn" onclick="event.preventDefault();document.getElementById('founder-story')?.scrollIntoView({behavior:'smooth', block:'start'})">
-                        <i class="fa-solid fa-book-open"></i> What Is This? (Philosophy)
-                    </a>
-                    <a href="/tos" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/tos')">Terms</a>
-                    <span aria-hidden="true">•</span>
-                    <a href="/privacy" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/privacy')">Privacy</a>
-                    <span aria-hidden="true">•</span>
-                    <a href="/dmca" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/dmca')">DMCA</a>
-                </div>
+                <p class="hero-quip" id="hero-quip" aria-live="polite"></p>
+                <div class="hero-stats" id="hero-stats" aria-label="Site stats"></div>
                 <div class="hero-cta">
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
                         <i class="fa-solid fa-broadcast-tower"></i> Start Streaming
@@ -224,6 +202,16 @@
                     <a href="/documentation" onclick="return handleLinkClick(event, '/documentation')" class="btn btn-outline btn-lg">
                         <i class="fa-solid fa-wand-magic-sparkles"></i> Vibe Code With Our API
                     </a>
+                </div>
+                <div class="hero-philosophy-links">
+                    <a href="#founder-story" class="hero-philosophy-btn" onclick="event.preventDefault();document.getElementById('founder-story')?.scrollIntoView({behavior:'smooth', block:'start'})">
+                        <i class="fa-solid fa-book-open"></i> What Is This? (Philosophy)
+                    </a>
+                    <a href="/tos" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/tos')">Terms</a>
+                    <span aria-hidden="true">•</span>
+                    <a href="/privacy" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/privacy')">Privacy</a>
+                    <span aria-hidden="true">•</span>
+                    <a href="/dmca" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/dmca')">DMCA</a>
                 </div>
             </div>
         </div>
@@ -4638,7 +4626,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=2" defer></script>
-<script src="/js/app.js?v=78" defer></script>
+<script src="/js/app.js?v=79" defer></script>
 <script src="/js/stream-player.js?v=12" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>
