@@ -100,15 +100,22 @@ async function forwardFollow(streamerUserId, { followerName, externalId } = {}) 
 }
 
 // ── viewcount:write ──────────────────────────────────────────
-const _lastViewCount = new Map(); // userId → last count sent
+// Re-push at least this often even when the count is UNCHANGED. PowerChat drops a viewer-count
+// slot that hasn't been refreshed (~90s freshness sweep), so a stable count would make our chip
+// silently disappear after the first push. A heartbeat inside that window keeps it alive.
+const VIEWCOUNT_HEARTBEAT_MS = 60000;
+const _lastViewCount = new Map(); // userId → { count, sentAt }
 async function sendViewCount(streamerUserId, count) {
     const conn = _connFor(streamerUserId, 'viewcount:write');
     if (!conn) return;
-    if (_lastViewCount.get(streamerUserId) === count) return; // only on change
-    _lastViewCount.set(streamerUserId, count);
+    const prev = _lastViewCount.get(streamerUserId);
+    const now = Date.now();
+    // Push on change, or when the last push is going stale (heartbeat).
+    if (prev && prev.count === count && (now - prev.sentAt) < VIEWCOUNT_HEARTBEAT_MS) return;
+    _lastViewCount.set(streamerUserId, { count, sentAt: now });
     try {
         await oauth.apiRequest(streamerUserId, { method: 'POST', path: '/view-count', body: { count } });
-    } catch { /* silent */ }
+    } catch { _lastViewCount.delete(streamerUserId); /* let the next tick retry */ }
 }
 
 // Periodic sweeper: push each connected live streamer's viewer count; push null once
