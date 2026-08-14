@@ -644,6 +644,11 @@ function initDb() {
             ip TEXT PRIMARY KEY,
             anon_num INTEGER NOT NULL UNIQUE
         )`);
+        // created_at = when this anon number was first assigned ("first seen"). SQLite
+        // can't ADD COLUMN with a CURRENT_TIMESTAMP default, so add it nullable and set it
+        // explicitly on insert; existing rows stay NULL and fall back to their first chat.
+        const aCols = database.prepare("PRAGMA table_info(anon_ip_mappings)").all().map(c => c.name);
+        if (!aCols.includes('created_at')) database.exec('ALTER TABLE anon_ip_mappings ADD COLUMN created_at DATETIME');
     } catch (e) { console.warn('[DB] anon_ip_mappings migration:', e.message); }
 
     // Seed default site settings if empty
@@ -3469,6 +3474,29 @@ function anonSubjectId(anonId) {
     return m ? parseInt(m[1], 10) : 0;
 }
 
+// Anon meta for the context menu: first-seen (when their anon number was assigned)
+// and first-chat (their earliest chat message), plus total message count.
+function getAnonMeta(anonId) {
+    const num = anonSubjectId(anonId);
+    const map = num ? get('SELECT created_at FROM anon_ip_mappings WHERE anon_num = ?', [num]) : null;
+    const firstChat = get(
+        `SELECT MIN(timestamp) AS t FROM chat_messages
+         WHERE anon_id = ? AND user_id IS NULL AND is_deleted = 0`, [String(anonId)]
+    )?.t || null;
+    const count = get(
+        `SELECT COUNT(*) AS c FROM chat_messages
+         WHERE anon_id = ? AND user_id IS NULL AND is_deleted = 0
+           AND (auto_delete_at IS NULL OR datetime(auto_delete_at) > CURRENT_TIMESTAMP)`, [String(anonId)]
+    )?.c || 0;
+    return {
+        anon_id: anonId,
+        anon_num: num || null,
+        first_seen: (map && map.created_at) || firstChat, // fall back to first chat for legacy rows
+        first_chat: firstChat,
+        message_count: count,
+    };
+}
+
 // An anon's message history (for the "Chat Logs" viewer).
 function getAnonChatHistory(anonId, { limit = 50, offset = 0, query = '' } = {}) {
     let where = `cm.anon_id = ? AND cm.user_id IS NULL AND cm.is_deleted = 0
@@ -5505,7 +5533,7 @@ function getOrCreateAnonNum(ip) {
     const max = get('SELECT MAX(anon_num) as m FROM anon_ip_mappings');
     const nextNum = (max?.m || 0) + 1;
     try {
-        run('INSERT INTO anon_ip_mappings (ip, anon_num) VALUES (?, ?)', [ip, nextNum]);
+        run('INSERT INTO anon_ip_mappings (ip, anon_num, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)', [ip, nextNum]);
     } catch (e) {
         // Race condition: another connection inserted first — re-read
         const retry = get('SELECT anon_num FROM anon_ip_mappings WHERE ip = ?', [ip]);
@@ -6568,7 +6596,7 @@ module.exports = {
     // Hidden Relay Users
     hideRelayUser, isRelayUserHidden, unhideRelayUser, unhideRelayUserByIdentity, getHiddenRelayUsers, recordRelayUser, getRelayUser,
     getRelayUserByRowid, getRelayUserChatHistory, getRelayChatMessagesForAi, getRelayUsersNeedingChatAi,
-    anonSubjectId, getAnonChatHistory, getAnonChatMessagesForAi, getAnonsNeedingChatAi,
+    anonSubjectId, getAnonMeta, getAnonChatHistory, getAnonChatMessagesForAi, getAnonsNeedingChatAi,
     // IP Tracking
     logIp, getIpsByUser, getUsersByIp, getLinkedAccounts, getLinkedAccountsByAnon,
     getLatestIpForUser, getLatestIpForAnon, getIpLog, banAllAccountsOnIp,

@@ -407,6 +407,17 @@ router.get('/relay-user/:platform/:username', optionalAuth, (req, res) => {
     }
 });
 
+// Anonymous chatter info: first-seen (anon-number assignment) + first chat + count.
+router.get('/anon/:anonId', optionalAuth, (req, res) => {
+    try {
+        const anonId = String(req.params.anonId || '');
+        if (!/^anon\d+$/i.test(anonId)) return res.status(400).json({ error: 'Invalid anon id' });
+        res.json({ anon: db.getAnonMeta(anonId) });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get anon info' });
+    }
+});
+
 // An anonymous chatter's chat-message history — same gate as native logs.
 router.get('/anon/:anonId/logs', requireAuth, (req, res) => {
     try {

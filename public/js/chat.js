@@ -4167,6 +4167,7 @@ function renderAnonContextMenu(menu, username, userId) {
             <div class="ctx-info">
                 <span class="ctx-name">${esc(username)}</span>
                 <span class="ctx-meta">Anonymous user</span>
+                <span class="ctx-meta ctx-anon-meta" style="opacity:0.85"><i class="fa-solid fa-clock"></i> …</span>
             </div>
         </div>
         <div class="ctx-actions">
@@ -4178,6 +4179,25 @@ function renderAnonContextMenu(menu, username, userId) {
             ${banBtns}
         </div>
     `;
+
+    // Async: first-seen (when their anon number was assigned) + first-chat time + count.
+    (async () => {
+        try {
+            const d = await api(`/chat/anon/${encodeURIComponent(username)}`);
+            const el = menu.querySelector('.ctx-anon-meta');
+            if (!el) return;
+            const a = d && d.anon;
+            if (a && (a.first_seen || a.first_chat)) {
+                const mc = a.message_count || 0;
+                const seen = a.first_seen ? `First seen ${timeAgoShort(a.first_seen)}` : '';
+                const chat = a.first_chat ? `First chat ${timeAgoShort(a.first_chat)}` : '';
+                const parts = [seen, chat].filter(Boolean).join(' &middot; ');
+                el.innerHTML = `<i class="fa-solid fa-clock"></i> ${parts} &middot; ${formatNumber(mc)} msg${mc === 1 ? '' : 's'}`;
+            } else {
+                el.remove();
+            }
+        } catch { menu.querySelector('.ctx-anon-meta')?.remove(); }
+    })();
 }
 
 function renderContextMenu(menu, profile, username) {
