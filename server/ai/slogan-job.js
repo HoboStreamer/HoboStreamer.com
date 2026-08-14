@@ -1,20 +1,21 @@
 /**
- * slogan-job.js — grow the home hero's rotating copy from real community context.
+ * slogan-job.js — generate the home hero's rotating words + slogans PURELY from the site's AI
+ * understanding of its own community, refreshed daily.
  *
- * Every run it samples the site's actual vibe — the global chat-AI summary (chatters), recent
- * streamer AI overviews (streamers), and recent VOD AI overviews (content) — plus a friendly
- * list of recently-active usernames, and asks the shared LLM for a FEW fresh slogans. Those are
- * MERGED into an accumulating pool in site_settings('home_hero_slogans') (deduped, capped), so
- * the copy keeps evolving with the community — a few new ones a day. The hero endpoint reads
- * that pool and falls back to a static set, so this is purely additive.
+ * Each run fuses every AI data source we have — the global chat-AI overview + running memory +
+ * timeline, per-USER chat analysis for the most active chatters (running jokes, personalities),
+ * recent streamer AI overviews, and recent VOD AI overviews — plus active usernames, and asks
+ * the shared LLM for ~20 rotating audience words and ~20 slogans that reference the real vibe,
+ * people, and memes of the site. Stored as a fresh daily batch in site_settings, with a static
+ * fallback only for the cold-start / AI-off case.
  */
 'use strict';
 const db = require('../db/database');
 const ai = require('./ai-analysis');
 let chatAi = null; try { chatAi = require('./chat-ai'); } catch { /* optional */ }
 
-const INTERVAL_MS = 8 * 60 * 60 * 1000; // ~3 passes/day, each adding a few
-const POOL_CAP = 50;                    // keep the pool fresh, not infinite
+const INTERVAL_MS = 24 * 60 * 60 * 1000; // one fresh batch per day
+const TARGET = 20;                        // ~20 words + ~20 slogans per day
 let _timer = null, _busy = false;
 
 function _parseJson(text) {
@@ -25,135 +26,128 @@ function _parseJson(text) {
     if (m) { try { return JSON.parse(m[0]); } catch { /* */ } }
     return null;
 }
-
-// Audiences must be JUST the noun phrase completing "Live streaming for ___".
 function _stripAudiencePrefix(s) {
-    return String(s == null ? '' : s)
-        .replace(/^\s*(live\s+)?streaming\s+for\s+/i, '')
-        .replace(/^\s*for\s+/i, '');
+    return String(s == null ? '' : s).replace(/^\s*(live\s+)?streaming\s+for\s+/i, '').replace(/^\s*for\s+/i, '');
 }
-
-function _cleanList(arr, maxLen, max = 12) {
+function _cleanList(arr, maxLen, max) {
     if (!Array.isArray(arr)) return [];
-    const seen = new Set();
-    const out = [];
+    const seen = new Set(); const out = [];
     for (const raw of arr) {
-        let s = String(raw == null ? '' : raw).trim()
-            .replace(/^["'‘’“”\-•\s]+|["'‘’“”\s]+$/g, '')
-            .replace(/[.,;:]+$/, '');
+        let s = String(raw == null ? '' : raw).trim().replace(/^["'‘’“”\-•\s]+|["'‘’“”\s]+$/g, '').replace(/[.,;:]+$/, '');
         if (!s || s.length > maxLen) continue;
-        const key = s.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(s);
+        const k = s.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k); out.push(s);
         if (out.length >= max) break;
     }
     return out;
 }
-
-function _dedupeCap(arr, cap) {
-    const seen = new Set(), out = [];
-    for (const s of arr) {
-        const v = String(s || '').trim();
-        if (!v) continue;
-        const k = v.toLowerCase();
-        if (seen.has(k)) continue;
-        seen.add(k);
-        out.push(v);
-        if (out.length >= cap) break;
-    }
-    return out;
+function _topUp(fresh, old, cap) {
+    const seen = new Set(fresh.map(s => s.toLowerCase())); const out = fresh.slice();
+    for (const s of (old || [])) { const v = String(s || '').trim(); if (!v) continue; const k = v.toLowerCase(); if (seen.has(k)) continue; seen.add(k); out.push(v); if (out.length >= cap) break; }
+    return out.slice(0, cap);
 }
-
+const SLOGAN_FORMAT = 2; // bump to force a one-time regen after a prompt/format change
 function _loadPool() {
-    try {
-        const cur = db.getSetting('home_hero_slogans');
-        const o = typeof cur === 'string' ? JSON.parse(cur) : cur;
-        if (o) return { audiences: Array.isArray(o.audiences) ? o.audiences : [], quips: Array.isArray(o.quips) ? o.quips : [], updated_at: o.updated_at || 0 };
-    } catch { /* */ }
-    return { audiences: [], quips: [], updated_at: 0 };
+    try { const cur = db.getSetting('home_hero_slogans'); const o = typeof cur === 'string' ? JSON.parse(cur) : cur; if (o) return { audiences: o.audiences || [], quips: o.quips || [], updated_at: o.updated_at || 0, v: o.v || 1 }; } catch { /* */ }
+    return { audiences: [], quips: [], updated_at: 0, v: 0 };
 }
 
 async function tick() {
     if (_busy || !ai.isEnabled() || !ai.withinBudget()) return;
     _busy = true;
     try {
-        // ── Sample real community context: chatters, streamers, VODs ──
-        let vibe = '';
-        try { const g = chatAi && chatAi.getGlobalInsight && chatAi.getGlobalInsight(); if (g) vibe = [g.overview, g.memory].filter(Boolean).join('\n').slice(0, 1400); } catch { /* */ }
+        // ── Global chat AI: overview + running memory + timeline ──
+        let global = '';
+        try {
+            const g = chatAi && chatAi.getGlobalInsight && chatAi.getGlobalInsight();
+            if (g) {
+                const tl = g.timeline ? (typeof g.timeline === 'string' ? g.timeline : JSON.stringify(g.timeline)) : '';
+                global = [g.overview, g.memory, tl && `Timeline: ${tl}`].filter(Boolean).join('\n').slice(0, 1800);
+            }
+        } catch { /* */ }
 
+        // ── Active chatters (ids) → per-USER chat analysis (running jokes / personalities) ──
+        let activeRows = [];
+        try {
+            activeRows = db.all(`
+                SELECT u.id, u.username FROM chat_messages c JOIN users u ON c.user_id = u.id
+                WHERE c.timestamp >= datetime('now','-14 days') AND COALESCE(u.is_banned,0)=0 AND COALESCE(c.is_deleted,0)=0
+                GROUP BY u.id ORDER BY COUNT(*) DESC LIMIT 12
+            `) || [];
+        } catch { /* */ }
+        const usernames = activeRows.map(r => r.username).filter(Boolean);
+        let userCtx = '';
+        try {
+            const parts = [];
+            for (const r of activeRows.slice(0, 8)) {
+                let ins = null;
+                try { ins = chatAi && chatAi.getUserInsight && chatAi.getUserInsight(r.id); } catch { /* */ }
+                const blurb = ins && (ins.overview || ins.memory);
+                if (blurb) parts.push(`- ${r.username}: ${String(blurb).replace(/\s+/g, ' ').slice(0, 180)}`);
+            }
+            userCtx = parts.join('\n').slice(0, 1600);
+        } catch { /* */ }
+
+        // ── Streamer AI overviews + recent VOD AI overviews ──
         let streamerCtx = '';
         try {
-            const rows = db.all(`
-                SELECT u.username, COALESCE(so.overview_short, so.overview) AS ov
+            const rows = db.all(`SELECT u.username, COALESCE(so.overview_short, so.overview) AS ov
                 FROM streamer_overviews so JOIN users u ON so.user_id = u.id
                 WHERE COALESCE(u.is_banned,0)=0 AND so.overview IS NOT NULL
-                ORDER BY so.generated_at DESC LIMIT 8
-            `) || [];
-            streamerCtx = rows.map(r => `- ${r.username}: ${String(r.ov || '').replace(/\s+/g, ' ').slice(0, 200)}`).join('\n').slice(0, 1400);
+                ORDER BY so.generated_at DESC LIMIT 8`) || [];
+            streamerCtx = rows.map(r => `- ${r.username}: ${String(r.ov || '').replace(/\s+/g, ' ').slice(0, 180)}`).join('\n').slice(0, 1400);
         } catch { /* */ }
-
         let vodCtx = '';
         try {
-            const rows = db.all(`
-                SELECT title, ai_overview FROM vods
+            const rows = db.all(`SELECT title, ai_overview FROM vods
                 WHERE is_public = 1 AND ai_overview IS NOT NULL AND LENGTH(ai_overview) > 0
-                ORDER BY created_at DESC LIMIT 10
-            `) || [];
-            vodCtx = rows.map(r => `- ${String(r.title || '').slice(0, 60)}: ${String(r.ai_overview || '').replace(/\s+/g, ' ').slice(0, 150)}`).join('\n').slice(0, 1400);
+                ORDER BY created_at DESC LIMIT 10`) || [];
+            vodCtx = rows.map(r => `- ${String(r.title || '').slice(0, 60)}: ${String(r.ai_overview || '').replace(/\s+/g, ' ').slice(0, 140)}`).join('\n').slice(0, 1400);
         } catch { /* */ }
-
-        let users = [];
-        try {
-            users = (db.all(`
-                SELECT u.username FROM chat_messages c JOIN users u ON c.user_id = u.id
-                WHERE c.timestamp >= datetime('now','-14 days') AND COALESCE(u.is_banned,0)=0 AND COALESCE(c.is_deleted,0)=0
-                GROUP BY u.username ORDER BY COUNT(*) DESC LIMIT 30
-            `) || []).map(r => r.username).filter(Boolean);
-        } catch { /* */ }
-
-        const pool = _loadPool();
-        const existing = [...pool.audiences, ...pool.quips].slice(0, 40).join(' | ');
 
         const prompt =
-`You write playful marketing microcopy for HoboStreamer — a scrappy, open-source, hobbyist-run live-streaming site with a campfire / hobo / nomad theme (IRL streamers, van-dwellers, coders, tinkerers, desktop gamers, the beautifully unhinged). Voice: witty, warm, self-aware, anti-corporate, a little irreverent — NEVER mean-spirited, never punching down.
+`You write the rotating hero copy for HoboStreamer — a scrappy, open-source, hobbyist-run live-streaming site with a campfire / hobo / nomad theme. Voice: witty, warm, self-aware, anti-corporate, meme-literate, a little unhinged — but ALWAYS kind, never punching down.
 
-=== THE ACTUAL COMMUNITY RIGHT NOW ===
-Overall chat vibe:
-${vibe || '(quiet at the moment)'}
+Everything below is REAL data about THIS community right now. Lean into it hard: reference the actual people, running jokes, recurring topics, and memes so the copy feels like an inside joke the community is in on. Reference usernames by name in good fun (no @), and NEVER mock or embarrass anyone.
 
-Recent streamers (what they stream):
+=== GLOBAL CHAT VIBE (overview + memory + timeline) ===
+${global || '(quiet)'}
+
+=== PER-USER CHAT ANALYSIS (running jokes / personalities) ===
+${userCtx || '(none yet)'}
+
+=== STREAMERS (what they stream) ===
 ${streamerCtx || '(none yet)'}
 
-Recent VODs (what's been on):
+=== RECENT VODS (what's been on) ===
 ${vodCtx || '(none yet)'}
 
-Active usernames you MAY reference by name, kindly and in good fun (optional — don't force it, don't @ them, never mock): ${users.join(', ') || '(none yet)'}
-
-We already have these (do NOT repeat them, give us DIFFERENT ones):
-${existing || '(none)'}
+=== ACTIVE USERNAMES you may reference kindly ===
+${usernames.join(', ') || '(none yet)'}
 
 === TASK ===
-Draw on the community context above so the copy feels specific to THIS site. Produce STRICT JSON, exactly this shape and nothing else:
+Produce STRICT JSON, exactly this shape and nothing else:
 {
-  "audiences": [ 10 short noun phrases, each a good fit for the sentence "Live streaming for ___". CRITICAL: give ONLY the noun phrase (e.g. "van-dwelling coders") — do NOT include the words "live streaming for" or "for". 1-5 words, lowercase, no trailing punctuation ],
-  "quips": [ 10 standalone one-liner taglines, punchy, <= 70 characters, a few nodding to the real streamers/VODs/vibe or a username in a friendly way ]
+  "audiences": [ ${TARGET} short noun phrases, each finishing "Live streaming for ___". CRITICAL: ONLY the noun phrase (e.g. "van-dwelling coders", "goosely's loyal 3 viewers") — do NOT include "live streaming for" or "for". 1-6 words, lowercase, no trailing punctuation. Mix on-theme audiences with community in-jokes drawn from the data. ],
+  "quips": [ ${TARGET} standalone one-liner taglines, punchy, <= 75 chars. Several should be clear references/memes about the real streamers, VODs, running jokes, or usernames above. ]
 }
 Return ONLY the JSON object.`;
 
-        const text = await ai.summarizeText(prompt, 1000, 'hero_slogans');
+        const text = await ai.summarizeText(prompt, 1700, 'hero_slogans');
         if (!text) return;
         const parsed = _parseJson(text);
         if (!parsed) return;
-        const newAud = _cleanList((parsed.audiences || []).map(_stripAudiencePrefix), 60, 12);
-        const newQuips = _cleanList(parsed.quips || [], 110, 12);
-        if (!newAud.length && !newQuips.length) return;
+        let audiences = _cleanList((parsed.audiences || []).map(_stripAudiencePrefix), 60, TARGET);
+        let quips = _cleanList(parsed.quips || [], 110, TARGET);
+        if (audiences.length < 6 && quips.length < 6) return; // bad batch — keep yesterday's
 
-        // Merge NEW first so fresh copy surfaces, dedupe, cap the pool.
-        const mergedAud = _dedupeCap([...newAud, ...pool.audiences.map(_stripAudiencePrefix)], POOL_CAP);
-        const mergedQuips = _dedupeCap([...newQuips, ...pool.quips], POOL_CAP);
-        db.setSetting('home_hero_slogans', JSON.stringify({ audiences: mergedAud, quips: mergedQuips, updated_at: Date.now() }));
-        console.log(`[Slogans] +${newAud.length} audiences, +${newQuips.length} quips (pool now ${mergedAud.length}/${mergedQuips.length})`);
+        // Fresh daily batch; top up from the previous batch only if the model returned few.
+        const old = _loadPool();
+        audiences = _topUp(audiences, old.audiences.map(_stripAudiencePrefix), TARGET);
+        quips = _topUp(quips, old.quips, TARGET);
+        db.setSetting('home_hero_slogans', JSON.stringify({ v: SLOGAN_FORMAT, audiences, quips, updated_at: Date.now() }));
+        console.log(`[Slogans] Fresh daily batch: ${audiences.length} words, ${quips.length} slogans (from full AI context)`);
     } catch (e) {
         console.warn('[Slogans] generation failed:', e.message);
     } finally {
@@ -165,15 +159,15 @@ function start() {
     if (_timer) return;
     _timer = setInterval(() => { tick().catch(() => {}); }, INTERVAL_MS);
     if (_timer.unref) _timer.unref();
-    // First pass a few minutes after boot — regenerate if the pool is empty, stale, or was
-    // written in the old buggy format (audiences carrying a "streaming for" prefix).
+    // Boot pass a few minutes in: regenerate if the pool is empty, a day stale, or old-format.
     setTimeout(() => {
         const pool = _loadPool();
         const buggy = pool.audiences.some(a => /streaming\s+for/i.test(String(a)));
         const stale = !pool.updated_at || (Date.now() - pool.updated_at) > INTERVAL_MS;
-        if (buggy || stale || pool.audiences.length < 8) tick().catch(() => {});
+        const outdated = pool.v !== SLOGAN_FORMAT; // new prompt/format → regenerate once
+        if (outdated || buggy || stale || pool.audiences.length < 8) tick().catch(() => {});
     }, 3 * 60 * 1000);
-    console.log('[Slogans] hero-slogan job started (8h refresh, accumulating pool)');
+    console.log('[Slogans] hero-slogan job started (daily batch from full AI context)');
 }
 
 module.exports = { start, tick };

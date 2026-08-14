@@ -106,14 +106,14 @@ function heroSlogans() {
         s = db.getSetting('home_hero_slogans');
         if (typeof s === 'string') s = JSON.parse(s);
     } catch { s = null; }
-    const rawAud = (s && Array.isArray(s.audiences) && s.audiences.length) ? s.audiences : FALLBACK_AUDIENCES;
-    const quips = (s && Array.isArray(s.quips) && s.quips.length) ? s.quips : FALLBACK_QUIPS;
-    const audiences = rawAud.map(_cleanAudience).filter(a => a && a.length <= 60);
-    // Always keep a few evergreen ones mixed in, then shuffle.
+    const aiAud = (s && Array.isArray(s.audiences)) ? s.audiences.map(_cleanAudience).filter(a => a && a.length <= 60) : [];
+    const aiQuips = (s && Array.isArray(s.quips)) ? s.quips.filter(q => q && String(q).length <= 120) : [];
+    const hasAi = aiAud.length >= 4 || aiQuips.length >= 4;
+    // Purely AI once we have a daily batch; the static set is only the cold-start / AI-off default.
     return {
-        audiences: _shuffle(Array.from(new Set([...audiences, ...FALLBACK_AUDIENCES]))).slice(0, 44),
-        quips: _shuffle(Array.from(new Set([...quips, ...FALLBACK_QUIPS]))).slice(0, 44),
-        ai: !!(s && (s.audiences || s.quips)),
+        audiences: _shuffle(Array.from(new Set(hasAi ? aiAud : FALLBACK_AUDIENCES))),
+        quips: _shuffle(Array.from(new Set(hasAi ? aiQuips : FALLBACK_QUIPS))),
+        ai: hasAi,
     };
 }
 

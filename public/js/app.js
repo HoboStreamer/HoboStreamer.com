@@ -1198,15 +1198,21 @@ function renderHeroStats(stats) {
 // ── Hero floating thumbnail collage ─────────────────────────────
 const _HERO_BADGE = { live: 'LIVE', vod: 'VOD', clip: 'CLIP', paste: 'PASTE' };
 let _heroCollageTimer = null;
-function _heroFloatFill(el, item) {
+function _heroFloatContent(item) {
     const badge = `<span class="hero-float-badge">${_HERO_BADGE[item.kind] || ''}</span>`;
     if (item.thumbnail) {
-        el.innerHTML = `<img src="${esc(item.thumbnail)}" alt="" loading="lazy" onerror="this.remove()">`
+        return `<img src="${esc(item.thumbnail)}" alt="" loading="lazy" onerror="this.remove()">`
             + `<span class="hero-float-body">${badge}<span class="hero-float-title">${esc(item.title || '')}</span></span>`;
-    } else {
-        const snippet = item.text ? esc(item.text) : '';
-        el.innerHTML = `<span class="hero-float-text">${badge}<span class="hero-float-title">${esc(item.title || 'Paste')}</span><span>${snippet}</span></span>`;
     }
+    const snippet = item.text ? esc(item.text) : '';
+    return `<span class="hero-float-text">${badge}<span class="hero-float-title">${esc(item.title || 'Paste')}</span><span>${snippet}</span></span>`;
+}
+// The visual content lives in a PERSISTENT .hero-float-inner so swaps only change its contents
+// (letting the inner shrink out / grow in) without recreating the element or fighting the drift.
+function _heroFloatFill(el, item) {
+    let inner = el.querySelector('.hero-float-inner');
+    if (!inner) { inner = document.createElement('div'); inner.className = 'hero-float-inner'; el.appendChild(inner); }
+    inner.innerHTML = _heroFloatContent(item);
     el.setAttribute('href', item.href || '#');
     el.onclick = (e) => handleLinkClick(e, item.href || '/');
     el.classList.remove('hero-float--live', 'hero-float--vod', 'hero-float--clip', 'hero-float--paste');
@@ -1263,8 +1269,8 @@ function renderHeroCollage(media) {
         const card = cards[Math.floor(Math.random() * cards.length)];
         const item = media[ptr % media.length]; ptr++;
         card.classList.add('swapping');
-        setTimeout(() => { _heroFloatFill(card, item); card.classList.remove('swapping'); }, 720);
-    }, 5200);
+        setTimeout(() => { _heroFloatFill(card, item); card.classList.remove('swapping'); }, 560);
+    }, 5600);
 }
 
 // Mouse-parallax: gently tilt the whole 3D collage toward the cursor (desktop only).
