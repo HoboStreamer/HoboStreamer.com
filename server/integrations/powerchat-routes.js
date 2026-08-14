@@ -135,7 +135,8 @@ router.get('/oauth/callback', async (req, res) => {
         // tip page URL (authoritative over the JWT claim).
         try {
             const prof = await oauth.fetchProfile(userId, username);
-            const p = prof.profile || prof;
+            // Every 2xx REST body is wrapped as { data: <payload> }.
+            const p = (prof && prof.data) || prof.profile || prof;
             db.upsertPowerchatConnection(userId, {
                 powerchat_username: p.username || username,
                 powerchat_user_id: (p.id != null ? String(p.id) : ident.id) || null,

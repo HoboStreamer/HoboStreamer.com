@@ -40,7 +40,7 @@ function getConfig() {
         // (chat:write / viewcount:write / subscriptions:write / currency:write), so the
         // grant carries them — otherwise every platform intake call 403s. Widening the
         // default requires the streamer to reconnect (re-consent) to re-mint tokens.
-        scopes: s('powerchat_scopes') || 'profile:read webhooks:events checkout:attribute paid_messages:read alerts:trigger chat:write viewcount:write subscriptions:write currency:write',
+        scopes: s('powerchat_scopes') || 'profile:read webhooks:events checkout:attribute paid_messages:read alerts:trigger chat:write viewcount:write subscriptions:write follows:write currency:write',
         sandboxUsername: s('powerchat_sandbox_username') || 'n8admin',
         authorizeUrl: `${baseUrl}/oauth/authorize`,
         tokenUrl: `${baseUrl}/oauth/token`,

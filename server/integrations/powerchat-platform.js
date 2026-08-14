@@ -42,15 +42,33 @@ async function forwardChat(streamerUserId, { chatterName, externalChatterId, mes
     try {
         await oauth.apiRequest(streamerUserId, {
             method: 'POST', path: '/chat',
+            // Field caps match the PowerChat schema (chatterName 1-48, externalChatterId
+            // 1-128, message 1-500) — over-long values 400 with VALIDATION_ERROR.
             body: {
-                chatterName: String(chatterName).slice(0, 80),
-                externalChatterId: String(externalChatterId || chatterName).slice(0, 120),
+                chatterName: String(chatterName).slice(0, 48),
+                externalChatterId: String(externalChatterId || chatterName).slice(0, 128),
                 message: String(message).slice(0, 500),
                 ...(avatarUrl ? { avatarUrl } : {}),
                 ...(isModerator ? { isModerator: true } : {}),
             },
         });
     } catch { /* scope/sandbox/rate — silent */ }
+}
+
+// ── follows:write ────────────────────────────────────────────
+async function forwardFollow(streamerUserId, { followerName, externalId } = {}) {
+    if (!followerName) return;
+    const conn = _connFor(streamerUserId, 'follows:write');
+    if (!conn) return;
+    try {
+        await oauth.apiRequest(streamerUserId, {
+            method: 'POST', path: '/follows',
+            body: {
+                followerName: String(followerName).slice(0, 48),
+                ...(externalId ? { externalId: String(externalId).slice(0, 128) } : {}),
+            },
+        });
+    } catch { /* silent */ }
 }
 
 // ── viewcount:write ──────────────────────────────────────────
@@ -101,16 +119,20 @@ function startViewerCountSweeper() {
 async function sendCurrencyRedemption(streamerUserId, { amount, redeemerName, rewardName, message, externalId } = {}) {
     const conn = _connFor(streamerUserId, 'currency:write');
     if (!conn) return;
+    const amt = Math.round(Number(amount) || 0);
+    if (amt < 1) return; // schema requires amount 1-1000000000
     try {
         await oauth.apiRequest(streamerUserId, {
             method: 'POST', path: '/currency-events',
+            // Caps match the schema: redeemerName 1-48, rewardName ≤64, message ≤250,
+            // externalId 1-128. Requires the CURRENCY_KEY declared in the PowerChat dashboard.
             body: {
                 currency: CURRENCY_KEY,
-                amount: Math.max(0, Math.round(Number(amount) || 0)),
-                redeemerName: String(redeemerName || 'viewer').slice(0, 80),
-                ...(rewardName ? { rewardName: String(rewardName).slice(0, 80) } : {}),
-                ...(message ? { message: String(message).slice(0, 200) } : {}),
-                ...(externalId ? { externalId: String(externalId).slice(0, 120) } : {}),
+                amount: amt,
+                redeemerName: String(redeemerName || 'viewer').slice(0, 48),
+                ...(rewardName ? { rewardName: String(rewardName).slice(0, 64) } : {}),
+                ...(message ? { message: String(message).slice(0, 250) } : {}),
+                ...(externalId ? { externalId: String(externalId).slice(0, 128) } : {}),
             },
         });
     } catch { /* silent */ }
@@ -124,9 +146,10 @@ async function sendCustomAlert(streamerUserId, { actorName, message, amountCents
     try {
         await oauth.apiRequest(streamerUserId, {
             method: 'POST', path: '/alerts/custom',
+            // Schema: actorName 1-32, message ≤250, amountCents 0-100000000.
             body: {
-                actorName: String(actorName || 'Test').slice(0, 80),
-                ...(message ? { message: String(message).slice(0, 200) } : {}),
+                actorName: String(actorName || 'Test').slice(0, 32),
+                ...(message ? { message: String(message).slice(0, 250) } : {}),
                 ...(amountCents ? { amountCents: Math.round(amountCents) } : {}),
             },
         });
@@ -136,6 +159,6 @@ async function sendCustomAlert(streamerUserId, { actorName, message, amountCents
 
 module.exports = {
     CURRENCY_KEY,
-    forwardChat, sendViewCount, startViewerCountSweeper,
+    forwardChat, forwardFollow, sendViewCount, startViewerCountSweeper,
     sendCurrencyRedemption, sendCustomAlert,
 };

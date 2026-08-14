@@ -1976,6 +1976,14 @@ router.post('/:id/follow', requireAuth, (req, res) => {
                 const hoboCoins = require('../monetization/hobo-coins');
                 hoboCoins.awardFollow(req.user.id, stream.user_id);
             } catch { /* non-critical */ }
+            // Fire a PowerChat follow alert for the streamer (follows:write).
+            try {
+                const follower = db.getUserById(req.user.id);
+                require('../integrations/powerchat-platform').forwardFollow(stream.user_id, {
+                    followerName: follower?.display_name || follower?.username || 'Someone',
+                    externalId: 'u' + req.user.id,
+                });
+            } catch { /* non-critical */ }
             // Notify the followed user
             try {
                 const { pushNotification, actorInfo } = require('../utils/notify');
@@ -2012,6 +2020,14 @@ router.post('/channel/:username/follow', requireAuth, (req, res) => {
             try {
                 const hoboCoins = require('../monetization/hobo-coins');
                 hoboCoins.awardFollow(req.user.id, user.id);
+            } catch { /* non-critical */ }
+            // Fire a PowerChat follow alert for the streamer (follows:write).
+            try {
+                const f = db.getUserById(req.user.id);
+                require('../integrations/powerchat-platform').forwardFollow(user.id, {
+                    followerName: f?.display_name || f?.username || 'Someone',
+                    externalId: 'u' + req.user.id,
+                });
             } catch { /* non-critical */ }
             // Notify the followed user
             try {
