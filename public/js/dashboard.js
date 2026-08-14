@@ -15,7 +15,8 @@ const _DASH_TAB_CARDS = {
     chatai:     ['dash-aibot-card', 'dash-card-overlay', 'dash-card-chatlogs'],
     moderation: [],  // injected by dashboard-moderation.js into #dash-grid-moderation
     controls:   ['dash-card-controls', 'dash-card-cameras', 'dash-card-tokens'],
-    money:      ['dash-card-goals', 'dash-powerchat-card', 'dash-card-rewards', 'dash-card-redemptions'],
+    money:      ['dash-card-goals', 'dash-powerchat-card'],
+    points:     ['dash-card-points-config', 'dash-card-rewards', 'dash-card-redemptions'],
     content:    [],  // content cards go into sub-grids (see _DASH_CONTENT_SUBCARDS)
 };
 // Content tab has its own sub-tabs; each card relocates into a sub-grid.
@@ -95,7 +96,8 @@ function _call(name) { try { if (typeof window[name] === 'function') window[name
 window._dashTabLoaders.home = () => { _call('loadDashActiveStreams'); _call('loadDashFunds'); _call('loadDashCoins'); _call('loadSettingsProfile'); _call('loadSettingsOffline'); };
 window._dashTabLoaders.chatai = () => { _call('updateDashObsOverlayUrl'); _call('loadAiViewers'); };
 window._dashTabLoaders.controls = () => { _call('loadDashConfigs'); _call('loadControlSettings'); _call('loadDashboardCameras'); _call('loadDashTokens'); };
-window._dashTabLoaders.money = () => { _call('loadDashGoals'); _call('loadPowerchatStatus'); _call('loadDashRewards'); _call('loadDashRedemptions'); };
+window._dashTabLoaders.money = () => { _call('loadDashGoals'); _call('loadPowerchatStatus'); };
+window._dashTabLoaders.points = () => { _call('loadDashPointsConfig'); _call('loadDashRewards'); _call('loadDashRedemptions'); };
 window._dashTabLoaders.content = () => { switchDashContentTab('videos', document.querySelector('#dash-content-subtabs .ch-tab[data-cdtab="videos"]')); };
 // moderation loader is registered by dashboard-moderation.js
 

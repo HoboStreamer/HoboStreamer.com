@@ -211,8 +211,6 @@
         const num = (v, d) => (v == null ? d : v);
         const chk = (v, d) => (num(v, d) ? 'checked' : '');
         const ev = (v) => String(v == null ? '' : v).replace(/"/g, '&quot;');
-        let cp = {};
-        try { cp = ((await (await fetch('/api/coins/config/' + ch.user_id)).json()).config) || {}; } catch { /* */ }
         body.innerHTML = `
             <div class="cu-form" style="gap:12px" data-channel-id="${ch.id}">
                 <div class="cu-set-group">
@@ -253,36 +251,12 @@
                 </div>
                 <div class="cu-set-group">
                     <div class="cu-set-group-title">Channel Points</div>
-                    <label class="cu-set-row"><span>Name</span><input type="text" id="cu-cp-name" maxlength="32" value="${ev(cp.name || 'Channel Points')}"></label>
-                    <label class="cu-set-row"><span>Icon (Font Awesome, e.g. fa-coins)</span><input type="text" id="cu-cp-icon" value="${ev(cp.icon || 'fa-coins')}"></label>
-                    <label class="cu-set-row"><span>Earn every (min)</span><input type="number" id="cu-cp-interval" min="1" max="120" value="${num(cp.watch_interval_min, 5)}"></label>
-                    <label class="cu-set-row"><span>Amount per earn</span><input type="number" id="cu-cp-amount" min="0" max="100000" value="${num(cp.watch_amount, 10)}"></label>
-                    <label class="cu-set-row"><span>Bonus game every (min, 0 = off)</span><input type="number" id="cu-cp-game" min="0" max="1440" value="${num(cp.game_interval_min, 0)}"></label>
-                    <button class="cu-btn" id="cu-cp-save" type="button">Save Channel Points</button>
-                    <div class="cu-hint">Viewers earn these by watching your channel and spend them on your rewards. The bonus game shows viewers a clickable chest on a timer for extra points.</div>
+                    <div class="cu-hint">Channel Points, rewards, and the redemption queue moved to your <b>Dashboard → Points</b> tab.</div>
                 </div>
                 <button class="cu-btn" id="cu-set-save" type="button">Save channel settings</button>
                 <div class="cu-hint">Applies to everyone in your channel's chat. Pitch/speed limits live in your dashboard's moderation panel.</div>
             </div>`;
         overlay.querySelector('#cu-set-save').onclick = () => saveChannelSettings(ch.id);
-        overlay.querySelector('#cu-cp-save').onclick = async () => {
-            const g = (id) => overlay.querySelector(id);
-            const payload = {
-                name: g('#cu-cp-name').value,
-                icon: g('#cu-cp-icon').value.trim(),
-                watch_interval_min: parseInt(g('#cu-cp-interval').value) || 5,
-                watch_amount: parseInt(g('#cu-cp-amount').value) || 0,
-                game_interval_min: parseInt(g('#cu-cp-game').value) || 0,
-            };
-            const btn = g('#cu-cp-save'); btn.disabled = true;
-            try {
-                const r = await fetch('/api/coins/config', { method: 'PUT', headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                const d = await r.json();
-                if (!r.ok) throw new Error(d.error || 'Save failed');
-                notify('Channel Points saved', 'success');
-            } catch (e) { notify(e.message, 'error'); }
-            finally { btn.disabled = false; }
-        };
         wireAlertSounds();
     }
 

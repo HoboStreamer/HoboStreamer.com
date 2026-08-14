@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=91">
+    <link rel="stylesheet" href="/css/style.css?v=92">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -1372,6 +1372,7 @@
                 <button class="ch-tab" role="tab" aria-selected="false" data-dtab="moderation" onclick="switchDashTab('moderation', this)"><i class="fa-solid fa-shield-halved"></i> Moderation</button>
                 <button class="ch-tab" role="tab" aria-selected="false" data-dtab="controls" onclick="switchDashTab('controls', this)"><i class="fa-solid fa-gamepad"></i> Controls</button>
                 <button class="ch-tab" role="tab" aria-selected="false" data-dtab="money" onclick="switchDashTab('money', this)"><i class="fa-solid fa-hand-holding-dollar"></i> Monetize</button>
+                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="points" onclick="switchDashTab('points', this)"><i class="fa-solid fa-star"></i> Points</button>
                 <button class="ch-tab" role="tab" aria-selected="false" data-dtab="content" onclick="switchDashTab('content', this)"><i class="fa-solid fa-photo-film"></i> Content</button>
             </div>
 
@@ -1380,6 +1381,7 @@
             <div class="ch-tab-panel dash-tab-panel" id="dash-panel-moderation" role="tabpanel"><div class="dash-grid" id="dash-grid-moderation"></div></div>
             <div class="ch-tab-panel dash-tab-panel" id="dash-panel-controls" role="tabpanel"><div class="dash-grid" id="dash-grid-controls"></div></div>
             <div class="ch-tab-panel dash-tab-panel" id="dash-panel-money" role="tabpanel"><div class="dash-grid" id="dash-grid-money"></div></div>
+            <div class="ch-tab-panel dash-tab-panel" id="dash-panel-points" role="tabpanel"><div class="dash-grid" id="dash-grid-points"></div></div>
             <div class="ch-tab-panel dash-tab-panel" id="dash-panel-content" role="tabpanel">
                 <div class="ch-tabs dash-subtabs" id="dash-content-subtabs" role="tablist">
                     <button class="ch-tab active" data-cdtab="videos" onclick="switchDashContentTab('videos', this)"><i class="fa-solid fa-video"></i> Videos</button>
@@ -1775,10 +1777,27 @@
                     </p>
                 </div>
 
+                <!-- Channel Points settings (migrated from the "Add to this channel" popover) -->
+                <div class="dash-card dash-card-wide" id="dash-card-points-config">
+                    <h3><i class="fa-solid fa-star"></i> Channel Points</h3>
+                    <p class="muted">Viewers earn your channel points by watching and chatting, then spend them on the rewards you create below. Name them whatever you like.</p>
+                    <div class="dash-cp-grid">
+                        <label><span>Name</span><input type="text" id="dash-cp-name" class="form-input" maxlength="32" placeholder="Channel Points"></label>
+                        <label><span>Icon <span class="muted" style="font-weight:400">(Font Awesome, e.g. fa-star)</span></span><input type="text" id="dash-cp-icon" class="form-input" placeholder="fa-coins"></label>
+                        <label><span>Earn every (minutes)</span><input type="number" id="dash-cp-interval" class="form-input" min="1" max="120" value="5"></label>
+                        <label><span>Amount per earn</span><input type="number" id="dash-cp-amount" class="form-input" min="0" max="100000" value="10"></label>
+                        <label><span>Bonus chest every (min, 0 = off)</span><input type="number" id="dash-cp-game" class="form-input" min="0" max="1440" value="0"></label>
+                    </div>
+                    <div style="margin-top:12px">
+                        <button class="btn btn-primary btn-small" onclick="saveDashPointsConfig(this)"><i class="fa-solid fa-floppy-disk"></i> Save Channel Points</button>
+                    </div>
+                    <p class="muted" style="font-size:0.8rem;margin-top:10px">The bonus chest shows viewers a clickable chest on a timer for extra points.</p>
+                </div>
+
                 <!-- Coin Rewards (Streamer Configuration) -->
                 <div class="dash-card dash-card-wide" id="dash-card-rewards">
-                    <h3><i class="fa-solid fa-gift"></i> Coin Rewards</h3>
-                    <p class="muted">Create rewards your viewers can redeem with Hobo Nickels. Think TTS, sound effects, chat highlights, streamer challenges, etc.</p>
+                    <h3><i class="fa-solid fa-gift"></i> Rewards</h3>
+                    <p class="muted">Create rewards your viewers can redeem with your channel points — TTS, sound effects, chat highlights, streamer challenges, and more.</p>
                     <div id="dash-rewards-list" class="dash-rewards-grid"></div>
                     <button class="btn btn-outline" onclick="showModal('add-reward')" style="margin-top:12px">
                         <i class="fa-solid fa-plus"></i> Add Reward
@@ -4644,10 +4663,10 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/gif-picker.js?v=1" defer></script>
 <script src="/js/chat.js?v=47" defer></script>
 <script src="/js/chat-autocomplete.js?v=1" defer></script>
-<script src="/js/channel-uploads.js?v=9" defer></script>
+<script src="/js/channel-uploads.js?v=10" defer></script>
 <script src="/js/controls.js?v=8" defer></script>
 <script src="/js/onvif-dashboard.js?v=5" defer></script>
-<script src="/js/dashboard.js?v=10" defer></script>
+<script src="/js/dashboard.js?v=11" defer></script>
 <script src="/js/admin.js?v=5" defer></script>
 <!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
 <div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
@@ -4693,7 +4712,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 </div>
 
 <script src="/js/hobo-bucks.js?v=5" defer></script>
-<script src="/js/hobo-coins.js?v=4" defer></script>
+<script src="/js/hobo-coins.js?v=5" defer></script>
 <script src="/js/cosmetics-ui.js?v=2" defer></script>
 <!-- Broadcast modules — load order matters: state → devices → vods → workspace → core -->
 <script src="/js/broadcast-state.js?v=1" defer></script>

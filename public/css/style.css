@@ -5298,6 +5298,10 @@ main#app { position: relative; z-index: 1; }
 .dash-subpanel.active { display: block; }
 .dash-subpanel > .dash-grid { margin-top: 14px; }
 #dash-pastes-list.pastes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 14px; }
+/* Channel Points config grid */
+.dash-cp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px 16px; margin-top: 8px; }
+.dash-cp-grid > label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }
+.dash-cp-grid > label > span:first-child { font-weight: 600; }
 .dash-card {
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: 18px; padding: 20px;

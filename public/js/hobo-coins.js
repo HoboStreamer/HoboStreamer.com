@@ -317,6 +317,40 @@ async function doAddReward() {
     } catch (e) { toast(e.message || 'Failed to create reward', 'error'); }
 }
 
+// ── Dashboard Channel Points config (migrated from the channel popover) ──
+async function loadDashPointsConfig() {
+    if (!currentUser) return;
+    const nameEl = document.getElementById('dash-cp-name');
+    if (!nameEl) return;
+    try {
+        const data = await api(`/coins/config/${currentUser.id}`);
+        const cp = data.config || {};
+        nameEl.value = cp.name || 'Channel Points';
+        const set = (id, v) => { const el = document.getElementById(id); if (el != null) el.value = v; };
+        set('dash-cp-icon', cp.icon || 'fa-coins');
+        set('dash-cp-interval', cp.watch_interval_min ?? 5);
+        set('dash-cp-amount', cp.watch_amount ?? 10);
+        set('dash-cp-game', cp.game_interval_min ?? 0);
+    } catch { /* silent */ }
+}
+
+async function saveDashPointsConfig(btn) {
+    const g = (id) => document.getElementById(id);
+    const payload = {
+        name: g('dash-cp-name')?.value || 'Channel Points',
+        icon: (g('dash-cp-icon')?.value || 'fa-coins').trim(),
+        watch_interval_min: parseInt(g('dash-cp-interval')?.value) || 5,
+        watch_amount: parseInt(g('dash-cp-amount')?.value) || 0,
+        game_interval_min: parseInt(g('dash-cp-game')?.value) || 0,
+    };
+    if (btn) btn.disabled = true;
+    try {
+        await api('/coins/config', { method: 'PUT', body: payload });
+        toast('Channel Points saved', 'success');
+    } catch (e) { toast(e.message || 'Save failed', 'error'); }
+    finally { if (btn) btn.disabled = false; }
+}
+
 // ── Dashboard Rewards Management ─────────────────────────────
 async function loadDashRewards() {
     if (!currentUser) return;
