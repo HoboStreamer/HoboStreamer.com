@@ -145,10 +145,23 @@ router.post('/cashout', requireAuth, (req, res) => {
 // ── Get Balance ──────────────────────────────────────────────
 router.get('/balance', requireAuth, (req, res) => {
     const user = db.getUserById(req.user.id);
+    const cashout = user.hobo_bucks_cashout_balance || 0;
     res.json({
         balance: user.hobo_bucks_balance,
         usd_value: user.hobo_bucks_balance.toFixed(2),
+        cashout_balance: cashout,
+        cashout_usd_value: cashout.toFixed(2),
     });
+});
+
+// ── Recycle cashout balance → spendable Hobo Bucks ───────────
+router.post('/recycle', requireAuth, (req, res) => {
+    try {
+        const result = hoboBucks.recycleCashout(req.user.id, req.body.amount);
+        res.json(result);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
 });
 
 // ── Transaction History ──────────────────────────────────────

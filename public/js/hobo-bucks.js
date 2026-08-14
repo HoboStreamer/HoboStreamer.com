@@ -258,7 +258,7 @@ async function doDonate() {
 function hoboBucksCashoutModal() {
     return `
         <h3><i class="fa-solid fa-money-bill-transfer"></i> Cash Out</h3>
-        <p class="muted" style="margin-bottom:16px">Minimum $5.00. Funds are held in escrow until admin approves.</p>
+        <p class="muted" style="margin-bottom:16px">Draws from your <strong>cashout balance</strong> (Hobo Bucks sent to you). Minimum $5.00. Funds are held in escrow until admin approves.</p>
 
         <div class="form-group">
             <label>Amount (Hobo Bucks)</label>

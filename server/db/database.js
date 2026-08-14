@@ -138,6 +138,13 @@ function initDb() {
             database.exec(`ALTER TABLE users ADD COLUMN hobo_coins_balance INTEGER DEFAULT 0`);
             console.log('[DB] Added hobo_coins_balance column to users');
         }
+        // Streamer cashout balance: only Hobo Bucks RECEIVED (donated to them) land here,
+        // and only this balance is cashout-able (bought bucks are not). Separate from the
+        // spendable hobo_bucks_balance.
+        if (!userCols.includes('hobo_bucks_cashout_balance')) {
+            database.exec(`ALTER TABLE users ADD COLUMN hobo_bucks_cashout_balance REAL DEFAULT 0.00`);
+            console.log('[DB] Added hobo_bucks_cashout_balance column to users');
+        }
         if (!userCols.includes('token_valid_after')) {
             database.exec(`ALTER TABLE users ADD COLUMN token_valid_after TEXT DEFAULT NULL`);
             console.log('[DB] Added token_valid_after column to users');
@@ -3544,6 +3551,19 @@ function deductHoboBucks(userId, amount) {
     return true;
 }
 
+// Streamer cashout balance (received donations; the only cashout-able balance).
+function addHoboBucksCashout(userId, amount) {
+    return run(`UPDATE users SET hobo_bucks_cashout_balance = hobo_bucks_cashout_balance + ? WHERE id = ?`,
+        [amount, userId]);
+}
+function deductHoboBucksCashout(userId, amount) {
+    const user = getUserById(userId);
+    if (!user || (user.hobo_bucks_cashout_balance || 0) < amount) return false;
+    run(`UPDATE users SET hobo_bucks_cashout_balance = hobo_bucks_cashout_balance - ? WHERE id = ?`,
+        [amount, userId]);
+    return true;
+}
+
 // ── Payment orders (idempotent purchase tracking) ────────────
 
 function createPaymentOrder({ user_id, provider, provider_ref = null, kind = 'bucks', amount_cents = 0, currency = 'usd', bucks = 0, streamer_id = null, status = 'pending' }) {
@@ -6401,7 +6421,7 @@ module.exports = {
     // Follows
     followUser, unfollowUser, getFollowerCount, isFollowing, getFollowerIds,
     // Transactions (Hobo Bucks)
-    createTransaction, addHoboBucks, deductHoboBucks,
+    createTransaction, addHoboBucks, deductHoboBucks, addHoboBucksCashout, deductHoboBucksCashout,
     // Hobo Coins
     addHoboCoins, deductHoboCoins, createCoinTransaction, getCoinTransactions,
     // Coin Rewards

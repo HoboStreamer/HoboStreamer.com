@@ -251,10 +251,11 @@ function fulfillSubscriptionOrder(order, { providerRef = null, periodEnd = null 
         status: 'active', current_period_end: end,
     });
     if (order.status !== 'credited') {
-        // Pay the streamer their share as Hobo Bucks
+        // Pay the streamer their share as Hobo Bucks — this is income they received, so
+        // it lands in their cashout balance (the only cashout-able balance).
         const sharePct = n('sub_streamer_share_pct', 70);
         const streamerBucks = bucksForUsd((order.amount_cents / 100) * (sharePct / 100));
-        if (streamerBucks > 0) db.addHoboBucks(order.streamer_id, streamerBucks);
+        if (streamerBucks > 0) db.addHoboBucksCashout(order.streamer_id, streamerBucks);
         db.updatePaymentOrder(order.id, { status: 'credited' });
     }
     return sub;

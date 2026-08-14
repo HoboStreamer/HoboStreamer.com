@@ -84,8 +84,9 @@ class HoboBucks {
             throw new Error('Insufficient Hobo Bucks');
         }
 
-        // Credit streamer (held in their balance)
-        db.addHoboBucks(toUserId, amount);
+        // Credit the streamer's CASHOUT balance (received bucks are the only cashout-able
+        // ones; their spendable balance is for bucks they bought).
+        db.addHoboBucksCashout(toUserId, amount);
 
         // Record transaction
         db.createTransaction({
@@ -139,8 +140,9 @@ class HoboBucks {
             throw new Error(`Minimum cashout is $${config.hoboBucks.minCashout.toFixed(2)}`);
         }
 
-        if (!db.deductHoboBucks(userId, amount)) {
-            throw new Error('Insufficient Hobo Bucks');
+        // Only the cashout balance (received donations) can be cashed out.
+        if (!db.deductHoboBucksCashout(userId, amount)) {
+            throw new Error('Insufficient cashout balance — only Hobo Bucks sent to you can be cashed out');
         }
 
         const tx = db.createTransaction({
@@ -181,11 +183,38 @@ class HoboBucks {
             [transactionId, 'escrow']);
         if (!tx) throw new Error('Transaction not found or not in escrow');
 
-        // Refund the amount
-        db.addHoboBucks(tx.from_user_id, tx.amount);
+        // Refund back to the cashout balance it came from.
+        db.addHoboBucksCashout(tx.from_user_id, tx.amount);
         db.run('UPDATE transactions SET status = ? WHERE id = ?', ['refunded', transactionId]);
 
         return tx;
+    }
+
+    /**
+     * Recycle: move Hobo Bucks from the streamer's cashout balance into their spendable
+     * balance, so they can re-donate / give back to the community instead of cashing out.
+     */
+    recycleCashout(userId, amount) {
+        amount = normalizeMoneyAmount(amount);
+        if (!db.deductHoboBucksCashout(userId, amount)) {
+            throw new Error('Insufficient cashout balance');
+        }
+        db.addHoboBucks(userId, amount);
+        db.createTransaction({
+            from_user_id: userId,
+            to_user_id: userId,
+            amount,
+            type: 'recycle',
+            status: 'completed',
+            message: 'Moved cashout balance to spendable Hobo Bucks',
+        });
+        const user = db.getUserById(userId);
+        return {
+            success: true,
+            amount,
+            balance: user.hobo_bucks_balance,
+            cashout_balance: user.hobo_bucks_cashout_balance,
+        };
     }
 
     /**

@@ -973,10 +973,27 @@ async function loadDashFunds() {
     if (!currentUser) return;
     try {
         const data = await api('/funds/balance');
-        const bal = data.balance || 0;
-        document.getElementById('dash-funds-amount').textContent = parseFloat(bal).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-        document.getElementById('dash-funds-usd').textContent = `($${parseFloat(bal).toFixed(2)})`;
+        const bal = parseFloat(data.balance || 0);
+        const cash = parseFloat(data.cashout_balance || 0);
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        set('dash-funds-amount', bal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        set('dash-funds-usd', `($${bal.toFixed(2)})`);
+        set('dash-cashout-amount', cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        set('dash-cashout-usd', `($${cash.toFixed(2)})`);
     } catch { /* silent */ }
+}
+
+// Move cashout balance → spendable Hobo Bucks (recycle / give back).
+async function dashRecycleBucks() {
+    const raw = prompt('How many Hobo Bucks to move from your cashout balance into your spendable balance?');
+    if (raw === null) return;
+    const amount = parseFloat(raw);
+    if (!(amount > 0)) return toast('Enter a positive amount', 'error');
+    try {
+        await api('/funds/recycle', { method: 'POST', body: { amount } });
+        toast(`Moved $${amount.toFixed(2)} to your spendable balance`, 'success');
+        loadDashFunds();
+    } catch (e) { toast(e.message || 'Failed', 'error'); }
 }
 
 /* ── Hobo Coins ─────────────────────────────────────────────── */
