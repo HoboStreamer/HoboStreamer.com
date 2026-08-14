@@ -55,7 +55,7 @@ window.switchDashTab = switchDashTab;
 // Per-tab loaders (guarded so a missing fn never breaks the tab).
 function _call(name) { try { if (typeof window[name] === 'function') window[name](); } catch (e) { console.warn('[dash]', name, e); } }
 window._dashTabLoaders.home = () => { _call('loadDashActiveStreams'); _call('loadDashFunds'); _call('loadDashCoins'); };
-window._dashTabLoaders.chatai = () => { _call('updateDashObsOverlayUrl'); _call('loadAiChatbotConfig'); };
+window._dashTabLoaders.chatai = () => { _call('updateDashObsOverlayUrl'); _call('loadAiViewers'); };
 window._dashTabLoaders.controls = () => { _call('loadDashConfigs'); _call('loadControlSettings'); _call('loadDashboardCameras'); _call('loadDashTokens'); };
 window._dashTabLoaders.money = () => { _call('loadDashGoals'); _call('loadPowerchatStatus'); _call('loadDashRewards'); _call('loadDashRedemptions'); };
 window._dashTabLoaders.content = () => { _call('loadDashVods'); _call('loadDashMyClips'); _call('loadDashStreamClips'); };

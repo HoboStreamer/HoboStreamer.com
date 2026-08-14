@@ -447,7 +447,7 @@ app.use('/api/thumbnails', thumbnailRoutes);
 app.use('/api/themes', themeRoutes);
 app.use('/api/emotes', emoteRoutes);
 app.use('/api/sounds', require('./chat/sounds-routes'));
-app.use('/api/ai-chatbot', require('./integrations/ai-chatbot-routes'));
+app.use('/api/ai-viewers', require('./ai/viewers/routes'));
 app.use('/api/powerchat', require('./integrations/powerchat-routes'));
 // Game & Canvas — migrated to hobo.quest
 app.get('/game', (req, res) => res.redirect(301, 'https://hobo.quest/game'));

@@ -2108,7 +2108,7 @@ function buildFullscreenChatEntry(msg) {
     const replyLine = msg.reply_to ? `<div style="font-size:0.72em;opacity:0.5;margin-bottom:1px"><i class="fa-solid fa-reply fa-flip-horizontal" style="font-size:0.65em"></i> @${esc(msg.reply_to.username || 'unknown')}</div>` : '';
     return {
         kind: 'chat',
-        html: `${replyLine}<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:${esc(nameColor)}">${badge}${_relayBadge}${_visibleName}</span></div><div class="fullscreen-chat-text">${text}</div>`,
+        html: `${replyLine}<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:${esc(nameColor)}">${badge}${_relayBadge}${(msg.is_ai || msg.source_platform === 'ai') ? '<span class="chat-ai-badge">AI</span>' : ''}${_visibleName}</span></div><div class="fullscreen-chat-text">${text}</div>`,
     };
 }
 
@@ -2913,6 +2913,7 @@ function addChatMessage(msg) {
     // moderation still identifies the platform + external user.
     const _relayPlatform = (msg.source_platform || parseRelayUsername(msg.username || '').platform || '').toLowerCase();
     const _relayBadge = relayBadgeHTML(_relayPlatform);
+    const _aiBadge = (msg.is_ai || msg.source_platform === 'ai') ? '<span class="chat-ai-badge" title="AI chat viewer">AI</span>' : '';
     const _visibleName = _relayBadge ? esc(_rawName) : displayName;
     const rawText = msg.message || msg.text || '';
     // Messages prefixed with "." skipped TTS — mark them muted and hide the "." marker.
@@ -3019,7 +3020,7 @@ function addChatMessage(msg) {
 
     // tts-off messages drop the ":" so it reads "name 🔇 message" after the mute marker.
     const separator = (ttsOff || msg.message_type === 'soundboard' || msg.message_type === 'channel-sound') ? ' ' : ': ';
-    el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${_relayBadge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${_visibleName}</span>${particleWrapClose}${separator}${text}`;
+    el.innerHTML = `${replyHtml}${timestamp}${streamBadge}${voiceBadge}${gameBadge}<span class="chat-avatar-wrap">${avatarHtml}</span>${badge}${_relayBadge}${_aiBadge}${hatHtml}${particleWrapOpen}<span class="chat-user${nameFXClass}" style="color:${esc(nameColor)}" data-username="${displayName}" data-core-username="${coreUsername}" data-user-id="${userId}" data-anon="${isAnon ? '1' : ''}" oncontextmenu="showChatContextMenu(event)" onclick="showChatContextMenu(event)">${_visibleName}</span>${particleWrapClose}${separator}${text}`;
 
     // Reply action button (hover)
     if (msg.id) {
@@ -4222,6 +4223,7 @@ function renderContextMenu(menu, profile, username) {
             ${currentUser?.id && currentUser.id !== profile.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxCallUser(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-phone"></i> Call this user</button>` : ''}
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
             ${profile.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="dismissContextMenu();window.openUserChatInsight&&openUserChatInsight(this.dataset.uid, this.dataset.username)"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Insight</button>` : ''}
+            ${profile.id && currentUser?.id && currentStreamData?.user_id === currentUser.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="dismissContextMenu();window.aivCloneChatter&&aivCloneChatter('user', this.dataset.uid, this.dataset.username)"><i class="fa-solid fa-clone"></i> AI Clone</button>` : ''}
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
             ${currentUser?.capabilities?.manage_users ? `<div class="ctx-rename-group">
                 <button class="ctx-btn" onclick="this.parentElement.classList.toggle('open')" type="button"><i class="fa-solid fa-pen"></i> Rename <i class="fa-solid fa-chevron-right ctx-rename-arrow"></i></button>
@@ -4609,6 +4611,7 @@ function renderRelayContextMenu(menu, username, sourcePlatform) {
         <div class="ctx-actions">
             ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
             <button class="ctx-btn" onclick="dismissContextMenu();window.openRelayUserChatInsight&&openRelayUserChatInsight('${esc(platform)}','${esc(externalUsername)}','${esc(displayPlatform)}')"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Insight</button>
+            ${currentUser?.id && currentStreamData?.user_id === currentUser.id ? `<button class="ctx-btn" onclick="dismissContextMenu();window.aivCloneChatter&&aivCloneChatter('relay','${esc(platform)}:${esc(externalUsername)}','${esc(externalUsername)}')"><i class="fa-solid fa-clone"></i> AI Clone</button>` : ''}
             ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" onclick="dismissContextMenu();ctxViewRelayLogs('${esc(platform)}','${esc(externalUsername)}')"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
             ${modBtns ? '<div class="ctx-divider"></div>' + modBtns : ''}
         </div>
@@ -5243,7 +5246,7 @@ function _buildCrossfeedEl(msg) {
             : { hour: '2-digit', minute: '2-digit' };
         tsHtml = `<span class="chat-time-inline">${tsSource.toLocaleTimeString([], tsOpts)}</span> `;
     }
-    el.innerHTML = `${tsHtml}${sourceBadge}${badge}${_relayBadge}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}">${_visibleName}</span>: <span class="chat-text">${text}</span>`;
+    el.innerHTML = `${tsHtml}${sourceBadge}${badge}${_relayBadge}${(msg.is_ai || msg.source_platform === 'ai') ? '<span class="chat-ai-badge">AI</span>' : ''}<span class="chat-name" style="color:${nameColor}" data-username="${displayName}">${_visibleName}</span>: <span class="chat-text">${text}</span>`;
     return el;
 }
 

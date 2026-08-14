@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=87">
+    <link rel="stylesheet" href="/css/style.css?v=88">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -1589,52 +1589,87 @@
 
                 <!-- AI Chat Bots -->
                 <div class="dash-card dash-card-wide" id="dash-aibot-card">
-                    <h3><i class="fa-solid fa-robot"></i> AI Chat Viewers <span class="muted">keep chat alive</span></h3>
-                    <p class="muted">Spin up AI-driven "viewers" that troll and argue in your chat so there's always something to react to — even when the stream is dead. Bring your own AI API key (OpenAI-compatible), or point it at a self-hosted server like Ollama / LM Studio (no token needed). Optionally let them hear your stream (transcription) so they react to what you're actually doing. Your key is stored securely and never shown again.</p>
-                    <p class="muted" style="font-size:0.82rem;background:rgba(192,150,92,0.1);border:1px solid rgba(192,150,92,0.25);border-radius:8px;padding:8px 12px"><i class="fa-solid fa-circle-info"></i> The viewers run on HoboStreamer's servers, so a self-hosted API must be reachable from the public internet. A local address like <code>localhost:11434</code> or a home/LAN IP won't work — expose it with a public URL or a tunnel (ngrok, cloudflared) and use that as the Base URL.</p>
-                    <div class="ai-bot-grid">
-                        <label class="staff-inline-toggle"><input type="checkbox" id="aibot-enabled"> <b>Enable AI chat viewers</b></label>
-                        <label>
-                            <span>AI API base URL</span>
-                            <input type="text" id="aibot-base-url" class="form-input" placeholder="https://api.openai.com/v1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" name="aibot_base_url_field">
-                            <span class="ai-bot-hint">OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, or your own Ollama / LM Studio URL)</span>
-                        </label>
-                        <label>
-                            <span>API token <span class="muted" style="font-weight:400">(optional for self-hosted)</span></span>
-                            <input type="password" id="aibot-token" class="form-input" placeholder="Paste your API key — or leave blank for Ollama/LM Studio" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" name="aibot_token_field">
-                            <span class="ai-bot-hint" id="aibot-token-status"></span>
-                        </label>
-                        <label>
-                            <span>Chat model</span>
-                            <input type="text" id="aibot-model" class="form-input" placeholder="gpt-4o-mini" autocomplete="off">
-                        </label>
-                        <div class="ai-bot-row">
+                    <h3><i class="fa-solid fa-robot"></i> AI Chat Viewers <span class="muted">a chat that remembers</span></h3>
+                    <p class="muted">Give your channel a persistent cast of AI viewers. They react to what's actually happening on stream, remember regulars across sessions, and each keeps their own personality and memory. Right-click anyone in chat to <b>AI Clone</b> them into a bot. Runs on HoboStreamer's shared AI up to your daily budget — or bring your own key for no cap.</p>
+
+                    <div class="ai-viewers-tabs ch-tabs" id="aiv-subtabs" role="tablist">
+                        <button class="ch-tab active" data-avtab="config" onclick="switchAivTab('config', this)"><i class="fa-solid fa-sliders"></i> Settings</button>
+                        <button class="ch-tab" data-avtab="roster" onclick="switchAivTab('roster', this)"><i class="fa-solid fa-users"></i> Roster <span class="aiv-count" id="aiv-roster-count"></span></button>
+                        <button class="ch-tab" data-avtab="budget" onclick="switchAivTab('budget', this)"><i class="fa-solid fa-gauge"></i> Key &amp; Budget</button>
+                    </div>
+
+                    <!-- Settings -->
+                    <div class="aiv-panel active" id="aiv-panel-config">
+                        <div class="ai-bot-grid">
+                            <label class="staff-inline-toggle"><input type="checkbox" id="aiv-enabled"> <b>Enable AI chat viewers</b></label>
+                            <div class="ai-bot-row">
+                                <label>
+                                    <span>Ambient viewers</span>
+                                    <input type="number" id="aiv-num" class="form-input" min="0" max="12" value="3" style="max-width:110px;">
+                                    <span class="ai-bot-hint">Always-on background chatters (0 = clones only).</span>
+                                </label>
+                                <label>
+                                    <span>Speak every ~N seconds</span>
+                                    <input type="number" id="aiv-pacing" class="form-input" min="10" max="600" value="45" style="max-width:120px;">
+                                    <span class="ai-bot-hint">Across all bots (lower = chattier).</span>
+                                </label>
+                            </div>
                             <label>
-                                <span>Number of bots</span>
-                                <input type="number" id="aibot-num" class="form-input" min="1" max="12" value="3" style="max-width:100px;">
+                                <span>Channel personality (optional seed)</span>
+                                <textarea id="aiv-persona" class="form-input" rows="2" placeholder="e.g. Gremlin energy, backseat gamers, wholesome chaos. Keep it funny, never mean."></textarea>
                             </label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="aiv-transcribe"> <span>Let them <b>hear</b> the stream (free local transcription) so they react to what you say <i class="fa-solid fa-microphone"></i></span></label>
+                            <label class="staff-inline-toggle"><input type="checkbox" id="aiv-vision"> <span>Let them <b>see</b> the stream (periodic frames) so they react to what's on screen <i class="fa-solid fa-eye" title="Uses vision tokens — counts against your budget."></i></span></label>
+                            <div class="ai-bot-actions">
+                                <button class="btn btn-outline btn-small" onclick="previewAiViewers(this)"><i class="fa-solid fa-wand-magic-sparkles"></i> Preview a line</button>
+                                <button class="btn btn-primary btn-small" onclick="saveAiViewers(this)"><i class="fa-solid fa-floppy-disk"></i> Save settings</button>
+                            </div>
+                            <div id="aiv-preview" class="ai-bot-preview" style="display:none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Roster -->
+                    <div class="aiv-panel" id="aiv-panel-roster">
+                        <p class="muted" style="font-size:0.85rem">Your channel's persistent bots. Ambient bots are generated automatically; clones come from real chatters. Personalities and memories persist across every stream.</p>
+                        <div id="aiv-roster-list"><p class="muted">Loading roster…</p></div>
+                    </div>
+
+                    <!-- Key & Budget -->
+                    <div class="aiv-panel" id="aiv-panel-budget">
+                        <div class="aiv-usage-meter" id="aiv-usage-meter"></div>
+                        <div class="ai-bot-grid">
                             <label>
-                                <span>Post every ~N seconds</span>
-                                <input type="number" id="aibot-interval" class="form-input" min="10" max="600" value="45" style="max-width:120px;">
-                                <span class="ai-bot-hint">Spread across all bots (lower = chattier).</span>
+                                <span>AI source</span>
+                                <select id="aiv-keymode" class="form-input" style="max-width:320px" onchange="_aivToggleKeyMode()">
+                                    <option value="shared">HoboStreamer shared AI (daily budget)</option>
+                                    <option value="byo">My own API key (no cap)</option>
+                                </select>
                             </label>
+                            <label id="aiv-budget-wrap">
+                                <span>Daily budget</span>
+                                <span style="display:flex;align-items:center;gap:6px">$<input type="number" id="aiv-budget" class="form-input" min="0" max="100" step="0.05" value="0.20" style="max-width:120px;"></span>
+                                <span class="ai-bot-hint">When today's spend hits this, the viewers go quiet until tomorrow.</span>
+                            </label>
+                            <div id="aiv-byo-fields" style="display:none">
+                                <label>
+                                    <span>Base URL</span>
+                                    <input type="text" id="aiv-byo-url" class="form-input" placeholder="https://api.openai.com/v1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" name="aiv_byo_url_field">
+                                    <span class="ai-bot-hint">OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, or a public Ollama / LM Studio URL). Must be reachable from the public internet.</span>
+                                </label>
+                                <label>
+                                    <span>API key <span class="muted" style="font-weight:400">(optional for self-hosted)</span></span>
+                                    <input type="password" id="aiv-byo-key" class="form-input" placeholder="Paste your API key — or leave blank for Ollama/LM Studio" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" name="aiv_byo_key_field">
+                                    <span class="ai-bot-hint" id="aiv-byo-key-status"></span>
+                                </label>
+                                <label>
+                                    <span>Chat model</span>
+                                    <input type="text" id="aiv-byo-model" class="form-input" placeholder="gpt-4o-mini" autocomplete="off" style="max-width:220px;">
+                                </label>
+                            </div>
+                            <div class="ai-bot-actions">
+                                <button class="btn btn-primary btn-small" onclick="saveAiViewers(this)"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                            </div>
                         </div>
-                        <label>
-                            <span>How the bots behave (persona / instructions)</span>
-                            <textarea id="aibot-persona" class="form-input" rows="3" placeholder="e.g. Be sarcastic gamers who backseat and start dumb arguments about my gameplay. Roast me lightly but keep it funny, not mean."></textarea>
-                        </label>
-                        <label class="staff-inline-toggle"><input type="checkbox" id="aibot-transcribe"> <span>Let bots hear the stream (live transcription) so they react to what I say/do <i class="fa-solid fa-microphone" title="Uses your API key's Whisper-compatible transcription endpoint"></i></span></label>
-                        <label>
-                            <span>Transcription model</span>
-                            <input type="text" id="aibot-transcribe-model" class="form-input" placeholder="whisper-1" autocomplete="off" style="max-width:200px;">
-                        </label>
-                        <label class="staff-inline-toggle"><input type="checkbox" id="aibot-vision"> <span>Let bots see the stream (periodic screenshots) so they react to what's on screen <i class="fa-solid fa-eye" title="Sends a periodic frame to your vision-capable chat model (e.g. gpt-4o-mini). Uses more tokens."></i></span></label>
-                        <div class="ai-bot-actions">
-                            <button class="btn btn-outline btn-small" onclick="testAiChatbot(this)"><i class="fa-solid fa-plug"></i> Test connection</button>
-                            <button class="btn btn-outline btn-small" onclick="previewAiChatbot(this)"><i class="fa-solid fa-wand-magic-sparkles"></i> Preview a line</button>
-                            <button class="btn btn-primary btn-small" onclick="saveAiChatbot(this)"><i class="fa-solid fa-floppy-disk"></i> Save</button>
-                        </div>
-                        <div id="aibot-preview" class="ai-bot-preview" style="display:none;"></div>
                     </div>
                 </div>
 
@@ -4673,12 +4708,12 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/stream-player.js?v=12" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>
-<script src="/js/chat.js?v=45" defer></script>
+<script src="/js/chat.js?v=46" defer></script>
 <script src="/js/chat-autocomplete.js?v=1" defer></script>
 <script src="/js/channel-uploads.js?v=9" defer></script>
 <script src="/js/controls.js?v=8" defer></script>
 <script src="/js/onvif-dashboard.js?v=5" defer></script>
-<script src="/js/dashboard.js?v=6" defer></script>
+<script src="/js/dashboard.js?v=7" defer></script>
 <script src="/js/admin.js?v=5" defer></script>
 <!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
 <div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
@@ -4737,7 +4772,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/settings.js?v=8" defer></script>
 <script src="/js/staff-console.js?v=1" defer></script>
 <script src="/js/dashboard-moderation.js?v=3" defer></script>
-<script src="/js/ai-chatbot-settings.js?v=10" defer></script>
+<script src="/js/ai-viewers.js?v=1" defer></script>
 <script src="/js/powerchat.js?v=5" defer></script>
 <script src="/js/pastes.js?v=9" defer></script>
 <script src="/js/draggable-fab.js?v=2" defer></script>

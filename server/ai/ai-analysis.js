@@ -57,13 +57,15 @@ function _normImage(image) {
 }
 
 // ── Provider calls (return { text, input_tokens, output_tokens }) ──
-async function _anthropic(prompt, img, maxTokens) {
+async function _anthropic(prompt, img, maxTokens, temperature) {
     const content = [{ type: 'text', text: prompt }];
     if (img) content.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.base64 } });
+    const body = { model: model(), max_tokens: maxTokens, messages: [{ role: 'user', content }] };
+    if (temperature != null) body.temperature = temperature;
     const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': s('ai_api_key'), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: model(), max_tokens: maxTokens, messages: [{ role: 'user', content }] }),
+        body: JSON.stringify(body),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((j.error && j.error.message) || `anthropic ${res.status}`);
@@ -71,12 +73,13 @@ async function _anthropic(prompt, img, maxTokens) {
     const u = j.usage || {};
     return { text, input_tokens: u.input_tokens || 0, output_tokens: u.output_tokens || 0 };
 }
-async function _openai(prompt, img, maxTokens) {
+async function _openai(prompt, img, maxTokens, temperature) {
     const base = (s('ai_base_url') || 'https://api.openai.com/v1').replace(/\/+$/, '');
     const m = model();
     const content = [{ type: 'text', text: prompt }];
     if (img) content.push({ type: 'image_url', image_url: { url: `data:${img.mediaType};base64,${img.base64}` } });
     const body = { model: m, messages: [{ role: 'user', content }] };
+    if (temperature != null && !/^(gpt-5|o\d)/i.test(m)) body.temperature = temperature;
     // GPT-5 / o-series are reasoning models: they reject `max_tokens` (need
     // `max_completion_tokens`) and spend hidden reasoning tokens, so give the
     // output headroom and keep reasoning effort low for these short tasks —
@@ -100,15 +103,15 @@ async function _openai(prompt, img, maxTokens) {
 }
 
 /** Core call: dispatches by provider, records usage/cost. Returns text or null. */
-async function _complete({ prompt, image = null, maxTokens = 400, kind }) {
+async function _complete({ prompt, image = null, maxTokens = 400, kind, temperature = null, ownerUserId = null, source = null }) {
     if (!isEnabled() || !withinBudget()) return null;
     const img = image ? _normImage(image) : null;
     if (image && !img) return null;
     const provider = s('ai_provider') === 'openai' ? _openai : _anthropic;
     let r;
-    try { r = await provider(prompt, img, maxTokens); }
+    try { r = await provider(prompt, img, maxTokens, temperature); }
     catch (e) { console.warn('[AI] analysis failed:', e.message); return null; }
-    try { db.recordAiUsage({ kind, model: model(), input_tokens: r.input_tokens, output_tokens: r.output_tokens, cost_usd: estimateCost(r.input_tokens, r.output_tokens) }); } catch { /* */ }
+    try { db.recordAiUsage({ kind, model: model(), input_tokens: r.input_tokens, output_tokens: r.output_tokens, cost_usd: estimateCost(r.input_tokens, r.output_tokens), owner_user_id: ownerUserId, source }); } catch { /* */ }
     return r.text || null;
 }
 
@@ -116,6 +119,20 @@ async function _complete({ prompt, image = null, maxTokens = 400, kind }) {
 async function summarizeText(prompt, maxTokens = 350, kind = 'media_overview') {
     return _complete({ prompt, maxTokens, kind });
 }
+
+/**
+ * Metered completion for the AI Chat Viewers engine on the SHARED (admin) key.
+ * Attributes the spend to a streamer (owner_user_id) under source='ai_viewers' so
+ * per-streamer daily budgets work. Returns text, or null if the admin AI is
+ * disabled / over the global budget. Supports an optional image (vision) input.
+ */
+async function viewerComplete({ system = '', user = '', image = null, maxTokens = 80, temperature = 1.0, ownerUserId = null }) {
+    const prompt = system ? `${system}\n\n${user}` : user;
+    return _complete({ prompt, image, maxTokens, temperature, kind: 'ai_viewers', source: 'ai_viewers', ownerUserId });
+}
+
+/** Is the shared admin AI key usable right now (enabled + within global budget)? */
+function sharedKeyReady() { return isEnabled() && withinBudget(); }
 
 function _parseJson(text) {
     if (!text) return null;
@@ -446,4 +463,5 @@ module.exports = {
     analyzeImagePaste, analyzeTextPaste, analyzeStreamFrame, summarizeStreamMemories,
     generateStreamerOverview, generateVodOverview, generateClipOverview, ensureVodTimeline,
     generateVodTranscript, generateClipTranscript, summarizeText, testStatus,
+    viewerComplete, sharedKeyReady, estimateCost,
 };

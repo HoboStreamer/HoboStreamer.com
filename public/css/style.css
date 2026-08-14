@@ -5116,6 +5116,50 @@ main#app { position: relative; z-index: 1; }
     font-size: 0.9rem; font-style: italic;
 }
 
+/* ── AI Chat Viewers 2.0 ───────────────────────────────────── */
+.ai-viewers-tabs { margin: 14px 0 4px; flex-wrap: wrap; }
+.aiv-count { opacity: 0.6; font-weight: 400; margin-left: 2px; }
+.aiv-panel { display: none; margin-top: 12px; }
+.aiv-panel.active { display: block; }
+
+.aiv-usage-meter {
+    background: var(--bg-tertiary); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; font-size: 0.9rem;
+}
+.aiv-meter-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.aiv-status { font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.aiv-status.ok { background: rgba(52,211,153,0.18); color: #34d399; }
+.aiv-status.off { background: rgba(148,148,148,0.18); color: #b0b0b0; }
+.aiv-meter-bar { margin-top: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.aiv-meter-fill { height: 100%; background: linear-gradient(90deg, #4ecdc4, #60a5fa); transition: width 0.3s; }
+.aiv-meter-fill.over { background: linear-gradient(90deg, #fb923c, #ff6b6b); }
+
+#aiv-roster-list { display: flex; flex-direction: column; gap: 10px; }
+.aiv-bot {
+    background: var(--bg-tertiary); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px;
+}
+.aiv-bot.inactive { opacity: 0.55; }
+.aiv-bot-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.aiv-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.aiv-bot-meta { font-size: 0.78rem; }
+.aiv-bot-actions { margin-left: auto; display: flex; gap: 4px; }
+.aiv-badge {
+    font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 1px 6px; border-radius: 5px; background: rgba(148,148,148,0.2); color: #b8b8b8;
+}
+.aiv-badge.clone { background: rgba(167,139,250,0.22); color: #c4b5fd; }
+.aiv-bot-identity { font-size: 0.84rem; margin-top: 5px; line-height: 1.35; }
+.aiv-bot-memory { font-size: 0.78rem; margin-top: 5px; opacity: 0.75; line-height: 1.35; }
+.btn-tiny { padding: 3px 7px; font-size: 0.72rem; line-height: 1; }
+
+/* "AI" badge on bot chat messages */
+.chat-ai-badge {
+    font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 0 4px; border-radius: 4px; margin-left: 4px; vertical-align: middle;
+    background: rgba(167,139,250,0.25); color: #c4b5fd;
+}
+
 /* Chat input area needs relative position for picker */
 .chat-input-area { position: relative; }
 
