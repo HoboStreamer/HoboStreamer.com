@@ -217,37 +217,10 @@ function showEndpointInfo(stream) {
 }
 
 /* ── Controls Manager ─────────────────────────────────────────── */
-async function loadDashControls() {
-    const list = document.getElementById('dash-controls-list');
-    if (!activeStreams.length) {
-        list.innerHTML = '<p class="muted">Go live first to manage controls</p>';
-        return;
-    }
-
-    try {
-        // Load controls for the first active stream (or the selected one)
-        const streamId = activeStreamData ? activeStreamData.id : activeStreams[0].id;
-        const data = await api(`/controls/${streamId}`);
-        const controls = data.controls || [];
-        if (!controls.length) {
-            list.innerHTML = '<p class="muted">No controls configured</p>';
-            return;
-        }
-        list.innerHTML = controls.map(c => `
-            <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
-                <i class="fa-solid ${esc(c.icon || 'fa-circle')}"></i>
-                <span>${esc(c.label || c.command)}</span>
-                <span class="muted" style="flex:1">${esc(c.command)} (${c.cooldown}s)</span>
-                <button class="btn btn-small btn-danger" onclick="deleteControl('${c.id}')">
-                    <i class="fa-solid fa-trash"></i>
-                </button>
-            </div>
-        `).join('');
-    } catch { list.innerHTML = '<p class="muted">Failed to load controls</p>'; }
-
-    // Load control settings
-    loadControlSettings();
-}
+/* Per-stream ad-hoc controls were removed — all controls now come from a Control
+   Profile assigned to the stream/channel. loadDashControls is kept as a no-op so
+   older call sites don't break; profile changes refresh via loadDashConfigs(). */
+function loadDashControls() { /* removed: controls are profile-driven */ }
 
 async function loadControlSettings() {
     try {
@@ -580,36 +553,8 @@ async function deleteConfigButton(configId, buttonId) {
     } catch (e) { toast(e.message, 'error'); }
 }
 
-async function doAddControl() {
-    const streamId = activeStreamData ? activeStreamData.id : (activeStreams[0] && activeStreams[0].id);
-    if (!streamId) return toast('Go live first', 'error');
-    const command = document.getElementById('modal-ctrl-cmd').value.trim();
-    const label = document.getElementById('modal-ctrl-label').value.trim();
-    const icon = document.getElementById('modal-ctrl-icon').value.trim();
-    const cooldown = parseInt(document.getElementById('modal-ctrl-cooldown').value) || 1;
-
-    if (!command) return toast('Command is required', 'error');
-
-    try {
-        await api(`/controls/${streamId}`, {
-            method: 'POST',
-            body: { command, label: label || command, icon, cooldown }
-        });
-        toast('Control added', 'success');
-        closeModal();
-        loadDashControls();
-    } catch (e) { toast(e.message, 'error'); }
-}
-
-async function deleteControl(controlId) {
-    const streamId = activeStreamData ? activeStreamData.id : (activeStreams[0] && activeStreams[0].id);
-    if (!streamId) return;
-    try {
-        await api(`/controls/${streamId}/${controlId}`, { method: 'DELETE' });
-        toast('Control removed', 'success');
-        loadDashControls();
-    } catch (e) { toast(e.message, 'error'); }
-}
+/* doAddControl / deleteControl removed — controls are now defined only in Control
+   Profiles (see the profile editor: addConfigButton / deleteConfigButton). */
 
 /* ── Bridge Script Downloads ──────────────────────────────────── */
 async function downloadDashBridgeScript(type) {

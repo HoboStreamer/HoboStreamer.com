@@ -605,7 +605,6 @@ function showModal(id) {
         'buy-funds': hoboBucksBuyModal(),
         cashout: hoboBucksCashoutModal(),
         'stream-key': streamKeyModal(),
-        'add-control': addControlModal(),
         'add-camera': addCameraModal(),
         'discover-cameras': discoverCamerasModal(),
         'create-config': createConfigModal(),
@@ -6068,44 +6067,6 @@ function streamKeyModal() {
             <i class="fa-solid fa-rotate"></i> Regenerate
         </button>`;
 }
-function addControlModal() {
-    return `
-        <h3><i class="fa-solid fa-gamepad"></i> Add Control</h3>
-        <div class="form-group">
-            <label>Command</label>
-            <input type="text" id="modal-ctrl-cmd" class="form-input" placeholder="e.g. forward">
-        </div>
-        <div class="form-group">
-            <label>Label</label>
-            <input type="text" id="modal-ctrl-label" class="form-input" placeholder="e.g. Forward">
-        </div>
-        <div class="form-group">
-            <label>Icon (FontAwesome class)</label>
-            <input type="text" id="modal-ctrl-icon" class="form-input" placeholder="e.g. fa-arrow-up" value="fa-circle">
-        </div>
-        <div class="form-group">
-            <label>Type</label>
-            <select id="modal-ctrl-type" class="form-input">
-                <option value="button">Button (single click)</option>
-                <option value="keyboard">Keyboard (hold to activate)</option>
-                <option value="dpad">D-Pad</option>
-                <option value="toggle">Toggle</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label>Key Binding (optional)</label>
-            <input type="text" id="modal-ctrl-keybind" class="form-input" placeholder="e.g. w, a, s, d" maxlength="20">
-            <span class="bc-field-hint">Keyboard shortcut for this button</span>
-        </div>
-        <div class="form-group">
-            <label>Cooldown (seconds)</label>
-            <input type="number" id="modal-ctrl-cooldown" class="form-input" value="1" min="0">
-        </div>
-        <button class="btn btn-primary btn-lg" onclick="doAddControl()" style="width:100%;margin-top:8px">
-            <i class="fa-solid fa-plus"></i> Add Control
-        </button>`;
-}
-
 function createConfigModal() {
     return `
         <h3><i class="fa-solid fa-sliders"></i> New Control Profile</h3>

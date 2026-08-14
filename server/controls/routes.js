@@ -1293,23 +1293,12 @@ router.put('/settings/channel', requireAuth, (req, res) => {
         if (anon_controls_enabled !== undefined) {
             updates.anon_controls_enabled = anon_controls_enabled ? 1 : 0;
         }
-        if (control_rate_limit_ms !== undefined) {
-            const ms = parseInt(control_rate_limit_ms);
-            if (isNaN(ms) || ms < 100 || ms > 30000) {
-                return res.status(400).json({ error: 'Rate limit must be 100-30000ms' });
-            }
-            updates.control_rate_limit_ms = ms;
-        }
         if (video_click_enabled !== undefined) {
             updates.video_click_enabled = video_click_enabled ? 1 : 0;
         }
-        if (video_click_rate_limit_ms !== undefined) {
-            const ms = parseInt(video_click_rate_limit_ms);
-            if (isNaN(ms) || ms < 0 || ms > 30000) {
-                return res.status(400).json({ error: 'Video click rate limit must be 0-30000ms' });
-            }
-            updates.video_click_rate_limit_ms = ms;
-        }
+        // control_rate_limit_ms / video_click_rate_limit_ms are no longer configurable —
+        // rate limiting is now a fixed anti-flood burst cap plus per-button cooldown_ms.
+        // The columns remain (harmless) but we no longer read or write them.
         if (Object.keys(updates).length > 0) {
             db.updateChannel(req.user.id, updates);
         }
@@ -1488,103 +1477,11 @@ router.get('/:streamId', (req, res) => {
     }
 });
 
-// ── Add Control Button ───────────────────────────────────────
-router.post('/:streamId', requireAuth, (req, res) => {
-    try {
-        const stream = db.getStreamById(req.params.streamId);
-        if (!stream) return res.status(404).json({ error: 'Stream not found' });
-        if (stream.user_id !== req.user.id && req.user.role !== 'admin') {
-            return res.status(403).json({ error: 'Not your stream' });
-        }
-
-        const { label, command, icon, control_type, key_binding, cooldown_ms, btn_color, btn_bg, btn_border_color } = req.body;
-        if (!label || !command) {
-            return res.status(400).json({ error: 'Label and command required' });
-        }
-        const cleanIcon = icon || 'fa-gamepad';
-        if (!/^fa-[a-z0-9-]+$/.test(cleanIcon)) {
-            return res.status(400).json({ error: 'Invalid icon class' });
-        }
-        const cleanLabel = String(label).replace(/<[^>]*>/g, '').slice(0, 50);
-        const cleanCommand = String(command).replace(/[<>"'`\\]/g, '').slice(0, 100);
-
-        db.createControl({
-            stream_id: parseInt(req.params.streamId),
-            label: cleanLabel,
-            command: cleanCommand,
-            icon: cleanIcon,
-            control_type: control_type || 'button',
-            key_binding,
-            cooldown_ms: Math.max(0, Math.min(30000, parseInt(cooldown_ms) || 100)),
-            btn_color: sanitizeCssColor(btn_color),
-            btn_bg: sanitizeCssColor(btn_bg),
-            btn_border_color: sanitizeCssColor(btn_border_color),
-        });
-
-        const controls = db.getStreamControls(req.params.streamId);
-        res.status(201).json({ controls });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to add control' });
-    }
-});
-
-// ── Update Control ───────────────────────────────────────────
-router.put('/:streamId/:id', requireAuth, (req, res) => {
-    try {
-        const stream = db.getStreamById(req.params.streamId);
-        if (!stream || (stream.user_id !== req.user.id && req.user.role !== 'admin')) {
-            return res.status(403).json({ error: 'Not authorized' });
-        }
-
-        const { label, command, icon, control_type, key_binding, cooldown_ms, is_enabled, sort_order, btn_color, btn_bg, btn_border_color } = req.body;
-        const updates = [];
-        const params = [];
-
-        if (label !== undefined) { updates.push('label = ?'); params.push(String(label).replace(/<[^>]*>/g, '').slice(0, 50)); }
-        if (command !== undefined) { updates.push('command = ?'); params.push(String(command).replace(/[<>"'`\\]/g, '').slice(0, 100)); }
-        if (icon !== undefined) {
-            if (!/^fa-[a-z0-9-]+$/.test(icon)) {
-                return res.status(400).json({ error: 'Invalid icon class' });
-            }
-            updates.push('icon = ?'); params.push(icon);
-        }
-        if (control_type !== undefined) { updates.push('control_type = ?'); params.push(control_type); }
-        if (key_binding !== undefined) { updates.push('key_binding = ?'); params.push(key_binding); }
-        if (cooldown_ms !== undefined) { updates.push('cooldown_ms = ?'); params.push(cooldown_ms); }
-        if (is_enabled !== undefined) { updates.push('is_enabled = ?'); params.push(is_enabled ? 1 : 0); }
-        if (sort_order !== undefined) { updates.push('sort_order = ?'); params.push(sort_order); }
-        if (btn_color !== undefined) { updates.push('btn_color = ?'); params.push(sanitizeCssColor(btn_color)); }
-        if (btn_bg !== undefined) { updates.push('btn_bg = ?'); params.push(sanitizeCssColor(btn_bg)); }
-        if (btn_border_color !== undefined) { updates.push('btn_border_color = ?'); params.push(sanitizeCssColor(btn_border_color)); }
-
-        if (updates.length > 0) {
-            params.push(req.params.id);
-            db.run(`UPDATE stream_controls SET ${updates.join(', ')} WHERE id = ?`, params);
-        }
-
-        const controls = db.getStreamControls(req.params.streamId);
-        res.json({ controls });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to update control' });
-    }
-});
-
-// ── Delete Control ───────────────────────────────────────────
-router.delete('/:streamId/:id', requireAuth, (req, res) => {
-    try {
-        const stream = db.getStreamById(req.params.streamId);
-        if (!stream || (stream.user_id !== req.user.id && req.user.role !== 'admin')) {
-            return res.status(403).json({ error: 'Not authorized' });
-        }
-
-        db.run('DELETE FROM stream_controls WHERE id = ? AND stream_id = ?',
-            [req.params.id, req.params.streamId]);
-
-        res.json({ message: 'Control deleted' });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to delete control' });
-    }
-});
+// ── Ad-hoc per-stream control editing removed ────────────────
+// Controls are now defined only in Control Profiles (control_configs) and
+// materialized onto a live stream by applyConfigToStream. The old direct
+// editor endpoints (POST /:streamId, PUT/DELETE /:streamId/:id) that hand-authored
+// rows in stream_controls have been removed so every control has a profile source.
 
 // ── Cozmo Presets ────────────────────────────────────────────
 const { applyCozmoPresets, removeCozmoPresets } = require('../integrations/cozmo-presets');

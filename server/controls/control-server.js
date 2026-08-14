@@ -21,6 +21,8 @@ class ControlServer {
         this.viewerClients = new Map();
         /** @type {Map<string, number>} `${streamId}-${controlId}-${userId}` → last command timestamp */
         this.commandCounts = new Map();
+        /** @type {Map<string, number[]>} `${streamId}-burst-${userId}` → recent command timestamps (anti-flood burst cap) */
+        this.commandBursts = new Map();
     }
 
     /**
@@ -227,14 +229,21 @@ class ControlServer {
         if (!ctx) return;
         const { stream, user, channel } = ctx;
 
-        // ── Per-User Rate Limiting ────────────────────────────
+        // ── Rate limiting ─────────────────────────────────────
+        // Real per-command throttling is the per-button cooldown_ms below. The only
+        // global limit is a fixed anti-flood safety cap (not user-configurable): a
+        // ridiculous burst ceiling that just stops a spammer from firehosing commands.
         const now = Date.now();
         const userId = client.user?.id || 'anon';
-        const globalRateLimitMs = (channel && channel.control_rate_limit_ms) || 100;
-        const globalKey = `${client.streamId}-command-global-${userId}`;
-        const lastGlobal = this.commandCounts.get(globalKey) || 0;
-        if (now - lastGlobal < globalRateLimitMs) {
-            ws.send(JSON.stringify({ type: 'cooldown', message: 'Command rate limited' }));
+        const BURST_WINDOW_MS = 1000;
+        const BURST_MAX = 20; // ≤20 commands/sec/user
+        const burstKey = `${client.streamId}-burst-${userId}`;
+        let hits = this.commandBursts.get(burstKey);
+        if (!hits) { hits = []; this.commandBursts.set(burstKey, hits); }
+        // Drop timestamps outside the window.
+        while (hits.length && now - hits[0] > BURST_WINDOW_MS) hits.shift();
+        if (hits.length >= BURST_MAX) {
+            ws.send(JSON.stringify({ type: 'cooldown', message: 'Too many commands — slow down' }));
             return;
         }
 
@@ -251,7 +260,7 @@ class ControlServer {
                 this.commandCounts.set(key, now);
             }
         }
-        this.commandCounts.set(globalKey, now);
+        hits.push(now);
 
         // Handle ONVIF camera movement
         if (isOnvif && cameraId && movement) {
@@ -478,11 +487,13 @@ class ControlServer {
             return;
         }
 
+        // Fixed anti-flood floor for video clicks (not user-configurable) — matches the
+        // ≤20 commands/sec/user burst philosophy for the button controls above.
         const userId = client.user?.id || 'anon';
         const key = `${client.streamId}-click-${userId}`;
         const lastCmd = this.commandCounts.get(key) || 0;
-        const rateLimitMs = (ctx.channel && ctx.channel.video_click_rate_limit_ms) || (ctx.channel && ctx.channel.control_rate_limit_ms) || 100;
-        if (Date.now() - lastCmd < rateLimitMs) {
+        const CLICK_MIN_INTERVAL_MS = 50; // 20 clicks/sec ceiling
+        if (Date.now() - lastCmd < CLICK_MIN_INTERVAL_MS) {
             ws.send(JSON.stringify({ type: 'cooldown', message: 'Click on cooldown' }));
             return;
         }
