@@ -370,7 +370,7 @@ async function resolveIngestForConnection(connection, { title } = {}) {
         return key ? { server_url: 'rtmps://live.twitch.tv/app', stream_key: key } : null;
     }
     if (connection.platform === 'youtube') {
-        return youtubeGoLive(token, title);
+        return youtubeGoLive(token, title, connection);
     }
     if (connection.platform === 'kick') {
         // With streamkey:read, /channels returns the current RTMP ingest + key.
@@ -383,40 +383,87 @@ async function resolveIngestForConnection(connection, { title } = {}) {
     return null;
 }
 
-/** Get the reusable YouTube ingest and create+bind an auto-start broadcast. */
-async function youtubeGoLive(token, title) {
+// Anti-spam for YouTube broadcast creation. A flaky stream reconnects a lot, and each
+// reconnect used to mint a brand-new broadcast (~50 quota units apiece → daily quota
+// exhaustion + a pile of ghost "Upcoming" broadcasts). We now REUSE the currently live (or
+// upcoming) broadcast across reconnects — so a whole stream, however many blips it has, is ONE
+// broadcast/VOD — floor how often a fresh broadcast can be minted, and back off hard once the
+// API signals quota exhaustion. A genuinely new stream (old broadcast auto-stopped by YouTube
+// after the ingest dropped long enough) still gets its own new broadcast → its own VOD.
+// State is per-user, in-memory, best-effort (resets on restart, where reuse-by-bind recovers it).
+const YT_MIN_CREATE_INTERVAL_MS = parseInt(process.env.YT_MIN_CREATE_INTERVAL_MS || '', 10) || 120000;  // ≥2m between fresh broadcasts
+const YT_QUOTA_COOLDOWN_MS = parseInt(process.env.YT_QUOTA_COOLDOWN_MS || '', 10) || 30 * 60 * 1000;     // back off 30m after a quota error
+const _ytBroadcastState = new Map(); // userKey → { broadcastId, ytStreamId, lastCreateAt, quotaCooldownUntil }
+const _YT_USABLE_LIFE = ['live', 'liveStarting', 'testing', 'testStarting', 'ready', 'created'];
+const _YT_ACTIVE_LIFE = ['live', 'liveStarting', 'testing', 'testStarting'];
+
+/** Get the reusable YouTube ingest and reuse/create+bind an auto-start broadcast. */
+async function youtubeGoLive(token, title, connection) {
     const H = { Authorization: `Bearer ${token}` };
+    const userKey = connection && (connection.user_id != null ? connection.user_id : connection.id);
+    const st = (userKey != null && _ytBroadcastState.get(userKey)) || {};
+    const now = Date.now();
+    const saveState = (patch) => { if (userKey != null) _ytBroadcastState.set(userKey, { ...st, ...patch }); };
+
     let stream = null;
     const list = await getJson('https://www.googleapis.com/youtube/v3/liveStreams?part=cdn,snippet&mine=true', H);
     if (list.items && list.items.length) stream = list.items.find(s => s.cdn && s.cdn.ingestionType === 'rtmp') || list.items[0];
     if (!stream) stream = await createYouTubeStream(H);
     const ingest = stream && stream.cdn && stream.cdn.ingestionInfo;
     if (!ingest || !ingest.streamName) return null;
+    const ret = { server_url: ingest.ingestionAddress, stream_key: ingest.streamName };
 
-    // Avoid piling up "Upcoming" broadcasts: reuse an existing upcoming/ready one
-    // (and clean up extras) instead of creating a fresh broadcast on every go-live.
+    // Anti-spam: if broadcast creation recently hit the API quota, stop hammering it (each
+    // attempt burns more of the already-exhausted quota). Return the ingest key — ffmpeg
+    // reconnecting continues whatever broadcast is already live on YouTube.
+    if (st.quotaCooldownUntil && now < st.quotaCooldownUntil) {
+        console.warn(`[PlatformOAuth] YouTube: broadcast create in quota cooldown (${Math.round((st.quotaCooldownUntil - now) / 60000)}m left) — reusing existing, no new broadcast`);
+        return ret;
+    }
+
     try {
+        // Find a reusable broadcast — our last one, or one bound to this ingest stream that's
+        // still live/upcoming. Reusing a LIVE broadcast is what makes a reconnect continue the
+        // SAME broadcast + VOD instead of spawning a new one.
         let reuse = null;
         try {
-            const bl = await getJson('https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,status,contentDetails&broadcastStatus=upcoming&broadcastType=all&maxResults=50', H);
-            const upcoming = (bl.items || []).filter(b => ['created', 'ready', 'testing'].includes(b.status && b.status.lifeCycleStatus));
-            // Prefer one already bound to our stream, else any upcoming one we can rebind.
-            reuse = upcoming.find(b => b.contentDetails && b.contentDetails.boundStreamId === stream.id) || upcoming[0] || null;
-            // Delete the leftover upcoming duplicates to clear the pileup.
-            for (const b of upcoming) {
-                if (reuse && b.id !== reuse.id) {
+            const items = [];
+            for (const status of ['active', 'upcoming']) {
+                try {
+                    const bl = await getJson(`https://www.googleapis.com/youtube/v3/liveBroadcasts?part=id,status,contentDetails&broadcastStatus=${status}&broadcastType=all&maxResults=50`, H);
+                    for (const b of (bl.items || [])) items.push(b);
+                } catch { /* try next status */ }
+            }
+            const life = b => b.status && b.status.lifeCycleStatus;
+            const usable = items.filter(b => _YT_USABLE_LIFE.includes(life(b)));
+            reuse = usable.find(b => st.broadcastId && b.id === st.broadcastId)
+                || usable.find(b => b.contentDetails && b.contentDetails.boundStreamId === stream.id)
+                || usable.find(b => !_YT_ACTIVE_LIFE.includes(life(b)))   // an upcoming one we can safely (re)bind
+                || null;
+            // Clear the ghost "Upcoming" pileup: delete leftover UPCOMING (never live) broadcasts
+            // we're not reusing. Never touch live ones.
+            for (const b of usable) {
+                if (!_YT_ACTIVE_LIFE.includes(life(b)) && (!reuse || b.id !== reuse.id)) {
                     try { await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts?id=${b.id}`, { method: 'DELETE', headers: H }); } catch { /* */ }
                 }
             }
         } catch { /* listing failed — fall through to create */ }
 
+        const reuseIsLive = reuse && _YT_ACTIVE_LIFE.includes(reuse.status && reuse.status.lifeCycleStatus);
         let broadcastId;
         if (reuse) {
             broadcastId = reuse.id;
-            console.log(`[PlatformOAuth] Reusing YouTube broadcast ${broadcastId} (no new "Upcoming" created)`);
+            console.log(`[PlatformOAuth] Reusing YouTube broadcast ${broadcastId} (${reuseIsLive ? 'live' : 'upcoming'}) — no new broadcast`);
         } else {
+            // Rate floor: don't mint another fresh broadcast within the min interval of the last
+            // one (a reconnect storm). Return the key and let ffmpeg continue the existing live
+            // broadcast rather than churning new ones + burning quota.
+            if (st.lastCreateAt && (now - st.lastCreateAt) < YT_MIN_CREATE_INTERVAL_MS) {
+                console.log(`[PlatformOAuth] YouTube: skipping new broadcast — one was created ${Math.round((now - st.lastCreateAt) / 1000)}s ago (< ${Math.round(YT_MIN_CREATE_INTERVAL_MS / 1000)}s floor)`);
+                return ret;
+            }
             const body = {
-                snippet: { title: (title || 'HoboStreamer').slice(0, 100), scheduledStartTime: new Date(Date.now() + 5000).toISOString() },
+                snippet: { title: (title || 'HoboStreamer').slice(0, 100), scheduledStartTime: new Date(now + 5000).toISOString() },
                 status: { privacyStatus: 'public', selfDeclaredMadeForKids: false },
                 contentDetails: { enableAutoStart: true, enableAutoStop: true },
             };
@@ -424,18 +471,30 @@ async function youtubeGoLive(token, title) {
                 method: 'POST', headers: { ...H, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
             });
             const broadcast = await res.json();
-            if (!res.ok) throw new Error(broadcast.error?.message || `insert ${res.status}`);
+            if (!res.ok) {
+                const msg = broadcast.error?.message || `insert ${res.status}`;
+                if (/quota/i.test(msg)) {
+                    saveState({ quotaCooldownUntil: now + YT_QUOTA_COOLDOWN_MS });
+                    console.warn(`[PlatformOAuth] YouTube broadcast create hit quota — backing off ${Math.round(YT_QUOTA_COOLDOWN_MS / 60000)}m`);
+                }
+                throw new Error(msg);
+            }
             broadcastId = broadcast.id;
             console.log(`[PlatformOAuth] YouTube broadcast ${broadcastId} created (auto-start)`);
         }
-        // Bind broadcast → stream (idempotent — safe to rebind the reused one).
-        const bindRes = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${broadcastId}&part=id,contentDetails&streamId=${stream.id}`, { method: 'POST', headers: H });
-        if (!bindRes.ok) { const j = await bindRes.json().catch(() => ({})); throw new Error(j.error?.message || `bind ${bindRes.status}`); }
+        // Bind broadcast → stream. Skip when reusing an already-LIVE broadcast — it's bound and
+        // streaming, and YouTube rejects a bind on an active broadcast.
+        if (!reuseIsLive) {
+            const bindRes = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts/bind?id=${broadcastId}&part=id,contentDetails&streamId=${stream.id}`, { method: 'POST', headers: H });
+            if (!bindRes.ok) { const j = await bindRes.json().catch(() => ({})); throw new Error(j.error?.message || `bind ${bindRes.status}`); }
+        }
+        // Remember what we're on so reconnects reuse it (and the rate floor applies to fresh mints).
+        saveState({ broadcastId, ytStreamId: stream.id, lastCreateAt: reuse ? (st.lastCreateAt || now) : now, quotaCooldownUntil: 0 });
     } catch (e) {
         // Still return the key — if the user has auto-start enabled in YT Studio it works anyway.
         console.warn('[PlatformOAuth] YouTube broadcast setup failed (key still returned):', e.message);
     }
-    return { server_url: ingest.ingestionAddress, stream_key: ingest.streamName };
+    return ret;
 }
 
 module.exports = {
