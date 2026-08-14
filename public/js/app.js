@@ -5474,17 +5474,17 @@ async function loadClipPlayer(clipId) {
             clippedByEl.innerHTML = `<i class="fa-solid fa-scissors"></i> Clipped by <strong>${esc(cl.display_name || cl.username || 'Unknown')}</strong>`;
         }
 
-        // Show delete button if user is clip creator, stream owner, or admin
+        // Show delete button per the server-authoritative can_delete flag (streamer /
+        // channel mod / staff, or the creator only if the channel opted in).
         const clpActions = document.getElementById('clp-actions');
         if (clpActions && currentUser) {
-            let canDelete = (cl.user_id === currentUser.id) || currentUser.capabilities?.moderate_global;
+            let canDelete = !!cl.can_delete;
             let isStreamOwner = false;
-            // Check if current user owns the stream this clip is from
+            // Check if current user owns the stream this clip is from (gates publish toggle)
             if (cl.stream_id) {
                 try {
                     const sData = await api(`/streams/${cl.stream_id}`);
                     if (sData.stream && sData.stream.user_id === currentUser.id) {
-                        canDelete = true;
                         isStreamOwner = true;
                     }
                 } catch {}

@@ -55,7 +55,7 @@ function _dashRelocateCards() {
 // Content sub-tab loaders (lazy per sub-tab).
 const _DASH_CONTENT_LOADERS = {
     videos:      () => _call('loadDashVods'),
-    streamclips: () => _call('loadDashStreamClips'),
+    streamclips: () => { _call('loadDashStreamClips'); _call('loadClipSettings'); },
     myclips:     () => _call('loadDashMyClips'),
     pastes:      () => _call('loadDashPastes'),
 };
@@ -860,7 +860,7 @@ async function loadDashMyClips() {
                             ? `<button class="btn btn-small btn-success" onclick="dashToggleClipVisibility(${cl.id}, true, 'mine')"><i class="fa-solid fa-eye"></i> Publish</button>`
                             : `<button class="btn btn-small btn-outline" onclick="dashToggleClipVisibility(${cl.id}, false, 'mine')"><i class="fa-solid fa-eye-slash"></i> Unlist</button>`}
                         <button class="btn btn-small" onclick="navigate('/clip/${cl.id}')"><i class="fa-solid fa-play"></i></button>
-                        <button class="btn btn-small btn-danger" onclick="dashDeleteClip(${cl.id}, 'mine')"><i class="fa-solid fa-trash"></i></button>
+                        ${cl.can_delete ? `<button class="btn btn-small btn-danger" onclick="dashDeleteClip(${cl.id}, 'mine')"><i class="fa-solid fa-trash"></i></button>` : ''}
                     </div>
                 </div>
             </div>
@@ -912,6 +912,24 @@ async function loadDashStreamClips() {
 }
 
 function dashStreamClipsGoPage(page) { dashStreamClipsPage = page; loadDashStreamClips(); }
+
+async function loadClipSettings() {
+    const el = document.getElementById('dash-clips-allow-creator-delete');
+    if (!el) return;
+    try {
+        const data = await api('/clips/settings/channel');
+        el.checked = !!data.clips_allow_creator_delete;
+    } catch { /* silent */ }
+}
+
+async function saveClipSettings() {
+    const el = document.getElementById('dash-clips-allow-creator-delete');
+    if (!el) return;
+    try {
+        await api('/clips/settings/channel', { method: 'PUT', body: { clips_allow_creator_delete: el.checked ? 1 : 0 } });
+        toast('Clip settings saved', 'success');
+    } catch (e) { toast(e.message || 'Save failed', 'error'); }
+}
 
 async function loadDashPastes() {
     const list = document.getElementById('dash-pastes-list');

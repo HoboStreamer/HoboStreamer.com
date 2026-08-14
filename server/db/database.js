@@ -271,6 +271,9 @@ function initDb() {
         add('cp_watch_interval_min', 'cp_watch_interval_min INTEGER DEFAULT 5');
         add('cp_watch_amount', 'cp_watch_amount INTEGER DEFAULT 10');
         add('cp_game_interval_min', 'cp_game_interval_min INTEGER DEFAULT 0');
+        // Clip settings: by default only the streamer/mods/staff can delete clips of the
+        // channel; the streamer can opt to let clip creators delete their own clips.
+        add('clips_allow_creator_delete', 'clips_allow_creator_delete INTEGER DEFAULT 0');
     } catch (e) { console.warn('[DB] Channel points config migration:', e.message); }
 
     // Migrate: add VOD health and recording metadata columns

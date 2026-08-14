@@ -16,22 +16,44 @@ const db = require('../db/database');
 const { requireAuth, optionalAuth } = require('../auth/auth');
 const permissions = require('../auth/permissions');
 
-// Can `actor` edit/delete this clip? Self / stream-owner / vod-owner always may;
-// otherwise it's a moderation action — allowed for staff EXCEPT when the clip's
-// creator OR the source streamer is an owner-rank user (protected from admins).
+// The user id of the channel/streamer that owns a clip's source (stream, else VOD).
+function clipChannelOwnerId(clip) {
+    if (!clip) return null;
+    if (clip.stream_id) { const s = db.getStreamById(clip.stream_id); if (s) return s.user_id; }
+    if (clip.vod_id) { const v = db.get('SELECT user_id FROM vods WHERE id = ?', [clip.vod_id]); if (v) return v.user_id; }
+    return null;
+}
+
+// Can `actor` EDIT (title) this clip? The creator may title their own clip (the
+// post-create titling flow), plus the streamer / mods / staff.
 function canActorModerateClip(actor, clip) {
     if (!actor || !clip) return false;
     if (actor.id === clip.user_id) return true;
-    let streamOwner = null;
-    if (clip.stream_id) {
-        const s = db.getStreamById(clip.stream_id);
-        if (s) { if (s.user_id === actor.id) return true; streamOwner = db.getUserById(s.user_id); }
-    }
-    if (clip.vod_id) {
-        const v = db.get('SELECT user_id FROM vods WHERE id = ?', [clip.vod_id]);
-        if (v && v.user_id === actor.id) return true;
+    const ownerId = clipChannelOwnerId(clip);
+    if (ownerId && actor.id === ownerId) return true;
+    if (ownerId) { const ch = db.getChannelByUserId(ownerId); if (ch && db.isChannelModerator(actor.id, ch.id)) return true; }
+    const clipOwner = clip.user_id ? db.getUserById(clip.user_id) : null;
+    const streamOwner = ownerId ? db.getUserById(ownerId) : null;
+    return permissions.canModerateContentOwner(actor, clipOwner) &&
+           permissions.canModerateContentOwner(actor, streamOwner);
+}
+
+// Can `actor` DELETE this clip? Stricter than editing: by default the CREATOR
+// (when not the streamer) may NOT delete — only the channel owner, channel mods,
+// and site staff can. The streamer can opt in per-channel
+// (channels.clips_allow_creator_delete) to let creators delete their own clips.
+function canActorDeleteClip(actor, clip) {
+    if (!actor || !clip) return false;
+    const ownerId = clipChannelOwnerId(clip);
+    if (ownerId && actor.id === ownerId) return true;          // the streamer / vod owner
+    if (!ownerId && actor.id === clip.user_id) return true;    // orphaned clip: creator manages it
+    if (ownerId) {
+        const ch = db.getChannelByUserId(ownerId);
+        if (ch && db.isChannelModerator(actor.id, ch.id)) return true;                       // channel mod
+        if (actor.id === clip.user_id && ch && ch.clips_allow_creator_delete) return true;   // creator, if channel opted in
     }
     const clipOwner = clip.user_id ? db.getUserById(clip.user_id) : null;
+    const streamOwner = ownerId ? db.getUserById(ownerId) : null;
     return permissions.canModerateContentOwner(actor, clipOwner) &&
            permissions.canModerateContentOwner(actor, streamOwner);
 }
@@ -46,7 +68,8 @@ router.get('/mine', requireAuth, (req, res) => {
         const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
         const allClips = db.getClipsByUser(req.user.id, true);
         const total = allClips.length;
-        const clips = limit > 0 ? allClips.slice(offset, offset + limit) : allClips;
+        const clips = (limit > 0 ? allClips.slice(offset, offset + limit) : allClips)
+            .map(c => ({ ...c, can_delete: canActorDeleteClip(req.user, c) }));
         res.json({ clips, total, limit: limit || total, offset });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list your clips' });
@@ -60,10 +83,33 @@ router.get('/my-stream', requireAuth, (req, res) => {
         const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
         const allClips = db.getClipsOfUserStreams(req.user.id);
         const total = allClips.length;
-        const clips = limit > 0 ? allClips.slice(offset, offset + limit) : allClips;
+        const clips = (limit > 0 ? allClips.slice(offset, offset + limit) : allClips)
+            .map(c => ({ ...c, can_delete: true }));  // the streamer owns these
         res.json({ clips, total, limit: limit || total, offset });
     } catch (err) {
         res.status(500).json({ error: 'Failed to list stream clips' });
+    }
+});
+
+// ── Clip settings for my channel (creator-delete opt-in) ─────
+router.get('/settings/channel', requireAuth, (req, res) => {
+    try {
+        const ch = db.getChannelByUserId(req.user.id);
+        res.json({ clips_allow_creator_delete: !!(ch && ch.clips_allow_creator_delete) });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load clip settings' });
+    }
+});
+
+router.put('/settings/channel', requireAuth, (req, res) => {
+    try {
+        const ch = db.getChannelByUserId(req.user.id);
+        if (!ch) return res.status(404).json({ error: 'Channel not found' });
+        const val = req.body.clips_allow_creator_delete ? 1 : 0;
+        db.run('UPDATE channels SET clips_allow_creator_delete = ? WHERE id = ?', [val, ch.id]);
+        res.json({ clips_allow_creator_delete: !!val });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to save clip settings' });
     }
 });
 
@@ -131,6 +177,10 @@ router.get('/:id', optionalAuth, (req, res) => {
 
         // Get comment count
         clip.comment_count = db.getCommentCount('clip', clip.id);
+
+        // Server-authoritative permission flags for the client UI.
+        clip.can_delete = canActorDeleteClip(req.user, clip);
+        clip.can_edit = canActorModerateClip(req.user, clip);
 
         // Whether the source VOD is still available (exists, not private, not mid-recording)
         // so the client can offer a "watch in the full VOD at this timestamp" deep link.
@@ -207,7 +257,8 @@ router.post('/bulk', requireAuth, async (req, res) => {
             const id = parseInt(rawId, 10);
             if (!id) { skipped++; continue; }
             const clip = db.get('SELECT * FROM clips WHERE id = ?', [id]);
-            if (!clip || !canActorModerateClip(req.user, clip)) { skipped++; continue; }
+            const allowed = action === 'delete' ? canActorDeleteClip(req.user, clip) : canActorModerateClip(req.user, clip);
+            if (!clip || !allowed) { skipped++; continue; }
             if (action === 'delete') {
                 try { if (clip.file_path && fs.existsSync(clip.file_path)) fs.unlinkSync(clip.file_path); } catch {}
                 if (clip.storage_provider && clip.storage_provider !== 'local' && clip.storage_key) {
@@ -231,9 +282,8 @@ router.delete('/:id', requireAuth, (req, res) => {
         const clip = db.get('SELECT * FROM clips WHERE id = ?', [req.params.id]);
         if (!clip) return res.status(404).json({ error: 'Clip not found' });
 
-        // Clip creator / stream owner / vod owner, or a permitted moderator
-        // (admins may not delete an owner-rank user's clips).
-        if (!canActorModerateClip(req.user, clip)) {
+        // Streamer / channel mod / staff — the creator only if the channel opted in.
+        if (!canActorDeleteClip(req.user, clip)) {
             return res.status(403).json({ error: 'Not authorized to delete this clip' });
         }
 
