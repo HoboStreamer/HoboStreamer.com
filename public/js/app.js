@@ -2471,6 +2471,18 @@ async function openUserChatInsight(userId, username) {
 }
 window.openUserChatInsight = openUserChatInsight;
 
+// Anonymous chatter insight — keyed by their stable anon_id ("anon<N>").
+async function openAnonChatInsight(anonId) {
+    if (!anonId) return;
+    return _openChatInsightModal({
+        title: anonId,
+        iconClass: 'fa-user-secret',
+        subtitle: 'Anonymous chatter — how they chat today vs. overall, from their public messages.',
+        fetchUrl: `/chat-ai/anon/${encodeURIComponent(anonId)}`,
+    });
+}
+window.openAnonChatInsight = openAnonChatInsight;
+
 // Relay (external-platform) chatter insight.
 async function openRelayUserChatInsight(platform, username, displayPlatform) {
     if (!platform || !username) return;

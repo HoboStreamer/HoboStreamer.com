@@ -4172,6 +4172,8 @@ function renderAnonContextMenu(menu, username, userId) {
         <div class="ctx-actions">
             ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
             <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
+            <button class="ctx-btn" data-username="${esc(username)}" onclick="dismissContextMenu();window.openAnonChatInsight&&openAnonChatInsight(this.dataset.username)"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Insight</button>
+            ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" onclick="dismissContextMenu();ctxViewAnonLogs(this.dataset.username)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
             ${modBtns}
             ${banBtns}
         </div>
@@ -4354,6 +4356,12 @@ function ctxViewLogs(username, userId) {
 function ctxViewRelayLogs(platform, username) {
     dismissContextMenu();
     openChatLogsModal(username, null, { platform, username });
+}
+
+// Chat logs for an anonymous chatter — keyed by their anon_id.
+function ctxViewAnonLogs(anonId) {
+    dismissContextMenu();
+    openChatLogsModal(anonId, null, { anon: anonId });
 }
 
 async function ctxRenameUsername(username, userId) {
@@ -4921,8 +4929,14 @@ function openChatLogsModal(username, userId, relay) {
 
     overlay.classList.add('show');
 
-    // Store context on the modal for pagination
-    content._logsCtx = { username, userId, relay: relay || null, offset: 0, query: '' };
+    // Store context on the modal for pagination. The 3rd arg is an options object:
+    // { platform, username } for relay logs, or { anon } for an anonymous chatter.
+    content._logsCtx = {
+        username, userId,
+        relay: (relay && relay.platform) ? relay : null,
+        anon: (relay && relay.anon) ? relay.anon : null,
+        offset: 0, query: '',
+    };
 
     loadChatLogs();
 }
@@ -4939,7 +4953,13 @@ async function loadChatLogs() {
 
     try {
         let url, result;
-        if (ctx.relay) {
+        if (ctx.anon) {
+            // Anonymous chatter history — matched by anon_id.
+            const params = new URLSearchParams({ limit: '50', offset: String(ctx.offset) });
+            if (ctx.query) params.set('q', ctx.query);
+            url = `/chat/anon/${encodeURIComponent(ctx.anon)}/logs?${params}`;
+            result = await api(url);
+        } else if (ctx.relay) {
             // Relay (external-platform) user history — matched by platform + username.
             const params = new URLSearchParams({ limit: '50', offset: String(ctx.offset) });
             if (ctx.query) params.set('q', ctx.query);

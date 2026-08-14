@@ -327,6 +327,79 @@ async function _relayPass() {
     }
 }
 
+// ── PER ANON (not-logged-in chatters, keyed by their stable anon_id) ──────────
+// Same "today vs all-time" insight as a native user, keyed by the numeric anon id.
+async function _refreshAnon(anonId) {
+    const ai = _ai();
+    const subjectId = db.anonSubjectId(anonId);
+    if (!subjectId) return false;
+    const prior = db.getChatAiSummary('anon', subjectId, 'rolling');
+    const now = Date.now();
+    const dayStart = _sqlTime(now - 24 * 60 * 60 * 1000);
+
+    let dayRows = db.getAnonChatMessagesForAi({ anonId, sinceTs: dayStart, order: 'asc', limit: MAX_BATCH_MESSAGES });
+    let has24h = dayRows.length > 0;
+    if (!dayRows.length) dayRows = db.getAnonChatMessagesForAi({ anonId, order: 'desc', limit: 80 });
+    if (!dayRows.length) return false;
+
+    const priorMemory = prior ? (prior.memory_json || '') : '';
+    const prompt =
+`You profile an ANONYMOUS chatter ("${anonId}", not logged in) on a live-streaming site, contrasting who they are TODAY vs OVERALL. Base everything only on the evidence below — do not invent.
+
+Return ONLY a JSON object, no prose, with exactly these keys:
+{
+  "overview_24h": "${has24h ? '2-3 sentences on what this anon chatted about and their mood/energy in the LAST 24 HOURS.' : 'They have not chatted in the last 24h; 1 sentence noting they have been quiet recently.'}",
+  "overview_alltime": "2-3 sentences on who this anon is as a chatter OVERALL: style, recurring interests, tone.",
+  "memory": "Condensed running notes carried forward (interests, catchphrases, patterns). Update the PRIOR notes; keep under ~1000 chars.",
+  "timeline": [ {"label":"short title","detail":"one sentence"} ]  // 0-2 NEW notable moments, or [].
+}
+
+PRIOR running notes:
+"""${_clip(priorMemory, USER_MEMORY_MAX_CHARS)}"""
+
+${has24h ? 'MESSAGES FROM THIS ANON IN THE LAST 24H' : "THIS ANON'S MOST RECENT MESSAGES"} (oldest first):
+${_fmtMessages(dayRows)}`;
+
+    const text = await ai.summarizeText(prompt, 600, 'chat_anon');
+    if (!text) return false;
+    const parsed = _parseJson(text);
+    if (!parsed) { console.warn(`[ChatAI] anon ${anonId}: unparseable model output`); return false; }
+
+    const nowIso = _sqlTime(now);
+    db.upsertChatAiSummary({
+        scope: 'anon', subject_id: subjectId, window: 'rolling',
+        overview: JSON.stringify({
+            today: _clip(parsed.overview_24h || '', 1200),
+            alltime: _clip(parsed.overview_alltime || '', 1200),
+            has_24h: has24h,
+        }),
+        memory_json: _clip(parsed.memory || priorMemory, USER_MEMORY_MAX_CHARS),
+        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso),
+        message_count: dayRows.length,
+        window_message_count: dayRows.length,
+        last_message_id: db.getMaxChatMessageId(),
+        window_label: has24h ? 'past 24h' : 'recent',
+        window_start: has24h ? dayStart : null,
+        window_end: nowIso,
+    });
+    console.log(`[ChatAI] anon ${anonId} refreshed (24h=${has24h}, ${dayRows.length} msgs)`);
+    return true;
+}
+
+async function _anonPass() {
+    const staleCutoff = _sqlTime(Date.now() - USER_STALE_MS);
+    const sinceTs = _sqlTime(Date.now() - USER_DISCOVERY_LOOKBACK_DAYS * 86400000);
+    let candidates = [];
+    try {
+        candidates = db.getAnonsNeedingChatAi({ threshold: USER_MSG_THRESHOLD, staleCutoffIso: staleCutoff, sinceTs, limit: USER_MAX_PER_TICK });
+    } catch (e) { console.warn('[ChatAI] anon discovery failed:', e.message); return; }
+    for (const c of candidates) {
+        if (!c.anon_id) continue;
+        try { await _refreshAnon(c.anon_id); }
+        catch (e) { console.warn(`[ChatAI] anon ${c.anon_id} refresh failed:`, e.message); }
+    }
+}
+
 // ── Poller ───────────────────────────────────────────────────────────────────
 async function _tick() {
     if (_tickInFlight) return;
@@ -341,6 +414,7 @@ async function _tick() {
             _lastUserPass = Date.now();
             if (ai.withinBudget()) await _userPass();
             if (ai.withinBudget()) await _relayPass();
+            if (ai.withinBudget()) await _anonPass();
         }
     } catch (e) {
         console.warn('[ChatAI] tick error:', e.message);
@@ -415,4 +489,22 @@ function getRelayUserInsight(relayId) {
     };
 }
 
-module.exports = { start, stop, getGlobalInsight, getUserInsight, getRelayUserInsight, _tick };
+function getAnonInsight(anonId) {
+    const row = db.getChatAiSummary('anon', db.anonSubjectId(anonId), 'rolling');
+    if (!row) return null;
+    let overviews = { today: '', alltime: '', has_24h: false };
+    try { overviews = { ...overviews, ...JSON.parse(row.overview || '{}') }; } catch { /* */ }
+    let timeline = [];
+    try { timeline = JSON.parse(row.timeline_json || '[]'); } catch { /* */ }
+    return {
+        overview_24h: overviews.today || '',
+        overview_alltime: overviews.alltime || '',
+        has_24h: !!overviews.has_24h,
+        memory: row.memory_json || '',
+        timeline,
+        message_count: row.message_count || 0,
+        updated_at: row.updated_at || null,
+    };
+}
+
+module.exports = { start, stop, getGlobalInsight, getUserInsight, getRelayUserInsight, getAnonInsight, _tick };

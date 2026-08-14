@@ -3460,6 +3460,65 @@ function getRelayUsersNeedingChatAi({ lookbackIso, threshold = 8, limit = 2 } = 
         LIMIT ?`, [lookbackIso, threshold, Math.max(1, limit)]);
 }
 
+// ── Anonymous chatters: chat logs + AI insight (mirror the relay path) ──────────
+// Anon messages have user_id NULL and a stable anon_id = "anon<N>" (which also equals
+// their username). Their chat-AI insight is keyed in chat_ai_summaries by scope='anon',
+// subject_id = the numeric N.
+function anonSubjectId(anonId) {
+    const m = /^anon(\d+)$/i.exec(String(anonId || ''));
+    return m ? parseInt(m[1], 10) : 0;
+}
+
+// An anon's message history (for the "Chat Logs" viewer).
+function getAnonChatHistory(anonId, { limit = 50, offset = 0, query = '' } = {}) {
+    let where = `cm.anon_id = ? AND cm.user_id IS NULL AND cm.is_deleted = 0
+                 AND (cm.auto_delete_at IS NULL OR datetime(cm.auto_delete_at) > CURRENT_TIMESTAMP)`;
+    const params = [String(anonId)];
+    if (query) { where += ' AND cm.message LIKE ?'; params.push('%' + query + '%'); }
+    const total = get(`SELECT COUNT(*) AS c FROM chat_messages cm WHERE ${where}`, params)?.c || 0;
+    const rows = all(
+        `SELECT cm.id, cm.username, cm.anon_id, cm.message, cm.message_type, cm.timestamp, cm.stream_id,
+                s.title AS stream_title
+         FROM chat_messages cm LEFT JOIN streams s ON cm.stream_id = s.id
+         WHERE ${where} ORDER BY cm.timestamp DESC LIMIT ? OFFSET ?`,
+        [...params, Math.max(1, Math.min(200, limit)), Math.max(0, offset)]
+    );
+    return { messages: rows, total };
+}
+
+// Anon messages for AI batching (mirrors getChatMessagesForAi / getRelayChatMessagesForAi).
+function getAnonChatMessagesForAi({ anonId, sinceTs = null, limit = 300, order = 'asc' } = {}) {
+    let sql = `SELECT cm.id, cm.username, cm.message, cm.message_type, cm.timestamp
+               FROM chat_messages cm
+               WHERE ${_CHAT_AI_WHERE} AND cm.user_id IS NULL AND cm.anon_id = ?`;
+    const params = [String(anonId)];
+    if (sinceTs != null) { sql += ' AND cm.timestamp >= ?'; params.push(sinceTs); }
+    sql += ` ORDER BY cm.id ${order === 'desc' ? 'DESC' : 'ASC'} LIMIT ?`;
+    params.push(Math.max(1, Math.min(2000, limit)));
+    const rows = all(sql, params);
+    return order === 'desc' ? rows.reverse() : rows;
+}
+
+// Anons with enough new chat activity (or a stale summary) to warrant an AI refresh.
+function getAnonsNeedingChatAi({ threshold = 12, staleCutoffIso, sinceTs, limit = 2 } = {}) {
+    const sql = `
+        SELECT cm.anon_id AS anon_id,
+               MAX(cm.id) AS max_id,
+               SUM(CASE WHEN cm.id > COALESCE(cs.last_message_id, 0) THEN 1 ELSE 0 END) AS new_msgs
+        FROM chat_messages cm
+        LEFT JOIN chat_ai_summaries cs
+          ON cs.scope = 'anon' AND cs.window = 'rolling'
+         AND cs.subject_id = CAST(SUBSTR(cm.anon_id, 5) AS INTEGER)
+        WHERE ${_CHAT_AI_WHERE} AND cm.user_id IS NULL AND cm.anon_id IS NOT NULL
+          AND cm.anon_id LIKE 'anon%' AND cm.timestamp >= ?
+        GROUP BY cm.anon_id
+        HAVING new_msgs > 0
+           AND ( new_msgs >= ? OR cs.last_message_id IS NULL OR cs.updated_at IS NULL OR cs.updated_at < ? )
+        ORDER BY (cs.updated_at IS NULL) DESC, new_msgs DESC
+        LIMIT ?`;
+    return all(sql, [sinceTs, threshold, staleCutoffIso, Math.max(1, limit)]);
+}
+
 function getUserProfile(userId) {
     const user = get(`SELECT id, username, display_name, avatar_url, profile_color, role,
                       hobo_bucks_balance, hobo_coins_balance, created_at, last_seen
@@ -6509,6 +6568,7 @@ module.exports = {
     // Hidden Relay Users
     hideRelayUser, isRelayUserHidden, unhideRelayUser, unhideRelayUserByIdentity, getHiddenRelayUsers, recordRelayUser, getRelayUser,
     getRelayUserByRowid, getRelayUserChatHistory, getRelayChatMessagesForAi, getRelayUsersNeedingChatAi,
+    anonSubjectId, getAnonChatHistory, getAnonChatMessagesForAi, getAnonsNeedingChatAi,
     // IP Tracking
     logIp, getIpsByUser, getUsersByIp, getLinkedAccounts, getLinkedAccountsByAnon,
     getLatestIpForUser, getLatestIpForAnon, getIpLog, banAllAccountsOnIp,

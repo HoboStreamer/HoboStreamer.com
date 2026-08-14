@@ -407,6 +407,22 @@ router.get('/relay-user/:platform/:username', optionalAuth, (req, res) => {
     }
 });
 
+// An anonymous chatter's chat-message history — same gate as native logs.
+router.get('/anon/:anonId/logs', requireAuth, (req, res) => {
+    try {
+        if (!permissions.canViewOtherUserLogs(req.user)) return res.status(403).json({ error: 'Not authorized' });
+        const anonId = String(req.params.anonId || '');
+        if (!/^anon\d+$/i.test(anonId)) return res.status(400).json({ error: 'Invalid anon id' });
+        const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
+        const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+        const query = String(req.query.q || '').trim();
+        const r = db.getAnonChatHistory(anonId, { limit, offset, query });
+        res.json(r);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get anon user logs' });
+    }
+});
+
 // A relay (external-platform) user's chat-message history — same gate as native logs.
 router.get('/relay-user/:platform/:username/logs', requireAuth, (req, res) => {
     try {

@@ -59,6 +59,18 @@ router.get('/user/:id', (req, res) => {
     }
 });
 
+// An anonymous chatter's insight, keyed by their stable anon_id ("anon<N>").
+router.get('/anon/:anonId', (req, res) => {
+    try {
+        const anonId = String(req.params.anonId || '');
+        if (!/^anon\d+$/i.test(anonId)) return res.status(400).json({ error: 'Invalid anon id' });
+        const insight = chatAi.getAnonInsight(anonId);
+        res.json({ insight: insight || null, user: { anon_id: anonId, username: anonId } });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load anon chat insight' });
+    }
+});
+
 // A bridged external (relay) chatter's insight, keyed by platform + username.
 router.get('/relay/:platform/:username', (req, res) => {
     try {
