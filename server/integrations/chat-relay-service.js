@@ -341,6 +341,7 @@ class ChatRelayService {
         bridge.stopped = true;
         clearTimeout(bridge.reconnectTimer);
         clearTimeout(bridge.pollTimer);
+        clearTimeout(bridge._ytResolveTimer);
         if (bridge.ws) {
             try { bridge.ws.close(1000); } catch {}
             bridge.ws = null;
@@ -740,17 +741,33 @@ class ChatRelayService {
         if (!token) return false;
         const H = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
 
-        // Resolve the currently-live broadcast's liveChatId.
-        let liveChatId = null;
-        for (const status of ['active', 'upcoming']) {
-            try {
-                const r = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&broadcastStatus=${status}&broadcastType=all&maxResults=10`, { headers: H });
-                if (!r.ok) continue;
-                const j = await r.json();
-                const item = (j.items || []).find(b => b.snippet && b.snippet.liveChatId);
-                if (item) { liveChatId = item.snippet.liveChatId; break; }
-            } catch { /* try next */ }
-        }
+        // Resolve the CURRENT live broadcast's liveChatId. A reconnect (or a flaky stream)
+        // makes YouTube spin up a FRESH broadcast + chat each time, so pick the most
+        // recently-started active broadcast ("newest wins") rather than the first one — that
+        // avoids locking onto a stale broadcast that still lists as 'active' while viewers
+        // (and the actual restream) are on a newer one.
+        const findLiveChatId = async () => {
+            let best = null; // { liveChatId, started }
+            for (const status of ['active', 'upcoming']) {
+                try {
+                    const r = await fetch(`https://www.googleapis.com/youtube/v3/liveBroadcasts?part=snippet&broadcastStatus=${status}&broadcastType=all&maxResults=20`, { headers: H });
+                    if (r.ok) {
+                        const j = await r.json();
+                        for (const b of (j.items || [])) {
+                            const lc = b.snippet && b.snippet.liveChatId;
+                            if (!lc) continue;
+                            const s = b.snippet;
+                            const started = Date.parse(s.actualStartTime || s.scheduledStartTime || s.publishedAt || '') || 0;
+                            if (!best || started > best.started) best = { liveChatId: lc, started };
+                        }
+                    }
+                } catch { /* try next status */ }
+                if (best && status === 'active') break; // an active broadcast beats an upcoming one
+            }
+            return best && best.liveChatId;
+        };
+
+        let liveChatId = await findLiveChatId();
         if (!liveChatId) {
             // Linked but no live chat yet — retry, but BACK OFF. Each attempt spends 2
             // liveBroadcasts.list calls; a flat 15s retry runs forever (≈480 units/hr)
@@ -764,9 +781,32 @@ class ChatRelayService {
         }
         bridge._ytDiscoveryAttempts = 0; // found a live chat — reset backoff
 
-        console.log(`[ChatRelay] YouTube: using official liveChat API for stream ${bridge.streamId}`);
+        console.log(`[ChatRelay] YouTube: using official liveChat API for stream ${bridge.streamId} (chat ${liveChatId})`);
         bridge._ytPageToken = undefined;
         bridge._ytFirstPoll = true; // skip the initial backlog; only relay new messages
+
+        // Periodically re-resolve the live chat. If the stream reconnected and YouTube rotated
+        // to a new broadcast/chat, follow it — otherwise the relay silently polls a dead chat
+        // (only a hard 403/404 would trigger a re-resolve, and a stale broadcast can keep
+        // returning empty 200s forever). Cheap: one list call at a slow cadence.
+        clearTimeout(bridge._ytResolveTimer);
+        const scheduleResolve = () => {
+            if (bridge.stopped) return;
+            bridge._ytResolveTimer = setTimeout(async () => {
+                if (bridge.stopped) return;
+                try {
+                    const current = await findLiveChatId();
+                    if (current && current !== liveChatId) {
+                        console.log(`[ChatRelay] YouTube: live chat rotated for stream ${bridge.streamId} → ${current}`);
+                        liveChatId = current;
+                        bridge._ytPageToken = undefined;
+                        bridge._ytFirstPoll = true; // don't dump the new chat's backlog
+                    }
+                } catch { /* keep the current chat */ }
+                scheduleResolve();
+            }, 90000);
+        };
+        scheduleResolve();
 
         const poll = async () => {
             if (bridge.stopped) return;
