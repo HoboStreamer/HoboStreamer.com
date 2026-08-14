@@ -459,17 +459,53 @@ function toast(msg, type = 'info') {
     const el = document.createElement('div');
     el.className = `toast ${type}${isPassiveEarnToast ? ' toast-passive' : ''}`;
     el.setAttribute('role', 'status');
+    el.title = 'Left-click to dismiss · right-click to copy';
     const icon = document.createElement('i');
     icon.className = `fa-solid ${icons[type] || icons.info}`;
     el.appendChild(icon);
-    el.appendChild(document.createTextNode(` ${text}`));
+    // Text in its own span so it can be selected/copied cleanly.
+    const span = document.createElement('span');
+    span.className = 'toast-text';
+    span.textContent = ` ${text}`;
+    el.appendChild(span);
     c.appendChild(el);
-    const timeout = isPassiveEarnToast ? 1600 : (durations[type] || 2600);
-    setTimeout(() => {
+
+    let removed = false;
+    const dismiss = () => {
+        if (removed) return; removed = true;
         el.style.opacity = '0';
         el.style.transform = 'translate3d(0, -8px, 0) scale(0.98)';
         setTimeout(() => el.remove(), 220);
-    }, timeout);
+    };
+    const baseTimeout = isPassiveEarnToast ? 1600 : (durations[type] || 2600);
+    let timer = setTimeout(dismiss, baseTimeout);
+    // Hovering pauses auto-dismiss so you can read / select / copy long error text.
+    el.addEventListener('mouseenter', () => clearTimeout(timer));
+    el.addEventListener('mouseleave', () => { clearTimeout(timer); timer = setTimeout(dismiss, 1200); });
+    // Left-click dismisses — unless you're mid-selection inside the toast.
+    el.addEventListener('click', () => {
+        const sel = (window.getSelection && window.getSelection().toString()) || '';
+        if (!sel) dismiss();
+    });
+    // Right-click copies the toast text to the clipboard (and keeps it up a moment).
+    el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const flash = () => { el.classList.add('toast-copied'); clearTimeout(timer); timer = setTimeout(dismiss, 1400); };
+        const fallback = () => {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select();
+                document.execCommand('copy'); ta.remove();
+            } catch { /* */ }
+            flash();
+        };
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(flash, fallback);
+            } else fallback();
+        } catch { fallback(); }
+    });
 }
 // Expose app-level toast under a stable name so chat.js (loaded after this file)
 // can delegate to it without triggering infinite recursion.

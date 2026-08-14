@@ -5569,7 +5569,10 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     pointer-events: none;
 }
 .toast {
-    pointer-events: none;
+    pointer-events: auto;                 /* clickable + right-click-copyable */
+    -webkit-user-select: text;
+    user-select: text;                    /* error text can be selected/copied */
+    cursor: pointer;
     padding: 10px 14px;
     border-radius: 12px;
     background: rgba(23, 27, 39, 0.88);
@@ -5585,6 +5588,12 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     max-width: min(280px, calc(100vw - 24px));
     backdrop-filter: blur(12px);
     opacity: 0.96;
+    transition: opacity .22s ease, transform .22s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.toast .toast-text { -webkit-user-select: text; user-select: text; }
+.toast.toast-copied {
+    border-color: var(--success, #2ecc71) !important;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--success, #2ecc71) 40%, transparent), 0 10px 24px rgba(0,0,0,0.22);
 }
 .toast.toast-passive {
     opacity: 0.9;
