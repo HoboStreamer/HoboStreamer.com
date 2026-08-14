@@ -28,10 +28,24 @@ function cookieOpts() {
 function resultPage(payload) {
     const data = JSON.stringify(payload);
     return `<!doctype html><html><head><meta charset="utf-8"><title>Connecting…</title>
-<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-.box{text-align:center}.ok{color:#53fc18}.err{color:#ff6b6b}</style></head>
-<body><div class="box"><h2 class="${payload.ok ? 'ok' : 'err'}">${payload.ok ? '✓ Connected' : '✗ Connection failed'}</h2>
-<p>${payload.ok ? 'PowerChat account linked. You can close this window.' : (payload.error || 'Something went wrong.')}</p></div>
+<style>
+:root{color-scheme:dark}
+body{font-family:system-ui,-apple-system,sans-serif;background:radial-gradient(circle at 50% 30%,#1b1b22,#0c0c11);color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.box{text-align:center;padding:24px;animation:rise .4s cubic-bezier(.34,1.4,.64,1)}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.icon{width:72px;height:72px;border-radius:50%;margin:0 auto 18px;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800}
+.ok .icon{background:#0f3a17;color:#53fc18;box-shadow:0 0 0 3px rgba(83,252,24,.35);animation:pop .5s cubic-bezier(.34,1.7,.5,1)}
+.err .icon{background:#3a0f14;color:#ff6b6b;box-shadow:0 0 0 3px rgba(255,107,107,.3);animation:shake .5s}
+@keyframes pop{0%{transform:scale(0)}70%{transform:scale(1.2)}100%{transform:scale(1)}}
+@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+h2{margin:0 0 6px;font-size:1.4rem}.ok h2{color:#53fc18}.err h2{color:#ff6b6b}
+p{color:#aaa;margin:0;max-width:340px;line-height:1.5}
+.close-hint{margin-top:16px;font-size:.78rem;color:#666}
+</style></head>
+<body><div class="box ${payload.ok ? 'ok' : 'err'}"><div class="icon">${payload.ok ? '✓' : '✕'}</div>
+<h2>${payload.ok ? 'Connected!' : 'Connection failed'}</h2>
+<p>${payload.ok ? 'PowerChat account linked. Returning to HoboStreamer…' : (payload.error || 'Something went wrong.')}</p>
+<div class="close-hint">${payload.ok ? 'This window closes automatically.' : 'You can close this window.'}</div></div>
 <script>(function(){
   var msg = Object.assign({ type: 'powerchat-oauth' }, ${data});
   try { if (window.opener) window.opener.postMessage(msg, '${config.baseUrl}'); } catch(e){}
