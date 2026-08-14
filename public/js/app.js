@@ -1032,7 +1032,21 @@ function showPage(page) {
         const link = document.querySelector(`.nav-link[data-page="${navPage}"]`);
         if (link) link.classList.add('active');
     }
+    updateNavHeroTransparency();
 }
+
+// Transparent nav over the home hero: it blends into the hero at the very top and its glass
+// background fades in as soon as you scroll down. Only on the home page — every other page
+// keeps its solid nav from the top.
+function updateNavHeroTransparency() {
+    const nav = document.querySelector('.navbar');
+    if (!nav) return;
+    const homeActive = document.getElementById('page-home')?.classList.contains('active');
+    const atTop = (window.scrollY || window.pageYOffset || 0) < 28;
+    nav.classList.toggle('nav-hero-top', !!homeActive && atTop);
+}
+window.addEventListener('scroll', updateNavHeroTransparency, { passive: true });
+window.addEventListener('resize', updateNavHeroTransparency, { passive: true });
 
 /* ── Nav Dropdown Helpers ──────────────────────────────────────── */
 function toggleNavDropdown(id) {
@@ -1315,6 +1329,7 @@ async function loadHeroData() {
 
 async function loadHome() {
     void loadHomeChangelog();
+    updateNavHeroTransparency();  // transparent nav over the hero at the top
     startHeroRotation();      // instant static rotation; loadHeroData upgrades it with AI slogans
     void loadHeroData();      // stats bar, floating-thumbnail collage, AI slogans
 
