@@ -1091,14 +1091,18 @@ async function start() {
             // Also clean up old live-stream thumbnails (>1 hour)
             thumbnailService.cleanupOldThumbnails();
 
-            // Generate server-side thumbnails for RTMP streams (no client capture available)
+            // Generate server-side thumbnails for RTMP streams (no client capture available).
+            // A managed-slot "Go Live" publishes under the SLOT's stream key, so prefer
+            // managed_streams.stream_key over the personal users.stream_key — the RTMP
+            // server's activeStreams map (and the HTTP-FLV URL) are keyed by the publish key.
             const rtmpStreams = db.all(
-                `SELECT s.id, u.stream_key FROM streams s
+                `SELECT s.id, COALESCE(ms.stream_key, u.stream_key) AS stream_key FROM streams s
                  JOIN users u ON s.user_id = u.id
+                 LEFT JOIN managed_streams ms ON s.managed_stream_id = ms.id
                  WHERE s.is_live = 1 AND s.protocol = 'rtmp'`
             );
             for (const rs of rtmpStreams) {
-                if (!rtmpServer.isReceiving(rs.stream_key)) continue;
+                if (!rs.stream_key || !rtmpServer.isReceiving(rs.stream_key)) continue;
                 if (!thumbnailService.shouldRefreshLiveThumbnail(rs.id, 120000)) continue;
                 thumbnailService.generateLiveStreamThumbnail(rs.id, rs.stream_key, { minAgeMs: 120000 }).catch(() => {});
             }

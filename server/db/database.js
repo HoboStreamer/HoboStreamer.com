@@ -2112,6 +2112,7 @@ function getLiveStreams() {
     return all(`
         SELECT s.*, u.username, u.display_name, u.avatar_url, u.profile_color,
                ms.slug AS managed_stream_slug, ms.id AS managed_stream_id,
+               ms.stream_key AS managed_stream_key,
                ms.browser_mode, ms.streaming_method
         FROM streams s
         JOIN users u ON s.user_id = u.id
