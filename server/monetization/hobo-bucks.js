@@ -1,7 +1,8 @@
 /**
  * HoboStreamer — Hobo Bucks Engine
  * 
- * Virtual currency: 1 Hobo Buck = $1.00 USD
+ * Virtual currency: integer "bit"-style Hobo Bucks. 100 Bucks = $1.00 streamer cashout.
+ * Viewers buy at a premium with volume discounts (priceUsdForBucks) — the platform margin.
  * Features: 
  *   - Buy Hobo Bucks (PayPal)
  *   - Donate to streamers
@@ -12,14 +13,41 @@
 const db = require('../db/database');
 const config = require('../config');
 
-function normalizeMoneyAmount(amount) {
-    const value = Number(amount);
+// Hobo Bucks are integer "bit"-style units: 100 bucks = $1.00 streamer cashout.
+const CASHOUT_BUCKS_PER_USD = 100;
+const MAX_BUCKS = 10_000_000;
+
+function normalizeBucks(amount) {
+    const value = Math.round(Number(amount));
     if (!Number.isFinite(value)) throw new Error('Amount must be a valid number');
-    const rounded = Math.round(value * 100) / 100;
-    if (rounded <= 0) throw new Error('Amount must be positive');
-    if (rounded > 10000) throw new Error('Amount exceeds maximum allowed');
-    return rounded;
+    if (value <= 0) throw new Error('Amount must be a positive whole number of Hobo Bucks');
+    if (value > MAX_BUCKS) throw new Error('Amount exceeds maximum allowed');
+    return value;
 }
+
+// Streamer cashout value of N bucks, in USD.
+function cashoutUsd(bucks) { return Math.round((Number(bucks) || 0)) / CASHOUT_BUCKS_PER_USD; }
+
+// Viewer purchase price (USD) for buying `bucks`. Volume discount: bigger buys are
+// cheaper per buck. Cashout is fixed at $0.01/buck, so the spread is the platform margin.
+const BUCKS_PRICE_TIERS = [
+    { min: 25000, perBuck: 0.0110 },
+    { min: 10000, perBuck: 0.0115 },
+    { min: 5000,  perBuck: 0.0120 },
+    { min: 2500,  perBuck: 0.0124 },
+    { min: 1000,  perBuck: 0.0130 },
+    { min: 500,   perBuck: 0.0140 },
+    { min: 0,     perBuck: 0.0150 },
+];
+function priceUsdForBucks(bucks) {
+    const b = Math.max(0, Math.round(Number(bucks) || 0));
+    const tier = BUCKS_PRICE_TIERS.find(t => b >= t.min) || BUCKS_PRICE_TIERS[BUCKS_PRICE_TIERS.length - 1];
+    return Math.round(b * tier.perBuck * 100) / 100; // USD, cents precision
+}
+// Preset packages surfaced in the buy UI.
+const BUCKS_PACKAGES = [100, 500, 1000, 2500, 5000, 10000, 25000].map(bucks => ({
+    bucks, usd: priceUsdForBucks(bucks),
+}));
 
 function normalizeText(value, maxLen = 300) {
     if (value === undefined || value === null || value === '') return null;
@@ -46,7 +74,7 @@ class HoboBucks {
      * @param {string} paypalTxId - PayPal transaction ID
      */
     purchase(userId, amount, paypalTxId) {
-        amount = normalizeMoneyAmount(amount);
+        amount = normalizeBucks(amount);
         const txId = normalizeText(paypalTxId, 128);
         const tx = db.createTransaction({
             from_user_id: null,
@@ -76,7 +104,7 @@ class HoboBucks {
      * @param {string} message - Donation message
      */
     donate(fromUserId, toUserId, streamId, amount, message, goalId = null) {
-        amount = normalizeMoneyAmount(amount);
+        amount = normalizeBucks(amount);
         message = normalizeText(message, 300);
 
         // Deduct from donor
@@ -134,10 +162,11 @@ class HoboBucks {
      * Request cashout (goes to escrow for admin review)
      */
     requestCashout(userId, amount, paypalEmail) {
-        amount = normalizeMoneyAmount(amount);
+        amount = normalizeBucks(amount);
         paypalEmail = validatePaypalEmail(paypalEmail);
-        if (amount < config.hoboBucks.minCashout) {
-            throw new Error(`Minimum cashout is $${config.hoboBucks.minCashout.toFixed(2)}`);
+        const minBucks = config.hoboBucks.minCashoutBucks;
+        if (amount < minBucks) {
+            throw new Error(`Minimum cashout is ${minBucks.toLocaleString()} Hobo Bucks ($${cashoutUsd(minBucks).toFixed(2)})`);
         }
 
         // Only the cashout balance (received donations) can be cashed out.
@@ -157,7 +186,7 @@ class HoboBucks {
         return {
             transaction_id: tx.lastInsertRowid,
             amount,
-            usd_value: amount.toFixed(2),
+            usd_value: cashoutUsd(amount).toFixed(2),
             status: 'escrow',
             hold_days: config.hoboBucks.escrowDays,
         };
@@ -195,7 +224,7 @@ class HoboBucks {
      * balance, so they can re-donate / give back to the community instead of cashing out.
      */
     recycleCashout(userId, amount) {
-        amount = normalizeMoneyAmount(amount);
+        amount = normalizeBucks(amount);
         if (!db.deductHoboBucksCashout(userId, amount)) {
             throw new Error('Insufficient cashout balance');
         }
@@ -268,7 +297,7 @@ class HoboBucks {
      */
     createGoal(userId, { title, target_amount, image_url = null, media_type = null } = {}) {
         const safeTitle = normalizeText(title, 120);
-        const safeAmount = Math.round(normalizeMoneyAmount(target_amount));
+        const safeAmount = Math.round(normalizeBucks(target_amount));
         if (!safeTitle) throw new Error('Title is required');
         const mt = ['image', 'video'].includes(media_type) ? media_type : null;
         return db.createDonationGoal(userId, { title: safeTitle, target_amount: safeAmount, image_url: image_url || null, media_type: mt });
@@ -280,7 +309,7 @@ class HoboBucks {
         if (!g || Number(g.user_id) !== Number(userId)) throw new Error('Goal not found');
         const fields = {};
         if (patch.title !== undefined) { const t = normalizeText(patch.title, 120); if (!t) throw new Error('Title is required'); fields.title = t; }
-        if (patch.target_amount !== undefined) fields.target_amount = Math.round(normalizeMoneyAmount(patch.target_amount));
+        if (patch.target_amount !== undefined) fields.target_amount = Math.round(normalizeBucks(patch.target_amount));
         if (patch.image_url !== undefined) fields.image_url = patch.image_url || null;
         if (patch.media_type !== undefined) fields.media_type = ['image', 'video'].includes(patch.media_type) ? patch.media_type : null;
         if (patch.is_active !== undefined) {
@@ -302,4 +331,11 @@ class HoboBucks {
     }
 }
 
-module.exports = new HoboBucks();
+const _hoboBucks = new HoboBucks();
+// Expose the pricing/cashout helpers + packages on the singleton for routes.
+_hoboBucks.priceUsdForBucks = priceUsdForBucks;
+_hoboBucks.cashoutUsd = cashoutUsd;
+_hoboBucks.normalizeBucks = normalizeBucks;
+_hoboBucks.BUCKS_PACKAGES = BUCKS_PACKAGES;
+_hoboBucks.CASHOUT_BUCKS_PER_USD = CASHOUT_BUCKS_PER_USD;
+module.exports = _hoboBucks;

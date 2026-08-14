@@ -99,8 +99,8 @@ class HoboBucks {
      * Request cashout (goes to escrow for admin review)
      */
     requestCashout(userId, amount, paypalEmail) {
-        if (amount < config.hoboBucks.minCashout) {
-            throw new Error(`Minimum cashout is $${config.hoboBucks.minCashout.toFixed(2)}`);
+        if (amount < config.hoboBucks.minCashoutBucks) {
+            throw new Error(`Minimum cashout is ${config.hoboBucks.minCashoutBucks.toLocaleString()} Hobo Bucks`);
         }
 
         if (!db.deductHoboBucks(userId, amount)) {
@@ -119,7 +119,7 @@ class HoboBucks {
         return {
             transaction_id: tx.lastInsertRowid,
             amount,
-            usd_value: amount.toFixed(2),
+            usd_value: (amount / 100).toFixed(2),
             status: 'escrow',
             hold_days: config.hoboBucks.escrowDays,
         };

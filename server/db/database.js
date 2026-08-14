@@ -739,8 +739,8 @@ function initDb() {
         // Master switch is OFF by default so nothing goes live until an admin enables it.
         const paymentSeeds = [
             ['payments_enabled', 'false', 'Master switch: enable real-money purchases & subscriptions', 'boolean'],
-            ['bucks_per_usd', '1', 'Hobo Bucks granted per 1 USD (1 Buck = $1.00)', 'number'],
-            ['bucks_min_purchase_usd', '5', 'Minimum Hobo Bucks purchase in USD', 'number'],
+            ['bucks_per_usd', '100', 'Hobo Bucks value per 1 USD (100 Bucks = $1.00 cashout). Purchase price adds a margin, see the buy tiers.', 'number'],
+            ['bucks_min_purchase_bucks', '100', 'Minimum Hobo Bucks purchase (bucks)', 'number'],
             ['sub_price_usd', '4.99', 'Monthly channel subscription price in USD', 'number'],
             ['sub_streamer_share_pct', '70', 'Percent of a subscription that goes to the streamer (as Hobo Bucks)', 'number'],
             // PayPal (REST)
@@ -769,6 +769,29 @@ function initDb() {
         ];
         const seedPay = database.prepare("INSERT OR IGNORE INTO site_settings (key, value, description, type) VALUES (?, ?, ?, ?)");
         for (const [k, v, d, t] of paymentSeeds) seedPay.run(k, v, d, t);
+
+        // ── One-time migration: decimal-dollar Hobo Bucks → bit-style (×100) ──────────
+        // Old model: 1 buck = $1 (stored as decimal dollars). New model: integer bucks,
+        // 100 bucks = $1. So existing balances / goals / ledger amounts multiply by 100,
+        // and the value rate flips from 1 to 100. Guarded so it runs exactly once.
+        try {
+            const done = database.prepare("SELECT value FROM site_settings WHERE key = 'bucks_bits_migration_done'").get();
+            if (!done) {
+                database.exec(`
+                    UPDATE users SET
+                        hobo_bucks_balance = ROUND(COALESCE(hobo_bucks_balance,0) * 100),
+                        hobo_bucks_cashout_balance = ROUND(COALESCE(hobo_bucks_cashout_balance,0) * 100);
+                    UPDATE donation_goals SET
+                        target_amount = ROUND(COALESCE(target_amount,0) * 100),
+                        current_amount = ROUND(COALESCE(current_amount,0) * 100);
+                    UPDATE transactions SET amount = ROUND(COALESCE(amount,0) * 100);
+                `);
+                // Flip the value rate (used for sub-share + external-tip conversion) 1 → 100.
+                database.prepare("UPDATE site_settings SET value = '100' WHERE key = 'bucks_per_usd'").run();
+                database.prepare("INSERT OR REPLACE INTO site_settings (key, value, description, type) VALUES ('bucks_bits_migration_done', '1', 'Internal: decimal→bit Hobo Bucks migration applied', 'boolean')").run();
+                console.log('[DB] Migrated Hobo Bucks decimal-dollars → bit-style (×100)');
+            }
+        } catch (e) { console.warn('[DB] Hobo Bucks bit migration:', e.message); }
 
         // AI analysis subsystem (configured in hobo.tools/admin → AI). Master switch
         // OFF by default so no API calls (or cost) happen until an admin enables it.

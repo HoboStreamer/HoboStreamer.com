@@ -80,9 +80,10 @@ function _handleDonation(userId, data) {
     const alerts = require('../monetization/alerts');
     const hoboBucks = require('../monetization/hobo-bucks');
 
-    // PowerChat amounts are in cents; amountUsdCents is the normalized-to-USD value.
+    // PowerChat amounts are in cents. Hobo Bucks are bit-style (100 bucks = $1), so 1 buck
+    // = 1 cent — the cent value IS the Hobo Bucks value of an external tip.
     const cents = Number(data.amountUsdCents || data.amountCents || 0);
-    const amount = Math.max(0, Math.round(cents / 100)); // Hobo Bucks goals are whole dollars
+    const amount = Math.max(0, Math.round(cents)); // Hobo Bucks (= USD cents)
     const donor = String(data.donorName || 'Someone').slice(0, 80);
     const message = String(data.message || '').slice(0, 500);
     const goalId = _goalIdFromRef(data.appExternalRef);
@@ -104,7 +105,7 @@ function _handleDonation(userId, data) {
     try {
         db.saveChatMessage({
             stream_id: streamId, channel_user_id: userId, user_id: null, username: donor,
-            message: `${donor} tipped $${amount}${message ? ': ' + message : ''} (PowerChat)`,
+            message: `${donor} tipped ${amount.toLocaleString()} Hobo Bucks${message ? ': ' + message : ''} (PowerChat)`,
             message_type: 'donation',
             metadata: { kind: 'donation', amount, message, username: donor, source: 'powerchat' },
         });
@@ -123,7 +124,7 @@ function _handleDonation(userId, data) {
         try {
             db.saveChatMessage({
                 stream_id: streamId, channel_user_id: userId, user_id: null, username: 'Donation Goal',
-                message: `🎉 Goal reached: ${g.title} ($${g.target_amount})`,
+                message: `🎉 Goal reached: ${g.title} (${Number(g.target_amount || 0).toLocaleString()} HB)`,
                 message_type: 'donation',
                 metadata: { kind: 'goal-reached', goal_id: g.id, title: g.title, target: g.target_amount, image: g.image_url || null, media_type: g.media_type || null, by: donor },
             });
@@ -131,7 +132,7 @@ function _handleDonation(userId, data) {
         try { alerts.playAlertSound(chatServer, userId, streamId, 'goal'); } catch { /* */ }
     }
 
-    console.log(`[PowerChat] Donation: $${amount} to user ${userId} from ${donor}${goalResult && goalResult.reached ? ' (goal reached!)' : ''}`);
+    console.log(`[PowerChat] Donation: ${amount} bucks to user ${userId} from ${donor}${goalResult && goalResult.reached ? ' (goal reached!)' : ''}`);
 }
 
 // A membership/sub — surface as a chat event (no HoboStreamer sub system to credit).
@@ -205,7 +206,8 @@ function processEvent(envelope) {
 function simulateDonation(userId, { amountUsd = 5, donor = 'Test Tipper', message = 'Test tip ✨' } = {}) {
     const chatServer = require('../chat/chat-server');
     const alerts = require('../monetization/alerts');
-    const amount = Math.max(1, Math.round(amountUsd));
+    // Hobo Bucks are bit-style: $1 = 100 bucks, so the test dollar amount → bucks ×100.
+    const amount = Math.max(1, Math.round(amountUsd * 100));
     const ts = new Date().toISOString();
     let streamId = null;
     try { const live = db.getLiveStreamsByUserId(userId) || []; if (live.length) streamId = live[0].id; } catch { /* */ }

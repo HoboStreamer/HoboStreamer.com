@@ -762,9 +762,9 @@ async function loadBalance() {
     if (!currentUser) return;
     try {
         const data = await api('/funds/balance');
-        const bal = data.balance || 0;
+        const bal = Math.round(data.balance || 0);
         const balEl = document.getElementById('nav-balance-amount');
-        if (balEl) balEl.textContent = parseFloat(bal).toFixed(2);
+        if (balEl) balEl.textContent = bal.toLocaleString();
     } catch { /* silent */ }
     // Navbar Hobo Nickels = the GLOBAL currency (game / cosmetics / media wallet).
     try {
@@ -3903,7 +3903,7 @@ function _goalWidgetItemHTML(g) {
             <div class="cgw-body">
                 <div class="cgw-top">
                     <span class="cgw-title">${reached ? '🎉 ' : ''}${esc(g.title)}</span>
-                    <span class="cgw-amt">$${g.current_amount} / $${g.target_amount}</span>
+                    <span class="cgw-amt">${Number(g.current_amount).toLocaleString()} / ${Number(g.target_amount).toLocaleString()} HB</span>
                     <span class="cgw-pct">${reached ? '✓' : pct + '%'}</span>
                 </div>
             </div>
@@ -3934,7 +3934,7 @@ function openGoalPopover(id) {
             <div class="cgw-pop-info">
                 <div class="cgw-pop-title">${reached ? '🎉 ' : ''}${esc(g.title)}</div>
                 <div class="cgw-bar cgw-pop-bar"><div class="cgw-fill" style="width:${pct}%"></div></div>
-                <div class="cgw-pop-amt">$${g.current_amount} / $${g.target_amount} Hobo Bucks · ${pct}%${reached ? ' · Goal reached!' : ''}</div>
+                <div class="cgw-pop-amt">${Number(g.current_amount).toLocaleString()} / ${Number(g.target_amount).toLocaleString()} Hobo Bucks · ${pct}%${reached ? ' · Goal reached!' : ''}</div>
                 ${(!reached && typeof currentUser !== 'undefined' && currentUser) ? `<button class="btn btn-primary" onclick="_donateToGoal(${g.id})"><i class="fa-solid fa-gift"></i> Donate to this goal</button>` : ''}
             </div>
         </div>`;

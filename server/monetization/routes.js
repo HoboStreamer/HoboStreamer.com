@@ -88,7 +88,7 @@ router.post('/donate', requireAuth, (req, res) => {
             db.saveChatMessage({
                 stream_id: stream_id || null, channel_user_id: streamer_id, user_id: req.user.id,
                 username: donor,
-                message: `${donor} donated $${result.amount} Hobo Bucks${message ? ': ' + message : ''}`,
+                message: `${donor} donated ${result.amount.toLocaleString()} Hobo Bucks${message ? ': ' + message : ''}`,
                 message_type: 'donation',
                 metadata: { kind: 'donation', amount: result.amount, message: message || '', username: donor, user_id: req.user.id, avatar_url: donorUser?.avatar_url || null },
             });
@@ -112,7 +112,7 @@ router.post('/donate', requireAuth, (req, res) => {
                 db.saveChatMessage({
                     stream_id: stream_id || null, channel_user_id: streamer_id, user_id: null,
                     username: 'Donation Goal',
-                    message: `🎉 Goal reached: ${g.title} ($${g.target_amount})`,
+                    message: `🎉 Goal reached: ${g.title} (${(g.target_amount || 0).toLocaleString()} HB)`,
                     message_type: 'donation',
                     metadata: { kind: 'goal-reached', goal_id: g.id, title: g.title, target: g.target_amount, image: g.image_url || null, media_type: g.media_type || null, by: donor },
                 });
@@ -145,12 +145,14 @@ router.post('/cashout', requireAuth, (req, res) => {
 // ── Get Balance ──────────────────────────────────────────────
 router.get('/balance', requireAuth, (req, res) => {
     const user = db.getUserById(req.user.id);
-    const cashout = user.hobo_bucks_cashout_balance || 0;
+    const bal = Math.round(user.hobo_bucks_balance || 0);
+    const cashout = Math.round(user.hobo_bucks_cashout_balance || 0);
     res.json({
-        balance: user.hobo_bucks_balance,
-        usd_value: user.hobo_bucks_balance.toFixed(2),
+        // Integer Hobo Bucks; USD is the streamer cashout value (100 bucks = $1).
+        balance: bal,
+        usd_value: hoboBucks.cashoutUsd(bal).toFixed(2),
         cashout_balance: cashout,
-        cashout_usd_value: cashout.toFixed(2),
+        cashout_usd_value: hoboBucks.cashoutUsd(cashout).toFixed(2),
     });
 });
 

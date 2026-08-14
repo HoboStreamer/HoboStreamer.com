@@ -3228,18 +3228,19 @@ function addDonationMessage(msg) {
     el.className = 'chat-msg donation';
 
     const donorName = esc(msg.username || msg.from || 'Anonymous');
-    const amount = msg.amount || 0;
+    const amount = Math.round(msg.amount || 0);
+    const amtStr = amount.toLocaleString();
     const rawDonText = msg.message || '';
     const text = rawDonText ? `: ${(typeof parseEmotes === 'function') ? parseEmotes(rawDonText) : esc(rawDonText)}` : '';
 
-    el.innerHTML = `<i class="fa-solid fa-coins" style="color:var(--accent)"></i> <strong>${donorName}</strong> donated <strong>$${amount} Hobo Bucks</strong>${text}`;
+    el.innerHTML = `<i class="fa-solid fa-coins" style="color:var(--accent)"></i> <strong>${donorName}</strong> donated <strong>${amtStr} Hobo Bucks</strong>${text}`;
 
     container.appendChild(el);
     scrollChat();
     if (_chatUserScrolledUp) _onNewChatMessageWhileScrolledUp();
     queueFullscreenChatEntry({
         kind: 'donation',
-        html: `<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:var(--accent)"><i class="fa-solid fa-coins"></i> ${donorName}</span></div><div class="fullscreen-chat-text">donated <strong>$${amount} Hobo Bucks</strong>${text}</div>`,
+        html: `<div class="fullscreen-chat-meta"><span class="fullscreen-chat-user" style="color:var(--accent)"><i class="fa-solid fa-coins"></i> ${donorName}</span></div><div class="fullscreen-chat-text">donated <strong>${amtStr} Hobo Bucks</strong>${text}</div>`,
     });
 
     // TTS for donations
@@ -3256,7 +3257,7 @@ function addDonationGoalMessage(msg) {
     const g = msg.goal || {};
     const by = esc(msg.by || 'the community');
     const title = esc(g.title || 'Goal');
-    const target = (g.target_amount != null && g.target_amount !== '') ? `$${g.target_amount}` : '';
+    const target = (g.target_amount != null && g.target_amount !== '') ? `${Number(g.target_amount).toLocaleString()} HB` : '';
     const media = g.image_url
         ? (g.media_type === 'video'
             ? `<video class="cgr-media" src="${esc(g.image_url)}" muted loop autoplay playsinline></video>`

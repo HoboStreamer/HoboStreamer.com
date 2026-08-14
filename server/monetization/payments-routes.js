@@ -10,6 +10,7 @@ const db = require('../db/database');
 const config = require('../config');
 const { requireAuth, optionalAuth } = require('../auth/auth');
 const pay = require('./payments');
+const hoboBucks = require('./hobo-bucks');
 
 const router = express.Router();
 function base() { return config.baseUrl.replace(/\/+$/, ''); }
@@ -23,17 +24,20 @@ router.get('/config', (req, res) => {
 router.post('/bucks/checkout', requireAuth, async (req, res) => {
     if (!pay.isEnabled()) return res.status(403).json({ error: 'Payments are not enabled' });
     const provider = String(req.body.provider || '').toLowerCase();
-    const amountUsd = Math.round(parseFloat(req.body.amountUsd) * 100) / 100;
-    const min = pay._num('bucks_min_purchase_usd', 5);
-    if (!Number.isFinite(amountUsd) || amountUsd < min) return res.status(400).json({ error: `Minimum purchase is $${min}` });
-    if (amountUsd > 1000) return res.status(400).json({ error: 'Amount too large' });
+    // The client picks a Hobo Bucks amount (bit-style); the USD price is derived from the
+    // volume-discount tiers so bigger buys are cheaper per buck and the platform keeps the spread.
+    let bucks;
+    try { bucks = hoboBucks.normalizeBucks(req.body.bucks); } catch (e) { return res.status(400).json({ error: e.message }); }
+    const minBucks = pay._num('bucks_min_purchase_bucks', 100);
+    if (bucks < minBucks) return res.status(400).json({ error: `Minimum purchase is ${minBucks.toLocaleString()} Hobo Bucks` });
+    if (bucks > 1_000_000) return res.status(400).json({ error: 'Amount too large' });
 
-    const bucks = pay.bucksForUsd(amountUsd);
+    const amountUsd = hoboBucks.priceUsdForBucks(bucks);
     const order = db.createPaymentOrder({
         user_id: req.user.id, provider, kind: 'bucks',
         amount_cents: Math.round(amountUsd * 100), bucks,
     });
-    const name = `${bucks} Hobo Bucks`;
+    const name = `${bucks.toLocaleString()} Hobo Bucks`;
     try {
         if (provider === 'stripe') {
             const r = await pay.stripeCheckout({

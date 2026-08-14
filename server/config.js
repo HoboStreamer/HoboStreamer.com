@@ -216,7 +216,11 @@ function buildConfig(registryValues) {
             audioPort: parseInt(process.env.JSMPEG_AUDIO_PORT || '9711', 10),
         },
         hoboBucks: {
-            minCashout: parseFloat(process.env.MIN_CASHOUT || '5.00'),
+            // Bit-style currency: integer bucks, 100 bucks = $1.00 streamer cashout
+            // (so 1 buck = $0.01 = one USD cent). Viewers buy at a premium with volume
+            // discounts (see hobo-bucks.js pricing tiers) — the spread is the platform margin.
+            cashoutBucksPerUsd: 100,
+            minCashoutBucks: parseInt(process.env.MIN_CASHOUT_BUCKS || '500', 10), // $5.00
             escrowDays: parseInt(process.env.ESCROW_HOLD_DAYS || '14', 10),
         },
         vod: {

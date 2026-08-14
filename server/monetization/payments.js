@@ -25,18 +25,23 @@ function n(key, dflt) { const v = parseFloat(db.getSetting(key)); return Number.
 
 function isEnabled() { return b('payments_enabled'); }
 
-/** USD (dollars) → whole Hobo Bucks. */
+/** USD (dollars) → whole Hobo Bucks at the VALUE rate (100 bucks = $1). Used for
+ *  converting real income (sub share, external tips) into bucks — NOT for purchase
+ *  pricing (buying adds a margin; see hobo-bucks.priceUsdForBucks). */
 function bucksForUsd(usd) {
-    const rate = n('bucks_per_usd', 1);
+    const rate = n('bucks_per_usd', 100);
     return Math.max(0, Math.round(usd * rate));
 }
 
 /** Public provider availability + pricing for the client. */
 function publicConfig() {
+    const hb = require('./hobo-bucks');
     return {
         enabled: isEnabled(),
-        bucksPerUsd: n('bucks_per_usd', 1),
-        minPurchaseUsd: n('bucks_min_purchase_usd', 5),
+        // Bit-style: 100 bucks = $1 cashout. Buy packages carry a per-buck premium.
+        cashoutBucksPerUsd: hb.CASHOUT_BUCKS_PER_USD,
+        packages: hb.BUCKS_PACKAGES,
+        minPurchaseBucks: n('bucks_min_purchase_bucks', 100),
         subPriceUsd: n('sub_price_usd', 4.99),
         providers: {
             paypal: isEnabled() && b('paypal_enabled') && !!s('paypal_client_id'),
@@ -231,9 +236,9 @@ function fulfillBucksOrder(order) {
     db.addHoboBucks(order.user_id, bucks);
     try {
         db.createTransaction({
-            from_user_id: null, to_user_id: order.user_id, amount: Math.round(order.amount_cents / 100),
+            from_user_id: null, to_user_id: order.user_id, amount: bucks, // ledger is in bucks
             type: 'purchase', status: 'completed',
-            message: `Purchased ${bucks} Hobo Bucks via ${order.provider}`,
+            message: `Purchased ${bucks.toLocaleString()} Hobo Bucks via ${order.provider}`,
         });
     } catch { /* ledger is best-effort */ }
     db.updatePaymentOrder(order.id, { status: 'credited', bucks });

@@ -667,7 +667,7 @@ function dashGoalCardHTML(g) {
                     <span class="muted">${pct}%${reached ? ' · ✓ reached' : (g.is_active ? '' : ' · closed')}</span>
                 </div>
                 <div class="goal-bar"><div class="goal-fill" style="width:${pct}%"></div></div>
-                <div class="muted" style="font-size:0.8rem;margin-top:2px">$${g.current_amount} / $${g.target_amount} Hobo Bucks</div>
+                <div class="muted" style="font-size:0.8rem;margin-top:2px">${Number(g.current_amount).toLocaleString()} / ${Number(g.target_amount).toLocaleString()} Hobo Bucks</div>
                 <div class="dash-goal-actions">
                     <button class="btn btn-xs btn-outline" onclick="editGoalModal(${g.id})"><i class="fa-solid fa-pen"></i> Edit</button>
                     ${g.is_active ? '' : `<button class="btn btn-xs btn-outline" onclick="reactivateGoal(${g.id})"><i class="fa-solid fa-rotate-left"></i> Reopen</button>`}
@@ -973,13 +973,14 @@ async function loadDashFunds() {
     if (!currentUser) return;
     try {
         const data = await api('/funds/balance');
-        const bal = parseFloat(data.balance || 0);
-        const cash = parseFloat(data.cashout_balance || 0);
+        const bal = Math.round(parseFloat(data.balance || 0));
+        const cash = Math.round(parseFloat(data.cashout_balance || 0));
         const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-        set('dash-funds-amount', bal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-        set('dash-funds-usd', `($${bal.toFixed(2)})`);
-        set('dash-cashout-amount', cash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-        set('dash-cashout-usd', `($${cash.toFixed(2)})`);
+        // Integer Hobo Bucks; USD shown is the cashout value (100 bucks = $1).
+        set('dash-funds-amount', bal.toLocaleString());
+        set('dash-funds-usd', `(${bal.toLocaleString()} HB)`);
+        set('dash-cashout-amount', cash.toLocaleString());
+        set('dash-cashout-usd', `($${(cash / 100).toFixed(2)})`);
     } catch { /* silent */ }
 }
 
@@ -988,7 +989,7 @@ function _bucksTxRow(t) {
     const me = currentUser?.id;
     const dt = new Date(t.created_at + (String(t.created_at).includes('Z') ? '' : 'Z'));
     const when = isNaN(dt) ? (t.created_at || '') : dt.toLocaleString();
-    const amt = parseFloat(t.amount || 0);
+    const amt = Math.round(parseFloat(t.amount || 0));
     let icon = 'fa-coins', label = t.type || 'transaction', sign = '', cls = '';
     if (t.type === 'purchase') { icon = 'fa-cart-shopping'; label = 'Purchased Hobo Bucks'; sign = '+'; cls = 'pos'; }
     else if (t.type === 'donation' && t.from_user_id === me) { icon = 'fa-hand-holding-heart'; label = `Tipped ${esc(t.to_display || t.to_username || 'a streamer')}`; sign = '−'; cls = 'neg'; }
@@ -1000,7 +1001,7 @@ function _bucksTxRow(t) {
     return `<div class="bucks-log-row">
         <div class="bucks-log-icon"><i class="fa-solid ${icon}"></i></div>
         <div class="bucks-log-main"><div class="bucks-log-label">${label}</div><div class="bucks-log-when">${esc(when)}</div>${note}</div>
-        <div class="bucks-log-amt ${cls}">${sign}$${amt.toFixed(2)}</div>
+        <div class="bucks-log-amt ${cls}">${sign}${amt.toLocaleString()} HB</div>
     </div>`;
 }
 
@@ -1029,11 +1030,11 @@ async function showBucksLogs() {
 async function dashRecycleBucks() {
     const raw = prompt('How many Hobo Bucks to move from your cashout balance into your spendable balance?');
     if (raw === null) return;
-    const amount = parseFloat(raw);
+    const amount = Math.round(parseFloat(raw));
     if (!(amount > 0)) return toast('Enter a positive amount', 'error');
     try {
         await api('/funds/recycle', { method: 'POST', body: { amount } });
-        toast(`Moved $${amount.toFixed(2)} to your spendable balance`, 'success');
+        toast(`Moved ${amount.toLocaleString()} Hobo Bucks to your spendable balance`, 'success');
         loadDashFunds();
     } catch (e) { toast(e.message || 'Failed', 'error'); }
 }

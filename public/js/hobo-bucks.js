@@ -1,7 +1,16 @@
 /* ═══════════════════════════════════════════════════════════════
    HoboStreamer — Hobo Bucks (Virtual Currency UI)
-   1 Hobo Buck = $1.00 USD
+   Bit-style: integer bucks. 100 Hobo Bucks = $1.00 streamer cashout.
    ═══════════════════════════════════════════════════════════════ */
+
+// Client mirror of the server volume-discount tiers (server is the source of truth;
+// this is just for the live custom-amount price preview). Keep in sync with hobo-bucks.js.
+const _BUCKS_TIERS = [[25000, 0.0110], [10000, 0.0115], [5000, 0.0120], [2500, 0.0124], [1000, 0.0130], [500, 0.0140], [0, 0.0150]];
+function _priceForBucks(b) {
+    b = Math.max(0, Math.round(Number(b) || 0));
+    const t = _BUCKS_TIERS.find(x => b >= x[0]) || _BUCKS_TIERS[_BUCKS_TIERS.length - 1];
+    return Math.round(b * t[1] * 100) / 100;
+}
 
 /**
  * Generate Buy Hobo Bucks modal HTML.
@@ -9,26 +18,22 @@
 function hoboBucksBuyModal() {
     return `
         <h3><i class="fa-solid fa-coins"></i> Buy Hobo Bucks</h3>
-        <p class="muted" style="margin-bottom:16px">1 Hobo Buck = $1.00</p>
+        <p class="muted" style="margin-bottom:16px">Tip streamers with Hobo Bucks — bigger packs cost less per buck. 100 Bucks = $1 to the streamer.</p>
 
         <div class="form-group">
-            <label>Amount</label>
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
-                <button class="btn btn-outline" onclick="setBuyAmount(5)">5 HB<br><small>$5</small></button>
-                <button class="btn btn-outline" onclick="setBuyAmount(10)">10 HB<br><small>$10</small></button>
-                <button class="btn btn-outline" onclick="setBuyAmount(25)">25 HB<br><small>$25</small></button>
-                <button class="btn btn-outline" onclick="setBuyAmount(50)">50 HB<br><small>$50</small></button>
-                <button class="btn btn-outline" onclick="setBuyAmount(100)">100 HB<br><small>$100</small></button>
-                <button class="btn btn-outline" onclick="setBuyAmount(250)">250 HB<br><small>$250</small></button>
+            <label>Choose a pack</label>
+            <div id="buy-packages" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
+                <p class="muted" style="grid-column:1/-1;text-align:center;font-size:0.85rem">Loading…</p>
             </div>
         </div>
 
         <div class="form-group">
-            <label>Custom Amount</label>
-            <input type="number" id="modal-buy-amount" class="form-input" placeholder="Enter amount" min="1">
+            <label>Custom amount (Hobo Bucks)</label>
+            <input type="number" id="modal-buy-amount" class="form-input" placeholder="e.g. 500" min="100" step="100" oninput="updateBuyPrice()">
         </div>
         <div class="form-group" style="text-align:center;padding:8px;background:var(--bg-primary);border-radius:var(--radius)">
             <span id="modal-buy-price" style="font-size:1.2rem;color:var(--accent);font-weight:700">$0.00</span>
+            <span class="muted" id="modal-buy-bucks" style="display:block;font-size:0.8rem"></span>
         </div>
 
         <div id="buy-providers" style="margin-top:8px">
@@ -36,7 +41,7 @@ function hoboBucksBuyModal() {
         </div>`;
 }
 
-/** Populate the buy modal with the enabled payment providers (called after render). */
+/** Populate the buy modal with packages + the enabled payment providers. */
 async function _initBuyBucks() {
     const box = document.getElementById('buy-providers');
     if (!box) return;
@@ -44,11 +49,20 @@ async function _initBuyBucks() {
     try { cfg = await api('/payments/config'); } catch { cfg = null; }
     if (!cfg || !cfg.enabled) {
         box.innerHTML = '<p class="muted" style="font-size:0.85rem;text-align:center">Purchases aren’t available right now.</p>';
+        const pkgBox = document.getElementById('buy-packages'); if (pkgBox) pkgBox.innerHTML = '';
         return;
     }
-    const min = cfg.minPurchaseUsd || 5;
+    // Package buttons.
+    const packages = (cfg.packages && cfg.packages.length) ? cfg.packages : [100, 500, 1000, 2500, 5000, 10000].map(bucks => ({ bucks, usd: _priceForBucks(bucks) }));
+    const pkgBox = document.getElementById('buy-packages');
+    if (pkgBox) pkgBox.innerHTML = packages.map(p =>
+        `<button class="btn btn-outline" onclick="setBuyAmount(${p.bucks})">${p.bucks.toLocaleString()} HB<br><small>$${Number(p.usd).toFixed(2)}</small></button>`
+    ).join('');
+
+    const min = cfg.minPurchaseBucks || 100;
     const amtInput = document.getElementById('modal-buy-amount');
-    if (amtInput) { amtInput.min = min; if (!amtInput.value) amtInput.value = min; updateBuyPrice(); }
+    if (amtInput) { amtInput.min = min; if (!amtInput.value) amtInput.value = packages[0]?.bucks || min; updateBuyPrice(); }
+
     const P = cfg.providers || {};
     const btn = (prov, label, icon, color) => P[prov]
         ? `<button class="btn btn-lg" style="width:100%;margin-top:8px;justify-content:center;background:${color};color:#fff;border:none" onclick="doPurchase('${prov}')"><i class="${icon}"></i> Pay with ${label}</button>`
@@ -62,12 +76,24 @@ async function _initBuyBucks() {
     box.innerHTML = buttons || '<p class="muted" style="font-size:0.85rem;text-align:center">No payment methods are enabled.</p>';
 }
 
+function setBuyAmount(bucks) {
+    const el = document.getElementById('modal-buy-amount');
+    if (el) { el.value = bucks; updateBuyPrice(); }
+}
+function updateBuyPrice() {
+    const bucks = Math.round(parseFloat(document.getElementById('modal-buy-amount')?.value) || 0);
+    const price = document.getElementById('modal-buy-price');
+    const sub = document.getElementById('modal-buy-bucks');
+    if (price) price.textContent = `$${_priceForBucks(bucks).toFixed(2)}`;
+    if (sub) sub.textContent = bucks > 0 ? `${bucks.toLocaleString()} Hobo Bucks` : '';
+}
+
 async function doPurchase(provider) {
     if (!currentUser) return showModal('login');
-    const amount = parseFloat(document.getElementById('modal-buy-amount').value);
-    if (!amount || amount < 1) return toast('Enter a valid amount', 'error');
+    const bucks = Math.round(parseFloat(document.getElementById('modal-buy-amount').value));
+    if (!bucks || bucks < 100) return toast('Enter at least 100 Hobo Bucks', 'error');
     try {
-        const data = await api('/payments/bucks/checkout', { method: 'POST', body: { provider, amountUsd: amount } });
+        const data = await api('/payments/bucks/checkout', { method: 'POST', body: { provider, bucks } });
         if (data.url) { window.location.href = data.url; return; }
         toast('Could not start checkout', 'error');
     } catch (e) { toast(e.message || 'Purchase failed', 'error'); }
@@ -125,39 +151,6 @@ function openSubscribeForCurrentStream() {
     showSubscribeModal(username);
 }
 
-function setBuyAmount(amount) {
-    document.getElementById('modal-buy-amount').value = amount;
-    updateBuyPrice();
-}
-
-function updateBuyPrice() {
-    const amount = parseFloat(document.getElementById('modal-buy-amount')?.value) || 0;
-    const price = document.getElementById('modal-buy-price');
-    if (price) price.textContent = `$${amount.toFixed(2)}`;
-}
-
-// Attach price update to input
-document.addEventListener('input', (e) => {
-    if (e.target.id === 'modal-buy-amount') updateBuyPrice();
-});
-
-async function doPurchase() {
-    if (!currentUser) return showModal('login');
-    const amount = parseFloat(document.getElementById('modal-buy-amount').value);
-    if (!amount || amount < 1) return toast('Enter a valid amount', 'error');
-
-    try {
-        // Simulated purchase — in production this would go through PayPal first
-        const data = await api('/funds/purchase', {
-            method: 'POST',
-            body: { amount, paypalTransactionId: `demo_${Date.now()}` }
-        });
-        toast(`Purchased ${amount} Hobo Bucks!`, 'success');
-        loadBalance();
-        closeModal();
-    } catch (e) { toast(e.message || 'Purchase failed', 'error'); }
-}
-
 /**
  * Generate Donate modal HTML.
  */
@@ -167,17 +160,17 @@ function hoboBucksDonateModal() {
         <p class="muted" style="margin-bottom:16px">Support this streamer!</p>
 
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
-            <button class="btn btn-outline" onclick="setDonateAmount(1)">1 HB</button>
-            <button class="btn btn-outline" onclick="setDonateAmount(2)">2 HB</button>
-            <button class="btn btn-outline" onclick="setDonateAmount(5)">5 HB</button>
-            <button class="btn btn-outline" onclick="setDonateAmount(10)">10 HB</button>
-            <button class="btn btn-outline" onclick="setDonateAmount(25)">25 HB</button>
-            <button class="btn btn-outline" onclick="setDonateAmount(50)">50 HB</button>
+            <button class="btn btn-outline" onclick="setDonateAmount(100)">100 HB</button>
+            <button class="btn btn-outline" onclick="setDonateAmount(250)">250 HB</button>
+            <button class="btn btn-outline" onclick="setDonateAmount(500)">500 HB</button>
+            <button class="btn btn-outline" onclick="setDonateAmount(1000)">1,000 HB</button>
+            <button class="btn btn-outline" onclick="setDonateAmount(2500)">2,500 HB</button>
+            <button class="btn btn-outline" onclick="setDonateAmount(5000)">5,000 HB</button>
         </div>
 
         <div class="form-group">
-            <label>Amount</label>
-            <input type="number" id="modal-donate-amount" class="form-input" placeholder="Amount" min="1">
+            <label>Amount (Hobo Bucks)</label>
+            <input type="number" id="modal-donate-amount" class="form-input" placeholder="e.g. 500" min="1" step="1">
         </div>
         <div class="form-group">
             <label>Message (optional)</label>
@@ -213,7 +206,7 @@ async function _loadDonateGoals() {
         const goals = (data.goals || []).filter(g => g.is_active);
         if (!goals.length) { wrap.style.display = 'none'; return; }
         sel.innerHTML = `<option value="">General support (no specific goal)</option>` +
-            goals.map(g => `<option value="${g.id}">${escHb(g.title)} — $${g.current_amount}/$${g.target_amount}</option>`).join('');
+            goals.map(g => `<option value="${g.id}">${escHb(g.title)} — ${Number(g.current_amount).toLocaleString()}/${Number(g.target_amount).toLocaleString()} HB</option>`).join('');
         wrap.style.display = '';
         // Pre-select a goal if the donate modal was opened from a goal popover.
         if (window._pendingDonateGoalId) {
@@ -244,9 +237,9 @@ async function doDonate() {
     try {
         await api('/funds/donate', {
             method: 'POST',
-            body: { streamer_id: streamerId, stream_id: (typeof currentStreamId !== 'undefined' ? currentStreamId : null) || null, amount, message, goal_id: goalId }
+            body: { streamer_id: streamerId, stream_id: (typeof currentStreamId !== 'undefined' ? currentStreamId : null) || null, amount: Math.round(amount), message, goal_id: goalId }
         });
-        toast(`Donated $${amount.toFixed(2)} Hobo Bucks!`, 'success');
+        toast(`Donated ${Math.round(amount).toLocaleString()} Hobo Bucks!`, 'success');
         loadBalance();
         closeModal();
     } catch (e) { toast(e.message || 'Donation failed', 'error'); }
@@ -258,11 +251,11 @@ async function doDonate() {
 function hoboBucksCashoutModal() {
     return `
         <h3><i class="fa-solid fa-money-bill-transfer"></i> Cash Out</h3>
-        <p class="muted" style="margin-bottom:16px">Draws from your <strong>cashout balance</strong> (Hobo Bucks sent to you). Minimum $5.00. Funds are held in escrow until admin approves.</p>
+        <p class="muted" style="margin-bottom:16px">Draws from your <strong>cashout balance</strong> (Hobo Bucks sent to you). 100 Bucks = $1.00. Minimum 500 HB ($5.00). Held in escrow until admin approves.</p>
 
         <div class="form-group">
             <label>Amount (Hobo Bucks)</label>
-            <input type="number" id="modal-cashout-amount" class="form-input" placeholder="5" min="5">
+            <input type="number" id="modal-cashout-amount" class="form-input" placeholder="500" min="500" step="100">
         </div>
         <div class="form-group">
             <label>PayPal Email</label>
@@ -281,7 +274,7 @@ document.addEventListener('input', (e) => {
     if (e.target.id === 'modal-cashout-amount') {
         const amt = parseFloat(e.target.value) || 0;
         const usd = document.getElementById('modal-cashout-usd');
-        if (usd) usd.textContent = `$${amt.toFixed(2)}`;
+        if (usd) usd.textContent = `$${(amt / 100).toFixed(2)}`; // 100 bucks = $1
     }
 });
 
@@ -307,13 +300,13 @@ async function doCashout() {
     const amount = parseFloat(document.getElementById('modal-cashout-amount').value);
     const paypalEmail = document.getElementById('modal-cashout-email').value.trim();
 
-    if (!amount || amount < 5) return toast('Minimum cashout is $5.00', 'error');
+    if (!amount || amount < 500) return toast('Minimum cashout is 500 Hobo Bucks ($5.00)', 'error');
     if (!paypalEmail) return toast('PayPal email required', 'error');
 
     try {
         await api('/funds/cashout', {
             method: 'POST',
-            body: { amount, paypalEmail }
+            body: { amount: Math.round(amount), paypalEmail }
         });
         toast('Cashout requested! Awaiting admin approval.', 'success');
         loadBalance();
