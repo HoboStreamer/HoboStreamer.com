@@ -198,13 +198,17 @@ repairZeroDurationVods().catch(() => {});
 function remuxForSeeking(filePath) {
     return new Promise((resolve) => {
         const ext = path.extname(filePath).toLowerCase();
-        if (ext !== '.webm') return resolve(false); // Only remux WebM
+        if (ext !== '.webm' && ext !== '.mp4') return resolve(false); // WebM + MP4 only
 
-        const tmpPath = filePath + '.remux.webm';
+        const tmpPath = filePath + '.remux' + ext;
+        // MP4: rewrite the fragmented recording into a plain, faststart (moov-at-front) MP4
+        // so finished-VOD playback seeks instantly. WebM: copy-remux to write cues/trailer.
+        const outArgs = ext === '.mp4'
+            ? ['-c', 'copy', '-movflags', '+faststart', '-fflags', '+genpts']
+            : ['-c', 'copy', '-fflags', '+genpts'];
         const proc = spawn('ffmpeg', [
             '-y', '-i', filePath,
-            '-c', 'copy',
-            '-fflags', '+genpts',
+            ...outArgs,
             tmpPath,
         ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
@@ -425,18 +429,33 @@ async function remuxClipFile(filePath) {
  */
 const _liveRemuxInProgress = new Set();
 
+function _seekableSidecarPath(filePath) {
+    if (!filePath) return null;
+    if (filePath.endsWith('.webm')) return filePath.replace(/\.webm$/, '.seekable.webm');
+    if (filePath.endsWith('.mp4')) return filePath.replace(/\.mp4$/, '.seekable.mp4');
+    return null;
+}
+
 function remuxForLiveSeeking(filePath) {
+    // Produce a fully-indexed seekable snapshot of the growing recording so DVR viewers can
+    // seek anywhere without the whole file. WebM: copy-remux to write cues. MP4: copy-remux
+    // with +faststart so a complete moov (all sample offsets) sits at the front — a bare
+    // <video> can then seek arbitrarily into a live MP4 (a fragmented file alone can't).
+    const seekablePath = _seekableSidecarPath(filePath);
+    if (!seekablePath) return Promise.resolve(false);
     if (_liveRemuxInProgress.has(filePath)) return Promise.resolve(false);
     _liveRemuxInProgress.add(filePath);
 
-    const seekablePath = filePath.replace(/\.webm$/, '.seekable.webm');
-    const tmpPath = filePath + '.live-remux.tmp.webm';
+    const isMp4 = filePath.endsWith('.mp4');
+    const tmpPath = filePath + (isMp4 ? '.live-remux.tmp.mp4' : '.live-remux.tmp.webm');
+    const outArgs = isMp4
+        ? ['-c', 'copy', '-movflags', '+faststart', '-fflags', '+genpts']
+        : ['-c', 'copy', '-fflags', '+genpts'];
 
     return new Promise((resolve) => {
         const proc = spawn('ffmpeg', [
             '-y', '-i', filePath,
-            '-c', 'copy',
-            '-fflags', '+genpts',
+            ...outArgs,
             tmpPath,
         ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
@@ -477,7 +496,11 @@ function remuxForLiveSeeking(filePath) {
  * Clean up the .seekable.webm file after finalization.
  */
 function cleanupSeekableFile(filePath) {
-    const seekablePath = filePath.replace(/\.webm$/, '.seekable.webm');
+    // Guard: the sidecar path must differ from the VOD itself (a bad regex fall-through
+    // would otherwise delete the recording). _seekableSidecarPath returns null for unknown
+    // extensions, so this is a no-op for anything that isn't a .webm/.mp4 recording.
+    const seekablePath = _seekableSidecarPath(filePath);
+    if (!seekablePath || seekablePath === filePath) return;
     try { if (fs.existsSync(seekablePath)) fs.unlinkSync(seekablePath); } catch {}
 }
 
@@ -751,6 +774,9 @@ router.get('/stream/:streamId/live', optionalAuth, (req, res) => {
         const streamId = parseInt(req.params.streamId);
         const vod = db.getActiveVodByStream(streamId);
         if (!vod) return res.status(404).json({ error: 'No active VOD recording' });
+        // A clips-only recording exists purely to serve server-side clip cuts on a
+        // VOD-disabled slot — it's never published and not offered for DVR/live playback.
+        if (vod.clips_only) return res.status(404).json({ error: 'No active VOD recording' });
         res.json({ vod });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get live VOD' });
@@ -763,11 +789,13 @@ router.get('/stream/:streamId/live', optionalAuth, (req, res) => {
  */
 router.get('/:id/live-info', optionalAuth, (req, res) => {
     try {
-        const vod = db.get('SELECT id, duration_seconds, file_size, is_recording, file_path FROM vods WHERE id = ?', [req.params.id]);
+        const vod = db.get('SELECT id, duration_seconds, file_size, is_recording, file_path, clips_only FROM vods WHERE id = ?', [req.params.id]);
         if (!vod) return res.status(404).json({ error: 'VOD not found' });
 
-        const seekablePath = (vod.file_path || '').replace(/\.webm$/, '.seekable.webm');
-        const hasSeekable = fs.existsSync(seekablePath);
+        // DVR-seekable once the fully-indexed sidecar (.seekable.webm / .seekable.mp4) has
+        // been remuxed. Clips-only recordings are never seekable (no DVR on a VOD-disabled slot).
+        const sidecar = _seekableSidecarPath(vod.file_path || '');
+        const hasSeekable = !vod.clips_only && !!sidecar && fs.existsSync(sidecar);
 
         res.json({
             id: vod.id,
@@ -862,6 +890,20 @@ async function _doFinalize(streamId) {
         startTime = new Date(vod.created_at + 'Z').getTime();
     }
 
+    // Ephemeral clips-only recording (VOD-disabled slot): it existed only to serve live
+    // clips. It's never published — delete the file (+ any offloaded object) and its row so
+    // it never shows up as a VOD. Clips already made from it keep their own extracted files.
+    const finVod = db.getVodById(vodId);
+    if (finVod && finVod.clips_only) {
+        try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch { /* */ }
+        try { cleanupSeekableFile(filePath); } catch { /* */ }
+        try { if (finVod.master_file_path && fs.existsSync(finVod.master_file_path)) fs.unlinkSync(finVod.master_file_path); } catch { /* */ }
+        try { if (finVod.storage_provider && finVod.storage_provider !== 'local') require('./vod-storage').deleteVodObjects(finVod).catch(() => {}); } catch { /* */ }
+        try { db.run('DELETE FROM vods WHERE id = ?', [vodId]); } catch { /* */ }
+        console.log(`[VOD] Discarded ephemeral clips-only recording (vod ${vodId}, stream ${streamId})`);
+        return null;
+    }
+
     if (!filePath || !fs.existsSync(filePath)) {
         db.run('UPDATE vods SET is_recording = 0 WHERE id = ?', [vodId]);
         return db.getVodById(vodId);
@@ -906,9 +948,14 @@ async function _doFinalize(streamId) {
     // ── Recover from the lossless master if the served webm came out truncated ──
     // (e.g. force-kill during trailer flush, or a container hiccup). This is the fix for
     // "VOD cut off short": the master holds the full recording, so we rebuild the webm.
-    const masterPath = (rec && rec.masterFilePath)
-        || (db.getVodById(vodId) || {}).master_file_path
-        || filePath.replace(/\.webm$/, '.master.mkv');
+    // Only WebM recordings have a separate lossless master to recover from. An RTMP MP4 is
+    // ITSELF a lossless stream-copy, so there's no master — and we must NOT let the .webm
+    // regex fall through to the same path (that would make master cleanup delete the VOD).
+    const masterPath = filePath.endsWith('.webm')
+        ? ((rec && rec.masterFilePath)
+            || (db.getVodById(vodId) || {}).master_file_path
+            || filePath.replace(/\.webm$/, '.master.mkv'))
+        : null;
     let masterDur = 0;
     if (masterPath && fs.existsSync(masterPath)) {
         try { const mi = await probeVodInfo(masterPath); masterDur = mi.duration || 0; } catch { /* */ }
@@ -1488,12 +1535,16 @@ router.get('/file/:filename', optionalAuth, async (req, res) => {
             }
         }
 
-        // For live recordings, serve the seekable copy if it exists
-        const seekablePath = filePath.replace(/\.webm$/, '.seekable.webm');
-        const isLiveSeekable = fs.existsSync(seekablePath);
+        // For a live recording, serve the fully-indexed seekable sidecar (.seekable.webm /
+        // .seekable.mp4) if it exists so DVR viewers can seek anywhere.
+        const seekablePath = _seekableSidecarPath(filePath);
+        const isLiveSeekable = !!seekablePath && seekablePath !== filePath && fs.existsSync(seekablePath);
         if (isLiveSeekable) {
             filePath = seekablePath;
         }
+        // A still-recording MP4 grows in place — serve it no-cache so the player keeps
+        // discovering new bytes (DVR to the live edge) instead of pinning the first response.
+        const isLiveMp4 = mediaType === 'vod' && !!mediaRecord.is_recording && filePath.endsWith('.mp4');
 
         // Support range requests for video seeking
         const stat = fs.statSync(filePath);
@@ -1503,7 +1554,7 @@ router.get('/file/:filename', optionalAuth, async (req, res) => {
         const contentType = mimeTypes[ext] || 'video/webm';
 
         // No-cache for live recordings so the player can refresh
-        const cacheHeaders = isLiveSeekable
+        const cacheHeaders = (isLiveSeekable || isLiveMp4)
             ? { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
             : {};
 
@@ -1842,17 +1893,22 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
             if (!Number.isFinite(dur) || dur < 1) dur = 30;
             dur = Math.min(dur, maxDur);
             // Cut the last `dur` seconds of the recording (live edge), or up to the viewer's
-            // position `at` if they're DVR-rewound. 1.5s safety margin keeps us inside the
-            // bytes ffmpeg has actually flushed to disk.
+            // position `at` if they're DVR-rewound. CRITICAL: clamp to what's ACTUALLY on disk,
+            // not wall-clock. The served recording can lag wall-clock (mux/encode latency), and
+            // a stalled/short recording would otherwise let ffmpeg seek PAST end-of-file and
+            // emit a header-only "broken clip". Probe the real duration and never exceed it.
             const recStartMs = new Date(String(rec.created_at).replace(' ', 'T') + 'Z').getTime();
             let recElapsed = (Date.now() - recStartMs) / 1000;
             if (!Number.isFinite(recElapsed) || recElapsed < 0) recElapsed = dur;
+            let recordedDur = recElapsed;
+            try { const pi = await probeVodInfo(rec.file_path); if (pi.duration > 0) recordedDur = pi.duration; } catch { /* fall back to wall-clock */ }
+            const safeEdge = Math.max(0, recordedDur - 0.5); // stay just inside flushed footage
             let clipEnd = parseFloat(req.body.at);
-            if (!Number.isFinite(clipEnd) || clipEnd <= 0 || clipEnd > recElapsed) clipEnd = recElapsed;
-            clipEnd = Math.max(dur, clipEnd - 1.5);
+            if (!Number.isFinite(clipEnd) || clipEnd <= 0) clipEnd = safeEdge; // default: live edge
+            clipEnd = Math.min(clipEnd, safeEdge);
             const liveStart = Math.max(0, clipEnd - dur);
             const liveDur = Math.min(dur, clipEnd - liveStart);
-            if (liveDur < 1) return res.status(400).json({ error: 'Not enough recorded footage yet — try again in a moment.' });
+            if (liveDur < 1) return res.status(400).json({ error: 'Not enough recorded footage yet — try again in a moment.', no_recording: true });
 
             if (_activeFFmpegJobs >= CLIP_MAX_CONCURRENT_FFMPEG) {
                 return res.status(503).json({ error: 'Server is busy processing other clips. Please try again in a few seconds.' });
@@ -1877,12 +1933,29 @@ router.post('/clips', requireAuth, clipUpload.single('video'), async (req, res) 
                 _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1); clearTimeout(timerL); cleanupTempFile(clipPathL);
                 if (!res.headersSent) res.status(500).json({ error: 'FFmpeg not available' });
             });
-            ffL.on('exit', (code) => {
+            ffL.on('exit', async (code) => {
                 _activeFFmpegJobs = Math.max(0, _activeFFmpegJobs - 1); clearTimeout(timerL);
                 if (ffToL) { cleanupTempFile(clipPathL); if (!res.headersSent) res.status(504).json({ error: 'Clip timed out. Try again.' }); return; }
                 if (code !== 0) { cleanupTempFile(clipPathL); console.warn('[Clips] live clip ffmpeg failed:', ffErrL.slice(-400)); if (!res.headersSent) res.status(500).json({ error: 'Failed to create clip' }); return; }
-                try { const st = fs.statSync(clipPathL); if (!st.size) { cleanupTempFile(clipPathL); if (!res.headersSent) res.status(500).json({ error: 'Clip extraction produced an empty file' }); return; } }
-                catch { cleanupTempFile(clipPathL); if (!res.headersSent) res.status(500).json({ error: 'Failed to verify clip file' }); return; }
+                // Validate the output actually contains real footage. A seek at/near EOF can
+                // exit 0 with a tiny header-only file that passes a size check but has no
+                // decodable video — that was the "broken clip" bug. Probe and reject those so
+                // no clip row (and no failed thumbnail) is ever created for empty media.
+                let clipOk = false;
+                try {
+                    const st = fs.statSync(clipPathL);
+                    if (st.size > 0) {
+                        const pi = await probeVodInfo(clipPathL);
+                        const hasVideo = (pi.streams || []).some(s => s.codec_type === 'video');
+                        if (hasVideo && pi.duration >= 1) clipOk = true;
+                    }
+                } catch { /* clipOk stays false */ }
+                if (!clipOk) {
+                    cleanupTempFile(clipPathL);
+                    console.warn(`[Clips] live clip rejected — no decodable footage (stream ${parsedStreamId}, ${liveStart.toFixed(1)}-${(liveStart + liveDur).toFixed(1)}s)`);
+                    if (!res.headersSent) res.status(422).json({ error: 'Not enough recorded footage yet — try clipping again in a few seconds.', no_recording: true });
+                    return;
+                }
                 const clipVis = db.resolveStreamClipVisibility(stream);
                 const result = db.createClip({
                     vod_id: rec.id, stream_id: parsedStreamId, user_id: req.user.id,

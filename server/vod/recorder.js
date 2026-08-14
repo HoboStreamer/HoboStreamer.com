@@ -257,7 +257,12 @@ class StreamRecorder {
         }
 
         const timestamp = Date.now();
-        const filename = `vod-${streamId}-${timestamp}.webm`;
+        // RTMP is recorded by lossless stream-copy into a fragmented MP4 (H.264/AAC
+        // passthrough): near-zero CPU, always keeps real-time, browser-native, and it IS
+        // its own lossless master (no separate .master.mkv). Every other server-pulled
+        // protocol (jsmpeg) transcodes to VP8/WebM. WebRTC is handled earlier via PlainRTP.
+        const recExt = protocol === 'rtmp' ? '.mp4' : '.webm';
+        const filename = `vod-${streamId}-${timestamp}${recExt}`;
         const filePath = path.resolve(config.vod.path, filename);
 
         // Rotation metadata: a marathon stream is split into "Part N" VODs so no single
@@ -265,9 +270,14 @@ class StreamRecorder {
         const part = opts.part || 1;
         const baseTitle = opts.baseTitle || stream.title || 'Stream Recording';
         const title = part > 1 ? `${baseTitle} (Part ${part})` : baseTitle;
+        // Recording MODE: 'vod' publishes a full VOD; 'clips' records an ephemeral rolling
+        // file solely to serve the clip system on a VOD-disabled slot (never published,
+        // deleted on stream end, short rotation to bound disk).
+        const mode = opts.mode || 'vod';
+        const clipsOnly = mode === 'clips';
         // Skip the lossless master when it was explicitly requested OR the disk is under
-        // pressure — the master is a recovery aid and the first thing to sacrifice.
-        const skipMaster = !!opts.skipMaster || this._diskState !== 'ok';
+        // pressure OR this is a clips-only ephemeral recording — the master is a recovery aid.
+        const skipMaster = !!opts.skipMaster || clipsOnly || this._diskState !== 'ok';
 
         // Create VOD record in DB first so it's tracked even if FFmpeg dies early
         const result = db.createVod({
@@ -279,7 +289,7 @@ class StreamRecorder {
             duration_seconds: 0,
         });
         const vodId = result.lastInsertRowid;
-        db.run('UPDATE vods SET is_recording = 1 WHERE id = ?', [vodId]);
+        db.run('UPDATE vods SET is_recording = 1, clips_only = ? WHERE id = ?', [clipsOnly ? 1 : 0, vodId]);
 
         // Also register in vodRoutes.activeRecordings so finalizeVodRecording() can find it
         try {
@@ -307,7 +317,7 @@ class StreamRecorder {
                 webrtcState: null,
                 _cancelWebrtc: false,
                 _expectedShutdown: false,
-                protocol, endpoint, part, baseTitle, skipMaster,
+                protocol, endpoint, part, baseTitle, skipMaster, mode, clipsOnly,
             });
             this._startWebrtcRecording(streamId, vodId, filePath, timestamp, protocol, { skipMaster }).catch(err => {
                 console.error(`[VOD] WebRTC recording startup failed for stream ${streamId}:`, err.message);
@@ -347,26 +357,43 @@ class StreamRecorder {
         // recovers the full recording from this master. Cheap: it's a stream copy, no
         // re-encode. Deleted once the webm is confirmed complete. Skipped when the disk is
         // under pressure (webm-only) to halve the recording's footprint.
-        const masterPath = skipMaster ? null : filePath.replace(/\.webm$/, '.master.mkv');
+        // RTMP needs no master: its served MP4 is already a lossless copy of the source.
+        const masterPath = (skipMaster || protocol === 'rtmp') ? null : filePath.replace(/\.webm$/, '.master.mkv');
 
-        const ffmpegArgs = [
-            '-y',
-            ...inputArgs,
-            // ── Output 1: served VP8/Vorbis WebM ──
-            '-c:v', 'libvpx',
-            '-b:v', '1500k',
-            '-crf', '20',
-            '-deadline', 'realtime',
-            '-cpu-used', '4',
-            // Force a keyframe every 2s so seeking always lands on one (no black scrub).
-            // Time-based so it's correct regardless of the source framerate.
-            '-force_key_frames', 'expr:gte(t,n_forced*2)',
-            '-g', '240',
-            '-c:a', 'libvorbis',
-            '-b:a', '128k',
-            '-f', 'webm',
-            filePath,
-        ];
+        const ffmpegArgs = protocol === 'rtmp'
+            ? [
+                '-y',
+                ...inputArgs,
+                // ── Lossless stream-copy → fragmented MP4 ──
+                // No re-encode (H.264/AAC pass straight through from the RTMP feed), so this
+                // ALWAYS keeps real-time regardless of source resolution/bitrate. Fragmented
+                // (frag_keyframe/empty_moov/default_base_moof) so the growing file is seekable
+                // live for DVR and survives an abrupt kill without needing a moov-atom rewrite.
+                '-c', 'copy',
+                '-fflags', '+genpts',
+                '-max_muxing_queue_size', '1024',
+                '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+                '-f', 'mp4',
+                filePath,
+            ]
+            : [
+                '-y',
+                ...inputArgs,
+                // ── Output 1: served VP8/Vorbis WebM (jsmpeg transcode) ──
+                '-c:v', 'libvpx',
+                '-b:v', '1500k',
+                '-crf', '20',
+                '-deadline', 'realtime',
+                '-cpu-used', '4',
+                // Force a keyframe every 2s so seeking always lands on one (no black scrub).
+                // Time-based so it's correct regardless of the source framerate.
+                '-force_key_frames', 'expr:gte(t,n_forced*2)',
+                '-g', '240',
+                '-c:a', 'libvorbis',
+                '-b:a', '128k',
+                '-f', 'webm',
+                filePath,
+            ];
         if (masterPath) {
             // ── Output 2: lossless copy master (recovery fallback) ──
             ffmpegArgs.push('-map', '0:v:0', '-map', '0:a?', '-c', 'copy', '-f', 'matroska', masterPath);
@@ -435,7 +462,7 @@ class StreamRecorder {
                 ffmpegCorruptionWarnings: 0,
                 _ffmpegCorrupted: false,
                 // Rotation metadata — lets the watchdog restart this recording as a new part.
-                protocol, endpoint, part, baseTitle, skipMaster,
+                protocol, endpoint, part, baseTitle, skipMaster, mode, clipsOnly,
             };
             // Track the master on the vod row + finalize registry so it's found on restart.
             if (masterPath) try { db.run('UPDATE vods SET master_file_path = ? WHERE id = ?', [masterPath, vodId]); } catch { /* */ }
@@ -560,7 +587,10 @@ class StreamRecorder {
             const stream = db.getStreamById(streamId);
             if (!stream || !stream.is_live) { console.log(`[VOD] Stream ${streamId} no longer live — not starting next part`); return false; }
             const skipMaster = opts.skipMaster || this._diskState !== 'ok';
-            this.startRecording(streamId, protocol, endpoint, { part: nextPart, baseTitle, skipMaster });
+            // Carry the recording mode forward so an ephemeral clips-only recording stays
+            // clips-only across rotation (and never suddenly publishes a VOD).
+            const nextMode = rec.clipsOnly ? 'clips' : (rec.mode || 'vod');
+            this.startRecording(streamId, protocol, endpoint, { part: nextPart, baseTitle, skipMaster, mode: nextMode });
             return true;
         } catch (e) {
             console.warn(`[VOD] Rotation failed for stream ${streamId}:`, e.message);
@@ -695,10 +725,11 @@ class StreamRecorder {
             if (this.isActivelyRecording(sid)) continue;
             if (this._rotating.has(sid)) continue;   // mid-rotation: a new part is about to start
 
-            // Respect the channel's recording policy — never force a VOD on a stream that opted out.
-            let policy = null;
-            try { policy = db.getChannelVodRecordingPolicyByUserId(stream.user_id, stream.managed_stream_id); } catch { /* */ }
-            if (!policy || !policy.recordingEnabled) continue;
+            // Respect the per-slot recording mode — never force recording on a both-off stream,
+            // and heal a clips-only stream as clips-only (not as a published VOD).
+            let mode = 'none';
+            try { mode = db.resolveStreamRecordingMode(stream); } catch { /* */ }
+            if (mode === 'none') continue;
 
             // Per-stream cooldown so a stream that can't heal isn't retried every tick.
             if (now - (this._healAttempts.get(sid) || 0) < 60000) continue;
@@ -706,8 +737,8 @@ class StreamRecorder {
             const proto = stream.protocol;
             if (WEBRTC_PROTOCOLS.has(proto)) {
                 this._healAttempts.set(sid, now);
-                console.log(`[VOD] Auto-healing recording for live ${proto} stream ${sid}`);
-                try { this.startRecording(sid, proto, {}); }
+                console.log(`[VOD] Auto-healing recording for live ${proto} stream ${sid} (mode: ${mode})`);
+                try { this.startRecording(sid, proto, {}, { mode }); }
                 catch (e) { console.warn(`[VOD] heal failed for stream ${sid}:`, e.message); }
             } else if (proto === 'rtmp') {
                 // Need the live RTMP publish key (what ffmpeg reads from); only heal if the
@@ -721,8 +752,8 @@ class StreamRecorder {
                 } catch { /* */ }
                 if (!streamKey) continue; // publisher gone → not truly live; leave it for stale cleanup
                 this._healAttempts.set(sid, now);
-                console.log(`[VOD] Auto-healing RTMP recording for live stream ${sid}`);
-                try { this.startRecording(sid, 'rtmp', { streamKey }); }
+                console.log(`[VOD] Auto-healing RTMP recording for live stream ${sid} (mode: ${mode})`);
+                try { this.startRecording(sid, 'rtmp', { streamKey }, { mode }); }
                 catch (e) { console.warn(`[VOD] heal failed for stream ${sid}:`, e.message); }
             }
         }

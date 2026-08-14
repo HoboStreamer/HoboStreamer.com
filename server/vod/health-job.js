@@ -55,7 +55,11 @@ async function _scanOne(vod, { deep }) {
         // healthy and is long finished, so a lingering master is pure wasted disk — reclaim it.
         // (Finalize normally deletes it; this cleans up ones orphaned by an old crash/bug.)
         try {
-            const master = vod.master_file_path || (vod.file_path ? vod.file_path.replace(/\.webm$/, '.master.mkv') : null);
+            // Only WebM recordings have a separate .master.mkv. Guard the extension: for an
+            // RTMP .mp4 (which has no master) the regex wouldn't match and `master` would
+            // resolve to the VOD file itself — deleting the recording.
+            const master = vod.master_file_path
+                || (vod.file_path && vod.file_path.endsWith('.webm') ? vod.file_path.replace(/\.webm$/, '.master.mkv') : null);
             if (master && fs.existsSync(master)) {
                 const freedMb = (fs.statSync(master).size / 1024 / 1024).toFixed(0);
                 fs.unlinkSync(master);
@@ -122,8 +126,8 @@ function _hardDeleteVod(vod) {
     try {
         if (vod.file_path) {
             try { require('./vod-storage').deleteVodObjects(vod).catch(() => {}); } catch { /* */ }
-            // Local file + sidecars (.seekable.webm, .master.mkv).
-            for (const p of [vod.file_path, vod.file_path.replace(/\.webm$/, '.seekable.webm'), vod.file_path.replace(/\.webm$/, '.master.mkv'), vod.master_file_path].filter(Boolean)) {
+            // Local file + sidecars (.seekable.webm / .seekable.mp4, .master.mkv).
+            for (const p of [vod.file_path, vod.file_path.replace(/\.webm$/, '.seekable.webm'), vod.file_path.replace(/\.mp4$/, '.seekable.mp4'), vod.file_path.replace(/\.webm$/, '.master.mkv'), vod.master_file_path].filter(Boolean)) {
                 try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* */ }
             }
         }

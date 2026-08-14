@@ -2558,6 +2558,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         // Weather is rendered on demand inside weather panels (see _fillWeatherPanels).
         _renderChannelAbout(ch);
         _resetChannelTabs(ch);
+        _applyChannelTabMeta(data);
         // Reveal the Media Request tab if the streamer has it enabled (non-blocking).
         _initMediaRequestTab(username);
 
@@ -3695,6 +3696,50 @@ function _resetChannelTabs(ch) {
     // (Controls are no longer a tab — they render in a section under the player.)
     const medBtn = document.getElementById('ch-tab-btn-media');
     if (medBtn) medBtn.style.display = 'none';
+}
+
+// Apply per-channel tab metadata from the channel response: count badges on the
+// Videos/Clips/Clips-Taken/Pastes tabs, and hide the Videos/Clips tabs entirely when the
+// streamer keeps them private across all slots with nothing public to show.
+function _applyChannelTabMeta(data) {
+    if (!data) return;
+    const setBadge = (id, n) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const num = Number(n) || 0;
+        if (num > 0) {
+            el.textContent = num >= 1000 ? (num / 1000).toFixed(num >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k' : String(num);
+            el.hidden = false;
+        } else {
+            el.textContent = '';
+            el.hidden = true;
+        }
+    };
+    setBadge('ch-tab-badge-videos', data.vodTotal);
+    setBadge('ch-tab-badge-clips', data.clipsOfTotal);
+    setBadge('ch-tab-badge-clips-taken', data.clipsTakenTotal);
+    setBadge('ch-tab-badge-pastes', data.pasteTotal);
+
+    // Never hide tabs for the channel owner — they manage their own content.
+    const isOwner = !!(currentUser && currentChannelUsername && currentUser.username === currentChannelUsername);
+    const hideTab = (tab, hidden) => {
+        const doHide = !!hidden && !isOwner;
+        const btn = document.querySelector(`#ch-tabs .ch-tab[data-tab="${tab}"]`);
+        const panel = document.getElementById('ch-panel-' + tab);
+        if (btn) btn.style.display = doHide ? 'none' : '';
+        if (panel && doHide) panel.classList.remove('active');
+    };
+    hideTab('videos', data.videos_tab_hidden);
+    hideTab('clips', data.clips_tab_hidden);
+
+    // If the tab that _resetChannelTabs made active just got hidden, fall back to the first
+    // still-visible tab so the panel area isn't left blank.
+    const activeBtn = document.querySelector('#ch-tabs .ch-tab.active');
+    if (!activeBtn || activeBtn.style.display === 'none') {
+        const firstVisible = Array.from(document.querySelectorAll('#ch-tabs .ch-tab'))
+            .find(b => b.style.display !== 'none');
+        if (firstVisible) switchChannelTab(firstVisible.dataset.tab, firstVisible);
+    }
 }
 
 // Render the About tab: bio + streamer-defined info panels. (Weather is injected

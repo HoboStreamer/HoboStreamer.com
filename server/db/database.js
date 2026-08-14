@@ -322,6 +322,13 @@ function initDb() {
             database.exec('ALTER TABLE vods ADD COLUMN quarantined_at DATETIME');
             console.log('[DB] Added quarantined_at column to vods');
         }
+        if (!vodCols.includes('clips_only')) {
+            // Ephemeral recording made ONLY to serve the clip system on a slot that has VOD
+            // recording disabled but clipping enabled. Never published as a browsable VOD;
+            // deleted when the stream ends. Kept short/rolling to bound disk (see recorder).
+            database.exec('ALTER TABLE vods ADD COLUMN clips_only INTEGER DEFAULT 0');
+            console.log('[DB] Added clips_only column to vods');
+        }
         if (!vodCols.includes('is_recording')) {
             database.exec('ALTER TABLE vods ADD COLUMN is_recording INTEGER DEFAULT 0');
             console.log('[DB] Added is_recording column to vods');
@@ -2707,7 +2714,9 @@ function countRecentVods() {
 }
 
 function getVodsByUserFiltered(userId, { includePrivate = false, managedStreamId = null, orderBy = 'newest', limit = 12, offset = 0 } = {}) {
-    const conditions = ['v.user_id = ?', 'COALESCE(v.is_recording, 0) = 0'];
+    // COALESCE(v.clips_only,0)=0 hides ephemeral clips-only recordings (they're deleted on
+    // stream end; this guards against a rare orphan surviving a crash before cleanup).
+    const conditions = ['v.user_id = ?', 'COALESCE(v.is_recording, 0) = 0', 'COALESCE(v.clips_only, 0) = 0'];
     const params = [userId];
 
     if (!includePrivate) {
@@ -2770,7 +2779,7 @@ function getPopularClipForUser(userId) {
 }
 
 function countVodsByUserFiltered(userId, { includePrivate = false, managedStreamId = null } = {}) {
-    const conditions = ['v.user_id = ?', 'COALESCE(v.is_recording, 0) = 0'];
+    const conditions = ['v.user_id = ?', 'COALESCE(v.is_recording, 0) = 0', 'COALESCE(v.clips_only, 0) = 0'];
     const params = [userId];
     if (!includePrivate) conditions.push('v.is_public = 1');
     if (managedStreamId) {
@@ -2930,6 +2939,22 @@ function getChannelVodRecordingPolicyByUserId(userId, managedStreamId = null) {
         recordingEnabled,
         forcedDisabled: !!channel?.force_vod_recording_disabled,
     };
+}
+// Resolve what (if anything) the server should record for a live stream, from the per-slot
+// VOD + clip toggles:
+//   'vod'   → VOD recording is on: record + publish a full VOD (clips cut from it too).
+//   'clips' → VOD off but clipping on: record an EPHEMERAL rolling file just to serve clips;
+//             never published, deleted when the stream ends.
+//   'none'  → both off: don't record at all. (Live thumbnails, AI vision and audio memories
+//             still run — they tap the live feed directly, not the VOD recording.)
+function resolveStreamRecordingMode(stream) {
+    if (!stream) return 'none';
+    let vodEnabled = false;
+    try { vodEnabled = getChannelVodRecordingPolicyByUserId(stream.user_id, stream.managed_stream_id).recordingEnabled; } catch { /* */ }
+    if (vodEnabled) return 'vod';
+    let clipsEnabled = true;
+    try { clipsEnabled = isStreamClipRecordingEnabled(stream); } catch { /* */ }
+    return clipsEnabled ? 'clips' : 'none';
 }
 // Effective VOD/clip visibility for a stream: per-slot setting first, else channel, else public.
 function resolveStreamVodVisibility(stream) {
@@ -6502,7 +6527,7 @@ module.exports = {
     // Channels
     getChannelByUserId, getChannelsByUserIds, getChannelByUsername, createChannel, updateChannel, ensureChannel, setUserBio,
     getChannelPointsConfig, setChannelPointsConfig,
-    getChannelVodRecordingPolicyByUserId, resolveStreamVodVisibility, resolveStreamClipVisibility, isStreamClipRecordingEnabled,
+    getChannelVodRecordingPolicyByUserId, resolveStreamRecordingMode, resolveStreamVodVisibility, resolveStreamClipVisibility, isStreamClipRecordingEnabled,
     // RobotStreamer integration
     getRobotStreamerIntegrationByUserId, upsertRobotStreamerIntegration,
     getRobotStreamerIntegrationBySlot, getRobotStreamerIntegrationForStream,

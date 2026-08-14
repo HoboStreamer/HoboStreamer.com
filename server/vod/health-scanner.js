@@ -136,8 +136,11 @@ function _rebuildWebmFromMaster(masterPath, webmPath) {
 // for seeking, re-probes, and (if longer) repairs the stored duration. Returns
 // { recovered: bool, duration }.
 async function recoverFromMaster(vod) {
+    // Only WebM recordings have a separate .master.mkv to rebuild from. An RTMP .mp4 has no
+    // master (it's itself a lossless copy); guard the extension so the regex can't fall
+    // through to the VOD's own path and overwrite the mp4 with re-encoded WebM bytes.
     const masterPath = vod.master_file_path
-        || (vod.file_path ? vod.file_path.replace(/\.webm$/, '.master.mkv') : null);
+        || (vod.file_path && vod.file_path.endsWith('.webm') ? vod.file_path.replace(/\.webm$/, '.master.mkv') : null);
     if (!masterPath || !fs.existsSync(masterPath) || !vod.file_path) return { recovered: false, duration: 0 };
     let masterDur = 0;
     try { const mi = await probeMediaInfo(masterPath); masterDur = mi.ok ? mi.duration : 0; } catch { /* */ }

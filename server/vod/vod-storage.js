@@ -320,9 +320,10 @@ async function resolveMediaSource(vod) {
 // ── Tier moves ───────────────────────────────────────────────
 
 function cleanupSidecar(localPath) {
-    const seekable = localPath.replace(/\.webm$/, '.seekable.webm');
-    if (seekable !== localPath && fs.existsSync(seekable)) {
-        try { fs.unlinkSync(seekable); } catch { /* ignore */ }
+    for (const seekable of [localPath.replace(/\.webm$/, '.seekable.webm'), localPath.replace(/\.mp4$/, '.seekable.mp4')]) {
+        if (seekable !== localPath && fs.existsSync(seekable)) {
+            try { fs.unlinkSync(seekable); } catch { /* ignore */ }
+        }
     }
 }
 

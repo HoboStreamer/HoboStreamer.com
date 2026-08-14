@@ -449,7 +449,30 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         delete publicChannel.vod_recording_enabled;
         delete publicChannel.force_vod_recording_disabled;
 
+        // Counts for tab badges. Owner/mods see hidden ones too.
+        let pasteTotal = 0, clipsTakenTotal = 0;
+        try { pasteTotal = pollOnly ? 0 : db.countUserPastesForChannel(channel.user_id, { includeHidden: canSeeHidden }); } catch { /* */ }
+        try { clipsTakenTotal = pollOnly ? 0 : db.countClipsTakenByUser(channel.user_id, { includePrivate: canSeeHidden }); } catch { /* */ }
+
+        // Tab-hide flags: when a streamer defaults ALL their slots' VODs (or clips) to private,
+        // and there's no public content to show, hide that tab on the public channel page.
+        // (Gating on an empty count means we never hide a tab that still has public content.)
+        const _slotVis = managedStreams.map(ms => ms.default_vod_visibility || 'public');
+        const _slotClipVis = managedStreams.map(ms => ms.default_clip_visibility || 'public');
+        const allVodPrivate = _slotVis.length
+            ? _slotVis.every(v => v === 'private')
+            : ((channel.default_vod_visibility || 'public') === 'private');
+        const allClipPrivate = _slotClipVis.length
+            ? _slotClipVis.every(v => v === 'private')
+            : ((channel.default_clip_visibility || 'public') === 'private');
+        const videos_tab_hidden = !pollOnly && allVodPrivate && vodTotal === 0;
+        const clips_tab_hidden = !pollOnly && allClipPrivate && clipTotal === 0 && clipsOfTotal === 0;
+
         res.json({
+            videos_tab_hidden,
+            clips_tab_hidden,
+            pasteTotal,
+            clipsTakenTotal,
             channel: publicChannel,
             stream: liveStreams[0] || null,
             streams: liveStreams,
@@ -1857,12 +1880,12 @@ router.get('/:id/endpoint', requireAuth, (req, res) => {
             endpoint = jsmpegRelay.getChannelInfo(msKey) || jsmpegRelay.createChannel(msKey);
 
             // Start server-side VOD recording for JSMPEG (taps the relay WebSocket, zero delay to live)
-            const vodPolicy = db.getChannelVodRecordingPolicyByUserId(stream.user_id, stream.managed_stream_id);
-            if (stream.is_live && vodPolicy.recordingEnabled && !recorder.isRecording(stream.id)) {
+            const recMode = db.resolveStreamRecordingMode(stream);
+            if (stream.is_live && recMode !== 'none' && !recorder.isRecording(stream.id)) {
                 recorder.startRecording(stream.id, 'jsmpeg', {
                     streamKey: msKey,
                     videoPort: endpoint.videoPort,
-                });
+                }, { mode: recMode });
             }
 
             const jsmpegOrigin = new URL(config.jsmpeg.publicUrl || `http://${hostname}`);
