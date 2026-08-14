@@ -119,12 +119,24 @@
         window.addEventListener('message', onMsg);
         window.addEventListener('storage', onStorage);
 
-        // Detect the popup being closed before finishing. Give any in-flight completion
-        // message a moment to land first, then treat a bare close as "cancelled".
+        // Detecting a real "user closed the popup" is unreliable across browsers: once the
+        // popup navigates to PowerChat's cross-origin page, COOP severs the opener handle and
+        // `popup.closed` starts reporting TRUE even though the window is still open (this is
+        // the Firefox false "cancelled" bug). So: the completion message (BroadcastChannel /
+        // localStorage — both survive COOP) is the source of truth for success/error, and the
+        // Cancel button is the explicit way to abort. We only treat `popup.closed` as a REAL
+        // close if it happens well after opening (COOP severance is near-instant), and even
+        // then only after a grace period with no completion message.
+        const openedAt = Date.now();
         const poll = setInterval(() => {
-            if (popup.closed) { clearInterval(poll); setTimeout(() => finish('cancelled'), 700); }
+            let closed = false;
+            try { closed = popup.closed; } catch { closed = false; }
+            if (!closed) return;
+            clearInterval(poll);
+            if (Date.now() - openedAt < 8000) return;   // near-instant "closed" = COOP severance, ignore
+            setTimeout(() => finish('cancelled'), 1000); // genuine late close (no message) → cancelled
         }, 500);
-        // Absolute safety net.
+        // Absolute safety net if the flow is simply abandoned.
         const to = setTimeout(() => finish('cancelled'), 5 * 60 * 1000);
 
         function cleanup() {
