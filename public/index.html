@@ -1364,16 +1364,18 @@
     <!-- ── DASHBOARD ─────────────────────────────────────── -->
     <section id="page-dashboard" class="page">
         <div class="container">
-            <h2><i class="fa-solid fa-gauge-high"></i> Streamer Dashboard</h2>
+            <div class="section-header">
+                <h2><i class="fa-solid fa-gauge-high"></i> Streamer Dashboard</h2>
+            </div>
 
             <div class="ch-tabs dash-tabs" id="dash-tabs" role="tablist">
                 <button class="ch-tab active" role="tab" aria-selected="true" data-dtab="home" onclick="switchDashTab('home', this)"><i class="fa-solid fa-house"></i> Home</button>
-                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="chatai" onclick="switchDashTab('chatai', this)"><i class="fa-solid fa-comments"></i> Chat &amp; AI</button>
+                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="content" onclick="switchDashTab('content', this)"><i class="fa-solid fa-photo-film"></i> Content</button>
                 <button class="ch-tab" role="tab" aria-selected="false" data-dtab="moderation" onclick="switchDashTab('moderation', this)"><i class="fa-solid fa-shield-halved"></i> Moderation</button>
+                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="chatai" onclick="switchDashTab('chatai', this)"><i class="fa-solid fa-comments"></i> Chat</button>
                 <button class="ch-tab" role="tab" aria-selected="false" data-dtab="controls" onclick="switchDashTab('controls', this)"><i class="fa-solid fa-gamepad"></i> Controls</button>
                 <button class="ch-tab" role="tab" aria-selected="false" data-dtab="money" onclick="switchDashTab('money', this)"><i class="fa-solid fa-hand-holding-dollar"></i> Monetize</button>
                 <button class="ch-tab" role="tab" aria-selected="false" data-dtab="points" onclick="switchDashTab('points', this)"><i class="fa-solid fa-star"></i> Points</button>
-                <button class="ch-tab" role="tab" aria-selected="false" data-dtab="content" onclick="switchDashTab('content', this)"><i class="fa-solid fa-photo-film"></i> Content</button>
             </div>
 
             <div class="ch-tab-panel dash-tab-panel active" id="dash-panel-home" role="tabpanel"><div class="dash-grid" id="dash-grid-home"></div></div>
@@ -1396,16 +1398,6 @@
             </div>
 
             <div class="dash-grid" id="dash-staging" style="display:none">
-                <!-- Stream Control -->
-                <div class="dash-card" id="dash-card-broadcast">
-                    <h3><i class="fa-solid fa-broadcast-tower"></i> Broadcast</h3>
-                    <p style="margin-bottom:12px">Create and manage streams, configure your broadcast setup, and go live from the dedicated Broadcast page.</p>
-                    <a href="/broadcast" class="btn btn-primary btn-lg" onclick="navigate('/broadcast');return false;">
-                        <i class="fa-solid fa-broadcast-tower"></i> Go to Broadcast Page
-                    </a>
-                    <div id="dash-active-streams" style="margin-top:16px"></div>
-                </div>
-
                 <div class="dash-card" id="dash-card-overlay">
                     <h3><i class="fa-solid fa-layer-group"></i> Chat Overlay</h3>
                     <p class="muted" style="margin-bottom:12px">Use this as a Browser Source in OBS to show your live chat on stream. This global URL shows chat from any of your live stream slots.</p>
@@ -1765,17 +1757,6 @@
                     <div id="dash-tx-history"></div>
                 </div>
 
-                <!-- Hobo Coins -->
-                <div class="dash-card" id="dash-card-nickels">
-                    <h3><i class="fa-solid fa-coins"></i> Hobo Nickels</h3>
-                    <div class="funds-display">
-                        <span class="funds-amount coins-color" id="dash-coins-amount">0</span>
-                        <span class="funds-usd" id="dash-coins-info">Free loyalty currency</span>
-                    </div>
-                    <p class="muted" style="font-size:0.8rem;margin-bottom:12px">
-                        Viewers earn Hobo Nickels by watching your stream and chatting. They can spend them on rewards you create below.
-                    </p>
-                </div>
 
                 <!-- Channel Points settings (migrated from the "Add to this channel" popover) -->
                 <div class="dash-card dash-card-wide" id="dash-card-points-config">
@@ -4666,7 +4647,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <script src="/js/channel-uploads.js?v=11" defer></script>
 <script src="/js/controls.js?v=8" defer></script>
 <script src="/js/onvif-dashboard.js?v=5" defer></script>
-<script src="/js/dashboard.js?v=11" defer></script>
+<script src="/js/dashboard.js?v=12" defer></script>
 <script src="/js/admin.js?v=5" defer></script>
 <!-- ── Floating Global Chat Widget (visible on non-chat pages) ── -->
 <div id="floating-chat-widget" class="floating-chat-widget" style="display:none">
