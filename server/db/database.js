@@ -2722,6 +2722,7 @@ function getHomeStats() {
         streamers: c(`SELECT COUNT(DISTINCT user_id) AS count FROM streams WHERE user_id IS NOT NULL`),
         chatMessages: c(`SELECT COUNT(*) AS count FROM chat_messages`),
         users: c(`SELECT COUNT(*) AS count FROM users WHERE COALESCE(is_banned, 0) = 0`),
+        anons: c(`SELECT COUNT(*) AS count FROM anon_ip_mappings`),
         weeklyActive: c(`SELECT COUNT(DISTINCT user_id) AS count FROM chat_messages
                          WHERE user_id IS NOT NULL AND COALESCE(is_deleted, 0) = 0
                            AND timestamp >= datetime('now', '-7 days')`),

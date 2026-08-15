@@ -1202,6 +1202,7 @@ function renderHeroStats(stats) {
     if (stats.liveNow > 0) rows.push({ cls: 'hero-stat--live', icon: 'fa-circle', num: stats.liveNow, label: 'Live', title: 'Streams live right now' });
     rows.push({ icon: 'fa-satellite-dish', num: stats.streamers, label: 'Streamers', title: 'People who have gone live' });
     rows.push({ icon: 'fa-users', num: stats.users, label: 'Campers', title: 'Registered users' });
+    rows.push({ icon: 'fa-user-secret', num: stats.anons, label: 'Anons', title: 'Anonymous chatters ever seen' });
     rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active', title: 'Active chatters this week' });
     rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Sessions', title: 'Total stream sessions' });
     rows.push({ icon: 'fa-film', num: stats.vods, label: 'VODs', title: 'Recorded videos' });
