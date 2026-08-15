@@ -229,13 +229,19 @@ function spawnFfmpeg(videoSource, audioSource) {
     const inputArgs = INPUT_MODE === 'sdp'
         ? [
             '-protocol_whitelist', 'file,rtp,udp',
-            '-thread_queue_size', '2048',
-            '-analyzeduration', '5000000',
-            '-probesize', '5000000',
-            '-max_delay', '500000',
-            '-reorder_queue_size', '200',
-            '-use_wallclock_as_timestamps', '1',
+            // Big input queue + UDP socket receive buffer so the local SFU→ffmpeg RTP path
+            // (no NACK/retransmit, unlike browser consumers) doesn't drop packets when the
+            // encoder briefly backs up — that packet loss was corrupting frames → choppy.
+            '-thread_queue_size', '8192',
+            '-buffer_size', '16000000',
+            '-analyzeduration', '2000000',
+            '-probesize', '2000000',
             '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
+            '-flags', 'low_delay',
+            // Lower latency than before (was 500ms/200) while still tolerating minor reordering.
+            '-max_delay', '150000',
+            '-reorder_queue_size', '64',
+            '-use_wallclock_as_timestamps', '1',
             '-err_detect', 'ignore_err',
             '-avoid_negative_ts', 'make_zero',
             '-i', INPUT_PATH,
@@ -277,7 +283,13 @@ function spawnFfmpeg(videoSource, audioSource) {
     });
 
     // ── Video: fixed-size I420 frames → RTCVideoSource ──────────
-    let frameBuf = Buffer.allocUnsafe(frameSize);
+    // Ping-pong two preallocated buffers instead of allocating a fresh ~1.3MB buffer per frame.
+    // At 30fps that was ~40MB/s of allocation → GC pauses that stalled the event loop, backed up
+    // the RTP read, and caused UDP packet loss. wrtc.onFrame copies the I420 data synchronously,
+    // so alternating two buffers is safe.
+    const frameBufs = [Buffer.allocUnsafe(frameSize), Buffer.allocUnsafe(frameSize)];
+    let bufIdx = 0;
+    let frameBuf = frameBufs[0];
     let frameOffset = 0;
     let pushedThisTick = 0;
     let lastSecond = Date.now();
@@ -309,7 +321,8 @@ function spawnFfmpeg(videoSource, audioSource) {
                 } else {
                     status.videoFramesDropped++;
                 }
-                frameBuf = Buffer.allocUnsafe(frameSize);
+                bufIdx ^= 1;
+                frameBuf = frameBufs[bufIdx];
                 frameOffset = 0;
             }
         }
