@@ -155,19 +155,26 @@ Return ONLY the JSON object.`;
     }
 }
 
+// Is a fresh batch due? Based on the stored batch's age (NOT a from-boot timer) so the
+// countdown the hero shows (updated_at + 12h) always matches when we actually regenerate.
+function _dueForRegen() {
+    const pool = _loadPool();
+    if (pool.v !== SLOGAN_FORMAT) return true;                 // new prompt/format
+    if (pool.audiences.length < 8) return true;                // empty / too small
+    if (pool.audiences.some(a => /streaming\s+for/i.test(String(a)))) return true; // old buggy format
+    if (!pool.updated_at || (Date.now() - pool.updated_at) >= INTERVAL_MS) return true; // 12h elapsed
+    return false;
+}
+
 function start() {
     if (_timer) return;
-    _timer = setInterval(() => { tick().catch(() => {}); }, INTERVAL_MS);
+    // Poll every 5 min and regenerate whenever a fresh batch is due — self-correcting across
+    // restarts and keeps the hero countdown honest (regenerates within ~5 min of hitting 12h).
+    const CHECK_MS = 5 * 60 * 1000;
+    _timer = setInterval(() => { if (_dueForRegen()) tick().catch(() => {}); }, CHECK_MS);
     if (_timer.unref) _timer.unref();
-    // Boot pass a few minutes in: regenerate if the pool is empty, a day stale, or old-format.
-    setTimeout(() => {
-        const pool = _loadPool();
-        const buggy = pool.audiences.some(a => /streaming\s+for/i.test(String(a)));
-        const stale = !pool.updated_at || (Date.now() - pool.updated_at) > INTERVAL_MS;
-        const outdated = pool.v !== SLOGAN_FORMAT; // new prompt/format → regenerate once
-        if (outdated || buggy || stale || pool.audiences.length < 8) tick().catch(() => {});
-    }, 3 * 60 * 1000);
-    console.log('[Slogans] hero-slogan job started (daily batch from full AI context)');
+    setTimeout(() => { if (_dueForRegen()) tick().catch(() => {}); }, 60 * 1000);
+    console.log('[Slogans] hero-slogan job started (12h batch from full AI context)');
 }
 
 module.exports = { start, tick };

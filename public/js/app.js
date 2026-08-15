@@ -1333,10 +1333,27 @@ async function loadHeroData() {
 
 // Playful countdown to the next AI slogan/label batch (regenerates every 12h).
 let _sloganCountdownTimer = null;
+let _sloganRefreshTimer = null;
+// After the countdown hits 0, poll the hero endpoint until the new batch lands, then swap the
+// slogans in + restart the countdown — so it never gets stuck on "brewing…".
+async function _refreshSlogansIfReady(prevNextAt) {
+    try {
+        const data = await api('/home/hero');
+        const sl = data && data.slogans;
+        if (sl && sl.next_at && (!prevNextAt || sl.next_at > prevNextAt)) {
+            startHeroRotation(_cleanAudiences(sl.audiences));
+            startHeroQuips(sl.quips);
+            startSloganCountdown(sl.next_at);
+            return true;
+        }
+    } catch { /* keep polling */ }
+    return false;
+}
 function startSloganCountdown(nextAt) {
     const el = document.getElementById('hero-slogan-timer');
     if (!el) return;
     if (_sloganCountdownTimer) { clearInterval(_sloganCountdownTimer); _sloganCountdownTimer = null; }
+    if (_sloganRefreshTimer) { clearInterval(_sloganRefreshTimer); _sloganRefreshTimer = null; }
     if (!nextAt) { el.hidden = true; return; }
     el.hidden = false;
     const pad = (n) => String(n).padStart(2, '0');
@@ -1345,6 +1362,14 @@ function startSloganCountdown(nextAt) {
         if (ms <= 0) {
             el.innerHTML = `<i class="fa-solid fa-fire"></i> brewing fresh slogans…`;
             if (_sloganCountdownTimer) { clearInterval(_sloganCountdownTimer); _sloganCountdownTimer = null; }
+            // Poll for the freshly-generated batch, then restart the countdown.
+            if (!_sloganRefreshTimer) {
+                _sloganRefreshTimer = setInterval(async () => {
+                    if (await _refreshSlogansIfReady(nextAt)) {
+                        clearInterval(_sloganRefreshTimer); _sloganRefreshTimer = null;
+                    }
+                }, 60000);
+            }
             return;
         }
         const s = Math.floor(ms / 1000) % 60, m = Math.floor(ms / 60000) % 60, h = Math.floor(ms / 3600000);
