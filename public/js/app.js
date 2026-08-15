@@ -1196,15 +1196,18 @@ function _heroCountUp(el, target) {
 function renderHeroStats(stats) {
     const wrap = document.getElementById('hero-stats');
     if (!wrap || !stats) return;
+    // Short, uniform labels (full meaning in the title tooltip) so a long label never dwarfs
+    // its number — the awkward "ACTIVE THIS WEEK" case.
     const rows = [];
-    if (stats.liveNow > 0) rows.push({ cls: 'hero-stat--live', icon: 'fa-circle', num: stats.liveNow, label: 'Live now' });
-    rows.push({ icon: 'fa-users', num: stats.users, label: 'Campers' });
-    rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active this week' });
-    rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Stream sessions' });
-    rows.push({ icon: 'fa-video', num: stats.vods, label: 'VODs' });
-    rows.push({ icon: 'fa-comments', num: stats.chatMessages, label: 'Chat messages' });
+    if (stats.liveNow > 0) rows.push({ cls: 'hero-stat--live', icon: 'fa-circle', num: stats.liveNow, label: 'Live', title: 'Streams live right now' });
+    rows.push({ icon: 'fa-satellite-dish', num: stats.streamers, label: 'Streamers', title: 'People who have gone live' });
+    rows.push({ icon: 'fa-users', num: stats.users, label: 'Campers', title: 'Registered users' });
+    rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active', title: 'Active chatters this week' });
+    rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Sessions', title: 'Total stream sessions' });
+    rows.push({ icon: 'fa-film', num: stats.vods, label: 'VODs', title: 'Recorded videos' });
+    rows.push({ icon: 'fa-comments', num: stats.chatMessages, label: 'Messages', title: 'Chat messages sent' });
     wrap.innerHTML = rows.map(r =>
-        `<div class="hero-stat ${r.cls || ''}"><i class="fa-solid ${r.icon}"></i><div class="hero-stat-meta"><span class="hero-stat-num" data-n="${r.num || 0}">0</span><span class="hero-stat-label">${r.label}</span></div></div>`
+        `<div class="hero-stat ${r.cls || ''}" title="${r.title || ''}"><i class="fa-solid ${r.icon}"></i><div class="hero-stat-meta"><span class="hero-stat-num" data-n="${r.num || 0}">0</span><span class="hero-stat-label">${r.label}</span></div></div>`
     ).join('');
     wrap.querySelectorAll('.hero-stat-num').forEach(el => _heroCountUp(el, parseInt(el.dataset.n, 10) || 0));
 }
@@ -1323,8 +1326,32 @@ async function loadHeroData() {
     try { data = await api('/home/hero'); } catch { /* static hero fallback below */ }
     startHeroRotation(_cleanAudiences(data && data.slogans && data.slogans.audiences));
     startHeroQuips(data && data.slogans && data.slogans.quips);
+    startSloganCountdown(data && data.slogans && data.slogans.next_at);
     if (data && data.stats) renderHeroStats(data.stats);
     if (data && data.media) renderHeroCollage(data.media);
+}
+
+// Playful countdown to the next AI slogan/label batch (regenerates every 12h).
+let _sloganCountdownTimer = null;
+function startSloganCountdown(nextAt) {
+    const el = document.getElementById('hero-slogan-timer');
+    if (!el) return;
+    if (_sloganCountdownTimer) { clearInterval(_sloganCountdownTimer); _sloganCountdownTimer = null; }
+    if (!nextAt) { el.hidden = true; return; }
+    el.hidden = false;
+    const pad = (n) => String(n).padStart(2, '0');
+    const tick = () => {
+        let ms = nextAt - Date.now();
+        if (ms <= 0) {
+            el.innerHTML = `<i class="fa-solid fa-fire"></i> brewing fresh slogans…`;
+            if (_sloganCountdownTimer) { clearInterval(_sloganCountdownTimer); _sloganCountdownTimer = null; }
+            return;
+        }
+        const s = Math.floor(ms / 1000) % 60, m = Math.floor(ms / 60000) % 60, h = Math.floor(ms / 3600000);
+        el.innerHTML = `<i class="fa-solid fa-fire"></i> next fresh batch of slogans in <b>${pad(h)}:${pad(m)}:${pad(s)}</b>`;
+    };
+    tick();
+    _sloganCountdownTimer = setInterval(tick, 1000);
 }
 
 async function loadHome() {

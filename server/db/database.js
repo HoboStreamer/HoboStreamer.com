@@ -2719,6 +2719,7 @@ function getHomeStats() {
     return {
         vods: c(`SELECT COUNT(*) AS count FROM vods WHERE is_public = 1 AND COALESCE(is_recording, 0) = 0`),
         liveSessions: c(`SELECT COUNT(*) AS count FROM streams`),
+        streamers: c(`SELECT COUNT(DISTINCT user_id) AS count FROM streams WHERE user_id IS NOT NULL`),
         chatMessages: c(`SELECT COUNT(*) AS count FROM chat_messages`),
         users: c(`SELECT COUNT(*) AS count FROM users WHERE COALESCE(is_banned, 0) = 0`),
         weeklyActive: c(`SELECT COUNT(DISTINCT user_id) AS count FROM chat_messages

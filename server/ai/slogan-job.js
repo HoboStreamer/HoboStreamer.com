@@ -14,8 +14,8 @@ const db = require('../db/database');
 const ai = require('./ai-analysis');
 let chatAi = null; try { chatAi = require('./chat-ai'); } catch { /* optional */ }
 
-const INTERVAL_MS = 24 * 60 * 60 * 1000; // one fresh batch per day
-const TARGET = 20;                        // ~20 words + ~20 slogans per day
+const INTERVAL_MS = 12 * 60 * 60 * 1000; // a fresh batch every 12h
+const TARGET = 20;                        // ~20 words + ~20 slogans per batch
 let _timer = null, _busy = false;
 
 function _parseJson(text) {

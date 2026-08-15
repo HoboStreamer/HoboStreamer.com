@@ -2123,6 +2123,15 @@ main#app { position: relative; z-index: 1; }
 .hero-stat--live > i { color: #e0245e; animation: heroLivePulse 1.6s ease-in-out infinite; }
 @keyframes heroLivePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
+/* Playful "next slogan batch" countdown */
+.hero-slogan-timer {
+    margin: -14px 0 22px; font-size: 0.72rem; letter-spacing: 0.02em;
+    color: var(--text-muted); opacity: 0.8;
+}
+.hero-slogan-timer[hidden] { display: none; }
+.hero-slogan-timer i { color: var(--accent); margin-right: 4px; }
+.hero-slogan-timer b { color: var(--text-secondary); font-weight: 700; font-variant-numeric: tabular-nums; }
+
 @media (max-width: 640px) {
     .hero { min-height: clamp(480px, 82vh, 620px); }
     .hero-stat { padding: 7px 11px; gap: 7px; }

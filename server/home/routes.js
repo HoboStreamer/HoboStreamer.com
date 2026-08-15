@@ -14,6 +14,7 @@ const path = require('path');
 const db = require('../db/database');
 
 const router = express.Router();
+const SLOGAN_INTERVAL_MS = 12 * 60 * 60 * 1000; // must match slogan-job INTERVAL_MS
 
 // ── Static fallback slogans (used until the AI job fills site_settings, or if AI is off) ──
 const FALLBACK_AUDIENCES = [
@@ -109,11 +110,16 @@ function heroSlogans() {
     const aiAud = (s && Array.isArray(s.audiences)) ? s.audiences.map(_cleanAudience).filter(a => a && a.length <= 60) : [];
     const aiQuips = (s && Array.isArray(s.quips)) ? s.quips.filter(q => q && String(q).length <= 120) : [];
     const hasAi = aiAud.length >= 4 || aiQuips.length >= 4;
-    // Purely AI once we have a daily batch; the static set is only the cold-start / AI-off default.
+    const updatedAt = (s && Number(s.updated_at)) || 0;
+    // The slogan job regenerates every 12h; next_at is when the current batch is due to refresh.
+    const nextAt = updatedAt ? updatedAt + SLOGAN_INTERVAL_MS : 0;
+    // Purely AI once we have a batch; the static set is only the cold-start / AI-off default.
     return {
         audiences: _shuffle(Array.from(new Set(hasAi ? aiAud : FALLBACK_AUDIENCES))),
         quips: _shuffle(Array.from(new Set(hasAi ? aiQuips : FALLBACK_QUIPS))),
         ai: hasAi,
+        updated_at: updatedAt || null,
+        next_at: nextAt || null,
     };
 }
 
