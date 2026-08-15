@@ -58,7 +58,18 @@ async function _analyzeOne(stream) {
             console.log(`[AI-Hear] stream ${stream.id}: transcription disabled (enabled=${ai.transcriptionEnabled && ai.transcriptionEnabled()})`);
         }
     } catch (e) { console.warn(`[AI-Hear] stream ${stream.id}: transcription error`, e.message); }
-    const memDesc = heard ? `${r.description} — heard: "${heard.slice(0, 500)}"` : r.description;
+    // Only fold in the "heard" part when the transcript is actual speech. Whisper emits
+    // non-speech markers on silence/noise (>> continuation, [INAUDIBLE], [BLANK_AUDIO],
+    // (music), etc.) — strip those and, if nothing with real words remains, drop the
+    // "heard" clause entirely rather than storing `heard: ">> [INAUDIBLE]"`.
+    const heardClean = String(heard || '')
+        .replace(/[<>]{2,}/g, ' ')                    // >> / << continuation markers
+        .replace(/[\[(][^\])]*[\])]/g, ' ')           // [INAUDIBLE] / (music) / [ silence ] …
+        .replace(/\s+/g, ' ')
+        .trim();
+    const hasSpeech = /[a-z0-9]/i.test(heardClean);
+    if (!hasSpeech) heardSegments = null;             // don't keep inaudible-only segments either
+    const memDesc = hasSpeech ? `${r.description} — heard: "${heardClean.slice(0, 500)}"` : r.description;
 
     try {
         db.addStreamMemory({
