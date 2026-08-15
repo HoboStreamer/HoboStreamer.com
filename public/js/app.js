@@ -7146,32 +7146,101 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// ── Docs → clean Markdown ────────────────────────────────────────────────────
+// Convert the docs HTML (headings, paragraphs, lists, code blocks, and the .doc-table
+// endpoint tables) into proper Markdown so "Copy All"/"Copy Section" paste as real Markdown
+// (GitHub-flavored tables, fenced code) instead of tab-separated innerText.
+function _docsInlineMd(node) {
+    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType !== 1) return '';
+    const tag = node.tagName.toLowerCase();
+    const cls = node.className || '';
+    if (tag === 'i' && /\bfa-/.test(cls)) return ''; // FontAwesome icon — no text
+    const inner = Array.from(node.childNodes).map(_docsInlineMd).join('');
+    switch (tag) {
+        case 'code': return '`' + node.textContent + '`';
+        case 'strong': case 'b': return '**' + inner.trim() + '**';
+        case 'em': case 'i': return inner.trim() ? '*' + inner.trim() + '*' : '';
+        case 'a': { const href = node.getAttribute('href') || ''; return href ? `[${inner.trim()}](${href})` : inner; }
+        case 'br': return '\n';
+        default: return inner;
+    }
+}
+function _docsCell(c) { return _docsInlineMd(c).replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|').trim(); }
+function _docsTableMd(table) {
+    let header = Array.from(table.querySelectorAll('thead th')).map(_docsCell);
+    let bodyRows = Array.from(table.querySelectorAll('tbody tr'));
+    if (!header.length) {
+        const rows = Array.from(table.querySelectorAll('tr'));
+        if (rows[0]) header = Array.from(rows[0].children).map(_docsCell);
+        bodyRows = rows.slice(1);
+    }
+    const out = [];
+    if (header.length) {
+        out.push('| ' + header.join(' | ') + ' |');
+        out.push('| ' + header.map(() => '---').join(' | ') + ' |');
+    }
+    for (const tr of bodyRows) {
+        const cells = Array.from(tr.children).map(_docsCell);
+        if (cells.length) out.push('| ' + cells.join(' | ') + ' |');
+    }
+    return out.join('\n');
+}
+function _docsToMarkdown(root) {
+    const lines = [];
+    const walk = (el) => {
+        for (const node of el.childNodes) {
+            if (node.nodeType === 3) { const t = node.textContent.trim(); if (t) lines.push(t); continue; }
+            if (node.nodeType !== 1) continue;
+            const tag = node.tagName.toLowerCase();
+            if (/^h[1-6]$/.test(tag)) {
+                lines.push('', '#'.repeat(Number(tag[1])) + ' ' + _docsInlineMd(node).trim(), '');
+            } else if (tag === 'p') {
+                const t = _docsInlineMd(node).trim(); if (t) lines.push(t, '');
+            } else if (tag === 'ul' || tag === 'ol') {
+                Array.from(node.children).filter(li => li.tagName === 'LI').forEach((li, i) => {
+                    lines.push((tag === 'ol' ? (i + 1) + '. ' : '- ') + _docsInlineMd(li).replace(/\s*\n\s*/g, ' ').trim());
+                });
+                lines.push('');
+            } else if (tag === 'pre') {
+                lines.push('```', (node.textContent || '').replace(/\n+$/, ''), '```', '');
+            } else if (tag === 'table') {
+                lines.push(_docsTableMd(node), '');
+            } else if (tag === 'hr') {
+                lines.push('', '---', '');
+            } else {
+                walk(node); // container — recurse
+            }
+        }
+    };
+    walk(root);
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}
+
 function copyDocsForAI() {
     const el = document.getElementById('docs-ai-content');
     if (!el) return;
-    // Non-active tabs are display:none, and innerText SKIPS hidden elements — that's why
-    // "Copy All" was only copying the open tab. Temporarily reveal every tab to capture the
-    // full docs, then restore the display states (synchronous, so there's no visible flash).
+    // Non-active tabs are display:none; reveal all so the converter sees every tab, then restore
+    // (synchronous — no visible flash).
     const tabs = Array.from(el.querySelectorAll('.doc-tab-content'));
     const prevDisplay = tabs.map(t => t.style.display);
     tabs.forEach(t => { t.style.display = ''; });
-    const text = (el.innerText || el.textContent || '').trim();
+    const text = _docsToMarkdown(el);
     tabs.forEach((t, i) => { t.style.display = prevDisplay[i]; });
+    _docsCopy(text, 'docs-copy-btn', 'Copied all!');
+}
 
+function _docsCopy(text, btnId, label) {
     const flash = () => {
         const toast = document.getElementById('docs-copy-toast');
-        const btn = document.getElementById('docs-copy-btn');
+        const btn = document.getElementById(btnId);
         if (toast) { toast.style.display = 'block'; setTimeout(() => { toast.style.display = 'none'; }, 4000); }
-        if (btn) { const orig = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied all!'; setTimeout(() => { btn.innerHTML = orig; }, 3000); }
+        if (btn) { const orig = btn.innerHTML; btn.innerHTML = `<i class="fa-solid fa-check"></i> ${label}`; setTimeout(() => { btn.innerHTML = orig; }, 3000); }
     };
     navigator.clipboard.writeText(text).then(flash).catch(() => {
-        // Fallback for older browsers
         const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta); ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
         flash();
     });
 }
@@ -7187,11 +7256,5 @@ function showDocTab(tabName, btn) {
 function copyDocSection() {
     const active = document.querySelector('.doc-tab-content[style=""], .doc-tab-content:not([style*="display: none"]):not([style*="display:none"])');
     if (!active) return;
-    const text = active.innerText || active.textContent || '';
-    navigator.clipboard.writeText(text.trim()).then(() => {
-        const btn = document.getElementById('docs-copy-section-btn');
-        if (btn) { const orig = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!'; setTimeout(() => { btn.innerHTML = orig; }, 3000); }
-        const toast = document.getElementById('docs-copy-toast');
-        if (toast) { toast.style.display = 'block'; setTimeout(() => { toast.style.display = 'none'; }, 4000); }
-    }).catch(() => {});
+    _docsCopy(_docsToMarkdown(active), 'docs-copy-section-btn', 'Copied!');
 }
