@@ -7149,22 +7149,30 @@ document.addEventListener('click', (e) => {
 function copyDocsForAI() {
     const el = document.getElementById('docs-ai-content');
     if (!el) return;
-    const text = el.innerText || el.textContent || '';
-    navigator.clipboard.writeText(text.trim()).then(() => {
+    // Non-active tabs are display:none, and innerText SKIPS hidden elements — that's why
+    // "Copy All" was only copying the open tab. Temporarily reveal every tab to capture the
+    // full docs, then restore the display states (synchronous, so there's no visible flash).
+    const tabs = Array.from(el.querySelectorAll('.doc-tab-content'));
+    const prevDisplay = tabs.map(t => t.style.display);
+    tabs.forEach(t => { t.style.display = ''; });
+    const text = (el.innerText || el.textContent || '').trim();
+    tabs.forEach((t, i) => { t.style.display = prevDisplay[i]; });
+
+    const flash = () => {
         const toast = document.getElementById('docs-copy-toast');
         const btn = document.getElementById('docs-copy-btn');
         if (toast) { toast.style.display = 'block'; setTimeout(() => { toast.style.display = 'none'; }, 4000); }
-        if (btn) { const orig = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!'; setTimeout(() => { btn.innerHTML = orig; }, 3000); }
-    }).catch(() => {
+        if (btn) { const orig = btn.innerHTML; btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied all!'; setTimeout(() => { btn.innerHTML = orig; }, 3000); }
+    };
+    navigator.clipboard.writeText(text).then(flash).catch(() => {
         // Fallback for older browsers
         const ta = document.createElement('textarea');
-        ta.value = text.trim();
+        ta.value = text;
         ta.style.position = 'fixed'; ta.style.opacity = '0';
         document.body.appendChild(ta); ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
-        const toast = document.getElementById('docs-copy-toast');
-        if (toast) { toast.style.display = 'block'; setTimeout(() => { toast.style.display = 'none'; }, 4000); }
+        flash();
     });
 }
 
