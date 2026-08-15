@@ -2786,7 +2786,23 @@ function handleChatMessage(msg) {
     }
 }
 
+// Ids already rendered this session — guards against the same message arriving via more than
+// one delivery path (the stream room + a cross-slot/global forward, a second WS subscription,
+// a relay echo, or a history/live race). Each message id renders at most once.
+const _seenChatMsgIds = new Set();
+function _chatMsgSeen(id) {
+    const key = String(id);
+    if (_seenChatMsgIds.has(key)) return true;
+    _seenChatMsgIds.add(key);
+    if (_seenChatMsgIds.size > 800) {
+        const it = _seenChatMsgIds.values();
+        for (let i = 0; i < 200; i++) { const n = it.next(); if (n.done) break; _seenChatMsgIds.delete(n.value); }
+    }
+    return false;
+}
+
 function addChatMessage(msg) {
+    if (msg && msg.id != null && _chatMsgSeen(msg.id)) return; // de-dupe double-delivered messages
     // Feed username into autocomplete cache
     if (typeof acTrackUser === 'function') acTrackUser(msg);
 
