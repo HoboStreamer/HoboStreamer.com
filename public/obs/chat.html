@@ -449,7 +449,9 @@ body.no-shadow .msg { text-shadow: none; }
         try {
             // The endpoint returns categorized arrays (defaults/channel/global/ffz/bttv/7tv),
             // NOT a flat `emotes` list. Merge them (channel/custom highest priority).
-            const resp = await fetch(`/api/emotes/all/${streamId || 0}`);
+            // Always pass the channel so its custom emotes load even with no live stream
+            // context (channel-wide overlay uses streamId 0) or before a slot is live.
+            const resp = await fetch(`/api/emotes/all/${streamId || 0}?channel=${encodeURIComponent(lookupUsername)}`);
             if (!resp.ok) return;
             const data = await resp.json();
             const map = {};

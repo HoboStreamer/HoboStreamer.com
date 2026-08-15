@@ -585,7 +585,13 @@ router.get('/all/:streamId', optionalAuth, async (req, res) => {
     try {
         const streamId = parseInt(req.params.streamId);
         const stream = streamId ? db.getStreamById(streamId) : null;
-        const streamUserId = stream ? stream.user_id : null;
+        let streamUserId = stream ? stream.user_id : null;
+        // Fallback: resolve the channel by ?channel=<username> when there's no live stream
+        // context (e.g. the channel-wide chat overlay uses streamId 0) so a channel's custom
+        // emotes still load and render instead of showing as plain text.
+        if (!streamUserId && req.query.channel) {
+            try { const u = db.getUserByUsername(String(req.query.channel)); if (u) streamUserId = u.id; } catch { /* */ }
+        }
 
         // Load channel's emote source preferences
         let sources = { defaults: true, custom: true, ffz: true, bttv: true, '7tv': true };
