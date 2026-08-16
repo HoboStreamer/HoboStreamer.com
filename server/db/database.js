@@ -920,6 +920,19 @@ function initDb() {
             UNIQUE(scope, subject_id, window)
         )`);
         database.exec(`CREATE INDEX IF NOT EXISTS idx_chat_ai_scope ON chat_ai_summaries(scope, subject_id, window)`);
+        // Growing log of AI timeline "notable moments" (beyond the 40 kept in the summary JSON),
+        // so the global timeline can be browsed/searched/paginated with real history.
+        database.exec(`CREATE TABLE IF NOT EXISTS chat_timeline_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL DEFAULT 'global',
+            subject_id INTEGER NOT NULL DEFAULT 0,
+            ts DATETIME NOT NULL,
+            label TEXT NOT NULL,
+            detail TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_chat_tl_scope_ts ON chat_timeline_events(scope, subject_id, ts DESC)`);
+        database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_tl_dedup ON chat_timeline_events(scope, subject_id, ts, label)`);
 
         const pcols = database.prepare('PRAGMA table_info(pastes)').all().map(c => c.name);
         if (!pcols.includes('ai_summary')) database.exec('ALTER TABLE pastes ADD COLUMN ai_summary TEXT');

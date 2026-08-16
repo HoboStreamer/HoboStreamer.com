@@ -105,7 +105,7 @@ function _mergeTimeline(priorJson, additions, fallbackTs, nowMs) {
     const now = nowMs || Date.now();
     for (const a of add) {
         const label = _clip(a && (a.label || a.title), 80);
-        if (!label) continue;
+        if (!label || _isPlaceholder(label)) continue; // skip empty / echoed-schema placeholders
         // Prefer the AI's estimated "minutes ago" (derived from the [Xm ago] markers we feed it),
         // so a moment is stamped when it ACTUALLY happened — not when the analysis ran.
         let ts = fallbackTs;
@@ -113,8 +113,18 @@ function _mergeTimeline(priorJson, additions, fallbackTs, nowMs) {
         if (Number.isFinite(mins) && mins >= 0 && mins <= 43200) ts = _sqlTime(now - mins * 60000);
         prior.push({ ts, label, detail: _clip(a.detail || a.description || '', 240) });
     }
+    // Keep chronological (mins_ago stamps mean append order isn't time order) then cap to newest.
+    prior.sort((x, y) => _parseSqlTime(x.ts) - _parseSqlTime(y.ts));
     if (prior.length > TIMELINE_MAX) prior = prior.slice(prior.length - TIMELINE_MAX);
     return JSON.stringify(prior);
+}
+// The model sometimes echoes the schema's example text as a real entry — reject those.
+function _isPlaceholder(s) { return /^(short title|one sentence|label|title|detail|\.\.\.)$/i.test(String(s || '').trim()); }
+function _cleanTimeline(arr) {
+    if (!Array.isArray(arr)) return [];
+    return arr
+        .filter(t => t && t.label && !_isPlaceholder(t.label))
+        .sort((a, b) => _parseSqlTime(a.ts) - _parseSqlTime(b.ts)); // chronological; UI reverses for newest-first
 }
 
 // ── GLOBAL ───────────────────────────────────────────────────────────────────
@@ -455,7 +465,7 @@ function getGlobalInsight() {
     const row = db.getChatAiSummary('global', 0, 'global');
     if (!row) return null;
     let timeline = [];
-    try { timeline = JSON.parse(row.timeline_json || '[]'); } catch { /* */ }
+    try { timeline = _cleanTimeline(JSON.parse(row.timeline_json || '[]')); } catch { /* */ }
     return {
         overview: row.overview || '',
         memory: row.memory_json || '',
@@ -473,7 +483,7 @@ function getUserInsight(userId) {
     let overviews = { today: '', alltime: '', has_24h: false };
     try { overviews = { ...overviews, ...JSON.parse(row.overview || '{}') }; } catch { /* */ }
     let timeline = [];
-    try { timeline = JSON.parse(row.timeline_json || '[]'); } catch { /* */ }
+    try { timeline = _cleanTimeline(JSON.parse(row.timeline_json || '[]')); } catch { /* */ }
     return {
         overview_24h: overviews.today || '',
         overview_alltime: overviews.alltime || '',
@@ -491,7 +501,7 @@ function getRelayUserInsight(relayId) {
     let overviews = { today: '', alltime: '', has_24h: false };
     try { overviews = { ...overviews, ...JSON.parse(row.overview || '{}') }; } catch { /* */ }
     let timeline = [];
-    try { timeline = JSON.parse(row.timeline_json || '[]'); } catch { /* */ }
+    try { timeline = _cleanTimeline(JSON.parse(row.timeline_json || '[]')); } catch { /* */ }
     return {
         overview_24h: overviews.today || '',
         overview_alltime: overviews.alltime || '',
@@ -509,7 +519,7 @@ function getAnonInsight(anonId) {
     let overviews = { today: '', alltime: '', has_24h: false };
     try { overviews = { ...overviews, ...JSON.parse(row.overview || '{}') }; } catch { /* */ }
     let timeline = [];
-    try { timeline = JSON.parse(row.timeline_json || '[]'); } catch { /* */ }
+    try { timeline = _cleanTimeline(JSON.parse(row.timeline_json || '[]')); } catch { /* */ }
     return {
         overview_24h: overviews.today || '',
         overview_alltime: overviews.alltime || '',
