@@ -517,9 +517,15 @@ router.get('/channel/:username/popular', (req, res) => {
     try {
         const user = db.getUserByUsername(req.params.username);
         if (!user) return res.status(404).json({ error: 'Not found' });
+        let vods = [], clips = [];
+        try { vods = db.getVodsByUserFiltered(user.id, { includePrivate: false, limit: 12 }) || []; } catch { /* */ }
+        try { clips = db.getClipsOfUserStreamsPaginated(user.id, 12, 0) || []; } catch { /* */ }
         res.json({
-            vod: db.getPopularVodForUser(user.id) || null,
-            clip: db.getPopularClipForUser(user.id) || null,
+            // Singular kept for back-compat; arrays let the offline screen fill the space.
+            vod: db.getPopularVodForUser(user.id) || (vods[0] || null),
+            clip: db.getPopularClipForUser(user.id) || (clips[0] || null),
+            vods,
+            clips,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get popular content' });

@@ -2866,11 +2866,24 @@ function getHomeStats() {
         emotes: c(`SELECT COUNT(*) AS count FROM emotes`),
         pastes: c(`SELECT COUNT(*) AS count FROM pastes`),
         aiMemories: c(`SELECT COUNT(*) AS count FROM stream_memories`),
+        pasteImages: c(`SELECT COUNT(*) AS count FROM pastes WHERE type = 'screenshot'`),
+        pasteText: c(`SELECT COUNT(*) AS count FROM pastes WHERE COALESCE(type, 'paste') <> 'screenshot'`),
         // Total hours of video the platform has archived (VODs, excluding in-progress recordings).
         streamHours: Math.round(c(`SELECT COALESCE(SUM(duration_seconds), 0) AS count FROM vods WHERE COALESCE(is_recording, 0) = 0`) / 3600),
-        weeklyActive: c(`SELECT COUNT(DISTINCT user_id) AS count FROM chat_messages
-                         WHERE user_id IS NOT NULL AND COALESCE(is_deleted, 0) = 0
-                           AND timestamp >= datetime('now', '-7 days')`),
+        // Active chatters this week across EVERYONE — registered users, anons, and relay chatters.
+        weeklyActive: c(`SELECT COUNT(*) AS count FROM (
+                            SELECT DISTINCT 'u' || user_id AS id FROM chat_messages
+                              WHERE user_id IS NOT NULL AND COALESCE(is_deleted, 0) = 0 AND timestamp >= datetime('now', '-7 days')
+                            UNION
+                            SELECT DISTINCT 'a' || anon_id FROM chat_messages
+                              WHERE anon_id IS NOT NULL AND COALESCE(is_deleted, 0) = 0 AND timestamp >= datetime('now', '-7 days')
+                            UNION
+                            SELECT DISTINCT 'r' || source_platform || '|' || username FROM chat_messages
+                              WHERE source_platform IS NOT NULL AND source_platform <> '' AND COALESCE(is_deleted, 0) = 0 AND timestamp >= datetime('now', '-7 days')
+                         )`),
+        // New unique visitors this week (first-seen anon fingerprints) — a proxy for people who
+        // showed up, not just those who chatted.
+        weeklyVisitors: c(`SELECT COUNT(*) AS count FROM anon_ip_mappings WHERE created_at >= datetime('now', '-7 days')`),
         liveNow: c(`SELECT COUNT(*) AS count FROM streams WHERE is_live = 1`),
     };
 }

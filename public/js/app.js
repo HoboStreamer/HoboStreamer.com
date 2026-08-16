@@ -1202,7 +1202,7 @@ function renderHeroStats(stats) {
     if (stats.liveNow > 0) rows.push({ cls: 'hero-stat--live', icon: 'fa-circle', num: stats.liveNow, label: 'Live', title: 'Streams live right now' });
     rows.push({ icon: 'fa-satellite-dish', num: stats.streamers, label: 'Streamers', title: 'People who have gone live' });
     rows.push({ icon: 'fa-users', num: stats.users, label: 'Users', title: 'Registered users' });
-    rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active', title: 'Active chatters this week' });
+    rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active', title: 'Active this week — chatters incl. anons & relays' + (stats.weeklyVisitors ? `, plus ${stats.weeklyVisitors} new visitors` : ''), sub: stats.weeklyVisitors ? `+${_fmtCount(stats.weeklyVisitors)} new` : '' });
     rows.push({ icon: 'fa-user-secret', num: stats.anons, label: 'Anons', title: 'Anonymous chatters ever seen' });
     rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Sessions', title: 'Total stream sessions' });
     rows.push({ icon: 'fa-film', num: stats.vods, label: 'VODs', title: 'Recorded videos' });
@@ -1211,10 +1211,10 @@ function renderHeroStats(stats) {
     rows.push({ icon: 'fa-brain', num: stats.aiMemories, label: 'AI Moments', title: 'Moments the AI remembers across every stream' });
     rows.push({ icon: 'fa-face-grin-squint', num: stats.emotes, label: 'Emotes', title: 'Custom channel emotes uploaded' });
     rows.push({ icon: 'fa-heart', num: stats.follows, label: 'Follows', title: 'Channel follows' });
-    rows.push({ icon: 'fa-paste', num: stats.pastes, label: 'Pastes', title: 'Pastes shared' });
+    rows.push({ icon: 'fa-paste', num: stats.pastes, label: 'Pastes', title: `${stats.pasteText || 0} text · ${stats.pasteImages || 0} image pastes`, sub: (stats.pasteText != null && stats.pasteImages != null) ? `${_fmtCount(stats.pasteText)} txt · ${_fmtCount(stats.pasteImages)} img` : '' });
     rows.push({ icon: 'fa-comments', num: stats.chatMessages, label: 'Messages', title: 'Chat messages sent' });
     wrap.innerHTML = rows.map(r =>
-        `<div class="hero-stat ${r.cls || ''}" title="${r.title || ''}"><i class="fa-solid ${r.icon}"></i><div class="hero-stat-meta"><span class="hero-stat-num" data-n="${r.num || 0}">0</span><span class="hero-stat-label">${r.label}</span></div></div>`
+        `<div class="hero-stat ${r.cls || ''}" title="${r.title || ''}"><i class="fa-solid ${r.icon}"></i><div class="hero-stat-meta"><span class="hero-stat-num" data-n="${r.num || 0}">0</span><span class="hero-stat-label">${r.label}</span>${r.sub ? `<span class="hero-stat-sub">${r.sub}</span>` : ''}</div></div>`
     ).join('');
     wrap.querySelectorAll('.hero-stat-num').forEach(el => _heroCountUp(el, parseInt(el.dataset.n, 10) || 0));
 }
@@ -4930,25 +4930,30 @@ async function _fillOfflineExplore(username) {
     catch { return; }
     const host = document.getElementById('ch-offline-explore');
     if (!host) return; // navigated away / offline screen re-rendered
-    const cards = [];
-    if (data.vod) cards.push(_offlineExploreCard('vod', data.vod));
-    if (data.clip) cards.push(_offlineExploreCard('clip', data.clip));
-    host.innerHTML = cards.length
-        ? `<div class="ch-offline-explore-cards">${cards.join('')}</div>`
+    const vods = (data.vods && data.vods.length) ? data.vods : (data.vod ? [data.vod] : []);
+    const clips = (data.clips && data.clips.length) ? data.clips : (data.clip ? [data.clip] : []);
+    // Interleave VODs + clips so the grid mixes content types as it fills the space.
+    const items = [];
+    for (let i = 0, mx = Math.max(vods.length, clips.length); i < mx; i++) {
+        if (vods[i]) items.push({ kind: 'vod', item: vods[i] });
+        if (clips[i]) items.push({ kind: 'clip', item: clips[i] });
+    }
+    host.innerHTML = items.length
+        ? `<div class="ch-offline-explore-grid">${items.map(x => _offlineExploreCard(x.kind, x.item)).join('')}</div>`
         : '';
 }
 function _offlineExploreCard(kind, item) {
     const isVod = kind === 'vod';
     const href = isVod ? `/vod/${item.id}` : `/clip/${item.id}`;
     const icon = isVod ? 'fa-video' : 'fa-scissors';
-    const label = isVod ? 'Top VOD' : 'Top Clip';
+    const label = isVod ? 'VOD' : 'CLIP';
     const thumbGen = isVod ? `/api/thumbnails/generate/vod/${item.id}` : `/api/thumbnails/generate/clip/${item.id}`;
     return `<a class="stream-card ch-offline-card" href="${href}" onclick="return handleLinkClick(event, '${href}')">
         <div class="stream-card-thumb">
             ${thumbImg(item.thumbnail_url, icon, item.title, thumbGen)}
+            <span class="ch-offline-card-kind ch-offline-card-kind--${kind}"><i class="fa-solid ${icon}"></i> ${label}</span>
             ${item.duration_seconds ? `<span class="stream-card-duration">${formatDuration(item.duration_seconds)}</span>` : ''}
             <span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${item.view_count || 0}</span>
-            <span class="ch-offline-card-kind"><i class="fa-solid ${icon}"></i> ${label}</span>
         </div>
         <div class="stream-card-info">
             <div class="stream-card-title">${esc(item.title || (isVod ? 'VOD' : 'Clip'))}</div>
