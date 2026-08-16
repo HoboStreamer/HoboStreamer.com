@@ -443,11 +443,13 @@ button{font:inherit}
   background:rgba(14,18,24,.28);border-color:rgba(255,255,255,.10);
   box-shadow:none;backdrop-filter:blur(3px);
 }
-.omni:not(.active) .omni-provider,.omni:not(.active) .omni-go{opacity:.45}
-.omni:not(.active) .omni-suggest,.omni:not(.active) .omni-provider-menu{display:none!important}
+.omni:not(.active) .omni-provider,.omni:not(.active) .omni-go{opacity:.55}
+.omni:not(.active) .omni-suggest{display:none!important}
 .omni:not(.active) .omni-hint{opacity:.3}
-/* Reveal on hover/focus even while resting, so it's discoverable without committing to typing. */
-.omni:not(.active) .omni-box:hover,.omni:not(.active) .omni-box:focus-within{opacity:.8;transition:opacity .18s}
+/* Reveal on hover (not focus — the input is always focused for the typing feature) so it stays
+   ghosted at rest, and go fully solid whenever the search-engine dropdown is open. */
+.omni:not(.active) .omni-box:hover{opacity:.85;transition:opacity .18s}
+.omni.provopen .omni-box{opacity:1!important}
 .omni-input{
   flex:1;min-width:0;background:none;border:none;outline:none;
   color:var(--text);font-size:1.5rem;font-weight:600;letter-spacing:-.01em;
@@ -1230,13 +1232,16 @@ button{font:inherit}
     const row=e.target.closest(".omni-sug"); if(!row) return;
     activate(curItems[Number(row.dataset.i)]);
   });
-  provBtn.addEventListener("click",e=>{ e.stopPropagation(); provMenu.hidden=!provMenu.hidden; if(!provMenu.hidden) renderProvMenu(); });
+  function setProvMenu(open){ provMenu.hidden=!open; omni.classList.toggle("provopen",open); if(open) renderProvMenu(); }
+  provBtn.addEventListener("click",e=>{ e.stopPropagation(); setProvMenu(provMenu.hidden); });
   function renderProvMenu(){
     provMenu.innerHTML=Object.entries(PROVIDERS).map(([k,p])=>`
       <button class="omni-prov-opt${k===provider?' active':''}" data-prov="${k}"><i class="${p.icon}"></i> ${esc(p.name)}${k===provider?' <i class="fa-solid fa-check" style="margin-left:auto"></i>':''}</button>`).join("");
   }
-  provMenu.addEventListener("click",e=>{ const b=e.target.closest(".omni-prov-opt"); if(!b) return; setProvider(b.dataset.prov); provMenu.hidden=true; input.focus(); });
-  omni.addEventListener("click",e=>{ if(e.target===omni) close(); });
+  provMenu.addEventListener("click",e=>{ const b=e.target.closest(".omni-prov-opt"); if(!b) return; setProvider(b.dataset.prov); setProvMenu(false); input.focus(); });
+  // Close the dropdown when clicking anywhere else, or on Escape.
+  document.addEventListener("click",e=>{ if(!provMenu.hidden && !provMenu.contains(e.target) && e.target!==provBtn && !provBtn.contains(e.target)) setProvMenu(false); });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape" && !provMenu.hidden){ e.stopPropagation(); setProvMenu(false); } },true);
 
   // Global: start typing anywhere → focus the (possibly ghosted or hidden) bar and seed it.
   document.addEventListener("keydown",e=>{
