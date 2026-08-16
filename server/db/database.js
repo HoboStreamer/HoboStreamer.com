@@ -2602,6 +2602,15 @@ function getVodsForMomentRanking(limit = 120) {
     } catch { return []; }
 }
 
+// Recent auto-generated clips (for cross-clip dedup — avoid near-identical scenes / same spot).
+function getRecentAutoClips(hours = 48, limit = 250) {
+    try {
+        return all(`SELECT id, title, ai_overview, start_time, stream_id, vod_id, user_id
+                    FROM clips WHERE COALESCE(auto_generated,0) = 1 AND created_at >= datetime('now', ?)
+                    ORDER BY created_at DESC LIMIT ?`, [`-${Math.max(1, hours)} hours`, Math.max(1, limit)]) || [];
+    } catch { return []; }
+}
+
 // How many AUTO-generated clips a stream has produced in the last N minutes (hourly cap +
 // min-spacing enforcement for the live auto-clipper).
 function countAutoClipsSince(streamId, minutes) {
@@ -7015,7 +7024,7 @@ module.exports = {
     updatePasteAi, cleanupMalformedAiText, deleteAiMomentTextPastes, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getStreamTranscriptSegments, getUserPastesForAi,
     getVodsForMomentRanking, getClipStartTimesForStream, getChatSpikeOffsets,
-    countAutoClipsSince, getLiveChatBuckets, getRecentChatText, getVodsWithoutAutoClip,
+    countAutoClipsSince, getLiveChatBuckets, getRecentChatText, getVodsWithoutAutoClip, getRecentAutoClips,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     getStreamerAiTimeline, assembleStreamerAiTimeline, setStreamAiTitle, getUntitledAiSessions, clearAiTimelineCache,
     // Homepage helpers

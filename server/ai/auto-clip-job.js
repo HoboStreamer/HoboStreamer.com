@@ -193,10 +193,32 @@ async function backfillVodClips({ limit = BACKFILL_PER_RUN, force = false } = {}
  * Cut a clip around a moment the AI-moments pipeline already chose for a finished VOD.
  * @param {object} o { vod (row w/ user_id, stream_id, vod_id/id), offset, title, desc, source }
  */
+function _sceneSig(text) {
+    return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).slice(0, 5).join(' ');
+}
+// True if a recent auto-clip is basically the same as (vod, offset, scene) we're about to cut —
+// same VOD spot, or a near-identical scene signature (same streamer's repeated intro/setup).
+function _isDuplicateAutoClip(vod, offset, desc, title) {
+    try {
+        const vId = vod.vod_id || vod.id;
+        const sig = _sceneSig(desc || title);
+        const start = Math.max(0, Math.floor(offset) - CLIP_PRE);
+        for (const c of (db.getRecentAutoClips ? db.getRecentAutoClips(48, 250) : [])) {
+            if ((c.vod_id === vId || c.stream_id === vod.stream_id) && Math.abs((c.start_time || 0) - start) < 45) return true;
+            if (sig && _sceneSig(c.ai_overview || c.title) === sig) return true;
+        }
+    } catch { /* */ }
+    return false;
+}
+
 async function clipVodMoment(o) {
     try {
         const { vod, offset, title, desc, source } = o || {};
         if (!vod || !source || !(offset >= 0)) return null;
+        if (_isDuplicateAutoClip(vod, offset, desc, title)) {
+            console.log(`[AutoClip] skip VOD ${vod.vod_id || vod.id} — duplicate/near-identical auto-clip already exists`);
+            return null;
+        }
         const dur = CLIP_PRE + CLIP_POST;
         const start = Math.max(0, Math.floor(offset) - CLIP_PRE);
         return await cutClip({
