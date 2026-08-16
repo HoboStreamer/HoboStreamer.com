@@ -3022,6 +3022,31 @@ function getPopularClipForUser(userId) {
     return null;
 }
 
+// Single most-viewed VOD / clip within a time window (win = "-7 days" | "-1 month" | null=all-time).
+function _topVodForUser(userId, win) {
+    const sql = `SELECT v.*, u.username, u.display_name, u.avatar_url, u.profile_color
+                 FROM vods v JOIN users u ON v.user_id = u.id
+                 WHERE v.user_id = ? AND v.is_public = 1 AND COALESCE(v.is_recording,0)=0 AND COALESCE(v.clips_only,0)=0`
+        + (win ? ` AND v.created_at >= datetime('now', ?)` : '')
+        + ` ORDER BY v.view_count DESC, v.created_at DESC LIMIT 1`;
+    return get(sql, win ? [userId, win] : [userId]) || null;
+}
+function _topClipForUser(userId, win) {
+    const sql = `SELECT c.*, su.username, su.display_name, su.avatar_url, su.profile_color
+                 FROM clips c JOIN streams s ON c.stream_id = s.id JOIN users su ON s.user_id = su.id
+                 WHERE s.user_id = ? AND c.is_public = 1`
+        + (win ? ` AND c.created_at >= datetime('now', ?)` : '')
+        + ` ORDER BY c.view_count DESC, c.created_at DESC LIMIT 1`;
+    return get(sql, win ? [userId, win] : [userId]) || null;
+}
+// Top VOD + top clip for each of week / month / all-time, for the offline-screen cycler.
+function getTopContentRanges(userId) {
+    const out = {};
+    for (const [key, win] of [['week', '-7 days'], ['month', '-1 month'], ['all', null]]) {
+        out[key] = { vod: _topVodForUser(userId, win), clip: _topClipForUser(userId, win) };
+    }
+    return out;
+}
 function countVodsByUserFiltered(userId, { includePrivate = false, managedStreamId = null } = {}) {
     const conditions = ['v.user_id = ?', 'COALESCE(v.is_recording, 0) = 0', 'COALESCE(v.clips_only, 0) = 0'];
     const params = [userId];
@@ -6766,7 +6791,7 @@ module.exports = {
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
     getRecentVods, countRecentVods, getHomeStats,
     // Filtered VODs/clips
-    getVodsByUserFiltered, countVodsByUserFiltered, getPopularVodForUser, getPopularClipForUser,
+    getVodsByUserFiltered, countVodsByUserFiltered, getPopularVodForUser, getPopularClipForUser, getTopContentRanges,
     getClipsOfUserStreamsPaginated, countClipsOfUserStreams,
     getClipsByUserPaginated,
     // Channels

@@ -4899,6 +4899,7 @@ function _linkify(escaped) {
 function _renderOfflineScreen(ch) {
     const host = document.getElementById('ch-offline-screen');
     if (!host) return;
+    _stopOfflineCycler(); // clear any prior offline cycler before re-rendering
     const type = ch && ch.offline_screen_type;
     const url = ch && ch.offline_screen_url;
     if (type === 'image' && url) {
@@ -4928,42 +4929,125 @@ function _renderOfflineScreen(ch) {
     }
 }
 
-// Fill the offline screen with the streamer's most-popular recent VOD + clip cards.
+// Compact "top content" cycler for the offline screen: the #1 VOD + #1 clip for the
+// streamer, cycling through time windows (all-time / this month / this week) by views.
+let _offlineRanges = [];
+let _offlineIdx = 0;
+let _offlineCyclerTimer = null;
+const _OFFLINE_RANGE_META = [
+    { key: 'all', label: 'All time' },
+    { key: 'month', label: 'This month' },
+    { key: 'week', label: 'This week' },
+];
+
+function _stopOfflineCycler() {
+    if (_offlineCyclerTimer) { clearInterval(_offlineCyclerTimer); _offlineCyclerTimer = null; }
+}
+
 async function _fillOfflineExplore(username) {
     if (!username) return;
+    _stopOfflineCycler();
     let data;
     try { data = await api(`/streams/channel/${encodeURIComponent(username)}/popular`); }
     catch { return; }
     const host = document.getElementById('ch-offline-explore');
     if (!host) return; // navigated away / offline screen re-rendered
-    const vods = (data.vods && data.vods.length) ? data.vods : (data.vod ? [data.vod] : []);
-    const clips = (data.clips && data.clips.length) ? data.clips : (data.clip ? [data.clip] : []);
-    // Interleave VODs + clips so the grid mixes content types as it fills the space.
-    const items = [];
-    for (let i = 0, mx = Math.max(vods.length, clips.length); i < mx; i++) {
-        if (vods[i]) items.push({ kind: 'vod', item: vods[i] });
-        if (clips[i]) items.push({ kind: 'clip', item: clips[i] });
+    const ranges = data.ranges || {};
+
+    // Build the range list (all → month → week), keep only windows that actually have
+    // content, and drop a window that is identical to the one before it (so a streamer with
+    // only recent content doesn't see "All time" and "This week" show the exact same pair).
+    const built = [];
+    let lastSig = '';
+    for (const meta of _OFFLINE_RANGE_META) {
+        const r = ranges[meta.key];
+        if (!r || (!r.vod && !r.clip)) continue;
+        const sig = `${r.vod ? 'v' + r.vod.id : ''}|${r.clip ? 'c' + r.clip.id : ''}`;
+        if (sig === lastSig) continue;
+        lastSig = sig;
+        built.push({ ...meta, vod: r.vod || null, clip: r.clip || null });
     }
-    host.innerHTML = items.length
-        ? `<div class="ch-offline-explore-grid">${items.map(x => _offlineExploreCard(x.kind, x.item)).join('')}</div>`
-        : '';
+    // Fall back to the legacy single top vod/clip if the ranges came back empty.
+    if (!built.length && (data.vod || data.clip)) {
+        built.push({ key: 'all', label: 'Top content', vod: data.vod || null, clip: data.clip || null });
+    }
+    if (!built.length) { host.innerHTML = ''; return; }
+
+    _offlineRanges = built;
+    _offlineIdx = 0;
+    const chips = built.length > 1
+        ? `<div class="off-cyc-ranges">${built.map((r, i) =>
+            `<button class="off-cyc-chip${i === 0 ? ' active' : ''}" data-i="${i}" onclick="_offlineCyclerGo(${i}, true)">${esc(r.label)}</button>`).join('')}</div>`
+        : `<span class="off-cyc-single-label">${esc(built[0].label)}</span>`;
+    const nav = built.length > 1
+        ? `<div class="off-cyc-nav">
+             <button class="off-cyc-arrow" onclick="_offlineCyclerStep(-1, true)" aria-label="Previous"><i class="fa-solid fa-chevron-left"></i></button>
+             <button class="off-cyc-arrow" onclick="_offlineCyclerStep(1, true)" aria-label="Next"><i class="fa-solid fa-chevron-right"></i></button>
+           </div>` : '';
+
+    host.innerHTML = `
+        <div class="off-cyc" id="off-cyc" onmouseenter="_stopOfflineCycler()" onmouseleave="_startOfflineCycler()">
+            <div class="off-cyc-head">
+                <span class="off-cyc-title"><i class="fa-solid fa-fire"></i> Most watched</span>
+                ${chips}
+                ${nav}
+            </div>
+            <div class="off-cyc-body" id="off-cyc-body"></div>
+        </div>`;
+    _offlineCyclerRender();
+    _startOfflineCycler();
 }
-function _offlineExploreCard(kind, item) {
+
+function _startOfflineCycler() {
+    _stopOfflineCycler();
+    if (_offlineRanges.length > 1 && document.getElementById('off-cyc-body')) {
+        _offlineCyclerTimer = setInterval(() => _offlineCyclerStep(1, false), 6500);
+    }
+}
+function _offlineCyclerStep(dir, userAction) {
+    if (!_offlineRanges.length) return;
+    _offlineCyclerGo((_offlineIdx + dir + _offlineRanges.length) % _offlineRanges.length, userAction);
+}
+function _offlineCyclerGo(i, userAction) {
+    if (!_offlineRanges.length) return;
+    _offlineIdx = ((i % _offlineRanges.length) + _offlineRanges.length) % _offlineRanges.length;
+    document.querySelectorAll('.off-cyc-chip').forEach(c => c.classList.toggle('active', +c.dataset.i === _offlineIdx));
+    _offlineCyclerRender();
+    // A manual pick restarts the dwell timer so it doesn't jump again immediately.
+    if (userAction) _startOfflineCycler();
+}
+function _offlineCyclerRender() {
+    const body = document.getElementById('off-cyc-body');
+    if (!body) { _stopOfflineCycler(); return; } // navigated away — stop firing
+    const r = _offlineRanges[_offlineIdx];
+    const cards = [];
+    if (r.vod) cards.push(_offlineTopCard('vod', r.vod));
+    if (r.clip) cards.push(_offlineTopCard('clip', r.clip));
+    body.classList.remove('off-cyc-fade');
+    // reflow to restart the fade-in animation
+    void body.offsetWidth;
+    body.innerHTML = cards.join('');
+    body.classList.add('off-cyc-fade');
+}
+function _offlineTopCard(kind, item) {
     const isVod = kind === 'vod';
     const href = isVod ? `/vod/${item.id}` : `/clip/${item.id}`;
     const icon = isVod ? 'fa-video' : 'fa-scissors';
-    const label = isVod ? 'VOD' : 'CLIP';
+    const label = isVod ? 'VOD' : 'Clip';
     const thumbGen = isVod ? `/api/thumbnails/generate/vod/${item.id}` : `/api/thumbnails/generate/clip/${item.id}`;
-    return `<a class="stream-card ch-offline-card" href="${href}" onclick="return handleLinkClick(event, '${href}')">
-        <div class="stream-card-thumb">
+    return `<a class="off-top-card" href="${href}" onclick="return handleLinkClick(event, '${href}')">
+        <div class="off-top-thumb">
             ${thumbImg(item.thumbnail_url, icon, item.title, thumbGen)}
-            <span class="ch-offline-card-kind ch-offline-card-kind--${kind}"><i class="fa-solid ${icon}"></i> ${label}</span>
-            ${item.duration_seconds ? `<span class="stream-card-duration">${formatDuration(item.duration_seconds)}</span>` : ''}
-            <span class="stream-card-viewers"><i class="fa-solid fa-eye"></i> ${item.view_count || 0}</span>
+            <span class="off-top-rank">#1 ${label}</span>
+            ${item.duration_seconds ? `<span class="off-top-dur">${formatDuration(item.duration_seconds)}</span>` : ''}
         </div>
-        <div class="stream-card-info">
-            <div class="stream-card-title">${esc(item.title || (isVod ? 'VOD' : 'Clip'))}</div>
-            <div class="muted" style="font-size:0.74rem;margin-top:2px">${timeAgo(item.created_at)}</div>
+        <div class="off-top-info">
+            <div class="off-top-title">${esc(item.title || label)}</div>
+            <div class="off-top-meta">
+                <span><i class="fa-solid fa-eye"></i> ${_fmtCount ? _fmtCount(item.view_count || 0) : (item.view_count || 0)}</span>
+                <span class="off-top-dot">·</span>
+                <span>${timeAgo(item.created_at)}</span>
+            </div>
         </div>
     </a>`;
 }

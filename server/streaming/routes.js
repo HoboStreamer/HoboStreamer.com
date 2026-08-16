@@ -520,12 +520,16 @@ router.get('/channel/:username/popular', (req, res) => {
         let vods = [], clips = [];
         try { vods = db.getVodsByUserFiltered(user.id, { includePrivate: false, limit: 12 }) || []; } catch { /* */ }
         try { clips = db.getClipsOfUserStreamsPaginated(user.id, 12, 0) || []; } catch { /* */ }
+        let ranges = null;
+        try { ranges = db.getTopContentRanges(user.id); } catch { /* */ }
         res.json({
             // Singular kept for back-compat; arrays let the offline screen fill the space.
             vod: db.getPopularVodForUser(user.id) || (vods[0] || null),
             clip: db.getPopularClipForUser(user.id) || (clips[0] || null),
             vods,
             clips,
+            // Top VOD + clip per time window (week/month/all) for the compact offline cycler.
+            ranges,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get popular content' });
