@@ -8,6 +8,7 @@
 <title>Hobo Network // New Tab</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="/css/chat-shared.css?v=1">
 <style>
 :root{
   --bg:#08090c;
@@ -342,25 +343,43 @@ button{font:inherit}
   background:var(--green);box-shadow:0 0 11px var(--green)
 }
 .messages{
-  min-height:0;overflow:hidden;
-  display:flex;flex-direction:column;justify-content:flex-end;
+  min-height:0;overflow-y:auto;overflow-x:hidden;
+  display:flex;flex-direction:column;justify-content:flex-start;
   gap:.25vh;padding:.7vh .7vw;
-  mask-image:linear-gradient(to bottom,transparent,#000 8%,#000)
+  scrollbar-width:thin;scrollbar-color:#39424e transparent
 }
+.messages::-webkit-scrollbar{width:8px}
+.messages::-webkit-scrollbar-thumb{background:#39424e;border-radius:8px}
+.messages::-webkit-scrollbar-track{background:transparent}
 .msg{
   font-size:.86vw;line-height:1.3;
-  padding:.46vh .45vw;border-radius:6px
+  padding:.46vh .45vw;border-radius:6px;
+  word-break:break-word
 }
 .msg:nth-child(odd){background:rgba(255,255,255,.02)}
 .msg .name{
-  font-weight:950;color:var(--gold);margin-right:.38vw
+  font-weight:950;color:var(--gold);margin-right:.38vw;cursor:pointer
 }
+.msg .name:hover{text-decoration:underline}
 .msg .platform{
   font-size:.53vw;color:#a7b0ba;background:#252d37;
   border-radius:4px;padding:.16vh .24vw;margin-right:.28vw;
   text-transform:uppercase
 }
+/* Which stream (or global) a message came from — clickable */
+.msg .chat-src{
+  font-size:.55vw;font-weight:900;letter-spacing:.03em;
+  color:#8fb3e6;background:rgba(105,183,255,.12);
+  border:1px solid rgba(105,183,255,.25);
+  border-radius:4px;padding:.14vh .3vw;margin-right:.3vw;
+  text-transform:uppercase;cursor:pointer;white-space:nowrap
+}
+.msg .chat-src:hover{background:rgba(105,183,255,.22)}
+.msg .chat-src.global{color:#9aa4af;background:rgba(255,255,255,.05);border-color:#333c48;cursor:default}
+.msg .chat-src i{font-size:.9em;margin-right:.15vw}
 .msg.system{color:#7c8795;font-style:italic}
+/* chat-link inherits shared styles from chat-shared.css; size it for the kiosk */
+.messages .chat-link{font-size:inherit}
 .chat-foot{
   display:flex;align-items:center;
   padding:0 .75vw;border-top:1px solid #28303a;
@@ -496,6 +515,7 @@ button{font:inherit}
   </section>
 </div>
 
+<script src="/js/chat-shared.js?v=1"></script>
 <script>
 (() => {
   "use strict";
@@ -701,38 +721,54 @@ button{font:inherit}
     rs:"#7dd3fc",robotstreamer:"#7dd3fc"
   };
 
+  // Where did this message come from? A live stream's chat is forwarded to the global feed
+  // tagged with stream_channel/source_channel (+ slug). Pure global-room messages have neither.
+  function srcBadge(m){
+    const ch=m.stream_channel||m.source_channel;
+    if(ch){
+      const user=String(ch).replace(/^@/,"");
+      const ref=m.source_slug||m.source_managed_id;
+      const href=`/@${encodeURIComponent(user)}${ref?"/"+encodeURIComponent(ref):""}`;
+      return `<span class="chat-src" title="From ${esc(user)}'s stream — open channel" onclick="location.href='${esc(href)}'"><i class="fa-solid fa-satellite-dish"></i>${esc(user)}</span>`;
+    }
+    return `<span class="chat-src global" title="Global chat"><i class="fa-solid fa-globe"></i>global</span>`;
+  }
   function addMsg(m){
+    // Auto-scroll only if the viewer is already near the bottom (don't yank them up mid-read).
+    const nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60;
     const el=document.createElement("div");
     if(m.type==="system"){
       el.className="msg system";
       el.textContent=m.message||"System";
     }else{
       el.className="msg";
-      if(m.source_platform){
-        const p=document.createElement("span");
-        p.className="platform";
-        p.textContent=m.source_platform;
-        el.appendChild(p);
-      }
-      const n=document.createElement("span");
-      n.className="name";
-      n.textContent=m.display_name||m.username||m.anon_id||"anon";
-      n.style.color=colors[String(m.source_platform||"").toLowerCase()]||"#dbb077";
-      el.appendChild(n);
-
-      const t=document.createElement("span");
-      t.textContent=m.message||"";
-      el.appendChild(t);
+      const plat=String(m.source_platform||"").toLowerCase();
+      const isRelay=!!m.source_platform;
+      const uname=String(m.core_username||m.username||"").replace(/^@/,"");
+      const label=m.display_name||m.username||m.anon_id||"anon";
+      const nameColor=colors[plat]||"#dbb077";
+      // Registered (non-relay, non-anon) users link to their channel on left-click.
+      const canChannel = uname && !isRelay && !m.anon_id && m.user_id;
+      let html = srcBadge(m);
+      if(isRelay) html += `<span class="platform">${esc(m.source_platform)}</span>`;
+      const nameAttrs = canChannel
+        ? ` style="color:${esc(nameColor)}" title="Open ${esc(uname)}'s channel" onclick="location.href='/@${esc(encodeURIComponent(uname))}'"`
+        : ` style="color:${esc(nameColor)};cursor:default"`;
+      html += `<span class="name"${nameAttrs}>${esc(label)}</span> `;
+      html += `<span class="msg-text">${HoboChat.linkify(m.message||"")}</span>`;
+      el.innerHTML = html;
     }
     messages.appendChild(el);
-    while(messages.children.length>9)messages.removeChild(messages.firstChild);
+    while(messages.children.length>200)messages.removeChild(messages.firstChild);
+    if(nearBottom) messages.scrollTop = messages.scrollHeight;
   }
 
   async function history(){
     try{
-      const d=await get("/chat/global/history?limit=9");
+      const d=await get("/chat/global/history?limit=50");
       messages.innerHTML="";
-      (d.messages||[]).slice(-9).forEach(m=>addMsg({...m,type:"chat"}));
+      (d.messages||[]).forEach(m=>addMsg({...m,type:"chat"}));
+      messages.scrollTop=messages.scrollHeight;
     }catch{}
   }
 
