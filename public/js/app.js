@@ -1201,7 +1201,7 @@ function renderHeroStats(stats) {
     const rows = [];
     if (stats.liveNow > 0) rows.push({ cls: 'hero-stat--live', icon: 'fa-circle', num: stats.liveNow, label: 'Live', title: 'Streams live right now' });
     rows.push({ icon: 'fa-satellite-dish', num: stats.streamers, label: 'Streamers', title: 'People who have gone live' });
-    rows.push({ icon: 'fa-users', num: stats.users, label: 'Campers', title: 'Registered users' });
+    rows.push({ icon: 'fa-users', num: stats.users, label: 'Users', title: 'Registered users' });
     rows.push({ icon: 'fa-user-secret', num: stats.anons, label: 'Anons', title: 'Anonymous chatters ever seen' });
     rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active', title: 'Active chatters this week' });
     rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Sessions', title: 'Total stream sessions' });
@@ -3944,17 +3944,20 @@ function _resetChannelTabs(ch) {
         try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
         hasAbout = !!bio || (Array.isArray(panels) && panels.length > 0);
     }
+    // The AI overview at the top of About also counts as About content, so the tab shows
+    // even when the streamer hasn't written a bio (unless they've hidden the overview).
+    const hasAiOverview = !!(ch && ch.ai_overview && !ch.hide_ai_overview);
     // Anyone who can edit (the streamer, or a mod the streamer allowed) always sees
     // the About tab — even when empty + hidden for everyone else — so they can set it up.
     const canEdit = !!(ch && ch.viewer_can_edit_about);
-    const showAbout = hasAbout || canEdit;
+    const showAbout = hasAbout || hasAiOverview || canEdit;
     const aboutBtn = document.getElementById('ch-tab-btn-about');
     if (aboutBtn) aboutBtn.style.display = showAbout ? '' : 'none';
     // Pencil edit button on the About tab — only for people who can edit.
     const aboutEditBtn = document.getElementById('ch-tab-about-edit');
     if (aboutEditBtn) aboutEditBtn.style.display = canEdit ? '' : 'none';
-    // Default to About only when it actually has content; otherwise Videos.
-    const defTab = hasAbout ? 'about' : 'videos';
+    // Default to About when it has real content (bio/panels or a shown AI overview).
+    const defTab = (hasAbout || hasAiOverview) ? 'about' : 'videos';
     switchChannelTab(defTab, document.querySelector(`#ch-tabs .ch-tab[data-tab="${defTab}"]`));
     // Media tab starts hidden; revealed by _initMediaRequestTab when applicable.
     // (Controls are no longer a tab — they render in a section under the player.)
@@ -4204,14 +4207,27 @@ function _renderChannelAbout(ch) {
     let panels = [];
     try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
     _aboutPanels = (Array.isArray(panels) ? panels : []).map(_normalizeAboutPanel);
+    _aboutAiOverview = ch.ai_overview || '';
+    _aboutHideAiOverview = !!ch.hide_ai_overview;
     _aboutEditMode = false;
     _renderAboutView();
+}
+let _aboutAiOverview = '';
+let _aboutHideAiOverview = false;
+// The AI overview card shown at the top of the About tab (view mode).
+function _aboutAiOverviewHTML() {
+    if (!_aboutAiOverview || _aboutHideAiOverview) return '';
+    return `<div class="ai-tl-overview-card about-ai-overview">
+        <div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview</div>
+        <div class="ai-tl-overview-text">${esc(_aboutAiOverview)}</div>
+    </div>`;
 }
 
 function _renderAboutView() {
     const host = document.getElementById('ch-about-content');
     if (!host) return;
-    const hasContent = _aboutBio || _aboutPanels.length;
+    const aiHtml = _aboutAiOverviewHTML();
+    const hasContent = _aboutBio || _aboutPanels.length || aiHtml;
     let html = '';
     if (!hasContent) {
         html += _aboutCanEdit
@@ -4220,6 +4236,7 @@ function _renderAboutView() {
         host.innerHTML = html;
         return;
     }
+    html += aiHtml; // AI overview card leads the About tab
     if (_aboutBio) html += `<div class="ch-about-bio">${_linkify(esc(_aboutBio))}</div>`;
     html += '<div class="ch-about-panels">' + _aboutPanels.map((p, i) => _aboutPanelViewHTML(p, i)).join('') + '</div>';
     host.innerHTML = html;
@@ -4537,6 +4554,14 @@ function _renderAboutEdit() {
                 <button class="btn btn-sm btn-outline" onclick="cancelAboutEdit()"><i class="fa-solid fa-xmark"></i> Cancel</button>
             </div>
         </div>
+        ${_aboutAiOverview ? `
+        <div class="ch-about-ai-toggle">
+            <label class="ch-about-mods-toggle" title="Show the AI-generated overview at the top of your About tab">
+                <input type="checkbox" id="ch-about-ai-overview-toggle" ${_aboutHideAiOverview ? '' : 'checked'} onchange="_aboutHideAiOverview=!this.checked;_markAboutDirty()">
+                <span><i class="fa-solid fa-wand-magic-sparkles"></i> Show AI overview</span>
+            </label>
+            <span class="muted ch-about-ai-hint">An AI-written summary of your streams, shown at the top of your About tab.</span>
+        </div>` : ''}
         <div class="ch-about-edit-bio">
             <label class="ch-edit-label">Bio</label>
             <textarea id="ch-about-bio-edit" rows="3" placeholder="Tell viewers about yourself…" oninput="_aboutBio=this.value;_markAboutDirty()">${esc(_aboutBio)}</textarea>
@@ -4638,7 +4663,7 @@ async function saveAboutInline() {
         // Targets the channel by username, so an allowed mod writes to the STREAMER's
         // channel (not their own). Server enforces the edit permission.
         await api(`/streams/channel/${encodeURIComponent(currentChannelUsername)}/about`, {
-            method: 'PUT', body: { bio: _aboutBio, panels: JSON.stringify(_aboutPanels) },
+            method: 'PUT', body: { bio: _aboutBio, panels: JSON.stringify(_aboutPanels), hide_ai_overview: _aboutHideAiOverview ? 1 : 0 },
         });
         if (_aboutIsOwner && currentUser) currentUser.bio = _aboutBio;
         _aboutEditMode = false;

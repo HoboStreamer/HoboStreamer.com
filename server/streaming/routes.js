@@ -444,6 +444,12 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         const viewerIsChannelMod = !!(req.user && db.isChannelModerator(req.user.id, channel.id));
         publicChannel.mods_can_edit_about = modsCanEditAbout;
         publicChannel.viewer_can_edit_about = !!(isOwner || (modsCanEditAbout && viewerIsChannelMod));
+        // Streamer AI overview for the top of the About tab (unless the streamer hid it).
+        // `hide_ai_overview` rides along on the channel row spread above.
+        try {
+            const _ov = pollOnly ? null : db.getStreamerOverview(channel.user_id);
+            publicChannel.ai_overview = (_ov && (_ov.overview || _ov.overview_short)) || null;
+        } catch { publicChannel.ai_overview = null; }
         delete publicChannel.weather_zip;
         delete publicChannel.stream_key;
         delete publicChannel.vod_recording_enabled;
@@ -656,6 +662,9 @@ router.put('/channel', requireAuth, (req, res) => {
         if (hasOwn(req.body, 'weather_show_location')) {
             fields.weather_show_location = cleanBooleanFlag(req.body.weather_show_location) ? 1 : 0;
         }
+        if (hasOwn(req.body, 'hide_ai_overview')) {
+            fields.hide_ai_overview = cleanBooleanFlag(req.body.hide_ai_overview) ? 1 : 0;
+        }
 
         // Offline screen config (asset is uploaded separately at /channel/offline-screen)
         if (hasOwn(req.body, 'offline_screen_type')) {
@@ -705,6 +714,10 @@ router.put('/channel/:username/about', requireAuth, (req, res) => {
             const panels = cleanPanels(req.body.panels);
             if (panels === null) return res.status(400).json({ error: 'Invalid panels' });
             if (panels !== undefined) db.updateChannel(channel.user_id, { panels });
+        }
+        // Show/hide the AI overview at the top of the About tab.
+        if (hasOwn(req.body, 'hide_ai_overview')) {
+            db.updateChannel(channel.user_id, { hide_ai_overview: req.body.hide_ai_overview ? 1 : 0 });
         }
 
         const updated = db.getChannelByUsername(req.params.username);

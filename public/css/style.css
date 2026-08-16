@@ -13064,6 +13064,10 @@ body.theme-light .user-dropdown {
 .ai-tl-sentinel { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.85rem; }
 .ai-tl-session.ai-tl-flash { animation: aiTlFlash 1.4s ease; }
 @keyframes aiTlFlash { 0%, 100% { background: transparent; } 20% { background: color-mix(in srgb, var(--accent, #8b5cf6) 14%, transparent); } }
+/* AI overview at the top of the About tab */
+.about-ai-overview { margin: 0 0 16px; }
+.ch-about-ai-toggle { display: flex; flex-direction: column; gap: 3px; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg-elevated, rgba(255,255,255,0.03)); border: 1px solid var(--border, rgba(255,255,255,0.07)); }
+.ch-about-ai-hint { font-size: 0.78rem; }
 /* Keep legacy .ch-panel-actions working (still used by the Controls header). */
 .ch-panel-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 
