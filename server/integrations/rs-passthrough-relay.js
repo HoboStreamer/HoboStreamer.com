@@ -321,7 +321,7 @@ class RsPassthroughRelay {
         const videoTrack = new MediaStreamTrack({ kind: 'video' });
         const videoTx = pc.addTransceiver(videoTrack, { direction: 'sendonly' });
         let audioTrack = null, audioTx = null;
-        if (audioCon) { audioTrack = new MediaStreamTrack({ kind: 'audio' }); audioTx = pc.addTransceiver(audioTrack, { direction: 'sendonly' }); }
+        if (audioIn) { audioTrack = new MediaStreamTrack({ kind: 'audio' }); audioTx = pc.addTransceiver(audioTrack, { direction: 'sendonly' }); }
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
