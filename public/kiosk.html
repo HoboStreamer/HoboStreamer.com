@@ -415,26 +415,39 @@ button{font:inherit}
 .omni{
   position:fixed;inset:0;z-index:9000;
   display:flex;align-items:flex-start;justify-content:center;
-  padding-top:16vh;
-  background:rgba(6,7,10,.55);backdrop-filter:blur(7px);
-  opacity:0;visibility:hidden;transition:opacity .28s ease,visibility .28s;
+  padding-top:3.5vh;
+  pointer-events:none;                 /* the dashboard behind stays fully visible + clickable */
+  opacity:0;visibility:hidden;transition:opacity .3s ease,visibility .3s;
 }
 .omni.show{opacity:1;visibility:visible}
 .omni-box{
-  width:min(760px,92vw);
-  transform:translateY(-14px) scale(.97);opacity:0;
-  transition:transform .32s cubic-bezier(.2,.9,.3,1.2),opacity .28s ease;
+  width:min(720px,92vw);pointer-events:auto;   /* only the bar itself is interactive */
+  transform:translateY(-10px);opacity:0;
+  transition:transform .34s cubic-bezier(.2,.9,.3,1.2),opacity .3s ease;
 }
-.omni.show .omni-box{transform:translateY(0) scale(1);opacity:1}
+.omni.show .omni-box{transform:translateY(0);opacity:1}
 .omni-inputwrap{
   display:flex;align-items:center;gap:6px;
   background:linear-gradient(180deg,rgba(20,26,35,.98),rgba(12,16,22,.98));
   border:1.5px solid var(--line);border-radius:16px;
   padding:8px 10px;
   box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px rgba(219,176,119,.05);
-  transition:border-color .2s,box-shadow .2s;
+  transition:background .25s,border-color .25s,box-shadow .25s;
 }
-.omni.show .omni-inputwrap{border-color:color-mix(in srgb,var(--gold) 40%,var(--line));box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 3px rgba(219,176,119,.12)}
+/* Active (user is typing): prominent, gold-glow. */
+.omni.active .omni-box{opacity:1}
+.omni.active .omni-inputwrap{border-color:color-mix(in srgb,var(--gold) 40%,var(--line));box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 3px rgba(219,176,119,.12)}
+/* Resting (nothing typed yet): almost see-through + pinned to the very top so the dashboard shows. */
+.omni:not(.active) .omni-box{opacity:.32;transform:translateY(-2px)}
+.omni:not(.active) .omni-inputwrap{
+  background:rgba(14,18,24,.28);border-color:rgba(255,255,255,.10);
+  box-shadow:none;backdrop-filter:blur(3px);
+}
+.omni:not(.active) .omni-provider,.omni:not(.active) .omni-go{opacity:.45}
+.omni:not(.active) .omni-suggest,.omni:not(.active) .omni-provider-menu{display:none!important}
+.omni:not(.active) .omni-hint{opacity:.3}
+/* Reveal on hover/focus even while resting, so it's discoverable without committing to typing. */
+.omni:not(.active) .omni-box:hover,.omni:not(.active) .omni-box:focus-within{opacity:.8;transition:opacity .18s}
 .omni-input{
   flex:1;min-width:0;background:none;border:none;outline:none;
   color:var(--text);font-size:1.5rem;font-weight:600;letter-spacing:-.01em;
@@ -1144,6 +1157,8 @@ button{font:inherit}
   }
   function renderSuggest(){
     const q=input.value;
+    // Ghosted/resting until there's actually text typed, then it materializes into the full bar.
+    omni.classList.toggle("active", !!q.trim());
     curItems=buildItems(q);
     if(selIdx>=curItems.length) selIdx=curItems.length-1;
     suggest.innerHTML=curItems.map((it,i)=>`
@@ -1206,7 +1221,7 @@ button{font:inherit}
     if(e.key==="ArrowDown"){ e.preventDefault(); if(curItems.length){ selIdx=(selIdx+1)%curItems.length; highlight(); } }
     else if(e.key==="ArrowUp"){ e.preventDefault(); if(curItems.length){ selIdx=(selIdx<=0?curItems.length:selIdx)-1; highlight(); } }
     else if(e.key==="Enter"){ e.preventDefault(); submit(); }
-    else if(e.key==="Escape"){ e.preventDefault(); close(); }
+    else if(e.key==="Escape"){ e.preventDefault(); if(input.value){ input.value=""; selIdx=-1; renderSuggest(); } else { close(); } }
   });
   goBtn.addEventListener("click",submit);
   suggest.addEventListener("click",e=>{
@@ -1223,15 +1238,15 @@ button{font:inherit}
   provMenu.addEventListener("click",e=>{ const b=e.target.closest(".omni-prov-opt"); if(!b) return; setProvider(b.dataset.prov); provMenu.hidden=true; input.focus(); });
   omni.addEventListener("click",e=>{ if(e.target===omni) close(); });
 
-  // Global: start typing anywhere to (re)open; Esc closes.
+  // Global: start typing anywhere → focus the (possibly ghosted or hidden) bar and seed it.
   document.addEventListener("keydown",e=>{
-    if(isOpen) return;
+    if(document.activeElement===input) return;   // already typing in the bar — let it be
     if(e.key==="Escape") return;
     const t=e.target;
     if(t && (t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.isContentEditable)) return;
     if(e.ctrlKey||e.metaKey||e.altKey) return;
     if(e.key==="/"){ e.preventDefault(); open(""); return; }
-    if(e.key.length===1){ open(e.key); }   // seed with the first character typed
+    if(e.key.length===1){ e.preventDefault(); open((input.value||"")+e.key); }
   });
 
   // Open automatically when the tab is launched at /kiosk#input.
