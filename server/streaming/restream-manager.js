@@ -765,6 +765,7 @@ class RestreamManager extends EventEmitter {
 
         session.process = proc;
         session.startedAt = Date.now();
+        session.liveConfirmedThisRun = false; // reset per ffmpeg run; set true once this run reaches 'live'
 
         let stderrBuf = '';
         let liveConfirmed = false;
@@ -773,6 +774,13 @@ class RestreamManager extends EventEmitter {
             if (liveConfirmed) return;
             if (session.process !== proc || session.status !== 'starting') return;
             liveConfirmed = true;
+            session.liveConfirmedThisRun = true;
+            session.everLive = true;         // this destination CAN accept our stream → not a dead endpoint
+            session.rapidCrashCount = 0;
+            // A confirmed-live restream is definitively healthy — lift any stale failure cooldown
+            // immediately (don't wait for the stable timer), so a brief earlier blip can't leave a
+            // working destination showing "paused / failed".
+            try { require('../db/database').clearRestreamDestinationCooldown(session.destId); } catch { /* */ }
 
             session.status = 'live';
             this.emit('status-change', {
@@ -859,33 +867,41 @@ class RestreamManager extends EventEmitter {
     _scheduleRestart(session) {
         if (session.status === 'stopped') return;
 
-        const _circuitBreak = (reason) => {
+        // Stop this session. Only persist a destination-level cooldown when the destination is
+        // genuinely dead (never once accepted our stream this session) — otherwise a healthy but
+        // flappy restream would get falsely "paused".
+        const _circuitBreak = (reason, { cooldown } = {}) => {
             session.status = 'failed';
             let cooldownMinutes = null;
-            try { cooldownMinutes = require('../db/database').markRestreamDestinationFailure(session.destId, session.lastError || reason)?.cooldownMinutes; } catch { /* */ }
+            if (cooldown) {
+                try { cooldownMinutes = require('../db/database').markRestreamDestinationFailure(session.destId, session.lastError || reason)?.cooldownMinutes; } catch { /* */ }
+            }
             this.emit('status-change', { streamId: session.streamId, destId: session.destId, status: 'failed', error: session.lastError || reason, cooldownMinutes });
-            console.warn(`[Restream] ${session.key} circuit-broken (${reason})${cooldownMinutes ? ` — cooling down ${cooldownMinutes}m` : ''}`);
+            console.warn(`[Restream] ${session.key} stopped (${reason})${cooldownMinutes ? ` — cooling down destination ${cooldownMinutes}m` : ''}`);
         };
 
         if (session.restartAttempts >= MAX_RESTART_ATTEMPTS) {
-            _circuitBreak(`max restart attempts (${MAX_RESTART_ATTEMPTS})`);
+            // Cool the destination down only if it never worked this session (a dead endpoint).
+            _circuitBreak(`max restart attempts (${MAX_RESTART_ATTEMPTS})`, { cooldown: !session.everLive });
             return;
         }
 
-        // Rapid-crash detection: if FFmpeg died within 5s, it likely can't connect at all.
-        // Apply extra backoff to avoid hammering the ingest server (which can trigger IP bans).
+        // Rapid-crash detection: FFmpeg died within 5s. This only signals a broken DESTINATION when
+        // the run never confirmed live — a run that went live and then dropped ("End of file") is a
+        // transient disconnect on a working ingest, NOT a connection failure, so it must never count
+        // toward the circuit breaker (that was falsely pausing live Twitch/Kick restreams).
         const runtime = Date.now() - (session.startedAt || Date.now());
-        if (runtime < RAPID_CRASH_THRESHOLD_MS) {
+        if (!session.liveConfirmedThisRun && runtime < RAPID_CRASH_THRESHOLD_MS) {
             session.rapidCrashCount = (session.rapidCrashCount || 0) + 1;
             session.restartDelay = Math.min(session.restartDelay * 2, RESTART_MAX_DELAY);
         } else {
-            session.rapidCrashCount = 0; // ran a while → not a persistent connect failure
+            session.rapidCrashCount = 0; // went live, or ran a while → not a persistent connect failure
         }
-        // Several rapid crashes in a row = the destination is genuinely broken (bad key, strike,
-        // ingest rejecting us). Stop this session AND cool the destination down across future
-        // go-lives, instead of grinding through all 30 attempts every stream.
-        if ((session.rapidCrashCount || 0) >= RAPID_CRASH_GIVEUP) {
-            _circuitBreak(`${session.rapidCrashCount} rapid crashes`);
+        // Repeated failures to EVER connect = the destination is genuinely broken (bad key, a
+        // platform strike, ingest rejecting us). Cool it down across future go-lives so we stop
+        // hammering it. Guarded by !everLive so a destination that has worked is never cooled down.
+        if ((session.rapidCrashCount || 0) >= RAPID_CRASH_GIVEUP && !session.everLive) {
+            _circuitBreak(`${session.rapidCrashCount} rapid crashes without ever going live`, { cooldown: true });
             return;
         }
 
@@ -1141,6 +1157,11 @@ class RestreamManager extends EventEmitter {
         for (const [, session] of this.sessions) {
             if (session.status === 'live' || session.status === 'starting') {
                 activeDests.add(session.destId);
+                // Self-heal: a destination with a currently-live restream must never show a failure
+                // cooldown. Clears any stale "paused" state left by an earlier transient blip.
+                if (session.status === 'live') {
+                    try { db.clearRestreamDestinationCooldown(session.destId); } catch { /* */ }
+                }
             }
         }
 
