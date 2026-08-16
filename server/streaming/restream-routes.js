@@ -239,6 +239,19 @@ router.put('/destinations/:id', requireAuth, (req, res) => {
 
         const updated = db.updateRestreamDestination(dest.id, updates);
 
+        // If the destination was just DISABLED, stop any active video restream to it right now —
+        // otherwise it keeps pushing to Twitch/Kick/etc. for a stream that's already live.
+        if (updates.enabled === 0) {
+            try {
+                const liveStreams = getLiveStreamsForDestination(dest, req.user.id) || [];
+                for (const s of liveStreams) {
+                    try { restreamManager.stopRestream(s.id, dest.id); } catch { /* */ }
+                    try { chatRelayService.stopBridge(s.id, dest.id); } catch { /* */ }
+                }
+                if (liveStreams.length) console.log(`[Restream] Destination ${dest.id} (${dest.name || dest.platform || ''}) disabled — stopped active restream on ${liveStreams.length} live stream(s)`);
+            } catch (err) { console.warn('[Restream] stop-on-disable failed:', err.message); }
+        }
+
         // If chat_relay or channel_url changed, sync relay bridges for live streams
         if (updates.chat_relay !== undefined || updates.channel_url !== undefined || updates.enabled !== undefined) {
             try { chatRelayService.syncForUser(req.user.id); } catch (err) {
