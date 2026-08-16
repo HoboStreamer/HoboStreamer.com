@@ -2830,10 +2830,16 @@ function addChatMessage(msg) {
     // Attach timestamp for time-range purge
     if (msg.timestamp) el.dataset.timestamp = msg.timestamp;
     // Attach source platform for relay user identification
+    // Live relay messages carry role 'external'; history-loaded ones don't (null role),
+    // and messages forwarded to the GLOBAL feed can arrive without source_platform at all —
+    // so also detect relay from the "[RS]/[Twitch]/…" username prefix. Keep dataset.isRelay
+    // and dataset.sourcePlatform in sync with the badge/avatar (which already use this
+    // fallback) so the right-click menu shows the relay menu, not the generic profile one.
+    const _relayPlatformDetected = (isRelayPlatform(msg.source_platform) ? msg.source_platform : '') ||
+        (isRelayPlatform(parseRelayUsername(msg.username || '').platform) ? parseRelayUsername(msg.username || '').platform : '');
     if (msg.source_platform) el.dataset.sourcePlatform = msg.source_platform;
-    // Live relay messages carry role 'external'; history-loaded ones don't (null
-    // user role), so also flag any known relay source_platform as a relay message.
-    if (msg.role === 'external' || isRelayPlatform(msg.source_platform)) el.dataset.isRelay = '1';
+    else if (_relayPlatformDetected) el.dataset.sourcePlatform = _relayPlatformDetected;
+    if (msg.role === 'external' || _relayPlatformDetected) el.dataset.isRelay = '1';
     if (msg.message_type === 'news') el.classList.add('news');
     if (msg.message_type === 'soundboard') el.classList.add('soundboard');
 
@@ -4002,9 +4008,12 @@ function showChatContextMenu(event) {
     const msgEl = target.closest('.chat-msg');
     const msgId = msgEl?.dataset?.msgId || null;
     const sourcePlatform = msgEl?.dataset?.sourcePlatform || '';
-    // Fall back to source_platform so history-loaded relay messages (no 'external'
-    // role) are still recognised as relay and get the relay menu, not the generic one.
-    const isRelay = msgEl?.dataset?.isRelay === '1' || isRelayPlatform(sourcePlatform);
+    // Fall back to source_platform AND the "[RS]/[Twitch]/…" username prefix so relay
+    // users are recognised even when a message was forwarded to the global feed without
+    // role/source_platform — otherwise they'd get the generic profile menu (Message/Channel)
+    // instead of the relay menu with AI Insight.
+    const isRelay = msgEl?.dataset?.isRelay === '1' || isRelayPlatform(sourcePlatform)
+        || isRelayPlatform(parseRelayUsername(username || '').platform);
 
     const menu = document.createElement('div');
     menu.className = 'chat-context-menu';
