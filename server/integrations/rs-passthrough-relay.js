@@ -303,6 +303,12 @@ class RsPassthroughRelay {
         log(sid, 'RS protoo connected');
 
         const routerRtpCapabilities = await peer.request('getRouterRtpCapabilities');
+        try {
+            const codecs = (routerRtpCapabilities.codecs || []).map(c => `${c.mimeType}#${c.preferredPayloadType}${(c.rtcpFeedback || []).length ? '[' + c.rtcpFeedback.map(f => f.type + (f.parameter ? '-' + f.parameter : '')).join(',') + ']' : ''}`).join(' | ');
+            const exts = (routerRtpCapabilities.headerExtensions || []).map(e => `${e.preferredId}:${e.uri.split('/').pop()}`).join(', ');
+            log(sid, 'RS ROUTER CAPS codecs:', codecs);
+            log(sid, 'RS ROUTER CAPS exts:', exts);
+        } catch { /* */ }
 
         // 4) Create RS send transport.
         const transportInfo = await peer.request('createWebRtcTransport', { producing: true, consuming: false, streamkey: session.token });
