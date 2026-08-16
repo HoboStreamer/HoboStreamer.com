@@ -13049,6 +13049,21 @@ body.theme-light .user-dropdown {
 .ai-tl-empty i { font-size: 2rem; color: color-mix(in srgb, var(--accent, #8b5cf6) 60%, transparent); margin-bottom: 12px; }
 .ai-tl-empty p { margin: 4px 0; }
 @media (max-width: 560px) { .ai-tl-moment-thumb { width: 72px; height: 40px; } }
+/* Month-jump bar */
+.ai-tl-months { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 18px; padding-bottom: 12px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); }
+.ai-tl-months-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 700; margin-right: 4px; display: inline-flex; align-items: center; gap: 5px; }
+.ai-tl-month { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); background: var(--bg-elevated, rgba(255,255,255,0.04)); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 999px; padding: 3px 11px; cursor: pointer; transition: all .15s; }
+.ai-tl-month:hover { color: var(--accent, #8b5cf6); border-color: color-mix(in srgb, var(--accent, #8b5cf6) 45%, transparent); background: color-mix(in srgb, var(--accent, #8b5cf6) 10%, transparent); }
+/* Collapsible moments */
+.ai-tl-moments-toggle { margin-top: 8px; display: inline-flex; align-items: center; gap: 7px; font-size: 0.8rem; font-weight: 600; color: var(--accent, #8b5cf6); background: color-mix(in srgb, var(--accent, #8b5cf6) 9%, transparent); border: 1px solid color-mix(in srgb, var(--accent, #8b5cf6) 22%, transparent); border-radius: 8px; padding: 5px 11px; cursor: pointer; transition: all .15s; }
+.ai-tl-moments-toggle:hover { background: color-mix(in srgb, var(--accent, #8b5cf6) 16%, transparent); }
+.ai-tl-moments-toggle i { transition: transform .18s ease; }
+.ai-tl-moments-toggle.open i { transform: rotate(90deg); }
+.ai-tl-moments[hidden] { display: none; }
+.ai-tl-moments { margin-top: 10px; }
+.ai-tl-sentinel { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.85rem; }
+.ai-tl-session.ai-tl-flash { animation: aiTlFlash 1.4s ease; }
+@keyframes aiTlFlash { 0%, 100% { background: transparent; } 20% { background: color-mix(in srgb, var(--accent, #8b5cf6) 14%, transparent); } }
 /* Keep legacy .ch-panel-actions working (still used by the Controls header). */
 .ch-panel-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 

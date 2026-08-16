@@ -3644,16 +3644,16 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
 
     let html = '';
 
-    // HoboStreamer-native viewer badge — always shown while live so viewers can see how many
-    // are watching HERE (vs the RS / restream badges that follow).
-    if (liveStreams.length > 0) {
-        html += `<span class="ch-hs-badge" title="Watching live on HoboStreamer${streamCount > 1 ? ` (across ${streamCount} streams)` : ''}"><i class="fa-solid fa-tower-broadcast"></i> <strong>${hsTotal}</strong> on HoboStreamer</span>`;
-    }
-
     // Show combined viewer total — but skip when live tabs already show per-stream counts
     if ((streamCount > 1 || hasExternal) && !tabsVisible) {
         const totalLabel = hasExternal ? 'total' : '';
         html += `<span class="ch-viewer-total"><i class="fa-solid fa-layer-group"></i> <strong>${combinedTotal}</strong> viewer${combinedTotal !== 1 ? 's' : ''} ${totalLabel}${streamCount > 1 ? ` across <strong>${streamCount}</strong> streams` : ''}</span>`;
+    }
+
+    // HoboStreamer-native viewer badge — styled like the platform restream badges, in brand
+    // green, so it reads as "this is the count HERE" alongside the RS/Twitch/etc badges.
+    if (liveStreams.length > 0) {
+        html += `<span class="ch-restream-badge" style="color:var(--accent)" title="Watching live on HoboStreamer${streamCount > 1 ? ` (across ${streamCount} streams)` : ''}"><i class="fa-solid fa-campground"></i> HoboStreamer <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${hsTotal}</span>`;
     }
 
     // RS restream badge — reflect the WATCHED slot's robot only (not the first slot's).
@@ -3989,11 +3989,13 @@ function _aiTimelineMomentHTML(mom, vodId) {
     return `<div class="ai-tl-moment">${thumb}<div class="ai-tl-moment-body">${jump}<div class="ai-tl-moment-desc">${desc}</div>${tagHTML ? `<div class="ai-tl-tags">${tagHTML}</div>` : ''}</div></div>`;
 }
 
+let _aiTl = null; // AI Timeline pagination state (per channel load)
+
 function _aiTimelineSessionHTML(s) {
     const when = s.started_at || s.created_at;
     const dateStr = when ? new Date((String(when).includes('T') ? when : when.replace(' ', 'T') + 'Z')).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }) : '';
     const ov = (s.ai_overview || s.ai_overview_short || '').trim();
-    const memories = Array.isArray(s.memories) ? s.memories : [];
+    const memCount = s.memory_count != null ? s.memory_count : (Array.isArray(s.memories) ? s.memories.length : 0);
     const titleLink = s.vod_id
         ? `<a href="/vod/${s.vod_id}" onclick="return handleLinkClick(event, '/vod/${s.vod_id}')">${esc(s.title || 'Untitled stream')}</a>`
         : esc(s.title || 'Untitled stream');
@@ -4001,40 +4003,121 @@ function _aiTimelineSessionHTML(s) {
     if (dateStr) meta.push(`<i class="fa-solid fa-calendar-day"></i> ${dateStr}`);
     if (s.duration_seconds) meta.push(`<i class="fa-solid fa-hourglass-half"></i> ${_aiTimeFmt(s.duration_seconds)}`);
     if (s.peak_viewers) meta.push(`<i class="fa-solid fa-eye"></i> ${s.peak_viewers} peak`);
-    if (memories.length) meta.push(`<i class="fa-solid fa-brain"></i> ${memories.length} moment${memories.length === 1 ? '' : 's'}`);
-    const momentsHTML = memories.map(m => _aiTimelineMomentHTML(m, s.vod_id)).join('');
-    return `<div class="ai-tl-session">
+    // Stash moments for lazy DOM build on expand — keeps thousands of moments OUT of the DOM.
+    if (_aiTl && Array.isArray(s.memories)) { _aiTl.moments[s.id] = s.memories; _aiTl.vodBySid[s.id] = s.vod_id || null; }
+    const toggle = memCount
+        ? `<button type="button" class="ai-tl-moments-toggle" onclick="_aiTlToggleMoments(this)"><i class="fa-solid fa-chevron-right"></i> <span>${memCount} moment${memCount === 1 ? '' : 's'}</span></button><div class="ai-tl-moments" hidden></div>`
+        : '';
+    return `<div class="ai-tl-session" data-sid="${s.id}">
         <div class="ai-tl-session-head">
             <div class="ai-tl-node"></div>
             <div class="ai-tl-session-title">${titleLink}</div>
             <div class="ai-tl-session-meta">${meta.join('<span class="ai-tl-dot">·</span>')}</div>
         </div>
         ${ov ? `<div class="ai-tl-session-overview">${esc(ov)}</div>` : ''}
-        ${momentsHTML ? `<div class="ai-tl-moments">${momentsHTML}</div>` : ''}
+        ${toggle}
     </div>`;
+}
+
+// Expand/collapse a session's moments, building the moment DOM only on first expand.
+function _aiTlToggleMoments(btn) {
+    const session = btn.closest('.ai-tl-session');
+    const box = btn.nextElementSibling;
+    if (!session || !box) return;
+    if (!box.hidden) { box.hidden = true; btn.classList.remove('open'); return; }
+    if (!box.dataset.built) {
+        const sid = session.dataset.sid;
+        const mems = (_aiTl && _aiTl.moments[sid]) || [];
+        box.innerHTML = mems.map(m => _aiTimelineMomentHTML(m, _aiTl && _aiTl.vodBySid[sid])).join('') || '<p class="muted" style="padding:6px">No moment details.</p>';
+        box.dataset.built = '1';
+    }
+    box.hidden = false; btn.classList.add('open');
+}
+
+function _aiTlMonthKey(when) {
+    if (!when) return null;
+    const d = new Date(String(when).includes('T') ? when : when.replace(' ', 'T') + 'Z');
+    if (isNaN(d)) return null;
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+// Month-jump bar built from the lightweight index (all sessions, newest first).
+function _aiTlBuildMonthBar() {
+    if (!_aiTl || !_aiTl.index) return '';
+    const order = [], firstSid = {};
+    for (const s of _aiTl.index) {
+        const k = _aiTlMonthKey(s.when);
+        if (!k) continue;
+        if (firstSid[k] == null) { firstSid[k] = s.id; order.push(k); }
+    }
+    if (order.length <= 1) return '';
+    const chips = order.map(k => {
+        const [y, m] = k.split('-');
+        const label = new Date(y, +m - 1, 1).toLocaleDateString([], { month: 'short', year: 'numeric' });
+        return `<button type="button" class="ai-tl-month" data-sid="${firstSid[k]}" onclick="_aiTlJumpTo(this.dataset.sid)">${esc(label)}</button>`;
+    }).join('');
+    return `<div class="ai-tl-months"><span class="ai-tl-months-label"><i class="fa-solid fa-calendar-days"></i> Jump to</span>${chips}</div>`;
+}
+
+// Jump to a session: load pages until it's in the DOM, then scroll + flash it.
+async function _aiTlJumpTo(sid) {
+    let guard = 0;
+    while (!document.querySelector(`.ai-tl-session[data-sid="${sid}"]`) && _aiTl && _aiTl.hasMore && guard++ < 60) {
+        await _aiTlLoadMore();
+    }
+    const el = document.querySelector(`.ai-tl-session[data-sid="${sid}"]`);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.classList.add('ai-tl-flash');
+        setTimeout(() => el.classList.remove('ai-tl-flash'), 1400);
+    }
+}
+
+async function _aiTlLoadMore() {
+    if (!_aiTl || _aiTl.loading || !_aiTl.hasMore) return;
+    _aiTl.loading = true;
+    const track = document.getElementById('ai-tl-track');
+    try {
+        const data = await api(`/chat-ai/timeline/${encodeURIComponent(_aiTl.username)}?offset=${_aiTl.offset}&limit=${_aiTl.limit}`);
+        const sessions = data.sessions || [];
+        if (track && sessions.length) track.insertAdjacentHTML('beforeend', sessions.map(_aiTimelineSessionHTML).join(''));
+        _aiTl.offset += sessions.length;
+        _aiTl.hasMore = !!data.hasMore && sessions.length > 0;
+        if (!_aiTl.hasMore) document.getElementById('ai-tl-sentinel')?.remove();
+    } catch { _aiTl.hasMore = false; }
+    finally { _aiTl.loading = false; }
 }
 
 async function loadChannelAiTimeline(username) {
     const wrap = document.getElementById('ch-ai-timeline');
     if (!wrap) return;
+    try { _aiTl?.io?.disconnect(); } catch { /* */ }
     wrap.innerHTML = '<div class="loading">Loading AI timeline…</div>';
+    _aiTl = { username, offset: 0, limit: 12, hasMore: false, loading: false, moments: {}, vodBySid: {}, index: null, io: null };
     try {
-        const data = await api(`/chat-ai/timeline/${encodeURIComponent(username)}`);
+        const data = await api(`/chat-ai/timeline/${encodeURIComponent(username)}?offset=0&limit=12`);
         const sessions = data.sessions || [];
         const overview = data.overview && (data.overview.overview || data.overview.overview_short);
         if (!overview && !sessions.length) {
             wrap.innerHTML = `<div class="ai-tl-empty"><i class="fa-solid fa-brain"></i><p>No AI timeline yet.</p><p class="muted">As ${esc(data.display_name || username)} streams, the AI builds an overview and captures memorable moments here — with links straight to the VOD.</p></div>`;
             return;
         }
+        _aiTl.index = data.index || [];
+        _aiTl.offset = sessions.length;
+        _aiTl.hasMore = !!data.hasMore;
         const header = overview
-            ? `<div class="ai-tl-overview-card">
-                 <div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview of ${esc(data.display_name || username)}</div>
-                 <div class="ai-tl-overview-text">${esc(data.overview.overview || data.overview.overview_short)}</div>
-               </div>`
+            ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview of ${esc(data.display_name || username)}</div><div class="ai-tl-overview-text">${esc(data.overview.overview || data.overview.overview_short)}</div></div>`
             : '';
         const summary = `<div class="ai-tl-summary">${data.sessionCount || sessions.length} session${(data.sessionCount || sessions.length) === 1 ? '' : 's'} · ${data.momentCount || 0} AI moment${(data.momentCount || 0) === 1 ? '' : 's'} tracked</div>`;
-        const timeline = `<div class="ai-tl-track">${sessions.map(_aiTimelineSessionHTML).join('')}</div>`;
-        wrap.innerHTML = header + summary + timeline;
+        wrap.innerHTML = header + summary + _aiTlBuildMonthBar()
+            + `<div class="ai-tl-track" id="ai-tl-track">${sessions.map(_aiTimelineSessionHTML).join('')}</div>`
+            + `<div id="ai-tl-sentinel" class="ai-tl-sentinel">${_aiTl.hasMore ? '<i class="fa-solid fa-spinner fa-spin"></i> Loading more…' : ''}</div>`;
+        const sentinel = document.getElementById('ai-tl-sentinel');
+        if (sentinel && _aiTl.hasMore && 'IntersectionObserver' in window) {
+            _aiTl.io = new IntersectionObserver(ents => { if (ents.some(e => e.isIntersecting)) _aiTlLoadMore(); }, { rootMargin: '700px' });
+            _aiTl.io.observe(sentinel);
+        } else if (sentinel && !_aiTl.hasMore) {
+            sentinel.remove();
+        }
     } catch (err) {
         wrap.innerHTML = `<div class="ai-tl-empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Couldn't load the AI timeline.</p><button class="btn btn-small btn-outline" onclick="loadChannelAiTimeline('${esc(username)}')">Retry</button></div>`;
     }

@@ -94,11 +94,32 @@ router.get('/timeline/:username', (req, res) => {
         const uname = String(req.params.username || '').trim();
         const user = db.getUserByUsername ? db.getUserByUsername(uname) : null;
         if (!user) return res.status(404).json({ error: 'Channel not found' });
-        const timeline = db.getStreamerAiTimeline(user.id);
+
+        const timeline = db.getStreamerAiTimeline(user.id); // full, cached
+        const allSessions = timeline.sessions || [];
+        const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+        const limit = Math.min(30, Math.max(1, parseInt(req.query.limit, 10) || 12));
+        const page = allSessions.slice(offset, offset + limit);
+
+        // On the first page, also ship overview + a lightweight index of EVERY session
+        // (no moment bodies) so the client can render a month-jump bar without the payload.
+        const first = offset === 0;
+        const index = first ? allSessions.map(s => ({
+            id: s.id, title: s.title, vod_id: s.vod_id, memory_count: s.memory_count,
+            when: s.started_at || s.created_at,
+        })) : undefined;
+
         res.json({
             username: user.username,
             display_name: user.display_name || user.username,
-            ...timeline,
+            overview: first ? timeline.overview : undefined,
+            sessionCount: timeline.sessionCount,
+            momentCount: timeline.momentCount,
+            generatedAt: timeline.generatedAt,
+            index,
+            sessions: page,
+            offset, limit,
+            hasMore: offset + limit < allSessions.length,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to load AI timeline' });
