@@ -78,12 +78,13 @@ if (!INPUT_MODE || !INPUT_PATH) throw new Error('Missing INPUT_MODE/INPUT_PATH')
 const width = Number(process.env.WIDTH || 1280);
 const height = Number(process.env.HEIGHT || 720);
 const fps = Number(process.env.FPS || 30);
-const videoKbps = Number(process.env.VIDEO_KBPS || 1500);
-const minVideoKbps = Number(process.env.MIN_VIDEO_KBPS || 700);
+const videoKbps = Number(process.env.VIDEO_KBPS || 2200);
+const minVideoKbps = Number(process.env.MIN_VIDEO_KBPS || 900);
 const hasAudio = String(HAS_AUDIO || '1') === '1';
 const frameSize = Math.floor(width * height * 3 / 2);
 
 let shuttingDown = false;
+let videoPumpTimer = null; // steady encode pacer (cleared on shutdown / ffmpeg exit)
 
 const status = {
     videoFramesIn: 0,
@@ -282,17 +283,25 @@ function spawnFfmpeg(videoSource, audioSource) {
         stdio: hasAudio ? ['ignore', 'pipe', 'inherit', 'pipe'] : ['ignore', 'pipe', 'inherit'],
     });
 
-    // ── Video: fixed-size I420 frames → RTCVideoSource ──────────
+    // ── Video: fixed-size I420 frames → RTCVideoSource, evenly paced ──
     // Ping-pong two preallocated buffers instead of allocating a fresh ~1.3MB buffer per frame.
     // At 30fps that was ~40MB/s of allocation → GC pauses that stalled the event loop, backed up
-    // the RTP read, and caused UDP packet loss. wrtc.onFrame copies the I420 data synchronously,
-    // so alternating two buffers is safe.
+    // the RTP read, and caused UDP packet loss. wrtc.onFrame copies the I420 data synchronously.
+    //
+    // ffmpeg emits frames to stdout in bursts (a 'data' chunk often carries several frames back
+    // to back). Handing those straight to the encoder makes libwebrtc timestamp them by ARRIVAL,
+    // so a burst becomes a cluster of near-simultaneous frames followed by a gap = visible judder
+    // / "bad framerate" on RobotStreamer even though the source is smooth. Instead we ASSEMBLE
+    // frames here and let a steady 1000/fps pacer hand the newest complete frame to the encoder,
+    // so RS receives evenly-spaced frames (smooth motion). A brief source stall re-sends the last
+    // frame (holds framerate instead of freezing); a burst just skips intermediates (we only ever
+    // expose the latest). The single-threaded event loop guarantees the pacer and this assembler
+    // never overlap, so two buffers suffice — the write target is always != the exposed frame.
     const frameBufs = [Buffer.allocUnsafe(frameSize), Buffer.allocUnsafe(frameSize)];
     let bufIdx = 0;
     let frameBuf = frameBufs[0];
     let frameOffset = 0;
-    let pushedThisTick = 0;
-    let lastSecond = Date.now();
+    let latestFrame = null; // most-recent complete frame, ready to encode
 
     ff.stdout.on('data', chunk => {
         let pos = 0;
@@ -305,28 +314,26 @@ function spawnFfmpeg(videoSource, audioSource) {
 
             if (frameOffset === frameSize) {
                 status.videoFramesIn++;
-                const now = Date.now();
-                if (now - lastSecond >= 1000) {
-                    pushedThisTick = 0;
-                    lastSecond = now;
-                }
-                if (pushedThisTick <= fps + 2) {
-                    try {
-                        videoSource.onFrame({ width, height, data: frameBuf });
-                        status.videoFramesPushed++;
-                        pushedThisTick++;
-                    } catch (err) {
-                        log('[video] onFrame failed:', err.message);
-                    }
-                } else {
-                    status.videoFramesDropped++;
-                }
-                bufIdx ^= 1;
+                latestFrame = frameBuf;          // expose the just-completed buffer
+                bufIdx ^= 1;                      // assemble the next frame in the other buffer
                 frameBuf = frameBufs[bufIdx];
                 frameOffset = 0;
             }
         }
     });
+
+    // Steady encode pacer — feed the newest complete frame at the target cadence so libwebrtc
+    // stamps evenly-spaced timestamps regardless of ffmpeg's bursty stdout delivery.
+    if (videoPumpTimer) clearInterval(videoPumpTimer);
+    videoPumpTimer = setInterval(() => {
+        if (!latestFrame) return;
+        try {
+            videoSource.onFrame({ width, height, data: latestFrame });
+            status.videoFramesPushed++;
+        } catch (err) {
+            log('[video] onFrame failed:', err.message);
+        }
+    }, Math.max(1, Math.round(1000 / fps)));
 
     // ── Audio: 10ms PCM blocks → RTCAudioSource ─────────────────
     if (hasAudio && ff.stdio[3]) {
@@ -369,6 +376,7 @@ function spawnFfmpeg(videoSource, audioSource) {
 
     ff.on('exit', (code, signal) => {
         log('[ffmpeg] exited:', { code, signal });
+        if (videoPumpTimer) { clearInterval(videoPumpTimer); videoPumpTimer = null; }
         if (!shuttingDown) process.exit(3);
     });
 
@@ -541,6 +549,7 @@ async function main() {
 
     const shutdown = () => {
         shuttingDown = true;
+        if (videoPumpTimer) { clearInterval(videoPumpTimer); videoPumpTimer = null; }
         try { ff.kill('SIGTERM'); } catch {}
         try { videoTrack.stop(); } catch {}
         try { audioTrack?.stop(); } catch {}
