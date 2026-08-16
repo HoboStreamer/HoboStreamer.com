@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=126">
+    <link rel="stylesheet" href="/css/style.css?v=127">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -3267,9 +3267,19 @@ WantedBy=multi-user.target</code>
             </div>
             <div class="gai-overview" id="global-ai-overview"></div>
             <div class="gai-cols">
-                <div class="gai-col">
-                    <h4><i class="fa-solid fa-timeline"></i> Timeline</h4>
-                    <div class="gai-timeline" id="global-ai-timeline"></div>
+                <div class="gai-col gai-col-timeline">
+                    <div class="gai-tl-head">
+                        <h4><i class="fa-solid fa-timeline"></i> Timeline</h4>
+                        <input type="search" id="gai-tl-search" class="gai-tl-search" placeholder="Search moments…" oninput="_gaiTlSearchDebounced(this.value)">
+                    </div>
+                    <div class="gai-tl-periods" id="gai-tl-periods">
+                        <button class="gai-tl-chip active" data-period="all" onclick="_gaiTlPeriod('all', this)">All</button>
+                        <button class="gai-tl-chip" data-period="today" onclick="_gaiTlPeriod('today', this)">Today</button>
+                        <button class="gai-tl-chip" data-period="yesterday" onclick="_gaiTlPeriod('yesterday', this)">Yesterday</button>
+                        <button class="gai-tl-chip" data-period="week" onclick="_gaiTlPeriod('week', this)">Week</button>
+                        <button class="gai-tl-chip" data-period="month" onclick="_gaiTlPeriod('month', this)">Month</button>
+                    </div>
+                    <div class="gai-timeline" id="global-ai-timeline" onscroll="_gaiTlOnScroll(this)"></div>
                 </div>
                 <div class="gai-col">
                     <h4><i class="fa-solid fa-brain"></i> Community Memory</h4>
@@ -4880,7 +4890,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=2" defer></script>
-<script src="/js/app.js?v=111" defer></script>
+<script src="/js/app.js?v=112" defer></script>
 <script src="/js/stream-player.js?v=16" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>

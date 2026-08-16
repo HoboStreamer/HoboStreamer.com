@@ -3820,6 +3820,33 @@ function getChatAiSummary(scope, subjectId, window) {
     return get('SELECT * FROM chat_ai_summaries WHERE scope = ? AND subject_id = ? AND window = ?',
         [scope, subjectId || 0, window]) || null;
 }
+// Append AI timeline "notable moments" to the growing log (deduped by scope+ts+label).
+function addChatTimelineEvents(scope, subjectId, events) {
+    if (!Array.isArray(events) || !events.length) return 0;
+    let n = 0;
+    for (const e of events) {
+        if (!e || !e.label || !e.ts) continue;
+        try {
+            run('INSERT OR IGNORE INTO chat_timeline_events (scope, subject_id, ts, label, detail) VALUES (?, ?, ?, ?, ?)',
+                [scope || 'global', subjectId || 0, e.ts, String(e.label).slice(0, 120), String(e.detail || '').slice(0, 400)]);
+            n++;
+        } catch { /* */ }
+    }
+    return n;
+}
+// Paginated + searchable timeline browse. `before` = epoch ms (exclusive upper bound); `q`
+// filters label/detail; `since` = epoch ms lower bound (for period jumps). Newest first.
+function getChatTimelineEvents({ scope = 'global', subjectId = 0, before = null, since = null, q = null, limit = 25 } = {}) {
+    const conds = ['scope = ?', 'subject_id = ?'];
+    const params = [scope, subjectId || 0];
+    if (before) { conds.push("ts < datetime(?, 'unixepoch')"); params.push(Math.floor(before / 1000)); }
+    if (since) { conds.push("ts >= datetime(?, 'unixepoch')"); params.push(Math.floor(since / 1000)); }
+    if (q && String(q).trim()) { const like = '%' + String(q).trim().slice(0, 60) + '%'; conds.push('(label LIKE ? OR detail LIKE ?)'); params.push(like, like); }
+    params.push(Math.min(60, Math.max(1, limit)));
+    try {
+        return all(`SELECT id, ts, label, detail FROM chat_timeline_events WHERE ${conds.join(' AND ')} ORDER BY ts DESC, id DESC LIMIT ?`, params) || [];
+    } catch { return []; }
+}
 function getChatAiSummaries(scope, subjectId) {
     return all('SELECT * FROM chat_ai_summaries WHERE scope = ? AND subject_id = ? ORDER BY window',
         [scope, subjectId || 0]);
@@ -6999,6 +7026,7 @@ module.exports = {
     // Chat AI summaries
     getMaxChatMessageId, countChatMessagesSince, getChatMessagesForAi, getNthRecentChatTs,
     getChatAiSummary, getChatAiSummaries, upsertChatAiSummary, getUsersNeedingChatAi,
+    addChatTimelineEvents, getChatTimelineEvents,
     // Profiles
     getUserProfile, updateUserAvatar, resetAvatarsForPaste, getUserAvatarPastes,
     getKickChannelCache, setKickChannelCache,

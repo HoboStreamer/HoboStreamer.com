@@ -7141,7 +7141,16 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .gai-cols { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; }
 @media (max-width: 720px) { .gai-cols { grid-template-columns: 1fr; } }
 .gai-col h4 { margin: 0 0 10px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
-.gai-timeline { display: flex; flex-direction: column; gap: 0; position: relative; }
+/* Timeline browser: head (title + search), period chips, scrollable list with day dividers. */
+.gai-tl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.gai-tl-head h4 { margin: 0; }
+.gai-tl-search { flex: 1; max-width: 200px; padding: 5px 10px; font-size: 0.78rem; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-input, var(--bg-tertiary)); color: var(--text-primary); }
+.gai-tl-periods { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+.gai-tl-chip { border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-secondary); font-size: 0.72rem; font-weight: 600; padding: 3px 11px; border-radius: 999px; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.gai-tl-chip:hover { color: var(--text-primary); border-color: var(--accent); }
+.gai-tl-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.gai-tl-day { position: sticky; top: 0; z-index: 1; margin: 4px 0 8px; padding: 3px 0; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); background: linear-gradient(var(--bg-primary), var(--bg-primary) 70%, transparent); }
+.gai-timeline { display: flex; flex-direction: column; gap: 0; position: relative; max-height: 460px; overflow-y: auto; padding-right: 6px; scrollbar-width: thin; }
 .gai-tl-item { position: relative; padding: 0 0 14px 20px; border-left: 2px solid var(--border); }
 .gai-tl-item:last-child { border-left-color: transparent; padding-bottom: 0; }
 .gai-tl-item::before { content: ''; position: absolute; left: -6px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }

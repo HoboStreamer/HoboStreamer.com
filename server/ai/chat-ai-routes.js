@@ -20,6 +20,22 @@ router.get('/global', (req, res) => {
     }
 });
 
+// Browsable/searchable global timeline. Query: before=<ms>, since=<ms>, q=<search>, limit=<n>.
+router.get('/timeline', (req, res) => {
+    try {
+        const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; };
+        const limit = Math.min(60, Math.max(1, num(req.query.limit) || 25));
+        const events = db.getChatTimelineEvents({
+            scope: 'global', subjectId: 0,
+            before: num(req.query.before), since: num(req.query.since),
+            q: req.query.q || null, limit,
+        });
+        res.json({ events, hasMore: events.length >= limit });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load timeline' });
+    }
+});
+
 router.get('/user/:id', (req, res) => {
     try {
         const uid = parseInt(req.params.id, 10);

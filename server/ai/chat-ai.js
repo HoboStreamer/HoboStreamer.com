@@ -98,21 +98,25 @@ function _windowLabel(ms) {
     return `past ${days} day${days === 1 ? '' : 's'}`;
 }
 
-function _mergeTimeline(priorJson, additions, fallbackTs, nowMs) {
-    let prior = [];
-    try { prior = JSON.parse(priorJson || '[]'); if (!Array.isArray(prior)) prior = []; } catch { prior = []; }
-    const add = Array.isArray(additions) ? additions : [];
+// Stamp raw model additions into {ts,label,detail}, skipping placeholders, timestamping each
+// with the AI's mins_ago (when it happened) or the fallback.
+function _stampAdditions(additions, fallbackTs, nowMs) {
     const now = nowMs || Date.now();
-    for (const a of add) {
+    const out = [];
+    for (const a of (Array.isArray(additions) ? additions : [])) {
         const label = _clip(a && (a.label || a.title), 80);
-        if (!label || _isPlaceholder(label)) continue; // skip empty / echoed-schema placeholders
-        // Prefer the AI's estimated "minutes ago" (derived from the [Xm ago] markers we feed it),
-        // so a moment is stamped when it ACTUALLY happened — not when the analysis ran.
+        if (!label || _isPlaceholder(label)) continue;
         let ts = fallbackTs;
         const mins = Number(a && a.mins_ago);
         if (Number.isFinite(mins) && mins >= 0 && mins <= 43200) ts = _sqlTime(now - mins * 60000);
-        prior.push({ ts, label, detail: _clip(a.detail || a.description || '', 240) });
+        out.push({ ts, label, detail: _clip(a.detail || a.description || '', 240) });
     }
+    return out;
+}
+function _mergeTimeline(priorJson, additions, fallbackTs, nowMs) {
+    let prior = [];
+    try { prior = JSON.parse(priorJson || '[]'); if (!Array.isArray(prior)) prior = []; } catch { prior = []; }
+    prior.push(..._stampAdditions(additions, fallbackTs, nowMs));
     // Keep chronological (mins_ago stamps mean append order isn't time order) then cap to newest.
     prior.sort((x, y) => _parseSqlTime(x.ts) - _parseSqlTime(y.ts));
     if (prior.length > TIMELINE_MAX) prior = prior.slice(prior.length - TIMELINE_MAX);
@@ -181,6 +185,8 @@ ${_fmtMessages(rows, { includeChannel: true, now })}`;
     if (!parsed) { console.warn('[ChatAI] global: unparseable model output'); return false; }
 
     const nowIso = _sqlTime(now);
+    // Persist the new moments to the growing timeline log (for the browsable/searchable view).
+    try { db.addChatTimelineEvents('global', 0, _stampAdditions(parsed.timeline, nowIso, now)); } catch { /* */ }
     db.upsertChatAiSummary({
         scope: 'global', subject_id: 0, window: 'global',
         overview: _clip(parsed.recent_overview || '', 2000),
@@ -447,9 +453,23 @@ async function _tick() {
     }
 }
 
+// One-time: backfill the growing timeline log from the existing summary JSON so the browsable
+// view has history immediately (before new moments accumulate).
+function _seedTimelineEvents() {
+    try {
+        if ((db.getChatTimelineEvents({ scope: 'global', limit: 1 }) || []).length) return;
+        const row = db.getChatAiSummary('global', 0, 'global');
+        if (!row) return;
+        let tl = []; try { tl = JSON.parse(row.timeline_json || '[]'); } catch { tl = []; }
+        const cleaned = _cleanTimeline(tl);
+        if (cleaned.length) { db.addChatTimelineEvents('global', 0, cleaned); console.log(`[ChatAI] Seeded ${cleaned.length} timeline event(s)`); }
+    } catch { /* */ }
+}
+
 function start() {
     if (_running) return;
     _running = true;
+    try { _seedTimelineEvents(); } catch { /* */ }
     _timer = setInterval(() => { _tick().catch(() => {}); }, TICK_MS);
     if (_timer.unref) _timer.unref();
     console.log('[AI] Chat-AI job started (global overview/timeline + per-user insights)');
