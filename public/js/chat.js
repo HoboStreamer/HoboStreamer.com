@@ -2855,10 +2855,7 @@ function addChatMessage(msg) {
     const showTs = isGlobal || chatSettings.showTimestamps;
     let tsSource;
     if (msg.timestamp) {
-        const raw = msg.timestamp;
-        // Ensure UTC: ISO strings with 'Z' or '+' are fine; bare SQLite datetimes need 'Z' appended
-        const isUTC = raw.includes('Z') || raw.includes('+') || raw.includes('T');
-        tsSource = new Date(isUTC ? raw : raw.replace(' ', 'T') + 'Z');
+        tsSource = _parseMsgTime(msg.timestamp);
     } else {
         tsSource = new Date();
     }
@@ -5376,6 +5373,18 @@ function _handleGlobalFeedMessage(msg) {
 
 // Build a cross-feed (.chat-msg-crossfeed) element — shared by the live global feed
 // AND history rehydration so global messages look identical whether live or reloaded.
+// Parse a chat message timestamp as UTC. Live messages arrive as ISO (with 'Z'); history from
+// SQLite arrives as a bare "YYYY-MM-DD HH:MM:SS" (UTC, no zone) which `new Date()` would wrongly
+// read as LOCAL time. Normalise both so every render path shows the same, correct time.
+function _parseMsgTime(raw) {
+    if (raw == null || raw === '') return new Date();
+    if (raw instanceof Date) return raw;
+    if (typeof raw === 'number') return new Date(raw);
+    const s = String(raw);
+    const isUTC = s.includes('Z') || s.includes('+') || s.includes('T');
+    return new Date(isUTC ? s : s.replace(' ', 'T') + 'Z');
+}
+
 function _buildCrossfeedEl(msg) {
     const hasStreamChannel = !!msg.stream_channel;
     const el = document.createElement('div');
@@ -5400,7 +5409,7 @@ function _buildCrossfeedEl(msg) {
     const text = (typeof parseEmotes === 'function') ? parseEmotes(rawText) : esc(rawText);
     let tsHtml = '';
     if (chatSettings.showTimestamps) {
-        const tsSource = msg.timestamp ? new Date(msg.timestamp) : new Date();
+        const tsSource = _parseMsgTime(msg.timestamp);
         const tsOpts = chatSettings.timestampFormat === '24h'
             ? { hour: '2-digit', minute: '2-digit', hour12: false }
             : { hour: '2-digit', minute: '2-digit' };
