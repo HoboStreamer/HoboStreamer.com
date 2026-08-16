@@ -1199,6 +1199,12 @@ function shutdown() {
     try { const n = require('./ai/transcribe').killActive(); if (n) console.log(`[Server] Killed ${n} transcription child(ren)`); } catch { /* */ }
     try { require('./ai/media-analysis').killActive(); } catch { /* */ }
 
+    // Cleanly END RobotStreamer passthrough streams FIRST (before the exit races the reconnect).
+    // This closes our protoo peers so RS's SFU closes the producers now and tells its viewers,
+    // instead of leaving stale producers that black out RS video (audio still playing) on the next
+    // go-live until viewers refresh. Done up-front so RS has the whole shutdown window to propagate.
+    try { const n = require('./integrations/rs-passthrough-relay').stopAll(); if (n) console.log(`[Server] Closed ${n} RobotStreamer passthrough(s)`); } catch { /* */ }
+
     // Small delay to let the message reach clients before closing sockets
     setTimeout(() => {
         restreamManager.stopViewerCountPolling();

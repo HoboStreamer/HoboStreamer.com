@@ -274,6 +274,27 @@ class RsPassthroughRelay {
         log(streamId, 'stopped');
     }
 
+    /**
+     * Cleanly end EVERY passthrough on process shutdown. Closing each protoo peer makes RS's SFU
+     * close our producers immediately and notify its viewers (consumerClosed) — instead of the old
+     * process dying abruptly and leaving stale producers that RS only reaps on an ICE/DTLS timeout.
+     * That timeout race is what black-screened RS video (audio kept playing) on a hobostreamer
+     * restart until viewers refreshed. Returns the number of sessions closed.
+     */
+    stopAll() {
+        const ids = [...this.sessions.keys()];
+        for (const id of ids) {
+            const s = this.sessions.get(id);
+            if (!s) continue;
+            s.stopped = true;
+            if (s.restartTimer) { clearTimeout(s.restartTimer); s.restartTimer = null; }
+            try { this._teardown(s); } catch { /* */ }
+            this.sessions.delete(id);
+        }
+        if (ids.length) log('all', `closed ${ids.length} RS passthrough session(s) for shutdown`);
+        return ids.length;
+    }
+
     _scheduleRestart(session, stream, integration) {
         if (session.stopped || session.restartTimer) return;
         session.restartTimer = setTimeout(() => {
