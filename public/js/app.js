@@ -4105,7 +4105,6 @@ function _aiTimelineSessionHTML(s) {
             <div class="ai-tl-session-title">${mainTitle}</div>
             <div class="ai-tl-session-meta">${meta.join('<span class="ai-tl-dot">·</span>')}</div>
         </div>
-        ${streamSubLink}
         ${ov ? `<div class="ai-tl-session-overview">${esc(ov)}</div>` : ''}
         <div class="ai-tl-session-actions">${momentsBtn}${transcriptBtn}</div>
         <div class="ai-tl-moments" hidden></div>
