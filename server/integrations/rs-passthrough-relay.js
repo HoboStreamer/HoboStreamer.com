@@ -157,7 +157,14 @@ function buildAnswer(transportInfo, offer) {
             lines.push(`a=rtcp-fb:${pt} nack pli`);
             lines.push(`a=rtcp-fb:${pt} ccm fir`);
             lines.push(`a=rtcp-fb:${pt} goog-remb`);
+            lines.push(`a=rtcp-fb:${pt} transport-cc`);
+        } else {
+            lines.push(`a=rtcp-fb:${pt} transport-cc`);
         }
+        // Echo the extensions werift offered so they stay negotiated on the send path —
+        // RS (and its viewers) need transport-cc + abs-send-time or the bandwidth estimator
+        // has no feedback and never lets the large keyframe through (endless PLI, black video).
+        for (const e of md.ext) lines.push(`a=extmap:${e.id} ${e.uri}`);
     }
     // ICE candidates apply to the whole bundle; attach to first m-line only is fine for werift.
     let candLines = '';
@@ -167,6 +174,16 @@ function buildAnswer(transportInfo, offer) {
     // insert candidates after the first m-line's attributes (append to whole sdp; werift tolerates)
     return lines.join('\r\n') + '\r\n' + candLines + 'a=end-of-candidates\r\n';
 }
+
+// werift's sender stamps header extensions using the IDs we configure on the PC (below),
+// NOT the (renumbered) ids in its own offer SDP. So the produce must declare THESE ids to
+// match what's actually on the wire, or RS mis-maps transport-cc/abs-send-time.
+const CANON_EXT_ID = {
+    'urn:ietf:params:rtp-hdrext:sdes:mid': 1,
+    'http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time': 4,
+    'http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01': 5,
+    'urn:ietf:params:rtp-hdrext:ssrc-audio-level': 10,
+};
 
 // mediasoup produce rtpParameters mirroring exactly what werift will send on this m-line.
 function buildProduceParams(md) {
@@ -178,8 +195,8 @@ function buildProduceParams(md) {
         clockRate: rm.clock,
         parameters: {},
         rtcpFeedback: md.kind === 'video'
-            ? [{ type: 'nack' }, { type: 'nack', parameter: 'pli' }, { type: 'ccm', parameter: 'fir' }, { type: 'goog-remb' }]
-            : [],
+            ? [{ type: 'nack' }, { type: 'nack', parameter: 'pli' }, { type: 'ccm', parameter: 'fir' }, { type: 'goog-remb' }, { type: 'transport-cc' }]
+            : [{ type: 'transport-cc' }],
     };
     if (rm.channels) codec.channels = rm.channels;
     if (md.fmtp[md.pts[0]]) {
@@ -191,7 +208,13 @@ function buildProduceParams(md) {
     return {
         mid: md.mid,
         codecs: [codec],
-        headerExtensions: [], // forwarded packets are stripped of extensions → declare none
+        // Declare exactly the extensions werift stamps on each packet (transport-cc /
+        // abs-send-time / mid) with the ON-WIRE ids (canonical, not the offer's renumbered
+        // ones) so RS reads them and its BWE works — otherwise keyframes never fully arrive
+        // and the viewer stays black.
+        headerExtensions: md.ext
+            .filter(e => CANON_EXT_ID[e.uri] != null)
+            .map(e => ({ uri: e.uri, id: CANON_EXT_ID[e.uri], encrypt: false, parameters: {} })),
         encodings: [{ ssrc: md.ssrc }],
         rtcp: { cname: md.cname || 'hobo-relay', reducedSize: true },
     };
@@ -210,7 +233,12 @@ async function openPlainIngest(sfu, roomId, producerId) {
     try { socket.setRecvBufferSize?.(4 * 1024 * 1024); } catch { /* best effort */ }
     const port = socket.address().port;
     const info = await sfu.createPlainConsumer(roomId, producerId, '127.0.0.1', port, port + 1);
-    return { socket, port, transportId: info.transportId, consumerId: info.consumerId, payloadType: info.payloadType, kind: info.kind };
+    return {
+        socket, port, transportId: info.transportId, consumerId: info.consumerId,
+        payloadType: info.payloadType, kind: info.kind,
+        mimeType: info.mimeType, clockRate: info.clockRate, channels: info.channels,
+        codecParameters: info.codecParameters || {},
+    };
 }
 
 // ── Relay ────────────────────────────────────────────────────────────────
@@ -313,8 +341,32 @@ class RsPassthroughRelay {
         // 4) Create RS send transport.
         const transportInfo = await peer.request('createWebRtcTransport', { producing: true, consuming: false, streamkey: session.token });
 
-        // 5) Build werift peer: one sendonly transceiver per source track.
-        const pc = new RTCPeerConnection({});
+        // 5) Build werift peer: sendonly transceivers whose codec MATCHES the source (so RS
+        //    decodes the forwarded payload) and that carry the header extensions RS needs
+        //    (transport-cc / abs-send-time / mid) for its bandwidth estimator + keyframes.
+        const { RTCRtpCodecParameters, RTCRtpHeaderExtensionParameters } = werift;
+        const EXT_MID = 'urn:ietf:params:rtp-hdrext:sdes:mid';
+        const EXT_AST = 'http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time';
+        const EXT_TWCC = 'http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01';
+        const EXT_AUDIO_LEVEL = 'urn:ietf:params:rtp-hdrext:ssrc-audio-level';
+        const HX = (uri, id) => new RTCRtpHeaderExtensionParameters({ uri, id });
+        const isH264 = /h264/i.test(videoIn.mimeType || 'video/VP8');
+        const videoCodec = new RTCRtpCodecParameters({
+            mimeType: isH264 ? 'video/H264' : 'video/VP8',
+            clockRate: 90000,
+            payloadType: isH264 ? 103 : 101,
+            rtcpFeedback: [{ type: 'nack' }, { type: 'nack', parameter: 'pli' }, { type: 'ccm', parameter: 'fir' }, { type: 'goog-remb' }, { type: 'transport-cc' }],
+            parameters: isH264 ? (videoIn.codecParameters && Object.keys(videoIn.codecParameters).length ? videoIn.codecParameters : { 'packetization-mode': 1, 'profile-level-id': '42e01f', 'level-asymmetry-allowed': 1 }) : {},
+        });
+        const audioCodec = new RTCRtpCodecParameters({ mimeType: 'audio/opus', clockRate: 48000, channels: 2, payloadType: 100, rtcpFeedback: [{ type: 'transport-cc' }] });
+        log(sid, `source video codec: ${videoIn.mimeType} → producing ${videoCodec.mimeType}`);
+        const pc = new RTCPeerConnection({
+            codecs: { video: [videoCodec], audio: [audioCodec] },
+            headerExtensions: {
+                video: [HX(EXT_MID, 1), HX(EXT_AST, 4), HX(EXT_TWCC, 5)],
+                audio: [HX(EXT_MID, 1), HX(EXT_AST, 4), HX(EXT_TWCC, 5), HX(EXT_AUDIO_LEVEL, 10)],
+            },
+        });
         session.pc = pc;
         pc.connectionStateChange.subscribe(() => {
             log(sid, 'werift conn', pc.connectionState);
