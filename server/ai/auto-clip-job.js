@@ -168,6 +168,16 @@ async function backfillVodClips({ limit = BACKFILL_PER_RUN, force = false } = {}
             if (!source) { newSkip.push(v.vod_id); continue; } // media gone / unreadable
             const moment = await moments.findBestMoment(v);
             if (!moment) { newSkip.push(v.vod_id); continue; }
+            // Pixel backstop: don't clip a black/empty frame.
+            try {
+                const thumb = require('../thumbnails/thumbnail-service');
+                const probe = require('node:path').join(require('node:os').tmpdir(), `autoclip-probe-${v.vod_id}-${Math.floor(moment.offset)}.jpg`);
+                if (thumb.extractFrameToFile && await thumb.extractFrameToFile(source, moment.offset, probe)) {
+                    const dark = moments.frameTooDark ? await moments.frameTooDark(probe) : false;
+                    try { require('node:fs').unlinkSync(probe); } catch { /* */ }
+                    if (dark) { console.log(`[AutoClip] backfill skip VOD ${v.vod_id} — dark/empty frame`); newSkip.push(v.vod_id); continue; }
+                }
+            } catch { /* probe optional */ }
             const clip = await clipVodMoment({ vod: v, offset: moment.offset, title: moment.title, desc: moment.desc, source });
             if (clip) { made++; console.log(`[AutoClip] Backfilled VOD ${v.vod_id} ("${String(moment.title || '').slice(0, 60)}")`); }
             else newSkip.push(v.vod_id); // cut failed (e.g. unseekable/short) — don't retry forever

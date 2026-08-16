@@ -146,7 +146,7 @@ ${script || '(none)'}
 Viewers CLIPPED these timestamps (very strong "this was a highlight" signal): ${clipHint}
 Chat activity SPIKED around: ${spikeHint}
 
-Find the SINGLE most interesting/funny/dramatic/surprising/striking moment in this VOD. Prefer moments backed by the clip/chat signals when they line up with something notable. Return STRICT JSON only, nothing else: {"t": <seconds into the vod>, "title": "<specific punchy 3-8 word title, not the stream name>", "desc": "<one vivid sentence describing the moment>"}`;
+Find the SINGLE most interesting/funny/dramatic/surprising/striking moment in this VOD with something clearly VISIBLE happening. Prefer moments backed by the clip/chat signals when they line up with something notable. NEVER pick a black/dark/loading/blank screen, an intro/BRB card, or a moment with no visible content or activity. Return STRICT JSON only, nothing else: {"t": <seconds into the vod>, "title": "<specific punchy 3-8 word title, not the stream name>", "desc": "<one vivid sentence describing the moment>"}`;
         try {
             const text = await ai.summarizeText(prompt, 300, 'moment_pick');
             const m = text && text.match(/\{[\s\S]*\}/);
@@ -156,7 +156,8 @@ Find the SINGLE most interesting/funny/dramatic/surprising/striking moment in th
                 if (!isNaN(t)) {
                     t = clamp(t);
                     const near = _nearestMemory(ctx.memories, t);
-                    return { offset: t, title: _cleanTitle(j.title) || _titleFromDesc(j.desc), desc: _cleanText(_deJson(j.desc), 400) || (near && _deJson(near.description)) || '', tags: _memTags(near) };
+                    const result = { offset: t, title: _cleanTitle(j.title) || _titleFromDesc(j.desc), desc: _cleanText(_deJson(j.desc), 400) || (near && _deJson(near.description)) || '', tags: _memTags(near) };
+                    return _isEmptyScene(result.desc) ? null : result;
                 }
             }
         } catch { /* fall through to signal-based pick */ }
@@ -173,12 +174,57 @@ Find the SINGLE most interesting/funny/dramatic/surprising/striking moment in th
     offset = clamp(offset);
     const near = _nearestMemory(ctx.memories, offset);
     const desc = near ? _deJson(near.description) : '';
-    return { offset, title: _titleFromDesc(desc), desc, tags: _memTags(near) };
+    return _isEmptyScene(desc) ? null : { offset, title: _titleFromDesc(desc), desc, tags: _memTags(near) };
+}
+// True when a description says the frame is essentially empty — black/dark/loading/blank — so we
+// never turn "nothing" into a clip or paste.
+function _isEmptyScene(text) {
+    const t = String(text || '').toLowerCase();
+    if (!t) return true;
+    return /(black screen|dark screen|extremely dark|mostly (black|dark)|entirely (dark|black)|screen is (black|dark|blank)|blank (screen|frame)|no visible (content|activity)|almost no (visible|content|activity)|nothing (is )?(visible|happening)|no (content|activity)|loading screen|(brb|be right back|starting soon|intro) (screen|card|slate)|offline)/.test(t);
 }
 function _memTags(m) {
     if (!m) return [];
     try { const t = typeof m.tags === 'string' ? JSON.parse(m.tags) : m.tags; if (Array.isArray(t)) return t.map(String).slice(0, 8); } catch { /* */ }
     return String(m.tags || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 8);
+}
+
+// True when the extracted frame is essentially a black/empty image (pixel-level backstop for
+// the description filter). Near-black, or very dark with almost no detail.
+async function _frameTooDark(imgPath) {
+    try {
+        const sharp = require('sharp');
+        const stats = await sharp(imgPath).stats();
+        const chans = (stats.channels || []).slice(0, 3);
+        if (!chans.length) return false;
+        const meanAvg = chans.reduce((a, c) => a + (c.mean || 0), 0) / chans.length;
+        const stdevAvg = chans.reduce((a, c) => a + (c.stdev || 0), 0) / chans.length;
+        return meanAvg < 14 || (meanAvg < 28 && stdevAvg < 12);
+    } catch { return false; }
+}
+
+// Coarse content signature for dedup — the first few significant words of a scene description.
+// Near-identical scenes ("A split-image close-up of an older man…") collapse to one signature.
+function _sig(desc) {
+    return String(desc || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).slice(0, 5).join(' ');
+}
+
+// Remove existing duplicate AI-moment pastes (same scene signature) — keep the newest of each.
+function _dedupePastes() {
+    try {
+        const rows = db.all(`SELECT id, ai_summary, content FROM pastes
+            WHERE type = 'screenshot' AND metadata LIKE '%"ai_moment":true%'
+            ORDER BY created_at DESC, id DESC`) || [];
+        const seen = new Set();
+        let removed = 0;
+        for (const p of rows) {
+            const s = _sig(p.ai_summary || p.content);
+            if (!s) continue;
+            if (seen.has(s)) { try { db.run('DELETE FROM pastes WHERE id = ?', [p.id]); removed++; } catch { /* */ } }
+            else seen.add(s);
+        }
+        if (removed) console.log(`[AI-Moments] Removed ${removed} duplicate moment paste(s)`);
+    } catch (e) { console.warn('[AI-Moments] dedupe error:', e.message); }
 }
 
 async function tick(opts = {}) {
@@ -191,10 +237,16 @@ async function tick(opts = {}) {
     const ignoreUsed = !!opts.fresh;
     _busy = true;
     try {
-        // Clear any stale text moment pastes from earlier failed-extraction runs.
+        // Clear any stale text moment pastes + de-duplicate existing moment pastes by scene.
         try { if (db.deleteAiMomentTextPastes) db.deleteAiMomentTextPastes(); } catch { /* */ }
+        try { _dedupePastes(); } catch { /* */ }
         const prev = _load();
         const usedVods = new Set(ignoreUsed ? [] : (prev.usedVods || []));
+        // Content-signature dedup: even different VODs from the same streamer (same setup) yield
+        // near-identical scenes → we skip a moment whose description signature was used recently,
+        // so the hero/pastes never show visual duplicates. Respected even on --fresh.
+        const usedSigs = new Set(prev.usedSigs || []);
+        const thisSigs = new Set();
 
         // Stage 1: consider every eligible VOD, ranked by its AI overview + popularity prior.
         let vods = (db.getVodsForMomentRanking(VOD_POOL) || [])
@@ -209,26 +261,36 @@ async function tick(opts = {}) {
         // Diversify: at most `perUser` VODs per streamer, in ranked order, up to TARGET_N.
         const userCount = new Map();
         const chosen = [];
+        // Over-select (3× target) so the sig-dedup below still leaves enough distinct moments.
+        const SELECT_N = TARGET_N * 3;
         for (const r of ranked) {
             const uid = r.vod.user_id;
             if ((userCount.get(uid) || 0) >= perUser) continue;
             userCount.set(uid, (userCount.get(uid) || 0) + 1);
             chosen.push(r);
-            if (chosen.length >= TARGET_N) break;
+            if (chosen.length >= SELECT_N) break;
         }
-        if (chosen.length < TARGET_N) {
+        if (chosen.length < SELECT_N) {
             const have = new Set(chosen.map(r => r.vod.vod_id));
-            for (const r of ranked) { if (!have.has(r.vod.vod_id)) { chosen.push(r); have.add(r.vod.vod_id); } if (chosen.length >= TARGET_N) break; }
+            for (const r of ranked) { if (!have.has(r.vod.vod_id)) { chosen.push(r); have.add(r.vod.vod_id); } if (chosen.length >= SELECT_N) break; }
         }
 
         const moments = [];
         const newUsedVods = [];
         for (const r of chosen) {
+            if (moments.length >= TARGET_N) break;
             const v = r.vod;
             newUsedVods.push(v.vod_id);
             // Stage 2: find the best moment within this VOD.
             const moment = await _findBestMoment(v);
             if (!moment) continue;
+            // Skip near-duplicate scenes (same signature as a recent or already-picked moment).
+            const sig = _sig(moment.desc || v.ai_overview_short || v.title);
+            if (sig && (usedSigs.has(sig) || thisSigs.has(sig))) {
+                console.log(`[AI-Moments] Skipped VOD ${v.vod_id} — duplicate scene ("${sig}")`);
+                continue;
+            }
+            if (sig) thisSigs.add(sig);
             const offset = Math.floor(moment.offset || 0);
             let desc = moment.desc || '';
             let title = moment.title || _titleFromDesc(desc) || v.title;
@@ -278,8 +340,22 @@ async function tick(opts = {}) {
                 console.log(`[AI-Moments] Skipped VOD ${v.vod_id} — could not extract moment frame (no local file).`);
                 continue;
             }
+            // Pixel backstop: never post/clip a black or empty frame.
+            if (await _frameTooDark(screenshotPath)) {
+                console.log(`[AI-Moments] Skipped VOD ${v.vod_id} — extracted frame is too dark/empty.`);
+                try { require('node:fs').unlinkSync(screenshotPath); } catch { /* */ }
+                continue;
+            }
 
             if (!desc) desc = _cleanText(v.ai_overview_short || v.ai_overview, 400) || 'A standout moment from this stream.';
+            // Re-check the signature against the FINAL (vision-verified) description — this is
+            // what actually catches same-scene duplicates (e.g. a split-image close-up re-picked).
+            const finalSig = _sig(desc);
+            if (finalSig && finalSig !== sig && (usedSigs.has(finalSig) || thisSigs.has(finalSig))) {
+                console.log(`[AI-Moments] Skipped VOD ${v.vod_id} — duplicate scene after vision ("${finalSig}")`);
+                continue;
+            }
+            if (finalSig) thisSigs.add(finalSig);
             const content = `${desc}\n\n▶ Watch this moment on @${v.username}'s stream: ${vodLink}`;
             const metadata = JSON.stringify({ ai_moment: true, vod_id: v.vod_id, offset, image: img, vod_link: vodPath, username: v.username, why: r.why || null });
             try {
@@ -307,7 +383,8 @@ async function tick(opts = {}) {
         }
 
         const usedLog = [...newUsedVods, ...(prev.usedVods || [])].slice(0, 300);
-        db.setSetting(SETTING, JSON.stringify({ moments, usedVods: usedLog, updated_at: Date.now() }));
+        const sigLog = [...thisSigs, ...(prev.usedSigs || [])].slice(0, 120);
+        db.setSetting(SETTING, JSON.stringify({ moments, usedVods: usedLog, usedSigs: sigLog, updated_at: Date.now() }));
         console.log(`[AI-Moments] ${moments.length} moment(s) from ${chosen.length}/${totalEligible} ranked VODs + pastes created`);
     } catch (e) {
         console.warn('[AI-Moments] tick error:', e.message);
@@ -324,7 +401,7 @@ function start() {
     setInterval(() => { tick().catch(() => {}); }, 5 * 60 * 1000);
 }
 
-module.exports = { start, tick, findBestMoment: _findBestMoment };
+module.exports = { start, tick, findBestMoment: _findBestMoment, frameTooDark: _frameTooDark };
 
 // CLI: force a one-off regeneration, e.g. a whole-dataset "best of all-time" test run:
 //   node server/ai/ai-moments-job.js --fresh --target=6 --perUser=2
