@@ -344,21 +344,17 @@ class RsPassthroughRelay {
         // 5) Build werift peer: sendonly transceivers whose codec MATCHES the source (so RS
         //    decodes the forwarded payload) and that carry the header extensions RS needs
         //    (transport-cc / abs-send-time / mid) for its bandwidth estimator + keyframes.
-        const { RTCRtpCodecParameters, RTCRtpHeaderExtensionParameters } = werift;
+        const { RTCRtpHeaderExtensionParameters, useH264, useVP8, useOPUS } = werift;
         const EXT_MID = 'urn:ietf:params:rtp-hdrext:sdes:mid';
         const EXT_AST = 'http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time';
         const EXT_TWCC = 'http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01';
         const EXT_AUDIO_LEVEL = 'urn:ietf:params:rtp-hdrext:ssrc-audio-level';
         const HX = (uri, id) => new RTCRtpHeaderExtensionParameters({ uri, id });
+        // Match the produced codec to the actual source so RS can decode the forwarded
+        // payload. Use werift's own codec helpers (correct mimeType casing + registry entry).
         const isH264 = /h264/i.test(videoIn.mimeType || 'video/VP8');
-        const videoCodec = new RTCRtpCodecParameters({
-            mimeType: isH264 ? 'video/H264' : 'video/VP8',
-            clockRate: 90000,
-            payloadType: isH264 ? 103 : 101,
-            rtcpFeedback: [{ type: 'nack' }, { type: 'nack', parameter: 'pli' }, { type: 'ccm', parameter: 'fir' }, { type: 'goog-remb' }, { type: 'transport-cc' }],
-            parameters: isH264 ? (videoIn.codecParameters && Object.keys(videoIn.codecParameters).length ? videoIn.codecParameters : { 'packetization-mode': 1, 'profile-level-id': '42e01f', 'level-asymmetry-allowed': 1 }) : {},
-        });
-        const audioCodec = new RTCRtpCodecParameters({ mimeType: 'audio/opus', clockRate: 48000, channels: 2, payloadType: 100, rtcpFeedback: [{ type: 'transport-cc' }] });
+        const videoCodec = isH264 ? useH264({ payloadType: 103 }) : useVP8({ payloadType: 101 });
+        const audioCodec = useOPUS({ payloadType: 100 });
         log(sid, `source video codec: ${videoIn.mimeType} → producing ${videoCodec.mimeType}`);
         const pc = new RTCPeerConnection({
             codecs: { video: [videoCodec], audio: [audioCodec] },
