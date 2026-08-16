@@ -2920,9 +2920,27 @@ function countRecentVods() {
 }
 
 // Public-facing site totals for the home hero stats bar.
+let _homeStatsCache = null;
+let _homeStatsCacheAt = 0;
+const _HOME_STATS_TTL = 30 * 1000; // 30s memo so the windowed COUNTs don't hammer SQLite
+
 function getHomeStats() {
+    const now = Date.now();
+    if (_homeStatsCache && (now - _homeStatsCacheAt) < _HOME_STATS_TTL) return _homeStatsCache;
+    _homeStatsCache = _computeHomeStats();
+    _homeStatsCacheAt = now;
+    return _homeStatsCache;
+}
+
+function _computeHomeStats() {
     // Each stat is isolated so a missing table / column can never blank the whole hero.
     const c = (sql, p = []) => { try { return get(sql, p)?.count || 0; } catch { return 0; } };
+    // Rolling day/week/month counts for a table by its timestamp column.
+    const winCount = (table, col, extra = '') => {
+        const q = (w) => c(`SELECT COUNT(*) AS count FROM ${table} WHERE ${col} >= datetime('now', ?)${extra ? ' AND ' + extra : ''}`, [w]);
+        return { d: q('-1 day'), w: q('-7 days'), m: q('-30 days') };
+    };
+    const hoursSince = (w) => Math.round(c(`SELECT COALESCE(SUM(duration_seconds), 0) AS count FROM vods WHERE COALESCE(is_recording, 0) = 0 AND created_at >= datetime('now', ?)`, [w]) / 3600);
     return {
         vods: c(`SELECT COUNT(*) AS count FROM vods WHERE is_public = 1 AND COALESCE(is_recording, 0) = 0`),
         clips: c(`SELECT COUNT(*) AS count FROM clips WHERE COALESCE(is_public, 1) = 1`),
@@ -2954,6 +2972,17 @@ function getHomeStats() {
         // showed up, not just those who chatted.
         weeklyVisitors: c(`SELECT COUNT(*) AS count FROM anon_ip_mappings WHERE created_at >= datetime('now', '-7 days')`),
         liveNow: c(`SELECT COUNT(*) AS count FROM streams WHERE is_live = 1`),
+        // Rolling last-day / week / month deltas ({ d, w, m }) for the hero stat tooltips + subs.
+        recent: {
+            users: winCount('users', 'created_at', 'COALESCE(is_banned, 0) = 0'),
+            anons: winCount('anon_ip_mappings', 'created_at'),
+            sessions: winCount('streams', 'created_at'),
+            vods: winCount('vods', 'created_at', 'is_public = 1 AND COALESCE(is_recording, 0) = 0'),
+            clips: winCount('clips', 'created_at', 'COALESCE(is_public, 1) = 1'),
+            aiMoments: winCount('stream_memories', 'created_at'),
+            messages: winCount('chat_messages', 'timestamp', 'COALESCE(is_deleted, 0) = 0'),
+            hours: { d: hoursSince('-1 day'), w: hoursSince('-7 days'), m: hoursSince('-30 days') },
+        },
     };
 }
 

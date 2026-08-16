@@ -1198,24 +1198,31 @@ function renderHeroStats(stats) {
     if (!wrap || !stats) return;
     // Short, uniform labels (full meaning in the title tooltip) so a long label never dwarfs
     // its number — the awkward "ACTIVE THIS WEEK" case.
+    const R = stats.recent || {};
     const rows = [];
     if (stats.liveNow > 0) rows.push({ cls: 'hero-stat--live', icon: 'fa-circle', num: stats.liveNow, label: 'Live', title: 'Streams live right now' });
     rows.push({ icon: 'fa-satellite-dish', num: stats.streamers, label: 'Streamers', title: 'People who have gone live' });
-    rows.push({ icon: 'fa-users', num: stats.users, label: 'Users', title: 'Registered users' });
+    rows.push({ icon: 'fa-users', num: stats.users, label: 'Users', title: 'Registered users', recent: R.users });
     rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active', title: 'Active this week — chatters incl. anons & relays' + (stats.weeklyVisitors ? `, plus ${stats.weeklyVisitors} new visitors` : ''), sub: stats.weeklyVisitors ? `+${_fmtCount(stats.weeklyVisitors)} new` : '' });
-    rows.push({ icon: 'fa-user-secret', num: stats.anons, label: 'Anons', title: 'Anonymous chatters ever seen' });
-    rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Sessions', title: 'Total stream sessions' });
-    rows.push({ icon: 'fa-film', num: stats.vods, label: 'VODs', title: 'Recorded videos' });
-    rows.push({ icon: 'fa-scissors', num: stats.clips, label: 'Clips', title: 'Clips created' });
-    if (stats.streamHours > 0) rows.push({ icon: 'fa-clock', num: stats.streamHours, label: 'Hours', title: 'Hours of video archived' });
-    rows.push({ icon: 'fa-brain', num: stats.aiMemories, label: 'AI Moments', title: 'Moments the AI remembers across every stream' });
+    rows.push({ icon: 'fa-user-secret', num: stats.anons, label: 'Anons', title: 'Anonymous chatters ever seen', recent: R.anons });
+    rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Sessions', title: 'Total stream sessions', recent: R.sessions });
+    rows.push({ icon: 'fa-film', num: stats.vods, label: 'VODs', title: 'Recorded videos', recent: R.vods });
+    rows.push({ icon: 'fa-scissors', num: stats.clips, label: 'Clips', title: 'Clips created', recent: R.clips });
+    if (stats.streamHours > 0) rows.push({ icon: 'fa-clock', num: stats.streamHours, label: 'Hours', title: 'Hours of video archived', recent: R.hours, unit: 'h' });
+    rows.push({ icon: 'fa-brain', num: stats.aiMemories, label: 'AI Moments', title: 'Moments the AI remembers across every stream', recent: R.aiMoments });
     rows.push({ icon: 'fa-face-grin-squint', num: stats.emotes, label: 'Emotes', title: 'Custom channel emotes uploaded' });
     rows.push({ icon: 'fa-heart', num: stats.follows, label: 'Follows', title: 'Channel follows' });
     rows.push({ icon: 'fa-paste', num: stats.pastes, label: 'Pastes', title: `${stats.pasteText || 0} text · ${stats.pasteImages || 0} image pastes`, sub: (stats.pasteText != null && stats.pasteImages != null) ? `${_fmtCount(stats.pasteText)} txt · ${_fmtCount(stats.pasteImages)} img` : '' });
-    rows.push({ icon: 'fa-comments', num: stats.chatMessages, label: 'Messages', title: 'Chat messages sent' });
-    wrap.innerHTML = rows.map(r =>
-        `<div class="hero-stat ${r.cls || ''}" title="${r.title || ''}"><i class="fa-solid ${r.icon}"></i><div class="hero-stat-meta"><span class="hero-stat-num" data-n="${r.num || 0}">0</span><span class="hero-stat-label">${r.label}</span>${r.sub ? `<span class="hero-stat-sub">${r.sub}</span>` : ''}</div></div>`
-    ).join('');
+    rows.push({ icon: 'fa-comments', num: stats.chatMessages, label: 'Messages', title: 'Chat messages sent', recent: R.messages });
+    // For stats with rolling data: append "+d today · +w this week · +m this month" to the
+    // hover tooltip and show the weekly delta as the small sub-line.
+    const recTitle = (rec, u = '') => rec ? ` — +${_fmtCount(rec.d)}${u} today · +${_fmtCount(rec.w)}${u} this week · +${_fmtCount(rec.m)}${u} this month` : '';
+    const recSub = (rec, u = '') => rec ? `+${_fmtCount(rec.w)}${u} wk` : '';
+    wrap.innerHTML = rows.map(r => {
+        const title = (r.title || '') + recTitle(r.recent, r.unit || '');
+        const sub = r.sub || recSub(r.recent, r.unit || '');
+        return `<div class="hero-stat ${r.cls || ''}" title="${esc(title)}"><i class="fa-solid ${r.icon}"></i><div class="hero-stat-meta"><span class="hero-stat-num" data-n="${r.num || 0}">0</span><span class="hero-stat-label">${r.label}</span>${sub ? `<span class="hero-stat-sub">${sub}</span>` : ''}</div></div>`;
+    }).join('');
     wrap.querySelectorAll('.hero-stat-num').forEach(el => _heroCountUp(el, parseInt(el.dataset.n, 10) || 0));
 }
 
