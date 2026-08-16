@@ -723,6 +723,7 @@ async function loadRobotStreamerIntegration() {
                 streamName: integration.stream_name || '',
                 ownerName: integration.owner_name || '',
                 availableRobots: integration.available_robots || [],
+                passthrough: !!integration.passthrough,
             };
             console.log('[Broadcast] RS integration loaded:', { enabled: integration.enabled, hasToken: !!integration.has_token, robotId: integration.robot_id });
             syncRobotStreamerUI();
@@ -3375,6 +3376,15 @@ async function startRobotStreamerRestream(streamId) {
         return null;
     }
     if (ss.robotStreamer?.active) return ss.robotStreamer;
+
+    // Server-side RAW passthrough owns this robot — the server forwards our already-encoded
+    // stream to RobotStreamer with zero re-encode, so the browser must NOT publish a second
+    // (double) encode. Skip the client publish entirely.
+    if (broadcastState.robotStreamer?.passthrough) {
+        console.log('[RS Restream] Server passthrough active — skipping browser publish for stream', streamId);
+        setRobotStreamerStatus('Restreaming to RobotStreamer via server (raw passthrough, no re-encode).', 'success', 'bc-rsLiveStatus');
+        return null;
+    }
 
     // Guard against concurrent startRobotStreamerRestream calls
     if (ss._rsRestreamStarting) {

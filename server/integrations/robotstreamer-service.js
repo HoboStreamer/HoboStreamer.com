@@ -199,7 +199,22 @@ class RobotStreamerService {
             owner_name: row.owner_name || '',
             last_validated_at: row.last_validated_at || null,
             available_robots: extras.available_robots || [],
+            passthrough: this._passthroughEnabledFor(row),
         };
+    }
+
+    /**
+     * Is the RAW passthrough relay active for this integration's robot?
+     * Global RS_PASSTHROUGH=1, or the robot id in RS_PASSTHROUGH_ROBOTS.
+     */
+    _passthroughEnabledFor(integration) {
+        try {
+            const cfg = require('../config').robotstreamer || {};
+            if (!require('./rs-passthrough-relay').available()) return false;
+            if (cfg.passthrough) return true;
+            const rid = String(integration?.robot_id || '');
+            return !!rid && (cfg.passthroughRobots || []).map(String).includes(rid);
+        } catch { return false; }
     }
 
     getClientIntegration(userId) {
@@ -535,8 +550,20 @@ class RobotStreamerService {
             return null;
         }
 
-        // Server-side video publish for WHIP/RTMP ingest (independent of chat mirror)
-        this._maybeStartNativePublish(stream, integration, opts);
+        // RAW passthrough relay (zero re-encode): when enabled, the server forwards the
+        // source's already-encoded RTP straight to RobotStreamer. Replaces BOTH the browser's
+        // second encode and the ffmpeg transcode worker for this stream.
+        if (this._passthroughEnabledFor(integration)) {
+            try {
+                require('./rs-passthrough-relay').start(stream, integration);
+                console.log(`[RS] Raw passthrough relay started for stream ${stream.id} (robot ${integration.robot_id})`);
+            } catch (err) {
+                console.warn(`[RS] Passthrough relay start failed for stream ${stream.id}:`, err.message);
+            }
+        } else {
+            // Server-side video publish for WHIP/RTMP ingest (independent of chat mirror)
+            this._maybeStartNativePublish(stream, integration, opts);
+        }
 
         if (integration.mirror_chat === 0) return null;
 
@@ -735,6 +762,7 @@ class RobotStreamerService {
     stopForStream(streamId) {
         this.stopChatBridge(streamId);
         try { require('./rs-native-publisher').stop(streamId); } catch { /* ignore */ }
+        try { require('./rs-passthrough-relay').stop(streamId); } catch { /* ignore */ }
     }
 
     stopForUserLiveStreams(userId) {
@@ -762,6 +790,16 @@ class RobotStreamerService {
 
         const integration = this.getIntegrationForStream(stream);
         if (!integration?.enabled || !integration?.token || !integration?.robot_id) {
+            socket.destroy();
+            return true;
+        }
+
+        // When the server-side raw passthrough relay owns this robot, the browser must NOT
+        // also publish (double producer). The client already skips it (see canUse gate), but
+        // reject here too so a stale client can't collide with the relay. Ensure the relay runs.
+        if (this._passthroughEnabledFor(integration)) {
+            try { require('./rs-passthrough-relay').start(stream, integration); } catch { /* */ }
+            console.log(`[RS] Rejecting browser publish for stream ${stream.id} — server passthrough owns robot ${integration.robot_id}`);
             socket.destroy();
             return true;
         }

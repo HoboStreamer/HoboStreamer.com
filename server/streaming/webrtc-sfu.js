@@ -406,6 +406,61 @@ class WebRTCSFU extends EventEmitter {
     }
 
     /**
+     * Direct (in-process) RTP passthrough consumer for the RobotStreamer raw relay.
+     * A DirectTransport delivers the producer's ENCODED RTP to a callback in-process —
+     * lossless (no UDP socket, no packet drop) and with zero decode/re-encode. The relay
+     * forwards these packets straight into a werift PeerConnection that produces to RS,
+     * so RobotStreamer receives goosely's bit-exact original video (no second encode).
+     *
+     * Uses this router's own capabilities so canConsume always succeeds; the caller reads
+     * the returned consumer's payload type and mirrors it downstream. Subscribe to
+     * consumer.on('rtp', buf) for packets and call consumer.requestKeyFrame() on RS PLI.
+     * @returns {Promise<{ consumer, transport, transportKey, rtpParameters }>}
+     */
+    async createDirectPassthroughConsumer(roomId, producerId, rtpCapabilities = null) {
+        const room = this.rooms.get(roomId);
+        if (!room) throw new Error('Room not found');
+        const caps = rtpCapabilities || room.router.rtpCapabilities;
+        if (!room.router.canConsume({ producerId, rtpCapabilities: caps })) {
+            throw new Error('Cannot consume this producer for passthrough');
+        }
+
+        const transport = await room.router.createDirectTransport();
+        const consumer = await transport.consume({ producerId, rtpCapabilities: caps, paused: false });
+
+        const transportKey = `direct-${transport.id}`;
+        room.transports.set(transportKey, transport);
+        room.consumers.set(consumer.id, { consumer, peerId: '__rs_passthrough__' });
+
+        consumer.on('transportclose', () => {
+            room.consumers.delete(consumer.id);
+            room.transports.delete(transportKey);
+        });
+        consumer.on('producerclose', () => {
+            try { transport.close(); } catch {}
+            room.consumers.delete(consumer.id);
+            room.transports.delete(transportKey);
+        });
+
+        // Nudge the source for early keyframes so RS gets a decodable picture fast.
+        if (consumer.kind === 'video') {
+            for (const d of [0, 400, 1200]) setTimeout(() => { consumer.requestKeyFrame().catch(() => {}); }, d);
+        }
+
+        return { consumer, transport, transportKey, rtpParameters: consumer.rtpParameters };
+    }
+
+    closeDirectPassthroughConsumer(roomId, transportKey) {
+        const room = this.rooms.get(roomId);
+        if (!room) return;
+        const transport = room.transports.get(transportKey);
+        if (transport) {
+            try { transport.close(); } catch {}
+            room.transports.delete(transportKey);
+        }
+    }
+
+    /**
      * Check if a room has producers.
      * @param {string} roomId
      * @returns {boolean}

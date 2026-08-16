@@ -217,6 +217,14 @@ function buildConfig(registryValues) {
             videoPort: parseInt(process.env.JSMPEG_VIDEO_PORT || '9710', 10),
             audioPort: parseInt(process.env.JSMPEG_AUDIO_PORT || '9711', 10),
         },
+        robotstreamer: {
+            // Raw passthrough relay: forward the source's already-encoded RTP to RobotStreamer
+            // with ZERO re-encode (werift + mediasoup DirectTransport), instead of the browser's
+            // second encode / the ffmpeg transcode worker. Off by default; opt-in globally with
+            // RS_PASSTHROUGH=1, or per-robot with RS_PASSTHROUGH_ROBOTS=<id,id,...> for A/B testing.
+            passthrough: process.env.RS_PASSTHROUGH === '1',
+            passthroughRobots: (process.env.RS_PASSTHROUGH_ROBOTS || '').split(',').map(s => s.trim()).filter(Boolean),
+        },
         hoboBucks: {
             // Bit-style currency: integer bucks, 100 bucks = $1.00 streamer cashout
             // (so 1 buck = $0.01 = one USD cent). Viewers buy at a premium with volume
