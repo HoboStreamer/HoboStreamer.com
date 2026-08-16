@@ -77,52 +77,53 @@ router.get('/site', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=300');
     const u = normalizeUrl(req.query.url);
     if (!u) return res.json({ reachable: false });
+
+    // "Does this domain exist?" == does it resolve to a PUBLIC IP. This is the reliable signal:
+    // plenty of real sites (chatgpt.com and other Cloudflare/bot-protected hosts) return 403 to a
+    // server-side GET, so reachability must come from DNS, NOT from the HTTP response. A GET is
+    // only used, best-effort, to enrich the suggestion with the page title.
     if (!(await hostIsPublic(u.hostname))) return res.json({ reachable: false });
 
+    let title = '', finalUrl = u.href, finalHost = u.hostname;
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
     try {
         const r = await fetch(u.href, {
             signal: ac.signal,
             redirect: 'follow',
-            headers: { 'user-agent': 'Mozilla/5.0 (compatible; HoboKiosk/1.0)', 'accept': 'text/html,*/*' },
+            headers: {
+                // A real browser UA gets past most simple bot walls so we can read the <title>.
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                'accept': 'text/html,application/xhtml+xml',
+            },
         });
-        clearTimeout(timer);
-
-        // A redirect target could point back at a private host — re-check the final URL.
-        let finalHost = u.hostname;
-        try { finalHost = new URL(r.url || u.href).hostname; } catch { /* keep */ }
-        if (!(await hostIsPublic(finalHost))) return res.json({ reachable: false });
-
-        let title = '';
+        // Follow redirects but keep the favicon/host on a still-public final host.
+        try { const fu = new URL(r.url || u.href); if (await hostIsPublic(fu.hostname)) { finalUrl = fu.href; finalHost = fu.hostname; } } catch { /* keep */ }
         const ct = r.headers.get('content-type') || '';
-        if (ct.includes('text/html')) {
-            const reader = r.body?.getReader?.();
-            if (reader) {
-                let received = 0; const chunks = [];
-                while (received < MAX_HTML_BYTES) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    chunks.push(value); received += value.length;
-                }
-                try { reader.cancel(); } catch { /* */ }
-                const html = Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
-                const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-                if (m) title = m[1].replace(/\s+/g, ' ').trim().slice(0, 140);
+        if (ct.includes('text/html') && r.body?.getReader) {
+            const reader = r.body.getReader();
+            let received = 0; const chunks = [];
+            while (received < MAX_HTML_BYTES) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value); received += value.length;
             }
+            try { reader.cancel(); } catch { /* */ }
+            const html = Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
+            const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+            if (m) title = m[1].replace(/\s+/g, ' ').trim().slice(0, 140);
         }
-        const reachable = r.status > 0 && r.status < 400;
-        return res.json({
-            reachable,
-            url: r.url || u.href,
-            host: finalHost,
-            title,
-            favicon: `/api/kiosk/favicon?domain=${encodeURIComponent(finalHost)}`,
-        });
-    } catch {
-        clearTimeout(timer);
-        return res.json({ reachable: false });
-    }
+    } catch { /* blocked / slow / 403 — irrelevant; the domain resolves, so we still navigate */ }
+    clearTimeout(timer);
+
+    // Domain resolves → it's a real site → navigate there (title may be empty if the GET was blocked).
+    return res.json({
+        reachable: true,
+        url: finalUrl,
+        host: finalHost,
+        title,
+        favicon: `/api/kiosk/favicon?domain=${encodeURIComponent(finalHost)}`,
+    });
 });
 
 // ── GET /api/kiosk/favicon?domain=<host> ─────────────────────────
