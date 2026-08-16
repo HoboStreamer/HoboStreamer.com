@@ -201,10 +201,12 @@ let _backfillTimer = null;
 function start() {
     if (_timer) return;
     _timer = setInterval(() => { _tick().catch(() => {}); }, CHECK_INTERVAL_MS);
-    // Historical VOD backfill: a few clips/day (self-gates on 24h). First pass ~3 min after boot.
-    setTimeout(() => { backfillVodClips().catch(() => {}); }, 3 * 60 * 1000);
-    _backfillTimer = setInterval(() => { backfillVodClips().catch(() => {}); }, 60 * 60 * 1000);
-    console.log('[AutoClip] Live auto-clip job started (selective chat-spike + AI agreement) + daily VOD backfill');
+    // Historical VOD backfill: schedule is persistent (due-ness from the DB-stored
+    // auto_clip_backfill.updated_at), so deploys/restarts never reset it. Re-check every 5m +
+    // shortly after boot so a due run resumes promptly.
+    setTimeout(() => { backfillVodClips().catch(() => {}); }, 30 * 1000);
+    _backfillTimer = setInterval(() => { backfillVodClips().catch(() => {}); }, 5 * 60 * 1000);
+    console.log('[AutoClip] Live auto-clip job started (selective chat-spike + AI agreement) + persistent VOD backfill');
 }
 function stop() { if (_timer) { clearInterval(_timer); _timer = null; } if (_backfillTimer) { clearInterval(_backfillTimer); _backfillTimer = null; } }
 

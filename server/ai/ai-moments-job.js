@@ -317,8 +317,11 @@ async function tick(opts = {}) {
 }
 
 function start() {
-    setTimeout(() => { tick().catch(() => {}); }, 60 * 1000);      // shortly after boot
-    setInterval(() => { tick().catch(() => {}); }, 30 * 60 * 1000); // self-gates on 24h
+    // Schedule is persistent: due-ness is computed from the DB-stored last-run (home_hero_moments
+    // .updated_at), so restarts/deploys never reset the clock. Re-check every 5m + shortly after
+    // boot so a due run resumes promptly after any restart.
+    setTimeout(() => { tick().catch(() => {}); }, 20 * 1000);
+    setInterval(() => { tick().catch(() => {}); }, 5 * 60 * 1000);
 }
 
 module.exports = { start, tick, findBestMoment: _findBestMoment };
