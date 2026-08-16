@@ -132,11 +132,11 @@ async function _tick() {
 // jobs). Processes the most-watched un-clipped VODs first; idempotent (skips VODs that already
 // have an auto-clip), so it steadily works through the back catalogue over days. ─────────────
 const BACKFILL_SETTING = 'auto_clip_backfill';
-const BACKFILL_PER_DAY = 4;
-const DAY_MS = 24 * 60 * 60 * 1000;
+const BACKFILL_PER_RUN = 3;                       // a few historical clips…
+const BACKFILL_INTERVAL_MS = 6 * 60 * 60 * 1000;  // …every 6h (guarantees ≥1 clip / 6h)
 
 function _backfillDue() {
-    try { const p = JSON.parse(db.getSetting(BACKFILL_SETTING) || '{}'); return !p.updated_at || (Date.now() - p.updated_at) >= DAY_MS; }
+    try { const p = JSON.parse(db.getSetting(BACKFILL_SETTING) || '{}'); return !p.updated_at || (Date.now() - p.updated_at) >= BACKFILL_INTERVAL_MS; }
     catch { return true; }
 }
 async function _resolveVodSource(vodId) {
@@ -151,7 +151,7 @@ async function _resolveVodSource(vodId) {
 // Cut auto-clips for up to `limit` historical VODs that don't have one yet. Keeps a `skip`
 // list of VODs we couldn't clip (media pruned / cut failed) so dead VODs don't block progress
 // or waste an AI call on every run.
-async function backfillVodClips({ limit = BACKFILL_PER_DAY, force = false } = {}) {
+async function backfillVodClips({ limit = BACKFILL_PER_RUN, force = false } = {}) {
     if (!force && !_backfillDue()) return 0;
     let prev = {};
     try { prev = JSON.parse(db.getSetting(BACKFILL_SETTING) || '{}') || {}; } catch { /* */ }

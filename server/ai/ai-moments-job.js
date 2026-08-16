@@ -20,8 +20,8 @@ let thumb = null; try { thumb = require('../thumbnails/thumbnail-service'); } ca
 const SCREENSHOTS_DIR = path.resolve('./data/pastes/screenshots');
 const BASE_URL = (cfg && (cfg.baseUrl || cfg.publicUrl)) || 'https://hobostreamer.com';
 
-const INTERVAL_MS = 24 * 60 * 60 * 1000;
-const TARGET = 3;
+const INTERVAL_MS = 6 * 60 * 60 * 1000;   // refresh a handful of hero moments every 6h
+const TARGET = 4;
 const SETTING = 'home_hero_moments';
 let _busy = false;
 

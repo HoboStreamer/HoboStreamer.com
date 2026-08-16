@@ -14,7 +14,7 @@ const path = require('path');
 const db = require('../db/database');
 
 const router = express.Router();
-const SLOGAN_INTERVAL_MS = 12 * 60 * 60 * 1000; // must match slogan-job INTERVAL_MS
+const SLOGAN_INTERVAL_MS = 6 * 60 * 60 * 1000; // must match slogan-job INTERVAL_MS
 
 // ── Static fallback slogans (used until the AI job fills site_settings, or if AI is off) ──
 const FALLBACK_AUDIENCES = [
