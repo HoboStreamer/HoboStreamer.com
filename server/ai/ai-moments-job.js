@@ -391,8 +391,9 @@ async function tick(opts = {}) {
     } finally {
         _busy = false;
         // Regenerate the hero slogans/labels at the SAME time as the hero background moments,
-        // so both halves of the home hero always refresh together.
-        try { require('./slogan-job').tick().catch(() => {}); } catch { /* */ }
+        // so both halves of the home hero always refresh together. Awaited so it completes even
+        // in a one-off CLI run (which would otherwise exit before the async slogan call).
+        try { await require('./slogan-job').tick(); } catch { /* */ }
     }
 }
 
