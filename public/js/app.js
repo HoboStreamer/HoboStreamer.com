@@ -1438,12 +1438,15 @@ function startSloganCountdown(nextAt) {
 // a first-time visitor (within 30 min of their first visit) so they're more likely to read it.
 function _homeAboutDefaultExpanded() {
     try {
+        // Once they've scrolled past it (i.e. actually seen it), always collapse by default.
+        if (localStorage.getItem('hobo_about_seen') === '1') return false;
         const KEY = 'hobo_first_visit';
         let first = parseInt(localStorage.getItem(KEY) || '0', 10);
         if (!first) { first = Date.now(); localStorage.setItem(KEY, String(first)); }
         return (Date.now() - first) < 30 * 60 * 1000;
     } catch { return false; }
 }
+let _homeAboutSeenObserver = null;
 function _initHomeAbout() {
     const banner = document.getElementById('home-cta-banner');
     if (!banner) return;
@@ -1451,6 +1454,24 @@ function _initHomeAbout() {
     banner.classList.toggle('about-collapsed', !expanded);
     const toggle = banner.querySelector('.home-about-toggle');
     if (toggle) toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    // Mark it "seen" once the user scrolls all the way past the section, so the next visit
+    // defaults to collapsed (they've already had their chance to read it).
+    try {
+        if (_homeAboutSeenObserver) { _homeAboutSeenObserver.disconnect(); _homeAboutSeenObserver = null; }
+        if (localStorage.getItem('hobo_about_seen') !== '1' && 'IntersectionObserver' in window) {
+            _homeAboutSeenObserver = new IntersectionObserver((entries) => {
+                for (const e of entries) {
+                    // Fully scrolled above the viewport → they've passed it.
+                    if (!e.isIntersecting && e.boundingClientRect.bottom < 0) {
+                        try { localStorage.setItem('hobo_about_seen', '1'); } catch { /* */ }
+                        if (_homeAboutSeenObserver) { _homeAboutSeenObserver.disconnect(); _homeAboutSeenObserver = null; }
+                        break;
+                    }
+                }
+            }, { threshold: 0 });
+            _homeAboutSeenObserver.observe(banner);
+        }
+    } catch { /* observer optional */ }
 }
 function toggleHomeAbout() {
     const banner = document.getElementById('home-cta-banner');
