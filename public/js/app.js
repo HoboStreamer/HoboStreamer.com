@@ -1206,6 +1206,12 @@ function renderHeroStats(stats) {
     rows.push({ icon: 'fa-fire', num: stats.weeklyActive, label: 'Active', title: 'Active chatters this week' });
     rows.push({ icon: 'fa-tower-broadcast', num: stats.liveSessions, label: 'Sessions', title: 'Total stream sessions' });
     rows.push({ icon: 'fa-film', num: stats.vods, label: 'VODs', title: 'Recorded videos' });
+    rows.push({ icon: 'fa-scissors', num: stats.clips, label: 'Clips', title: 'Clips created' });
+    if (stats.streamHours > 0) rows.push({ icon: 'fa-clock', num: stats.streamHours, label: 'Hours', title: 'Hours of video archived' });
+    rows.push({ icon: 'fa-brain', num: stats.aiMemories, label: 'AI Moments', title: 'Moments the AI remembers across every stream' });
+    rows.push({ icon: 'fa-face-grin-squint', num: stats.emotes, label: 'Emotes', title: 'Custom channel emotes uploaded' });
+    rows.push({ icon: 'fa-heart', num: stats.follows, label: 'Follows', title: 'Channel follows' });
+    rows.push({ icon: 'fa-paste', num: stats.pastes, label: 'Pastes', title: 'Pastes shared' });
     rows.push({ icon: 'fa-comments', num: stats.chatMessages, label: 'Messages', title: 'Chat messages sent' });
     wrap.innerHTML = rows.map(r =>
         `<div class="hero-stat ${r.cls || ''}" title="${r.title || ''}"><i class="fa-solid ${r.icon}"></i><div class="hero-stat-meta"><span class="hero-stat-num" data-n="${r.num || 0}">0</span><span class="hero-stat-label">${r.label}</span></div></div>`
@@ -3610,7 +3616,7 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
     // Whether live tabs are already showing multi-stream summary
     const tabsVisible = document.getElementById('live-stream-tabs')?.style.display !== 'none';
 
-    if (liveStreams.length <= 1 && !hasRs && !hasRestream && !hasExternal) {
+    if (liveStreams.length < 1 && !hasRs && !hasRestream && !hasExternal) {
         el.style.display = 'none';
         return;
     }
@@ -3637,6 +3643,12 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
     }
 
     let html = '';
+
+    // HoboStreamer-native viewer badge — always shown while live so viewers can see how many
+    // are watching HERE (vs the RS / restream badges that follow).
+    if (liveStreams.length > 0) {
+        html += `<span class="ch-hs-badge" title="Watching live on HoboStreamer${streamCount > 1 ? ` (across ${streamCount} streams)` : ''}"><i class="fa-solid fa-tower-broadcast"></i> <strong>${hsTotal}</strong> on HoboStreamer</span>`;
+    }
 
     // Show combined viewer total — but skip when live tabs already show per-stream counts
     if ((streamCount > 1 || hasExternal) && !tabsVisible) {

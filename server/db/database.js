@@ -2715,14 +2715,22 @@ function countRecentVods() {
 
 // Public-facing site totals for the home hero stats bar.
 function getHomeStats() {
-    const c = (sql, p = []) => (get(sql, p)?.count || 0);
+    // Each stat is isolated so a missing table / column can never blank the whole hero.
+    const c = (sql, p = []) => { try { return get(sql, p)?.count || 0; } catch { return 0; } };
     return {
         vods: c(`SELECT COUNT(*) AS count FROM vods WHERE is_public = 1 AND COALESCE(is_recording, 0) = 0`),
+        clips: c(`SELECT COUNT(*) AS count FROM clips WHERE COALESCE(is_public, 1) = 1`),
         liveSessions: c(`SELECT COUNT(*) AS count FROM streams`),
         streamers: c(`SELECT COUNT(DISTINCT user_id) AS count FROM streams WHERE user_id IS NOT NULL`),
         chatMessages: c(`SELECT COUNT(*) AS count FROM chat_messages`),
         users: c(`SELECT COUNT(*) AS count FROM users WHERE COALESCE(is_banned, 0) = 0`),
         anons: c(`SELECT COUNT(*) AS count FROM anon_ip_mappings`),
+        follows: c(`SELECT COUNT(*) AS count FROM follows`),
+        emotes: c(`SELECT COUNT(*) AS count FROM emotes`),
+        pastes: c(`SELECT COUNT(*) AS count FROM pastes`),
+        aiMemories: c(`SELECT COUNT(*) AS count FROM stream_memories`),
+        // Total hours of video the platform has archived (VODs, excluding in-progress recordings).
+        streamHours: Math.round(c(`SELECT COALESCE(SUM(duration_seconds), 0) AS count FROM vods WHERE COALESCE(is_recording, 0) = 0`) / 3600),
         weeklyActive: c(`SELECT COUNT(DISTINCT user_id) AS count FROM chat_messages
                          WHERE user_id IS NOT NULL AND COALESCE(is_deleted, 0) = 0
                            AND timestamp >= datetime('now', '-7 days')`),
