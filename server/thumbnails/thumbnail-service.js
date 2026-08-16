@@ -640,9 +640,24 @@ async function generateMomentThumbnail(memoryId, filePath, seekSeconds) {
     return generateFromVideo(filePath, 'moment', memoryId, { seekSeconds: Math.max(0.5, Number(seekSeconds) || 1) });
 }
 
+// Extract a frame from a VOD at a timestamp directly to an arbitrary file (e.g. the pastes
+// screenshots dir so an AI moment becomes a real image paste). Resolves true on success.
+function extractFrameToFile(videoPath, seekSeconds, outAbsPath) {
+    return new Promise((resolve) => {
+        if (!videoPath || !fs.existsSync(videoPath)) return resolve(false);
+        try { fs.mkdirSync(path.dirname(outAbsPath), { recursive: true }); } catch { /* */ }
+        const args = ['-y', '-ss', String(Math.max(0.5, Number(seekSeconds) || 1)), '-i', videoPath,
+            '-vframes', '1', '-vf', `scale=${THUMB_WIDTH}:-1`, '-q:v', String(THUMB_QUALITY), outAbsPath];
+        const ff = spawn('ffmpeg', args, { stdio: 'ignore' });
+        ff.on('close', (code) => resolve(code === 0 && fs.existsSync(outAbsPath)));
+        ff.on('error', () => resolve(false));
+    });
+}
+
 module.exports = {
     generateFromVideo,
     generateMomentThumbnail,
+    extractFrameToFile,
     generateVodThumbnail,
     generateClipThumbnail,
     generateLiveStreamThumbnail,

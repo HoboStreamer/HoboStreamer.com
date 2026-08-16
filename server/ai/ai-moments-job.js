@@ -5,9 +5,13 @@
  * exact timestamp). Rotates daily, dedups against recently-used moments, and costs at most
  * ONE cheap LLM pick per day (with a daily-rotating heuristic fallback when AI is off).
  */
+const path = require('node:path');
 const db = require('../db/database');
 const ai = require('./ai-analysis');
+let cfg = null; try { cfg = require('../config'); } catch { /* */ }
 let thumb = null; try { thumb = require('../thumbnails/thumbnail-service'); } catch { /* optional */ }
+const SCREENSHOTS_DIR = path.resolve('./data/pastes/screenshots');
+const BASE_URL = (cfg && (cfg.baseUrl || cfg.publicUrl)) || 'https://hobostreamer.com';
 
 const INTERVAL_MS = 24 * 60 * 60 * 1000;
 const TARGET = 6;
@@ -70,27 +74,39 @@ async function tick() {
         const newUsed = [];
         for (const p of picks) {
             const c = p.cand;
-            // Prefer a real frame at the moment's timestamp; fall back to existing thumbnails.
-            let img = c.thumbnail_url || `/api/thumbnails/generate/vod/${c.vod_id}`;
-            try {
-                const vod = db.getVodById(c.vod_id);
-                if (thumb && vod && vod.file_path) {
-                    const url = await thumb.generateMomentThumbnail(c.memory_id, vod.file_path, c.offset_seconds);
-                    if (url) img = url;
-                }
-            } catch { /* keep fallback */ }
-
             const title = (p.title || c.stream_title || 'A wild moment').slice(0, 80);
             const desc = String(c.description || '').replace(/\s+/g, ' ').trim();
             const offset = Math.floor(c.offset_seconds || 0);
-            const vodLink = `/vod/${c.vod_id}?t=${offset}`;
+            const vodPath = `/vod/${c.vod_id}?t=${offset}`;
+            const vodLink = `${BASE_URL}${vodPath}`;
             const slug = _slug();
-            const content = `${desc}\n\nCaught by the AI on @${c.username}'s stream — watch this exact moment: ${vodLink}`;
+
+            // Extract the actual frame at this moment into the pastes screenshots dir so the
+            // paste is a real IMAGE paste (not plain text). Fall back to a text paste + existing
+            // thumbnail if the VOD file isn't local.
+            let screenshotPath = null;
+            let img = c.thumbnail_url || `/api/thumbnails/generate/vod/${c.vod_id}`;
+            try {
+                const vod = db.getVodById(c.vod_id);
+                if (thumb && vod && vod.file_path && thumb.extractFrameToFile) {
+                    const fname = `ai-moment-${c.memory_id}-${offset}.jpg`;
+                    const outPath = path.join(SCREENSHOTS_DIR, fname);
+                    if (await thumb.extractFrameToFile(vod.file_path, c.offset_seconds, outPath)) {
+                        screenshotPath = outPath;
+                        img = `/data/pastes/screenshots/${fname}`;
+                    }
+                }
+            } catch { /* keep fallback */ }
+
+            // Description = the AI-generated text; card links back to the exact VOD moment.
+            const content = `${desc}\n\n▶ Watch this moment on @${c.username}'s stream: ${vodLink}`;
+            const metadata = JSON.stringify({ ai_moment: true, memory_id: c.memory_id, vod_id: c.vod_id, offset, image: img, vod_link: vodPath, username: c.username });
             try {
                 db.createPaste({
-                    slug, userId: c.user_id, type: 'paste', title, content,
-                    language: 'text', visibility: 'public', streamId: c.stream_id,
-                    metadata: JSON.stringify({ ai_moment: true, memory_id: c.memory_id, vod_id: c.vod_id, offset, image: img, username: c.username }),
+                    slug, userId: c.user_id,
+                    type: screenshotPath ? 'screenshot' : 'paste',
+                    title, content, language: 'text', visibility: 'public',
+                    streamId: c.stream_id, screenshotPath, metadata,
                 });
             } catch { /* slug collision / other — skip this paste */ }
 
