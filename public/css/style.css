@@ -2080,6 +2080,28 @@ main#app { position: relative; z-index: 1; }
         linear-gradient(180deg, color-mix(in srgb, var(--bg-primary) 55%, transparent) 0%, transparent 22%, transparent 78%, var(--bg-primary) 100%);
 }
 
+/* ── Hero background: one AI moment frame at a time, Ken-Burns crossfade ─────────── */
+.hero-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.hero-bg-layer {
+    position: absolute; inset: 0;
+    background-position: center; background-size: cover; background-repeat: no-repeat;
+    opacity: 0;
+    transition: opacity 1.8s ease;
+    filter: brightness(0.5) saturate(1.2) contrast(1.03);
+    transform: scale(1.08);
+    will-change: opacity, transform;
+}
+/* The active frame fades in AND slowly drifts/zooms (Ken Burns) for constant subtle motion. */
+.hero-bg-layer.active { opacity: 1; animation: heroBgKenBurns 12s ease-out both; }
+@keyframes heroBgKenBurns {
+    from { transform: scale(1.06) translate(-1.4%, 1%); }
+    to   { transform: scale(1.16) translate(1.8%, -1.8%); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .hero-bg-layer { transition: opacity 0.6s ease; }
+    .hero-bg-layer.active { animation: none; transform: scale(1.08); }
+}
+
 @keyframes heroFloatIn { to { opacity: var(--op, 0.6); } }
 /* 3D drift: translate in x/y + slow z-tilt so cards feel like they float in space. */
 @keyframes heroFloat3d {

@@ -1262,6 +1262,44 @@ function _heroCollagePositions(n) {
     while (pos.length < n) pos.push({ left: Math.random() * 88 + 3, top: Math.random() * 82 + 2 });
     return pos;
 }
+// One AI moment frame at a time as the full-bleed hero background, cross-fading (Ken Burns)
+// through the day's ~5 frames. Prefers the AI "moment" frames; falls back to any thumbnail.
+let _heroBgTimer = null;
+let _heroBgActive = 0;
+function renderHeroBackground(media) {
+    const wrap = document.getElementById('hero-bg');
+    if (!wrap) return;
+    const layers = wrap.querySelectorAll('.hero-bg-layer');
+    if (layers.length < 2) return;
+    let frames = (media || []).filter(m => m && m.kind === 'moment' && m.thumbnail).map(m => m.thumbnail);
+    if (!frames.length) frames = (media || []).filter(m => m && m.thumbnail && m.kind !== 'paste').map(m => m.thumbnail);
+    frames = [...new Set(frames)];
+    if (_heroBgTimer) { clearInterval(_heroBgTimer); _heroBgTimer = null; }
+    if (!frames.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    _heroBgActive = 0;
+    layers[0].style.backgroundImage = `url("${frames[0]}")`;
+    layers[1].classList.remove('active');
+    // Re-trigger the Ken-Burns animation on first paint.
+    layers[0].classList.remove('active'); void layers[0].offsetWidth; layers[0].classList.add('active');
+    if (frames.length < 2 || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches && frames.length < 2)) return;
+    let idx = 0;
+    _heroBgTimer = setInterval(() => {
+        if (document.hidden) return;
+        idx = (idx + 1) % frames.length;
+        const next = (_heroBgActive + 1) % 2;
+        const el = layers[next];
+        const pre = new Image();
+        pre.onload = () => {
+            el.style.backgroundImage = `url("${frames[idx]}")`;
+            el.classList.remove('active'); void el.offsetWidth; el.classList.add('active');
+            layers[_heroBgActive].classList.remove('active');
+            _heroBgActive = next;
+        };
+        pre.src = frames[idx];
+    }, 9000);
+}
+
 function renderHeroCollage(media) {
     const wrap = document.getElementById('hero-collage');
     if (!wrap || !Array.isArray(media) || !media.length) return;
@@ -1342,7 +1380,7 @@ async function loadHeroData() {
     startHeroQuips(data && data.slogans && data.slogans.quips);
     startSloganCountdown(data && data.slogans && data.slogans.next_at);
     if (data && data.stats) renderHeroStats(data.stats);
-    if (data && data.media) renderHeroCollage(data.media);
+    if (data && data.media) { renderHeroBackground(data.media); renderHeroCollage(data.media); }
 }
 
 // Playful countdown to the next AI slogan/label batch (regenerates every 12h).
