@@ -187,7 +187,9 @@ function buildConfig(registryValues) {
                     kind: 'video',
                     mimeType: 'video/VP8',
                     clockRate: 90000,
-                    parameters: { 'x-google-start-bitrate': 1000 },
+                    // Start high so viewers reach full sharpness immediately instead of
+                    // ramping up from a soft low-bitrate image over the first few seconds.
+                    parameters: { 'x-google-start-bitrate': 2500 },
                 },
                 {
                     kind: 'video',

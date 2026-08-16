@@ -78,8 +78,8 @@ if (!INPUT_MODE || !INPUT_PATH) throw new Error('Missing INPUT_MODE/INPUT_PATH')
 const width = Number(process.env.WIDTH || 1280);
 const height = Number(process.env.HEIGHT || 720);
 const fps = Number(process.env.FPS || 30);
-const videoKbps = Number(process.env.VIDEO_KBPS || 2200);
-const minVideoKbps = Number(process.env.MIN_VIDEO_KBPS || 900);
+const videoKbps = Number(process.env.VIDEO_KBPS || 3500);
+const minVideoKbps = Number(process.env.MIN_VIDEO_KBPS || 1200);
 const hasAudio = String(HAS_AUDIO || '1') === '1';
 const frameSize = Math.floor(width * height * 3 / 2);
 
@@ -239,9 +239,11 @@ function spawnFfmpeg(videoSource, audioSource) {
             '-probesize', '2000000',
             '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
             '-flags', 'low_delay',
-            // Lower latency than before (was 500ms/200) while still tolerating minor reordering.
-            '-max_delay', '150000',
-            '-reorder_queue_size', '64',
+            // The SFU→ffmpeg leg is a single in-order localhost RTP flow, so large reorder
+            // buffering is almost pure added latency. Keep it small (60ms / 16 pkts) — enough
+            // to smooth the rare out-of-order packet without inflating glass-to-glass delay.
+            '-max_delay', '60000',
+            '-reorder_queue_size', '16',
             '-use_wallclock_as_timestamps', '1',
             '-err_detect', 'ignore_err',
             '-avoid_negative_ts', 'make_zero',

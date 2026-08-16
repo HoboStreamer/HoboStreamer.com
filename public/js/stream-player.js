@@ -1962,6 +1962,17 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                 rtpParameters: consumerParams.rtpParameters,
             });
 
+            // Minimize glass-to-glass latency: ask the browser for the smallest playout /
+            // jitter buffer it will honor. This is a hint — the receiver still grows the
+            // buffer adaptively under real packet loss, so it's low-latency without freezing.
+            try {
+                const receiver = consumer.rtpReceiver;
+                if (receiver) {
+                    if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0;
+                    if ('playoutDelayHint' in receiver) receiver.playoutDelayHint = 0;
+                }
+            } catch { /* non-fatal — playback still works at default latency */ }
+
             mediaStream.addTrack(consumer.track);
             console.log(`[Player] SFU consumed ${consumer.kind} track — enabled=${consumer.track.enabled} muted=${consumer.track.muted} readyState=${consumer.track.readyState} paused=${consumer.paused} id=${consumer.id}`);
 

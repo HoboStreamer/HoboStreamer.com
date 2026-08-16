@@ -111,7 +111,10 @@ class WebRTCSFU extends EventEmitter {
             enableUdp: true,
             enableTcp: true,
             preferUdp: true,
-            initialAvailableOutgoingBitrate: 1000000,
+            // Higher starting estimate → the bandwidth estimator lets viewers pull full-quality
+            // video within the first second instead of climbing from 1 Mbps. It still adapts
+            // down under real congestion; this only raises the initial ceiling.
+            initialAvailableOutgoingBitrate: 3000000,
         };
 
         // Allow callers (e.g. WHIP ingest) to override transport settings.
