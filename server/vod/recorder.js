@@ -380,6 +380,9 @@ class StreamRecorder {
                 '-y',
                 ...inputArgs,
                 // ── Output 1: served VP8/Vorbis WebM (jsmpeg transcode) ──
+                // Pin to a constant canvas so a mid-stream resolution change can't shear the
+                // rest of the VOD (see the WebRTC path). Escape hatch: VOD_NO_NORMALIZE=1.
+                ...(process.env.VOD_NO_NORMALIZE !== '1' ? ['-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1'] : []),
                 '-c:v', 'libvpx',
                 '-b:v', '1500k',
                 '-crf', '20',
@@ -904,6 +907,25 @@ class StreamRecorder {
             ffmpegArgs.push('-err_detect', 'ignore_err');
         }
 
+        // Pin the transcoded VOD to a CONSTANT canvas. WebRTC sources (esp. screen shares)
+        // can change resolution mid-stream (window resize, monitor switch, bandwidth adaptation);
+        // without a fixed-size scale the VP8 encoder loses dimensional sync from that point on and
+        // the rest of the VOD shears/rotates/melts. scale-to-fit + pad guarantees every output
+        // frame is exactly 1920x1080, so a resolution change just gets re-fit into the same box.
+        // Escape hatch: VOD_NO_NORMALIZE=1.
+        const normalizeVod = process.env.VOD_NO_NORMALIZE !== '1';
+        const VOD_SCALE_VF = 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1';
+        const libvpxVideo = [
+            ...(normalizeVod ? ['-vf', VOD_SCALE_VF] : []),
+            '-c:v', 'libvpx',
+            '-b:v', '2000k',
+            '-crf', '18',
+            '-deadline', 'realtime',
+            '-cpu-used', '4',
+            // Keyframe every 2s → seekable WebM (see RTMP path for rationale)
+            '-force_key_frames', 'expr:gte(t,n_forced*2)',
+            '-g', '240',
+        ];
         // Declared at function scope so it's in scope later (activeRec.masterFilePath).
         const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
         if (isMasterRecording) {
@@ -914,14 +936,7 @@ class StreamRecorder {
                 '-f', 'matroska',
                 masterPath,
                 '-map', '0',
-                '-c:v', 'libvpx',
-                '-b:v', '2000k',
-                '-crf', '18',
-                '-deadline', 'realtime',
-                '-cpu-used', '4',
-                // Keyframe every 2s → seekable WebM (see RTMP path for rationale)
-                '-force_key_frames', 'expr:gte(t,n_forced*2)',
-                '-g', '240'
+                ...libvpxVideo
             );
             if (audioConsumer) {
                 ffmpegArgs.push('-c:a', 'libopus', '-b:a', '128k', '-application', 'audio');
@@ -932,16 +947,7 @@ class StreamRecorder {
             diagnostics.masterFilePath = path.basename(masterPath);
             diagnostics.filePath = path.basename(filePath);
         } else {
-            ffmpegArgs.push(
-                '-c:v', 'libvpx',
-                '-b:v', '2000k',
-                '-crf', '18',
-                '-deadline', 'realtime',
-                '-cpu-used', '4',
-                // Keyframe every 2s → seekable WebM (see RTMP path for rationale)
-                '-force_key_frames', 'expr:gte(t,n_forced*2)',
-                '-g', '240'
-            );
+            ffmpegArgs.push(...libvpxVideo);
             if (audioConsumer) {
                 ffmpegArgs.push('-c:a', 'libopus', '-b:a', '128k', '-application', 'audio');
             } else {
