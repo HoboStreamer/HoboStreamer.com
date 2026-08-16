@@ -120,7 +120,13 @@ let _chatReplyTo = null; // { id, username, user_id, message }
 // don't persist a color, so without this they'd fall back to grey.
 const PLATFORM_NAME_COLORS = { rs: '#7dd3fc', robotstreamer: '#7dd3fc', twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', yt: '#ff0000' };
 function relayColorFor(msg) {
-    const sp = msg && msg.source_platform ? String(msg.source_platform).toLowerCase() : '';
+    let sp = msg && msg.source_platform ? String(msg.source_platform).toLowerCase() : '';
+    // Global-forwarded relay history messages can arrive without source_platform — fall back
+    // to the "[RS]/[Twitch]/…" username prefix so they keep their platform colour (not grey).
+    if (!PLATFORM_NAME_COLORS[sp] && msg) {
+        const fromName = parseRelayUsername(msg.username || msg.displayName || '').platform;
+        if (fromName) sp = fromName.toLowerCase();
+    }
     return PLATFORM_NAME_COLORS[sp] || null;
 }
 
