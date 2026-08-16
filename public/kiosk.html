@@ -548,10 +548,11 @@ button{font:inherit}
       setNum("#v-ai",s.aiMemories); setDelta("#v-ai-d",r.aiMoments&&r.aiMoments.d);
       setNum("#v-msgs",s.chatMessages); setDelta("#v-msgs-d",r.messages&&r.messages.d);
       setNum("#v-users",s.users); setDelta("#v-users-d",r.users&&r.users.d);
-      // AI-generated network slogans (rotate through the hero subtitle)
-      if(Array.isArray(d.slogans)&&d.slogans.length){
-        slogans=d.slogans.map(x=>typeof x==="string"?x:(x&&(x.text||x.slogan||x.title))).filter(Boolean);
-        if(slogans.length){$("#hero-slogan").textContent=slogans[0];sloganIdx=1;}
+      // AI-generated network quips (same source the homepage hero rotates through)
+      const quips=(d.slogans&&Array.isArray(d.slogans.quips))?d.slogans.quips.filter(x=>typeof x==="string"&&x.trim()):[];
+      if(quips.length){
+        slogans=quips;
+        $("#hero-slogan").textContent=slogans[0];sloganIdx=1;
       }
     }catch{}
   }
