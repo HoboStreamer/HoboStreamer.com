@@ -1380,7 +1380,7 @@ function startSloganCountdown(nextAt) {
             return;
         }
         const s = Math.floor(ms / 1000) % 60, m = Math.floor(ms / 60000) % 60, h = Math.floor(ms / 3600000);
-        el.innerHTML = `<i class="fa-solid fa-fire"></i> next fresh batch of slogans in <b>${pad(h)}:${pad(m)}:${pad(s)}</b>`;
+        el.innerHTML = `<i class="fa-solid fa-fire"></i> next fresh batch of memes in <b>${pad(h)}:${pad(m)}:${pad(s)}</b>`;
     };
     tick();
     _sloganCountdownTimer = setInterval(tick, 1000);
@@ -2654,7 +2654,6 @@ async function _openChatInsightModal(opts) {
                 <span class="gai-badge"><i class="fa-solid fa-wand-magic-sparkles"></i> AI</span>
                 <button class="uai-close" onclick="document.getElementById('user-ai-modal-overlay').remove()"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <p class="uai-sub">${esc(opts.subtitle || 'How they chat today vs. overall — from their public chat messages.')}</p>
             <div id="user-ai-modal-body"><div class="gai-empty">Loading insight…</div></div>
         </div>`;
     document.body.appendChild(overlay);
@@ -2675,24 +2674,39 @@ async function _openChatInsightModal(opts) {
     let html = '';
 
     // Streamer section first — who they are as a streamer + recent on-stream context.
+    // Styled to match the chat sections below. The timeline is truncated here and links out
+    // to the streamer's full AI Timeline tab on their channel page.
     if (hasStreamer) {
-        const mems = st.memories || [];
-        html += `<div class="uai-section uai-streamer">
-            <h4><i class="fa-solid fa-tower-broadcast"></i> As a streamer <span class="uai-tag uai-tag-streamer">channel</span></h4>
-            <div class="uai-body">${esc(st.overview || st.overview_short || '')}</div>
-            ${mems.length ? `<div class="gai-timeline" style="margin-top:10px">${mems.map(m => `
-                <div class="gai-tl-item">
-                    <div class="gai-tl-when">${_aiTimeAgo(m.created_at)}</div>
-                    <div class="gai-tl-detail">${esc(m.description || '')}</div>
-                </div>`).join('')}</div>` : ''}
-            ${st.generated_at ? `<p class="uai-sub" style="margin:8px 0 0">Streamer overview updated ${_aiTimeAgo(st.generated_at)}</p>` : ''}
-        </div>`;
+        const uname = opts.username || opts.title || '';
+        const MEM_PREVIEW = 3;
+        const mems = (st.memories || []).slice(0, MEM_PREVIEW);
+        const hasMore = (st.memories || []).length > MEM_PREVIEW || !!uname;
+        const fullLink = uname
+            ? `<a class="uai-tl-more" href="${channelPath(uname)}#ai-timeline" onclick="document.getElementById('user-ai-modal-overlay')?.remove(); return handleLinkClick(event, '${channelPath(uname)}#ai-timeline')"><i class="fa-solid fa-timeline"></i> View full AI timeline <i class="fa-solid fa-arrow-right" style="font-size:0.8em"></i></a>`
+            : '';
+        html += `<div class="uai-group-label"><i class="fa-solid fa-tower-broadcast"></i> As a streamer</div>`;
+        html += `<p class="uai-sub uai-group-sub">Who they are as a streamer — from the AI analysis of their streams.</p>`;
+        html += `
+            <div class="uai-section">
+                <h4><i class="fa-solid fa-wand-magic-sparkles"></i> Streamer overview <span class="uai-tag uai-tag-streamer">channel</span></h4>
+                <div class="uai-body">${esc(st.overview || st.overview_short || '')}</div>
+            </div>
+            ${mems.length ? `<div class="uai-section">
+                <h4><i class="fa-solid fa-timeline"></i> Recent stream moments</h4>
+                <div class="gai-timeline">${mems.map(m => `
+                    <div class="gai-tl-item">
+                        <div class="gai-tl-when">${_aiTimeAgo(m.created_at)}</div>
+                        <div class="gai-tl-detail">${esc(m.description || '')}</div>
+                    </div>`).join('')}</div>
+                ${hasMore ? fullLink : ''}
+            </div>` : (fullLink ? `<div class="uai-section">${fullLink}</div>` : '')}`;
     }
 
     // Chat-behavior insight.
     if (hasChat) {
         const tl = (ins.timeline || []).slice().reverse();
-        if (hasStreamer) html += `<div class="uai-group-label"><i class="fa-solid fa-comments"></i> In chat</div>`;
+        html += `<div class="uai-group-label"><i class="fa-solid fa-comments"></i> In chat</div>`;
+        html += `<p class="uai-sub uai-group-sub">How they chat today vs. overall — from their public chat messages.</p>`;
         html += `
             <div class="uai-section">
                 <h4><i class="fa-solid fa-bolt"></i> Today <span class="uai-tag uai-tag-today">last 24h</span></h4>
@@ -2704,12 +2718,13 @@ async function _openChatInsightModal(opts) {
             </div>
             ${tl.length ? `<div class="uai-section">
                 <h4><i class="fa-solid fa-timeline"></i> Notable moments</h4>
-                <div class="gai-timeline">${tl.map(t => `
+                <div class="gai-timeline">${tl.slice(0, 3).map(t => `
                     <div class="gai-tl-item">
                         <div class="gai-tl-when">${_aiTimeAgo(t.ts)}</div>
                         <div class="gai-tl-label">${esc(t.label || '')}</div>
                         ${t.detail ? `<div class="gai-tl-detail">${esc(t.detail)}</div>` : ''}
                     </div>`).join('')}</div>
+                ${(opts.username || opts.title) ? `<a class="uai-tl-more" href="${channelPath(opts.username || opts.title)}#ai-timeline" onclick="document.getElementById('user-ai-modal-overlay')?.remove(); return handleLinkClick(event, '${channelPath(opts.username || opts.title)}#ai-timeline')"><i class="fa-solid fa-timeline"></i> View full AI timeline <i class="fa-solid fa-arrow-right" style="font-size:0.8em"></i></a>` : ''}
             </div>` : ''}
             <p class="uai-sub" style="margin:14px 0 0">${ins.updated_at ? 'Updated ' + _aiTimeAgo(ins.updated_at) : ''}${ins.message_count ? ' · ~' + ins.message_count + ' messages analyzed' : ''}</p>`;
     } else if (hasStreamer) {
@@ -2721,7 +2736,7 @@ async function _openChatInsightModal(opts) {
 
 async function openUserChatInsight(userId, username) {
     if (!userId) return;
-    return _openChatInsightModal({ title: username || 'User', iconClass: 'fa-user-tag', fetchUrl: `/chat-ai/user/${userId}` });
+    return _openChatInsightModal({ title: username || 'User', username: username || '', iconClass: 'fa-user-tag', fetchUrl: `/chat-ai/user/${userId}` });
 }
 window.openUserChatInsight = openUserChatInsight;
 
@@ -2813,6 +2828,7 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
         _renderChannelAbout(ch);
         _resetChannelTabs(ch);
         _applyChannelTabMeta(data);
+        _applyChannelHashTab(); // deep-link: #ai-timeline / #about / #videos … opens that tab
         // Reveal the Media Request tab if the streamer has it enabled (non-blocking).
         _initMediaRequestTab(username);
 
@@ -3653,7 +3669,7 @@ function updateCumulativeViewers(liveStreams, rsRestream = {}, restreamLinks = n
     // HoboStreamer-native viewer badge — styled like the platform restream badges, in brand
     // green, so it reads as "this is the count HERE" alongside the RS/Twitch/etc badges.
     if (liveStreams.length > 0) {
-        html += `<span class="ch-restream-badge" style="color:var(--accent)" title="Watching live on HoboStreamer${streamCount > 1 ? ` (across ${streamCount} streams)` : ''}"><i class="fa-solid fa-campground"></i> HoboStreamer <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${hsTotal}</span>`;
+        html += `<span class="ch-restream-badge" style="color:var(--accent)" title="Watching live on HoboStreamer${streamCount > 1 ? ` (across ${streamCount} streams)` : ''}"><i class="fa-solid fa-campground"></i> Hobo <i class="fa-solid fa-eye" style="font-size:0.75em"></i> ${hsTotal}</span>`;
     }
 
     // RS restream badge — reflect the WATCHED slot's robot only (not the first slot's).
@@ -3931,6 +3947,22 @@ function switchChannelTab(tab, btn) {
         try { loadChannelMedia(currentChannelUsername); } catch {}
     }
 }
+
+// A URL hash like #ai-timeline / #about / #videos auto-opens that channel tab on load and
+// scrolls the tab content into view (used by "view full AI timeline" links, deep links, etc.).
+const CHANNEL_TAB_HASHES = ['about', 'videos', 'clips', 'clips-taken', 'pastes', 'media', 'analytics', 'ai-timeline'];
+function _applyChannelHashTab() {
+    const h = (location.hash || '').replace(/^#/, '').toLowerCase();
+    if (!h || !CHANNEL_TAB_HASHES.includes(h)) return;
+    const btn = document.querySelector(`#ch-tabs .ch-tab[data-tab="${h}"]`);
+    if (!btn || btn.style.display === 'none') return; // tab hidden / not present for this channel
+    switchChannelTab(h, btn);
+    // Jump to the tab strip once the panel has had a beat to render its content.
+    setTimeout(() => {
+        (document.getElementById('ch-tabs') || document.getElementById('ch-panel-' + h))
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 200);
+}
 let _chTabLoaded = {};
 let _chAnalyticsDays = 7;
 // About tab visibility + default open tab depend on whether the streamer has any
@@ -4099,21 +4131,54 @@ async function loadChannelAiTimeline(username) {
     try {
         const data = await api(`/chat-ai/timeline/${encodeURIComponent(username)}?offset=0&limit=12`);
         const sessions = data.sessions || [];
-        const overview = data.overview && (data.overview.overview || data.overview.overview_short);
-        if (!overview && !sessions.length) {
-            wrap.innerHTML = `<div class="ai-tl-empty"><i class="fa-solid fa-brain"></i><p>No AI timeline yet.</p><p class="muted">As ${esc(data.display_name || username)} streams, the AI builds an overview and captures memorable moments here — with links straight to the VOD.</p></div>`;
+        const dn = esc(data.display_name || username);
+        const streamerOv = data.overview && (data.overview.overview || data.overview.overview_short);
+        const chat = data.chatInsight;
+        const chatOverall = chat && (chat.overview_alltime || chat.overview_24h);
+        const chatMoments = (chat && Array.isArray(chat.timeline)) ? chat.timeline.slice().reverse() : [];
+        const hasStreamer = !!(sessions.length || streamerOv);
+        const hasChatter = !!(chatOverall || chatMoments.length);
+        const combined = data.combinedOverview;
+        if (!combined && !hasStreamer && !hasChatter) {
+            wrap.innerHTML = `<div class="ai-tl-empty"><i class="fa-solid fa-brain"></i><p>No AI timeline yet.</p><p class="muted">As ${dn} streams and chats, the AI builds an overview here — with links straight to the VOD moments.</p></div>`;
             return;
         }
         _aiTl.index = data.index || [];
         _aiTl.offset = sessions.length;
         _aiTl.hasMore = !!data.hasMore;
-        const header = overview
-            ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview of ${esc(data.display_name || username)}</div><div class="ai-tl-overview-text">${esc(data.overview.overview || data.overview.overview_short)}</div></div>`
+
+        // Combined "whole person" overview (streamer + chatter) at the very top.
+        const topText = combined || streamerOv || chatOverall;
+        const header = topText
+            ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview of ${dn}</div><div class="ai-tl-overview-text">${esc(topText)}</div></div>`
             : '';
-        const summary = `<div class="ai-tl-summary">${data.sessionCount || sessions.length} session${(data.sessionCount || sessions.length) === 1 ? '' : 's'} · ${data.momentCount || 0} AI moment${(data.momentCount || 0) === 1 ? '' : 's'} tracked</div>`;
-        wrap.innerHTML = header + summary + _aiTlBuildMonthBar()
-            + `<div class="ai-tl-track" id="ai-tl-track">${sessions.map(_aiTimelineSessionHTML).join('')}</div>`
-            + `<div id="ai-tl-sentinel" class="ai-tl-sentinel">${_aiTl.hasMore ? '<i class="fa-solid fa-spinner fa-spin"></i> Loading more…' : ''}</div>`;
+
+        // ── As a streamer ──
+        let streamerHTML = '';
+        if (hasStreamer) {
+            const summary = `<div class="ai-tl-summary">${data.sessionCount || sessions.length} session${(data.sessionCount || sessions.length) === 1 ? '' : 's'} · ${data.momentCount || 0} AI moment${(data.momentCount || 0) === 1 ? '' : 's'} tracked</div>`;
+            streamerHTML = `<div class="ai-tl-side-label"><i class="fa-solid fa-tower-broadcast"></i> As a streamer</div>`
+                + summary + _aiTlBuildMonthBar()
+                + `<div class="ai-tl-track" id="ai-tl-track">${sessions.map(_aiTimelineSessionHTML).join('')}</div>`
+                + `<div id="ai-tl-sentinel" class="ai-tl-sentinel">${_aiTl.hasMore ? '<i class="fa-solid fa-spinner fa-spin"></i> Loading more…' : ''}</div>`;
+        }
+
+        // ── As a chatter ──
+        let chatterHTML = '';
+        if (hasChatter) {
+            const momentsHTML = chatMoments.length ? `<div class="ai-tl-track">${chatMoments.map(t => `
+                <div class="ai-tl-session">
+                    <div class="ai-tl-session-head"><div class="ai-tl-node"></div>
+                        <div class="ai-tl-session-title">${esc(t.label || 'Moment')}</div>
+                        <div class="ai-tl-session-meta"><i class="fa-solid fa-clock"></i> ${_aiTimeAgo(t.ts)}</div></div>
+                    ${t.detail ? `<div class="ai-tl-session-overview">${esc(t.detail)}</div>` : ''}
+                </div>`).join('')}</div>` : '';
+            chatterHTML = `<div class="ai-tl-side-label"><i class="fa-solid fa-comments"></i> As a chatter</div>`
+                + (chatOverall ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-comments"></i> Chat behaviour</div><div class="ai-tl-overview-text">${esc(chatOverall)}</div>${chat.message_count ? `<p class="ai-tl-summary" style="margin:8px 0 0">~${chat.message_count} messages analyzed</p>` : ''}</div>` : '')
+                + momentsHTML;
+        }
+
+        wrap.innerHTML = header + streamerHTML + chatterHTML;
         const sentinel = document.getElementById('ai-tl-sentinel');
         if (sentinel && _aiTl.hasMore && 'IntersectionObserver' in window) {
             _aiTl.io = new IntersectionObserver(ents => { if (ents.some(e => e.isIntersecting)) _aiTlLoadMore(); }, { rootMargin: '700px' });
