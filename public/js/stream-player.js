@@ -2031,6 +2031,10 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
                 }
             } catch { /* non-fatal — playback still works at default latency */ }
 
+            // Keep a handle on the VIDEO receiver so the freeze watchdog can read framesDecoded
+            // when requestVideoFrameCallback isn't available.
+            if (consumer.kind === 'video') player._sfuVideoReceiver = consumer.rtpReceiver || null;
+
             mediaStream.addTrack(consumer.track);
             console.log(`[Player] SFU consumed ${consumer.kind} track — enabled=${consumer.track.enabled} muted=${consumer.track.muted} readyState=${consumer.track.readyState} paused=${consumer.paused} id=${consumer.id}`);
 
@@ -2083,38 +2087,83 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
             _hidePlayerPlaceholder();
             if (!video.muted) document.getElementById('unmute-overlay')?.remove();
 
-            // Post-play frozen-frame detector: check video.currentTime every 10 s.
-            // If it stalls for ≥30 s the source is likely lost; request a re-watch without
-            // starting the P2P offer timeout (we are in SFU mode).
-            let _frozenLastTime = -1;
-            let _frozenTicks = 0;
-            const _frozenInterval = setInterval(() => {
-                if (!player || player._sfuRecvTransport !== recvTransport) {
-                    clearInterval(_frozenInterval);
-                    return;
-                }
-                if (video.paused || !(video.srcObject?.active)) {
-                    clearInterval(_frozenInterval);
-                    return;
-                }
-                const t = video.currentTime;
-                if (t === _frozenLastTime && t > 0) {
-                    _frozenTicks++;
-                    if (_frozenTicks >= 3) { // 3 × 10 s = 30 s frozen
-                        clearInterval(_frozenInterval);
-                        if (player._sfuFrozenInterval === _frozenInterval) player._sfuFrozenInterval = null;
-                        console.warn('[Player] SFU video frozen for ~30s — requesting source check via re-watch');
-                        _hasVideoFrames = false; // allow stall timer to re-arm if needed
-                        player.watchSent = false;
-                        sendPlayerSignal({ type: 'watch' });
-                        player.watchSent = true;
-                        // Intentionally NOT calling _startWatchOfferTimeout() — SFU mode.
+            // Post-play VIDEO-freeze watchdog.
+            //
+            // The old detector watched video.currentTime — but for a WebRTC MediaStream that
+            // clock keeps advancing as long as the AUDIO track renders. So when only the VIDEO
+            // decoder stalls (a lost keyframe after packet loss, a decode hiccup), the screen goes
+            // black yet currentTime never stops → the stall was invisible → viewers had to refresh.
+            //
+            // Instead we watch actual VIDEO frame PRESENTATION via requestVideoFrameCallback
+            // (falling back to getStats framesDecoded). On a video-only stall we recover in two
+            // stages: (1) a cheap keyframe request via re-watch — the server responds with
+            // consumer.requestKeyFrame(), which unsticks a missing-keyframe black frame without a
+            // rebuild; (2) if that doesn't help within a few seconds, rebuild the receive transport
+            // (full re-consume). No manual refresh needed.
+            const _nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            const STALL_CHECK_MS = 1500;
+            const STALL_TRIGGER_MS = 3500;   // no new video frame for this long (while playing) = frozen
+            const STALL_ESCALATE_MS = 6000;  // still frozen this long after a keyframe nudge = rebuild
+            let _lastFrameAt = _nowMs();
+            let _lastFramesDecoded = -1;
+            let _recoverStage = 0;           // 0 = healthy, 1 = keyframe requested
+            let _recoverAt = 0;
+            let _usingRVFC = false;
+
+            // Primary signal: rVFC fires only when a NEW frame is actually presented.
+            if (typeof video.requestVideoFrameCallback === 'function') {
+                _usingRVFC = true;
+                const _onFrame = () => {
+                    _lastFrameAt = _nowMs();
+                    if (player?._sfuRecvTransport === recvTransport && video.srcObject) {
+                        try { video.requestVideoFrameCallback(_onFrame); } catch { /* */ }
                     }
-                } else {
-                    _frozenLastTime = t;
-                    _frozenTicks = 0;
+                };
+                try { video.requestVideoFrameCallback(_onFrame); } catch { _usingRVFC = false; }
+            }
+
+            const _frozenInterval = setInterval(async () => {
+                if (!player || player._sfuRecvTransport !== recvTransport) { clearInterval(_frozenInterval); return; }
+                if (video.paused || !(video.srcObject?.active)) { clearInterval(_frozenInterval); return; }
+
+                // Fallback progress signal when rVFC is unavailable (e.g. older Firefox): decoded
+                // video frame count from getStats. A rising count == video is still rendering.
+                if (!_usingRVFC && player._sfuVideoReceiver?.getStats) {
+                    try {
+                        const stats = await player._sfuVideoReceiver.getStats();
+                        let fd = null;
+                        stats.forEach((r) => { if (r.type === 'inbound-rtp' && (r.kind === 'video' || r.mediaType === 'video') && typeof r.framesDecoded === 'number') fd = r.framesDecoded; });
+                        if (fd != null && fd !== _lastFramesDecoded) { _lastFrameAt = _nowMs(); _lastFramesDecoded = fd; }
+                    } catch { /* */ }
                 }
-            }, 10000);
+
+                const stalledFor = _nowMs() - _lastFrameAt;
+
+                if (stalledFor <= STALL_TRIGGER_MS) {
+                    // Video is progressing — healthy (or recovered after a nudge).
+                    if (_recoverStage !== 0) { console.log('[Player] SFU video recovered'); _recoverStage = 0; }
+                    return;
+                }
+
+                if (_recoverStage === 0) {
+                    // Stage 1: cheap keyframe request (server calls consumer.requestKeyFrame() on re-watch).
+                    console.warn(`[Player] SFU video frozen ~${(stalledFor / 1000).toFixed(1)}s (audio may still be playing) — requesting keyframe via re-watch`);
+                    _recoverStage = 1; _recoverAt = _nowMs();
+                    player.watchSent = false;
+                    sendPlayerSignal({ type: 'watch' });
+                    player.watchSent = true;
+                    // Intentionally NOT calling _startWatchOfferTimeout() — SFU mode.
+                } else if (_recoverStage === 1 && (_nowMs() - _recoverAt) > STALL_ESCALATE_MS) {
+                    // Stage 2: keyframe didn't unstick it — rebuild the receive transport.
+                    console.warn('[Player] SFU video still frozen after keyframe nudge — rebuilding receive transport');
+                    clearInterval(_frozenInterval);
+                    if (player._sfuFrozenInterval === _frozenInterval) player._sfuFrozenInterval = null;
+                    _hasVideoFrames = false;
+                    if (player._sfuRecvTransport === recvTransport) player._sfuRecvTransport = null;
+                    try { recvTransport.close(); } catch { /* */ }
+                    scheduleRewatch(1000);
+                }
+            }, STALL_CHECK_MS);
             player._sfuFrozenInterval = _frozenInterval;
         };
         video.addEventListener('playing', onPlaying);
