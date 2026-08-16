@@ -924,6 +924,8 @@ function initDb() {
 
         const scols = database.prepare('PRAGMA table_info(streams)').all().map(c => c.name);
         if (!scols.includes('ai_overview')) database.exec('ALTER TABLE streams ADD COLUMN ai_overview TEXT');
+        // Short AI-generated session title for the AI Timeline (streamers reuse literal titles).
+        if (!scols.includes('ai_title')) database.exec('ALTER TABLE streams ADD COLUMN ai_title TEXT');
 
         // AI overview + transcript on VODs and clips.
         const vcols = database.prepare('PRAGMA table_info(vods)').all().map(c => c.name);
@@ -2536,7 +2538,7 @@ function assembleStreamerAiTimeline(userId) {
     let sessions = [];
     try {
         const streams = all(`
-            SELECT s.id, s.title, s.started_at, s.ended_at, s.created_at, s.duration_seconds,
+            SELECT s.id, s.title, s.ai_title, s.started_at, s.ended_at, s.created_at, s.duration_seconds,
                    s.ai_overview, s.ai_overview_short, s.thumbnail_url, s.peak_viewers, s.category,
                    (SELECT v.id FROM vods v WHERE v.stream_id = s.id AND COALESCE(v.is_recording, 0) = 0
                       ORDER BY COALESCE(v.is_public, 1) DESC, v.id DESC LIMIT 1) AS vod_id,
@@ -2580,6 +2582,22 @@ function assembleStreamerAiTimeline(userId) {
         momentCount: sessions.reduce((n, s) => n + (s.memories?.length || 0), 0),
         generatedAt: new Date().toISOString(),
     };
+}
+
+function setStreamAiTitle(streamId, title) {
+    try { return run('UPDATE streams SET ai_title = ? WHERE id = ?', [String(title || '').slice(0, 80), streamId]); } catch { return null; }
+}
+// Sessions that have an AI overview but no short AI title yet (for background titling).
+function getUntitledAiSessions(userId, limit = 20) {
+    try {
+        return all(`SELECT id, ai_overview_short, ai_overview, title FROM streams
+                    WHERE user_id = ? AND (ai_title IS NULL OR ai_title = '')
+                      AND (ai_overview_short IS NOT NULL OR ai_overview IS NOT NULL)
+                    ORDER BY COALESCE(started_at, created_at) DESC LIMIT ?`, [userId, limit]) || [];
+    } catch { return []; }
+}
+function clearAiTimelineCache(userId) {
+    try { return run('DELETE FROM ai_timeline_cache WHERE user_id = ?', [userId]); } catch { return null; }
 }
 
 // Lazy, TTL-cached accessor: re-assemble only when the tab is viewed AND the cache is stale.
@@ -6692,7 +6710,7 @@ module.exports = {
     updatePasteAi, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getStreamTranscriptSegments, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
-    getStreamerAiTimeline, assembleStreamerAiTimeline,
+    getStreamerAiTimeline, assembleStreamerAiTimeline, setStreamAiTitle, getUntitledAiSessions, clearAiTimelineCache,
     // Homepage helpers
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
     getRecentVods, countRecentVods, getHomeStats,

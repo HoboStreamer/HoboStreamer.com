@@ -4050,26 +4050,28 @@ function _aiTimelineMomentHTML(mom, vodId) {
 
 let _aiTl = null; // AI Timeline pagination state (per channel load)
 
-// A concise session title derived from the AI overview (streamers often reuse the same
-// literal stream title, so this reads far better on the timeline). Zero extra AI cost.
+// A collapsible AI-overview body — long ones clamp with a fade + "Show more" toggle.
+// Shared by the AI Timeline tab and the About tab.
+function _collapsibleOverview(text) {
+    const t = String(text || '').trim();
+    if (!t) return '';
+    if (t.length <= 320) return `<div class="ai-ov-text">${esc(t)}</div>`;
+    return `<div class="ai-ov-collapse"><div class="ai-ov-text ai-ov-clamped">${esc(t)}</div><button type="button" class="ai-ov-toggle" onclick="_toggleOverview(this)">Show more <i class="fa-solid fa-chevron-down"></i></button></div>`;
+}
+function _toggleOverview(btn) {
+    const box = btn.previousElementSibling;
+    if (!box) return;
+    const open = box.classList.toggle('ai-ov-expanded');
+    box.classList.toggle('ai-ov-clamped', !open);
+    btn.innerHTML = open ? 'Show less <i class="fa-solid fa-chevron-up"></i>' : 'Show more <i class="fa-solid fa-chevron-down"></i>';
+}
+window._toggleOverview = _toggleOverview;
+
+// Short AI-generated session title (streamers reuse the same literal title). Generated in the
+// background server-side and stored on the session; fall back to the real stream title.
 function _aiSessionTitle(s) {
-    const ov = (s.ai_overview_short || s.ai_overview || '').trim();
-    if (!ov) return null;
-    const firstSentence = ov.split(/(?<=[.!?])\s+/)[0].trim();
-    let t = firstSentence
-        // Meta preambles the model sometimes adds ("From these observations, …", "Based on …")
-        .replace(/^(from|based on|according to|in)\b[^,]{0,60},\s*/i, '')
-        // Subject openers → get to the actual content
-        .replace(/^(the stream|this stream|the streamer|the broadcast|the vod|the session)\b\s*/i, '')
-        .replace(/^[A-Z][\w'-]{1,20}\s+(primarily |mostly |mainly )?(streams?|is streaming|broadcasts?|hosts?)\s+/i, '') // "Goosely primarily streams …"
-        .replace(/^(appears to be|seems to be|appears to|seems to|is|shows|features|centers on|centered on|primarily|mostly|mainly)\s+/i, '')
-        .replace(/^(a|an|the)\s+/i, '')
-        .trim();
-    if (t.length < 6) t = firstSentence; // stripped too aggressively — keep the sentence
-    if (!t) return null;
-    t = t.charAt(0).toUpperCase() + t.slice(1);
-    if (t.length > 74) t = t.slice(0, 71).replace(/\s+\S*$/, '') + '…';
-    return t.replace(/[.,;:]+$/, '') || null;
+    const t = (s.ai_title || '').trim();
+    return t || null;
 }
 
 function _aiTimelineSessionHTML(s) {
@@ -4081,9 +4083,10 @@ function _aiTimelineSessionHTML(s) {
     const _asLink = (label) => _vodHref ? `<a href="${_vodHref}" onclick="return handleLinkClick(event, '${_vodHref}')">${label}</a>` : label;
     const aiTitle = _aiSessionTitle(s);
     const mainTitle = aiTitle ? _asLink(esc(aiTitle)) : _asLink(esc(s.title || 'Untitled stream'));
-    // Smaller secondary link with the actual stream title → the VOD (only when we showed an AI title).
-    const streamSubLink = (aiTitle && _vodHref) ? `<div class="ai-tl-session-vodlink">${_asLink(`<i class="fa-solid fa-film"></i> ${esc(s.title || 'stream')}`)}</div>` : '';
     const meta = [];
+    // Stream-title → VOD link leads the meta row (only when the heading is an AI title, so it's
+    // not a duplicate of the heading). Rendered inline for every item incl. lazy-loaded ones.
+    if (aiTitle && _vodHref) meta.push(`<a class="ai-tl-session-vodlink" href="${_vodHref}" onclick="return handleLinkClick(event, '${_vodHref}')"><i class="fa-solid fa-film"></i> ${esc(s.title || 'stream')}</a>`);
     if (dateStr) meta.push(`<i class="fa-solid fa-calendar-day"></i> ${dateStr}`);
     if (s.duration_seconds) meta.push(`<i class="fa-solid fa-hourglass-half"></i> ${_aiTimeFmt(s.duration_seconds)}`);
     if (s.peak_viewers) meta.push(`<i class="fa-solid fa-eye"></i> ${s.peak_viewers} peak`);
@@ -4259,14 +4262,18 @@ async function loadChannelAiTimeline(username) {
         // Combined "whole person" overview (streamer + chatter) at the very top.
         const topText = combined || streamerOv || chatOverall;
         const header = topText
-            ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview of ${dn}</div><div class="ai-tl-overview-text">${esc(topText)}</div></div>`
+            ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> Overall AI overview <span class="ai-tl-ov-sub">as a streamer &amp; chatter</span></div>${_collapsibleOverview(topText)}</div>`
             : '';
 
         // ── As a streamer (inner content, no label — the sub-tab / side-label supplies it) ──
         let streamerInner = '';
         if (hasStreamer) {
+            // The streamer's own AI overview leads this pane (mirrors the chatter pane).
+            const streamerOvCard = streamerOv
+                ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-tower-broadcast"></i> As a streamer</div>${_collapsibleOverview(streamerOv)}</div>`
+                : '';
             const summary = `<div class="ai-tl-summary">${data.sessionCount || sessions.length} session${(data.sessionCount || sessions.length) === 1 ? '' : 's'} · ${data.momentCount || 0} AI moment${(data.momentCount || 0) === 1 ? '' : 's'} tracked</div>`;
-            streamerInner = summary + _aiTlBuildMonthBar()
+            streamerInner = streamerOvCard + summary + _aiTlBuildMonthBar()
                 + `<div class="ai-tl-track" id="ai-tl-track">${sessions.map(_aiTimelineSessionHTML).join('')}</div>`
                 + `<div id="ai-tl-sentinel" class="ai-tl-sentinel">${_aiTl.hasMore ? '<i class="fa-solid fa-spinner fa-spin"></i> Loading more…' : ''}</div>`;
         }
@@ -4281,7 +4288,7 @@ async function loadChannelAiTimeline(username) {
                         <div class="ai-tl-session-meta"><i class="fa-solid fa-clock"></i> ${_aiTimeAgo(t.ts)}</div></div>
                     ${t.detail ? `<div class="ai-tl-session-overview">${esc(t.detail)}</div>` : ''}
                 </div>`).join('')}</div>` : '';
-            chatterInner = (chatOverall ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-comments"></i> Chat behaviour</div><div class="ai-tl-overview-text">${esc(chatOverall)}</div>${chat.message_count ? `<p class="ai-tl-summary" style="margin:8px 0 0">~${chat.message_count} messages analyzed</p>` : ''}</div>` : '')
+            chatterInner = (chatOverall ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-comments"></i> As a chatter</div>${_collapsibleOverview(chatOverall)}${chat.message_count ? `<p class="ai-tl-summary" style="margin:8px 0 0">~${chat.message_count} messages analyzed</p>` : ''}</div>` : '')
                 + momentsHTML;
         }
 
@@ -4408,7 +4415,7 @@ function _aboutAiOverviewHTML() {
     if (!_aboutAiOverview || _aboutHideAiOverview) return '';
     return `<div class="ai-tl-overview-card about-ai-overview">
         <div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview</div>
-        <div class="ai-tl-overview-text">${esc(_aboutAiOverview)}</div>
+        ${_collapsibleOverview(_aboutAiOverview)}
     </div>`;
 }
 
