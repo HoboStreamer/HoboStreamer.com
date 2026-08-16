@@ -3644,6 +3644,34 @@
     justify-content: space-between;
     margin-top: 4px;
 }
+.bc-ws-restream-card.cooling {
+    border-color: color-mix(in srgb, var(--warning, #e0a800) 55%, var(--border));
+    background: color-mix(in srgb, var(--warning, #e0a800) 8%, var(--bg-tertiary));
+}
+.bc-ws-restream-cooldown {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    padding: 7px 9px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--warning, #e0a800) 14%, transparent);
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    line-height: 1.35;
+}
+.bc-ws-restream-cooldown > span {
+    flex: 1 1 200px;
+}
+.bc-ws-restream-cooldown i.fa-triangle-exclamation {
+    color: var(--warning, #e0a800);
+}
+.bc-ws-restream-cooldown .btn {
+    padding: 3px 9px;
+    font-size: 0.74rem;
+    white-space: nowrap;
+}
 
 /* ── Workspace tabs ── */
 .bc-ws-tabs {

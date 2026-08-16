@@ -311,6 +311,10 @@ router.post('/destinations/:id/start', requireAuth, async (req, res) => {
             return res.status(400).json({ error: 'Destination is not fully configured (missing server URL or stream key)' });
         }
 
+        // Manual start = the streamer explicitly asking to retry. Lift any failure cooldown now,
+        // regardless of whether they're live yet, so the next go-live isn't circuit-broken either.
+        try { db.clearRestreamDestinationCooldown(dest.id); } catch { /* */ }
+
         const stream = getLiveStreamForDestination(dest, req.user.id, req.body?.streamId);
         if (!stream) {
             const message = dest.managed_stream_id
@@ -338,10 +342,6 @@ router.post('/destinations/:id/start', requireAuth, async (req, res) => {
         if (!streamKey) {
             return res.status(400).json({ error: 'No valid stream key found for the current live stream' });
         }
-
-        // Manual start = the streamer explicitly asking to retry; clear any failure cooldown and
-        // bypass the circuit breaker for this attempt.
-        try { db.clearRestreamDestinationCooldown(dest.id); } catch { /* */ }
 
         const session = await restreamManager.startRestream(stream.id, dest, {
             protocol: stream.protocol,

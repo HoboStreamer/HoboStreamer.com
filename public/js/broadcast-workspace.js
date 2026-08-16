@@ -2404,8 +2404,15 @@ function _wsRenderRestreamList(container) {
     container.innerHTML = rsCard + _wsRestreamDests.map(d => {
         const plat = _wsRestreamPlatforms[d.platform] || _wsRestreamPlatforms.custom;
         const statusClass = d.enabled ? '' : ' disabled';
+        const coolMs = Number(d.cooldown_ms) || 0;
+        const coolMins = coolMs > 0 ? Math.max(1, Math.ceil(coolMs / 60000)) : 0;
+        const coolBanner = coolMs > 0 ? `
+            <div class="bc-ws-restream-cooldown">
+                <span><i class="fa-solid fa-triangle-exclamation"></i> Paused after ${d.consecutive_failures || 'repeated'} failed attempt(s)${d.last_error ? ' — ' + esc(String(d.last_error).slice(0, 80)) : ''}. Retrying in ~${coolMins}m.</span>
+                <button class="btn btn-small btn-outline" onclick="_wsRetryRestreamDest(${d.id})" title="Clear the cooldown and try now"><i class="fa-solid fa-rotate-right"></i> Retry now</button>
+            </div>` : '';
         return `
-        <div class="bc-ws-restream-card${statusClass}" data-restreamid="${d.id}">
+        <div class="bc-ws-restream-card${statusClass}${coolMs > 0 ? ' cooling' : ''}" data-restreamid="${d.id}">
             <div class="bc-ws-restream-card-hd">
                 <span class="bc-ws-restream-platform" style="color:${plat.color}">
                     <i class="${plat.icon}"></i> ${esc(d.name || plat.name)}
@@ -2428,8 +2435,22 @@ function _wsRenderRestreamList(container) {
                 <span class="muted" style="font-size:0.78rem">${esc(d.server_url || '')} · Key: ****${esc(d.stream_key ? d.stream_key.slice(-4) : '')}</span>
                 <span class="muted" style="font-size:0.78rem">Quality: ${esc(d.quality_preset || 'auto')}</span>
             </div>
+            ${coolBanner}
         </div>`;
     }).join('');
+}
+
+/** Clear a destination's failure cooldown and immediately retry the restream. */
+async function _wsRetryRestreamDest(id) {
+    try {
+        // POST /start clears the cooldown server-side and bypasses the circuit breaker for this try.
+        await api(`/restream/destinations/${id}/start`, { method: 'POST', body: {} });
+        toast('Retrying restream…', 'success');
+    } catch (err) {
+        // Even if start fails (e.g. the slot isn't live yet), the cooldown was cleared on the attempt.
+        toast(err?.message || 'Retry queued — cooldown cleared', 'info');
+    }
+    try { await _wsLoadRestreamDests(_wsState.selectedId); } catch { /* */ }
 }
 
 function _wsAddRestreamDest() {
