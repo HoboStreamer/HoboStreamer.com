@@ -2458,6 +2458,11 @@ function getAiUsageSummary(days = 30) {
 function getStreamMemoriesByUser(userId, limit = 60) {
     return all('SELECT * FROM stream_memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?', [userId, limit]);
 }
+// Total AI "events" (captured memory moments) for a user — powers the AI Timeline tab badge.
+function countStreamMemoriesByUser(userId) {
+    try { return get('SELECT COUNT(*) AS count FROM stream_memories WHERE user_id = ?', [userId])?.count || 0; }
+    catch { return 0; }
+}
 // A user's pastes including AI fields (the explorer + overview want ai_summary/ai_tags).
 function getUserPastesForAi(userId, limit = 30) {
     return all(`SELECT id, slug, type, title, ai_summary, ai_tags, ai_analyzed_at, created_at
@@ -6610,7 +6615,7 @@ module.exports = {
     getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTimeline, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
-    getStreamMemoriesByUser, getUserPastesForAi,
+    getStreamMemoriesByUser, countStreamMemoriesByUser, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     getStreamerAiTimeline, assembleStreamerAiTimeline,
     // Homepage helpers

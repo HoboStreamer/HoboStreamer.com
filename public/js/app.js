@@ -4061,6 +4061,7 @@ function _applyChannelTabMeta(data) {
     setBadge('ch-tab-badge-clips', data.clipsOfTotal);
     setBadge('ch-tab-badge-clips-taken', data.clipsTakenTotal);
     setBadge('ch-tab-badge-pastes', data.pasteTotal);
+    setBadge('ch-tab-badge-ai-timeline', data.aiEventTotal);
 
     // Never hide tabs for the channel owner — they manage their own content.
     const isOwner = !!(currentUser && currentChannelUsername && currentUser.username === currentChannelUsername);

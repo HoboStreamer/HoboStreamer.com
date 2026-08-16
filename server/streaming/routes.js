@@ -450,9 +450,10 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         delete publicChannel.force_vod_recording_disabled;
 
         // Counts for tab badges. Owner/mods see hidden ones too.
-        let pasteTotal = 0, clipsTakenTotal = 0;
+        let pasteTotal = 0, clipsTakenTotal = 0, aiEventTotal = 0;
         try { pasteTotal = pollOnly ? 0 : db.countUserPastesForChannel(channel.user_id, { includeHidden: canSeeHidden }); } catch { /* */ }
         try { clipsTakenTotal = pollOnly ? 0 : db.countClipsTakenByUser(channel.user_id, { includePrivate: canSeeHidden }); } catch { /* */ }
+        try { aiEventTotal = pollOnly ? 0 : db.countStreamMemoriesByUser(channel.user_id); } catch { /* */ }
 
         // Tab-hide flags: when a streamer defaults ALL their slots' VODs (or clips) to private,
         // and there's no public content to show, hide that tab on the public channel page.
@@ -473,6 +474,7 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
             clips_tab_hidden,
             pasteTotal,
             clipsTakenTotal,
+            aiEventTotal,
             channel: publicChannel,
             stream: liveStreams[0] || null,
             streams: liveStreams,
