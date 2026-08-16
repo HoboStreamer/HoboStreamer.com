@@ -956,6 +956,7 @@ function initDb() {
             database.exec("ALTER TABLE clips ADD COLUMN visibility TEXT DEFAULT 'public'");
             database.exec("UPDATE clips SET visibility = CASE WHEN is_public = 1 THEN 'public' ELSE 'unlisted' END");
         }
+        if (!ccols.includes('auto_generated')) database.exec('ALTER TABLE clips ADD COLUMN auto_generated INTEGER DEFAULT 0');
         const msCols = database.prepare('PRAGMA table_info(managed_streams)').all().map(c => c.name);
         if (!msCols.includes('slot_clip_recording_enabled')) {
             database.exec('ALTER TABLE managed_streams ADD COLUMN slot_clip_recording_enabled INTEGER DEFAULT 1');
@@ -2570,6 +2571,43 @@ function getVodsForMomentRanking(limit = 120) {
             ORDER BY COALESCE(v.view_count, 0) DESC, clip_count DESC, COALESCE(s.peak_viewers, 0) DESC, v.created_at DESC
             LIMIT ?
         `, [Math.max(1, limit)]) || [];
+    } catch { return []; }
+}
+
+// How many AUTO-generated clips a stream has produced in the last N minutes (hourly cap +
+// min-spacing enforcement for the live auto-clipper).
+function countAutoClipsSince(streamId, minutes) {
+    try {
+        return get(`SELECT COUNT(*) AS count FROM clips WHERE stream_id = ? AND COALESCE(auto_generated,0) = 1
+                    AND created_at >= datetime('now', ?)`, [streamId, `-${Math.max(1, minutes)} minutes`])?.count || 0;
+    } catch { return 0; }
+}
+
+// Live chat-velocity window: message-count buckets over the last `windowSec`, each with a
+// representative epoch timestamp — used to detect a "everyone reacted" spike and locate WHEN.
+function getLiveChatBuckets(streamId, windowSec = 150, bucketSec = 15) {
+    try {
+        const rows = all(`
+            SELECT CAST(strftime('%s', cm.timestamp) / ? AS INT) AS b,
+                   COUNT(*) AS n,
+                   MIN(CAST(strftime('%s', cm.timestamp) AS INT)) AS ts
+            FROM chat_messages cm
+            WHERE cm.stream_id = ? AND COALESCE(cm.is_deleted, 0) = 0
+              AND cm.timestamp >= datetime('now', ?)
+            GROUP BY b ORDER BY ts ASC`, [bucketSec, streamId, `-${windowSec} seconds`]) || [];
+        return rows.map(r => ({ count: r.n, tsEpoch: r.ts }));
+    } catch { return []; }
+}
+
+// Recent chat message texts for a stream (AI context for the live auto-clipper — what people
+// were actually saying/reacting to around a spike).
+function getRecentChatText(streamId, sinceSec = 120, limit = 40) {
+    try {
+        const rows = all(`SELECT message FROM chat_messages
+            WHERE stream_id = ? AND COALESCE(is_deleted, 0) = 0 AND message IS NOT NULL AND message <> ''
+              AND timestamp >= datetime('now', ?)
+            ORDER BY timestamp DESC LIMIT ?`, [streamId, `-${Math.max(1, sinceSec)} seconds`, Math.max(1, limit)]) || [];
+        return rows.map(r => String(r.message)).reverse();
     } catch { return []; }
 }
 
@@ -4370,14 +4408,14 @@ function getOrphanedRecordingVods() {
 
 // ── Clip helpers ─────────────────────────────────────────────
 
-function createClip({ vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds, is_public }) {
+function createClip({ vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds, is_public, auto_generated }) {
     // is_public defaults to 1 (public) for backward-compatibility when the caller
     // doesn't resolve the streamer's default_clip_visibility.
     const pub = (is_public === 0 || is_public === false) ? 0 : 1;
     return run(
-        `INSERT INTO clips (vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds, is_public)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [vod_id || null, stream_id || null, user_id, title || 'Untitled Clip', description || '', file_path || '', thumbnail_url || null, start_time || 0, end_time || 0, duration_seconds || 0, pub]
+        `INSERT INTO clips (vod_id, stream_id, user_id, title, description, file_path, thumbnail_url, start_time, end_time, duration_seconds, is_public, auto_generated)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [vod_id || null, stream_id || null, user_id, title || 'Untitled Clip', description || '', file_path || '', thumbnail_url || null, start_time || 0, end_time || 0, duration_seconds || 0, pub, auto_generated ? 1 : 0]
     );
 }
 
@@ -6880,6 +6918,7 @@ module.exports = {
     updatePasteAi, cleanupMalformedAiText, deleteAiMomentTextPastes, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getStreamTranscriptSegments, getUserPastesForAi,
     getVodsForMomentRanking, getClipStartTimesForStream, getChatSpikeOffsets,
+    countAutoClipsSince, getLiveChatBuckets, getRecentChatText,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     getStreamerAiTimeline, assembleStreamerAiTimeline, setStreamAiTitle, getUntitledAiSessions, clearAiTimelineCache,
     // Homepage helpers

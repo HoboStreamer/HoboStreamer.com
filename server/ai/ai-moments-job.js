@@ -242,11 +242,13 @@ async function tick(opts = {}) {
             // source can be a local file OR a presigned B2/R2 URL (for cold/offloaded VODs), so
             // pruned-local VODs still work — ffmpeg range-seeks the remote file.
             let screenshotPath = null;
+            let momentSource = null; // resolved media (local path or presigned URL) for clipping
             let img = `/api/thumbnails/generate/vod/${v.vod_id}`;
             try {
                 const vod = db.getVodById(v.vod_id);
                 let source = vod && vod.file_path;
                 try { const vs = require('../vod/vod-storage'); const src = vod && await vs.resolveMediaSource(vod); if (src && src.value) source = src.value; } catch { /* fall back to file_path */ }
+                momentSource = source || null;
                 if (thumb && source && thumb.extractFrameToFile) {
                     const fname = `ai-moment-vod${v.vod_id}-${offset}.jpg`;
                     const outPath = path.join(SCREENSHOTS_DIR, fname);
@@ -294,6 +296,14 @@ async function tick(opts = {}) {
             } catch { /* slug collision / other — skip */ }
 
             moments.push({ vodId: v.vod_id, offset, title: title.slice(0, 80), thumbnail: img, username: v.username, pasteSlug: slug });
+
+            // Also cut a real VOD clip around this same moment (AI auto-clip), unless disabled.
+            if (opts.clip !== false && momentSource) {
+                try {
+                    const clip = await require('./auto-clip-job').clipVodMoment({ vod: v, offset, title, desc, source: momentSource });
+                    if (clip) console.log(`[AI-Moments] Auto-clip cut for VOD ${v.vod_id} ("${title.slice(0, 60)}")`);
+                } catch { /* clipping is best-effort */ }
+            }
         }
 
         const usedLog = [...newUsedVods, ...(prev.usedVods || [])].slice(0, 300);
