@@ -72,6 +72,10 @@
         .cu-sound .cu-meta{font-size:11px;opacity:.6;margin-left:auto;}
         .cu-del{background:none;border:none;color:#e66;cursor:pointer;font-size:12px;opacity:.8;}
         .cu-del:hover{opacity:1;}
+        .cu-cfg{background:none;border:none;color:#9ab;cursor:pointer;font-size:12px;opacity:.75;}
+        .cu-cfg:hover{opacity:1;}
+        .cu-code-edit{cursor:pointer;}
+        .cu-code-edit:hover{text-decoration:underline;}
         .cu-empty{opacity:.5;font-size:13px;padding:8px 0;}
         .cu-set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;font-size:13px;}
         .cu-set-row input[type=number]{width:84px;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:inherit;}
@@ -338,8 +342,11 @@
             box.innerHTML = list.map((e) => `
                 <div class="cu-emote">
                     <img src="${esc(e.url)}" alt="${esc(e.code)}" loading="lazy">
-                    <code>${esc(e.code)}${e.size && e.size !== 100 ? ` · ${e.size}%` : ''}</code>
-                    ${e.emote_id ? `<button class="cu-del" title="Delete" onclick="__cuDeleteEmote(${e.emote_id})">✕</button>` : ''}
+                    ${e.emote_id
+                        ? `<code class="cu-code-edit" title="Click to rename" onclick="__cuRenameEmote(${e.emote_id}, '${esc(e.code)}')">${esc(e.code)}${e.size && e.size !== 100 ? ` · ${e.size}%` : ''}</code>
+                           <button class="cu-cfg" title="Display size" onclick="__cuEmoteSize(${e.emote_id}, ${e.size || 100})"><i class="fa-solid fa-gear"></i></button>
+                           <button class="cu-del" title="Delete" onclick="__cuDeleteEmote(${e.emote_id})">✕</button>`
+                        : `<code>${esc(e.code)}${e.size && e.size !== 100 ? ` · ${e.size}%` : ''}</code>`}
                 </div>`).join('');
         } catch { box.innerHTML = '<span class="cu-empty">Could not load emotes.</span>'; }
     }
@@ -361,9 +368,10 @@
                 const emoteCode = (arr.find((s) => s.emote_code) || {}).emote_code || '';
                 return `<div class="cu-sound-group">
                     <div class="cu-sound-cmd-hd">
-                        <span class="cu-cmd">!${esc(cmd)}</span>
+                        <span class="cu-cmd cu-code-edit" title="Click to rename this command" onclick="__cuRenameSoundCmd('${esc(cmd)}')">!${esc(cmd)}</span>
                         ${arr.length > 1 ? `<span class="cu-count">×${arr.length}</span> <span class="cu-hint" style="opacity:.55">random</span>` : ''}
                         ${emoteCode ? `<span class="cu-hint" style="opacity:.7"><i class="fa-solid fa-face-grin-stars"></i> :${esc(emoteCode)}:</span>` : ''}
+                        <button class="cu-cfg" title="${emoteCode ? 'Change or remove the attached emote' : 'Attach an emote to this command'}" onclick="__cuSoundEmote('${esc(cmd)}', '${esc(emoteCode)}')"><i class="fa-solid fa-face-grin-stars"></i></button>
                         <button class="cu-btn" style="margin-left:auto;padding:2px 8px;font-size:12px" onclick="__cuAddToSound('${esc(cmd)}')" title="Add another sound to this command"><i class="fa-solid fa-plus"></i> Add</button>
                     </div>
                     ${arr.map((s) => `<div class="cu-sound" style="margin-left:10px">
@@ -477,6 +485,78 @@
             notify('Sound removed.', 'success');
             loadSoundList();
             if (typeof reloadChannelSounds === 'function' && curStreamId) reloadChannelSounds(curStreamId);
+        } catch (e) { notify(e.message, 'error'); }
+    };
+
+    const refreshEmotes = () => {
+        loadEmoteList();
+        if (typeof reloadChannelEmotes === 'function' && curStreamId) reloadChannelEmotes(curStreamId);
+        else if (typeof loadEmotes === 'function' && curStreamId) loadEmotes(curStreamId);
+    };
+    const refreshSounds = () => {
+        loadSoundList();
+        if (typeof reloadChannelSounds === 'function' && curStreamId) reloadChannelSounds(curStreamId);
+    };
+    const patchJson = async (url, body) => {
+        const r = await fetch(url, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Update failed');
+        return data;
+    };
+    // Channel target for command-group edits (mirrors upload's resolution).
+    const soundChannelTarget = () => ({
+        ...(curStreamId ? { stream_id: curStreamId } : {}),
+        ...(curChannelOwnerId ? { channel_id: curChannelOwnerId } : {}),
+    });
+
+    window.__cuRenameEmote = async function (id, current) {
+        if (!token()) return notify('Log in first.', 'error');
+        const code = (prompt('New emote code (letters, numbers, underscores):', current) || '').trim();
+        if (!code || code === current) return;
+        try {
+            const data = await patchJson(`/api/emotes/${id}`, { code });
+            notify(`Emote renamed to :${data.code}:`, 'success');
+            refreshEmotes();
+        } catch (e) { notify(e.message, 'error'); }
+    };
+
+    window.__cuEmoteSize = async function (id, current) {
+        if (!token()) return notify('Log in first.', 'error');
+        const raw = prompt('Emote display size in percent (100 = normal):', String(current || 100));
+        if (raw === null) return;
+        const size = parseInt(raw, 10);
+        if (!Number.isFinite(size)) return notify('Enter a number, e.g. 150', 'error');
+        try {
+            const data = await patchJson(`/api/emotes/${id}`, { size });
+            notify(`Emote size set to ${data.size}%`, 'success');
+            refreshEmotes();
+        } catch (e) { notify(e.message, 'error'); }
+    };
+
+    window.__cuRenameSoundCmd = async function (cmd) {
+        if (!token()) return notify('Log in first.', 'error');
+        const next = (prompt(`Rename !${cmd} to (letters, numbers, underscores):`, cmd) || '').trim().replace(/^!+/, '');
+        if (!next || next === cmd) return;
+        try {
+            const data = await patchJson('/api/sounds/command', { ...soundChannelTarget(), command: cmd, newCommand: next });
+            notify(`Command renamed to !${data.command}`, 'success');
+            refreshSounds();
+        } catch (e) { notify(e.message, 'error'); }
+    };
+
+    window.__cuSoundEmote = async function (cmd, current) {
+        if (!token()) return notify('Log in first.', 'error');
+        const raw = prompt(`Emote code to attach to !${cmd} (empty to remove):`, current || '');
+        if (raw === null) return;
+        const emoteCode = raw.trim().replace(/^:|:$/g, '');
+        try {
+            await patchJson('/api/sounds/command', { ...soundChannelTarget(), command: cmd, emoteCode });
+            notify(emoteCode ? `Attached :${emoteCode}: to !${cmd}` : `Removed the emote from !${cmd}`, 'success');
+            refreshSounds();
         } catch (e) { notify(e.message, 'error'); }
     };
 

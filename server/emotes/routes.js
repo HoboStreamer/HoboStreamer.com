@@ -395,6 +395,65 @@ router.use((err, req, res, next) => {
 });
 
 // ── Delete an emote ──────────────────────────────────────────
+// ── Edit an emote in place (rename code / change display size) ──
+// Same permission model as delete: uploader, admin, or channel mod/owner.
+router.patch('/:id', requireAuth, (req, res) => {
+    try {
+        const emote = db.getEmoteById(req.params.id);
+        if (!emote) return res.status(404).json({ error: 'Emote not found' });
+        let allowed = emote.user_id === req.user.id || req.user.role === 'admin';
+        if (!allowed) {
+            const ownerId = emote.channel_owner_id || emote.user_id;
+            const channel = db.getChannelByUserId(ownerId);
+            if (channel && permissions.canModerateChannel(req.user, channel.id)) allowed = true;
+        }
+        if (!allowed) return res.status(403).json({ error: 'Not your emote' });
+
+        const patch = {};
+        if (req.body.code !== undefined) {
+            const code = String(req.body.code || '').trim();
+            if (!code || code.length < 2 || code.length > 32) {
+                return res.status(400).json({ error: 'Emote code must be 2-32 characters' });
+            }
+            if (!/^[a-zA-Z0-9_]+$/.test(code)) {
+                return res.status(400).json({ error: 'Emote code can only contain letters, numbers, and underscores' });
+            }
+            // No duplicates within the same channel's emote set.
+            const scopeOwner = emote.channel_owner_id || emote.user_id;
+            const clash = (db.getChannelEmotes(scopeOwner) || [])
+                .find((e) => e.id !== emote.id && String(e.code).toLowerCase() === code.toLowerCase());
+            if (clash) return res.status(409).json({ error: `An emote named "${clash.code}" already exists in this channel.` });
+            patch.code = code;
+        }
+        if (req.body.size !== undefined) {
+            // Clamp to the channel's configured render range, like upload does.
+            let sizeMin = 25, sizeMax = 400;
+            try {
+                const ownerId = emote.channel_owner_id || emote.user_id;
+                const channel = db.getChannelByUserId(ownerId);
+                const st = channel ? db.getChannelModerationSettings(channel.id) : null;
+                if (st) { sizeMin = st.emote_size_min || 50; sizeMax = st.emote_size_max || 200; }
+            } catch { /* defaults */ }
+            patch.size = Math.min(sizeMax, Math.max(sizeMin, parseInt(req.body.size) || 100));
+        }
+        if (patch.code === undefined && patch.size === undefined) {
+            return res.status(400).json({ error: 'Nothing to change' });
+        }
+
+        db.updateEmote(emote.id, patch);
+        // Sound commands attach this emote by code — carry the rename over.
+        if (patch.code && patch.code !== emote.code) {
+            try { db.updateChannelSoundEmoteRefs(emote.channel_owner_id || emote.user_id, emote.code, patch.code); } catch { /* */ }
+        }
+        if (emote.channel_owner_id) {
+            try { require('../chat/chat-server').broadcastToOwnerStreams(emote.channel_owner_id, { type: 'emotes-updated' }); } catch { /* */ }
+        }
+        res.json({ message: 'Emote updated', code: patch.code ?? emote.code, size: patch.size ?? emote.size });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update emote' });
+    }
+});
+
 router.delete('/:id', requireAuth, (req, res) => {
     try {
         const emote = db.getEmoteById(req.params.id);

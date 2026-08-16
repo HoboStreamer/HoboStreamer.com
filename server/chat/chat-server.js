@@ -1240,6 +1240,23 @@ class ChatServer {
                     if (tagProfile) soundMsg.tag = tagProfile;
                 } catch { /* non-critical */ }
             }
+            // Persist the announce so it survives a reload — history rebuilds the
+            // rich sound row from metadata (the audio itself is never replayed).
+            try {
+                const saved = db.saveChatMessage({
+                    stream_id: client.streamId || null,
+                    channel_user_id: stream.user_id,
+                    user_id: client.user?.id,
+                    anon_id: relay ? null : client.anonId,
+                    username,
+                    message: soundMsg.message,
+                    message_type: 'channel-sound',
+                    is_global: false,
+                    source_platform: relay ? relay.sourcePlatform : null,
+                    metadata: { sound: soundMsg.sound },
+                });
+                if (saved.lastInsertRowid) soundMsg.id = Number(saved.lastInsertRowid);
+            } catch { /* non-critical */ }
             this.broadcastToStream(client.streamId, soundMsg);
             // Also surface it on the global chat feed / global overlay (with stream_channel).
             this.forwardToGlobal(client.streamId, soundMsg);
@@ -1704,7 +1721,7 @@ class ChatServer {
             const coreUsername = client.user?.username || null;
             const role = client.user ? client.user.role : 'anon';
 
-            this.broadcastToStream(streamId, {
+            const sbMsg = {
                 type: 'chat',
                 username,
                 core_username: coreUsername,
@@ -1725,7 +1742,22 @@ class ChatServer {
                     pitchShift: parsed.pitchShift,
                 },
                 timestamp: new Date().toISOString(),
-            });
+            };
+            // Persist so the announce survives a reload (rebuilt from metadata).
+            try {
+                const saved = db.saveChatMessage({
+                    stream_id: streamId,
+                    user_id: client.user?.id,
+                    anon_id: client.anonId,
+                    username,
+                    message: sbMsg.message,
+                    message_type: 'soundboard',
+                    is_global: false,
+                    metadata: { soundboard: sbMsg.soundboard },
+                });
+                if (saved.lastInsertRowid) sbMsg.id = Number(saved.lastInsertRowid);
+            } catch { /* non-critical */ }
+            this.broadcastToStream(streamId, sbMsg);
 
             this.broadcastToStream(streamId, {
                 type: 'soundboard-audio',

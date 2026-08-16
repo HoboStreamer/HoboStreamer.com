@@ -3866,6 +3866,14 @@ function _renderChatHistoryData(data, globalMsgs = []) {
 
 // Render a single stream/channel history row (donation/goal events render richly).
 function _renderHistoryMainMsg(m) {
+    // Sound rows persist their rich payload in metadata — rebuild the fields
+    // the live renderer expects (audio is never replayed from history).
+    if ((m.message_type === 'channel-sound' || m.message_type === 'soundboard') && m.metadata) {
+        let meta = null;
+        try { meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata; } catch { meta = null; }
+        if (meta && meta.sound && !m.sound) m.sound = meta.sound;
+        if (meta && meta.soundboard && !m.soundboard) m.soundboard = meta.soundboard;
+    }
     if (m.message_type === 'donation' && m.metadata) {
         let meta = null;
         try { meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata; } catch { meta = null; }
@@ -3885,6 +3893,7 @@ function _renderHistoryMainMsg(m) {
         message: m.message,
         message_type: m.message_type,
         sound: m.sound,
+        soundboard: m.soundboard,
         metadata: m.metadata,
         role: m.role || 'user',
         color: m.color,

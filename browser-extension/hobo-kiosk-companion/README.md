@@ -9,8 +9,12 @@ It can also set the kiosk as your **new-tab page**.
 - Injects a content script only on `hobostreamer.com/kiosk` that bridges the page to a
   background script which queries `browser.history` and returns your top matches
   (ranked by visit count + recency). History never leaves your browser.
-- Overrides the new-tab page to open `https://hobostreamer.com/kiosk#input`.
-  (Don't want that? Delete the `chrome_url_overrides` block from `manifest.json`.)
+- Overrides the new-tab page to open `https://hobostreamer.com/kiosk#input` **with the
+  kiosk's omnibar focused instead of the browser address bar**. It does this by opening
+  the kiosk in a fresh tab and closing the temporary new-tab page (Firefox focuses the web
+  page on a real tab navigation, but keeps focus on the URL bar if you merely update the
+  new-tab tab). (Don't want the new-tab override? Delete the `chrome_url_overrides` block
+  from `manifest.json`.)
 
 The kiosk page detects the companion automatically — no configuration. Without the
 extension the omnibar still works, it just falls back to its own on-page history.

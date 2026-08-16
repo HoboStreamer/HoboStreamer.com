@@ -646,6 +646,9 @@ button{font:inherit}
   const abs=u=>{try{return u?new URL(u,location.origin).href:""}catch{return""}};
   const fmt=n=>{n=Number(n)||0;return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"K":String(n)};
   const state={tab:"vods",vods:[],clips:[],pastes:[]};
+  // Navigate the TOP tab so links work whether standalone or inside the companion new-tab iframe.
+  const kioskNav=u=>{ try{ (window.top||window).location.href=u; }catch{ location.href=u; } };
+  window.kioskNav=kioskNav;
 
   function tick(){
     const d=new Date();
@@ -859,7 +862,7 @@ button{font:inherit}
       const user=String(ch).replace(/^@/,"");
       const ref=m.source_slug||m.source_managed_id;
       const href=`/@${encodeURIComponent(user)}${ref?"/"+encodeURIComponent(ref):""}`;
-      return `<span class="chat-src" title="From ${esc(user)}'s stream — open channel" onclick="location.href='${esc(href)}'"><i class="fa-solid fa-satellite-dish"></i>${esc(user)}</span>`;
+      return `<span class="chat-src" title="From ${esc(user)}'s stream — open channel" onclick="kioskNav('${esc(href)}')"><i class="fa-solid fa-satellite-dish"></i>${esc(user)}</span>`;
     }
     return `<span class="chat-src global" title="Global chat"><i class="fa-solid fa-globe"></i>global</span>`;
   }
@@ -902,14 +905,14 @@ button{font:inherit}
   //    universal actions (Channel / AI Insight), wired here to navigation. ──
   let _kioskMenu=null;
   function _dismissKioskMenu(){ if(_kioskMenu){_kioskMenu.remove();_kioskMenu=null;} }
-  const _chan=(u)=>{ _dismissKioskMenu(); if(u) location.href="/@"+encodeURIComponent(String(u).replace(/^@/,"")); };
+  const _chan=(u)=>{ _dismissKioskMenu(); if(u) kioskNav("/@"+encodeURIComponent(String(u).replace(/^@/,""))); };
   window.dismissContextMenu=_dismissKioskMenu;
   window.ctxViewChannel=_chan;
   window.ctxWhisper=_chan;
   window.ctxReply=_dismissKioskMenu;
-  window.openUserChatInsight=(uid,u)=>{ _dismissKioskMenu(); if(u) location.href="/@"+encodeURIComponent(String(u).replace(/^@/,""))+"#ai-timeline"; };
-  window.openAnonChatInsight=()=>{ _dismissKioskMenu(); location.href="/chat"; };
-  window.openRelayUserChatInsight=()=>{ _dismissKioskMenu(); location.href="/chat"; };
+  window.openUserChatInsight=(uid,u)=>{ _dismissKioskMenu(); if(u) kioskNav("/@"+encodeURIComponent(String(u).replace(/^@/,""))+"#ai-timeline"); };
+  window.openAnonChatInsight=()=>{ _dismissKioskMenu(); kioskNav("/chat"); };
+  window.openRelayUserChatInsight=()=>{ _dismissKioskMenu(); kioskNav("/chat"); };
   function _posMenu(menu,x,y){
     menu.style.left=x+"px"; menu.style.top=y+"px";
     requestAnimationFrame(()=>{
@@ -950,7 +953,7 @@ button{font:inherit}
   });
   messages.addEventListener("click",e=>{
     const el=e.target.closest(".name[data-kind]");
-    if(el && el.dataset.kind==="user" && el.dataset.username) location.href="/@"+encodeURIComponent(el.dataset.username);
+    if(el && el.dataset.kind==="user" && el.dataset.username) kioskNav("/@"+encodeURIComponent(el.dataset.username));
   });
 
   async function history(){
@@ -1031,6 +1034,11 @@ button{font:inherit}
   const resolving=new Set();
   let curItems=[], selIdx=-1, isOpen=false, resolveTimer=null;
 
+  // Navigate the TOP tab (so it works whether the kiosk is standalone or embedded in the
+  // companion new-tab iframe). Setting top.location.href cross-origin is allowed on a user gesture.
+  const nav=u=>{ try{ (window.top||window).location.href=u; }catch{ location.href=u; } };
+  const framed = window.top !== window.self;
+
   // ── Firefox companion extension (optional): history autocomplete ──
   let extReady=false; const bhCache=new Map(), bhInFlight=new Set(); let bhSeq=0;
   window.addEventListener("message",ev=>{
@@ -1073,7 +1081,10 @@ button{font:inherit}
     omni.classList.add("show"); omni.setAttribute("aria-hidden","false");
     if(seed!=null) input.value=seed;
     renderSuggest(); requestBH(input.value);
-    setTimeout(()=>{ input.focus(); if(seed==null){ input.select(); } else { input.setSelectionRange(input.value.length,input.value.length); } },30);
+    const doFocus=()=>{ try{ window.focus(); }catch{} input.focus(); if(seed==null){ input.select(); } else { input.setSelectionRange(input.value.length,input.value.length); } };
+    setTimeout(doFocus,30);
+    // In the companion new-tab iframe, retry so the caret wins over the browser URL bar.
+    if(framed) [120,280,550,900].forEach(t=>setTimeout(()=>{ if(isOpen) doFocus(); },t));
   }
   function close(){
     isOpen=false; omni.classList.remove("show"); omni.setAttribute("aria-hidden","true");
@@ -1169,7 +1180,7 @@ button{font:inherit}
   function highlight(){ suggest.querySelectorAll(".omni-sug").forEach((el,i)=>el.classList.toggle("sel",i===selIdx)); }
 
   // ── activation ──
-  function activate(it){ if(!it) return; const q=input.value.trim(); pushHistory(it,q); location.href=it.url; }
+  function activate(it){ if(!it) return; const q=input.value.trim(); pushHistory(it,q); nav(it.url); }
   async function activateDefault(){
     const q=input.value.trim(); if(!q) return;
     if(looksLikeDomain(q)){
@@ -1180,9 +1191,9 @@ button{font:inherit}
         catch{ res={reachable:true,url:fullUrl(q),host:hostOf(q)}; }
         goBtn.innerHTML='<i class="fa-solid fa-arrow-right"></i>';
       }
-      if(res.reachable){ pushHistory({type:"domain",url:res.url||fullUrl(q),host:res.host,title:res.title},q); location.href=res.url||fullUrl(q); return; }
+      if(res.reachable){ pushHistory({type:"domain",url:res.url||fullUrl(q),host:res.host,title:res.title},q); nav(res.url||fullUrl(q)); return; }
     }
-    pushHistory({type:"search"},q); location.href=searchUrl(q);
+    pushHistory({type:"search"},q); nav(searchUrl(q));
   }
   function submit(){
     if(selIdx>=0 && curItems[selIdx] && !curItems[selIdx].pending) activate(curItems[selIdx]);

@@ -303,6 +303,64 @@ router.delete('/:id', requireAuth, (req, res) => {
     }
 });
 
+// ── Edit a !command group in place (rename / set emote) ──────
+// Body: { channel_id? , stream_id?, command, newCommand?, emoteCode? }.
+// A command may hold several sounds, so edits apply to the whole group.
+// Allowed: channel owner, channel mods, admins, or the creator of every
+// sound in the group (mirrors the add-to-command rule).
+router.patch('/command', requireAuth, (req, res) => {
+    try {
+        let channelOwnerId = parseInt(req.body.channel_id) || null;
+        if (!channelOwnerId && req.body.stream_id) {
+            channelOwnerId = db.getStreamById(parseInt(req.body.stream_id))?.user_id || null;
+        }
+        if (!channelOwnerId) channelOwnerId = req.user.id;
+        const channel = db.getChannelByUserId(channelOwnerId);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+        const command = String(req.body.command || '').trim().toLowerCase().replace(/^!+/, '');
+        const group = (db.getChannelSounds(channelOwnerId) || []).filter((s) => s.command === command);
+        if (!group.length) return res.status(404).json({ error: `No sound command !${command} in this channel.` });
+
+        const isMod = permissions.canModerateChannel(req.user, channel.id);
+        const isOwnChannel = channelOwnerId === req.user.id;
+        const isCreator = group.every((s) => s.created_by === req.user.id);
+        if (!isMod && !isOwnChannel && !isCreator && req.user.role !== 'admin') {
+            return res.status(403).json({ error: `Only the creator of !${command} (or a mod) can edit it.` });
+        }
+
+        let finalCommand = command;
+        if (req.body.newCommand !== undefined) {
+            const next = String(req.body.newCommand || '').trim().toLowerCase().replace(/^!+/, '');
+            if (!/^[a-z0-9_]{2,24}$/.test(next)) {
+                return res.status(400).json({ error: 'Command must be 2-24 letters, numbers, or underscores' });
+            }
+            if (RESERVED_COMMANDS.has(next)) {
+                return res.status(400).json({ error: `"!${next}" is a reserved command — pick another name` });
+            }
+            if (next !== command && db.getChannelSoundByCommand(channelOwnerId, next)) {
+                return res.status(409).json({ error: `!${next} already exists in this channel.` });
+            }
+            if (next !== command) {
+                db.renameChannelSoundCommand(channelOwnerId, command, next);
+                finalCommand = next;
+            }
+        }
+        if (req.body.emoteCode !== undefined) {
+            const emoteCode = String(req.body.emoteCode || '').trim().replace(/^:|:$/g, '');
+            if (emoteCode && !/^[a-zA-Z0-9_]{2,32}$/.test(emoteCode)) {
+                return res.status(400).json({ error: 'Emote code can only contain letters, numbers, and underscores' });
+            }
+            db.setChannelSoundEmote(channelOwnerId, finalCommand, emoteCode);
+        }
+
+        try { require('./chat-server').broadcastToOwnerStreams(channelOwnerId, { type: 'sounds-updated' }); } catch { /* */ }
+        res.json({ message: 'Sound command updated', command: finalCommand });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update sound command' });
+    }
+});
+
 // ── Serve a sound file ───────────────────────────────────────
 const EXT_TO_MIME = {
     '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',

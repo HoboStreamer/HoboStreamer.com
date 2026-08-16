@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hobo Kiosk Companion",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Lets the HoboStreamer /kiosk address bar autocomplete from your Firefox history, and (optionally) sets the kiosk as your new-tab page.",
   "browser_specific_settings": {
     "gecko": {

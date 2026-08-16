@@ -239,6 +239,39 @@ function initDb() {
         }
     } catch (e) { console.warn('[DB] chat_messages reply_to_id migration:', e.message); }
 
+    // Migrate: widen the message_type CHECK so sound announces ('channel-sound',
+    // 'soundboard') persist to history. SQLite can't alter a CHECK — rebuild the
+    // table from its CURRENT definition (columns have grown over time).
+    try {
+        const tbl = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='chat_messages'").get();
+        if (tbl && /message_type IN \([^)]*\)/.test(tbl.sql) && !tbl.sql.includes("'channel-sound'")) {
+            const newSql = tbl.sql
+                .replace(/CREATE TABLE ["']?chat_messages["']?/, 'CREATE TABLE chat_messages_new')
+                .replace(/message_type IN \([^)]*\)/,
+                    "message_type IN ('chat', 'system', 'donation', 'command', 'tts', 'channel-sound', 'soundboard')");
+            const cols = database.prepare("PRAGMA table_info('chat_messages')").all().map(c => `"${c.name}"`).join(', ');
+            const indexes = database.prepare(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='chat_messages' AND sql IS NOT NULL"
+            ).all().map(r => r.sql);
+            database.pragma('foreign_keys = OFF');
+            try {
+                database.exec('BEGIN');
+                database.exec(newSql);
+                database.exec(`INSERT INTO chat_messages_new (${cols}) SELECT ${cols} FROM chat_messages`);
+                database.exec('DROP TABLE chat_messages');
+                database.exec('ALTER TABLE chat_messages_new RENAME TO chat_messages');
+                for (const sql of indexes) { try { database.exec(sql); } catch { /* index name may survive */ } }
+                database.exec('COMMIT');
+                console.log('[DB] Widened chat_messages.message_type CHECK for sound announces');
+            } catch (e2) {
+                try { database.exec('ROLLBACK'); } catch { /* no open tx */ }
+                throw e2;
+            } finally {
+                database.pragma('foreign_keys = ON');
+            }
+        }
+    } catch (e) { console.warn('[DB] chat_messages message_type migration:', e.message); }
+
     // Migrate: add default_vod_visibility / default_clip_visibility to channels
     try {
         const chanCols = database.prepare("PRAGMA table_info('channels')").all().map(c => c.name);
@@ -5150,6 +5183,18 @@ function deleteEmote(id) {
     return run('DELETE FROM emotes WHERE id = ?', [id]);
 }
 
+// Edit an emote in place (rename the code and/or change display size %)
+// so streamers don't have to delete + re-upload.
+function updateEmote(id, { code, size }) {
+    const sets = [];
+    const params = [];
+    if (code !== undefined) { sets.push('code = ?'); params.push(code); }
+    if (size !== undefined) { sets.push('size = ?'); params.push(Math.min(400, Math.max(25, parseInt(size) || 100))); }
+    if (!sets.length) return { changes: 0 };
+    params.push(id);
+    return run(`UPDATE emotes SET ${sets.join(', ')} WHERE id = ?`, params);
+}
+
 function getEmoteByCode(code, userId) {
     // Check channel emotes first, then global
     return get(
@@ -5208,6 +5253,19 @@ function countChannelSoundsByUploader(ownerId, uploaderId) {
 
 function deleteChannelSound(id) {
     return run('DELETE FROM channel_sounds WHERE id = ?', [id]);
+}
+
+// Rename a whole !command group (a command may hold several sounds).
+function renameChannelSoundCommand(ownerId, oldCommand, newCommand) {
+    return run('UPDATE channel_sounds SET command = ? WHERE channel_owner_id = ? AND command = ?',
+        [String(newCommand || '').toLowerCase(), ownerId, String(oldCommand || '').toLowerCase()]);
+}
+
+// Sounds attach emotes BY CODE — keep those references alive when an emote
+// is renamed so the streamer's emote+sound combos don't silently break.
+function updateChannelSoundEmoteRefs(ownerId, oldCode, newCode) {
+    return run('UPDATE channel_sounds SET emote_code = ? WHERE channel_owner_id = ? AND emote_code = ?',
+        [newCode || '', ownerId, oldCode]);
 }
 
 // ── AI chatbot config (per streamer) ─────────────────────────
@@ -7139,9 +7197,9 @@ module.exports = {
     // Bans
     isUserBanned, isIpBanned,
     // Emotes
-    createEmote, getEmoteById, getEmotesByUser, getGlobalEmotes, getChannelEmotes,
+    createEmote, getEmoteById, getEmotesByUser, getGlobalEmotes, getChannelEmotes, updateEmote,
     deleteEmote, getEmoteByCode, countUserEmotes, countChannelEmotes, getChannelEmoteByCode,
-    createChannelSound, setChannelSoundEmote, getChannelSounds, getChannelSoundByCommand, getChannelSoundById,
+    createChannelSound, setChannelSoundEmote, getChannelSounds, getChannelSoundByCommand, getChannelSoundById, renameChannelSoundCommand, updateChannelSoundEmoteRefs,
     countChannelSounds, countChannelSoundsByUploader, deleteChannelSound,
     getAiChatbotConfig, upsertAiChatbotConfig,
     getChannelAiConfig, upsertChannelAiConfig,
