@@ -390,6 +390,9 @@ async function tick(opts = {}) {
         console.warn('[AI-Moments] tick error:', e.message);
     } finally {
         _busy = false;
+        // Regenerate the hero slogans/labels at the SAME time as the hero background moments,
+        // so both halves of the home hero always refresh together.
+        try { require('./slogan-job').tick().catch(() => {}); } catch { /* */ }
     }
 }
 

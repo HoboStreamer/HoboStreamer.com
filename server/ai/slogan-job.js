@@ -14,7 +14,10 @@ const db = require('../db/database');
 const ai = require('./ai-analysis');
 let chatAi = null; try { chatAi = require('./chat-ai'); } catch { /* optional */ }
 
-const INTERVAL_MS = 6 * 60 * 60 * 1000; // a fresh batch every 6h
+// Slogans are driven together with the hero background moments (ai-moments-job triggers a
+// regen every 6h). This is only a FALLBACK cadence — slightly longer than the moments' 6h so
+// the moments job always fires first and the two never double-generate.
+const INTERVAL_MS = 7 * 60 * 60 * 1000;
 const TARGET = 20;                        // ~20 words + ~20 slogans per batch
 let _timer = null, _busy = false;
 
