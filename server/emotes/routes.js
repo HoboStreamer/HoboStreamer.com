@@ -678,6 +678,17 @@ router.get('/all/:streamId', optionalAuth, async (req, res) => {
             }
         }
 
+        // The streamer's overall emote scale (a multiplier on top of per-emote sizes) so
+        // chat overlays can honour it — the main chat already applies this via chat settings.
+        let emoteScale = 100;
+        if (streamUserId) {
+            try {
+                const ch = db.getChannelByUserId(streamUserId);
+                const st = ch ? db.getChannelModerationSettings(ch.id) : null;
+                if (st && st.emote_scale) emoteScale = Number(st.emote_scale) || 100;
+            } catch { /* default 100 */ }
+        }
+
         res.json({
             defaults,
             channel: channelEmotes,
@@ -686,6 +697,7 @@ router.get('/all/:streamId', optionalAuth, async (req, res) => {
             bttv: bttvEmotes,
             '7tv': sevenTvEmotes,
             sources,
+            emote_scale: emoteScale,
         });
     } catch (err) {
         res.status(500).json({ error: 'Failed to load emotes' });
