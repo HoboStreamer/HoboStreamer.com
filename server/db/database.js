@@ -283,6 +283,10 @@ function initDb() {
         add('clips_allow_creator_delete', 'clips_allow_creator_delete INTEGER DEFAULT 0');
         // Streamer can hide the AI-generated overview from the top of their About tab.
         add('hide_ai_overview', 'hide_ai_overview INTEGER DEFAULT 0');
+        // Tri-state preference for the About-tab AI overview: 'auto' (show only when there's no
+        // bio/about yet), 'show' (always), 'hide' (never). Migrate old hide flag → 'hide'.
+        add('ai_overview_pref', "ai_overview_pref TEXT DEFAULT 'auto'");
+        try { database.exec("UPDATE channels SET ai_overview_pref = 'hide' WHERE hide_ai_overview = 1 AND (ai_overview_pref IS NULL OR ai_overview_pref = 'auto')"); } catch { /* */ }
     } catch (e) { console.warn('[DB] Channel points config migration:', e.message); }
 
     // Migrate: add VOD health and recording metadata columns
@@ -3317,7 +3321,7 @@ function updateChannel(userId, fields) {
     const updates = [];
     const params = [];
     for (const [key, val] of Object.entries(fields)) {
-        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'vod_recording_enabled', 'force_vod_recording_disabled', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms', 'active_control_config_id', 'video_click_enabled', 'offline_screen_type', 'offline_screen_url', 'offline_html', 'offline_css', 'hide_ai_overview'].includes(key)) {
+        if (val !== undefined && ['title', 'description', 'category', 'tags', 'protocol', 'is_nsfw', 'force_nsfw', 'auto_record', 'vod_recording_enabled', 'force_vod_recording_disabled', 'offline_banner_url', 'panels', 'emote_sources', 'weather_zip', 'weather_detail', 'weather_show_location', 'control_mode', 'anon_controls_enabled', 'control_rate_limit_ms', 'active_control_config_id', 'video_click_enabled', 'offline_screen_type', 'offline_screen_url', 'offline_html', 'offline_css', 'hide_ai_overview', 'ai_overview_pref'].includes(key)) {
             updates.push(`${key} = ?`);
             params.push(['tags', 'panels', 'emote_sources'].includes(key) ? (typeof val === 'string' ? val : JSON.stringify(val)) : val);
         }

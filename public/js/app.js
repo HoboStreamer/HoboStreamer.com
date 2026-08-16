@@ -1573,7 +1573,6 @@ async function loadHomePastes(page) {
                 <div class="home-paste-body">
                 <div class="home-paste-info">
                     <div class="home-paste-title">${esc(p.title || 'Untitled')}</div>
-                    ${p.type === 'paste' && preview ? `<div class="home-paste-preview">${preview}</div>` : ''}
                     <div class="home-paste-meta">
                         ${p.username ? esc(p.username) : 'Anonymous'}
                         ${p.language && p.language !== 'plaintext' ? ` · <span class="home-paste-lang">${esc(p.language)}</span>` : ''}
@@ -3996,6 +3995,24 @@ function _applyChannelHashTab() {
 }
 let _chTabLoaded = {};
 let _chAnalyticsDays = 7;
+// Does this channel have written About content (bio or panels)?
+function _channelHasBio(ch) {
+    if (!ch) return false;
+    const bio = (ch.bio || ch.description || '').trim();
+    let panels = [];
+    try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
+    return !!bio || (Array.isArray(panels) && panels.length > 0);
+}
+// Effective visibility of the About-tab AI overview. 'auto' (default) shows it ONLY when the
+// streamer hasn't written a bio/About yet; 'show' always; 'hide' never.
+function _effAiOverviewShow(ch) {
+    if (!ch || !ch.ai_overview) return false;
+    const pref = ch.ai_overview_pref || (ch.hide_ai_overview ? 'hide' : 'auto');
+    if (pref === 'show') return true;
+    if (pref === 'hide') return false;
+    return !_channelHasBio(ch); // auto
+}
+
 // About tab visibility + default open tab depend on whether the streamer has any
 // About content (bio/panels) or weather enabled.
 function _resetChannelTabs(ch) {
@@ -4008,8 +4025,8 @@ function _resetChannelTabs(ch) {
         hasAbout = !!bio || (Array.isArray(panels) && panels.length > 0);
     }
     // The AI overview at the top of About also counts as About content, so the tab shows
-    // even when the streamer hasn't written a bio (unless they've hidden the overview).
-    const hasAiOverview = !!(ch && ch.ai_overview && !ch.hide_ai_overview);
+    // even when the streamer hasn't written a bio (per the auto/show/hide preference).
+    const hasAiOverview = _effAiOverviewShow(ch);
     // Anyone who can edit (the streamer, or a mod the streamer allowed) always sees
     // the About tab — even when empty + hidden for everyone else — so they can set it up.
     const canEdit = !!(ch && ch.viewer_can_edit_about);
@@ -4410,15 +4427,22 @@ function _renderChannelAbout(ch) {
     try { panels = typeof ch.panels === 'string' ? JSON.parse(ch.panels || '[]') : (ch.panels || []); } catch { panels = []; }
     _aboutPanels = (Array.isArray(panels) ? panels : []).map(_normalizeAboutPanel);
     _aboutAiOverview = ch.ai_overview || '';
-    _aboutHideAiOverview = !!ch.hide_ai_overview;
+    _aboutAiPref = ch.ai_overview_pref || (ch.hide_ai_overview ? 'hide' : 'auto');
     _aboutEditMode = false;
     _renderAboutView();
 }
 let _aboutAiOverview = '';
-let _aboutHideAiOverview = false;
+let _aboutAiPref = 'auto';
+// Effective show for the About view, given the current pref + whether a bio/panels exist.
+function _aboutAiEffectiveShow() {
+    if (!_aboutAiOverview) return false;
+    if (_aboutAiPref === 'show') return true;
+    if (_aboutAiPref === 'hide') return false;
+    return !(_aboutBio || (_aboutPanels && _aboutPanels.length)); // auto → only when no bio/panels
+}
 // The AI overview card shown at the top of the About tab (view mode).
 function _aboutAiOverviewHTML() {
-    if (!_aboutAiOverview || _aboutHideAiOverview) return '';
+    if (!_aboutAiEffectiveShow()) return '';
     return `<div class="ai-tl-overview-card about-ai-overview">
         <div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview</div>
         ${_collapsibleOverview(_aboutAiOverview)}
@@ -4759,10 +4783,10 @@ function _renderAboutEdit() {
         ${_aboutAiOverview ? `
         <div class="ch-about-ai-toggle">
             <label class="ch-about-mods-toggle" title="Show the AI-generated overview at the top of your About tab">
-                <input type="checkbox" id="ch-about-ai-overview-toggle" ${_aboutHideAiOverview ? '' : 'checked'} onchange="_aboutHideAiOverview=!this.checked;_markAboutDirty()">
+                <input type="checkbox" id="ch-about-ai-overview-toggle" ${_aboutAiEffectiveShow() ? 'checked' : ''} onchange="_aboutAiPref=this.checked?'show':'hide';_markAboutDirty()">
                 <span><i class="fa-solid fa-wand-magic-sparkles"></i> Show AI overview</span>
             </label>
-            <span class="muted ch-about-ai-hint">An AI-written summary of your streams, shown at the top of your About tab.</span>
+            <span class="muted ch-about-ai-hint">An AI-written summary of your streams. Shown automatically until you add a bio; turn it on here to keep showing it, or off to hide it.</span>
         </div>` : ''}
         <div class="ch-about-edit-bio">
             <label class="ch-edit-label">Bio</label>
@@ -4865,7 +4889,7 @@ async function saveAboutInline() {
         // Targets the channel by username, so an allowed mod writes to the STREAMER's
         // channel (not their own). Server enforces the edit permission.
         await api(`/streams/channel/${encodeURIComponent(currentChannelUsername)}/about`, {
-            method: 'PUT', body: { bio: _aboutBio, panels: JSON.stringify(_aboutPanels), hide_ai_overview: _aboutHideAiOverview ? 1 : 0 },
+            method: 'PUT', body: { bio: _aboutBio, panels: JSON.stringify(_aboutPanels), ai_overview_pref: _aboutAiPref, hide_ai_overview: _aboutAiPref === 'hide' ? 1 : 0 },
         });
         if (_aboutIsOwner && currentUser) currentUser.bio = _aboutBio;
         _aboutEditMode = false;

@@ -675,6 +675,10 @@ router.put('/channel', requireAuth, (req, res) => {
         if (hasOwn(req.body, 'hide_ai_overview')) {
             fields.hide_ai_overview = cleanBooleanFlag(req.body.hide_ai_overview) ? 1 : 0;
         }
+        if (hasOwn(req.body, 'ai_overview_pref')) {
+            const p = String(req.body.ai_overview_pref || 'auto').trim();
+            if (['auto', 'show', 'hide'].includes(p)) fields.ai_overview_pref = p;
+        }
 
         // Offline screen config (asset is uploaded separately at /channel/offline-screen)
         if (hasOwn(req.body, 'offline_screen_type')) {
@@ -728,6 +732,11 @@ router.put('/channel/:username/about', requireAuth, (req, res) => {
         // Show/hide the AI overview at the top of the About tab.
         if (hasOwn(req.body, 'hide_ai_overview')) {
             db.updateChannel(channel.user_id, { hide_ai_overview: req.body.hide_ai_overview ? 1 : 0 });
+        }
+        // Tri-state AI-overview preference (auto/show/hide).
+        if (hasOwn(req.body, 'ai_overview_pref')) {
+            const p = String(req.body.ai_overview_pref || 'auto').trim();
+            if (['auto', 'show', 'hide'].includes(p)) db.updateChannel(channel.user_id, { ai_overview_pref: p });
         }
 
         const updated = db.getChannelByUsername(req.params.username);
