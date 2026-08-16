@@ -5284,16 +5284,12 @@ function speakBroadcastTTS(text, username) {
     if (String(text || '').trimStart().startsWith('.')) return;
     const maxQueue = parseInt(s.ttsQueue) || 0;
     if (maxQueue > 0 && ttsQueue.length >= maxQueue) return;
-    // Replace URLs with TTS-friendly descriptions
-    let cleanText = text.replace(/(?:https?:\/\/)?(?:www\.)?([a-z0-9][-a-z0-9]*(?:\.[a-z]{2,})+)(?:[^\s]*)/gi, (m, domain) => {
-        const parts = domain.split('.');
-        const site = parts.length > 2 ? parts[parts.length - 2] : parts[0];
-        return username ? `(${username} sent a link to ${site})` : `(link to ${site})`;
-    });
+    // Replace real links with TTS-friendly descriptions (shared with chat.js + server).
+    let cleanText = HoboChat.ttsReplaceLinks(text, username);
     // Cap to the channel's max TTS length.
     const _ttsMax = (window._channelChatLimits && window._channelChatLimits.tts_max_length) || 200;
     if (cleanText.length > _ttsMax) cleanText = cleanText.slice(0, _ttsMax);
-    const fullText = s.ttsNames === 'on' && username ? `${username} says: ${cleanText}` : cleanText;
+    const fullText = s.ttsNames === 'on' && username ? `${HoboChat.ttsUsername(username)} says: ${cleanText}` : cleanText;
     ttsQueue.push(fullText); processTTSQueue();
 }
 

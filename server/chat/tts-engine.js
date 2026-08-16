@@ -445,14 +445,32 @@ function synthesizeEspeak(text, voiceDef) {
  * Replace URLs with TTS-friendly descriptions.
  * "check youtube.com/watch?v=abc" → "check (link to youtube)"
  */
+// Common gTLDs; every 2-letter TLD is accepted as a country code. Mirrors chat-shared.js.
+const _TTS_TLDS = new Set('com net org io co gg tv me app dev xyz info biz live tech online site store blog news wiki gov edu mil int tools quest link click stream fm to ly gl sh cc ws pro club shop art design games game media cloud email fun life world today space website host page video chat social band lol wtf money'.split(/\s+/));
+function _realTld(tld) { tld = String(tld || '').toLowerCase(); return tld.length === 2 || _TTS_TLDS.has(tld); }
+// Shorten a username for speech: collapse long same-character runs ("WWWW…" → "W") and cap length.
+function ttsUsername(name) {
+    if (!name) return name;
+    let n = String(name).replace(/(.)\1{3,}/g, '$1');
+    if (n.length > 18) n = n.slice(0, 18);
+    return n;
+}
+/**
+ * Replace only REAL links with a spoken description; leave non-link text (typos like
+ * "I.gkt" whose ".gkt" is not a real TLD) untouched so TTS doesn't announce fake links.
+ */
 function replaceUrlsForTTS(text, username) {
-    // Match full URLs (http/https) and bare domain.tld patterns
-    return text.replace(/(?:https?:\/\/)?(?:www\.)?([a-z0-9][-a-z0-9]*(?:\.[a-z]{2,})+)(?:[^\s]*)/gi, (match, domain) => {
-        // Extract the base domain name (e.g. "youtube" from "youtube.com")
-        const parts = domain.split('.');
-        const siteName = parts.length > 2 ? parts[parts.length - 2] : parts[0];
-        return username ? `(${username} sent a link to ${siteName})` : `(link to ${siteName})`;
-    });
+    const uname = ttsUsername(username);
+    return String(text == null ? '' : text).replace(
+        /((?:https?:\/\/)?(?:www\.)?)([a-z0-9][-a-z0-9]*(?:\.[a-z]{2,})+)([^\s]*)/gi,
+        (match, pre, domain) => {
+            const hasScheme = /https?:\/\//i.test(pre) || /^www\./i.test(pre);
+            const parts = domain.split('.');
+            if (!hasScheme && !_realTld(parts[parts.length - 1])) return match; // not a real link
+            const siteName = parts.length > 2 ? parts[parts.length - 2] : parts[0];
+            return uname ? `(${uname} sent a link to ${siteName})` : `(link to ${siteName})`;
+        }
+    );
 }
 
 function sanitize(text, maxLen, username) {

@@ -506,9 +506,42 @@
             </div>`;
     }
 
+    /* ═══════════════════════════════════════════════════════════════
+       TTS link/username helpers — shared so chat.js, broadcast.js (and a
+       mirror in the server tts-engine) all decide "is this actually a link?"
+       the same way, instead of reading "sent a link to i" for typos like
+       "I.gkt" whose ".gkt" isn't a real TLD.
+       ═══════════════════════════════════════════════════════════════ */
+    // Common gTLDs; every 2-letter TLD is accepted as a country code.
+    const _TTS_TLDS = new Set('com net org io co gg tv me app dev xyz info biz live tech online site store blog news wiki gov edu mil int tools quest link click stream fm to ly gl sh cc ws pro club shop art design games game media cloud email fun life world today space website host page video chat social band lol wtf social space money space'.split(/\s+/));
+    function _realTld(tld) { tld = String(tld || '').toLowerCase(); return tld.length === 2 || _TTS_TLDS.has(tld); }
+    // Shorten a username for speech: collapse long same-character runs ("WWWW…" → "W") and cap length.
+    function ttsUsername(name) {
+        if (!name) return name;
+        let n = String(name).replace(/(.)\1{3,}/g, '$1');
+        if (n.length > 18) n = n.slice(0, 18);
+        return n;
+    }
+    // Replace only REAL links with a spoken description; leave non-link text (typos) untouched.
+    function ttsReplaceLinks(text, username) {
+        const uname = ttsUsername(username);
+        return String(text == null ? '' : text).replace(
+            /((?:https?:\/\/)?(?:www\.)?)([a-z0-9][-a-z0-9]*(?:\.[a-z]{2,})+)([^\s]*)/gi,
+            (m, pre, domain) => {
+                const hasScheme = /https?:\/\//i.test(pre) || /^www\./i.test(pre);
+                const parts = domain.split('.');
+                if (!hasScheme && !_realTld(parts[parts.length - 1])) return m; // not a real link → keep as text
+                const site = parts.length > 2 ? parts[parts.length - 2] : parts[0];
+                return uname ? `(${uname} sent a link to ${site})` : `(link to ${site})`;
+            }
+        );
+    }
+
     window.HoboChat = {
         escape: esc,
         linkify,
+        ttsReplaceLinks,
+        ttsUsername,
         handleLinkClick: handleChatLinkClick,
         showLinkContextMenu,
         isTrusted: (domain) => _trustedDomains.has(String(domain || '').toLowerCase()),
