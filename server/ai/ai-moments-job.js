@@ -50,32 +50,40 @@ function _heuristicPick(pool, n) {
         .sort((a, b) => a.k - b.k).slice(0, n).map(s => ({ cand: s.c, title: null }));
 }
 
-async function tick() {
-    if (_busy || !_due()) return;
+async function tick(opts = {}) {
+    // opts: { force } bypass the daily gate, { days, limit } widen the candidate window
+    // (e.g. whole-dataset test run), { target } how many moments to select.
+    if (_busy || (!opts.force && !_due())) return;
+    const TARGET_N = Math.max(1, opts.target || TARGET);
+    const DAYS = opts.days || 30;
+    const LIMIT = opts.limit || 150;
+    // A forced whole-dataset run ("test / best of all-time") ignores the recently-used log so
+    // it can re-surface the genuinely top moments; the scheduled daily run still rotates.
+    const ignoreUsed = !!opts.force && !!opts.fresh;
     _busy = true;
     try {
         const prev = _load();
-        const usedIds = new Set(prev.usedIds || []);
+        const usedIds = new Set(ignoreUsed ? [] : (prev.usedIds || []));
         // Finished-VOD moments only, with an offset that actually falls inside the VOD.
-        const raw = (db.getAiMomentCandidates(30, 150) || [])
+        const raw = (db.getAiMomentCandidates(DAYS, LIMIT) || [])
             .filter(c => c.vod_id && (!c.vod_duration || (c.offset_seconds || 0) < c.vod_duration - 2));
         if (!raw.length) { _busy = false; return; }
         const fresh = raw.filter(c => !usedIds.has(c.memory_id));
         // One moment per streamer per run so a single busy channel can't flood the pastes tab.
         const seenUser = new Set();
-        const oneEach = (fresh.length >= TARGET ? fresh : raw).filter(c => {
+        const oneEach = (fresh.length >= TARGET_N ? fresh : raw).filter(c => {
             if (seenUser.has(c.user_id)) return false;
             seenUser.add(c.user_id); return true;
         });
         const pool = oneEach;
 
         let picks = [];
-        if (ai.isEnabled && ai.isEnabled() && ai.withinBudget && ai.withinBudget() && pool.length > TARGET) {
-            picks = await _aiPick(pool, TARGET);
+        if (ai.isEnabled && ai.isEnabled() && ai.withinBudget && ai.withinBudget() && pool.length > TARGET_N) {
+            picks = await _aiPick(pool, TARGET_N);
         }
-        if (picks.length < TARGET) {
+        if (picks.length < TARGET_N) {
             const chosen = new Set(picks.map(p => p.cand.memory_id));
-            for (const h of _heuristicPick(pool.filter(c => !chosen.has(c.memory_id)), TARGET - picks.length)) picks.push(h);
+            for (const h of _heuristicPick(pool.filter(c => !chosen.has(c.memory_id)), TARGET_N - picks.length)) picks.push(h);
         }
 
         const moments = [];
@@ -143,3 +151,22 @@ function start() {
 }
 
 module.exports = { start, tick };
+
+// CLI: force a one-off regeneration, e.g. a whole-dataset "best of all-time" test run:
+//   node server/ai/ai-moments-job.js --all --fresh --target=8
+if (require.main === module) {
+    const argv = process.argv.slice(2);
+    const has = (f) => argv.includes(f);
+    const num = (name, def) => { const a = argv.find(x => x.startsWith(`--${name}=`)); return a ? parseInt(a.split('=')[1], 10) : def; };
+    const opts = {
+        force: true,
+        fresh: has('--fresh'),                       // ignore the recently-used log
+        days: has('--all') ? 100000 : num('days', 30),
+        limit: has('--all') ? 500 : num('limit', 150),
+        target: num('target', 6),
+    };
+    console.log('[AI-Moments] Manual run:', JSON.stringify(opts));
+    tick(opts)
+        .then(() => { const p = _load(); console.log(`[AI-Moments] Done — ${(p.moments || []).length} moment(s) in the hero set.`); process.exit(0); })
+        .catch((e) => { console.error('[AI-Moments] Manual run failed:', e); process.exit(1); });
+}
