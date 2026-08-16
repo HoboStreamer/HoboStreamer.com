@@ -23,6 +23,7 @@
 const WebSocket = require('ws');
 const https = require('node:https');
 const crypto = require('node:crypto');
+const dgram = require('node:dgram');
 
 let werift = null;
 try { werift = require('werift'); } catch { /* optional dep — relay disabled if absent */ }
@@ -196,6 +197,22 @@ function buildProduceParams(md) {
     };
 }
 
+// Open a lossless in-process ingest for a producer: a mediasoup PlainTransport consumer
+// pipes the producer's ENCODED RTP to a localhost UDP socket we read. (DirectTransport's
+// consumer 'rtp' event does not fire in this mediasoup build, so we use the same
+// PlainTransport→UDP mechanism the transcode publisher uses — proven to deliver RTP.)
+async function openPlainIngest(sfu, roomId, producerId) {
+    const socket = dgram.createSocket('udp4');
+    await new Promise((res, rej) => {
+        socket.once('error', rej);
+        socket.bind(0, '127.0.0.1', () => { socket.removeListener('error', rej); res(); });
+    });
+    try { socket.setRecvBufferSize?.(4 * 1024 * 1024); } catch { /* best effort */ }
+    const port = socket.address().port;
+    const info = await sfu.createPlainConsumer(roomId, producerId, '127.0.0.1', port, port + 1);
+    return { socket, port, transportId: info.transportId, consumerId: info.consumerId, payloadType: info.payloadType, kind: info.kind };
+}
+
 // ── Relay ────────────────────────────────────────────────────────────────
 class RsPassthroughRelay {
     constructor() {
@@ -209,7 +226,7 @@ class RsPassthroughRelay {
     async start(stream, integration) {
         if (!werift) { log(stream.id, 'werift not installed — cannot start passthrough'); return false; }
         if (this.sessions.has(stream.id)) return true;
-        const session = { streamId: stream.id, robotId: integration.robot_id, token: integration.token, stopped: false, peer: null, pc: null, consumers: [], roomId: `stream-${stream.id}`, restartTimer: null };
+        const session = { streamId: stream.id, robotId: integration.robot_id, token: integration.token, stopped: false, peer: null, pc: null, ingests: [], roomId: `stream-${stream.id}`, restartTimer: null };
         this.sessions.set(stream.id, session);
         this._run(session).catch(err => {
             log(stream.id, 'run error:', err.message);
@@ -241,9 +258,13 @@ class RsPassthroughRelay {
     }
 
     _teardown(session) {
+        if (session.statsTimer) { clearInterval(session.statsTimer); session.statsTimer = null; }
         const sfu = require('../streaming/webrtc-sfu');
-        for (const c of session.consumers) { try { sfu.closeDirectPassthroughConsumer(session.roomId, c.transportKey); } catch {} }
-        session.consumers = [];
+        for (const ing of session.ingests) {
+            try { ing.socket.removeAllListeners('message'); ing.socket.close(); } catch {}
+            try { sfu.closePlainConsumer(session.roomId, ing.transportId); } catch {}
+        }
+        session.ingests = [];
         try { session.pc?.close(); } catch {}
         try { session.peer?.close(); } catch {}
         session.pc = null; session.peer = null;
@@ -260,11 +281,11 @@ class RsPassthroughRelay {
         const audioProd = sfu.findProducerByKind(session.roomId, 'audio');
         log(sid, `source producers: video=${videoProd.id}${audioProd ? ` audio=${audioProd.id}` : ' (no audio)'}`);
 
-        // 2) In-process encoded-RTP consumers (lossless).
-        const videoCon = await sfu.createDirectPassthroughConsumer(session.roomId, videoProd.id);
-        session.consumers.push(videoCon);
-        let audioCon = null;
-        if (audioProd) { audioCon = await sfu.createDirectPassthroughConsumer(session.roomId, audioProd.id); session.consumers.push(audioCon); }
+        // 2) Encoded-RTP ingest (PlainTransport → localhost UDP socket).
+        const videoIn = await openPlainIngest(sfu, session.roomId, videoProd.id);
+        session.ingests.push(videoIn);
+        let audioIn = null;
+        if (audioProd) { audioIn = await openPlainIngest(sfu, session.roomId, audioProd.id); session.ingests.push(audioIn); }
 
         // 3) Connect to RS: discover SFU, open protoo.
         const page = await postJson(RS_API_HOST, '/v1/robot_page_load', { token: session.token, robot_id: session.robotId, referrer: `https://robotstreamer.com/robot/${session.robotId}` });
@@ -327,21 +348,31 @@ class RsPassthroughRelay {
         }
 
         // 9) Forward encoded RTP straight through (strip our-router ext ids, match declared PT).
+        //    Each UDP datagram from the PlainTransport consumer is one RTP packet.
+        const stats = { v: 0, a: 0, pli: 0 };
         const vPt = +vMedia.pts[0];
-        videoCon.consumer.on('rtp', (buf) => {
-            try { const p = RtpPacket.deSerialize(buf); p.header.payloadType = vPt; p.header.extensions = []; videoTrack.writeRtp(p); } catch { /* drop malformed */ }
+        videoIn.socket.on('message', (buf) => {
+            try { const p = RtpPacket.deSerialize(buf); p.header.payloadType = vPt; p.header.extensions = []; videoTrack.writeRtp(p); stats.v++; } catch { /* drop malformed */ }
         });
-        if (audioCon && aMedia) {
+        if (audioIn && aMedia) {
             const aPt = +aMedia.pts[0];
-            audioCon.consumer.on('rtp', (buf) => {
-                try { const p = RtpPacket.deSerialize(buf); p.header.payloadType = aPt; p.header.extensions = []; audioTrack.writeRtp(p); } catch { /* */ }
+            audioIn.socket.on('message', (buf) => {
+                try { const p = RtpPacket.deSerialize(buf); p.header.payloadType = aPt; p.header.extensions = []; audioTrack.writeRtp(p); stats.a++; } catch { /* */ }
             });
         }
 
         // 10) Relay RS keyframe requests (PLI/FIR) back to the source encoder.
         const vSender = videoTx.sender;
-        const reqKey = () => { videoCon.consumer.requestKeyFrame().catch(() => {}); };
+        const reqKey = () => { stats.pli++; sfu.requestConsumerKeyFrame(session.roomId, videoIn.consumerId).catch?.(() => {}); };
         vSender.onPictureLossIndication?.subscribe(reqKey);
+
+        // Throughput heartbeat so a live stream shows media actually flowing (not just connected).
+        let lastV = 0, lastA = 0;
+        session.statsTimer = setInterval(() => {
+            log(sid, `flow: video ${Math.round((stats.v - lastV) / 10)}/s audio ${Math.round((stats.a - lastA) / 10)}/s (total v=${stats.v} a=${stats.a}) pli=${stats.pli} werift=${pc.connectionState}`);
+            lastV = stats.v; lastA = stats.a;
+        }, 10000);
+        session.statsTimer.unref?.();
         vSender.onGenericNack?.subscribe(() => { /* werift retransmits from its own buffer; keyframe as backstop for heavy loss */ });
         for (const d of [250, 800, 2000]) setTimeout(reqKey, d); // ensure RS gets an early keyframe
 

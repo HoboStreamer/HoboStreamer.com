@@ -460,6 +460,15 @@ class WebRTCSFU extends EventEmitter {
         }
     }
 
+    /** Ask a consumer's source to emit a keyframe (relays a downstream PLI to the encoder). */
+    async requestConsumerKeyFrame(roomId, consumerId) {
+        const room = this.rooms.get(roomId);
+        const entry = room?.consumers.get(consumerId);
+        if (entry?.consumer && !entry.consumer.closed && entry.consumer.kind === 'video') {
+            try { await entry.consumer.requestKeyFrame(); } catch { /* transient */ }
+        }
+    }
+
     /**
      * Check if a room has producers.
      * @param {string} roomId
