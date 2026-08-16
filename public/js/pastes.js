@@ -104,6 +104,12 @@ async function fetchPastes() {
 
         grid.innerHTML = data.pastes.map(p => renderPasteCard(p)).join('');
 
+        // Admin bulk-select (ctrl/shift multi-select + bulk delete) on the pastes index,
+        // mirroring the global VODs/Clips pages. No-op for non-admins (cards stay plain links).
+        if (typeof _selSetContext === 'function' && typeof _isContentAdmin === 'function') {
+            _selSetContext(_isContentAdmin(), fetchPastes);
+        }
+
         // Pagination
         const pagEl = document.getElementById('pastes-pagination');
         if (pagEl) {
@@ -150,8 +156,8 @@ function renderPasteCard(p) {
     }
     const nsfwBlur = p.is_nsfw ? ' paste-card-nsfw-blur' : '';
 
-    return `
-        <div class="paste-card${nsfwBlur}" onclick="navigate('/p/${p.slug}')">
+    const _cardInner = `
+        <a class="paste-card${nsfwBlur}" href="/p/${p.slug}" onclick="return handleLinkClick(event, '/p/${p.slug}')">
             ${thumb}
             <div class="paste-card-info">
                 <div class="paste-card-title">${pinBadge}${nsfwBadge}${escapeHtml(p.title)}${burnBadge}</div>
@@ -164,7 +170,9 @@ function renderPasteCard(p) {
                 </div>
                 ${(typeof _cardAiHTML === 'function') ? _cardAiHTML(p.ai_summary) : ((p.ai_summary && p.ai_summary.trim()) ? `<div class="card-ai-overview"><i class="fa-solid fa-wand-magic-sparkles"></i> ${escapeHtml(p.ai_summary)}</div>` : '')}
             </div>
-        </div>`;
+        </a>`;
+    // Wrap for admin bulk-select (ctrl/shift multi-select + bulk delete) when enabled.
+    return (typeof _selWrap === 'function') ? _selWrap('paste', p.slug, _cardInner, !!p.owner_is_owner) : _cardInner;
 }
 
 function filterPastes(type) {

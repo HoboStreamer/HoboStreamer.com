@@ -2956,14 +2956,14 @@ function addChatMessage(msg) {
             const thumb = clip.thumbnail_url
                 ? `<div class="clip-chat-thumb"><img src="${esc(clip.thumbnail_url)}" alt="" loading="lazy">${dur ? `<span class="clip-chat-dur">${esc(dur)}</span>` : ''}<span class="clip-chat-play"><i class="fa-solid fa-play"></i></span></div>`
                 : `<div class="clip-chat-thumb clip-chat-thumb-ph"><i class="fa-solid fa-scissors"></i></div>`;
-            text = `<div class="clip-chat-card" onclick="navigate('/clip/${clip.clip_id}')" title="Watch clip">
+            text = `<a class="clip-chat-card" href="/clip/${clip.clip_id}" onclick="return handleLinkClick(event, '/clip/${clip.clip_id}')" title="Watch clip">
                 ${thumb}
                 <div class="clip-chat-info">
                     <div class="clip-chat-label"><i class="fa-solid fa-scissors"></i> New clip</div>
                     <div class="clip-chat-title">${esc(clip.title || 'Untitled Clip')}</div>
                     <div class="clip-chat-meta">by ${esc(clip.creator || msg.username || 'someone')}</div>
                 </div>
-            </div>`;
+            </a>`;
         }
     }
     if (msg.message_type === 'soundboard' && msg.soundboard) {
