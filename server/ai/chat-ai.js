@@ -68,7 +68,7 @@ function _parseJson(text) {
 
 function _clip(str, n) { str = (str == null ? '' : String(str)).trim(); return str.length > n ? str.slice(0, n) : str; }
 
-function _fmtMessages(rows, { includeChannel = false } = {}) {
+function _fmtMessages(rows, { includeChannel = false, now = 0 } = {}) {
     const lines = [];
     for (const r of rows) {
         const who = r.username || (r.user_id ? `user#${r.user_id}` : 'anon');
@@ -79,7 +79,10 @@ function _fmtMessages(rows, { includeChannel = false } = {}) {
             else if (r.stream_id) ctx = `[stream] `;
         }
         const kind = (r.message_type && r.message_type !== 'chat') ? `(${r.message_type}) ` : '';
-        lines.push(`${ctx}${who}: ${kind}${_clip(r.message, MSG_MAX_CHARS)}`);
+        // "[Xm ago]" marker so the model can time-stamp notable moments accurately.
+        let when = '';
+        if (now) { const t = _parseSqlTime(r.timestamp || r.created_at); if (t) when = `[${Math.max(0, Math.round((now - t) / 60000))}m ago] `; }
+        lines.push(`${when}${ctx}${who}: ${kind}${_clip(r.message, MSG_MAX_CHARS)}`);
     }
     let out = lines.join('\n');
     if (out.length > PROMPT_MSGS_MAX_CHARS) out = out.slice(out.length - PROMPT_MSGS_MAX_CHARS); // keep the freshest
@@ -95,14 +98,20 @@ function _windowLabel(ms) {
     return `past ${days} day${days === 1 ? '' : 's'}`;
 }
 
-function _mergeTimeline(priorJson, additions, nowIso) {
+function _mergeTimeline(priorJson, additions, fallbackTs, nowMs) {
     let prior = [];
     try { prior = JSON.parse(priorJson || '[]'); if (!Array.isArray(prior)) prior = []; } catch { prior = []; }
     const add = Array.isArray(additions) ? additions : [];
+    const now = nowMs || Date.now();
     for (const a of add) {
         const label = _clip(a && (a.label || a.title), 80);
         if (!label) continue;
-        prior.push({ ts: nowIso, label, detail: _clip(a.detail || a.description || '', 240) });
+        // Prefer the AI's estimated "minutes ago" (derived from the [Xm ago] markers we feed it),
+        // so a moment is stamped when it ACTUALLY happened — not when the analysis ran.
+        let ts = fallbackTs;
+        const mins = Number(a && a.mins_ago);
+        if (Number.isFinite(mins) && mins >= 0 && mins <= 43200) ts = _sqlTime(now - mins * 60000);
+        prior.push({ ts, label, detail: _clip(a.detail || a.description || '', 240) });
     }
     if (prior.length > TIMELINE_MAX) prior = prior.slice(prior.length - TIMELINE_MAX);
     return JSON.stringify(prior);
@@ -144,7 +153,7 @@ Return ONLY a JSON object, no prose, with exactly these keys:
 {
   "recent_overview": "2-4 sentences on what the chat is about right now: main topics, mood/energy, who's active, any notable events. Concrete, no fluff.",
   "memory": "Condensed running notes about this community carried forward: recurring topics, regulars, running jokes, ongoing events/dramas. Update the PRIOR notes with anything new; keep it under ~1400 chars.",
-  "timeline": [ {"label":"short title","detail":"one sentence"} ]  // 0-3 genuinely NOTABLE moments from THIS window (raids, milestones, big drama, memorable bits). Use [] if nothing stands out — do not invent.
+  "timeline": [ {"label":"short title","detail":"one sentence","mins_ago": <integer: minutes before now this happened, read from the [Xm ago] markers on the messages>} ]  // 0-3 genuinely NOTABLE moments from THIS window (raids, milestones, big drama, memorable bits). Use [] if nothing stands out — do not invent.
 }
 
 PRIOR running notes (may be empty):
@@ -154,7 +163,7 @@ Recent timeline entries already recorded (avoid duplicating these):
 ${recentLabels}
 
 RECENT CHAT (${rows.length} messages, oldest first):
-${_fmtMessages(rows, { includeChannel: true })}`;
+${_fmtMessages(rows, { includeChannel: true, now })}`;
 
     const text = await ai.summarizeText(prompt, 700, 'chat_global');
     if (!text) return false; // disabled / over budget / call failed
@@ -166,7 +175,7 @@ ${_fmtMessages(rows, { includeChannel: true })}`;
         scope: 'global', subject_id: 0, window: 'global',
         overview: _clip(parsed.recent_overview || '', 2000),
         memory_json: _clip(parsed.memory || priorMemory, MEMORY_MAX_CHARS),
-        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso),
+        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso, now),
         message_count: (prior ? (prior.message_count || 0) : 0) + newCount,
         window_message_count: rows.length,
         last_message_id: maxId,
@@ -203,14 +212,14 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "overview_24h": "${has24h ? '2-3 sentences on what this user has been chatting about and their mood/energy in the LAST 24 HOURS.' : 'They have not chatted in the last 24h; write 1 sentence noting they have been quiet recently.'}",
   "overview_alltime": "2-3 sentences on who this user is as a chatter OVERALL: their style, recurring interests, tone, how they interact.",
   "memory": "Condensed running notes about this user carried forward (interests, catchphrases, who they talk to, patterns). Update the PRIOR notes; keep under ~1000 chars.",
-  "timeline": [ {"label":"short title","detail":"one sentence"} ]  // 0-2 NEW notable moments for this user, or [].
+  "timeline": [ {"label":"short title","detail":"one sentence","mins_ago": <integer: minutes before now this happened, read from the [Xm ago] markers on the messages>} ]  // 0-2 NEW notable moments for this user, or [].
 }
 
 PRIOR running notes (all-time gist so far${totalSeen ? `; ~${totalSeen} messages seen previously` : ''}):
 """${_clip(priorMemory, USER_MEMORY_MAX_CHARS)}"""
 
 ${has24h ? 'MESSAGES FROM THIS USER IN THE LAST 24H' : 'THIS USER\'S MOST RECENT MESSAGES'} (oldest first):
-${_fmtMessages(dayRows)}`;
+${_fmtMessages(dayRows, { now })}`;
 
     const text = await ai.summarizeText(prompt, 600, 'chat_user');
     if (!text) return false;
@@ -219,6 +228,11 @@ ${_fmtMessages(dayRows)}`;
 
     const newCount = db.countChatMessagesSince(prior ? (prior.last_message_id || 0) : 0, uid);
     const nowIso = _sqlTime(now);
+    // Stamp new timeline moments with the user's ACTUAL last activity time in the analyzed
+    // batch — NOT "now". Otherwise old moments show as "2m ago" whenever the insight is refreshed
+    // (e.g. when someone opens it), even if the user hasn't chatted in days.
+    const _lastRow = dayRows[dayRows.length - 1] || {};
+    const activityTs = _lastRow.timestamp || _lastRow.created_at || nowIso;
     // Canonical rolling row: memory + timeline + high-water + both overviews (as JSON).
     db.upsertChatAiSummary({
         scope: 'user', subject_id: uid, window: 'rolling',
@@ -228,7 +242,7 @@ ${_fmtMessages(dayRows)}`;
             has_24h: has24h,
         }),
         memory_json: _clip(parsed.memory || priorMemory, USER_MEMORY_MAX_CHARS),
-        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso),
+        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, activityTs, now),
         message_count: totalSeen + newCount,
         window_message_count: dayRows.length,
         last_message_id: maxId || db.getMaxChatMessageId(),
@@ -280,14 +294,14 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "overview_24h": "${has24h ? '2-3 sentences on what this user chatted about and their mood/energy in the LAST 24 HOURS.' : 'They have not chatted in the last 24h; 1 sentence noting they have been quiet recently.'}",
   "overview_alltime": "2-3 sentences on who this user is as a chatter OVERALL: style, recurring interests, tone.",
   "memory": "Condensed running notes carried forward (interests, catchphrases, patterns). Update the PRIOR notes; keep under ~1000 chars.",
-  "timeline": [ {"label":"short title","detail":"one sentence"} ]  // 0-2 NEW notable moments, or [].
+  "timeline": [ {"label":"short title","detail":"one sentence","mins_ago": <integer: minutes before now this happened, read from the [Xm ago] markers on the messages>} ]  // 0-2 NEW notable moments, or [].
 }
 
 PRIOR running notes:
 """${_clip(priorMemory, USER_MEMORY_MAX_CHARS)}"""
 
 ${has24h ? 'MESSAGES FROM THIS USER IN THE LAST 24H' : "THIS USER'S MOST RECENT MESSAGES"} (oldest first):
-${_fmtMessages(dayRows)}`;
+${_fmtMessages(dayRows, { now })}`;
 
     const text = await ai.summarizeText(prompt, 600, 'chat_relay');
     if (!text) return false;
@@ -303,7 +317,7 @@ ${_fmtMessages(dayRows)}`;
             has_24h: has24h,
         }),
         memory_json: _clip(parsed.memory || priorMemory, USER_MEMORY_MAX_CHARS),
-        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso),
+        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso, now),
         message_count: ru.message_count || 0,
         window_message_count: dayRows.length,
         last_message_id: db.getMaxChatMessageId(),
@@ -351,14 +365,14 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "overview_24h": "${has24h ? '2-3 sentences on what this anon chatted about and their mood/energy in the LAST 24 HOURS.' : 'They have not chatted in the last 24h; 1 sentence noting they have been quiet recently.'}",
   "overview_alltime": "2-3 sentences on who this anon is as a chatter OVERALL: style, recurring interests, tone.",
   "memory": "Condensed running notes carried forward (interests, catchphrases, patterns). Update the PRIOR notes; keep under ~1000 chars.",
-  "timeline": [ {"label":"short title","detail":"one sentence"} ]  // 0-2 NEW notable moments, or [].
+  "timeline": [ {"label":"short title","detail":"one sentence","mins_ago": <integer: minutes before now this happened, read from the [Xm ago] markers on the messages>} ]  // 0-2 NEW notable moments, or [].
 }
 
 PRIOR running notes:
 """${_clip(priorMemory, USER_MEMORY_MAX_CHARS)}"""
 
 ${has24h ? 'MESSAGES FROM THIS ANON IN THE LAST 24H' : "THIS ANON'S MOST RECENT MESSAGES"} (oldest first):
-${_fmtMessages(dayRows)}`;
+${_fmtMessages(dayRows, { now })}`;
 
     const text = await ai.summarizeText(prompt, 600, 'chat_anon');
     if (!text) return false;
@@ -374,7 +388,7 @@ ${_fmtMessages(dayRows)}`;
             has_24h: has24h,
         }),
         memory_json: _clip(parsed.memory || priorMemory, USER_MEMORY_MAX_CHARS),
-        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso),
+        timeline_json: _mergeTimeline(prior ? prior.timeline_json : '[]', parsed.timeline, nowIso, now),
         message_count: dayRows.length,
         window_message_count: dayRows.length,
         last_message_id: db.getMaxChatMessageId(),
