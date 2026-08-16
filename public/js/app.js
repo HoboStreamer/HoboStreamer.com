@@ -891,6 +891,9 @@ function setPageTitle(name) {
 window.setPageTitle = setPageTitle;
 
 function routeFromURL() {
+    // Remove the server-rendered SEO prerender block once the SPA takes over (it's crawlable
+    // content for no-JS scrapers; JS clients render the real interactive page instead).
+    try { document.getElementById('seo-prerender')?.remove(); } catch { /* */ }
     setPageTitle(null); // reset to default; per-route loaders set it once content loads
     const path = window.location.pathname;
     const segments = path.split('/').filter(Boolean);
