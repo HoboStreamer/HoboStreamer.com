@@ -3997,6 +3997,42 @@ async function loadGlobalChatHistory() {
    CONTEXT MENU
    ═══════════════════════════════════════════════════════════════ */
 
+// Middle-click a chat username → open their channel (real users), or open the right-click
+// context menu for relay / anon / system names that have no channel to visit.
+(function _wireChatUsernameMiddleClick() {
+    if (window._chatUsernameMiddleClickWired) return;
+    window._chatUsernameMiddleClickWired = true;
+    // Suppress the browser's middle-click autoscroll when starting on a username.
+    document.addEventListener('mousedown', (e) => {
+        if (e.button === 1 && e.target.closest && e.target.closest('.chat-user[data-username]')) e.preventDefault();
+    });
+    document.addEventListener('auxclick', (e) => {
+        if (e.button !== 1) return; // middle button only
+        const target = e.target.closest && e.target.closest('.chat-user[data-username]');
+        if (!target) return;
+        e.preventDefault();
+        const username = target.dataset.username;
+        if (!username) return;
+        const msgEl = target.closest('.chat-msg');
+        const sourcePlatform = msgEl?.dataset?.sourcePlatform || '';
+        const isRelay = msgEl?.dataset?.isRelay === '1' || isRelayPlatform(sourcePlatform)
+            || isRelayPlatform(parseRelayUsername(username || '').platform);
+        const isAnon = target.dataset.anon === '1';
+        // Relay / anon / system users have no channel page — show their context menu instead.
+        if (isRelay || isAnon || isSystemUsername(username)) {
+            // showChatContextMenu reads event.currentTarget; in this delegated listener that
+            // would be `document`, so hand it a synthetic event anchored to the username span.
+            showChatContextMenu({
+                currentTarget: target, target: e.target,
+                clientX: e.clientX, clientY: e.clientY,
+                preventDefault() {}, stopPropagation() {},
+            });
+        } else {
+            ctxViewChannel(target.dataset.coreUsername || username);
+        }
+    });
+})();
+
 function showChatContextMenu(event) {
     event.preventDefault();
     event.stopPropagation();
