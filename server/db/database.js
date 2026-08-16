@@ -2466,6 +2466,29 @@ function countStreamMemoriesByUser(userId) {
     catch { return 0; }
 }
 
+// Flattened audio-transcript segments for a whole stream (from its memories), ordered by time.
+// Used by the AI Timeline transcript viewer; each segment deep-links to the VOD at its start.
+function getStreamTranscriptSegments(streamId) {
+    const out = [];
+    try {
+        const rows = all('SELECT offset_seconds, transcript_json FROM stream_memories WHERE stream_id = ? AND transcript_json IS NOT NULL ORDER BY offset_seconds ASC', [streamId]);
+        for (const r of rows) {
+            try {
+                const segs = JSON.parse(r.transcript_json);
+                for (const sg of (Array.isArray(segs) ? segs : [])) {
+                    const text = String((sg && (sg.text || sg.t)) || '').trim();
+                    if (!text) continue;
+                    let start = sg && (sg.start != null ? sg.start : (sg.offset != null ? sg.offset : sg.s));
+                    if (start == null || isNaN(Number(start))) start = r.offset_seconds || 0;
+                    out.push({ start: Math.floor(Number(start) || 0), text });
+                }
+            } catch { /* */ }
+        }
+    } catch { /* */ }
+    out.sort((a, b) => a.start - b.start);
+    return out;
+}
+
 // Candidate memories for the daily AI "crazy moments" picker: recent, substantive, and from
 // a stream that has a public VOD (so we can link + extract the moment frame).
 function getAiMomentCandidates(days = 30, limit = 150) {
@@ -2527,10 +2550,26 @@ function assembleStreamerAiTimeline(userId) {
         sessions = streams.map(s => {
             let memories = [];
             try {
-                memories = all(`SELECT offset_seconds, description, tags, thumbnail_url, captured_at
+                memories = all(`SELECT offset_seconds, description, tags, thumbnail_url, captured_at, transcript_json
                                 FROM stream_memories WHERE stream_id = ? ORDER BY offset_seconds ASC LIMIT 400`, [s.id]);
             } catch { /* */ }
-            return { ...s, memories };
+            // Compute the session's total spoken-word count from the transcripts, then DROP the
+            // (heavy) transcript_json from the payload — the full transcript loads on demand.
+            let wordCount = 0, hasTranscript = false;
+            for (const m of memories) {
+                if (m.transcript_json) {
+                    hasTranscript = true;
+                    try {
+                        const segs = JSON.parse(m.transcript_json);
+                        for (const sg of (Array.isArray(segs) ? segs : [])) {
+                            const txt = (sg && (sg.text || sg.t)) || '';
+                            wordCount += String(txt).trim().split(/\s+/).filter(Boolean).length;
+                        }
+                    } catch { /* */ }
+                }
+                delete m.transcript_json;
+            }
+            return { ...s, memories, word_count: wordCount, has_transcript: hasTranscript };
         });
     } catch { /* */ }
 
@@ -6638,7 +6677,7 @@ module.exports = {
     getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTimeline, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
-    getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getUserPastesForAi,
+    getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getStreamTranscriptSegments, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     getStreamerAiTimeline, assembleStreamerAiTimeline,
     // Homepage helpers

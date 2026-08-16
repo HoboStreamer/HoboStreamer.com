@@ -171,4 +171,21 @@ router.get('/timeline/:username', (req, res) => {
     }
 });
 
+// Full audio transcript for a stream (AI Timeline transcript viewer), with a VOD id for links.
+router.get('/transcript/:streamId', (req, res) => {
+    try {
+        const sid = parseInt(req.params.streamId, 10);
+        if (!Number.isFinite(sid)) return res.status(400).json({ error: 'Invalid stream id' });
+        const segments = db.getStreamTranscriptSegments(sid) || [];
+        let vodId = null;
+        try {
+            const v = db.get('SELECT id FROM vods WHERE stream_id = ? AND COALESCE(is_recording, 0) = 0 ORDER BY COALESCE(is_public,1) DESC, id DESC LIMIT 1', [sid]);
+            vodId = v ? v.id : null;
+        } catch { /* */ }
+        res.json({ streamId: sid, vodId, segments });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load transcript' });
+    }
+});
+
 module.exports = router;

@@ -2716,16 +2716,26 @@ async function _openChatInsightModal(opts) {
                 <h4><i class="fa-solid fa-infinity"></i> Overall <span class="uai-tag uai-tag-all">all-time</span></h4>
                 <div class="uai-body">${esc(ins.overview_alltime || '')}</div>
             </div>
-            ${tl.length ? `<div class="uai-section">
-                <h4><i class="fa-solid fa-timeline"></i> Notable moments</h4>
-                <div class="gai-timeline">${tl.slice(0, 3).map(t => `
-                    <div class="gai-tl-item">
+            ${tl.length ? (() => {
+                // Relay users have no channel page → expand the full timeline inline (lazy).
+                // Everyone else links out to their channel's AI Timeline tab.
+                const hasChannel = !!(opts.username || opts.title) && !opts.isRelay;
+                const PREVIEW = opts.isRelay ? 5 : 3;
+                const items = tl.map((t, i) => `
+                    <div class="gai-tl-item${i >= PREVIEW ? ' uai-tl-item-hidden' : ''}">
                         <div class="gai-tl-when">${_aiTimeAgo(t.ts)}</div>
                         <div class="gai-tl-label">${esc(t.label || '')}</div>
                         ${t.detail ? `<div class="gai-tl-detail">${esc(t.detail)}</div>` : ''}
-                    </div>`).join('')}</div>
-                ${(opts.username || opts.title) ? `<a class="uai-tl-more" href="${channelPath(opts.username || opts.title)}#ai-timeline" onclick="document.getElementById('user-ai-modal-overlay')?.remove(); return handleLinkClick(event, '${channelPath(opts.username || opts.title)}#ai-timeline')"><i class="fa-solid fa-timeline"></i> View full AI timeline <i class="fa-solid fa-arrow-right" style="font-size:0.8em"></i></a>` : ''}
-            </div>` : ''}
+                    </div>`).join('');
+                const footer = hasChannel
+                    ? `<a class="uai-tl-more" href="${channelPath(opts.username || opts.title)}#ai-timeline" onclick="document.getElementById('user-ai-modal-overlay')?.remove(); return handleLinkClick(event, '${channelPath(opts.username || opts.title)}#ai-timeline')"><i class="fa-solid fa-timeline"></i> View full AI timeline <i class="fa-solid fa-arrow-right" style="font-size:0.8em"></i></a>`
+                    : (tl.length > PREVIEW ? `<button type="button" class="uai-tl-more" onclick="_uaiRevealMore(this)"><i class="fa-solid fa-chevron-down"></i> Show ${tl.length - PREVIEW} more</button>` : '');
+                return `<div class="uai-section">
+                    <h4><i class="fa-solid fa-timeline"></i> Notable moments</h4>
+                    <div class="gai-timeline">${items}</div>
+                    ${footer}
+                </div>`;
+            })() : ''}
             <p class="uai-sub" style="margin:14px 0 0">${ins.updated_at ? 'Updated ' + _aiTimeAgo(ins.updated_at) : ''}${ins.message_count ? ' · ~' + ins.message_count + ' messages analyzed' : ''}</p>`;
     } else if (hasStreamer) {
         html += `<p class="uai-sub" style="margin:6px 0 0">No chat insight yet — this user hasn't chatted enough recently.</p>`;
@@ -2733,6 +2743,19 @@ async function _openChatInsightModal(opts) {
 
     body.innerHTML = html;
 }
+
+// Reveal the next batch of an inline (relay-user) timeline — lazy expansion in place.
+function _uaiRevealMore(btn) {
+    const section = btn.closest('.uai-section');
+    const tl = section?.querySelector('.gai-timeline');
+    if (!tl) return;
+    let n = 0;
+    for (const el of tl.querySelectorAll('.uai-tl-item-hidden')) { el.classList.remove('uai-tl-item-hidden'); if (++n >= 12) break; }
+    const remaining = tl.querySelectorAll('.uai-tl-item-hidden').length;
+    if (remaining > 0) btn.innerHTML = `<i class="fa-solid fa-chevron-down"></i> Show ${remaining} more`;
+    else btn.remove();
+}
+window._uaiRevealMore = _uaiRevealMore;
 
 async function openUserChatInsight(userId, username) {
     if (!userId) return;
@@ -2759,6 +2782,7 @@ async function openRelayUserChatInsight(platform, username, displayPlatform) {
     return _openChatInsightModal({
         title: `${username}`,
         iconClass: 'fa-link',
+        isRelay: true, // no channel page → expand the timeline inline instead of linking out
         subtitle: `Bridged ${plat} chatter — how they chat today vs. overall, from their relayed messages.`,
         fetchUrl: `/chat-ai/relay/${encodeURIComponent(platform)}/${encodeURIComponent(username)}`,
     });
@@ -4026,38 +4050,63 @@ function _aiTimelineMomentHTML(mom, vodId) {
 
 let _aiTl = null; // AI Timeline pagination state (per channel load)
 
+// A concise session title derived from the AI overview (streamers often reuse the same
+// literal stream title, so this reads far better on the timeline). Zero extra AI cost.
+function _aiSessionTitle(s) {
+    const ov = (s.ai_overview_short || s.ai_overview || '').trim();
+    if (!ov) return null;
+    let t = ov.split(/(?<=[.!?])\s+/)[0].trim()
+        .replace(/^(the stream|this stream|the streamer|the broadcast|the vod)\b[\s,:-]*/i, '')
+        .replace(/^(appears to be |seems to be |appears to |seems to |is |shows |features |centers on |centered on )/i, '');
+    if (!t) return null;
+    t = t.charAt(0).toUpperCase() + t.slice(1);
+    if (t.length > 74) t = t.slice(0, 71).replace(/\s+\S*$/, '') + '…';
+    return t.replace(/[.,;:]+$/, '') || null;
+}
+
 function _aiTimelineSessionHTML(s) {
     const when = s.started_at || s.created_at;
     const dateStr = when ? new Date((String(when).includes('T') ? when : when.replace(' ', 'T') + 'Z')).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }) : '';
     const ov = (s.ai_overview || s.ai_overview_short || '').trim();
     const memCount = s.memory_count != null ? s.memory_count : (Array.isArray(s.memories) ? s.memories.length : 0);
-    const titleLink = s.vod_id
-        ? `<a href="/vod/${s.vod_id}" onclick="return handleLinkClick(event, '/vod/${s.vod_id}')">${esc(s.title || 'Untitled stream')}</a>`
-        : esc(s.title || 'Untitled stream');
+    const _vodHref = s.vod_id ? `/vod/${s.vod_id}` : null;
+    const _asLink = (label) => _vodHref ? `<a href="${_vodHref}" onclick="return handleLinkClick(event, '${_vodHref}')">${label}</a>` : label;
+    const aiTitle = _aiSessionTitle(s);
+    const mainTitle = aiTitle ? _asLink(esc(aiTitle)) : _asLink(esc(s.title || 'Untitled stream'));
+    // Smaller secondary link with the actual stream title → the VOD (only when we showed an AI title).
+    const streamSubLink = (aiTitle && _vodHref) ? `<div class="ai-tl-session-vodlink">${_asLink(`<i class="fa-solid fa-film"></i> ${esc(s.title || 'stream')}`)}</div>` : '';
     const meta = [];
     if (dateStr) meta.push(`<i class="fa-solid fa-calendar-day"></i> ${dateStr}`);
     if (s.duration_seconds) meta.push(`<i class="fa-solid fa-hourglass-half"></i> ${_aiTimeFmt(s.duration_seconds)}`);
     if (s.peak_viewers) meta.push(`<i class="fa-solid fa-eye"></i> ${s.peak_viewers} peak`);
     // Stash moments for lazy DOM build on expand — keeps thousands of moments OUT of the DOM.
     if (_aiTl && Array.isArray(s.memories)) { _aiTl.moments[s.id] = s.memories; _aiTl.vodBySid[s.id] = s.vod_id || null; }
-    const toggle = memCount
-        ? `<button type="button" class="ai-tl-moments-toggle" onclick="_aiTlToggleMoments(this)"><i class="fa-solid fa-chevron-right"></i> <span>${memCount} moment${memCount === 1 ? '' : 's'}</span></button><div class="ai-tl-moments" hidden></div>`
+    const momentsBtn = memCount
+        ? `<button type="button" class="ai-tl-moments-toggle" onclick="_aiTlToggleMoments(this)"><i class="fa-solid fa-chevron-right"></i> <span>${memCount} moment${memCount === 1 ? '' : 's'}</span></button>`
+        : '';
+    // Transcript button (word count) — loads the audio transcription on demand.
+    const transcriptBtn = (s.has_transcript && s.word_count)
+        ? `<button type="button" class="ai-tl-moments-toggle ai-tl-transcript-toggle" data-sid="${s.id}" data-vod="${s.vod_id || ''}" onclick="_aiTlToggleTranscript(this)"><i class="fa-solid fa-closed-captioning"></i> <span>${_fmtCount(s.word_count)} words</span></button>`
         : '';
     return `<div class="ai-tl-session" data-sid="${s.id}">
         <div class="ai-tl-session-head">
             <div class="ai-tl-node"></div>
-            <div class="ai-tl-session-title">${titleLink}</div>
+            <div class="ai-tl-session-title">${mainTitle}</div>
             <div class="ai-tl-session-meta">${meta.join('<span class="ai-tl-dot">·</span>')}</div>
         </div>
+        ${streamSubLink}
         ${ov ? `<div class="ai-tl-session-overview">${esc(ov)}</div>` : ''}
-        ${toggle}
+        <div class="ai-tl-session-actions">${momentsBtn}${transcriptBtn}</div>
+        <div class="ai-tl-moments" hidden></div>
+        <div class="ai-tl-transcript" hidden></div>
     </div>`;
 }
+function _fmtCount(n) { n = Number(n) || 0; return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k' : String(n); }
 
 // Expand/collapse a session's moments, building the moment DOM only on first expand.
 function _aiTlToggleMoments(btn) {
     const session = btn.closest('.ai-tl-session');
-    const box = btn.nextElementSibling;
+    const box = session?.querySelector('.ai-tl-moments');
     if (!session || !box) return;
     if (!box.hidden) { box.hidden = true; btn.classList.remove('open'); return; }
     if (!box.dataset.built) {
@@ -4067,6 +4116,31 @@ function _aiTlToggleMoments(btn) {
         box.dataset.built = '1';
     }
     box.hidden = false; btn.classList.add('open');
+}
+
+// Expand/collapse a session's audio transcript, fetched on demand. Each segment deep-links
+// to the VOD at that moment's timestamp.
+async function _aiTlToggleTranscript(btn) {
+    const session = btn.closest('.ai-tl-session');
+    const box = session?.querySelector('.ai-tl-transcript');
+    if (!session || !box) return;
+    if (!box.hidden) { box.hidden = true; btn.classList.remove('open'); return; }
+    box.hidden = false; btn.classList.add('open');
+    if (!box.dataset.built) {
+        box.dataset.built = '1';
+        box.innerHTML = '<div class="loading" style="padding:8px"><i class="fa-solid fa-spinner fa-spin"></i> Loading transcript…</div>';
+        try {
+            const data = await api(`/chat-ai/transcript/${session.dataset.sid}`);
+            const segs = data.segments || [];
+            const vod = data.vodId;
+            if (!segs.length) { box.innerHTML = '<p class="muted" style="padding:6px">No transcript available.</p>'; return; }
+            box.innerHTML = segs.map(sg => {
+                const stamp = _aiTimeFmt(sg.start || 0);
+                const jump = vod ? `<a class="ai-tl-ts" href="/vod/${vod}?t=${Math.floor(sg.start || 0)}" onclick="return handleLinkClick(event, '/vod/${vod}?t=${Math.floor(sg.start || 0)}')">${stamp}</a>` : `<span class="ai-tl-ts">${stamp}</span>`;
+                return `<div class="ai-tl-tr-line">${jump}<span class="ai-tl-tr-text">${esc(sg.text || '')}</span></div>`;
+            }).join('');
+        } catch { box.innerHTML = '<p class="muted" style="padding:6px">Couldn\'t load transcript.</p>'; box.dataset.built = ''; }
+    }
 }
 
 function _aiTlMonthKey(when) {
