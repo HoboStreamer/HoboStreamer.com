@@ -440,7 +440,13 @@ router.get('/channel/:username', optionalAuth, (req, res) => {
         // the streamer has opted in (mods_can_edit_about). Surfaced so the client can
         // show the pencil edit button to the right people.
         let modsCanEditAbout = false;
-        try { modsCanEditAbout = !!(db.getChannelModerationSettings(channel.id) || {}).mods_can_edit_about; } catch { /* default off */ }
+        let _modSettings = {};
+        try { _modSettings = db.getChannelModerationSettings(channel.id) || {}; modsCanEditAbout = !!_modSettings.mods_can_edit_about; } catch { /* default off */ }
+        // Public chat limits so the client can cap the input + truncate TTS to the streamer's max.
+        publicChannel.chat_limits = {
+            max_message_length: Math.max(1, Number(_modSettings.max_message_length) || 500),
+            tts_max_length: Math.max(10, Number(_modSettings.tts_max_length) || 200),
+        };
         const viewerIsChannelMod = !!(req.user && db.isChannelModerator(req.user.id, channel.id));
         publicChannel.mods_can_edit_about = modsCanEditAbout;
         publicChannel.viewer_can_edit_about = !!(isOwner || (modsCanEditAbout && viewerIsChannelMod));

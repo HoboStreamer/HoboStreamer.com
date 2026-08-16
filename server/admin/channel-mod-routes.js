@@ -188,6 +188,8 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? Math.min(100, Math.max(0, parseInt(req.body.caps_percentage_limit) || 70)) : undefined,
             max_message_length: req.body.max_message_length !== undefined
                 ? Math.min(2000, Math.max(1, parseInt(req.body.max_message_length) || 500)) : undefined,
+            tts_max_length: req.body.tts_max_length !== undefined
+                ? Math.min(1000, Math.max(10, parseInt(req.body.tts_max_length) || 200)) : undefined,
             slur_filter_enabled: req.body.slur_filter_enabled !== undefined
                 ? parseBoolean(req.body.slur_filter_enabled, false) : undefined,
             slur_filter_use_builtin: req.body.slur_filter_use_builtin !== undefined

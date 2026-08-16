@@ -2927,6 +2927,11 @@ async function loadChannelPage(username, managedStreamRef = null, legacySessionI
 
         const data = await api(`/streams/channel/${username}?vodLimit=${CHANNEL_VODS_PAGE_SIZE}&vodOffset=${channelVodOffset}&clipLimit=${CHANNEL_CLIPS_PAGE_SIZE}&clipOffset=${channelClipOffset}${initialVodExtra}`);
         const ch = data.channel;
+        if (typeof applyChatLimits === 'function') applyChatLimits(ch && ch.chat_limits);
+        if (typeof setChatLimitsContext === 'function') {
+            const _canManageChat = !!(currentUser && ch && (ch.user_id === currentUser.id || currentUser.role === 'admin' || ch.viewer_can_edit_about));
+            setChatLimitsContext(ch && ch.id, _canManageChat);
+        }
         const streams = data.streams || (data.stream ? [data.stream] : []);
         const vods = data.vods || [];
         const clips = data.clips || [];

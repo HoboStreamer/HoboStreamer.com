@@ -5290,6 +5290,9 @@ function speakBroadcastTTS(text, username) {
         const site = parts.length > 2 ? parts[parts.length - 2] : parts[0];
         return username ? `(${username} sent a link to ${site})` : `(link to ${site})`;
     });
+    // Cap to the channel's max TTS length.
+    const _ttsMax = (window._channelChatLimits && window._channelChatLimits.tts_max_length) || 200;
+    if (cleanText.length > _ttsMax) cleanText = cleanText.slice(0, _ttsMax);
     const fullText = s.ttsNames === 'on' && username ? `${username} says: ${cleanText}` : cleanText;
     ttsQueue.push(fullText); processTTSQueue();
 }

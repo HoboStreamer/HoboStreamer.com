@@ -1183,6 +1183,7 @@ function initDb() {
         if (!cols.includes('caps_percentage_limit')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN caps_percentage_limit INTEGER DEFAULT 0');
         if (!cols.includes('aggressive_filter')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN aggressive_filter INTEGER DEFAULT 0');
         if (!cols.includes('max_message_length')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN max_message_length INTEGER DEFAULT 500');
+        if (!cols.includes('tts_max_length')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN tts_max_length INTEGER DEFAULT 200');
         if (!cols.includes('slur_filter_enabled')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_enabled INTEGER DEFAULT 0');
         if (!cols.includes('slur_filter_use_builtin')) database.exec('ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_use_builtin INTEGER DEFAULT 1');
         if (!cols.includes('slur_filter_terms')) database.exec("ALTER TABLE channel_moderation_settings ADD COLUMN slur_filter_terms TEXT DEFAULT ''");
@@ -5653,6 +5654,7 @@ function getChannelModerationSettings(channelId) {
             caps_percentage_limit: 0,
             aggressive_filter: 0,
             max_message_length: 500,
+            tts_max_length: 200,
             slur_filter_enabled: 0,
             slur_filter_use_builtin: 1,
             slur_filter_terms: '',
@@ -5776,6 +5778,11 @@ function upsertChannelModerationSettings(channelId, fields) {
                 fields.mods_can_edit_about ? 1 : 0,
             ]
         );
+    }
+    // tts_max_length is handled here (covers both the UPDATE and freshly-INSERTed row) so we
+    // don't have to thread it through the positional INSERT.
+    if (fields.tts_max_length !== undefined) {
+        try { run('UPDATE channel_moderation_settings SET tts_max_length = ? WHERE channel_id = ?', [Math.min(1000, Math.max(10, Number(fields.tts_max_length) || 200)), channelId]); } catch { /* */ }
     }
     return getChannelModerationSettings(channelId);
 }

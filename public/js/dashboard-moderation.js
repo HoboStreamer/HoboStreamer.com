@@ -100,6 +100,7 @@ function renderDashModerationChannels(channels) {
                         <div class="dash-mod-settings">
                             <label><span>Slowmode Seconds</span><input type="number" id="dash-mod-slow-${channel.id}" class="form-input" value="${Number(settings.slowmode_seconds || 0)}"></label>
                             <label><span>Max Message Length</span><input type="number" id="dash-mod-maxlen-${channel.id}" class="form-input" value="${Number(settings.max_message_length || 500)}"></label>
+                            <label><span>Max TTS Length</span><input type="number" id="dash-mod-ttslen-${channel.id}" class="form-input" value="${Number(settings.tts_max_length || 200)}"></label>
                             <label><span>Account Age Gate (hours)</span><input type="number" id="dash-mod-age-${channel.id}" class="form-input" value="${Number(settings.account_age_gate_hours || 0)}"></label>
                             <label><span>Caps Limit (%)</span><input type="number" id="dash-mod-caps-${channel.id}" class="form-input" value="${Number(settings.caps_percentage_limit || 70)}"></label>
                             <label class="staff-inline-toggle"><input type="checkbox" id="dash-mod-anon-${channel.id}" ${Number(settings.allow_anonymous ?? 1) ? 'checked' : ''}> Allow Anonymous</label>
@@ -292,6 +293,7 @@ window.dashSaveChannelModerationSettings = async function dashSaveChannelModerat
             body: {
                 slowmode_seconds: Number(document.getElementById(`dash-mod-slow-${channelId}`)?.value || 0),
                 max_message_length: Number(document.getElementById(`dash-mod-maxlen-${channelId}`)?.value || 500),
+                tts_max_length: Number(document.getElementById(`dash-mod-ttslen-${channelId}`)?.value || 200),
                 account_age_gate_hours: Number(document.getElementById(`dash-mod-age-${channelId}`)?.value || 0),
                 caps_percentage_limit: Number(document.getElementById(`dash-mod-caps-${channelId}`)?.value || 70),
                 allow_anonymous: !!document.getElementById(`dash-mod-anon-${channelId}`)?.checked,

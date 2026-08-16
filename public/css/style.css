@@ -5410,6 +5410,20 @@ main#app { position: relative; z-index: 1; }
 .clip-chat-dur { position: absolute; right: 3px; bottom: 3px; background: rgba(0,0,0,0.75); color: #fff; font-size: 0.68rem; padding: 0 4px; border-radius: 4px; }
 .clip-chat-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; opacity: 0; transition: opacity .15s; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
 .clip-chat-card:hover .clip-chat-play { opacity: 0.95; }
+/* Streamer "Chat limits" popover (message + TTS max length) */
+.chat-limits-popover {
+    z-index: 10050; width: 250px; max-width: calc(100vw - 16px);
+    background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 12px 34px rgba(0,0,0,0.45); padding: 12px 14px;
+}
+.chat-limits-popover .clp-title { display: flex; align-items: center; gap: 7px; font-weight: 800; font-size: 0.9rem; color: var(--text-primary); margin-bottom: 10px; }
+.chat-limits-popover .clp-title i { color: var(--accent); }
+.chat-limits-popover .clp-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-size: 0.82rem; color: var(--text-secondary); }
+.chat-limits-popover .clp-row input { width: 78px; padding: 5px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg-input, var(--bg-tertiary)); color: var(--text-primary); font-size: 0.82rem; }
+.chat-limits-popover .clp-actions { margin-top: 6px; }
+.chat-limits-popover .clp-actions .btn { width: 100%; }
+.chat-limits-popover .clp-hint { margin-top: 8px; font-size: 0.72rem; color: var(--text-muted); }
+
 .clip-chat-info { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; }
 .clip-chat-label { display: inline-flex; align-items: center; gap: 5px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); }
 .clip-chat-title { font-size: 0.92rem; font-weight: 700; color: var(--text-primary, var(--text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

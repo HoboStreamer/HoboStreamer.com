@@ -5482,6 +5482,74 @@ function timeAgoShort(dateStr) {
     return Math.floor(diff / 31536000) + 'y ago';
 }
 
+/* ── Per-channel chat limits (max message length + max TTS length) ── */
+let _channelChatLimits = { max_message_length: 500, tts_max_length: 200 };
+function applyChatLimits(limits) {
+    if (limits && typeof limits === 'object') {
+        _channelChatLimits = {
+            max_message_length: Math.max(1, Number(limits.max_message_length) || 500),
+            tts_max_length: Math.max(10, Number(limits.tts_max_length) || 200),
+        };
+    }
+    window._channelChatLimits = _channelChatLimits;
+    // Cap the chat input(s) to the streamer's max message length.
+    ['chat-input', 'fullscreen-chat-input', 'offline-chat-input'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.setAttribute('maxlength', String(_channelChatLimits.max_message_length));
+    });
+    // Refresh the streamer settings popover if it's open.
+    if (typeof _syncChatLimitsPopover === 'function') _syncChatLimitsPopover();
+}
+function _ttsMaxLen() { return (window._channelChatLimits && window._channelChatLimits.tts_max_length) || 200; }
+
+// Streamer/mod control: show the "Chat limits" button + remember which channel to save to.
+let _chatLimitsChannelId = null;
+function setChatLimitsContext(channelId, canManage) {
+    _chatLimitsChannelId = channelId || null;
+    document.querySelectorAll('.chat-limits-btn').forEach(b => { b.style.display = (canManage && channelId) ? '' : 'none'; });
+    if (!canManage) { const p = document.getElementById('chat-limits-popover'); if (p) p.remove(); }
+}
+function _syncChatLimitsPopover() {
+    const L = window._channelChatLimits || {};
+    const a = document.getElementById('clp-maxmsg'), b = document.getElementById('clp-maxtts');
+    if (a && L.max_message_length) a.value = L.max_message_length;
+    if (b && L.tts_max_length) b.value = L.tts_max_length;
+}
+function toggleChatLimitsPopover(btn) {
+    const existing = document.getElementById('chat-limits-popover');
+    if (existing) { existing.remove(); return; }
+    const L = window._channelChatLimits || { max_message_length: 500, tts_max_length: 200 };
+    const pop = document.createElement('div');
+    pop.id = 'chat-limits-popover';
+    pop.className = 'chat-limits-popover';
+    pop.innerHTML = `
+        <div class="clp-title"><i class="fa-solid fa-sliders"></i> Chat limits</div>
+        <label class="clp-row"><span>Max message length</span><input type="number" id="clp-maxmsg" min="1" max="2000" value="${Number(L.max_message_length) || 500}"></label>
+        <label class="clp-row"><span>Max TTS length</span><input type="number" id="clp-maxtts" min="10" max="1000" value="${Number(L.tts_max_length) || 200}"></label>
+        <div class="clp-actions"><button class="btn btn-small btn-primary" onclick="saveChatLimits()"><i class="fa-solid fa-check"></i> Save</button></div>
+        <div class="clp-hint">Applies to everyone in your chat.</div>`;
+    document.body.appendChild(pop);
+    const r = btn.getBoundingClientRect();
+    pop.style.position = 'fixed';
+    pop.style.left = Math.min(Math.max(8, r.left), window.innerWidth - pop.offsetWidth - 8) + 'px';
+    pop.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+    setTimeout(() => {
+        const closer = (e) => { if (!pop.contains(e.target) && !e.target.closest('.chat-limits-btn')) { pop.remove(); document.removeEventListener('click', closer); } };
+        document.addEventListener('click', closer);
+    }, 0);
+}
+async function saveChatLimits() {
+    if (!_chatLimitsChannelId) { toast('No channel selected', 'error'); return; }
+    const maxmsg = Math.min(2000, Math.max(1, parseInt(document.getElementById('clp-maxmsg')?.value, 10) || 500));
+    const maxtts = Math.min(1000, Math.max(10, parseInt(document.getElementById('clp-maxtts')?.value, 10) || 200));
+    try {
+        await api(`/channels/${_chatLimitsChannelId}/moderation`, { method: 'PUT', body: { max_message_length: maxmsg, tts_max_length: maxtts } });
+        applyChatLimits({ max_message_length: maxmsg, tts_max_length: maxtts });
+        toast('Chat limits saved', 'success');
+        document.getElementById('chat-limits-popover')?.remove();
+    } catch (e) { toast(e.message || 'Failed to save chat limits', 'error'); }
+}
+
 /* ── TTS ──────────────────────────────────────────────────────── */
 
 /** Browser-side TTS using SpeechSynthesis API (Self TTS / legacy fallback) */
@@ -5495,6 +5563,9 @@ function speakTTS(text, voiceFX, username) {
         const site = parts.length > 2 ? parts[parts.length - 2] : parts[0];
         return username ? `(${username} sent a link to ${site})` : `(link to ${site})`;
     });
+    // Cap TTS to the streamer's max TTS length.
+    const _ttsMax = _ttsMaxLen();
+    if (cleanText.length > _ttsMax) cleanText = cleanText.slice(0, _ttsMax);
     const utter = new SpeechSynthesisUtterance(cleanText);
     utter.rate = voiceFX?.rate || 1;
     utter.pitch = voiceFX?.pitch || 1;
