@@ -148,24 +148,34 @@ async function _resolveVodSource(vodId) {
     } catch { return null; }
 }
 
-// Cut auto-clips for up to `n` historical VODs that don't have one yet.
+// Cut auto-clips for up to `limit` historical VODs that don't have one yet. Keeps a `skip`
+// list of VODs we couldn't clip (media pruned / cut failed) so dead VODs don't block progress
+// or waste an AI call on every run.
 async function backfillVodClips({ limit = BACKFILL_PER_DAY, force = false } = {}) {
     if (!force && !_backfillDue()) return 0;
+    let prev = {};
+    try { prev = JSON.parse(db.getSetting(BACKFILL_SETTING) || '{}') || {}; } catch { /* */ }
+    const skip = new Set(prev.skip || []);
     const moments = require('./ai-moments-job');
-    const vods = db.getVodsWithoutAutoClip(Math.max(1, limit)) || [];
+    // Over-fetch so skipped/dead VODs don't starve a batch.
+    const pool = (db.getVodsWithoutAutoClip(Math.max(1, limit) * 6) || []).filter(v => !skip.has(v.vod_id));
     let made = 0;
-    for (const v of vods) {
+    const newSkip = [];
+    for (const v of pool) {
+        if (made >= limit) break;
         try {
             const source = await _resolveVodSource(v.vod_id);
-            if (!source) continue; // media gone / unreadable
+            if (!source) { newSkip.push(v.vod_id); continue; } // media gone / unreadable
             const moment = await moments.findBestMoment(v);
-            if (!moment) continue;
+            if (!moment) { newSkip.push(v.vod_id); continue; }
             const clip = await clipVodMoment({ vod: v, offset: moment.offset, title: moment.title, desc: moment.desc, source });
             if (clip) { made++; console.log(`[AutoClip] Backfilled VOD ${v.vod_id} ("${String(moment.title || '').slice(0, 60)}")`); }
-        } catch (e) { console.warn(`[AutoClip] backfill VOD ${v.vod_id} failed:`, e.message); }
+            else newSkip.push(v.vod_id); // cut failed (e.g. unseekable/short) — don't retry forever
+        } catch (e) { newSkip.push(v.vod_id); console.warn(`[AutoClip] backfill VOD ${v.vod_id} failed:`, e.message); }
     }
-    try { db.setSetting(BACKFILL_SETTING, JSON.stringify({ updated_at: Date.now(), lastMade: made })); } catch { /* */ }
-    if (made) console.log(`[AutoClip] Historical backfill: ${made} clip(s) added today`);
+    const mergedSkip = [...new Set([...(prev.skip || []), ...newSkip])].slice(-2000);
+    try { db.setSetting(BACKFILL_SETTING, JSON.stringify({ updated_at: Date.now(), lastMade: made, skip: mergedSkip })); } catch { /* */ }
+    if (made || newSkip.length) console.log(`[AutoClip] Historical backfill: ${made} clip(s) added, ${newSkip.length} VOD(s) skipped (unclippable)`);
     return made;
 }
 
