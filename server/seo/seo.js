@@ -85,9 +85,44 @@ function _pageMeta(routePath) {
     if ((m = p.match(/^\/vod\/(\d+)$/))) return _vodMeta(parseInt(m[1], 10));
     if ((m = p.match(/^\/clip\/(\d+)$/))) return _clipMeta(parseInt(m[1], 10));
     if ((m = p.match(/^\/p\/([A-Za-z0-9_-]+)$/))) return _pasteMeta(m[1]);
+    if ((m = p.match(/^\/@([A-Za-z0-9_.-]+)$/))) return _channelMeta(m[1]);
 
     return null;
     void bu;
+}
+
+function _channelMeta(username) {
+    let ch; try { ch = db.getChannelByUsername(username); } catch { ch = null; }
+    if (!ch) return null;
+    const name = ch.display_name || ch.username || username;
+    const handle = '@' + (ch.username || username);
+    let ov = null;
+    try { ov = db.getStreamerOverview ? db.getStreamerOverview(ch.user_id) : null; } catch { /* */ }
+    let followers = 0;
+    try { followers = db.getFollowerCount ? (db.getFollowerCount(ch.user_id) || 0) : 0; } catch { /* */ }
+    const bio = clean(ch.bio || '', 300);
+    const aiShort = clean((ov && (ov.overview_short || ov.overview)) || '', 220);
+    const desc = clean(bio || aiShort || `${name} (${handle}) streams live on ${SITE_NAME}. Watch their live streams, VODs and clips.`, 200);
+    const image = ch.avatar_url ? abs(ch.avatar_url) : DEFAULT_OG_IMAGE;
+    const canonicalPath = `/${handle}`;
+    const person = {
+        '@type': 'Person', name: clean(name, 80), alternateName: handle, url: abs(canonicalPath),
+        image: image !== DEFAULT_OG_IMAGE ? image : undefined,
+        description: desc,
+        interactionStatistic: followers ? { '@type': 'InteractionCounter', interactionType: 'https://schema.org/FollowAction', userInteractionCount: followers } : undefined,
+    };
+    const profile = { '@context': 'https://schema.org', '@type': 'ProfilePage', name: `${name} (${handle})`, url: abs(canonicalPath), mainEntity: person };
+    const snapshot = _detailSnapshot({
+        title: `${name} (${handle})`, byline: followers ? `${followers} follower${followers === 1 ? '' : 's'} on ${SITE_NAME}` : null,
+        desc: bio || null, overview: (ov && ov.overview) || null, transcript: null,
+        canonicalPath, watchLabel: `Visit ${name}'s channel`,
+    });
+    return {
+        title: `${name} (${handle}) — ${SITE_NAME}`, description: desc,
+        canonicalPath, image, ogType: 'profile', robots: 'index,follow',
+        jsonLd: [profile, _breadcrumb([{ name: 'Home', url: '/' }, { name: name, url: canonicalPath }])],
+        snapshot,
+    };
 }
 
 function _listMeta(slug, label, description, itemsFn) {
@@ -288,7 +323,7 @@ function _cacheSet(key, html) {
     _cache.set(key, { html, at: Date.now() });
 }
 
-const SEO_ROUTE_RE = /^\/(?:$|vods$|clips$|pastes$|vod\/\d+$|clip\/\d+$|p\/[A-Za-z0-9_-]+$)/;
+const SEO_ROUTE_RE = /^\/(?:$|vods$|clips$|pastes$|vod\/\d+$|clip\/\d+$|p\/[A-Za-z0-9_-]+$|@[A-Za-z0-9_.-]+$)/;
 
 function middleware(req, res, next) {
     if (req.method !== 'GET') return next();
