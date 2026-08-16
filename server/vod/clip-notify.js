@@ -49,15 +49,16 @@ function _sendOne(clip) {
     if (!ownerId) { _markNotified(clip.id); return; }
     if (clip.visibility === 'private') { _markNotified(clip.id); return; } // don't announce private clips
 
-    // Per-slot opt-out via the source stream's managed slot.
+    // Only announce clips of a CURRENTLY-LIVE stream — that's when there's a chat audience.
+    // This keeps clips of offline VODs (including AI backfill auto-clips) out of the chat.
     const streamId = clip.stream_id || null;
-    if (streamId) {
+    const srcStream = streamId ? db.getStreamById(streamId) : null;
+    if (!srcStream || !srcStream.is_live) { _markNotified(clip.id); return; }
+    // Per-slot opt-out via the source stream's managed slot.
+    if (srcStream.managed_stream_id) {
         try {
-            const s = db.getStreamById(streamId);
-            if (s && s.managed_stream_id) {
-                const ms = db.get('SELECT slot_clip_notify_enabled FROM managed_streams WHERE id = ?', [s.managed_stream_id]);
-                if (ms && Number(ms.slot_clip_notify_enabled) === 0) { _markNotified(clip.id); return; }
-            }
+            const ms = db.get('SELECT slot_clip_notify_enabled FROM managed_streams WHERE id = ?', [srcStream.managed_stream_id]);
+            if (ms && Number(ms.slot_clip_notify_enabled) === 0) { _markNotified(clip.id); return; }
         } catch { /* fall through and notify */ }
     }
 
@@ -68,6 +69,9 @@ function _sendOne(clip) {
     const meta = {
         clip_id: clip.id, title, thumbnail_url: thumb,
         duration: clip.duration_seconds || null, creator: creatorName,
+        creator_avatar: (creator && creator.avatar_url) || null,
+        creator_color: (creator && creator.profile_color) || null,
+        auto: !!clip.auto_generated,
     };
     const payload = {
         type: 'chat',

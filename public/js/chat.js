@@ -2953,15 +2953,27 @@ function addChatMessage(msg) {
         if (!clip && msg.metadata) { try { clip = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata; } catch { clip = null; } }
         if (clip && clip.clip_id) {
             const dur = (clip.duration && typeof formatDuration === 'function') ? formatDuration(clip.duration) : '';
+            const isAuto = !!clip.auto;
             const thumb = clip.thumbnail_url
                 ? `<div class="clip-chat-thumb"><img src="${esc(clip.thumbnail_url)}" alt="" loading="lazy">${dur ? `<span class="clip-chat-dur">${esc(dur)}</span>` : ''}<span class="clip-chat-play"><i class="fa-solid fa-play"></i></span></div>`
                 : `<div class="clip-chat-thumb clip-chat-thumb-ph"><i class="fa-solid fa-scissors"></i></div>`;
-            text = `<a class="clip-chat-card" href="/clip/${clip.clip_id}" onclick="return handleLinkClick(event, '/clip/${clip.clip_id}')" title="Watch clip">
+            const label = isAuto
+                ? `<div class="clip-chat-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI clip</div>`
+                : `<div class="clip-chat-label"><i class="fa-solid fa-scissors"></i> New clip</div>`;
+            const creator = esc(clip.creator || msg.username || 'someone');
+            const avatar = clip.creator_avatar
+                ? `<img class="clip-chat-avatar" src="${esc(clip.creator_avatar)}" alt="" loading="lazy">`
+                : `<span class="clip-chat-avatar clip-chat-avatar-ltr" style="background:${esc(clip.creator_color || 'var(--accent)')}">${creator.charAt(0).toUpperCase()}</span>`;
+            const metaLine = isAuto
+                ? `<div class="clip-chat-meta"><i class="fa-solid fa-robot"></i> Auto-generated highlight</div>`
+                : `<div class="clip-chat-meta">${avatar}<span>Clipped by ${creator}</span></div>`;
+            text = `<a class="clip-chat-card${isAuto ? ' clip-chat-card-ai' : ''}" href="/clip/${clip.clip_id}" onclick="return handleLinkClick(event, '/clip/${clip.clip_id}')" title="Watch clip">
                 ${thumb}
                 <div class="clip-chat-info">
-                    <div class="clip-chat-label"><i class="fa-solid fa-scissors"></i> New clip</div>
+                    ${label}
                     <div class="clip-chat-title">${esc(clip.title || 'Untitled Clip')}</div>
-                    <div class="clip-chat-meta">by ${esc(clip.creator || msg.username || 'someone')}</div>
+                    ${metaLine}
+                    <span class="clip-chat-cta">Watch clip <i class="fa-solid fa-arrow-right"></i></span>
                 </div>
             </a>`;
         }
