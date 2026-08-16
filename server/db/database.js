@@ -933,6 +933,16 @@ function initDb() {
         )`);
         database.exec(`CREATE INDEX IF NOT EXISTS idx_chat_tl_scope_ts ON chat_timeline_events(scope, subject_id, ts DESC)`);
         database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_tl_dedup ON chat_timeline_events(scope, subject_id, ts, label)`);
+        // Daily easter-egg solves (one per solver per day).
+        database.exec(`CREATE TABLE IF NOT EXISTS easter_egg_solves (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            egg_date TEXT NOT NULL,
+            solver_key TEXT NOT NULL,
+            user_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(egg_date, solver_key)
+        )`);
+        database.exec(`CREATE INDEX IF NOT EXISTS idx_egg_solves_date ON easter_egg_solves(egg_date)`);
 
         const pcols = database.prepare('PRAGMA table_info(pastes)').all().map(c => c.name);
         if (!pcols.includes('ai_summary')) database.exec('ALTER TABLE pastes ADD COLUMN ai_summary TEXT');
@@ -3821,6 +3831,21 @@ function getChatAiSummary(scope, subjectId, window) {
         [scope, subjectId || 0, window]) || null;
 }
 // Append AI timeline "notable moments" to the growing log (deduped by scope+ts+label).
+// ── Daily easter egg solves ──────────────────────────────────
+function recordEasterEggSolve(eggDate, solverKey, userId) {
+    try {
+        const res = run('INSERT OR IGNORE INTO easter_egg_solves (egg_date, solver_key, user_id) VALUES (?, ?, ?)',
+            [eggDate, String(solverKey).slice(0, 80), userId || null]);
+        return !!(res && res.changes); // true = newly solved (first time today)
+    } catch { return false; }
+}
+function hasSolvedEasterEgg(eggDate, solverKey) {
+    try { return !!get('SELECT 1 FROM easter_egg_solves WHERE egg_date = ? AND solver_key = ?', [eggDate, String(solverKey).slice(0, 80)]); } catch { return false; }
+}
+function countEasterEggSolves(eggDate) {
+    try { return get('SELECT COUNT(*) AS n FROM easter_egg_solves WHERE egg_date = ?', [eggDate])?.n || 0; } catch { return 0; }
+}
+
 function addChatTimelineEvents(scope, subjectId, events) {
     if (!Array.isArray(events) || !events.length) return 0;
     let n = 0;
@@ -7027,6 +7052,7 @@ module.exports = {
     getMaxChatMessageId, countChatMessagesSince, getChatMessagesForAi, getNthRecentChatTs,
     getChatAiSummary, getChatAiSummaries, upsertChatAiSummary, getUsersNeedingChatAi,
     addChatTimelineEvents, getChatTimelineEvents,
+    recordEasterEggSolve, hasSolvedEasterEgg, countEasterEggSolves,
     // Profiles
     getUserProfile, updateUserAvatar, resetAvatarsForPaste, getUserAvatarPastes,
     getKickChannelCache, setKickChannelCache,

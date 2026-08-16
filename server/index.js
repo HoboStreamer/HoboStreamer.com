@@ -439,6 +439,7 @@ app.use('/api/cosmetics', cosmeticsRoutes);
 app.use('/api/vods', vodRoutes);
 app.use('/api/clips', clipRoutes);
 app.use('/api/chat-ai', require('./ai/chat-ai-routes'));
+app.use('/api/easter-egg', require('./ai/easter-egg-routes'));
 app.use('/api/comments', commentRoutes);
 app.use('/api/controls', controlRoutes);
 app.use('/api/onvif', onvifRoutes);
@@ -910,6 +911,7 @@ async function start() {
         try { require('./ai/slogan-job').start(); } catch (e) { console.warn('[AI] slogan job not started:', e.message); }
         try { require('./ai/ai-moments-job').start(); } catch (e) { console.warn('[AI] moments job not started:', e.message); }
         try { require('./ai/auto-clip-job').start(); } catch (e) { console.warn('[AI] auto-clip job not started:', e.message); }
+        try { require('./ai/easter-egg-job').start(); } catch (e) { console.warn('[AI] easter-egg job not started:', e.message); }
         // Heal server-side recordings for live streams (resume after restart / ffmpeg death)
         // so clipping always has a source. First pass delayed to let broadcasters reconnect.
         try {

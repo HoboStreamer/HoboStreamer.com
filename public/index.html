@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=127">
+    <link rel="stylesheet" href="/css/style.css?v=128">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -185,6 +185,19 @@
                 <p class="hero-quip" id="hero-quip" aria-live="polite"></p>
                 <div class="hero-slogan-timer" id="hero-slogan-timer" hidden></div>
                 <div class="hero-stats" id="hero-stats" aria-label="Site stats"></div>
+                <div class="hero-egg" id="hero-egg" style="display:none">
+                    <button class="hero-egg-head" type="button" onclick="toggleHeroEgg()">
+                        <span class="hero-egg-icon">🥚</span>
+                        <span class="hero-egg-titles"><span class="hero-egg-kicker">Today's Secret</span><span class="hero-egg-title" id="hero-egg-title"></span></span>
+                        <span class="hero-egg-status" id="hero-egg-status"></span>
+                        <i class="fa-solid fa-chevron-down hero-egg-chev"></i>
+                    </button>
+                    <div class="hero-egg-body">
+                        <p class="hero-egg-intro">A fresh AI-made secret drops daily. Decode the hints into a key sequence, then type it anywhere on the site to crack it.</p>
+                        <ul class="hero-egg-hints" id="hero-egg-hints"></ul>
+                        <div class="hero-egg-meta"><span id="hero-egg-count"></span><span id="hero-egg-reset"></span></div>
+                    </div>
+                </div>
                 <div class="hero-cta">
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
                         <i class="fa-solid fa-broadcast-tower"></i> Stream
@@ -4890,7 +4903,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=2" defer></script>
-<script src="/js/app.js?v=113" defer></script>
+<script src="/js/app.js?v=114" defer></script>
 <script src="/js/stream-player.js?v=16" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>

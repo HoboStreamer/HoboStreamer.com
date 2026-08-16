@@ -1362,6 +1362,36 @@ main#app { position: relative; z-index: 1; }
 }
 .hero-cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 
+/* ── Daily easter-egg hero widget ─────────────────────────────── */
+.hero-egg { max-width: 460px; margin: 0 auto 22px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--accent) 8%, rgba(0,0,0,0.35)); overflow: hidden; text-align: left; }
+.hero-egg-head { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: none; border: 0; cursor: pointer; color: var(--text-primary); }
+.hero-egg-icon { font-size: 1.3rem; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); animation: eggWobble 3.5s ease-in-out infinite; }
+@keyframes eggWobble { 0%,100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }
+.hero-egg-titles { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; flex: 1; }
+.hero-egg-kicker { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent-light, var(--accent)); }
+.hero-egg-title { font-size: 0.95rem; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.hero-egg-status { font-size: 0.72rem; font-weight: 700; color: var(--text-muted); background: rgba(255,255,255,0.06); padding: 3px 9px; border-radius: 999px; }
+.hero-egg-status.solved { color: #06d6a0; background: color-mix(in srgb, #06d6a0 18%, transparent); }
+.hero-egg-chev { color: var(--text-muted); transition: transform .2s ease; }
+.hero-egg.open .hero-egg-chev { transform: rotate(180deg); }
+.hero-egg-body { max-height: 0; overflow: hidden; opacity: 0; transition: max-height .35s ease, opacity .3s ease, padding .3s ease; padding: 0 14px; }
+.hero-egg.open .hero-egg-body { max-height: 340px; opacity: 1; padding: 0 14px 14px; }
+.hero-egg-intro { font-size: 0.78rem; color: var(--text-secondary); margin: 0 0 10px; }
+.hero-egg-hints { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.hero-egg-hints li { position: relative; padding-left: 22px; font-size: 0.82rem; color: var(--text-primary); font-style: italic; }
+.hero-egg-hints li::before { content: '\f0eb'; font-family: 'Font Awesome 6 Free'; font-weight: 900; position: absolute; left: 0; top: 1px; color: var(--accent); font-style: normal; font-size: 0.78rem; }
+.hero-egg-meta { margin-top: 11px; font-size: 0.72rem; color: var(--text-muted); }
+
+/* Celebration effects */
+.egg-confetti { position: fixed; inset: 0; pointer-events: none; z-index: 100000; overflow: hidden; }
+.egg-confetti span { position: absolute; top: -14px; width: 9px; height: 14px; border-radius: 2px; animation: eggFall linear forwards; }
+@keyframes eggFall { to { transform: translateY(105vh) rotate(720deg); opacity: 0.9; } }
+body.egg-shake { animation: eggShake 0.9s cubic-bezier(.36,.07,.19,.97) both; }
+@keyframes eggShake { 10%,90%{transform:translate3d(-2px,0,0)} 20%,80%{transform:translate3d(4px,0,0)} 30%,50%,70%{transform:translate3d(-8px,0,0)} 40%,60%{transform:translate3d(8px,0,0)} }
+body.egg-rainbow { animation: eggRainbow 2.6s linear; }
+@keyframes eggRainbow { 0%{filter:hue-rotate(0)} 100%{filter:hue-rotate(360deg)} }
+@media (prefers-reduced-motion: reduce) { .egg-confetti, body.egg-shake, body.egg-rainbow { animation: none !important; } .egg-confetti { display: none; } }
+
 .network-hub {
     background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 50%, var(--bg-secondary) 100%);
     border-top: 1px solid var(--border);

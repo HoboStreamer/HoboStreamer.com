@@ -1496,12 +1496,88 @@ function openHomeAbout() {
     banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// ── Daily AI easter egg ─────────────────────────────────────────────────────
+let _egg = null, _eggBuf = [], _eggSolved = false, _eggSubmitTimer = null, _eggKeysWired = false;
+const _EGG_ARROW = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+async function loadHeroEgg() {
+    const el = document.getElementById('hero-egg');
+    if (!el) return;
+    let data; try { data = await api('/easter-egg/daily'); } catch { return; }
+    const egg = data && data.egg;
+    if (!egg) { el.style.display = 'none'; return; }
+    _egg = egg; _eggSolved = !!egg.solved;
+    el.style.display = '';
+    const set = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
+    set('hero-egg-title', egg.title || 'The Daily Secret');
+    const hints = document.getElementById('hero-egg-hints');
+    if (hints) hints.innerHTML = (egg.hints || []).length ? egg.hints.map(h => `<li>${esc(h)}</li>`).join('') : '<li>No hints today — go on instinct.</li>';
+    set('hero-egg-count', `${egg.foundCount || 0} cracked it today`);
+    const reset = document.getElementById('hero-egg-reset');
+    if (reset) reset.textContent = egg.nextResetAt ? ` · resets ${_eggResetLabel(egg.nextResetAt)}` : '';
+    _renderEggStatus();
+    _wireEggKeys();
+}
+function _eggResetLabel(ts) { const h = Math.round((ts - Date.now()) / 3600000); return h <= 1 ? 'soon' : `in ${h}h`; }
+function _renderEggStatus() {
+    const s = document.getElementById('hero-egg-status'); if (!s) return;
+    s.textContent = _eggSolved ? '✓ Solved' : `${_egg ? _egg.codeLength : ''} keys`;
+    s.className = 'hero-egg-status' + (_eggSolved ? ' solved' : '');
+}
+function toggleHeroEgg() { document.getElementById('hero-egg')?.classList.toggle('open'); }
+function _wireEggKeys() {
+    if (_eggKeysWired) return;
+    _eggKeysWired = true;
+    document.addEventListener('keydown', (e) => {
+        if (_eggSolved || !_egg) return;
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        let tok = _EGG_ARROW[e.key];
+        if (!tok && /^[a-zA-Z]$/.test(e.key)) tok = e.key.toLowerCase();
+        if (!tok) return;
+        _eggBuf.push(tok);
+        if (_eggBuf.length > _egg.codeLength) _eggBuf = _eggBuf.slice(-_egg.codeLength);
+        if (_eggBuf.length === _egg.codeLength) { clearTimeout(_eggSubmitTimer); _eggSubmitTimer = setTimeout(_submitEgg, 220); }
+    });
+}
+async function _submitEgg() {
+    if (_eggSolved || !_egg || _eggBuf.length < _egg.codeLength) return;
+    let res; try { res = await api('/easter-egg/solve', { method: 'POST', body: { sequence: _eggBuf.slice() } }); } catch { return; }
+    if (res && res.solved) {
+        _eggSolved = true; _renderEggStatus();
+        const c = document.getElementById('hero-egg-count'); if (c && res.foundCount != null) c.textContent = `${res.foundCount} cracked it today`;
+        _celebrateEgg(res.egg || {});
+    }
+}
+function _celebrateEgg(egg) {
+    try { toast(egg.reward || "You cracked today's secret! 🎉", 'success'); } catch { /* */ }
+    const effect = egg.effect || 'confetti';
+    try {
+        if (effect === 'shake') { document.body.classList.add('egg-shake'); setTimeout(() => document.body.classList.remove('egg-shake'), 900); }
+        if (effect === 'rainbow') { document.body.classList.add('egg-rainbow'); setTimeout(() => document.body.classList.remove('egg-rainbow'), 2600); }
+        const N = effect === 'fireworks' ? 170 : effect === 'matrix' ? 90 : 130;
+        const cont = document.createElement('div'); cont.className = 'egg-confetti';
+        const colors = effect === 'matrix' ? ['#00ff41', '#0f0', '#00c030'] : ['#ff5a5f', '#ffd166', '#06d6a0', '#4d96ff', '#c77dff', '#fff'];
+        for (let i = 0; i < N; i++) {
+            const p = document.createElement('span');
+            p.style.left = (Math.random() * 100) + 'vw';
+            p.style.background = colors[i % colors.length];
+            p.style.animationDelay = (Math.random() * 0.5) + 's';
+            p.style.animationDuration = (1.5 + Math.random() * 1.6) + 's';
+            if (effect === 'matrix') { p.style.width = '3px'; p.style.height = (12 + Math.random() * 20) + 'px'; }
+            cont.appendChild(p);
+        }
+        document.body.appendChild(cont);
+        setTimeout(() => cont.remove(), 3800);
+    } catch { /* */ }
+}
+
 async function loadHome() {
     void loadHomeChangelog();
     _initHomeAbout();
     updateNavHeroTransparency();  // transparent nav over the hero at the top
     startHeroRotation();      // instant static rotation; loadHeroData upgrades it with AI slogans
     void loadHeroData();      // stats bar, floating-thumbnail collage, AI slogans
+    void loadHeroEgg();       // daily AI easter egg widget
 
     // Reset homepage pagination on fresh load
     _homeRecentOnlinePage = 1;
