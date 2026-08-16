@@ -372,6 +372,10 @@ app.use('/assets/sounds', express.static(soundsPath, {
 const noCacheHeaders = (res) => { res.setHeader('Cache-Control', 'no-cache'); res.setHeader('CDN-Cache-Control', 'no-store'); };
 app.use('/js', express.static(path.join(__dirname, '../public/js'), { maxAge: 0, etag: true, lastModified: true, setHeaders: noCacheHeaders }));
 app.use('/css', express.static(path.join(__dirname, '../public/css'), { maxAge: 0, etag: true, lastModified: true, setHeaders: noCacheHeaders }));
+// SEO: per-route <head> meta/OG/JSON-LD injection + dynamic sitemap. MUST be before the public
+// static below (so it can intercept "/") and before the SPA catch-all. Only touches the SPA
+// HTML routes (home, vods/clips/pastes lists, vod/clip/paste detail); everything else falls through.
+try { require('./seo/seo').register(app); } catch (e) { console.warn('[SEO] not registered:', e.message); }
 app.use(express.static(path.join(__dirname, '../public'), { setHeaders: (res, filePath) => { if (filePath.endsWith('.html')) noCacheHeaders(res); } }));
 
 // Ensure data directories exist

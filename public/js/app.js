@@ -1447,10 +1447,14 @@ function _homeAboutDefaultExpanded() {
     } catch { return false; }
 }
 let _homeAboutSeenObserver = null;
+let _homeAboutInited = false;   // only auto-expand on the FIRST home view of the session
 function _initHomeAbout() {
     const banner = document.getElementById('home-cta-banner');
     if (!banner) return;
-    const expanded = _homeAboutDefaultExpanded();
+    // Re-navigating back to Home should NOT re-expand it — only the first view of the session
+    // uses the first-visit rule; after that it defaults collapsed.
+    const expanded = _homeAboutInited ? false : _homeAboutDefaultExpanded();
+    _homeAboutInited = true;
     banner.classList.toggle('about-collapsed', !expanded);
     const toggle = banner.querySelector('.home-about-toggle');
     if (toggle) toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
