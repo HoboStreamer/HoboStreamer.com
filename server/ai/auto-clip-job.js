@@ -128,6 +128,47 @@ async function _tick() {
     } finally { _busy = false; }
 }
 
+// ── Historical VOD backfill: a few auto-clips per day (daily-gated, like the moments/paste
+// jobs). Processes the most-watched un-clipped VODs first; idempotent (skips VODs that already
+// have an auto-clip), so it steadily works through the back catalogue over days. ─────────────
+const BACKFILL_SETTING = 'auto_clip_backfill';
+const BACKFILL_PER_DAY = 4;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function _backfillDue() {
+    try { const p = JSON.parse(db.getSetting(BACKFILL_SETTING) || '{}'); return !p.updated_at || (Date.now() - p.updated_at) >= DAY_MS; }
+    catch { return true; }
+}
+async function _resolveVodSource(vodId) {
+    try {
+        const vod = db.getVodById(vodId);
+        if (!vod) return null;
+        try { const vs = require('../vod/vod-storage'); const src = await vs.resolveMediaSource(vod); if (src && src.value) return src.value; } catch { /* */ }
+        return vod.file_path || null;
+    } catch { return null; }
+}
+
+// Cut auto-clips for up to `n` historical VODs that don't have one yet.
+async function backfillVodClips({ limit = BACKFILL_PER_DAY, force = false } = {}) {
+    if (!force && !_backfillDue()) return 0;
+    const moments = require('./ai-moments-job');
+    const vods = db.getVodsWithoutAutoClip(Math.max(1, limit)) || [];
+    let made = 0;
+    for (const v of vods) {
+        try {
+            const source = await _resolveVodSource(v.vod_id);
+            if (!source) continue; // media gone / unreadable
+            const moment = await moments.findBestMoment(v);
+            if (!moment) continue;
+            const clip = await clipVodMoment({ vod: v, offset: moment.offset, title: moment.title, desc: moment.desc, source });
+            if (clip) { made++; console.log(`[AutoClip] Backfilled VOD ${v.vod_id} ("${String(moment.title || '').slice(0, 60)}")`); }
+        } catch (e) { console.warn(`[AutoClip] backfill VOD ${v.vod_id} failed:`, e.message); }
+    }
+    try { db.setSetting(BACKFILL_SETTING, JSON.stringify({ updated_at: Date.now(), lastMade: made })); } catch { /* */ }
+    if (made) console.log(`[AutoClip] Historical backfill: ${made} clip(s) added today`);
+    return made;
+}
+
 /**
  * Cut a clip around a moment the AI-moments pipeline already chose for a finished VOD.
  * @param {object} o { vod (row w/ user_id, stream_id, vod_id/id), offset, title, desc, source }
@@ -146,11 +187,31 @@ async function clipVodMoment(o) {
     } catch { return null; }
 }
 
+let _backfillTimer = null;
 function start() {
     if (_timer) return;
     _timer = setInterval(() => { _tick().catch(() => {}); }, CHECK_INTERVAL_MS);
-    console.log('[AutoClip] Live auto-clip job started (selective chat-spike + AI agreement)');
+    // Historical VOD backfill: a few clips/day (self-gates on 24h). First pass ~3 min after boot.
+    setTimeout(() => { backfillVodClips().catch(() => {}); }, 3 * 60 * 1000);
+    _backfillTimer = setInterval(() => { backfillVodClips().catch(() => {}); }, 60 * 60 * 1000);
+    console.log('[AutoClip] Live auto-clip job started (selective chat-spike + AI agreement) + daily VOD backfill');
 }
-function stop() { if (_timer) { clearInterval(_timer); _timer = null; } }
+function stop() { if (_timer) { clearInterval(_timer); _timer = null; } if (_backfillTimer) { clearInterval(_backfillTimer); _backfillTimer = null; } }
 
-module.exports = { start, stop, clipVodMoment, _tick };
+module.exports = { start, stop, clipVodMoment, backfillVodClips, _tick };
+
+// CLI: force a historical backfill batch, e.g. `node server/ai/auto-clip-job.js --backfill --limit=4`
+if (require.main === module) {
+    const argv = process.argv.slice(2);
+    const num = (name, def) => { const a = argv.find(x => x.startsWith(`--${name}=`)); return a ? parseInt(a.split('=')[1], 10) : def; };
+    if (argv.includes('--backfill')) {
+        const limit = num('limit', 4);
+        console.log(`[AutoClip] Manual backfill (limit ${limit})…`);
+        backfillVodClips({ limit, force: true })
+            .then((n) => { console.log(`[AutoClip] Manual backfill done — ${n} clip(s) created.`); process.exit(0); })
+            .catch((e) => { console.error('[AutoClip] Manual backfill failed:', e); process.exit(1); });
+    } else {
+        console.log('Usage: node server/ai/auto-clip-job.js --backfill [--limit=N]');
+        process.exit(0);
+    }
+}

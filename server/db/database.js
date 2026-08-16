@@ -2611,6 +2611,27 @@ function getRecentChatText(streamId, sinceSec = 120, limit = 40) {
     } catch { return []; }
 }
 
+// Eligible finished VODs that do NOT yet have an auto-generated clip — the work-list for the
+// historical auto-clip backfill. Requires a timeline (memories) so Stage-2 can find a moment.
+// Best-first by views so the most-watched history gets clipped first. Idempotent.
+function getVodsWithoutAutoClip(limit = 20) {
+    try {
+        return all(`
+            SELECT v.id AS vod_id, v.stream_id, v.user_id, u.username, v.title,
+                   COALESCE(NULLIF(v.duration_seconds, 0), v.probe_duration_seconds, 0) AS duration,
+                   COALESCE(v.ai_overview, '') AS ai_overview, COALESCE(v.ai_overview_short, '') AS ai_overview_short,
+                   COALESCE(v.view_count, 0) AS view_count
+            FROM vods v JOIN users u ON u.id = v.user_id
+            WHERE v.is_public = 1 AND COALESCE(v.is_recording, 0) = 0 AND COALESCE(v.clips_only, 0) = 0
+              AND EXISTS (SELECT 1 FROM stream_memories m WHERE m.stream_id = v.stream_id)
+              AND NOT EXISTS (SELECT 1 FROM clips c WHERE (c.vod_id = v.id OR c.stream_id = v.stream_id)
+                              AND COALESCE(c.auto_generated, 0) = 1)
+            ORDER BY COALESCE(v.view_count, 0) DESC, v.created_at DESC
+            LIMIT ?
+        `, [Math.max(1, limit)]) || [];
+    } catch { return []; }
+}
+
 // Timestamps (seconds into the VOD) that viewers CLIPPED — the strongest "this was a moment"
 // signal we have.
 function getClipStartTimesForStream(streamId, vodId) {
@@ -6918,7 +6939,7 @@ module.exports = {
     updatePasteAi, cleanupMalformedAiText, deleteAiMomentTextPastes, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getStreamTranscriptSegments, getUserPastesForAi,
     getVodsForMomentRanking, getClipStartTimesForStream, getChatSpikeOffsets,
-    countAutoClipsSince, getLiveChatBuckets, getRecentChatText,
+    countAutoClipsSince, getLiveChatBuckets, getRecentChatText, getVodsWithoutAutoClip,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     getStreamerAiTimeline, assembleStreamerAiTimeline, setStreamAiTitle, getUntitledAiSessions, clearAiTimelineCache,
     // Homepage helpers

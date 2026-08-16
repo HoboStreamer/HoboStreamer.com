@@ -321,7 +321,7 @@ function start() {
     setInterval(() => { tick().catch(() => {}); }, 30 * 60 * 1000); // self-gates on 24h
 }
 
-module.exports = { start, tick };
+module.exports = { start, tick, findBestMoment: _findBestMoment };
 
 // CLI: force a one-off regeneration, e.g. a whole-dataset "best of all-time" test run:
 //   node server/ai/ai-moments-job.js --fresh --target=6 --perUser=2
