@@ -859,26 +859,38 @@ function _applyLoaderThumb(stream) {
         img.crossOrigin = 'anonymous';
         img.onload = () => {
             try {
-                const cv = document.createElement('canvas'); cv.width = 24; cv.height = 24;
-                const ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0, 24, 24);
-                const d = ctx.getImageData(0, 0, 24, 24).data;
-                let r = 0, g = 0, b = 0, n = 0;
+                // Cluster the thumbnail's colours by hue and pull the TWO strongest, most
+                // saturated clusters → a real two-tone palette to theme the loader with.
+                const S = 28;
+                const cv = document.createElement('canvas'); cv.width = S; cv.height = S;
+                const ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0, S, S);
+                const d = ctx.getImageData(0, 0, S, S).data;
+                const bins = Array.from({ length: 12 }, () => ({ r: 0, g: 0, b: 0, w: 0 }));
                 for (let i = 0; i < d.length; i += 4) {
                     if (d[i + 3] < 100) continue;
-                    // Skip near-black/near-white pixels so the accent is an actual colour.
-                    const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
-                    if (mx < 32 || (mx > 235 && mx - mn < 24)) continue;
-                    r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
-                }
-                if (n > 4) {
-                    r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
-                    // Nudge toward a vivid, readable accent.
-                    const boost = c => Math.min(255, Math.round(c * 1.15 + 18));
-                    const accent = `rgb(${boost(r)}, ${boost(g)}, ${boost(b)})`;
-                    if (document.querySelector('.video-placeholder') === placeholder) {
-                        placeholder.style.setProperty('--loader-a', accent);
-                        placeholder.style.setProperty('--loader-c', accent);
+                    const r = d[i], g = d[i + 1], b = d[i + 2];
+                    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), dlt = mx - mn;
+                    if (mx < 30 || (mx > 236 && dlt < 22)) continue; // skip black / white-grey
+                    let h = 0;
+                    if (dlt > 0) {
+                        if (mx === r) h = ((g - b) / dlt) % 6; else if (mx === g) h = (b - r) / dlt + 2; else h = (r - g) / dlt + 4;
+                        h *= 60; if (h < 0) h += 360;
                     }
+                    const sat = mx === 0 ? 0 : dlt / mx;
+                    const w = sat * (dlt + 12);
+                    const bin = Math.floor(h / 30) % 12;
+                    bins[bin].r += r * w; bins[bin].g += g * w; bins[bin].b += b * w; bins[bin].w += w;
+                }
+                const cols = bins.filter(x => x.w > 0).map(x => ({ r: x.r / x.w, g: x.g / x.w, b: x.b / x.w, w: x.w })).sort((a, b) => b.w - a.w);
+                if (cols.length && document.querySelector('.video-placeholder') === placeholder) {
+                    const boost = c => Math.min(255, Math.round(c * 1.12 + 16));
+                    const rgb = c => `rgb(${boost(c.r)}, ${boost(c.g)}, ${boost(c.b)})`;
+                    const a = cols[0];
+                    const c = cols[1] || cols[0];
+                    const mid = { r: (a.r + c.r) / 2, g: (a.g + c.g) / 2, b: (a.b + c.b) / 2 };
+                    placeholder.style.setProperty('--loader-a', rgb(a));
+                    placeholder.style.setProperty('--loader-b', rgb(mid));
+                    placeholder.style.setProperty('--loader-c', rgb(c));
                 }
             } catch { /* tainted canvas (cross-origin) — blurred thumb still applies */ }
         };
