@@ -2425,6 +2425,16 @@ function bumpClipTranscriptAttempt(id) {
 function getPastesNeedingAnalysis(limit = 5) {
     return all("SELECT * FROM pastes WHERE ai_summary IS NULL AND type IN ('paste','screenshot') ORDER BY created_at DESC LIMIT ?", [limit]);
 }
+// Remove AI-moment pastes that were created as TEXT (type != 'screenshot') — these only
+// happen when the moment frame couldn't be extracted, and they clutter the pastes tab.
+function deleteAiMomentTextPastes() {
+    try {
+        const rows = all(`SELECT id FROM pastes WHERE type <> 'screenshot' AND metadata LIKE '%"ai_moment":true%'`) || [];
+        for (const r of rows) run('DELETE FROM pastes WHERE id = ?', [r.id]);
+        if (rows.length) console.log(`[AI-Moments] Removed ${rows.length} stale text moment paste(s)`);
+        return rows.length;
+    } catch { return 0; }
+}
 function updatePasteAi(pasteId, { ai_summary = null, ai_tags = null }) {
     return run('UPDATE pastes SET ai_summary = ?, ai_tags = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?',
         [ai_summary, ai_tags ? (typeof ai_tags === 'string' ? ai_tags : JSON.stringify(ai_tags)) : null, pasteId]);
@@ -6867,7 +6877,7 @@ module.exports = {
     setVodAiOverview, setClipAiOverview, setVodTranscript, setClipTranscript, getStreamMemoriesInRange,
     getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTimeline, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
-    updatePasteAi, cleanupMalformedAiText, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
+    updatePasteAi, cleanupMalformedAiText, deleteAiMomentTextPastes, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getStreamTranscriptSegments, getUserPastesForAi,
     getVodsForMomentRanking, getClipStartTimesForStream, getChatSpikeOffsets,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,

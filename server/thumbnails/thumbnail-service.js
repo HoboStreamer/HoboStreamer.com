@@ -642,15 +642,21 @@ async function generateMomentThumbnail(memoryId, filePath, seekSeconds) {
 
 // Extract a frame from a VOD at a timestamp directly to an arbitrary file (e.g. the pastes
 // screenshots dir so an AI moment becomes a real image paste). Resolves true on success.
-function extractFrameToFile(videoPath, seekSeconds, outAbsPath) {
+// Extract one frame to a file. `source` may be a local path OR an http(s) URL (e.g. a
+// presigned B2/R2 URL) — with `-ss` before `-i`, ffmpeg seeks via HTTP range requests and
+// only pulls the bytes around that timestamp, so remote/cold VODs work without downloading.
+function extractFrameToFile(source, seekSeconds, outAbsPath) {
     return new Promise((resolve) => {
-        if (!videoPath || !fs.existsSync(videoPath)) return resolve(false);
+        const isUrl = /^https?:\/\//i.test(String(source || ''));
+        if (!source || (!isUrl && !fs.existsSync(source))) return resolve(false);
         try { fs.mkdirSync(path.dirname(outAbsPath), { recursive: true }); } catch { /* */ }
-        const args = ['-y', '-ss', String(Math.max(0.5, Number(seekSeconds) || 1)), '-i', videoPath,
+        const args = ['-y', '-ss', String(Math.max(0.5, Number(seekSeconds) || 1)), '-i', source,
             '-vframes', '1', '-vf', `scale=${THUMB_WIDTH}:-1`, '-q:v', String(THUMB_QUALITY), outAbsPath];
         const ff = spawn('ffmpeg', args, { stdio: 'ignore' });
-        ff.on('close', (code) => resolve(code === 0 && fs.existsSync(outAbsPath)));
-        ff.on('error', () => resolve(false));
+        // Remote reads can hang — cap the attempt.
+        const to = setTimeout(() => { try { ff.kill('SIGKILL'); } catch { /* */ } resolve(false); }, isUrl ? 35000 : 15000);
+        ff.on('close', (code) => { clearTimeout(to); resolve(code === 0 && fs.existsSync(outAbsPath)); });
+        ff.on('error', () => { clearTimeout(to); resolve(false); });
     });
 }
 

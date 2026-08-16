@@ -191,6 +191,8 @@ async function tick(opts = {}) {
     const ignoreUsed = !!opts.fresh;
     _busy = true;
     try {
+        // Clear any stale text moment pastes from earlier failed-extraction runs.
+        try { if (db.deleteAiMomentTextPastes) db.deleteAiMomentTextPastes(); } catch { /* */ }
         const prev = _load();
         const usedVods = new Set(ignoreUsed ? [] : (prev.usedVods || []));
 
@@ -236,15 +238,19 @@ async function tick(opts = {}) {
             const vodLink = `${BASE_URL}${vodPath}`;
             const slug = _slug();
 
-            // Extract the real frame at this moment so the paste is a true IMAGE paste.
+            // Extract the real frame at this moment so the paste is a true IMAGE paste. The
+            // source can be a local file OR a presigned B2/R2 URL (for cold/offloaded VODs), so
+            // pruned-local VODs still work — ffmpeg range-seeks the remote file.
             let screenshotPath = null;
             let img = `/api/thumbnails/generate/vod/${v.vod_id}`;
             try {
                 const vod = db.getVodById(v.vod_id);
-                if (thumb && vod && vod.file_path && thumb.extractFrameToFile) {
+                let source = vod && vod.file_path;
+                try { const vs = require('../vod/vod-storage'); const src = vod && await vs.resolveMediaSource(vod); if (src && src.value) source = src.value; } catch { /* fall back to file_path */ }
+                if (thumb && source && thumb.extractFrameToFile) {
                     const fname = `ai-moment-vod${v.vod_id}-${offset}.jpg`;
                     const outPath = path.join(SCREENSHOTS_DIR, fname);
-                    if (await thumb.extractFrameToFile(vod.file_path, offset, outPath)) {
+                    if (await thumb.extractFrameToFile(source, offset, outPath)) {
                         screenshotPath = outPath;
                         img = `/data/pastes/screenshots/${fname}`;
                         // Vision-verify the ACTUAL extracted frame → most accurate description +
@@ -262,6 +268,14 @@ async function tick(opts = {}) {
                     }
                 }
             } catch { /* keep fallback */ }
+
+            // These are meant to be IMAGE pastes of the actual moment. If we couldn't extract
+            // the frame (e.g. the VOD file was pruned), skip it entirely — never post a text
+            // paste, which just clutters the pastes tab.
+            if (!screenshotPath) {
+                console.log(`[AI-Moments] Skipped VOD ${v.vod_id} — could not extract moment frame (no local file).`);
+                continue;
+            }
 
             if (!desc) desc = _cleanText(v.ai_overview_short || v.ai_overview, 400) || 'A standout moment from this stream.';
             const content = `${desc}\n\n▶ Watch this moment on @${v.username}'s stream: ${vodLink}`;
