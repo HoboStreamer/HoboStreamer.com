@@ -69,11 +69,14 @@ async function tick(opts = {}) {
             .filter(c => c.vod_id && (!c.vod_duration || (c.offset_seconds || 0) < c.vod_duration - 2));
         if (!raw.length) { _busy = false; return; }
         const fresh = raw.filter(c => !usedIds.has(c.memory_id));
-        // One moment per streamer per run so a single busy channel can't flood the pastes tab.
-        const seenUser = new Set();
+        // At most `perUser` moments per streamer per run (default 1) so a single busy channel
+        // can't flood the pastes tab; a manual "best of dataset" run can raise this.
+        const perUser = Math.max(1, opts.perUser || 1);
+        const userCount = new Map();
         const oneEach = (fresh.length >= TARGET_N ? fresh : raw).filter(c => {
-            if (seenUser.has(c.user_id)) return false;
-            seenUser.add(c.user_id); return true;
+            const n = userCount.get(c.user_id) || 0;
+            if (n >= perUser) return false;
+            userCount.set(c.user_id, n + 1); return true;
         });
         const pool = oneEach;
 
@@ -164,6 +167,7 @@ if (require.main === module) {
         days: has('--all') ? 100000 : num('days', 30),
         limit: has('--all') ? 500 : num('limit', 150),
         target: num('target', 6),
+        perUser: num('perUser', 1),
     };
     console.log('[AI-Moments] Manual run:', JSON.stringify(opts));
     tick(opts)
