@@ -1031,6 +1031,26 @@ button{font:inherit}
   const resolving=new Set();
   let curItems=[], selIdx=-1, isOpen=false, resolveTimer=null;
 
+  // ── Firefox companion extension (optional): history autocomplete ──
+  let extReady=false; const bhCache=new Map(), bhInFlight=new Set(); let bhSeq=0;
+  window.addEventListener("message",ev=>{
+    if(ev.source!==window) return;
+    const d=ev.data; if(!d||d.source!=="hobo-kiosk-ext") return;
+    if(d.type==="ready"){ if(!extReady){ extReady=true; if(isOpen) renderSuggest(); } }
+    else if(d.type==="history-result"){
+      const k=String(d.q||"").toLowerCase();
+      bhInFlight.delete(k); bhCache.set(k, Array.isArray(d.items)?d.items:[]);
+      if(isOpen && input.value.trim().toLowerCase()===k) renderSuggest();
+    }
+  });
+  try{ window.postMessage({source:"hobo-kiosk",type:"ping"},location.origin); }catch{} // is the companion here?
+  function requestBH(q){
+    q=(q||"").trim(); if(!extReady||q.length<2) return;
+    const k=q.toLowerCase(); if(bhCache.has(k)||bhInFlight.has(k)) return;
+    bhInFlight.add(k);
+    try{ window.postMessage({source:"hobo-kiosk",type:"history-query",id:++bhSeq,q},location.origin); }catch{ bhInFlight.delete(k); }
+  }
+
   const saveHist=()=>{ try{ localStorage.setItem(LS_HIST, JSON.stringify(hist.slice(0,120))); }catch{} };
   const searchUrl=q=>PROVIDERS[provider].url.replace("%s",encodeURIComponent(q));
   const faviconUrl=host=>`/api/kiosk/favicon?domain=${encodeURIComponent(host)}`;
@@ -1052,7 +1072,7 @@ button{font:inherit}
     isOpen=true; selIdx=-1;
     omni.classList.add("show"); omni.setAttribute("aria-hidden","false");
     if(seed!=null) input.value=seed;
-    renderSuggest();
+    renderSuggest(); requestBH(input.value);
     setTimeout(()=>{ input.focus(); if(seed==null){ input.select(); } else { input.setSelectionRange(input.value.length,input.value.length); } },30);
   }
   function close(){
@@ -1077,23 +1097,31 @@ button{font:inherit}
 
   // ── suggestions ──
   function buildItems(q){
-    const items=[]; q=q.trim();
+    const items=[], seen=new Set(); q=q.trim();
+    const add=it=>{ const k=it.url||("s:"+(it.title||"")); if(seen.has(k)) return; seen.add(k); items.push(it); };
     if(q){
       if(looksLikeDomain(q)){
         const key=q.toLowerCase(), c=resolved.get(key);
         if(c && !c.reachable){
           // resolved as unreachable → offer search only
         } else if(c && c.reachable){
-          items.push({type:"domain",title:c.title||q,sub:c.host+(c.title?" · "+c.title:""),host:c.host,url:c.url});
+          add({type:"domain",title:c.title||q,sub:c.host+(c.title?" · "+c.title:""),host:c.host,url:c.url});
         } else {
-          items.push({type:"domain",title:q,sub:"Open site — checking…",host:hostOf(q),url:fullUrl(q),pending:true,key});
+          add({type:"domain",title:q,sub:"Open site — checking…",host:hostOf(q),url:fullUrl(q),pending:true,key});
         }
       }
-      items.push({type:"search",title:q,sub:`Search ${PROVIDERS[provider].name}`,url:searchUrl(q),icon:PROVIDERS[provider].icon});
+      add({type:"search",title:q,sub:`Search ${PROVIDERS[provider].name}`,url:searchUrl(q),icon:PROVIDERS[provider].icon});
     }
+    // Firefox history (via the companion extension, if installed)
+    if(extReady){
+      const bh=bhCache.get(q.toLowerCase());
+      if(bh) for(const h of bh){ if(items.length>=8) break; add({type:"history",title:h.title||h.host||h.url,sub:h.url,url:h.url,host:hostOf(h.url),ff:true}); }
+    }
+    // Kiosk's own on-page history (localStorage)
     for(const h of historyMatches(q)){
+      if(items.length>=8) break;
       if(q && looksLikeDomain(q) && h.url===fullUrl(q)) continue;
-      items.push({type:"history",title:h.title||h.host||h.q,sub:h.url||("Search: "+h.q),url:h.url||searchUrl(h.q),host:h.host,histKey:h.key});
+      add({type:"history",title:h.title||h.host||h.q,sub:h.url||("Search: "+h.q),url:h.url||searchUrl(h.q),host:h.host,histKey:h.key});
     }
     return items;
   }
@@ -1115,7 +1143,7 @@ button{font:inherit}
           <span class="omni-sug-sub">${esc(it.sub)}</span>
         </span>
         <span class="omni-sug-kind">${it.type==="search"?"Search":it.type==="history"?"History":"Go"}</span>
-        ${it.type==="history"?`<button class="omni-sug-del" data-del="${esc(it.histKey||"")}" title="Remove from history"><i class="fa-solid fa-xmark"></i></button>`:""}
+        ${(it.type==="history"&&it.histKey)?`<button class="omni-sug-del" data-del="${esc(it.histKey)}" title="Remove from history"><i class="fa-solid fa-xmark"></i></button>`:""}
       </div>`).join("");
   }
   function scheduleResolve(){
@@ -1162,7 +1190,7 @@ button{font:inherit}
   }
 
   // ── events ──
-  input.addEventListener("input",()=>{ selIdx=-1; renderSuggest(); scheduleResolve(); });
+  input.addEventListener("input",()=>{ selIdx=-1; renderSuggest(); scheduleResolve(); requestBH(input.value); });
   input.addEventListener("keydown",e=>{
     if(e.key==="ArrowDown"){ e.preventDefault(); if(curItems.length){ selIdx=(selIdx+1)%curItems.length; highlight(); } }
     else if(e.key==="ArrowUp"){ e.preventDefault(); if(curItems.length){ selIdx=(selIdx<=0?curItems.length:selIdx)-1; highlight(); } }
