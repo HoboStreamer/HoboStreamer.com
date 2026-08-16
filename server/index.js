@@ -592,6 +592,15 @@ app.post('/whip/:streamId', express.text({ type: 'application/sdp', limit: '64kb
 app.patch('/whip/:streamId/:resourceId', express.text({ type: 'application/trickle-ice-sdpfrag', limit: '16kb' }), whipHandler.handleWhipPatch);
 app.delete('/whip/:streamId/:resourceId', whipHandler.handleWhipDelete);
 
+// ── Kiosk / new-tab page ─────────────────────────────────────
+// Standalone one-pager (NOT the SPA) with live network data + all the domain links —
+// meant to be set as a browser's default new-tab URL for on-stream promo. Served for
+// both /kiosk and /kiosk.html so either URL works.
+app.get(['/kiosk', '/kiosk.html'], (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(path.join(__dirname, '../public/kiosk.html'));
+});
+
 // ── SPA Fallback ─────────────────────────────────────────────
 app.get('*', (req, res) => {
     // Don't serve HTML for API routes

@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex">
+<title>Hobo Network // New Tab</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+:root{
+  --bg:#08090c;
+  --panel:#0e1117;
+  --panel2:#121720;
+  --line:#2d3540;
+  --text:#f6f2e9;
+  --muted:#a6b0bc;
+  --gold:#dbb077;
+  --green:#72f1b8;
+  --purple:#b38cff;
+  --pink:#ff5da2;
+  --red:#ff4d5f;
+}
+*{box-sizing:border-box}
+html,body{
+  margin:0;width:100%;height:100%;overflow:hidden;
+  background:var(--bg);color:var(--text);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+body{
+  background:
+    radial-gradient(circle at 10% 10%,rgba(219,176,119,.14),transparent 30%),
+    radial-gradient(circle at 88% 14%,rgba(105,183,255,.09),transparent 28%),
+    linear-gradient(145deg,#08090c,#0b0f14 52%,#08090c);
+}
+body:before{
+  content:"";position:fixed;inset:0;pointer-events:none;opacity:.16;
+  background-image:
+    linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
+  background-size:54px 54px;
+}
+a{color:inherit;text-decoration:none}
+button{font:inherit}
+
+.page{
+  width:100vw;height:100vh;
+  padding:1.1vh 1.1vw;
+  display:grid;
+  grid-template-rows:6.4vh 18.5vh 8.6vh 22vh 1fr;
+  gap:1vh;
+}
+
+/* HEADER */
+.topbar{
+  display:flex;align-items:center;
+  border:1px solid var(--line);border-radius:16px;
+  background:rgba(11,14,19,.94);
+  padding:0 1.1vw;
+  box-shadow:0 16px 44px rgba(0,0,0,.26)
+}
+.brand{
+  display:flex;align-items:center;gap:.8vw;
+  font-size:1.15vw;font-weight:950;letter-spacing:.08em;
+  white-space:nowrap
+}
+.logo{
+  width:2.55vw;height:2.55vw;
+  min-width:38px;min-height:38px;
+  border:2px solid var(--gold);border-radius:10px;
+  color:var(--gold);display:grid;place-items:center;
+  font-weight:950;transform:rotate(45deg)
+}
+.logo span{transform:rotate(-45deg);font-size:1vw}
+.network-line{
+  flex:1;text-align:center;
+  font-size:.95vw;font-weight:900;letter-spacing:.1em;
+  color:#d0d7df;white-space:nowrap
+}
+.network-line b{color:var(--gold)}
+.clock{
+  text-align:right;font-variant-numeric:tabular-nums;
+  font-size:1vw;font-weight:950;line-height:1.05
+}
+.clock small{
+  display:block;font-size:.64vw;color:var(--muted);
+  letter-spacing:.1em;margin-top:.4vh
+}
+
+/* HERO */
+.hero{
+  position:relative;overflow:hidden;
+  display:flex;align-items:center;justify-content:space-between;
+  border:1px solid var(--line);border-radius:20px;
+  background:linear-gradient(120deg,rgba(18,22,29,.97),rgba(10,12,17,.92));
+  padding:2.2vh 2vw;
+}
+.hero:after{
+  content:"HOBO NETWORK";position:absolute;right:-1vw;bottom:-3.9vh;
+  font-size:8.5vw;letter-spacing:-.07em;font-weight:950;
+  color:rgba(255,255,255,.028);white-space:nowrap
+}
+.hero-copy{position:relative;z-index:1;max-width:66%}
+.kicker{
+  font-size:.92vw;color:var(--gold);font-weight:950;
+  letter-spacing:.14em;text-transform:uppercase
+}
+.hero h1{
+  margin:.6vh 0 .55vh;
+  font-size:3.7vw;line-height:.9;letter-spacing:-.055em
+}
+.hero h1 span{color:var(--gold)}
+.hero p{
+  margin:0;font-size:1.08vw;line-height:1.35;
+  font-weight:650;color:#bcc5cf;
+  min-height:1.5em;transition:opacity .5s
+}
+.hero-side{
+  position:relative;z-index:1;text-align:right;
+  padding-left:2vw
+}
+.hero-side strong{
+  display:block;font-size:1.55vw;line-height:1.05;
+  letter-spacing:-.025em
+}
+.hero-side .live-pill{
+  display:inline-flex;align-items:center;gap:.5vw;
+  margin-top:1vh;padding:.7vh 1vw;border-radius:999px;
+  border:1px solid rgba(255,77,95,.4);
+  background:rgba(255,77,95,.1);
+  font-size:.92vw;font-weight:950;letter-spacing:.06em
+}
+.hero-side .live-pill.dark{
+  border-color:#333c48;background:rgba(255,255,255,.03);
+  color:var(--muted)
+}
+.hero-side .live-pill .pulse{
+  width:9px;height:9px;border-radius:50%;background:var(--red);
+  box-shadow:0 0 12px var(--red);animation:pulse 1.6s infinite
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.hero-side span.tag{
+  display:block;margin-top:.8vh;
+  font-size:.78vw;color:var(--muted);font-weight:850;
+  letter-spacing:.08em
+}
+
+/* VITALS */
+.vitals{
+  display:grid;grid-template-columns:repeat(9,1fr);
+  gap:.7vw
+}
+.vital{
+  position:relative;overflow:hidden;
+  border:1px solid var(--line);border-radius:14px;
+  background:linear-gradient(160deg,rgba(18,22,29,.96),rgba(10,12,17,.95));
+  padding:1.1vh 1vw;
+  display:flex;flex-direction:column;justify-content:center;
+  box-shadow:0 10px 26px rgba(0,0,0,.2)
+}
+.vital .vlabel{
+  font-size:.66vw;font-weight:950;letter-spacing:.12em;
+  text-transform:uppercase;color:#8b96a3;white-space:nowrap
+}
+.vital .vnum{
+  font-size:1.9vw;line-height:1;font-weight:950;
+  letter-spacing:-.03em;margin:.5vh 0 .35vh;
+  font-variant-numeric:tabular-nums
+}
+.vital .vdelta{
+  font-size:.66vw;font-weight:900;color:var(--green);white-space:nowrap
+}
+.vital .vdelta.zero{color:#6f7b89}
+.vital.hot .vnum{color:var(--gold)}
+.vital.hot{border-color:color-mix(in srgb,var(--gold) 45%,var(--line))}
+.vital.livecount .vnum{color:var(--red)}
+.vital.livecount{border-color:color-mix(in srgb,var(--red) 40%,var(--line))}
+
+/* DOMAINS */
+.domains{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  gap:.85vw
+}
+.domain{
+  position:relative;overflow:hidden;
+  border:1px solid var(--line);border-radius:18px;
+  padding:2vh 1.3vw;
+  background:linear-gradient(145deg,rgba(18,22,29,.97),rgba(10,12,17,.96));
+  display:flex;flex-direction:column;justify-content:center;
+  box-shadow:0 14px 36px rgba(0,0,0,.22);
+  transition:transform .12s,border-color .12s
+}
+.domain:hover{transform:translateY(-3px);border-color:var(--c)}
+.domain:after{
+  content:"";position:absolute;right:-3vw;bottom:-5vw;
+  width:11vw;height:11vw;border-radius:50%;
+  background:var(--c);opacity:.085;filter:blur(10px)
+}
+.domain .kind{
+  color:var(--c);font-size:.82vw;font-weight:950;
+  letter-spacing:.13em;text-transform:uppercase
+}
+.domain .url{
+  font-size:2vw;line-height:1;
+  font-weight:950;letter-spacing:-.045em;
+  margin:.7vh 0 .75vh;white-space:nowrap
+}
+.domain .desc{
+  font-size:.98vw;line-height:1.28;
+  color:#b5bec9;font-weight:650;max-width:92%
+}
+.domain .arrow{
+  position:absolute;right:1vw;bottom:1.1vh;
+  color:var(--c);font-size:1.65vw;font-weight:900
+}
+.hs{--c:var(--gold)}
+.tools{--c:var(--green)}
+.quest{--c:var(--purple)}
+.power{--c:var(--pink)}
+
+/* LOWER */
+.lower{
+  display:grid;
+  grid-template-columns:1.65fr .72fr;
+  gap:.85vw;min-height:0
+}
+.content-panel,.chat{
+  min-height:0;overflow:hidden;
+  border:1px solid var(--line);border-radius:18px;
+  background:rgba(12,15,20,.95)
+}
+.content-panel{
+  display:grid;grid-template-rows:1fr 1fr
+}
+.section{
+  min-height:0;display:flex;flex-direction:column
+}
+.section + .section{border-top:1px solid #28303a}
+.head{
+  min-height:4.6vh;display:flex;align-items:center;gap:.7vw;
+  padding:0 .9vw;border-bottom:1px solid #262e38
+}
+.head h2{
+  margin:0;font-size:.92vw;font-weight:950;
+  letter-spacing:.11em;text-transform:uppercase
+}
+.dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--red);box-shadow:0 0 12px var(--red);
+  animation:pulse 1.6s infinite
+}
+.spacer{flex:1}
+.badge{
+  font-size:.69vw;font-weight:900;color:#9ba6b2;
+  border:1px solid #333c48;border-radius:999px;
+  padding:.42vh .55vw
+}
+.tabs{display:flex;gap:.3vw}
+.tab{
+  border:0;background:transparent;color:#8b96a3;
+  font-size:.72vw;font-weight:950;letter-spacing:.09em;
+  text-transform:uppercase;padding:.45vh .55vw;border-radius:7px;
+  cursor:pointer
+}
+.tab.active{background:#1c232d;color:#fff}
+
+.cards{
+  flex:1;min-height:0;
+  display:grid;grid-template-columns:repeat(3,1fr);
+  gap:.65vw;padding:.7vh .7vw
+}
+.card{
+  min-width:0;overflow:hidden;
+  display:grid;grid-template-rows:1fr auto;
+  border:1px solid #29313b;border-radius:12px;
+  background:#0b0e13;transition:border-color .12s
+}
+.card:hover{border-color:#3c4652}
+.thumb{
+  min-height:0;position:relative;overflow:hidden;
+  display:grid;place-items:center;
+  background:linear-gradient(145deg,#151b24,#0b0f15)
+}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.placeholder{
+  font-size:.85vw;font-weight:950;letter-spacing:.14em;
+  color:#6f7b89
+}
+.live{
+  position:absolute;left:.55vw;top:.55vh;
+  background:var(--red);border-radius:5px;
+  padding:.28vh .4vw;font-size:.6vw;font-weight:950;
+  letter-spacing:.08em
+}
+.count{
+  position:absolute;right:.55vw;top:.55vh;
+  background:#080a0edf;border-radius:5px;
+  padding:.28vh .4vw;font-size:.6vw;font-weight:900
+}
+.info{padding:.7vh .65vw}
+.title{
+  font-size:.9vw;font-weight:900;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.meta{
+  margin-top:.25vh;font-size:.69vw;color:#8a95a3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.empty{
+  grid-column:1/-1;display:grid;place-items:center;
+  text-align:center;font-size:.95vw;color:#8793a0
+}
+.empty b{color:var(--gold)}
+
+/* CHAT */
+.chat{
+  display:grid;grid-template-rows:5.7vh 1fr 4vh
+}
+.chat-head{
+  display:flex;align-items:center;gap:.65vw;
+  padding:0 .9vw;border-bottom:1px solid #28303a
+}
+.chat-title{
+  font-size:1vw;font-weight:950;letter-spacing:.1em
+}
+.chat-url{
+  margin-top:.15vh;font-size:.7vw;color:var(--gold);
+  font-weight:900;letter-spacing:.05em
+}
+.status{
+  margin-left:auto;display:flex;align-items:center;gap:.35vw;
+  font-size:.68vw;font-weight:950;color:#74808d
+}
+.status i{
+  width:7px;height:7px;border-radius:50%;background:#59616c
+}
+.status.online{color:var(--green)}
+.status.online i{
+  background:var(--green);box-shadow:0 0 11px var(--green)
+}
+.messages{
+  min-height:0;overflow:hidden;
+  display:flex;flex-direction:column;justify-content:flex-end;
+  gap:.25vh;padding:.7vh .7vw;
+  mask-image:linear-gradient(to bottom,transparent,#000 8%,#000)
+}
+.msg{
+  font-size:.86vw;line-height:1.3;
+  padding:.46vh .45vw;border-radius:6px
+}
+.msg:nth-child(odd){background:rgba(255,255,255,.02)}
+.msg .name{
+  font-weight:950;color:var(--gold);margin-right:.38vw
+}
+.msg .platform{
+  font-size:.53vw;color:#a7b0ba;background:#252d37;
+  border-radius:4px;padding:.16vh .24vw;margin-right:.28vw;
+  text-transform:uppercase
+}
+.msg.system{color:#7c8795;font-style:italic}
+.chat-foot{
+  display:flex;align-items:center;
+  padding:0 .75vw;border-top:1px solid #28303a;
+  font-size:.62vw;color:#7e8997;font-weight:800
+}
+.chat-foot b{margin-left:auto;color:#b4bdc8}
+
+@media (max-width:1400px){
+  .domain .url{font-size:1.8vw}
+  .domain .desc{font-size:.9vw}
+  .hero h1{font-size:3.4vw}
+  .vital .vnum{font-size:1.7vw}
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <a class="brand" href="https://hobostreamer.com">
+      <span class="logo"><span>H</span></span>
+      <span>HOBO NETWORK</span>
+    </a>
+    <div class="network-line">
+      <b>HOBOSTREAMER.COM</b> &nbsp;•&nbsp;
+      <b>HOBO.TOOLS</b> &nbsp;•&nbsp;
+      <b>HOBO.QUEST</b> &nbsp;•&nbsp;
+      <b>POWERCHAT.LIVE</b>
+    </div>
+    <div class="clock"><span id="clock">--:--</span><small id="date">LOADING</small></div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-copy">
+      <div class="kicker">OPEN • COMMUNITY-BUILT • WEIRD INTERNET</div>
+      <h1>STREAM. BUILD. PLAY.<br><span>KEEP IT YOURS.</span></h1>
+      <p id="hero-slogan">Live streaming, useful tools, games, and community infrastructure.</p>
+    </div>
+    <div class="hero-side">
+      <strong>THE HOBO NETWORK</strong>
+      <div class="live-pill dark" id="hero-live"><span class="pulse" style="display:none"></span><span id="hero-live-text">CHECKING NETWORK…</span></div>
+      <span class="tag">FREE TO USE • BUILT IN PUBLIC</span>
+    </div>
+  </section>
+
+  <section class="vitals" id="vitals">
+    <div class="vital livecount"><div class="vlabel">Live now</div><div class="vnum" id="v-live">–</div><div class="vdelta" id="v-viewers">watching</div></div>
+    <div class="vital hot"><div class="vlabel">Streamers</div><div class="vnum" id="v-streamers">–</div><div class="vdelta zero" id="v-streamers-d">all time</div></div>
+    <div class="vital"><div class="vlabel">VODs</div><div class="vnum" id="v-vods">–</div><div class="vdelta zero" id="v-vods-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel">Clips</div><div class="vnum" id="v-clips">–</div><div class="vdelta zero" id="v-clips-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel">Pastes</div><div class="vnum" id="v-pastes">–</div><div class="vdelta zero" id="v-pastes-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel">Stream hrs</div><div class="vnum" id="v-hours">–</div><div class="vdelta zero" id="v-hours-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel">AI moments</div><div class="vnum" id="v-ai">–</div><div class="vdelta zero" id="v-ai-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel">Messages</div><div class="vnum" id="v-msgs">–</div><div class="vdelta zero" id="v-msgs-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel">Hobos</div><div class="vnum" id="v-users">–</div><div class="vdelta zero" id="v-users-d">&nbsp;</div></div>
+  </section>
+
+  <section class="domains">
+    <a class="domain hs" href="https://hobostreamer.com">
+      <div class="kind">Live Streaming</div>
+      <div class="url">HOBOSTREAMER.COM</div>
+      <div class="desc">Streams, chat, VODs, clips and restreaming.</div>
+      <div class="arrow">↗</div>
+    </a>
+
+    <a class="domain tools" href="https://hobo.tools">
+      <div class="kind">Free Internet Tools</div>
+      <div class="url">HOBO.TOOLS</div>
+      <div class="desc">200+ media, dev, text and utility tools.</div>
+      <div class="arrow">↗</div>
+    </a>
+
+    <a class="domain quest" href="https://hobo.quest">
+      <div class="kind">Multiplayer Sandbox</div>
+      <div class="url">HOBO.QUEST</div>
+      <div class="desc">Physics, building, crafting and chaos.</div>
+      <div class="arrow">↗</div>
+    </a>
+
+    <a class="domain power" href="https://powerchat.live">
+      <div class="kind">Monetization Partner</div>
+      <div class="url">POWERCHAT.LIVE</div>
+      <div class="desc">Paid chat, TTS, media and stream alerts.</div>
+      <div class="arrow">↗</div>
+    </a>
+  </section>
+
+  <section class="lower">
+    <div class="content-panel">
+      <div class="section">
+        <div class="head">
+          <span class="dot"></span>
+          <h2>Live on HoboStreamer</h2>
+          <span class="spacer"></span>
+          <span class="badge" id="live-count">CHECKING…</span>
+        </div>
+        <div class="cards" id="streams">
+          <div class="empty">Checking <b>HOBOSTREAMER.COM</b> for live streams…</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="head">
+          <h2>Latest from the network</h2>
+          <span class="spacer"></span>
+          <div class="tabs">
+            <button class="tab active" data-tab="vods">VODs</button>
+            <button class="tab" data-tab="clips">Clips</button>
+            <button class="tab" data-tab="pastes">Pastes</button>
+          </div>
+        </div>
+        <div class="cards" id="latest">
+          <div class="empty">Loading recent stuff…</div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="chat">
+      <div class="chat-head">
+        <div>
+          <div class="chat-title">GLOBAL CHAT</div>
+          <div class="chat-url">HOBOSTREAMER.COM/CHAT</div>
+        </div>
+        <div class="status" id="chat-status"><i></i><span>CONNECTING</span></div>
+      </div>
+      <div class="messages" id="messages">
+        <div class="msg system">Connecting to HoboStreamer global chat…</div>
+      </div>
+      <div class="chat-foot">
+        <span id="chat-users">GLOBAL ROOM</span>
+        <b>LIVE RELAY</b>
+      </div>
+    </aside>
+  </section>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  // Served from hobostreamer.com/kiosk → everything is same-origin (no CORS, no cross-host WS).
+  const API="/api";
+  const WS_URL=(location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/chat";
+  const $=s=>document.querySelector(s);
+  const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const abs=u=>{try{return u?new URL(u,location.origin).href:""}catch{return""}};
+  const fmt=n=>{n=Number(n)||0;return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"K":String(n)};
+  const state={tab:"vods",vods:[],clips:[],pastes:[]};
+
+  function tick(){
+    const d=new Date();
+    $("#clock").textContent=d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+    $("#date").textContent=d.toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"}).toUpperCase();
+  }
+  tick();setInterval(tick,1000);
+
+  async function get(path){
+    const r=await fetch(API+path,{headers:{Accept:"application/json"}});
+    if(!r.ok)throw new Error(r.status);
+    return r.json();
+  }
+
+  /* ── Network vitals + hero slogans (from /api/home/hero) ── */
+  function setDelta(id,val){
+    const el=$(id);if(!el)return;
+    const n=Number(val)||0;
+    el.textContent=n>0?("+"+fmt(n)+" today"):"—";
+    el.classList.toggle("zero",n<=0);
+  }
+  function setNum(id,val){const el=$(id);if(el)el.textContent=fmt(val);}
+  let slogans=[],sloganIdx=0;
+  function rotateSlogan(){
+    if(!slogans.length)return;
+    const el=$("#hero-slogan");
+    el.style.opacity="0";
+    setTimeout(()=>{
+      el.textContent=slogans[sloganIdx%slogans.length];
+      sloganIdx++;el.style.opacity="1";
+    },500);
+  }
+  async function loadVitals(){
+    try{
+      const d=await get("/home/hero");
+      const s=d.stats||{},r=s.recent||{};
+      setNum("#v-streamers",s.streamers);
+      setNum("#v-vods",s.vods); setDelta("#v-vods-d",r.vods&&r.vods.d);
+      setNum("#v-clips",s.clips); setDelta("#v-clips-d",r.clips&&r.clips.d);
+      setNum("#v-pastes",s.pastes);
+      setNum("#v-hours",s.streamHours); setDelta("#v-hours-d",r.hours&&r.hours.d);
+      setNum("#v-ai",s.aiMemories); setDelta("#v-ai-d",r.aiMoments&&r.aiMoments.d);
+      setNum("#v-msgs",s.chatMessages); setDelta("#v-msgs-d",r.messages&&r.messages.d);
+      setNum("#v-users",s.users); setDelta("#v-users-d",r.users&&r.users.d);
+      // AI-generated network slogans (rotate through the hero subtitle)
+      if(Array.isArray(d.slogans)&&d.slogans.length){
+        slogans=d.slogans.map(x=>typeof x==="string"?x:(x&&(x.text||x.slogan||x.title))).filter(Boolean);
+        if(slogans.length){$("#hero-slogan").textContent=slogans[0];sloganIdx=1;}
+      }
+    }catch{}
+  }
+
+  function streamHref(s){
+    const user=String(s.username||"").replace(/^@/,"");
+    const ref=s.managed_stream_slug||s.managed_stream_id;
+    return user?`/@${encodeURIComponent(user)}${ref?"/"+encodeURIComponent(ref):""}`:"/";
+  }
+  function streamCard(s){
+    const thumb=abs(s.thumbnail_url), viewers=s.total_viewer_count??s.viewer_count??0;
+    return `<a class="card" href="${esc(streamHref(s))}">
+      <div class="thumb">${thumb?`<img src="${esc(thumb)}" alt="">`:`<span class="placeholder">HOBO // LIVE</span>`}
+        <span class="live">● LIVE</span>
+        <span class="count">${fmt(viewers)} watching</span>
+      </div>
+      <div class="info">
+        <div class="title">${esc(s.title||"Untitled stream")}</div>
+        <div class="meta">${esc(s.display_name||s.username||"HoboStreamer")}</div>
+      </div>
+    </a>`;
+  }
+
+  function setHeroLive(liveN,viewers){
+    const pill=$("#hero-live"),txt=$("#hero-live-text"),pulse=pill.querySelector(".pulse");
+    if(liveN>0){
+      pill.classList.remove("dark");pulse.style.display="";
+      txt.textContent=`${liveN} LIVE NOW • ${fmt(viewers)} WATCHING`;
+    }else{
+      pill.classList.add("dark");pulse.style.display="none";
+      txt.textContent="NETWORK IDLE • GO LIVE";
+    }
+  }
+
+  async function loadStreams(){
+    try{
+      const d=await get("/streams");
+      const all=d.streams||[];
+      const totalViewers=all.reduce((a,s)=>a+(s.total_viewer_count??s.viewer_count??0),0);
+      const list=[...all]
+        .sort((a,b)=>(b.total_viewer_count??b.viewer_count??0)-(a.total_viewer_count??a.viewer_count??0))
+        .slice(0,3);
+      $("#live-count").textContent=all.length+" LIVE";
+      $("#v-live").textContent=all.length;
+      $("#v-viewers").textContent=fmt(totalViewers)+" watching";
+      $("#v-viewers").classList.toggle("zero",totalViewers<=0);
+      setHeroLive(all.length,totalViewers);
+      $("#streams").innerHTML=list.length
+        ?list.map(streamCard).join("")
+        :`<div class="empty">Nobody live right now — <b>HOBOSTREAMER.COM</b></div>`;
+    }catch{
+      $("#live-count").textContent="HOBOSTREAMER.COM";
+      $("#streams").innerHTML=`
+        <a class="card" href="/">
+          <div class="thumb"><span class="placeholder">LIVE STREAMING</span></div>
+          <div class="info"><div class="title">HOBOSTREAMER.COM</div><div class="meta">Browser • OBS • RTMP • WHIP</div></div>
+        </a>
+        <a class="card" href="/vods">
+          <div class="thumb"><span class="placeholder">VODS + CLIPS</span></div>
+          <div class="info"><div class="title">Keep your broadcasts</div><div class="meta">Recordings • clips • replay</div></div>
+        </a>
+        <a class="card" href="/chat">
+          <div class="thumb"><span class="placeholder">GLOBAL CHAT</span></div>
+          <div class="info"><div class="title">HOBOSTREAMER.COM/CHAT</div><div class="meta">One shared community room</div></div>
+        </a>`;
+    }
+  }
+
+  function age(raw){
+    if(!raw)return"";
+    const d=new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(raw)?raw:String(raw).replace(" ","T")+"Z");
+    const s=Math.max(0,(Date.now()-d)/1000);
+    return s<3600?Math.floor(s/60)+"m ago":s<86400?Math.floor(s/3600)+"h ago":Math.floor(s/86400)+"d ago";
+  }
+  function mediaCard(kind,x){
+    let href="/",title="",sub="",thumb="";
+    if(kind==="vods"){
+      href=`/vod/${x.id}`;
+      title=x.title||"VOD";
+      sub=`${fmt(x.view_count||0)} views • ${age(x.created_at||x.ended_at)}`;
+      thumb=abs(x.thumbnail_url);
+    }
+    if(kind==="clips"){
+      href=`/clip/${x.id}`;
+      title=x.title||"Clip";
+      sub=`${fmt(x.view_count||0)} views • ${age(x.created_at)}`;
+      thumb=abs(x.thumbnail_url);
+    }
+    if(kind==="pastes"){
+      href=`/p/${encodeURIComponent(x.slug||"")}`;
+      title=x.title||"Paste";
+      sub=`${x.language||x.type||"text"} • ${fmt(x.views||0)} views`;
+      thumb=abs(x.screenshot_url);
+    }
+    return `<a class="card" href="${esc(href)}">
+      <div class="thumb">${thumb?`<img src="${esc(thumb)}" alt="">`:`<span class="placeholder">${kind==="pastes"?"PASTE":"MEDIA"}</span>`}</div>
+      <div class="info"><div class="title">${esc(title)}</div><div class="meta">${esc(sub)}</div></div>
+    </a>`;
+  }
+  function renderLatest(){
+    const arr=state[state.tab]||[];
+    $("#latest").innerHTML=arr.length
+      ?arr.slice(0,3).map(x=>mediaCard(state.tab,x)).join("")
+      :`<div class="empty">Nothing recent to show.</div>`;
+  }
+  async function loadLatest(){
+    try{
+      const [v,c,p]=await Promise.all([
+        get("/streams/recent-vods?limit=3&offset=0"),
+        get("/clips?limit=3&offset=0"),
+        get("/pastes?limit=3&offset=0")
+      ]);
+      state.vods=v.vods||[];
+      state.clips=c.clips||[];
+      state.pastes=p.pastes||[];
+    }catch{}
+    renderLatest();
+  }
+
+  document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    state.tab=b.dataset.tab;
+    renderLatest();
+  });
+
+  const messages=$("#messages"),status=$("#chat-status");
+  let ws,retry=1500,timer;
+  const colors={
+    twitch:"#a970ff",kick:"#7cff4e",youtube:"#ff5b5b",yt:"#ff5b5b",
+    rs:"#7dd3fc",robotstreamer:"#7dd3fc"
+  };
+
+  function addMsg(m){
+    const el=document.createElement("div");
+    if(m.type==="system"){
+      el.className="msg system";
+      el.textContent=m.message||"System";
+    }else{
+      el.className="msg";
+      if(m.source_platform){
+        const p=document.createElement("span");
+        p.className="platform";
+        p.textContent=m.source_platform;
+        el.appendChild(p);
+      }
+      const n=document.createElement("span");
+      n.className="name";
+      n.textContent=m.display_name||m.username||m.anon_id||"anon";
+      n.style.color=colors[String(m.source_platform||"").toLowerCase()]||"#dbb077";
+      el.appendChild(n);
+
+      const t=document.createElement("span");
+      t.textContent=m.message||"";
+      el.appendChild(t);
+    }
+    messages.appendChild(el);
+    while(messages.children.length>9)messages.removeChild(messages.firstChild);
+  }
+
+  async function history(){
+    try{
+      const d=await get("/chat/global/history?limit=9");
+      messages.innerHTML="";
+      (d.messages||[]).slice(-9).forEach(m=>addMsg({...m,type:"chat"}));
+    }catch{}
+  }
+
+  function connect(){
+    clearTimeout(timer);
+    try{ws=new WebSocket(WS_URL)}catch{return schedule()}
+    ws.onopen=()=>{
+      retry=1500;
+      status.className="status online";
+      status.querySelector("span").textContent="LIVE";
+      // No join needed: connecting with no ?stream= param and no auth makes us a "pure global"
+      // client, so the server's forwardToGlobal mirrors the whole network's chat to us.
+    };
+    ws.onmessage=e=>{
+      try{
+        const m=JSON.parse(e.data);
+        if(m.type==="chat")addMsg(m);
+        else if(m.type==="user-count"&&m.count!=null)
+          $("#chat-users").textContent=fmt(m.count)+" IN GLOBAL";
+      }catch{}
+    };
+    ws.onclose=()=>{
+      status.className="status";
+      status.querySelector("span").textContent="RECONNECTING";
+      schedule();
+    };
+    ws.onerror=()=>{};
+  }
+
+  function schedule(){
+    timer=setTimeout(connect,retry);
+    retry=Math.min(retry*1.7,15000);
+  }
+
+  loadVitals();
+  loadStreams();
+  loadLatest();
+  history();
+  connect();
+
+  setInterval(loadStreams,30000);
+  setInterval(loadLatest,90000);
+  setInterval(loadVitals,60000);
+  setInterval(rotateSlogan,12000);
+})();
+</script>
+</body>
+</html>
