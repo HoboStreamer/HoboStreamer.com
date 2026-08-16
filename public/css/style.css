@@ -2206,6 +2206,31 @@ main#app { position: relative; z-index: 1; }
     border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
     box-shadow: 0 30px 80px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
 }
+/* ── Collapsible "About / Streaming the way it should be" ─────────────── */
+.home-about-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin: 6px auto 2px; padding: 9px 18px;
+    background: color-mix(in srgb, var(--accent) 16%, rgba(255,255,255,0.04));
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    color: #f4f2ef; font-size: 0.86rem; font-weight: 700; letter-spacing: 0.01em;
+    border-radius: 999px; cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, transform .1s ease;
+}
+.home-about-toggle:hover { background: color-mix(in srgb, var(--accent) 26%, rgba(255,255,255,0.05)); border-color: var(--accent); }
+.home-about-toggle:active { transform: translateY(1px); }
+.home-about-body {
+    overflow: hidden;
+    max-height: 8000px; opacity: 1;
+    transition: max-height 0.6s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s ease, margin 0.4s ease;
+}
+.home-cta-banner.about-collapsed .home-about-body { max-height: 0; opacity: 0; margin: 0; }
+/* Toggle label swaps with collapsed state. */
+.home-about-toggle-more { display: none; align-items: center; gap: 8px; }
+.home-about-toggle-less { display: inline-flex; align-items: center; gap: 8px; }
+.home-cta-banner.about-collapsed .home-about-toggle-more { display: inline-flex; }
+.home-cta-banner.about-collapsed .home-about-toggle-less { display: none; }
+@media (prefers-reduced-motion: reduce) { .home-about-body { transition: opacity 0.3s ease; } }
+
 /* Animated glowing border sweep */
 .home-cta-banner::before {
     content: ''; position: absolute; inset: -1px; z-index: -1; border-radius: 23px;
@@ -3249,27 +3274,26 @@ main#app { position: relative; z-index: 1; }
     color: rgba(226, 232, 240, 0.75);
 }
 
+/* Labels are shadowed text now — no filled boxes. */
 .player-loader-badge,
 .player-loader-meta {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 7px 11px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(255,255,255,0.05);
-    backdrop-filter: blur(10px);
+    padding: 0;
+    border: 0;
+    background: none;
 }
 
 .player-loader-badge {
-    color: white;
-    background: linear-gradient(135deg, color-mix(in srgb, var(--loader-a) 56%, transparent), color-mix(in srgb, var(--loader-b) 52%, transparent));
-    box-shadow: 0 12px 28px color-mix(in srgb, var(--loader-a) 28%, transparent);
+    color: color-mix(in srgb, var(--loader-c) 72%, white 22%);
+    font-weight: 800;
+    text-shadow: 0 0 14px color-mix(in srgb, var(--loader-c) 55%, transparent), 0 1px 4px rgba(0,0,0,0.65);
 }
 
 .player-loader-meta {
-    color: rgba(226, 232, 240, 0.82);
-    background: rgba(255,255,255,0.04);
+    color: rgba(226, 232, 240, 0.8);
+    text-shadow: 0 1px 5px rgba(0,0,0,0.6);
 }
 
 .player-loader-summary {
@@ -3324,30 +3348,32 @@ main#app { position: relative; z-index: 1; }
     gap: 9px;
 }
 
+/* Step labels are shadowed text — no boxes. State shows via colour + glow. */
 .player-loader-step {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 7px 12px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,0.1);
+    padding: 0;
+    border: 0;
+    background: none;
     font-size: 0.78rem;
-    color: rgba(203, 213, 225, 0.78);
-    background: rgba(255,255,255,0.04);
-    transition: transform 0.24s ease, border-color 0.24s ease, background 0.24s ease, color 0.24s ease, box-shadow 0.24s ease;
+    font-weight: 600;
+    color: rgba(203, 213, 225, 0.5);
+    opacity: 0.85;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.55);
+    transition: color 0.24s ease, opacity 0.24s ease, text-shadow 0.24s ease;
 }
 
 .player-loader-step.is-done {
-    color: #f8fafc;
-    background: linear-gradient(135deg, color-mix(in srgb, var(--loader-a) 42%, transparent), color-mix(in srgb, var(--loader-b) 38%, transparent));
-    border-color: color-mix(in srgb, var(--loader-b) 44%, transparent);
+    color: color-mix(in srgb, var(--loader-a) 30%, #f1f5f9);
+    opacity: 1;
+    text-shadow: 0 0 10px color-mix(in srgb, var(--loader-a) 38%, transparent), 0 1px 4px rgba(0,0,0,0.6);
 }
 
 .player-loader-step.is-current {
-    color: #f8fafc;
-    border-color: color-mix(in srgb, var(--loader-c) 52%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--loader-c) 18%, transparent), 0 10px 24px rgba(0,0,0,0.18);
-    transform: translateY(-1px) scale(1.02);
+    color: #ffffff;
+    opacity: 1;
+    text-shadow: 0 0 14px color-mix(in srgb, var(--loader-c) 72%, transparent), 0 1px 4px rgba(0,0,0,0.65);
 }
 
 .player-loader-expanded {

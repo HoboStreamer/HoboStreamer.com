@@ -1434,8 +1434,43 @@ function startSloganCountdown(nextAt) {
     _sloganCountdownTimer = setInterval(tick, 1000);
 }
 
+// The "Streaming the way it should be" About block is collapsed by default — but expanded for
+// a first-time visitor (within 30 min of their first visit) so they're more likely to read it.
+function _homeAboutDefaultExpanded() {
+    try {
+        const KEY = 'hobo_first_visit';
+        let first = parseInt(localStorage.getItem(KEY) || '0', 10);
+        if (!first) { first = Date.now(); localStorage.setItem(KEY, String(first)); }
+        return (Date.now() - first) < 30 * 60 * 1000;
+    } catch { return false; }
+}
+function _initHomeAbout() {
+    const banner = document.getElementById('home-cta-banner');
+    if (!banner) return;
+    const expanded = _homeAboutDefaultExpanded();
+    banner.classList.toggle('about-collapsed', !expanded);
+    const toggle = banner.querySelector('.home-about-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+}
+function toggleHomeAbout() {
+    const banner = document.getElementById('home-cta-banner');
+    if (!banner) return;
+    const collapsed = banner.classList.toggle('about-collapsed');
+    const toggle = banner.querySelector('.home-about-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+}
+function openHomeAbout() {
+    const banner = document.getElementById('home-cta-banner');
+    if (!banner) return;
+    banner.classList.remove('about-collapsed');
+    const toggle = banner.querySelector('.home-about-toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', 'true');
+    banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 async function loadHome() {
     void loadHomeChangelog();
+    _initHomeAbout();
     updateNavHeroTransparency();  // transparent nav over the hero at the top
     startHeroRotation();      // instant static rotation; loadHeroData upgrades it with AI slogans
     void loadHeroData();      // stats bar, floating-thumbnail collage, AI slogans

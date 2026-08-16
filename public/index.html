@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="/css/style.css?v=124">
+    <link rel="stylesheet" href="/css/style.css?v=125">
     <link rel="stylesheet" href="/css/broadcast.css?v=8">
     <link rel="stylesheet" href="/css/cosmetics.css?v=2">
     <link rel="stylesheet" href="/css/messenger.css?v=1">
@@ -187,13 +187,13 @@
                 <div class="hero-stats" id="hero-stats" aria-label="Site stats"></div>
                 <div class="hero-cta">
                     <button class="btn btn-primary btn-lg" onclick="currentUser ? navigate('/broadcast') : showModal('register')">
-                        <i class="fa-solid fa-broadcast-tower"></i> Start Streaming
+                        <i class="fa-solid fa-broadcast-tower"></i> Stream
                     </button>
                     <a href="https://hobo.tools" class="btn btn-outline btn-lg">
-                        <i class="fa-solid fa-screwdriver-wrench"></i> Discover Tools
+                        <i class="fa-solid fa-screwdriver-wrench"></i> Tools
                     </a>
                     <a href="https://hobo.quest/game" class="btn btn-outline btn-lg">
-                        <i class="fa-solid fa-gamepad"></i> Play Game
+                        <i class="fa-solid fa-gamepad"></i> Game
                     </a>
                     <a href="https://github.com/HoboStreamer/HoboStreamer.com" target="_blank" class="btn btn-outline btn-lg">
                         <i class="fa-brands fa-github"></i> GitHub
@@ -202,11 +202,11 @@
                         <i class="fa-brands fa-discord"></i> Discord
                     </a>
                     <a href="/documentation" onclick="return handleLinkClick(event, '/documentation')" class="btn btn-outline btn-lg">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Vibe Code With Our API
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Vibe Coders
                     </a>
                 </div>
                 <div class="hero-philosophy-links">
-                    <a href="#founder-story" class="hero-philosophy-btn" onclick="event.preventDefault();document.getElementById('founder-story')?.scrollIntoView({behavior:'smooth', block:'start'})">
+                    <a href="#home-cta-banner" class="hero-philosophy-btn" onclick="event.preventDefault();openHomeAbout();">
                         <i class="fa-solid fa-book-open"></i> What Is This? (Philosophy)
                     </a>
                     <a href="/tos" class="hero-philosophy-link" onclick="return handleLinkClick(event, '/tos')">Terms</a>
@@ -250,6 +250,12 @@
                         HoboStreamer is a living platform built by <strong>one person who actually streams here</strong>, hangs out in chat, and ships your ideas. No boardroom, no algorithm games, no mystery bans — just an <strong>epic</strong> streaming stack packed with things the big sites flat-out don't have.
                     </p>
 
+                    <button class="home-about-toggle" type="button" onclick="toggleHomeAbout()" aria-expanded="false" aria-controls="home-about-body">
+                        <span class="home-about-toggle-more"><i class="fa-solid fa-circle-plus"></i> See what makes it different</span>
+                        <span class="home-about-toggle-less"><i class="fa-solid fa-circle-minus"></i> Show less</span>
+                    </button>
+
+                    <div class="home-about-body" id="home-about-body">
                     <!-- Three ways to go live -->
                     <div class="cta-section-label"><i class="fa-solid fa-tower-broadcast"></i> Three ways to go live — pick your vibe</div>
                     <div class="cta-methods">
@@ -357,6 +363,28 @@
                             <i class="fa-solid fa-screwdriver-wrench"></i> 200+ free tools
                         </a>
                     </div>
+
+                    <!-- The not-for-profit plan — part of the same About section -->
+                    <div class="cta-section-label cta-diff-label"><i class="fa-solid fa-seedling"></i> The not-for-profit plan</div>
+                    <p class="cta-lede">The goal is not maximum revenue; it&rsquo;s long-term sustainability. Servers, storage, bandwidth, and development all cost money — so the plan is to keep the network transparent, fund operations responsibly, and formalize it as a real not-for-profit / public-benefit project once it can stand on its own.</p>
+                    <div class="home-cta-features">
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-plug-circle-bolt"></i>
+                            <strong>Phase 1 — Make it sustainable</strong>
+                            <span>Use optional support, memberships, cosmetics, or tasteful monetization to cover hosting, bandwidth, storage, and development.</span>
+                        </div>
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-heart"></i>
+                            <strong>Phase 2 — Protect the mission</strong>
+                            <span>No investors, no surprise corporate pivot, and no turning the community into a product. Any money goes to operations first.</span>
+                        </div>
+                        <div class="home-cta-feature">
+                            <i class="fa-solid fa-landmark"></i>
+                            <strong>Phase 3 — Formalize it</strong>
+                            <span>Once the network is stable enough, file the not-for-profit paperwork and build this into the real community project it was always meant to be.</span>
+                        </div>
+                    </div>
+                    </div><!-- /home-about-body -->
                 </div>
             </div>
 
@@ -4925,7 +4953,7 @@ https://www.101soundboards.com/sounds/12345 150p 2</code></pre>
 <!-- Scripts -->
 <script src="/js/theme-engine.js?v=4"></script>
 <script src="/live-notify.js?v=2" defer></script>
-<script src="/js/app.js?v=106" defer></script>
+<script src="/js/app.js?v=107" defer></script>
 <script src="/js/stream-player.js?v=16" defer></script>
 <script src="/js/emotes.js?v=8" defer></script>
 <script src="/js/gif-picker.js?v=1" defer></script>
