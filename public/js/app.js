@@ -4055,9 +4055,17 @@ let _aiTl = null; // AI Timeline pagination state (per channel load)
 function _aiSessionTitle(s) {
     const ov = (s.ai_overview_short || s.ai_overview || '').trim();
     if (!ov) return null;
-    let t = ov.split(/(?<=[.!?])\s+/)[0].trim()
-        .replace(/^(the stream|this stream|the streamer|the broadcast|the vod)\b[\s,:-]*/i, '')
-        .replace(/^(appears to be |seems to be |appears to |seems to |is |shows |features |centers on |centered on )/i, '');
+    const firstSentence = ov.split(/(?<=[.!?])\s+/)[0].trim();
+    let t = firstSentence
+        // Meta preambles the model sometimes adds ("From these observations, …", "Based on …")
+        .replace(/^(from|based on|according to|in)\b[^,]{0,60},\s*/i, '')
+        // Subject openers → get to the actual content
+        .replace(/^(the stream|this stream|the streamer|the broadcast|the vod|the session)\b\s*/i, '')
+        .replace(/^[A-Z][\w'-]{1,20}\s+(primarily |mostly |mainly )?(streams?|is streaming|broadcasts?|hosts?)\s+/i, '') // "Goosely primarily streams …"
+        .replace(/^(appears to be|seems to be|appears to|seems to|is|shows|features|centers on|centered on|primarily|mostly|mainly)\s+/i, '')
+        .replace(/^(a|an|the)\s+/i, '')
+        .trim();
+    if (t.length < 6) t = firstSentence; // stripped too aggressively — keep the sentence
     if (!t) return null;
     t = t.charAt(0).toUpperCase() + t.slice(1);
     if (t.length > 74) t = t.slice(0, 71).replace(/\s+\S*$/, '') + '…';
