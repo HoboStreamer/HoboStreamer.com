@@ -2946,10 +2946,7 @@ async function _openChatInsightModal(opts) {
         html += `<div class="uai-group-label"><i class="fa-solid fa-tower-broadcast"></i> As a streamer</div>`;
         html += `<p class="uai-sub uai-group-sub">Who they are as a streamer — from the AI analysis of their streams.</p>`;
         html += `
-            <div class="uai-section">
-                <h4><i class="fa-solid fa-wand-magic-sparkles"></i> Streamer overview <span class="uai-tag uai-tag-streamer">channel</span></h4>
-                <div class="uai-body">${esc(st.overview || st.overview_short || '')}</div>
-            </div>
+            ${_uaiCollapsible('Streamer overview', '<span class="uai-tag uai-tag-streamer">channel</span>', esc(st.overview || st.overview_short || ''), { icon: 'fa-wand-magic-sparkles' })}
             ${mems.length ? `<div class="uai-section">
                 <h4><i class="fa-solid fa-timeline"></i> Recent stream moments</h4>
                 <div class="gai-timeline">${mems.map(m => `
@@ -2967,14 +2964,8 @@ async function _openChatInsightModal(opts) {
         html += `<div class="uai-group-label"><i class="fa-solid fa-comments"></i> In chat</div>`;
         html += `<p class="uai-sub uai-group-sub">How they chat today vs. overall — from their public chat messages.</p>`;
         html += `
-            <div class="uai-section">
-                <h4><i class="fa-solid fa-bolt"></i> Today <span class="uai-tag uai-tag-today">last 24h</span></h4>
-                <div class="uai-body">${ins.has_24h ? esc(ins.overview_24h) : '<span class="gai-empty">' + esc(ins.overview_24h || 'Quiet in the last 24 hours.') + '</span>'}</div>
-            </div>
-            <div class="uai-section">
-                <h4><i class="fa-solid fa-infinity"></i> Overall <span class="uai-tag uai-tag-all">all-time</span></h4>
-                <div class="uai-body">${esc(ins.overview_alltime || '')}</div>
-            </div>
+            ${_uaiCollapsible('Today', '<span class="uai-tag uai-tag-today">last 24h</span>', ins.has_24h ? esc(ins.overview_24h) : '<span class="gai-empty">' + esc(ins.overview_24h || 'Quiet in the last 24 hours.') + '</span>', { icon: 'fa-bolt' })}
+            ${_uaiCollapsible('Overall', '<span class="uai-tag uai-tag-all">all-time</span>', esc(ins.overview_alltime || ''), { icon: 'fa-infinity' })}
             ${tl.length ? (() => {
                 // Relay users have no channel page → expand the full timeline inline (lazy).
                 // Everyone else links out to their channel's AI Timeline tab.
@@ -3002,6 +2993,27 @@ async function _openChatInsightModal(opts) {
 
     body.innerHTML = html;
 }
+
+// Build a collapsible overview section (collapsed by default). The header toggles it open;
+// a short preview of the text shows while collapsed so it's clear there's content to expand.
+function _uaiCollapsible(title, tagHtml, bodyHtml, opts = {}) {
+    const plain = String(bodyHtml || '').replace(/<[^>]*>/g, '').trim();
+    const preview = plain.length > 90 ? plain.slice(0, 90).trimEnd() + '…' : plain;
+    return `<div class="uai-section uai-collapsible">
+        <h4 class="uai-collapse-toggle" onclick="_uaiToggleSection(this)" role="button" tabindex="0">
+            <i class="fa-solid ${opts.icon || 'fa-wand-magic-sparkles'}"></i> ${title} ${tagHtml || ''}
+            <i class="fa-solid fa-chevron-down uai-collapse-caret"></i>
+        </h4>
+        <div class="uai-collapse-preview">${esc(preview)}</div>
+        <div class="uai-collapse-body"><div class="uai-body">${bodyHtml}</div></div>
+    </div>`;
+}
+// Toggle a collapsible AI-insight section open/closed.
+function _uaiToggleSection(h4) {
+    const section = h4.closest('.uai-collapsible');
+    if (section) section.classList.toggle('uai-open');
+}
+window._uaiToggleSection = _uaiToggleSection;
 
 // Reveal the next batch of an inline (relay-user) timeline — lazy expansion in place.
 function _uaiRevealMore(btn) {

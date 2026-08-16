@@ -7,6 +7,7 @@
 <meta name="robots" content="noindex">
 <title>Hobo Network // New Tab</title>
 <link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
 :root{
   --bg:#08090c;
@@ -47,7 +48,7 @@ button{font:inherit}
   width:100vw;height:100vh;
   padding:1.1vh 1.1vw;
   display:grid;
-  grid-template-rows:6.4vh 18.5vh 8.6vh 22vh 1fr;
+  grid-template-rows:6.4vh 17vh 8.4vh 14.5vh 1fr;
   gap:1vh;
 }
 
@@ -71,7 +72,7 @@ button{font:inherit}
   color:var(--gold);display:grid;place-items:center;
   font-weight:950;transform:rotate(45deg)
 }
-.logo span{transform:rotate(-45deg);font-size:1vw}
+.logo i{transform:rotate(-45deg);font-size:1.15vw}
 .network-line{
   flex:1;text-align:center;
   font-size:.95vw;font-weight:900;letter-spacing:.1em;
@@ -183,8 +184,8 @@ button{font:inherit}
 }
 .domain{
   position:relative;overflow:hidden;
-  border:1px solid var(--line);border-radius:18px;
-  padding:2vh 1.3vw;
+  border:1px solid var(--line);border-radius:16px;
+  padding:1vh 1.3vw;
   background:linear-gradient(145deg,rgba(18,22,29,.97),rgba(10,12,17,.96));
   display:flex;flex-direction:column;justify-content:center;
   box-shadow:0 14px 36px rgba(0,0,0,.22);
@@ -201,18 +202,20 @@ button{font:inherit}
   letter-spacing:.13em;text-transform:uppercase
 }
 .domain .url{
-  font-size:2vw;line-height:1;
+  font-size:1.85vw;line-height:1;
   font-weight:950;letter-spacing:-.045em;
-  margin:.7vh 0 .75vh;white-space:nowrap
+  margin:.35vh 0 .45vh;white-space:nowrap;
+  display:flex;align-items:center;gap:.5vw
 }
 .domain .desc{
-  font-size:.98vw;line-height:1.28;
-  color:#b5bec9;font-weight:650;max-width:92%
+  font-size:.92vw;line-height:1.25;
+  color:#b5bec9;font-weight:650;max-width:88%
 }
 .domain .arrow{
-  position:absolute;right:1vw;bottom:1.1vh;
-  color:var(--c);font-size:1.65vw;font-weight:900
+  position:absolute;right:1vw;bottom:.9vh;
+  color:var(--c);font-size:1.5vw;font-weight:900
 }
+.domain .kind{display:flex;align-items:center;gap:.45vw}
 .hs{--c:var(--gold)}
 .tools{--c:var(--green)}
 .quest{--c:var(--purple)}
@@ -377,70 +380,70 @@ button{font:inherit}
 <div class="page">
   <header class="topbar">
     <a class="brand" href="https://hobostreamer.com">
-      <span class="logo"><span>H</span></span>
+      <span class="logo"><i class="fa-solid fa-campground"></i></span>
       <span>HOBO NETWORK</span>
     </a>
     <div class="network-line">
-      <b>HOBOSTREAMER.COM</b> &nbsp;•&nbsp;
-      <b>HOBO.TOOLS</b> &nbsp;•&nbsp;
-      <b>HOBO.QUEST</b> &nbsp;•&nbsp;
-      <b>POWERCHAT.LIVE</b>
+      <b><i class="fa-solid fa-video"></i> HOBOSTREAMER.COM</b> &nbsp;•&nbsp;
+      <b><i class="fa-solid fa-screwdriver-wrench"></i> HOBO.TOOLS</b> &nbsp;•&nbsp;
+      <b><i class="fa-solid fa-gamepad"></i> HOBO.QUEST</b> &nbsp;•&nbsp;
+      <b><i class="fa-solid fa-bolt"></i> POWERCHAT.LIVE</b>
     </div>
-    <div class="clock"><span id="clock">--:--</span><small id="date">LOADING</small></div>
+    <div class="clock"><span><i class="fa-regular fa-clock"></i> <span id="clock">--:--</span></span><small id="date">LOADING</small></div>
   </header>
 
   <section class="hero">
     <div class="hero-copy">
-      <div class="kicker">OPEN • COMMUNITY-BUILT • WEIRD INTERNET</div>
+      <div class="kicker"><i class="fa-solid fa-earth-americas"></i> OPEN • COMMUNITY-BUILT • WEIRD INTERNET</div>
       <h1>STREAM. BUILD. PLAY.<br><span>KEEP IT YOURS.</span></h1>
       <p id="hero-slogan">Live streaming, useful tools, games, and community infrastructure.</p>
     </div>
     <div class="hero-side">
       <strong>THE HOBO NETWORK</strong>
       <div class="live-pill dark" id="hero-live"><span class="pulse" style="display:none"></span><span id="hero-live-text">CHECKING NETWORK…</span></div>
-      <span class="tag">FREE TO USE • BUILT IN PUBLIC</span>
+      <span class="tag"><i class="fa-solid fa-heart"></i> FREE TO USE • BUILT IN PUBLIC</span>
     </div>
   </section>
 
   <section class="vitals" id="vitals">
-    <div class="vital livecount"><div class="vlabel">Live now</div><div class="vnum" id="v-live">–</div><div class="vdelta" id="v-viewers">watching</div></div>
-    <div class="vital hot"><div class="vlabel">Streamers</div><div class="vnum" id="v-streamers">–</div><div class="vdelta zero" id="v-streamers-d">all time</div></div>
-    <div class="vital"><div class="vlabel">VODs</div><div class="vnum" id="v-vods">–</div><div class="vdelta zero" id="v-vods-d">&nbsp;</div></div>
-    <div class="vital"><div class="vlabel">Clips</div><div class="vnum" id="v-clips">–</div><div class="vdelta zero" id="v-clips-d">&nbsp;</div></div>
-    <div class="vital"><div class="vlabel">Pastes</div><div class="vnum" id="v-pastes">–</div><div class="vdelta zero" id="v-pastes-d">&nbsp;</div></div>
-    <div class="vital"><div class="vlabel">Stream hrs</div><div class="vnum" id="v-hours">–</div><div class="vdelta zero" id="v-hours-d">&nbsp;</div></div>
-    <div class="vital"><div class="vlabel">AI moments</div><div class="vnum" id="v-ai">–</div><div class="vdelta zero" id="v-ai-d">&nbsp;</div></div>
-    <div class="vital"><div class="vlabel">Messages</div><div class="vnum" id="v-msgs">–</div><div class="vdelta zero" id="v-msgs-d">&nbsp;</div></div>
-    <div class="vital"><div class="vlabel">Hobos</div><div class="vnum" id="v-users">–</div><div class="vdelta zero" id="v-users-d">&nbsp;</div></div>
+    <div class="vital livecount"><div class="vlabel"><i class="fa-solid fa-tower-broadcast"></i> Live now</div><div class="vnum" id="v-live">–</div><div class="vdelta" id="v-viewers">watching</div></div>
+    <div class="vital hot"><div class="vlabel"><i class="fa-solid fa-user-astronaut"></i> Streamers</div><div class="vnum" id="v-streamers">–</div><div class="vdelta zero" id="v-streamers-d">all time</div></div>
+    <div class="vital"><div class="vlabel"><i class="fa-solid fa-film"></i> VODs</div><div class="vnum" id="v-vods">–</div><div class="vdelta zero" id="v-vods-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel"><i class="fa-solid fa-scissors"></i> Clips</div><div class="vnum" id="v-clips">–</div><div class="vdelta zero" id="v-clips-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel"><i class="fa-solid fa-paste"></i> Pastes</div><div class="vnum" id="v-pastes">–</div><div class="vdelta zero" id="v-pastes-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel"><i class="fa-solid fa-hourglass-half"></i> Stream hrs</div><div class="vnum" id="v-hours">–</div><div class="vdelta zero" id="v-hours-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel"><i class="fa-solid fa-wand-magic-sparkles"></i> AI moments</div><div class="vnum" id="v-ai">–</div><div class="vdelta zero" id="v-ai-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel"><i class="fa-solid fa-message"></i> Messages</div><div class="vnum" id="v-msgs">–</div><div class="vdelta zero" id="v-msgs-d">&nbsp;</div></div>
+    <div class="vital"><div class="vlabel"><i class="fa-solid fa-users"></i> Hobos</div><div class="vnum" id="v-users">–</div><div class="vdelta zero" id="v-users-d">&nbsp;</div></div>
   </section>
 
   <section class="domains">
     <a class="domain hs" href="https://hobostreamer.com">
-      <div class="kind">Live Streaming</div>
-      <div class="url">HOBOSTREAMER.COM</div>
+      <div class="kind"><i class="fa-solid fa-tower-broadcast"></i> Live Streaming</div>
+      <div class="url"><i class="fa-solid fa-video"></i> HOBOSTREAMER.COM</div>
       <div class="desc">Streams, chat, VODs, clips and restreaming.</div>
-      <div class="arrow">↗</div>
+      <div class="arrow"><i class="fa-solid fa-arrow-up-right-from-square"></i></div>
     </a>
 
     <a class="domain tools" href="https://hobo.tools">
-      <div class="kind">Free Internet Tools</div>
-      <div class="url">HOBO.TOOLS</div>
+      <div class="kind"><i class="fa-solid fa-toolbox"></i> Free Internet Tools</div>
+      <div class="url"><i class="fa-solid fa-screwdriver-wrench"></i> HOBO.TOOLS</div>
       <div class="desc">200+ media, dev, text and utility tools.</div>
-      <div class="arrow">↗</div>
+      <div class="arrow"><i class="fa-solid fa-arrow-up-right-from-square"></i></div>
     </a>
 
     <a class="domain quest" href="https://hobo.quest">
-      <div class="kind">Multiplayer Sandbox</div>
-      <div class="url">HOBO.QUEST</div>
+      <div class="kind"><i class="fa-solid fa-cubes"></i> Multiplayer Sandbox</div>
+      <div class="url"><i class="fa-solid fa-gamepad"></i> HOBO.QUEST</div>
       <div class="desc">Physics, building, crafting and chaos.</div>
-      <div class="arrow">↗</div>
+      <div class="arrow"><i class="fa-solid fa-arrow-up-right-from-square"></i></div>
     </a>
 
     <a class="domain power" href="https://powerchat.live">
-      <div class="kind">Monetization Partner</div>
-      <div class="url">POWERCHAT.LIVE</div>
+      <div class="kind"><i class="fa-solid fa-hand-holding-dollar"></i> Monetization Partner</div>
+      <div class="url"><i class="fa-solid fa-bolt"></i> POWERCHAT.LIVE</div>
       <div class="desc">Paid chat, TTS, media and stream alerts.</div>
-      <div class="arrow">↗</div>
+      <div class="arrow"><i class="fa-solid fa-arrow-up-right-from-square"></i></div>
     </a>
   </section>
 
@@ -449,7 +452,7 @@ button{font:inherit}
       <div class="section">
         <div class="head">
           <span class="dot"></span>
-          <h2>Live on HoboStreamer</h2>
+          <h2><i class="fa-solid fa-satellite-dish"></i> Live on HoboStreamer</h2>
           <span class="spacer"></span>
           <span class="badge" id="live-count">CHECKING…</span>
         </div>
@@ -460,12 +463,12 @@ button{font:inherit}
 
       <div class="section">
         <div class="head">
-          <h2>Latest from the network</h2>
+          <h2><i class="fa-solid fa-layer-group"></i> Latest from the network</h2>
           <span class="spacer"></span>
           <div class="tabs">
-            <button class="tab active" data-tab="vods">VODs</button>
-            <button class="tab" data-tab="clips">Clips</button>
-            <button class="tab" data-tab="pastes">Pastes</button>
+            <button class="tab active" data-tab="vods"><i class="fa-solid fa-film"></i> VODs</button>
+            <button class="tab" data-tab="clips"><i class="fa-solid fa-scissors"></i> Clips</button>
+            <button class="tab" data-tab="pastes"><i class="fa-solid fa-paste"></i> Pastes</button>
           </div>
         </div>
         <div class="cards" id="latest">
@@ -477,7 +480,7 @@ button{font:inherit}
     <aside class="chat">
       <div class="chat-head">
         <div>
-          <div class="chat-title">GLOBAL CHAT</div>
+          <div class="chat-title"><i class="fa-solid fa-comments"></i> GLOBAL CHAT</div>
           <div class="chat-url">HOBOSTREAMER.COM/CHAT</div>
         </div>
         <div class="status" id="chat-status"><i></i><span>CONNECTING</span></div>
@@ -672,12 +675,24 @@ button{font:inherit}
     renderLatest();
   }
 
-  document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{
-    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
-    b.classList.add("active");
-    state.tab=b.dataset.tab;
+  const TAB_ORDER=["vods","clips","pastes"];
+  let _tabPausedUntil=0;
+  function selectLatestTab(tab){
+    state.tab=tab;
+    document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.dataset.tab===tab));
     renderLatest();
+  }
+  document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{
+    _tabPausedUntil=Date.now()+45000; // pause auto-cycle briefly after a manual click
+    selectLatestTab(b.dataset.tab);
   });
+  // Auto-cycle the Latest tabs so an idle kiosk keeps showing fresh content.
+  function cycleLatestTab(){
+    if(Date.now()<_tabPausedUntil)return;
+    const i=TAB_ORDER.indexOf(state.tab);
+    selectLatestTab(TAB_ORDER[(i+1)%TAB_ORDER.length]);
+  }
+  setInterval(cycleLatestTab,9000);
 
   const messages=$("#messages"),status=$("#chat-status");
   let ws,retry=1500,timer;

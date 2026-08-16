@@ -7214,6 +7214,15 @@ textarea.form-input { resize: vertical; min-height: 60px; }
 .uai-tag-all { background: var(--bg-tertiary); color: var(--text-secondary); }
 .uai-tag-streamer { background: color-mix(in srgb, var(--live-red, #e05a5a) 20%, transparent); color: var(--live-red, #e05a5a); }
 .uai-body { font-size: 0.9rem; line-height: 1.55; color: var(--text-primary); }
+/* Collapsible overview sections (collapsed by default; header toggles open) */
+.uai-collapsible .uai-collapse-toggle { cursor: pointer; user-select: none; }
+.uai-collapsible .uai-collapse-toggle:hover { color: var(--text-primary); }
+.uai-collapse-caret { margin-left: 6px; font-size: 0.72em; opacity: 0.6; transition: transform 0.2s ease; }
+.uai-collapsible.uai-open .uai-collapse-caret { transform: rotate(180deg); }
+.uai-collapse-preview { font-size: 0.82rem; line-height: 1.4; color: var(--text-secondary); opacity: 0.75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.uai-collapse-body { max-height: 0; overflow: hidden; transition: max-height 0.28s ease; }
+.uai-collapsible.uai-open .uai-collapse-body { max-height: 1600px; }
+.uai-collapsible.uai-open .uai-collapse-preview { display: none; }
 /* Streamer overview leads the popover, set apart from the chat insight below it. */
 .uai-streamer { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
 .uai-streamer h4 { color: var(--text); }
