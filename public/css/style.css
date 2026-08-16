@@ -2981,6 +2981,33 @@ main#app { position: relative; z-index: 1; }
     pointer-events: none;
 }
 
+/* ── Themed blurred-thumbnail loading screen ─────────────────── */
+.video-placeholder.has-thumb::before {
+    inset: 0;
+    background: var(--loader-thumb) center/cover no-repeat;
+    filter: blur(38px) brightness(0.42) saturate(1.25);
+    transform: scale(1.3);
+    opacity: 0.9;
+    animation: loaderThumbZoom 24s ease-in-out infinite alternate;
+}
+.video-placeholder.has-thumb::after {
+    /* accent wash sampled from the thumbnail + a vignette so the copy stays readable */
+    background:
+        radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--loader-a) 24%, transparent), transparent 58%),
+        radial-gradient(140% 90% at 50% 125%, rgba(0, 0, 0, 0.6), transparent 68%);
+    opacity: 1;
+    mix-blend-mode: normal;
+}
+@keyframes loaderThumbZoom {
+    from { transform: scale(1.26) translate(-1.2%, 0.6%); }
+    to   { transform: scale(1.36) translate(1.6%, -1.6%); }
+}
+/* Calm the decorative bits when a thumbnail is present, so the preview reads clean + sleek. */
+.video-placeholder.has-thumb .player-loader-grid { opacity: 0.1; }
+.video-placeholder.has-thumb .player-loader-halo { opacity: 0.55; }
+.video-placeholder.has-thumb .player-loader-orb { opacity: 0.6; }
+.video-placeholder.has-thumb .player-loader-sheen { opacity: 0.4; }
+
 .video-placeholder.is-exiting {
     opacity: 0;
     filter: blur(18px) saturate(1.12);

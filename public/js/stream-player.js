@@ -841,11 +841,57 @@ function startClipRecordingIfNeeded(stream, streamId) {
  * Initialize the appropriate player based on stream protocol.
  * @param {Object} stream - Stream object with protocol, endpoint info
  */
+// Dress the loading screen with the stream's own thumbnail (blurred) and a colour sampled
+// from it, so the "connecting" state feels like a sleek preview of that streamer rather than
+// a generic spinner.
+function _applyLoaderThumb(stream) {
+    const placeholder = document.querySelector('.video-placeholder');
+    if (!placeholder) return;
+    const thumb = stream && stream.thumbnail_url;
+    // Reset any previous stream's theming.
+    placeholder.classList.remove('has-thumb');
+    ['--loader-thumb', '--loader-a', '--loader-c'].forEach(v => placeholder.style.removeProperty(v));
+    if (!thumb) return;
+    placeholder.style.setProperty('--loader-thumb', `url("${thumb}")`);
+    placeholder.classList.add('has-thumb');
+    try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            try {
+                const cv = document.createElement('canvas'); cv.width = 24; cv.height = 24;
+                const ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0, 24, 24);
+                const d = ctx.getImageData(0, 0, 24, 24).data;
+                let r = 0, g = 0, b = 0, n = 0;
+                for (let i = 0; i < d.length; i += 4) {
+                    if (d[i + 3] < 100) continue;
+                    // Skip near-black/near-white pixels so the accent is an actual colour.
+                    const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+                    if (mx < 32 || (mx > 235 && mx - mn < 24)) continue;
+                    r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
+                }
+                if (n > 4) {
+                    r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+                    // Nudge toward a vivid, readable accent.
+                    const boost = c => Math.min(255, Math.round(c * 1.15 + 18));
+                    const accent = `rgb(${boost(r)}, ${boost(g)}, ${boost(b)})`;
+                    if (document.querySelector('.video-placeholder') === placeholder) {
+                        placeholder.style.setProperty('--loader-a', accent);
+                        placeholder.style.setProperty('--loader-c', accent);
+                    }
+                }
+            } catch { /* tainted canvas (cross-origin) — blurred thumb still applies */ }
+        };
+        img.src = thumb;
+    } catch { /* */ }
+}
+
 function initPlayer(stream) {
     destroyPlayer();
     setViewerPausedIntent(false); // fresh stream — always start playing
     streamRef = stream; // Store for clip recording across all protocols
     _resetPlayerRevealState();
+    _applyLoaderThumb(stream);
     const proto = stream.protocol || 'jsmpeg';
     const endpoint = stream.endpoint || {};
 
