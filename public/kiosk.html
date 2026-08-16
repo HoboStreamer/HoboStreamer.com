@@ -410,6 +410,94 @@ button{font:inherit}
   .hero h1{font-size:3.4vw}
   .vital .vnum{font-size:1.7vw}
 }
+
+/* ── OMNIBAR (address-bar replacement) ── */
+.omni{
+  position:fixed;inset:0;z-index:9000;
+  display:flex;align-items:flex-start;justify-content:center;
+  padding-top:16vh;
+  background:rgba(6,7,10,.55);backdrop-filter:blur(7px);
+  opacity:0;visibility:hidden;transition:opacity .28s ease,visibility .28s;
+}
+.omni.show{opacity:1;visibility:visible}
+.omni-box{
+  width:min(760px,92vw);
+  transform:translateY(-14px) scale(.97);opacity:0;
+  transition:transform .32s cubic-bezier(.2,.9,.3,1.2),opacity .28s ease;
+}
+.omni.show .omni-box{transform:translateY(0) scale(1);opacity:1}
+.omni-inputwrap{
+  display:flex;align-items:center;gap:6px;
+  background:linear-gradient(180deg,rgba(20,26,35,.98),rgba(12,16,22,.98));
+  border:1.5px solid var(--line);border-radius:16px;
+  padding:8px 10px;
+  box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 1px rgba(219,176,119,.05);
+  transition:border-color .2s,box-shadow .2s;
+}
+.omni.show .omni-inputwrap{border-color:color-mix(in srgb,var(--gold) 40%,var(--line));box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 0 3px rgba(219,176,119,.12)}
+.omni-input{
+  flex:1;min-width:0;background:none;border:none;outline:none;
+  color:var(--text);font-size:1.5rem;font-weight:600;letter-spacing:-.01em;
+  padding:8px 6px;
+}
+.omni-input::placeholder{color:#6f7b89;font-weight:500}
+.omni-provider{
+  display:flex;align-items:center;gap:7px;flex-shrink:0;
+  background:rgba(255,255,255,.04);border:1px solid var(--line);
+  color:var(--muted);border-radius:11px;padding:9px 12px;cursor:pointer;
+  font-size:.82rem;font-weight:800;letter-spacing:.02em;transition:background .15s,color .15s;
+}
+.omni-provider:hover{background:rgba(255,255,255,.08);color:var(--text)}
+.omni-provider i:first-child{color:var(--gold)}
+.omni-caret{font-size:.62rem;opacity:.6}
+.omni-go{
+  flex-shrink:0;background:var(--gold);color:#161009;border:none;
+  width:44px;height:44px;border-radius:11px;cursor:pointer;font-size:1.05rem;
+  display:grid;place-items:center;transition:transform .12s,filter .15s;
+}
+.omni-go:hover{filter:brightness(1.08)}
+.omni-go:active{transform:scale(.94)}
+.omni-provider-menu{
+  margin-top:8px;background:rgba(14,18,24,.99);border:1px solid var(--line);
+  border-radius:12px;padding:5px;box-shadow:0 16px 44px rgba(0,0,0,.5);
+  display:grid;grid-template-columns:1fr 1fr;gap:3px;
+}
+.omni-provider-menu[hidden]{display:none}
+.omni-prov-opt{
+  display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:8px;
+  cursor:pointer;color:var(--text-secondary);font-size:.9rem;font-weight:600;background:none;border:none;text-align:left;
+}
+.omni-prov-opt:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.omni-prov-opt.active{color:var(--gold)}
+.omni-prov-opt i{width:18px;text-align:center}
+.omni-suggest{margin-top:8px;display:flex;flex-direction:column;gap:2px}
+.omni-sug{
+  display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:11px;
+  cursor:pointer;background:rgba(16,20,27,.7);border:1px solid transparent;
+  transition:background .12s,border-color .12s,transform .12s;
+  animation:omniSugIn .22s ease both;
+}
+.omni-sug:hover,.omni-sug.sel{background:rgba(26,32,42,.95);border-color:var(--line)}
+.omni-sug.sel{transform:translateX(2px)}
+@keyframes omniSugIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.omni-sug-ico{
+  width:26px;height:26px;flex-shrink:0;border-radius:6px;
+  display:grid;place-items:center;background:rgba(255,255,255,.05);
+  color:var(--muted);font-size:.9rem;overflow:hidden
+}
+.omni-sug-ico img{width:18px;height:18px;object-fit:contain}
+.omni-sug-main{flex:1;min-width:0}
+.omni-sug-title{font-size:.98rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.omni-sug-sub{font-size:.76rem;color:#7e8997;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.omni-sug-kind{font-size:.64rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#6f7b89;flex-shrink:0}
+.omni-sug-del{flex-shrink:0;background:none;border:none;color:#5a6570;cursor:pointer;padding:4px 6px;border-radius:6px;font-size:.8rem;opacity:0;transition:opacity .12s,color .12s}
+.omni-sug:hover .omni-sug-del{opacity:1}
+.omni-sug-del:hover{color:var(--red)}
+.omni-hint{
+  display:flex;gap:18px;justify-content:center;margin-top:12px;
+  font-size:.72rem;color:#6b7683;font-weight:600
+}
+.omni-hint b{color:#97a2ad;font-weight:800}
 </style>
 </head>
 <body>
@@ -530,6 +618,20 @@ button{font:inherit}
       </div>
     </aside>
   </section>
+</div>
+
+<!-- Address-bar replacement (shown on /kiosk#input, or when you start typing) -->
+<div id="omni" class="omni" aria-hidden="true">
+  <div class="omni-box">
+    <div class="omni-inputwrap">
+      <button class="omni-provider" id="omni-provider-btn" title="Change search engine"><i class="fa-solid fa-magnifying-glass"></i><span id="omni-provider-name">Google</span><i class="fa-solid fa-chevron-down omni-caret"></i></button>
+      <input id="omni-input" class="omni-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search the web or type a URL…">
+      <button class="omni-go" id="omni-go" title="Go"><i class="fa-solid fa-arrow-right"></i></button>
+    </div>
+    <div class="omni-provider-menu" id="omni-provider-menu" hidden></div>
+    <div class="omni-suggest" id="omni-suggest"></div>
+    <div class="omni-hint"><span><b>Enter</b> to go</span><span><b>Esc</b> to dismiss</span><span>just start typing to bring it back</span></div>
+  </div>
 </div>
 
 <script src="/js/chat-shared.js?v=2"></script>
@@ -900,6 +1002,202 @@ button{font:inherit}
   setInterval(loadLatest,90000);
   setInterval(loadVitals,60000);
   setInterval(rotateSlogan,12000);
+})();
+</script>
+
+<!-- ── OMNIBAR: address-bar replacement for /kiosk#input ── -->
+<script>
+(() => {
+  "use strict";
+  const $=s=>document.querySelector(s);
+  const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const omni=$("#omni"), input=$("#omni-input"), suggest=$("#omni-suggest"),
+        provBtn=$("#omni-provider-btn"), provName=$("#omni-provider-name"),
+        provMenu=$("#omni-provider-menu"), goBtn=$("#omni-go");
+  if(!omni) return;
+
+  const PROVIDERS={
+    google:{name:"Google",url:"https://www.google.com/search?q=%s",icon:"fa-brands fa-google"},
+    ddg:{name:"DuckDuckGo",url:"https://duckduckgo.com/?q=%s",icon:"fa-solid fa-shield-halved"},
+    bing:{name:"Bing",url:"https://www.bing.com/search?q=%s",icon:"fa-brands fa-microsoft"},
+    brave:{name:"Brave",url:"https://search.brave.com/search?q=%s",icon:"fa-brands fa-brave"},
+    startpage:{name:"Startpage",url:"https://www.startpage.com/sp/search?query=%s",icon:"fa-solid fa-user-secret"},
+    ecosia:{name:"Ecosia",url:"https://www.ecosia.org/search?q=%s",icon:"fa-solid fa-leaf"}
+  };
+  const LS_PROV="hobo_kiosk_search", LS_HIST="hobo_kiosk_history";
+  let provider=localStorage.getItem(LS_PROV); if(!PROVIDERS[provider]) provider="google";
+  let hist=[]; try{ hist=JSON.parse(localStorage.getItem(LS_HIST)||"[]"); if(!Array.isArray(hist)) hist=[]; }catch{}
+  const resolved=new Map();      // domain(lowercased) → {reachable,url,host,title}
+  const resolving=new Set();
+  let curItems=[], selIdx=-1, isOpen=false, resolveTimer=null;
+
+  const saveHist=()=>{ try{ localStorage.setItem(LS_HIST, JSON.stringify(hist.slice(0,120))); }catch{} };
+  const searchUrl=q=>PROVIDERS[provider].url.replace("%s",encodeURIComponent(q));
+  const faviconUrl=host=>`/api/kiosk/favicon?domain=${encodeURIComponent(host)}`;
+  const fullUrl=s=>/^https?:\/\//i.test(s)?s:"https://"+s;
+  const hostOf=s=>{ try{ return new URL(fullUrl(s)).hostname; }catch{ return ""; } };
+  function looksLikeDomain(s){
+    s=s.trim(); if(!s||/\s/.test(s)) return false;
+    if(/^https?:\/\//i.test(s)) return true;
+    if(/^localhost(:\d+)?(\/|$)/i.test(s)) return true;
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/.*)?$/i.test(s) && /\.[a-z]{2,}/i.test(s.split("/")[0]);
+  }
+
+  function setProvider(p){ provider=p; provName.textContent=PROVIDERS[p].name; try{localStorage.setItem(LS_PROV,p);}catch{}; renderSuggest(); }
+  provName.textContent=PROVIDERS[provider].name;
+
+  // ── open / close ──
+  function open(seed){
+    isOpen=true; selIdx=-1;
+    omni.classList.add("show"); omni.setAttribute("aria-hidden","false");
+    if(seed!=null) input.value=seed;
+    renderSuggest();
+    setTimeout(()=>{ input.focus(); if(seed==null){ input.select(); } else { input.setSelectionRange(input.value.length,input.value.length); } },30);
+  }
+  function close(){
+    isOpen=false; omni.classList.remove("show"); omni.setAttribute("aria-hidden","true");
+    provMenu.hidden=true; input.blur();
+    if(location.hash==="#input"){ try{ history.replaceState(null,"",location.pathname+location.search); }catch{} }
+  }
+
+  // ── history helpers ──
+  function historyMatches(q){
+    q=q.toLowerCase().trim();
+    const list = q ? hist.filter(h=>(h.q&&h.q.toLowerCase().includes(q))||(h.host&&h.host.toLowerCase().includes(q))||(h.title&&h.title.toLowerCase().includes(q))) : hist;
+    return list.slice(0,6);
+  }
+  function pushHistory(it,q){
+    let entry;
+    if(it.type==="search") entry={q, key:"s:"+q.toLowerCase(), t:Date.now()};
+    else entry={q, url:it.url, host:it.host||hostOf(it.url), title:(it.title&&it.title!==q)?it.title:"", key:it.url, t:Date.now()};
+    hist=hist.filter(h=>h.key!==entry.key);
+    hist.unshift(entry); if(hist.length>120) hist.length=120; saveHist();
+  }
+
+  // ── suggestions ──
+  function buildItems(q){
+    const items=[]; q=q.trim();
+    if(q){
+      if(looksLikeDomain(q)){
+        const key=q.toLowerCase(), c=resolved.get(key);
+        if(c && !c.reachable){
+          // resolved as unreachable → offer search only
+        } else if(c && c.reachable){
+          items.push({type:"domain",title:c.title||q,sub:c.host+(c.title?" · "+c.title:""),host:c.host,url:c.url});
+        } else {
+          items.push({type:"domain",title:q,sub:"Open site — checking…",host:hostOf(q),url:fullUrl(q),pending:true,key});
+        }
+      }
+      items.push({type:"search",title:q,sub:`Search ${PROVIDERS[provider].name}`,url:searchUrl(q),icon:PROVIDERS[provider].icon});
+    }
+    for(const h of historyMatches(q)){
+      if(q && looksLikeDomain(q) && h.url===fullUrl(q)) continue;
+      items.push({type:"history",title:h.title||h.host||h.q,sub:h.url||("Search: "+h.q),url:h.url||searchUrl(h.q),host:h.host,histKey:h.key});
+    }
+    return items;
+  }
+  function iconFor(it){
+    if(it.host) return `<img src="${esc(faviconUrl(it.host))}" alt="" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\\'fa-solid fa-globe\\'></i>'">`;
+    if(it.type==="search") return `<i class="${esc(it.icon||'fa-solid fa-magnifying-glass')}"></i>`;
+    if(it.type==="history") return `<i class="fa-solid fa-clock-rotate-left"></i>`;
+    return `<i class="fa-solid fa-globe"></i>`;
+  }
+  function renderSuggest(){
+    const q=input.value;
+    curItems=buildItems(q);
+    if(selIdx>=curItems.length) selIdx=curItems.length-1;
+    suggest.innerHTML=curItems.map((it,i)=>`
+      <div class="omni-sug${i===selIdx?' sel':''}" data-i="${i}">
+        <span class="omni-sug-ico">${iconFor(it)}</span>
+        <span class="omni-sug-main">
+          <span class="omni-sug-title">${esc(it.title)}</span>
+          <span class="omni-sug-sub">${esc(it.sub)}</span>
+        </span>
+        <span class="omni-sug-kind">${it.type==="search"?"Search":it.type==="history"?"History":"Go"}</span>
+        ${it.type==="history"?`<button class="omni-sug-del" data-del="${esc(it.histKey||"")}" title="Remove from history"><i class="fa-solid fa-xmark"></i></button>`:""}
+      </div>`).join("");
+  }
+  function scheduleResolve(){
+    clearTimeout(resolveTimer);
+    const q=input.value.trim();
+    if(!q||!looksLikeDomain(q)) return;
+    const key=q.toLowerCase();
+    if(resolved.has(key)||resolving.has(key)) return;
+    resolveTimer=setTimeout(()=>resolveDomain(key,q),260);
+  }
+  async function resolveDomain(key,q){
+    if(resolved.has(key)||resolving.has(key)) return;
+    resolving.add(key);
+    try{
+      const r=await fetch(`/api/kiosk/site?url=${encodeURIComponent(q)}`,{headers:{Accept:"application/json"}});
+      const d=await r.json();
+      resolved.set(key, d.reachable?{reachable:true,url:d.url,host:d.host,title:d.title}:{reachable:false});
+    }catch{ resolved.set(key,{reachable:true,url:fullUrl(q),host:hostOf(q)}); } // our resolver failing shouldn't block nav
+    resolving.delete(key);
+    if(isOpen && input.value.trim().toLowerCase()===key) renderSuggest();
+  }
+
+  function highlight(){ suggest.querySelectorAll(".omni-sug").forEach((el,i)=>el.classList.toggle("sel",i===selIdx)); }
+
+  // ── activation ──
+  function activate(it){ if(!it) return; const q=input.value.trim(); pushHistory(it,q); location.href=it.url; }
+  async function activateDefault(){
+    const q=input.value.trim(); if(!q) return;
+    if(looksLikeDomain(q)){
+      const key=q.toLowerCase(); let res=resolved.get(key);
+      if(!res){
+        goBtn.innerHTML='<i class="fa-solid fa-spinner fa-spin"></i>';
+        try{ const r=await fetch(`/api/kiosk/site?url=${encodeURIComponent(q)}`); const d=await r.json(); res=d.reachable?{reachable:true,url:d.url,host:d.host,title:d.title}:{reachable:false}; resolved.set(key,res); }
+        catch{ res={reachable:true,url:fullUrl(q),host:hostOf(q)}; }
+        goBtn.innerHTML='<i class="fa-solid fa-arrow-right"></i>';
+      }
+      if(res.reachable){ pushHistory({type:"domain",url:res.url||fullUrl(q),host:res.host,title:res.title},q); location.href=res.url||fullUrl(q); return; }
+    }
+    pushHistory({type:"search"},q); location.href=searchUrl(q);
+  }
+  function submit(){
+    if(selIdx>=0 && curItems[selIdx] && !curItems[selIdx].pending) activate(curItems[selIdx]);
+    else activateDefault();
+  }
+
+  // ── events ──
+  input.addEventListener("input",()=>{ selIdx=-1; renderSuggest(); scheduleResolve(); });
+  input.addEventListener("keydown",e=>{
+    if(e.key==="ArrowDown"){ e.preventDefault(); if(curItems.length){ selIdx=(selIdx+1)%curItems.length; highlight(); } }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); if(curItems.length){ selIdx=(selIdx<=0?curItems.length:selIdx)-1; highlight(); } }
+    else if(e.key==="Enter"){ e.preventDefault(); submit(); }
+    else if(e.key==="Escape"){ e.preventDefault(); close(); }
+  });
+  goBtn.addEventListener("click",submit);
+  suggest.addEventListener("click",e=>{
+    const del=e.target.closest(".omni-sug-del");
+    if(del){ e.stopPropagation(); const k=del.dataset.del; hist=hist.filter(h=>h.key!==k); saveHist(); renderSuggest(); return; }
+    const row=e.target.closest(".omni-sug"); if(!row) return;
+    activate(curItems[Number(row.dataset.i)]);
+  });
+  provBtn.addEventListener("click",e=>{ e.stopPropagation(); provMenu.hidden=!provMenu.hidden; if(!provMenu.hidden) renderProvMenu(); });
+  function renderProvMenu(){
+    provMenu.innerHTML=Object.entries(PROVIDERS).map(([k,p])=>`
+      <button class="omni-prov-opt${k===provider?' active':''}" data-prov="${k}"><i class="${p.icon}"></i> ${esc(p.name)}${k===provider?' <i class="fa-solid fa-check" style="margin-left:auto"></i>':''}</button>`).join("");
+  }
+  provMenu.addEventListener("click",e=>{ const b=e.target.closest(".omni-prov-opt"); if(!b) return; setProvider(b.dataset.prov); provMenu.hidden=true; input.focus(); });
+  omni.addEventListener("click",e=>{ if(e.target===omni) close(); });
+
+  // Global: start typing anywhere to (re)open; Esc closes.
+  document.addEventListener("keydown",e=>{
+    if(isOpen) return;
+    if(e.key==="Escape") return;
+    const t=e.target;
+    if(t && (t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.isContentEditable)) return;
+    if(e.ctrlKey||e.metaKey||e.altKey) return;
+    if(e.key==="/"){ e.preventDefault(); open(""); return; }
+    if(e.key.length===1){ open(e.key); }   // seed with the first character typed
+  });
+
+  // Open automatically when the tab is launched at /kiosk#input.
+  function maybeAutoOpen(){ if(location.hash==="#input") open(""); }
+  maybeAutoOpen();
+  window.addEventListener("hashchange",maybeAutoOpen);
 })();
 </script>
 </body>
