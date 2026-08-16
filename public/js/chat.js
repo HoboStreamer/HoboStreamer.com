@@ -2143,12 +2143,6 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
     }
 
     _loadingHistory = true;
-    // Reset the render-dedup set for this fresh timeline. It persists across the session
-    // (and across page navigations), so ids seen in a PREVIOUS room — e.g. the global feed
-    // on the home page — would otherwise dedup-suppress the same messages when they reappear
-    // in this room's history, leaving the panel showing only cross-feed globals. Clearing
-    // here scopes dedup to the timeline we're about to render (it repopulates as we render).
-    _seenChatMsgIds.clear();
     try {
         // Load emotes BEFORE rendering history — otherwise parseEmotes falls back to
         // plain text and historical messages show raw codes (e.g. "PepeD") instead of
@@ -2792,28 +2786,22 @@ function handleChatMessage(msg) {
     }
 }
 
-// Ids already rendered this session — guards against the same message arriving via more than
-// one delivery path (the stream room + a cross-slot/global forward, a second WS subscription,
-// a relay echo, or a history/live race). Each message id renders at most once.
-const _seenChatMsgIds = new Set();
-function _chatMsgSeen(id) {
-    const key = String(id);
-    if (_seenChatMsgIds.has(key)) return true;
-    _seenChatMsgIds.add(key);
-    if (_seenChatMsgIds.size > 800) {
-        const it = _seenChatMsgIds.values();
-        for (let i = 0; i < 200; i++) { const n = it.next(); if (n.done) break; _seenChatMsgIds.delete(n.value); }
-    }
-    return false;
-}
 
 function addChatMessage(msg) {
-    if (msg && msg.id != null && _chatMsgSeen(msg.id)) return; // de-dupe double-delivered messages
     // Feed username into autocomplete cache
     if (typeof acTrackUser === 'function') acTrackUser(msg);
 
     const chatEl = getChatEl();
     const container = chatEl.messages;
+
+    // De-dupe double-delivered messages (a message can arrive via both the stream room and
+    // a cross-slot/global forward). Scoped to what's actually IN this container: we only skip
+    // a message whose id is already rendered here. This can never hide a message that isn't
+    // already visible, and it resets on its own when the container is cleared (room switch /
+    // history reload) — unlike a session-wide "seen" set, which wrongly suppressed messages
+    // across rooms and blanked global chat.
+    if (msg && msg.id != null && container &&
+        container.querySelector(`[data-msg-id="${CSS.escape(String(msg.id))}"]`)) return;
 
     // Voice Call mode filter: skip messages not tagged with our voice channel
     const isVoiceMsg = !!msg.voiceChannelId;
