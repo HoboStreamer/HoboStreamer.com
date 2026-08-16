@@ -4464,8 +4464,11 @@ async function loadChannelAiTimeline(username) {
         _aiTl.offset = sessions.length;
         _aiTl.hasMore = !!data.hasMore;
 
-        // Combined "whole person" overview (streamer + chatter) at the very top.
-        const topText = combined || streamerOv || chatOverall;
+        // Combined "whole person" overview at the very top — ONLY when they have BOTH a streamer
+        // and a chatter overview. With only one, this would just duplicate the single "As a
+        // streamer"/"As a chatter" card below it, so we omit it.
+        const hasBothOverviews = !!(streamerOv && chatOverall);
+        const topText = hasBothOverviews ? (combined || `${streamerOv}\n\n${chatOverall}`) : '';
         const header = topText
             ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> Overall AI overview <span class="ai-tl-ov-sub">as a streamer &amp; chatter</span></div>${_collapsibleOverview(topText)}</div>`
             : '';
