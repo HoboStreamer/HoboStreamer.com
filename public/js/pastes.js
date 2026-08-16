@@ -268,6 +268,14 @@ async function loadPasteViewer(slug) {
         let meta;
         try { meta = JSON.parse(p.metadata); } catch { meta = {}; }
 
+        // AI "crazy moment" pastes carry a link back to the exact VOD timestamp they were
+        // grabbed from — surface it as a real button (and drop the raw "▶ Watch…" line the
+        // description text used to carry).
+        const momentLink = (meta.ai_moment && typeof meta.vod_link === 'string' && /^\/(vod|clip)\//.test(meta.vod_link))
+            ? `<a class="btn btn-primary btn-sm paste-moment-link" href="${escapeHtml(meta.vod_link)}" onclick="return handleLinkClick(event, '${escapeHtml(meta.vod_link)}')"><i class="fa-solid fa-circle-play"></i> Watch this moment on the VOD</a>`
+            : '';
+        const displayContent = (p.content || '').replace(/\n*▶[^\n]*$/,'').trim();
+
         let contentHtml;
         if (isScreenshot) {
             const screenshotUrl = p.screenshot_url || `/data/pastes/screenshots/${p.screenshot_path?.split('/').pop()}`;
@@ -275,7 +283,8 @@ async function loadPasteViewer(slug) {
                 <div class="paste-screenshot-view">
                     <img src="${escapeHtml(screenshotUrl)}" alt="Screenshot" class="paste-screenshot-img"
                          onclick="window.open(this.src, '_blank')">
-                    ${p.content ? `<div class="paste-screenshot-desc">${escapeHtml(p.content)}</div>` : ''}
+                    ${displayContent ? `<div class="paste-screenshot-desc">${escapeHtml(displayContent)}</div>` : ''}
+                    ${momentLink ? `<div class="paste-moment-link-row">${momentLink}</div>` : ''}
                     ${meta.page_url && /^https?:\/\//i.test(meta.page_url) ? `<div class="paste-screenshot-url"><i class="fa-solid fa-link"></i> <a href="${escapeHtml(meta.page_url)}" target="_blank" rel="noopener">${escapeHtml(meta.page_url)}</a></div>` : ''}
                     ${isLoggedIn ? `<div class="paste-screenshot-actions"><button class="btn btn-outline btn-sm" onclick="setPasteAsAvatar('${p.slug}')" title="Use this image as your avatar"><i class="fa-solid fa-user-circle"></i> Set As Avatar</button></div>` : ''}
                 </div>`;

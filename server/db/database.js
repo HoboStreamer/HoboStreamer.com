@@ -2429,6 +2429,49 @@ function updatePasteAi(pasteId, { ai_summary = null, ai_tags = null }) {
     return run('UPDATE pastes SET ai_summary = ?, ai_tags = ?, ai_analyzed_at = CURRENT_TIMESTAMP WHERE id = ?',
         [ai_summary, ai_tags ? (typeof ai_tags === 'string' ? ai_tags : JSON.stringify(ai_tags)) : null, pasteId]);
 }
+// ── One-time cleanup: earlier builds stored raw (often malformed) model JSON like
+// `{"description":"…","tags":[…]}` directly into text columns. Extract just the
+// human description so cards/overviews stop showing JSON. Idempotent; cheap to re-run.
+function _extractDescFromMaybeJson(text) {
+    if (!text || typeof text !== 'string') return text;
+    const t = text.trim();
+    if (!/^[{[]/.test(t) || !/"description"\s*:/.test(t)) return text; // not a JSON blob
+    const dm = t.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    if (dm) { try { return JSON.parse(`"${dm[1]}"`); } catch { return dm[1]; } }
+    return text;
+}
+function cleanupMalformedAiText() {
+    const jobs = [
+        ['pastes', 'ai_summary', 'id'],
+        ['stream_memories', 'description', 'id'],
+        ['streams', 'ai_overview', 'id'],
+        ['streams', 'ai_overview_short', 'id'],
+        ['vods', 'ai_overview', 'id'],
+        ['vods', 'ai_overview_short', 'id'],
+        ['clips', 'ai_overview', 'id'],
+        ['clips', 'ai_overview_short', 'id'],
+    ];
+    let fixed = 0;
+    for (const [table, col, key] of jobs) {
+        try {
+            const rows = all(`SELECT ${key} AS k, ${col} AS v FROM ${table} WHERE ${col} LIKE '{%"description"%'`);
+            for (const r of rows) {
+                const clean = _extractDescFromMaybeJson(r.v);
+                if (clean && clean !== r.v) { run(`UPDATE ${table} SET ${col} = ? WHERE ${key} = ?`, [clean, r.k]); fixed++; }
+            }
+        } catch { /* table/column may not exist on older DBs */ }
+    }
+    // streamer_overviews uses different column names.
+    try {
+        const rows = all(`SELECT user_id AS k, overview AS v FROM streamer_overviews WHERE overview LIKE '{%"description"%'`);
+        for (const r of rows) {
+            const clean = _extractDescFromMaybeJson(r.v);
+            if (clean && clean !== r.v) { run('UPDATE streamer_overviews SET overview = ? WHERE user_id = ?', [clean, r.k]); fixed++; }
+        }
+    } catch { /* */ }
+    if (fixed) console.log(`[AI] Cleaned ${fixed} malformed JSON AI text value(s)`);
+    return fixed;
+}
 function recordAiUsage({ kind, model, input_tokens = 0, output_tokens = 0, cost_usd = 0, owner_user_id = null, source = null }) {
     return run('INSERT INTO ai_usage (kind, model, input_tokens, output_tokens, cost_usd, owner_user_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
         [kind || null, model || null, input_tokens || 0, output_tokens || 0, cost_usd || 0, owner_user_id || null, source || null]);
@@ -2495,17 +2538,25 @@ function getStreamTranscriptSegments(streamId) {
 // a stream that has a public VOD (so we can link + extract the moment frame).
 function getAiMomentCandidates(days = 30, limit = 150) {
     try {
+        // Only mine FINISHED streams (real VOD history) — never the currently-live
+        // stream, so we don't spam the pastes tab with live frames. The picked VOD is the
+        // recording of that same session, so offset_seconds lines up with its timeline;
+        // vod_duration lets the caller drop offsets that fall past the VOD's end.
         return all(`
             SELECT m.id AS memory_id, m.stream_id, m.offset_seconds, m.description, m.tags,
                    m.thumbnail_url, m.user_id, s.title AS stream_title, u.username,
                    (SELECT v.id FROM vods v WHERE v.stream_id = m.stream_id
                       AND COALESCE(v.is_public, 1) = 1 AND COALESCE(v.is_recording, 0) = 0
-                      ORDER BY v.id DESC LIMIT 1) AS vod_id
+                      ORDER BY v.id DESC LIMIT 1) AS vod_id,
+                   (SELECT COALESCE(NULLIF(v.duration_seconds, 0), v.probe_duration_seconds, 0)
+                      FROM vods v WHERE v.stream_id = m.stream_id
+                      AND COALESCE(v.is_recording, 0) = 0 ORDER BY v.id DESC LIMIT 1) AS vod_duration
             FROM stream_memories m
             JOIN users u ON u.id = m.user_id
-            LEFT JOIN streams s ON s.id = m.stream_id
+            JOIN streams s ON s.id = m.stream_id
             WHERE m.description IS NOT NULL AND length(m.description) > 45
               AND m.created_at >= datetime('now', ?)
+              AND COALESCE(s.is_live, 0) = 0 AND s.ended_at IS NOT NULL
             ORDER BY m.created_at DESC
             LIMIT ?
         `, [`-${Math.max(1, days)} days`, limit]) || [];
@@ -6707,7 +6758,7 @@ module.exports = {
     setVodAiOverview, setClipAiOverview, setVodTranscript, setClipTranscript, getStreamMemoriesInRange,
     getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTimeline, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
-    updatePasteAi, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
+    updatePasteAi, cleanupMalformedAiText, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getStreamTranscriptSegments, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     getStreamerAiTimeline, assembleStreamerAiTimeline, setStreamAiTitle, getUntitledAiSessions, clearAiTimelineCache,

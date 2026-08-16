@@ -205,15 +205,14 @@ class RobotStreamerService {
 
     /**
      * Is the RAW passthrough relay active for this integration's robot?
-     * Global RS_PASSTHROUGH=1, or the robot id in RS_PASSTHROUGH_ROBOTS.
+     * Passthrough is now the ONLY restream method and is on by default whenever the relay
+     * is available; RS_PASSTHROUGH=0 is an emergency kill-switch only.
      */
     _passthroughEnabledFor(integration) {
         try {
             const cfg = require('../config').robotstreamer || {};
-            if (!require('./rs-passthrough-relay').available()) return false;
-            if (cfg.passthrough) return true;
-            const rid = String(integration?.robot_id || '');
-            return !!rid && (cfg.passthroughRobots || []).map(String).includes(rid);
+            if (cfg.passthrough === false) return false;   // explicit kill-switch
+            return require('./rs-passthrough-relay').available();
         } catch { return false; }
     }
 
@@ -550,9 +549,9 @@ class RobotStreamerService {
             return null;
         }
 
-        // RAW passthrough relay (zero re-encode): when enabled, the server forwards the
-        // source's already-encoded RTP straight to RobotStreamer. Replaces BOTH the browser's
-        // second encode and the ffmpeg transcode worker for this stream.
+        // RAW passthrough relay (zero re-encode) is the ONLY restream path now: the server
+        // forwards the source's already-encoded RTP straight to RobotStreamer, replacing both
+        // the browser's second encode and the old ffmpeg transcode publisher.
         if (this._passthroughEnabledFor(integration)) {
             try {
                 require('./rs-passthrough-relay').start(stream, integration);
@@ -561,8 +560,7 @@ class RobotStreamerService {
                 console.warn(`[RS] Passthrough relay start failed for stream ${stream.id}:`, err.message);
             }
         } else {
-            // Server-side video publish for WHIP/RTMP ingest (independent of chat mirror)
-            this._maybeStartNativePublish(stream, integration, opts);
+            console.warn(`[RS] Passthrough relay unavailable — RobotStreamer video restream disabled for stream ${stream.id} (chat mirror still active). Install werift or unset RS_PASSTHROUGH=0.`);
         }
 
         if (integration.mirror_chat === 0) return null;

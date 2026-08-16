@@ -14,7 +14,7 @@ const SCREENSHOTS_DIR = path.resolve('./data/pastes/screenshots');
 const BASE_URL = (cfg && (cfg.baseUrl || cfg.publicUrl)) || 'https://hobostreamer.com';
 
 const INTERVAL_MS = 24 * 60 * 60 * 1000;
-const TARGET = 6;
+const TARGET = 3;
 const SETTING = 'home_hero_moments';
 let _busy = false;
 
@@ -56,10 +56,18 @@ async function tick() {
     try {
         const prev = _load();
         const usedIds = new Set(prev.usedIds || []);
-        const cands = (db.getAiMomentCandidates(30, 150) || []).filter(c => c.vod_id);
-        if (!cands.length) { _busy = false; return; }
-        const fresh = cands.filter(c => !usedIds.has(c.memory_id));
-        const pool = fresh.length >= TARGET ? fresh : cands;
+        // Finished-VOD moments only, with an offset that actually falls inside the VOD.
+        const raw = (db.getAiMomentCandidates(30, 150) || [])
+            .filter(c => c.vod_id && (!c.vod_duration || (c.offset_seconds || 0) < c.vod_duration - 2));
+        if (!raw.length) { _busy = false; return; }
+        const fresh = raw.filter(c => !usedIds.has(c.memory_id));
+        // One moment per streamer per run so a single busy channel can't flood the pastes tab.
+        const seenUser = new Set();
+        const oneEach = (fresh.length >= TARGET ? fresh : raw).filter(c => {
+            if (seenUser.has(c.user_id)) return false;
+            seenUser.add(c.user_id); return true;
+        });
+        const pool = oneEach;
 
         let picks = [];
         if (ai.isEnabled && ai.isEnabled() && ai.withinBudget && ai.withinBudget() && pool.length > TARGET) {
@@ -75,7 +83,12 @@ async function tick() {
         for (const p of picks) {
             const c = p.cand;
             const title = (p.title || c.stream_title || 'A wild moment').slice(0, 80);
-            const desc = String(c.description || '').replace(/\s+/g, ' ').trim();
+            // Defensive: if an old memory still holds a raw JSON blob, lift just the description.
+            let desc = String(c.description || '').replace(/\s+/g, ' ').trim();
+            if (/^\{.*"description"\s*:/.test(desc)) {
+                const dm = desc.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+                if (dm) { try { desc = JSON.parse(`"${dm[1]}"`); } catch { desc = dm[1]; } }
+            }
             const offset = Math.floor(c.offset_seconds || 0);
             const vodPath = `/vod/${c.vod_id}?t=${offset}`;
             const vodLink = `${BASE_URL}${vodPath}`;

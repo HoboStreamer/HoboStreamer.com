@@ -68,6 +68,8 @@ async function tick() {
 
 function start() {
     if (_timer) return;
+    // One-time repair of any raw-JSON descriptions stored by earlier builds.
+    try { if (db.cleanupMalformedAiText) db.cleanupMalformedAiText(); } catch (e) { console.warn('[AI] cleanup:', e.message); }
     _timer = setInterval(tick, 60_000);
     console.log('[AI] Backfill job started (paste summaries + VOD/clip overviews + VOD/clip transcripts)');
 }

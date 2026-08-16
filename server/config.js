@@ -219,10 +219,10 @@ function buildConfig(registryValues) {
         },
         robotstreamer: {
             // Raw passthrough relay: forward the source's already-encoded RTP to RobotStreamer
-            // with ZERO re-encode (werift + mediasoup DirectTransport), instead of the browser's
-            // second encode / the ffmpeg transcode worker. Off by default; opt-in globally with
-            // RS_PASSTHROUGH=1, or per-robot with RS_PASSTHROUGH_ROBOTS=<id,id,...> for A/B testing.
-            passthrough: process.env.RS_PASSTHROUGH === '1',
+            // with ZERO re-encode (werift + mediasoup), instead of the browser's second encode /
+            // the ffmpeg transcode worker. This is now the ONLY restream path and is ON by
+            // default; set RS_PASSTHROUGH=0 only as an emergency kill-switch.
+            passthrough: process.env.RS_PASSTHROUGH !== '0',
             passthroughRobots: (process.env.RS_PASSTHROUGH_ROBOTS || '').split(',').map(s => s.trim()).filter(Boolean),
         },
         hoboBucks: {

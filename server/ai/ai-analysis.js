@@ -138,7 +138,48 @@ function _parseJson(text) {
     if (!text) return null;
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return null;
-    try { return JSON.parse(m[0]); } catch { return null; }
+    let raw = m[0];
+    try { return JSON.parse(raw); } catch { /* try to repair below */ }
+    // Models often emit slightly-broken JSON (a missing closing "]" before "}",
+    // a trailing comma, smart quotes). Repair the common cases before giving up.
+    try {
+        let s = raw
+            .replace(/[“”]/g, '"')   // smart double quotes → "
+            .replace(/[‘’]/g, "'")   // smart single quotes → '
+            .replace(/,\s*([}\]])/g, '$1');    // trailing commas
+        // Balance brackets: an unclosed array right before the object close is the common
+        // case (`..."fight"}` → `..."fight"]}`). Strip a trailing "}", add the missing "]",
+        // then re-add the needed "}" so bracket counts line up.
+        const opensq = (s.match(/\[/g) || []).length, closesq = (s.match(/\]/g) || []).length;
+        if (opensq > closesq) {
+            s = s.replace(/\}\s*$/, '');
+            s += ']'.repeat(opensq - closesq);
+        }
+        const opencb = (s.match(/\{/g) || []).length, closecb = (s.match(/\}/g) || []).length;
+        if (opencb > closecb) s += '}'.repeat(opencb - closecb);
+        return JSON.parse(s);
+    } catch { return null; }
+}
+
+// Robustly pull a plain-text description out of a model reply that was SUPPOSED to be
+// JSON but may be malformed — so we never store a raw `{"description":...}` blob as text.
+function _extractDescription(text, maxLen) {
+    if (!text) return '';
+    const j = _parseJson(text);
+    if (j && j.description) return String(j.description).slice(0, maxLen);
+    // Broken JSON: lift just the description string field.
+    const dm = text.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    if (dm) { try { return JSON.parse(`"${dm[1]}"`).slice(0, maxLen); } catch { return dm[1].slice(0, maxLen); } }
+    // Not JSON at all → use as-is; if it merely looks like a JSON blob we couldn't parse, drop it.
+    const t = text.trim();
+    return /^[{[]/.test(t) ? '' : t.slice(0, maxLen);
+}
+function _extractTags(text, maxTags) {
+    const j = _parseJson(text);
+    if (j && Array.isArray(j.tags)) return j.tags.slice(0, maxTags).map(String);
+    const tm = text && text.match(/"tags"\s*:\s*\[([^\]]*)/i);
+    if (tm) return tm[1].split(',').map(s => s.replace(/["'\s]/g, '')).filter(Boolean).slice(0, maxTags);
+    return [];
 }
 
 // ── Public analysis functions ──
@@ -163,9 +204,9 @@ async function analyzeImagePaste(image, title) {
 Reply ONLY with compact JSON: {"description":"1-2 sentence description of what the image shows","tags":["3-6","short","lowercase","tags"]}.`;
     const img = await _toVisionJpeg(image);
     const text = await _complete({ prompt, image: img, maxTokens: 300, kind: 'paste_image' });
-    const j = _parseJson(text);
-    if (j) return { description: String(j.description || '').slice(0, 600), tags: Array.isArray(j.tags) ? j.tags.slice(0, 8).map(String) : [] };
-    return text ? { description: text.slice(0, 600), tags: [] } : null;
+    if (!text) return null;
+    const description = _extractDescription(text, 600);
+    return description ? { description, tags: _extractTags(text, 8) } : null;
 }
 
 /** Summarize a text paste → { description }. */
@@ -180,9 +221,9 @@ async function analyzeTextPaste(content, title) {
 async function analyzeStreamFrame(image) {
     const prompt = `This is a frame from a live stream. Reply ONLY with compact JSON: {"description":"one concise sentence describing what is happening on screen right now","tags":["2-5","short","tags"]}.`;
     const text = await _complete({ prompt, image, maxTokens: 200, kind: 'stream_memory' });
-    const j = _parseJson(text);
-    if (j) return { description: String(j.description || '').slice(0, 400), tags: Array.isArray(j.tags) ? j.tags.slice(0, 6).map(String) : [] };
-    return text ? { description: text.slice(0, 400), tags: [] } : null;
+    if (!text) return null;
+    const description = _extractDescription(text, 400);
+    return description ? { description, tags: _extractTags(text, 6) } : null;
 }
 
 /** Condense a stream's memories into a one-line "AI Overview" for the home card. */

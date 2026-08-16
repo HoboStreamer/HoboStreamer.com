@@ -8780,6 +8780,8 @@ body.theme-light .user-dropdown {
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
     gap: 16px;
 }
+.paste-moment-link-row { margin-top: 12px; }
+.paste-moment-link { display: inline-flex; align-items: center; gap: 8px; }
 .paste-card {
     display: block;
     background: var(--bg-secondary);
