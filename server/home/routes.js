@@ -101,6 +101,17 @@ function heroMedia() {
     return _shuffle(items).slice(0, 28);
 }
 
+// The full set of AI "crazy moment" frames (not subject to the collage shuffle/slice) — used
+// for the full-bleed hero BACKGROUND that cross-fades through them.
+function heroMoments() {
+    try {
+        const hm = JSON.parse(db.getSetting('home_hero_moments') || '{}');
+        return (hm.moments || [])
+            .filter(m => m && m.vodId && m.thumbnail)
+            .map(m => ({ title: m.title || 'AI Moment', thumbnail: m.thumbnail, href: `/vod/${m.vodId}?t=${m.offset || 0}`, username: m.username }));
+    } catch { return []; }
+}
+
 // An audience must be JUST the noun phrase that completes "Live streaming for ___" — strip any
 // baked-in "(live) streaming for" / "for" prefix (some LLM outputs include it → "Live streaming
 // for live streaming for nomads") and trailing punctuation.
@@ -138,7 +149,7 @@ function heroSlogans() {
 router.get('/hero', (req, res) => {
     try {
         res.set('Cache-Control', 'public, max-age=20');
-        res.json({ stats: db.getHomeStats(), media: heroMedia(), slogans: heroSlogans() });
+        res.json({ stats: db.getHomeStats(), media: heroMedia(), moments: heroMoments(), slogans: heroSlogans() });
     } catch (err) {
         console.error('[Home] hero error:', err.message);
         res.status(500).json({ error: 'Failed to load hero' });

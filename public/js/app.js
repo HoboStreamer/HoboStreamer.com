@@ -1266,12 +1266,15 @@ function _heroCollagePositions(n) {
 // through the day's ~5 frames. Prefers the AI "moment" frames; falls back to any thumbnail.
 let _heroBgTimer = null;
 let _heroBgActive = 0;
-function renderHeroBackground(media) {
+function renderHeroBackground(media, moments) {
     const wrap = document.getElementById('hero-bg');
     if (!wrap) return;
     const layers = wrap.querySelectorAll('.hero-bg-layer');
     if (layers.length < 2) return;
-    let frames = (media || []).filter(m => m && m.kind === 'moment' && m.thumbnail).map(m => m.thumbnail);
+    // Prefer the full AI-moment frame set (not the shuffled/sliced collage media), so the
+    // background cycles through all of the day's frames.
+    let frames = (moments || []).filter(m => m && m.thumbnail).map(m => m.thumbnail);
+    if (!frames.length) frames = (media || []).filter(m => m && m.kind === 'moment' && m.thumbnail).map(m => m.thumbnail);
     if (!frames.length) frames = (media || []).filter(m => m && m.thumbnail && m.kind !== 'paste').map(m => m.thumbnail);
     frames = [...new Set(frames)];
     if (_heroBgTimer) { clearInterval(_heroBgTimer); _heroBgTimer = null; }
@@ -1380,7 +1383,7 @@ async function loadHeroData() {
     startHeroQuips(data && data.slogans && data.slogans.quips);
     startSloganCountdown(data && data.slogans && data.slogans.next_at);
     if (data && data.stats) renderHeroStats(data.stats);
-    if (data && data.media) { renderHeroBackground(data.media); renderHeroCollage(data.media); }
+    if (data && data.media) { renderHeroBackground(data.media, data.moments); renderHeroCollage(data.media); }
 }
 
 // Playful countdown to the next AI slogan/label batch (regenerates every 12h).
