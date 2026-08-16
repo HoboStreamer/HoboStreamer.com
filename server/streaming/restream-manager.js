@@ -29,6 +29,7 @@ const STABLE_THRESHOLD_MS = 30000;
 const MAX_RESTART_ATTEMPTS = 30;           // 30 attempts (was 10 — too few for Twitch connection storms)
 const FFMPEG_STARTUP_DELAY_RTMP = 3000;
 const RAPID_CRASH_THRESHOLD_MS = 5000;     // If FFmpeg exits within this, apply extra backoff
+const RAPID_CRASH_GIVEUP = 4;              // …this many rapid crashes in a row = destination is dead (circuit-break)
 const LIVE_OUTPUT_BUFFER_MS = 1000;
 
 /**
@@ -228,6 +229,20 @@ class RestreamManager extends EventEmitter {
                 return session;
             }
         }
+
+        // Circuit breaker: if this destination recently failed to go live repeatedly (e.g. the
+        // streamer's YouTube got a strike), don't keep hammering it — skip until cooldown expires.
+        // A manual /start (forceIgnoreCooldown) overrides this so users can retry after fixing it.
+        try {
+            const db = require('../db/database');
+            const fresh = db.getRestreamDestinationById(destination.id) || destination;
+            const coolMs = db.restreamDestinationCooldownMs ? db.restreamDestinationCooldownMs(fresh) : 0;
+            if (coolMs > 0 && !(streamInfo && streamInfo.forceIgnoreCooldown)) {
+                console.warn(`[Restream] Dest ${destination.id} (${destination.platform}) in cooldown after repeated failures — skipping for ~${Math.ceil(coolMs / 60000)}m`);
+                this.emit('status-change', { streamId, destId: destination.id, status: 'cooldown', error: fresh.last_error || 'Paused after repeated failures', cooldownUntil: fresh.cooldown_until });
+                return null;
+            }
+        } catch { /* */ }
 
         const { protocol, streamKey } = streamInfo;
 
@@ -769,6 +784,9 @@ class RestreamManager extends EventEmitter {
                 if (session.process === proc && session.status === 'live') {
                     session.restartAttempts = 0;
                     session.restartDelay = RESTART_BASE_DELAY;
+                    session.rapidCrashCount = 0;
+                    // Successfully stayed live → destination is healthy again; lift any cooldown.
+                    try { require('../db/database').clearRestreamDestinationCooldown(session.destId); } catch { /* */ }
                     console.log(`[Restream] Session ${session.key} stable — reset backoff`);
                 }
             }, STABLE_THRESHOLD_MS);
@@ -841,13 +859,16 @@ class RestreamManager extends EventEmitter {
     _scheduleRestart(session) {
         if (session.status === 'stopped') return;
 
-        if (session.restartAttempts >= MAX_RESTART_ATTEMPTS) {
-            console.warn(`[Restream] Max restart attempts (${MAX_RESTART_ATTEMPTS}) reached for ${session.key}`);
+        const _circuitBreak = (reason) => {
             session.status = 'failed';
-            this.emit('status-change', {
-                streamId: session.streamId, destId: session.destId,
-                status: 'failed', error: session.lastError,
-            });
+            let cooldownMinutes = null;
+            try { cooldownMinutes = require('../db/database').markRestreamDestinationFailure(session.destId, session.lastError || reason)?.cooldownMinutes; } catch { /* */ }
+            this.emit('status-change', { streamId: session.streamId, destId: session.destId, status: 'failed', error: session.lastError || reason, cooldownMinutes });
+            console.warn(`[Restream] ${session.key} circuit-broken (${reason})${cooldownMinutes ? ` — cooling down ${cooldownMinutes}m` : ''}`);
+        };
+
+        if (session.restartAttempts >= MAX_RESTART_ATTEMPTS) {
+            _circuitBreak(`max restart attempts (${MAX_RESTART_ATTEMPTS})`);
             return;
         }
 
@@ -855,7 +876,17 @@ class RestreamManager extends EventEmitter {
         // Apply extra backoff to avoid hammering the ingest server (which can trigger IP bans).
         const runtime = Date.now() - (session.startedAt || Date.now());
         if (runtime < RAPID_CRASH_THRESHOLD_MS) {
+            session.rapidCrashCount = (session.rapidCrashCount || 0) + 1;
             session.restartDelay = Math.min(session.restartDelay * 2, RESTART_MAX_DELAY);
+        } else {
+            session.rapidCrashCount = 0; // ran a while → not a persistent connect failure
+        }
+        // Several rapid crashes in a row = the destination is genuinely broken (bad key, strike,
+        // ingest rejecting us). Stop this session AND cool the destination down across future
+        // go-lives, instead of grinding through all 30 attempts every stream.
+        if ((session.rapidCrashCount || 0) >= RAPID_CRASH_GIVEUP) {
+            _circuitBreak(`${session.rapidCrashCount} rapid crashes`);
+            return;
         }
 
         const delay = session.restartDelay;

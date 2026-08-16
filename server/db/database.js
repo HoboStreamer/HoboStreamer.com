@@ -561,6 +561,12 @@ function initDb() {
         const newCols = [
             { name: 'channel_url', def: 'TEXT DEFAULT NULL' },
             { name: 'chat_relay', def: 'INTEGER DEFAULT 0' },
+            // Circuit breaker: persist repeated go-live failures so a broken destination
+            // (e.g. a YouTube strike) isn't hammered every time the streamer goes live.
+            { name: 'consecutive_failures', def: 'INTEGER DEFAULT 0' },
+            { name: 'cooldown_until', def: 'DATETIME DEFAULT NULL' },
+            { name: 'last_error', def: 'TEXT DEFAULT NULL' },
+            { name: 'last_failed_at', def: 'DATETIME DEFAULT NULL' },
         ];
         for (const col of newCols) {
             if (!cols.includes(col.name)) {
@@ -3523,6 +3529,31 @@ function upsertRobotStreamerIntegration(userId, fields, managedStreamId = null) 
 
 function getRestreamDestinationsByUserId(userId) {
     return all('SELECT * FROM restream_destinations WHERE user_id = ? ORDER BY created_at', [userId]);
+}
+
+// Circuit breaker: escalating cooldown after repeated go-live failures for a destination.
+// 1st → 15m, 2nd → 1h, 3rd → 6h, 4th+ → 24h. Returns the new cooldown_until (ms epoch).
+function markRestreamDestinationFailure(id, error) {
+    try {
+        const row = get('SELECT consecutive_failures FROM restream_destinations WHERE id = ?', [id]);
+        const n = ((row && row.consecutive_failures) || 0) + 1;
+        const mins = n <= 1 ? 15 : n === 2 ? 60 : n === 3 ? 360 : 1440;
+        run(`UPDATE restream_destinations SET consecutive_failures = ?, last_error = ?, last_failed_at = CURRENT_TIMESTAMP,
+             cooldown_until = datetime('now', ?) WHERE id = ?`,
+            [n, String(error || 'restream failed to go live').slice(0, 300), `+${mins} minutes`, id]);
+        return { failures: n, cooldownMinutes: mins };
+    } catch { return null; }
+}
+function clearRestreamDestinationCooldown(id) {
+    try { run('UPDATE restream_destinations SET consecutive_failures = 0, cooldown_until = NULL, last_error = NULL WHERE id = ?', [id]); } catch { /* */ }
+}
+// Remaining cooldown in ms (0 if not cooling down).
+function restreamDestinationCooldownMs(dest) {
+    try {
+        if (!dest || !dest.cooldown_until) return 0;
+        const until = new Date(String(dest.cooldown_until).replace(' ', 'T') + 'Z').getTime();
+        return until > Date.now() ? (until - Date.now()) : 0;
+    } catch { return 0; }
 }
 
 function getRestreamDestinationById(id) {
@@ -7044,6 +7075,7 @@ module.exports = {
     deleteRobotStreamerIntegrationForSlot,
     // Restream destinations
     getRestreamDestinationsByUserId, getRestreamDestinationById,
+    markRestreamDestinationFailure, clearRestreamDestinationCooldown, restreamDestinationCooldownMs,
     createRestreamDestination, updateRestreamDestination, deleteRestreamDestination,
     getPlatformConnection, getPlatformConnectionById, getPlatformConnectionsByUserId,
     upsertPlatformConnection, updatePlatformConnectionTokens, deletePlatformConnection,

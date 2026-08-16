@@ -39,6 +39,11 @@ function sanitizeDest(d) {
         quality_preset: d.quality_preset || 'auto',
         channel_url: d.channel_url || '',
         chat_relay: !!d.chat_relay,
+        // Circuit-breaker status — non-zero when the destination is paused after repeated failures.
+        cooldown_ms: (() => { try { return db.restreamDestinationCooldownMs(d); } catch { return 0; } })(),
+        cooldown_until: d.cooldown_until || null,
+        consecutive_failures: d.consecutive_failures || 0,
+        last_error: d.last_error || null,
     };
 }
 
@@ -239,6 +244,12 @@ router.put('/destinations/:id', requireAuth, (req, res) => {
 
         const updated = db.updateRestreamDestination(dest.id, updates);
 
+        // Fixing a broken destination (new stream key, or re-enabling it) is the streamer's signal
+        // that it should work now — lift any failure cooldown so it retries on the next go-live.
+        if (updates.stream_key !== undefined || updates.server_url !== undefined || updates.enabled === 1) {
+            try { db.clearRestreamDestinationCooldown(dest.id); } catch { /* */ }
+        }
+
         // If the destination was just DISABLED, stop any active video restream to it right now —
         // otherwise it keeps pushing to Twitch/Kick/etc. for a stream that's already live.
         if (updates.enabled === 0) {
@@ -328,9 +339,14 @@ router.post('/destinations/:id/start', requireAuth, async (req, res) => {
             return res.status(400).json({ error: 'No valid stream key found for the current live stream' });
         }
 
+        // Manual start = the streamer explicitly asking to retry; clear any failure cooldown and
+        // bypass the circuit breaker for this attempt.
+        try { db.clearRestreamDestinationCooldown(dest.id); } catch { /* */ }
+
         const session = await restreamManager.startRestream(stream.id, dest, {
             protocol: stream.protocol,
             streamKey,
+            forceIgnoreCooldown: true,
         });
 
         res.json({ ok: true, status: session?.status || 'starting' });
