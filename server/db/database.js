@@ -2534,6 +2534,59 @@ function getStreamTranscriptSegments(streamId) {
     return out;
 }
 
+// ── AI "crazy moments" v2: rank whole VODs by their AI overview, then mine the winner's
+// timeline + transcript for its single best moment. ─────────────────────────────────────
+
+// Every public, finished VOD that has an AI overview or a timeline — ordered by an objective
+// popularity prior (views, clips taken, peak viewers) so the AI ranker sees the strongest first
+// and cost stays bounded when there are many VODs.
+function getVodsForMomentRanking(limit = 120) {
+    try {
+        return all(`
+            SELECT v.id AS vod_id, v.stream_id, v.user_id, u.username, v.title,
+                   COALESCE(v.ai_overview, '') AS ai_overview,
+                   COALESCE(v.ai_overview_short, '') AS ai_overview_short,
+                   COALESCE(v.view_count, 0) AS view_count,
+                   COALESCE(NULLIF(v.duration_seconds, 0), v.probe_duration_seconds, 0) AS duration,
+                   COALESCE(s.peak_viewers, 0) AS peak_viewers, v.created_at,
+                   (SELECT COUNT(*) FROM clips c WHERE c.vod_id = v.id OR c.stream_id = v.stream_id) AS clip_count,
+                   (SELECT COUNT(*) FROM stream_memories m WHERE m.stream_id = v.stream_id) AS memory_count
+            FROM vods v
+            JOIN users u ON u.id = v.user_id
+            LEFT JOIN streams s ON s.id = v.stream_id
+            WHERE v.is_public = 1 AND COALESCE(v.is_recording, 0) = 0 AND COALESCE(v.clips_only, 0) = 0
+              AND ( (v.ai_overview IS NOT NULL AND v.ai_overview <> '')
+                    OR EXISTS (SELECT 1 FROM stream_memories m WHERE m.stream_id = v.stream_id) )
+            ORDER BY COALESCE(v.view_count, 0) DESC, clip_count DESC, COALESCE(s.peak_viewers, 0) DESC, v.created_at DESC
+            LIMIT ?
+        `, [Math.max(1, limit)]) || [];
+    } catch { return []; }
+}
+
+// Timestamps (seconds into the VOD) that viewers CLIPPED — the strongest "this was a moment"
+// signal we have.
+function getClipStartTimesForStream(streamId, vodId) {
+    try {
+        return (all(`SELECT start_time FROM clips WHERE (stream_id = ? OR vod_id = ?) AND start_time > 0 ORDER BY start_time`,
+            [streamId, vodId || -1]) || []).map(r => Math.floor(r.start_time));
+    } catch { return []; }
+}
+
+// Chat-message spikes: the busiest time-buckets of a stream (offset seconds → message count),
+// a proxy for "everyone reacted here". Offsets are relative to the stream's start.
+function getChatSpikeOffsets(streamId, bucketSec = 30, topN = 8) {
+    try {
+        const rows = all(`
+            SELECT CAST((julianday(cm.timestamp) - julianday(s.started_at)) * 86400 / ? AS INT) AS bucket,
+                   COUNT(*) AS n
+            FROM chat_messages cm JOIN streams s ON s.id = cm.stream_id
+            WHERE cm.stream_id = ? AND s.started_at IS NOT NULL AND cm.timestamp >= s.started_at
+              AND COALESCE(cm.is_deleted, 0) = 0
+            GROUP BY bucket HAVING bucket >= 0 ORDER BY n DESC LIMIT ?`, [bucketSec, streamId, topN]) || [];
+        return rows.map(r => ({ offset: r.bucket * bucketSec, count: r.n }));
+    } catch { return []; }
+}
+
 // Candidate memories for the daily AI "crazy moments" picker: recent, substantive, and from
 // a stream that has a public VOD (so we can link + extract the moment frame).
 function getAiMomentCandidates(days = 30, limit = 150) {
@@ -2544,20 +2597,22 @@ function getAiMomentCandidates(days = 30, limit = 150) {
         // vod_duration lets the caller drop offsets that fall past the VOD's end.
         return all(`
             SELECT m.id AS memory_id, m.stream_id, m.offset_seconds, m.description, m.tags,
-                   m.thumbnail_url, m.user_id, s.title AS stream_title, u.username,
+                   m.thumbnail_url, m.user_id, s.title AS stream_title, s.peak_viewers, u.username,
                    (SELECT v.id FROM vods v WHERE v.stream_id = m.stream_id
                       AND COALESCE(v.is_public, 1) = 1 AND COALESCE(v.is_recording, 0) = 0
                       ORDER BY v.id DESC LIMIT 1) AS vod_id,
                    (SELECT COALESCE(NULLIF(v.duration_seconds, 0), v.probe_duration_seconds, 0)
                       FROM vods v WHERE v.stream_id = m.stream_id
-                      AND COALESCE(v.is_recording, 0) = 0 ORDER BY v.id DESC LIMIT 1) AS vod_duration
+                      AND COALESCE(v.is_recording, 0) = 0 ORDER BY v.id DESC LIMIT 1) AS vod_duration,
+                   (SELECT COALESCE(v.view_count, 0) FROM vods v WHERE v.stream_id = m.stream_id
+                      AND COALESCE(v.is_recording, 0) = 0 ORDER BY v.id DESC LIMIT 1) AS vod_views
             FROM stream_memories m
             JOIN users u ON u.id = m.user_id
             JOIN streams s ON s.id = m.stream_id
             WHERE m.description IS NOT NULL AND length(m.description) > 45
               AND m.created_at >= datetime('now', ?)
               AND COALESCE(s.is_live, 0) = 0 AND s.ended_at IS NOT NULL
-            ORDER BY m.created_at DESC
+            ORDER BY COALESCE(s.peak_viewers, 0) DESC, length(m.description) DESC, m.created_at DESC
             LIMIT ?
         `, [`-${Math.max(1, days)} days`, limit]) || [];
     } catch { return []; }
@@ -6814,6 +6869,7 @@ module.exports = {
     setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
     updatePasteAi, cleanupMalformedAiText, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getStreamTranscriptSegments, getUserPastesForAi,
+    getVodsForMomentRanking, getClipStartTimesForStream, getChatSpikeOffsets,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     getStreamerAiTimeline, assembleStreamerAiTimeline, setStreamAiTitle, getUntitledAiSessions, clearAiTimelineCache,
     // Homepage helpers
