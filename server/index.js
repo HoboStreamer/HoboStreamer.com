@@ -461,6 +461,7 @@ app.use('/api/game', (req, res) => res.status(410).json({ error: 'Game has moved
 app.use('/api/meta', metaRoutes);
 app.use('/api/pastes', pasteRoutes);
 app.use('/api/home', require('./home/routes'));
+app.use('/api/kiosk', require('./kiosk/routes'));
 app.use('/api/media', mediaRoutes);
 app.use('/api/vibe-coding', vibeCodingRoutes);
 const ttsRoutes = require('./chat/tts-routes');

@@ -4210,69 +4210,17 @@ const SYSTEM_USERNAMES = new Set(['hobostreamer']);
 function isSystemUsername(name) { return SYSTEM_USERNAMES.has(String(name || '').trim().toLowerCase()); }
 
 function renderSystemContextMenu(menu, username) {
-    menu.innerHTML = `
-        <div class="ctx-header">
-            <span class="ctx-avatar-letter" style="background:var(--accent)"><i class="fa-solid fa-tower-broadcast"></i></span>
-            <div class="ctx-info">
-                <span class="ctx-name">${esc(username)}</span>
-                <span class="ctx-meta"><i class="fa-solid fa-circle-check"></i> Official system account</span>
-            </div>
-        </div>
-        <div class="ctx-actions">
-            <a class="ctx-btn" href="/updates" style="text-decoration:none" onclick="dismissContextMenu();return handleLinkClick(event, '/updates')"><i class="fa-solid fa-rss"></i> View all updates</a>
-            <div class="ctx-system-note">Automated site account — its posts are the changelog. It can't be messaged, moderated, or analyzed.</div>
-        </div>`;
+    // Markup lives in chat-shared.js (HoboChat.buildUserMenu) — shared with the /kiosk page.
+    menu.innerHTML = HoboChat.buildUserMenu({ kind: 'system', username });
 }
 
 function renderAnonContextMenu(menu, username, userId) {
-    const initial = username[0] ? username[0].toUpperCase() : '?';
-    const canMod = canModerateCurrentStream() && chatStreamId;
-    const isGlobalMod = currentUser?.capabilities?.moderate_global;
-
-    let modBtns = '';
-    let banBtns = '';
-    const showStreamBan = canMod;
-    const showSiteBan = currentUser?.capabilities?.manage_site_bans;
-    const showAdminTools = currentUser?.capabilities?.view_ip_info;
-
-    // Delete message / delete all messages (moderators)
-    if (canMod || isGlobalMod) {
-        const msgId = menu.dataset.msgId;
-        if (msgId) {
-            modBtns += `<button class="ctx-btn ctx-btn-warn" onclick="ctxDeleteMessage('${esc(msgId)}')"><i class="fa-solid fa-trash"></i> Delete Message</button>`;
-        }
-        modBtns += `<button class="ctx-btn ctx-btn-warn" data-username="${esc(username)}" onclick="ctxDeleteAllAnonMessages(this.dataset.username)"><i class="fa-solid fa-trash-can"></i> Delete All Messages</button>`;
-    }
-    if (modBtns) modBtns = '<div class="ctx-divider"></div>' + modBtns;
-
-    if (showStreamBan || showSiteBan || showAdminTools) banBtns += '<div class="ctx-divider"></div>';
-    if (showAdminTools) {
-        banBtns += `<button class="ctx-btn ctx-btn-admin-tools" data-username="${esc(username)}" data-uid="" data-anon="1" onclick="ctxAdminTools(this.dataset.username, null, this.dataset.username)"><i class="fa-solid fa-shield-halved"></i> Admin Tools</button>`;
-    }
-    if (showStreamBan) {
-        banBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxStreamBan(this.dataset.username, null, this.dataset.username)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>`;
-    }
-    if (showSiteBan) {
-        banBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${esc(userId)}" onclick="ctxGlobalBanAnon(this.dataset.username)"><i class="fa-solid fa-ban"></i> Ban from site</button>`;
-    }
-    menu.innerHTML = `
-        <div class="ctx-header">
-            <span class="ctx-avatar-letter" style="background:#666">${initial}</span>
-            <div class="ctx-info">
-                <span class="ctx-name">${esc(username)}</span>
-                <span class="ctx-meta">Anonymous user</span>
-                <span class="ctx-meta ctx-anon-meta" style="opacity:0.85"><i class="fa-solid fa-clock"></i> …</span>
-            </div>
-        </div>
-        <div class="ctx-actions">
-            ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
-            <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
-            <button class="ctx-btn" data-username="${esc(username)}" onclick="dismissContextMenu();window.openAnonChatInsight&&openAnonChatInsight(this.dataset.username)"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Insight</button>
-            ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" onclick="dismissContextMenu();ctxViewAnonLogs(this.dataset.username)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
-            ${modBtns}
-            ${banBtns}
-        </div>
-    `;
+    // Markup lives in chat-shared.js (HoboChat.buildUserMenu) — shared with the /kiosk page.
+    menu.innerHTML = HoboChat.buildUserMenu({
+        kind: 'anon', username, userId,
+        msgId: menu.dataset.msgId, replyMsgId: menu.dataset.replyMsgId,
+        ctx: { currentUser, chatStreamId, currentStreamData, canMod: canModerateCurrentStream() },
+    });
 
     // Async: first-seen (when their anon number was assigned) + first-chat time + count.
     (async () => {
@@ -4295,86 +4243,13 @@ function renderAnonContextMenu(menu, username, userId) {
 }
 
 function renderContextMenu(menu, profile, username) {
-    const avatarHtml = profile.avatar_url
-        ? `<img class="ctx-avatar" src="${esc(profile.avatar_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
-        + `<span class="ctx-avatar-letter" style="display:none;background:${esc(profile.profile_color || '#999')}">${esc(username)[0].toUpperCase()}</span>`
-        : `<span class="ctx-avatar-letter" style="background:${esc(profile.profile_color || '#999')}">${esc(username)[0].toUpperCase()}</span>`;
-
-    const badge = getBadgeHTML(profile.role);
-    const joined = profile.created_at ? timeAgoShort(profile.created_at) : '?';
-
-    // Game stats
-    let gameHtml = '';
-    if (profile.game) {
-        const g = profile.game;
-        gameHtml = `
-            <div class="ctx-game">
-                <div class="ctx-game-level">Lv. <strong>${g.total_level}</strong></div>
-                <div class="ctx-skills">
-                    <span title="Mining ${g.mining_level}"><i class="fa-solid fa-gem"></i>${g.mining_level}</span>
-                    <span title="Fishing ${g.fishing_level}"><i class="fa-solid fa-fish"></i>${g.fishing_level}</span>
-                    <span title="Woodcutting ${g.woodcut_level}"><i class="fa-solid fa-tree"></i>${g.woodcut_level}</span>
-                    <span title="Farming ${g.farming_level}"><i class="fa-solid fa-seedling"></i>${g.farming_level}</span>
-                    <span title="Combat ${g.combat_level}"><i class="fa-solid fa-sword"></i>${g.combat_level}</span>
-                    <span title="Crafting ${g.crafting_level}"><i class="fa-solid fa-hammer"></i>${g.crafting_level}</span>
-                </div>
-            </div>
-        `;
-    }
-
-    // Coins + messages
-    const coins = profile.hobo_coins_balance || 0;
-    const msgs = profile.messageCount || 0;
-
-    // Moderation: delete message / delete all messages
-    const canMod = canModerateCurrentStream() && chatStreamId;
-    const isGlobalMod = currentUser?.capabilities?.moderate_global;
-    let modBtns = '';
-    if (canMod || isGlobalMod) {
-        const msgId = menu.dataset.msgId;
-        if (msgId) {
-            modBtns += `<button class="ctx-btn ctx-btn-warn" onclick="ctxDeleteMessage('${esc(String(msgId))}')"><i class="fa-solid fa-trash"></i> Delete Message</button>`;
-        }
-        modBtns += `<button class="ctx-btn ctx-btn-warn" data-uid="${profile.id}" onclick="ctxDeleteAllUserMessages(this.dataset.uid)"><i class="fa-solid fa-trash-can"></i> Delete All Messages</button>`;
-    }
-
-    menu.innerHTML = `
-        <div class="ctx-header">
-            ${avatarHtml}
-            <div class="ctx-info">
-                <span class="ctx-name">${badge}${esc(profile.display_name || username)}</span>
-                <span class="ctx-meta">@${esc(username)} &middot; ${joined}</span>
-            </div>
-        </div>
-        <div class="ctx-stats">
-            <div class="ctx-stat"><i class="fa-solid fa-coins"></i> ${formatNumber(coins)}</div>
-            <div class="ctx-stat"><i class="fa-solid fa-message"></i> ${formatNumber(msgs)}</div>
-            <div class="ctx-stat"><i class="fa-solid fa-heart"></i> ${formatNumber(profile.followerCount || 0)}</div>
-        </div>
-        ${gameHtml}
-        <div class="ctx-divider"></div>
-        <div class="ctx-actions">
-            ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
-            <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxWhisper(this.dataset.username)"><i class="fa-solid fa-comment"></i> Message</button>
-            ${currentUser?.id && currentUser.id !== profile.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxCallUser(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-phone"></i> Call this user</button>` : ''}
-            <button class="ctx-btn" data-username="${esc(username)}" onclick="ctxViewChannel(this.dataset.username)"><i class="fa-solid fa-user"></i> Channel</button>
-            ${profile.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="dismissContextMenu();window.openUserChatInsight&&openUserChatInsight(this.dataset.uid, this.dataset.username)"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Insight</button>` : ''}
-            ${profile.id && currentUser?.id && currentStreamData?.user_id === currentUser.id ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="dismissContextMenu();window.aivCloneChatter&&aivCloneChatter('user', this.dataset.uid, this.dataset.username)"><i class="fa-solid fa-clone"></i> AI Clone</button>` : ''}
-            ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxViewLogs(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
-            ${currentUser?.capabilities?.manage_users ? `<div class="ctx-rename-group">
-                <button class="ctx-btn" onclick="this.parentElement.classList.toggle('open')" type="button"><i class="fa-solid fa-pen"></i> Rename <i class="fa-solid fa-chevron-right ctx-rename-arrow"></i></button>
-                <div class="ctx-rename-submenu">
-                    <button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxRenameUsername(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-at"></i> Rename Username</button>
-                    <button class="ctx-btn" data-username="${esc(username)}" data-uid="${profile.id}" data-display="${esc(profile.display_name || username)}" onclick="ctxRenameDisplayName(this.dataset.username, this.dataset.uid, this.dataset.display)"><i class="fa-solid fa-signature"></i> Rename Display Name</button>
-                </div>
-            </div>` : ''}
-            ${modBtns ? '<div class="ctx-divider"></div>' + modBtns : ''}
-            ${(canModerateCurrentStream() && chatStreamId) || currentUser?.capabilities?.manage_site_bans || currentUser?.capabilities?.view_ip_info ? '<div class="ctx-divider"></div>' : ''}
-            ${currentUser?.capabilities?.view_ip_info ? `<button class="ctx-btn ctx-btn-admin-tools" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxAdminTools(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-shield-halved"></i> Admin Tools</button>` : ''}
-            ${canModerateCurrentStream() && chatStreamId ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxStreamBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-comment-slash"></i> Ban from stream</button>` : ''}
-            ${currentUser?.capabilities?.manage_site_bans ? `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" data-uid="${profile.id}" onclick="ctxGlobalBan(this.dataset.username, this.dataset.uid)"><i class="fa-solid fa-ban"></i> Ban from site</button>` : ''}
-        </div>
-    `;
+    // Markup lives in chat-shared.js (HoboChat.buildUserMenu) — shared with the /kiosk page.
+    menu.innerHTML = HoboChat.buildUserMenu({
+        kind: 'user', profile, username,
+        msgId: menu.dataset.msgId, replyMsgId: menu.dataset.replyMsgId,
+        ctx: { currentUser, chatStreamId, currentStreamData, canMod: canModerateCurrentStream() },
+        deps: { timeAgoShort, formatNumber },
+    });
 }
 
 /* ── Context menu actions ─────────────────────────────────────── */
@@ -4721,43 +4596,12 @@ function ctxUnbanRelayUser(prefixedUsername) {
 function renderRelayContextMenu(menu, username, sourcePlatform) {
     const { platform, externalUsername } = parseRelayUsername(username);
     const displayPlatform = platform.charAt(0).toUpperCase() + platform.slice(1);
-    const initial = externalUsername[0] ? externalUsername[0].toUpperCase() : '?';
-
-    const platformColors = { twitch: '#9146ff', kick: '#53fc18', youtube: '#ff0000', rs: '#e67e22' };
-    const color = platformColors[platform] || '#888';
-
-    const canMod = canModerateCurrentStream() && chatStreamId;
-    const isGlobalMod = currentUser?.capabilities?.moderate_global;
-
-    let modBtns = '';
-    if (canMod || isGlobalMod) {
-        const msgId = menu.dataset.msgId;
-        if (msgId) {
-            modBtns += `<button class="ctx-btn ctx-btn-warn" onclick="ctxDeleteMessage('${esc(String(msgId))}')"><i class="fa-solid fa-trash"></i> Delete Message</button>`;
-        }
-        modBtns += `<button class="ctx-btn ctx-btn-warn" data-username="${esc(username)}" onclick="ctxDeleteRelayMessages(this.dataset.username)"><i class="fa-solid fa-trash-can"></i> Delete All Messages</button>`;
-        modBtns += `<button class="ctx-btn ctx-btn-warn" data-username="${esc(username)}" onclick="ctxHideRelayUser(this.dataset.username)"><i class="fa-solid fa-eye-slash"></i> Hide from stream</button>`;
-        modBtns += `<button class="ctx-btn ctx-btn-danger" data-username="${esc(username)}" onclick="ctxBanRelayUser(this.dataset.username)"><i class="fa-solid fa-ban"></i> Ban from stream</button>`;
-        modBtns += `<button class="ctx-btn" data-username="${esc(username)}" onclick="ctxUnbanRelayUser(this.dataset.username)"><i class="fa-solid fa-rotate-left"></i> Unban / unhide</button>`;
-    }
-
-    menu.innerHTML = `
-        <div class="ctx-header">
-            <span class="ctx-avatar-letter" style="background:${esc(color)}">${initial}</span>
-            <div class="ctx-info">
-                <span class="ctx-name">${esc(externalUsername)}</span>
-                <span class="ctx-meta"><i class="fa-solid fa-link"></i> ${esc(displayPlatform)} relay user</span>
-                <span class="ctx-meta ctx-relay-joined" style="opacity:0.85"><i class="fa-solid fa-clock"></i> …</span>
-            </div>
-        </div>
-        <div class="ctx-actions">
-            ${menu.dataset.replyMsgId ? `<button class="ctx-btn" onclick="ctxReply()"><i class="fa-solid fa-reply"></i> Reply</button>` : ''}
-            <button class="ctx-btn" onclick="dismissContextMenu();window.openRelayUserChatInsight&&openRelayUserChatInsight('${esc(platform)}','${esc(externalUsername)}','${esc(displayPlatform)}')"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Insight</button>
-            ${currentUser?.id && currentStreamData?.user_id === currentUser.id ? `<button class="ctx-btn" onclick="dismissContextMenu();window.aivCloneChatter&&aivCloneChatter('relay','${esc(platform)}:${esc(externalUsername)}','${esc(externalUsername)}')"><i class="fa-solid fa-clone"></i> AI Clone</button>` : ''}
-            ${currentUser?.capabilities?.view_all_logs ? `<button class="ctx-btn" onclick="dismissContextMenu();ctxViewRelayLogs('${esc(platform)}','${esc(externalUsername)}')"><i class="fa-solid fa-clock-rotate-left"></i> Chat Logs</button>` : ''}
-            ${modBtns ? '<div class="ctx-divider"></div>' + modBtns : ''}
-        </div>
-    `;
+    // Markup lives in chat-shared.js (HoboChat.buildUserMenu) — shared with the /kiosk page.
+    menu.innerHTML = HoboChat.buildUserMenu({
+        kind: 'relay', username, platform, externalUsername, displayPlatform,
+        msgId: menu.dataset.msgId, replyMsgId: menu.dataset.replyMsgId,
+        ctx: { currentUser, chatStreamId, currentStreamData, canMod: canModerateCurrentStream() },
+    });
 
     // Async: their first message time = "join date" (+ message count).
     (async () => {

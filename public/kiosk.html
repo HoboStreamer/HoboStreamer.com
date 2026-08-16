@@ -22,6 +22,12 @@
   --purple:#b38cff;
   --pink:#ff5da2;
   --red:#ff4d5f;
+  /* Aliases so the shared chat menu / link-trust styles (chat-shared.css) render on the kiosk */
+  --accent:#dbb077;--accent-hover:#e8c48f;--accent-light:#e8c48f;
+  --bg-primary:#0b0e13;--bg-secondary:#141a23;--bg-tertiary:#0e1117;--bg-hover:#1c232d;
+  --surface:#0e1117;--border:#2d3540;
+  --text-primary:#f6f2e9;--text-secondary:#a6b0bc;--text-muted:#7e8997;
+  --danger:#ff4d5f;--warning:#e0a800;
 }
 *{box-sizing:border-box}
 html,body{
@@ -49,7 +55,7 @@ button{font:inherit}
   width:100vw;height:100vh;
   padding:1.1vh 1.1vw;
   display:grid;
-  grid-template-rows:6.4vh 17vh 8.4vh 14.5vh 1fr;
+  grid-template-rows:6.4vh 16.5vh 8.2vh 11.5vh 1fr;
   gap:1vh;
 }
 
@@ -186,7 +192,7 @@ button{font:inherit}
 .domain{
   position:relative;overflow:hidden;
   border:1px solid var(--line);border-radius:16px;
-  padding:1vh 1.3vw;
+  padding:0 1.3vw;
   background:linear-gradient(145deg,rgba(18,22,29,.97),rgba(10,12,17,.96));
   display:flex;flex-direction:column;justify-content:center;
   box-shadow:0 14px 36px rgba(0,0,0,.22);
@@ -378,6 +384,17 @@ button{font:inherit}
 .msg .chat-src.global{color:#9aa4af;background:rgba(255,255,255,.05);border-color:#333c48;cursor:default}
 .msg .chat-src i{font-size:.9em;margin-right:.15vw}
 .msg.system{color:#7c8795;font-style:italic}
+/* Relay platform badge (kick/twitch/youtube/rs) */
+.msg .chat-relay-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:.6vw;border-radius:4px;padding:.14vh .3vw;margin-right:.3vw;
+  border:1px solid #333c48;vertical-align:middle
+}
+.msg .chat-relay-badge .relay-ico-txt{font-weight:950;font-size:.9em;line-height:1}
+.msg .chat-relay-badge.relay-twitch{color:#a970ff;background:rgba(169,112,255,.15);border-color:rgba(169,112,255,.4)}
+.msg .chat-relay-badge.relay-kick{color:#53fc18;background:rgba(83,252,24,.14);border-color:rgba(83,252,24,.4)}
+.msg .chat-relay-badge.relay-youtube{color:#ff5b5b;background:rgba(255,91,91,.14);border-color:rgba(255,91,91,.4)}
+.msg .chat-relay-badge.relay-rs{color:#7dd3fc;background:rgba(125,211,252,.14);border-color:rgba(125,211,252,.4)}
 /* chat-link inherits shared styles from chat-shared.css; size it for the kiosk */
 .messages .chat-link{font-size:inherit}
 .chat-foot{
@@ -515,7 +532,7 @@ button{font:inherit}
   </section>
 </div>
 
-<script src="/js/chat-shared.js?v=1"></script>
+<script src="/js/chat-shared.js?v=2"></script>
 <script>
 (() => {
   "use strict";
@@ -715,6 +732,17 @@ button{font:inherit}
   setInterval(cycleLatestTab,9000);
 
   const messages=$("#messages"),status=$("#chat-status");
+  // Track unique participants seen in the loaded chat log (users + anons + relay identities).
+  const chatters=new Set();
+  function trackChatter(m){
+    if(m.type==="system") return;
+    let key=null;
+    if(m.source_platform) key="r:"+String(m.source_platform).toLowerCase()+":"+String(m.core_username||m.username||m.display_name||"").toLowerCase();
+    else if(m.user_id) key="u:"+m.user_id;
+    else if(m.anon_id||m.username) key="a:"+String(m.anon_id||m.username).toLowerCase();
+    if(key) chatters.add(key);
+    $("#chat-users").textContent=chatters.size+" chatter"+(chatters.size===1?"":"s");
+  }
   let ws,retry=1500,timer;
   const colors={
     twitch:"#a970ff",kick:"#7cff4e",youtube:"#ff5b5b",yt:"#ff5b5b",
@@ -734,6 +762,7 @@ button{font:inherit}
     return `<span class="chat-src global" title="Global chat"><i class="fa-solid fa-globe"></i>global</span>`;
   }
   function addMsg(m){
+    trackChatter(m);
     // Auto-scroll only if the viewer is already near the bottom (don't yank them up mid-read).
     const nearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60;
     const el=document.createElement("div");
@@ -744,17 +773,20 @@ button{font:inherit}
       el.className="msg";
       const plat=String(m.source_platform||"").toLowerCase();
       const isRelay=!!m.source_platform;
+      const isAnon=!!m.anon_id && !m.user_id;
+      const kind=isRelay?"relay":(isAnon?"anon":"user");
       const uname=String(m.core_username||m.username||"").replace(/^@/,"");
-      const label=m.display_name||m.username||m.anon_id||"anon";
+      // Strip any "[Platform]" prefix from relay display names — the FA badge shows the platform.
+      const ext=isRelay?HoboChat.parseRelayUsername(m.display_name||m.username||"").externalUsername:"";
+      const label=isRelay?(ext||m.display_name||m.username||"user"):(m.display_name||m.username||m.anon_id||"anon");
       const nameColor=colors[plat]||"#dbb077";
-      // Registered (non-relay, non-anon) users link to their channel on left-click.
-      const canChannel = uname && !isRelay && !m.anon_id && m.user_id;
       let html = srcBadge(m);
-      if(isRelay) html += `<span class="platform">${esc(m.source_platform)}</span>`;
-      const nameAttrs = canChannel
-        ? ` style="color:${esc(nameColor)}" title="Open ${esc(uname)}'s channel" onclick="location.href='/@${esc(encodeURIComponent(uname))}'"`
-        : ` style="color:${esc(nameColor)};cursor:default"`;
-      html += `<span class="name"${nameAttrs}>${esc(label)}</span> `;
+      if(isRelay) html += HoboChat.relayPlatformBadge(plat);
+      // data-* carry what the right-click context menu needs; the menu markup is shared (HoboChat).
+      const da=[`data-kind="${kind}"`,`data-username="${esc(uname||label)}"`,`data-label="${esc(label)}"`,
+        `data-uid="${esc(String(m.user_id||""))}"`,`data-platform="${esc(plat)}"`,`data-ext="${esc(ext)}"`,
+        `data-color="${esc(nameColor)}"`].join(" ");
+      html += `<span class="name" ${da} style="color:${esc(nameColor)}" title="Right-click for options">${esc(label)}</span> `;
       html += `<span class="msg-text">${HoboChat.linkify(m.message||"")}</span>`;
       el.innerHTML = html;
     }
@@ -762,6 +794,62 @@ button{font:inherit}
     while(messages.children.length>200)messages.removeChild(messages.firstChild);
     if(nearBottom) messages.scrollTop = messages.scrollHeight;
   }
+
+  // ── Right-click user context menu — markup is shared with the main site via
+  //    HoboChat.buildUserMenu (chat-shared.js). Anonymous kiosk viewers get the
+  //    universal actions (Channel / AI Insight), wired here to navigation. ──
+  let _kioskMenu=null;
+  function _dismissKioskMenu(){ if(_kioskMenu){_kioskMenu.remove();_kioskMenu=null;} }
+  const _chan=(u)=>{ _dismissKioskMenu(); if(u) location.href="/@"+encodeURIComponent(String(u).replace(/^@/,"")); };
+  window.dismissContextMenu=_dismissKioskMenu;
+  window.ctxViewChannel=_chan;
+  window.ctxWhisper=_chan;
+  window.ctxReply=_dismissKioskMenu;
+  window.openUserChatInsight=(uid,u)=>{ _dismissKioskMenu(); if(u) location.href="/@"+encodeURIComponent(String(u).replace(/^@/,""))+"#ai-timeline"; };
+  window.openAnonChatInsight=()=>{ _dismissKioskMenu(); location.href="/chat"; };
+  window.openRelayUserChatInsight=()=>{ _dismissKioskMenu(); location.href="/chat"; };
+  function _posMenu(menu,x,y){
+    menu.style.left=x+"px"; menu.style.top=y+"px";
+    requestAnimationFrame(()=>{
+      const r=menu.getBoundingClientRect();
+      if(x+r.width>innerWidth-8) menu.style.left=Math.max(8,x-r.width)+"px";
+      if(y+r.height>innerHeight-8) menu.style.top=Math.max(8,y-r.height)+"px";
+    });
+  }
+  async function showKioskUserMenu(el,x,y){
+    _dismissKioskMenu();
+    const kind=el.dataset.kind, username=el.dataset.username, label=el.dataset.label;
+    const menu=document.createElement("div");
+    menu.className="chat-context-menu";
+    menu.innerHTML=`<div class="ctx-loading"><i class="fa-solid fa-spinner fa-spin"></i> Loading…</div>`;
+    document.body.appendChild(menu); _kioskMenu=menu;
+    _posMenu(menu,x,y);
+    menu.addEventListener("click",e=>e.stopPropagation());
+    setTimeout(()=>document.addEventListener("click",_dismissKioskMenu,{once:true}),10);
+    try{
+      if(kind==="relay"){
+        menu.innerHTML=HoboChat.buildUserMenu({kind:"relay",username:label,platform:el.dataset.platform,externalUsername:el.dataset.ext,ctx:{currentUser:null}});
+      }else if(kind==="anon"){
+        menu.innerHTML=HoboChat.buildUserMenu({kind:"anon",username:label,ctx:{currentUser:null}});
+      }else{
+        let profile={id:el.dataset.uid?Number(el.dataset.uid):null,display_name:label};
+        try{ const d=await get(`/chat/user/${encodeURIComponent(username)}/profile`); if(d&&(d.id||d.username||d.display_name)) profile=d; }catch{}
+        if(_kioskMenu!==menu) return; // dismissed while loading
+        menu.innerHTML=HoboChat.buildUserMenu({kind:"user",username,profile,ctx:{currentUser:null}});
+      }
+      _posMenu(menu,x,y);
+    }catch{ _dismissKioskMenu(); }
+  }
+  messages.addEventListener("contextmenu",e=>{
+    const el=e.target.closest(".name[data-kind]");
+    if(!el) return;
+    e.preventDefault();
+    showKioskUserMenu(el,e.clientX,e.clientY);
+  });
+  messages.addEventListener("click",e=>{
+    const el=e.target.closest(".name[data-kind]");
+    if(el && el.dataset.kind==="user" && el.dataset.username) location.href="/@"+encodeURIComponent(el.dataset.username);
+  });
 
   async function history(){
     try{
@@ -786,8 +874,7 @@ button{font:inherit}
       try{
         const m=JSON.parse(e.data);
         if(m.type==="chat")addMsg(m);
-        else if(m.type==="user-count"&&m.count!=null)
-          $("#chat-users").textContent=fmt(m.count)+" IN GLOBAL";
+        // (footer now shows unique chatters from the log, updated in trackChatter)
       }catch{}
     };
     ws.onclose=()=>{
