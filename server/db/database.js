@@ -881,6 +881,16 @@ function initDb() {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
 
+        // Assembled AI Timeline payload per streamer (streamer overview + every session's
+        // AI overview + memory moments), cached JSON so the channel tab is cheap to serve and
+        // only re-assembled lazily when viewed + stale. No LLM cost — pure join of existing data.
+        database.exec(`CREATE TABLE IF NOT EXISTS ai_timeline_cache (
+            user_id INTEGER PRIMARY KEY,
+            payload TEXT,
+            generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )`);
+
         // Rolling AI summaries of chat activity — for the global chat overview/timeline
         // and per-user "today vs all-time" insights. scope='global' uses subject_id=0.
         // window: 'rolling' (canonical processing state + condensed memory + timeline),
@@ -2463,6 +2473,66 @@ function upsertStreamerOverview(userId, { overview, model = null, sources = null
 }
 function getStreamerOverview(userId) {
     return get('SELECT * FROM streamer_overviews WHERE user_id = ?', [userId]);
+}
+
+// Assemble the full AI timeline for a streamer from already-generated AI data (no LLM cost):
+// the whole-streamer overview + every session that has an AI overview or captured memories,
+// newest first, each with its VOD (for timestamped links) and its ordered memory moments.
+function assembleStreamerAiTimeline(userId) {
+    let overview = null;
+    try { overview = get('SELECT overview, overview_short, generated_at FROM streamer_overviews WHERE user_id = ?', [userId]) || null; } catch { /* */ }
+
+    let sessions = [];
+    try {
+        const streams = all(`
+            SELECT s.id, s.title, s.started_at, s.ended_at, s.created_at, s.duration_seconds,
+                   s.ai_overview, s.ai_overview_short, s.thumbnail_url, s.peak_viewers, s.category,
+                   (SELECT v.id FROM vods v WHERE v.stream_id = s.id AND COALESCE(v.is_recording, 0) = 0
+                      ORDER BY COALESCE(v.is_public, 1) DESC, v.id DESC LIMIT 1) AS vod_id,
+                   (SELECT COUNT(*) FROM stream_memories m WHERE m.stream_id = s.id) AS memory_count
+            FROM streams s
+            WHERE s.user_id = ?
+              AND (s.ai_overview IS NOT NULL OR EXISTS (SELECT 1 FROM stream_memories m WHERE m.stream_id = s.id))
+            ORDER BY COALESCE(s.started_at, s.created_at) DESC
+            LIMIT 300
+        `, [userId]);
+        sessions = streams.map(s => {
+            let memories = [];
+            try {
+                memories = all(`SELECT offset_seconds, description, tags, thumbnail_url, captured_at
+                                FROM stream_memories WHERE stream_id = ? ORDER BY offset_seconds ASC LIMIT 400`, [s.id]);
+            } catch { /* */ }
+            return { ...s, memories };
+        });
+    } catch { /* */ }
+
+    return {
+        overview,
+        sessions,
+        sessionCount: sessions.length,
+        momentCount: sessions.reduce((n, s) => n + (s.memories?.length || 0), 0),
+        generatedAt: new Date().toISOString(),
+    };
+}
+
+// Lazy, TTL-cached accessor: re-assemble only when the tab is viewed AND the cache is stale.
+function getStreamerAiTimeline(userId, ttlMs = 15 * 60 * 1000) {
+    try {
+        const row = get('SELECT payload, generated_at FROM ai_timeline_cache WHERE user_id = ?', [userId]);
+        if (row && row.payload) {
+            const age = Date.now() - Date.parse((row.generated_at || '').replace(' ', 'T') + 'Z');
+            if (!(age > ttlMs) && !Number.isNaN(age)) {
+                try { return { ...JSON.parse(row.payload), cached: true }; } catch { /* rebuild */ }
+            }
+        }
+    } catch { /* rebuild */ }
+    const fresh = assembleStreamerAiTimeline(userId);
+    try {
+        run(`INSERT INTO ai_timeline_cache (user_id, payload, generated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(user_id) DO UPDATE SET payload = excluded.payload, generated_at = CURRENT_TIMESTAMP`,
+            [userId, JSON.stringify(fresh)]);
+    } catch { /* cache is best-effort */ }
+    return { ...fresh, cached: false };
 }
 function getAllStreamerOverviews(limit = 100) {
     return all(`SELECT o.*, u.username, u.display_name
@@ -6542,6 +6612,7 @@ module.exports = {
     updatePasteAi, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
     getStreamMemoriesByUser, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
+    getStreamerAiTimeline, assembleStreamerAiTimeline,
     // Homepage helpers
     getRecentlyOnlineStreamers, countRecentlyOnlineStreamers,
     getRecentVods, countRecentVods, getHomeStats,

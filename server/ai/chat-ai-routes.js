@@ -86,4 +86,23 @@ router.get('/relay/:platform/:username', (req, res) => {
     }
 });
 
+// Full AI timeline for a streamer's channel page (streamer overview + every session's AI
+// overview + memory moments with VOD timestamps). Lazily assembled + cached (15 min TTL),
+// so it only rebuilds when the tab is actually opened and the cache is stale — no LLM cost.
+router.get('/timeline/:username', (req, res) => {
+    try {
+        const uname = String(req.params.username || '').trim();
+        const user = db.getUserByUsername ? db.getUserByUsername(uname) : null;
+        if (!user) return res.status(404).json({ error: 'Channel not found' });
+        const timeline = db.getStreamerAiTimeline(user.id);
+        res.json({
+            username: user.username,
+            display_name: user.display_name || user.username,
+            ...timeline,
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load AI timeline' });
+    }
+});
+
 module.exports = router;

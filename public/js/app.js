@@ -3922,6 +3922,10 @@ function switchChannelTab(tab, btn) {
         _chTabLoaded.clipsTaken = true;
         try { loadClipsTaken(currentChannelUsername, { reset: true }); } catch {}
     }
+    if (tab === 'ai-timeline' && currentChannelUsername && !_chTabLoaded.aiTimeline) {
+        _chTabLoaded.aiTimeline = true;
+        try { loadChannelAiTimeline(currentChannelUsername); } catch {}
+    }
     // Media queue changes constantly — reload every time the tab opens.
     if (tab === 'media' && currentChannelUsername) {
         try { loadChannelMedia(currentChannelUsername); } catch {}
@@ -3956,6 +3960,84 @@ function _resetChannelTabs(ch) {
     // (Controls are no longer a tab — they render in a section under the player.)
     const medBtn = document.getElementById('ch-tab-btn-media');
     if (medBtn) medBtn.style.display = 'none';
+}
+
+// ── AI Timeline tab ───────────────────────────────────────────────
+// The streamer's whole AI-observed history: overall AI overview + every session's AI
+// overview + captured "moments" that deep-link into the VOD at the exact timestamp.
+function _aiTimeFmt(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    const pad = n => String(n).padStart(2, '0');
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function _aiTimelineMomentHTML(mom, vodId) {
+    const off = mom.offset_seconds || 0;
+    const stamp = _aiTimeFmt(off);
+    const desc = esc(mom.description || '');
+    let tags = [];
+    try { tags = typeof mom.tags === 'string' ? JSON.parse(mom.tags) : (mom.tags || []); } catch { tags = []; }
+    const tagHTML = (Array.isArray(tags) ? tags : []).slice(0, 4)
+        .map(t => `<span class="ai-tl-tag">${esc(String(t))}</span>`).join('');
+    const thumb = mom.thumbnail_url
+        ? `<img class="ai-tl-moment-thumb" src="${esc(mom.thumbnail_url)}" alt="" loading="lazy" onerror="this.remove()">`
+        : '';
+    const jump = vodId
+        ? `<a class="ai-tl-stamp" href="/vod/${vodId}?t=${off}" onclick="return handleLinkClick(event, '/vod/${vodId}?t=${off}')" title="Watch this moment"><i class="fa-solid fa-play"></i> ${stamp}</a>`
+        : `<span class="ai-tl-stamp ai-tl-stamp--novod" title="No VOD available for this moment"><i class="fa-solid fa-clock"></i> ${stamp}</span>`;
+    return `<div class="ai-tl-moment">${thumb}<div class="ai-tl-moment-body">${jump}<div class="ai-tl-moment-desc">${desc}</div>${tagHTML ? `<div class="ai-tl-tags">${tagHTML}</div>` : ''}</div></div>`;
+}
+
+function _aiTimelineSessionHTML(s) {
+    const when = s.started_at || s.created_at;
+    const dateStr = when ? new Date((String(when).includes('T') ? when : when.replace(' ', 'T') + 'Z')).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+    const ov = (s.ai_overview || s.ai_overview_short || '').trim();
+    const memories = Array.isArray(s.memories) ? s.memories : [];
+    const titleLink = s.vod_id
+        ? `<a href="/vod/${s.vod_id}" onclick="return handleLinkClick(event, '/vod/${s.vod_id}')">${esc(s.title || 'Untitled stream')}</a>`
+        : esc(s.title || 'Untitled stream');
+    const meta = [];
+    if (dateStr) meta.push(`<i class="fa-solid fa-calendar-day"></i> ${dateStr}`);
+    if (s.duration_seconds) meta.push(`<i class="fa-solid fa-hourglass-half"></i> ${_aiTimeFmt(s.duration_seconds)}`);
+    if (s.peak_viewers) meta.push(`<i class="fa-solid fa-eye"></i> ${s.peak_viewers} peak`);
+    if (memories.length) meta.push(`<i class="fa-solid fa-brain"></i> ${memories.length} moment${memories.length === 1 ? '' : 's'}`);
+    const momentsHTML = memories.map(m => _aiTimelineMomentHTML(m, s.vod_id)).join('');
+    return `<div class="ai-tl-session">
+        <div class="ai-tl-session-head">
+            <div class="ai-tl-node"></div>
+            <div class="ai-tl-session-title">${titleLink}</div>
+            <div class="ai-tl-session-meta">${meta.join('<span class="ai-tl-dot">·</span>')}</div>
+        </div>
+        ${ov ? `<div class="ai-tl-session-overview">${esc(ov)}</div>` : ''}
+        ${momentsHTML ? `<div class="ai-tl-moments">${momentsHTML}</div>` : ''}
+    </div>`;
+}
+
+async function loadChannelAiTimeline(username) {
+    const wrap = document.getElementById('ch-ai-timeline');
+    if (!wrap) return;
+    wrap.innerHTML = '<div class="loading">Loading AI timeline…</div>';
+    try {
+        const data = await api(`/chat-ai/timeline/${encodeURIComponent(username)}`);
+        const sessions = data.sessions || [];
+        const overview = data.overview && (data.overview.overview || data.overview.overview_short);
+        if (!overview && !sessions.length) {
+            wrap.innerHTML = `<div class="ai-tl-empty"><i class="fa-solid fa-brain"></i><p>No AI timeline yet.</p><p class="muted">As ${esc(data.display_name || username)} streams, the AI builds an overview and captures memorable moments here — with links straight to the VOD.</p></div>`;
+            return;
+        }
+        const header = overview
+            ? `<div class="ai-tl-overview-card">
+                 <div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview of ${esc(data.display_name || username)}</div>
+                 <div class="ai-tl-overview-text">${esc(data.overview.overview || data.overview.overview_short)}</div>
+               </div>`
+            : '';
+        const summary = `<div class="ai-tl-summary">${data.sessionCount || sessions.length} session${(data.sessionCount || sessions.length) === 1 ? '' : 's'} · ${data.momentCount || 0} AI moment${(data.momentCount || 0) === 1 ? '' : 's'} tracked</div>`;
+        const timeline = `<div class="ai-tl-track">${sessions.map(_aiTimelineSessionHTML).join('')}</div>`;
+        wrap.innerHTML = header + summary + timeline;
+    } catch (err) {
+        wrap.innerHTML = `<div class="ai-tl-empty"><i class="fa-solid fa-triangle-exclamation"></i><p>Couldn't load the AI timeline.</p><button class="btn btn-small btn-outline" onclick="loadChannelAiTimeline('${esc(username)}')">Retry</button></div>`;
+    }
 }
 
 // Apply per-channel tab metadata from the channel response: count badges on the
