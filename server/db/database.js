@@ -2465,6 +2465,27 @@ function countStreamMemoriesByUser(userId) {
     try { return get('SELECT COUNT(*) AS count FROM stream_memories WHERE user_id = ?', [userId])?.count || 0; }
     catch { return 0; }
 }
+
+// Candidate memories for the daily AI "crazy moments" picker: recent, substantive, and from
+// a stream that has a public VOD (so we can link + extract the moment frame).
+function getAiMomentCandidates(days = 30, limit = 150) {
+    try {
+        return all(`
+            SELECT m.id AS memory_id, m.stream_id, m.offset_seconds, m.description, m.tags,
+                   m.thumbnail_url, m.user_id, s.title AS stream_title, u.username,
+                   (SELECT v.id FROM vods v WHERE v.stream_id = m.stream_id
+                      AND COALESCE(v.is_public, 1) = 1 AND COALESCE(v.is_recording, 0) = 0
+                      ORDER BY v.id DESC LIMIT 1) AS vod_id
+            FROM stream_memories m
+            JOIN users u ON u.id = m.user_id
+            LEFT JOIN streams s ON s.id = m.stream_id
+            WHERE m.description IS NOT NULL AND length(m.description) > 45
+              AND m.created_at >= datetime('now', ?)
+            ORDER BY m.created_at DESC
+            LIMIT ?
+        `, [`-${Math.max(1, days)} days`, limit]) || [];
+    } catch { return []; }
+}
 // A user's pastes including AI fields (the explorer + overview want ai_summary/ai_tags).
 function getUserPastesForAi(userId, limit = 30) {
     return all(`SELECT id, slug, type, title, ai_summary, ai_tags, ai_analyzed_at, created_at
@@ -6617,7 +6638,7 @@ module.exports = {
     getVodsNeedingOverview, getClipsNeedingOverview, getVodsNeedingTimeline, getVodsNeedingTranscript, getClipsNeedingTranscript, getPastesNeedingAnalysis,
     setVodTranscriptStatus, setClipTranscriptStatus, bumpVodTranscriptAttempt, bumpClipTranscriptAttempt,
     updatePasteAi, recordAiUsage, getAiCostToday, getAiCostTodayForUser, getAiUsageSummary,
-    getStreamMemoriesByUser, countStreamMemoriesByUser, getUserPastesForAi,
+    getStreamMemoriesByUser, countStreamMemoriesByUser, getAiMomentCandidates, getUserPastesForAi,
     upsertStreamerOverview, getStreamerOverview, getAllStreamerOverviews, getStreamersNeedingOverview,
     getStreamerAiTimeline, assembleStreamerAiTimeline,
     // Homepage helpers

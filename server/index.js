@@ -904,6 +904,7 @@ async function start() {
         try { require('./ai/streamer-overview-job').start(); } catch (e) { console.warn('[AI] streamer-overview job not started:', e.message); }
         try { require('./ai/chat-ai').start(); } catch (e) { console.warn('[AI] chat-ai job not started:', e.message); }
         try { require('./ai/slogan-job').start(); } catch (e) { console.warn('[AI] slogan job not started:', e.message); }
+        try { require('./ai/ai-moments-job').start(); } catch (e) { console.warn('[AI] moments job not started:', e.message); }
         // Heal server-side recordings for live streams (resume after restart / ffmpeg death)
         // so clipping always has a source. First pass delayed to let broadcasters reconnect.
         try {

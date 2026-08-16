@@ -633,8 +633,16 @@ function cleanupOldThumbnails(maxAgeMs = 3600000) {
     }
 }
 
+// Extract a still frame from a VOD at an exact timestamp (for AI "crazy moment" images).
+// Returns a stable /api/thumbnails/<file> URL, or null if the source file isn't local.
+async function generateMomentThumbnail(memoryId, filePath, seekSeconds) {
+    if (!filePath) return null;
+    return generateFromVideo(filePath, 'moment', memoryId, { seekSeconds: Math.max(0.5, Number(seekSeconds) || 1) });
+}
+
 module.exports = {
     generateFromVideo,
+    generateMomentThumbnail,
     generateVodThumbnail,
     generateClipThumbnail,
     generateLiveStreamThumbnail,

@@ -1220,7 +1220,7 @@ function renderHeroStats(stats) {
 }
 
 // ── Hero floating thumbnail collage ─────────────────────────────
-const _HERO_BADGE = { live: 'LIVE', vod: 'VOD', clip: 'CLIP', paste: 'PASTE' };
+const _HERO_BADGE = { live: 'LIVE', vod: 'VOD', clip: 'CLIP', paste: 'PASTE', moment: 'AI MOMENT' };
 let _heroCollageTimer = null;
 function _heroFloatContent(item) {
     const badge = `<span class="hero-float-badge">${_HERO_BADGE[item.kind] || ''}</span>`;
@@ -4094,17 +4094,44 @@ function _aiTlBuildMonthBar() {
 }
 
 // Jump to a session: load pages until it's in the DOM, then scroll + flash it.
+// Switch between the "As a streamer" / "As a chatter" panes.
+function _aiTlSwitchSide(side, btn) {
+    document.querySelectorAll('#ch-ai-timeline .ai-tl-subtab').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('#ch-ai-timeline .ai-tl-pane').forEach(p => p.classList.toggle('ai-tl-pane--hidden', p.dataset.side !== side));
+}
+
 async function _aiTlJumpTo(sid) {
+    // Make sure the streamer pane (which holds the sessions + month bar) is the active one.
+    const btn = document.querySelector('#ch-ai-timeline .ai-tl-subtab[data-side="streamer"]');
+    if (btn && !btn.classList.contains('active')) _aiTlSwitchSide('streamer', btn);
+
     let guard = 0;
     while (!document.querySelector(`.ai-tl-session[data-sid="${sid}"]`) && _aiTl && _aiTl.hasMore && guard++ < 60) {
         await _aiTlLoadMore();
     }
-    const el = document.querySelector(`.ai-tl-session[data-sid="${sid}"]`);
+    const scrollToTarget = () => {
+        const el = document.querySelector(`.ai-tl-session[data-sid="${sid}"]`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return el;
+    };
+    // Wait for images/content above to settle before measuring (a plain single scroll lands
+    // "halfway" because lazy content shifts positions after the scroll). Re-scroll a couple
+    // of times to correct for reflow, and pause the infinite-scroll loader during the jump.
+    _aiTl.jumping = true;
+    const el = scrollToTarget();
     if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         el.classList.add('ai-tl-flash');
-        setTimeout(() => el.classList.remove('ai-tl-flash'), 1400);
+        setTimeout(() => el.classList.remove('ai-tl-flash'), 1600);
+        // Wait for any images currently in the timeline to finish, then re-align.
+        const imgs = Array.from(document.querySelectorAll('#ai-tl-track img')).filter(i => !i.complete);
+        await Promise.race([
+            Promise.all(imgs.map(i => new Promise(r => { i.addEventListener('load', r, { once: true }); i.addEventListener('error', r, { once: true }); }))),
+            new Promise(r => setTimeout(r, 700)),
+        ]);
+        scrollToTarget();
+        setTimeout(scrollToTarget, 250);
     }
+    _aiTl.jumping = false;
 }
 
 async function _aiTlLoadMore() {
@@ -4153,18 +4180,17 @@ async function loadChannelAiTimeline(username) {
             ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Overview of ${dn}</div><div class="ai-tl-overview-text">${esc(topText)}</div></div>`
             : '';
 
-        // ── As a streamer ──
-        let streamerHTML = '';
+        // ── As a streamer (inner content, no label — the sub-tab / side-label supplies it) ──
+        let streamerInner = '';
         if (hasStreamer) {
             const summary = `<div class="ai-tl-summary">${data.sessionCount || sessions.length} session${(data.sessionCount || sessions.length) === 1 ? '' : 's'} · ${data.momentCount || 0} AI moment${(data.momentCount || 0) === 1 ? '' : 's'} tracked</div>`;
-            streamerHTML = `<div class="ai-tl-side-label"><i class="fa-solid fa-tower-broadcast"></i> As a streamer</div>`
-                + summary + _aiTlBuildMonthBar()
+            streamerInner = summary + _aiTlBuildMonthBar()
                 + `<div class="ai-tl-track" id="ai-tl-track">${sessions.map(_aiTimelineSessionHTML).join('')}</div>`
                 + `<div id="ai-tl-sentinel" class="ai-tl-sentinel">${_aiTl.hasMore ? '<i class="fa-solid fa-spinner fa-spin"></i> Loading more…' : ''}</div>`;
         }
 
-        // ── As a chatter ──
-        let chatterHTML = '';
+        // ── As a chatter (inner content) ──
+        let chatterInner = '';
         if (hasChatter) {
             const momentsHTML = chatMoments.length ? `<div class="ai-tl-track">${chatMoments.map(t => `
                 <div class="ai-tl-session">
@@ -4173,15 +4199,31 @@ async function loadChannelAiTimeline(username) {
                         <div class="ai-tl-session-meta"><i class="fa-solid fa-clock"></i> ${_aiTimeAgo(t.ts)}</div></div>
                     ${t.detail ? `<div class="ai-tl-session-overview">${esc(t.detail)}</div>` : ''}
                 </div>`).join('')}</div>` : '';
-            chatterHTML = `<div class="ai-tl-side-label"><i class="fa-solid fa-comments"></i> As a chatter</div>`
-                + (chatOverall ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-comments"></i> Chat behaviour</div><div class="ai-tl-overview-text">${esc(chatOverall)}</div>${chat.message_count ? `<p class="ai-tl-summary" style="margin:8px 0 0">~${chat.message_count} messages analyzed</p>` : ''}</div>` : '')
+            chatterInner = (chatOverall ? `<div class="ai-tl-overview-card"><div class="ai-tl-overview-label"><i class="fa-solid fa-comments"></i> Chat behaviour</div><div class="ai-tl-overview-text">${esc(chatOverall)}</div>${chat.message_count ? `<p class="ai-tl-summary" style="margin:8px 0 0">~${chat.message_count} messages analyzed</p>` : ''}</div>` : '')
                 + momentsHTML;
         }
 
-        wrap.innerHTML = header + streamerHTML + chatterHTML;
+        // Both sides → sub-tabs (so you don't scroll past the whole streamer timeline to reach
+        // chat). One side → a plain labelled section.
+        const bothSides = hasStreamer && hasChatter;
+        let sidesHTML;
+        if (bothSides) {
+            sidesHTML = `<div class="ai-tl-subtabs">
+                    <button class="ai-tl-subtab active" data-side="streamer" onclick="_aiTlSwitchSide('streamer', this)"><i class="fa-solid fa-tower-broadcast"></i> As a streamer</button>
+                    <button class="ai-tl-subtab" data-side="chatter" onclick="_aiTlSwitchSide('chatter', this)"><i class="fa-solid fa-comments"></i> As a chatter</button>
+                </div>
+                <div class="ai-tl-pane" data-side="streamer">${streamerInner}</div>
+                <div class="ai-tl-pane ai-tl-pane--hidden" data-side="chatter">${chatterInner}</div>`;
+        } else if (hasStreamer) {
+            sidesHTML = `<div class="ai-tl-side-label"><i class="fa-solid fa-tower-broadcast"></i> As a streamer</div>${streamerInner}`;
+        } else {
+            sidesHTML = `<div class="ai-tl-side-label"><i class="fa-solid fa-comments"></i> As a chatter</div>${chatterInner}`;
+        }
+
+        wrap.innerHTML = header + sidesHTML;
         const sentinel = document.getElementById('ai-tl-sentinel');
         if (sentinel && _aiTl.hasMore && 'IntersectionObserver' in window) {
-            _aiTl.io = new IntersectionObserver(ents => { if (ents.some(e => e.isIntersecting)) _aiTlLoadMore(); }, { rootMargin: '700px' });
+            _aiTl.io = new IntersectionObserver(ents => { if (!_aiTl.jumping && ents.some(e => e.isIntersecting)) _aiTlLoadMore(); }, { rootMargin: '700px' });
             _aiTl.io.observe(sentinel);
         } else if (sentinel && !_aiTl.hasMore) {
             sentinel.remove();

@@ -85,6 +85,18 @@ function heroMedia() {
             });
         }
     } catch { /* */ }
+    // AI "crazy moments" — daily-rotated standout frames from the AI memory data, deep-linking
+    // to the exact VOD timestamp (populated by ai-moments-job).
+    try {
+        const hm = JSON.parse(db.getSetting('home_hero_moments') || '{}');
+        for (const m of (hm.moments || [])) {
+            if (!m || !m.vodId) continue;
+            items.push({
+                kind: 'moment', title: m.title || 'AI Moment', thumbnail: m.thumbnail || null,
+                href: `/vod/${m.vodId}?t=${m.offset || 0}`, username: m.username,
+            });
+        }
+    } catch { /* */ }
     // Interleave types so the collage isn't clumped, then shuffle for variety per request.
     return _shuffle(items).slice(0, 28);
 }

@@ -2062,6 +2062,7 @@ main#app { position: relative; z-index: 1; }
 .hero-float--vod .hero-float-badge { background: #5865f2; border-color: #8b93ff; }
 .hero-float--clip .hero-float-badge { background: #2ecc71; border-color: #6fe0a2; color: #05130a; }
 .hero-float--paste .hero-float-badge { background: var(--accent); border-color: var(--accent-light); color: var(--on-accent, #0b0d10); }
+.hero-float--moment .hero-float-badge { background: linear-gradient(135deg, #a855f7, #ec4899); border-color: #d8b4fe; color: #fff; }
 /* Swap = shrink + fade OUT, then the fresh content grows + fades back IN (gentle, no flash) */
 .hero-float.swapping .hero-float-inner { opacity: 0.08; transform: scale(0.78); }
 /* Hover lift on the inner — eases smoothly, never fights the drift */
@@ -13075,6 +13076,12 @@ body.theme-light .user-dropdown {
 .ai-tl-side-label { font-size: 0.95rem; font-weight: 800; color: var(--text-primary); margin: 26px 0 14px; display: flex; align-items: center; gap: 9px; padding-bottom: 7px; border-bottom: 2px solid color-mix(in srgb, var(--accent, #8b5cf6) 30%, transparent); }
 .ai-tl-side-label:first-child { margin-top: 6px; }
 .ai-tl-side-label i { color: var(--accent, #8b5cf6); }
+/* Streamer / chatter sub-tabs */
+.ai-tl-subtabs { display: flex; gap: 6px; margin: 14px 0 16px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); }
+.ai-tl-subtab { font-size: 0.9rem; font-weight: 700; color: var(--text-muted); background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; margin-bottom: -1px; transition: color .15s; }
+.ai-tl-subtab:hover { color: var(--text-secondary); }
+.ai-tl-subtab.active { color: var(--accent, #8b5cf6); border-bottom-color: var(--accent, #8b5cf6); }
+.ai-tl-pane--hidden { display: none; }
 /* Keep legacy .ch-panel-actions working (still used by the Controls header). */
 .ch-panel-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 
