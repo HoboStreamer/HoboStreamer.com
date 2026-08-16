@@ -4910,7 +4910,16 @@ function _renderOfflineScreen(ch) {
     const type = ch && ch.offline_screen_type;
     const url = ch && ch.offline_screen_url;
     if (type === 'image' && url) {
-        host.innerHTML = `<img class="ch-offline-media" src="${esc(url)}" alt="Offline">`;
+        // Show the streamer's offline image AND float the "most watched" cycler over it, with a
+        // close button so a viewer can dismiss it and see just the background image. (HTML
+        // offline screens are left untouched — they own their whole canvas.)
+        host.innerHTML = `<img class="ch-offline-media" src="${esc(url)}" alt="Offline">
+            <div class="ch-offline-overlay" id="ch-offline-overlay">
+                <button class="ch-offline-overlay-close" onclick="_dismissOfflineOverlay()" title="Hide — show just the background image"><i class="fa-solid fa-xmark"></i></button>
+                <div class="ch-offline-explore ch-offline-explore--over" id="ch-offline-explore"></div>
+            </div>
+            <button class="ch-offline-reopen" id="ch-offline-reopen" onclick="_reopenOfflineOverlay()" title="Show most-watched content"><i class="fa-solid fa-fire"></i> Top content</button>`;
+        _fillOfflineExplore(ch && ch.username);
     } else if (type === 'video' && url) {
         host.innerHTML = `<video class="ch-offline-media" src="${esc(url)}" autoplay muted loop playsinline></video>`;
     } else if (type === 'html' && (ch.offline_html || ch.offline_css)) {
@@ -4951,6 +4960,23 @@ function _stopOfflineCycler() {
     if (_offlineCyclerTimer) { clearInterval(_offlineCyclerTimer); _offlineCyclerTimer = null; }
 }
 
+// Over-image offline overlay: dismiss to reveal just the background image; reopen to bring
+// the "most watched" cycler back.
+function _dismissOfflineOverlay() {
+    const ov = document.getElementById('ch-offline-overlay');
+    const re = document.getElementById('ch-offline-reopen');
+    if (ov) ov.style.display = 'none';
+    if (re) re.classList.add('show');
+    _stopOfflineCycler();
+}
+function _reopenOfflineOverlay() {
+    const ov = document.getElementById('ch-offline-overlay');
+    const re = document.getElementById('ch-offline-reopen');
+    if (ov) ov.style.display = '';
+    if (re) re.classList.remove('show');
+    _startOfflineCycler();
+}
+
 async function _fillOfflineExplore(username) {
     if (!username) return;
     _stopOfflineCycler();
@@ -4978,7 +5004,15 @@ async function _fillOfflineExplore(username) {
     if (!built.length && (data.vod || data.clip)) {
         built.push({ key: 'all', label: 'Top content', vod: data.vod || null, clip: data.clip || null });
     }
-    if (!built.length) { host.innerHTML = ''; return; }
+    if (!built.length) {
+        host.innerHTML = '';
+        // Nothing to show → don't leave an empty overlay (just an X) floating over the image.
+        const ov = document.getElementById('ch-offline-overlay');
+        const re = document.getElementById('ch-offline-reopen');
+        if (ov) ov.style.display = 'none';
+        if (re) re.classList.remove('show');
+        return;
+    }
 
     _offlineRanges = built;
     _offlineIdx = 0;

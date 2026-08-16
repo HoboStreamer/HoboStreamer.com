@@ -6816,6 +6816,19 @@ textarea.form-input { resize: vertical; min-height: 60px; }
     .off-cyc-body { grid-template-columns: 1fr; }
     .off-cyc-body:has(.off-top-card:only-child) { grid-template-columns: 1fr; }
 }
+
+/* Cycler floated OVER a streamer's offline image (dismissable to reveal the image). */
+.ch-offline-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 0 clamp(14px, 3vh, 26px); pointer-events: none; background: linear-gradient(to top, rgba(0,0,0,.80) 0%, rgba(0,0,0,.5) 34%, rgba(0,0,0,0) 62%); }
+.ch-offline-overlay > * { pointer-events: auto; }
+.ch-offline-explore--over { margin-top: 0; }
+.ch-offline-overlay-close { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid rgba(255,255,255,.24); background: rgba(0,0,0,.55); color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 0.95rem; backdrop-filter: blur(4px); transition: background .15s, border-color .15s; z-index: 2; }
+.ch-offline-overlay-close:hover { background: rgba(0,0,0,.82); border-color: var(--accent); }
+.ch-offline-reopen { position: absolute; bottom: 12px; right: 12px; display: none; align-items: center; gap: 7px; padding: 7px 13px; border-radius: 999px; border: 1px solid rgba(255,255,255,.24); background: rgba(0,0,0,.6); color: #fff; font-size: 0.78rem; font-weight: 700; cursor: pointer; backdrop-filter: blur(4px); transition: background .15s, border-color .15s; z-index: 2; }
+.ch-offline-reopen.show { display: inline-flex; }
+.ch-offline-reopen:hover { background: rgba(0,0,0,.82); border-color: var(--accent); }
+.ch-offline-reopen i { color: var(--accent); }
+/* Over an image the cycler title/chips sit on a dark scrim — force light text regardless of theme. */
+.ch-offline-overlay .off-cyc-title { color: #fff; }
 .ch-info-bar-top .ch-category-badge {
     font-size: 0.72rem; padding: 1px 8px;
 }
