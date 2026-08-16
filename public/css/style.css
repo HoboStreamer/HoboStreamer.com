@@ -1770,6 +1770,16 @@ body.egg-rainbow { animation: eggRainbow 2.6s linear; }
     background: var(--text-muted); color: var(--bg-primary); border-radius: 4px; padding: 1px 5px; vertical-align: middle;
 }
 
+/* ── Condensed VOD session group (many restart-split VODs → one expandable card) ── */
+.vod-group-card { position: relative; cursor: pointer; box-shadow: 3px 3px 0 -1px var(--border), 6px 6px 0 -2px color-mix(in srgb, var(--border) 70%, transparent); }
+.vod-group-card:hover { box-shadow: 3px 3px 0 -1px var(--accent), 6px 6px 0 -2px color-mix(in srgb, var(--accent) 55%, transparent); }
+.vod-group-count { position: absolute; top: 8px; left: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 5px; background: color-mix(in srgb, var(--accent) 82%, #000); color: #fff; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.02em; padding: 3px 8px; border-radius: 6px; }
+.vod-group-hint { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 0.72rem; font-weight: 700; color: var(--accent-light, var(--accent)); }
+.vod-group-hint i { transition: transform .2s ease; }
+.vod-group-card.expanded .vod-group-hint i { transform: rotate(180deg); }
+.vod-group-parts { grid-column: 1 / -1; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; padding: 2px 0 12px; }
+.vod-group-parts::before { content: ''; display: block; grid-column: 1 / -1; height: 1px; background: var(--border); margin: 2px 0 6px; }
+
 .stream-card {
     display: block;
     background: var(--bg-card);

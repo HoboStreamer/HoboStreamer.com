@@ -5767,6 +5767,81 @@ async function _selBulk(action) {
     }
 }
 
+// A single VOD card's inner anchor (shared by the flat list + expanded session groups).
+function _vodCardInner(v, myId) {
+    return `<a class="stream-card" href="/vod/${v.id}" onclick="return handleLinkClick(event, '/vod/${v.id}')">
+        <div class="stream-card-thumb">
+            ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
+            ${!v.is_public && v.user_id === myId ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
+            ${v.stream_protocol ? protocolBadge(v.stream_protocol) : ''}
+            <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || v.duration)}</span>
+        </div>
+        <div class="stream-card-info">
+            <div class="stream-card-title">${esc(v.title || 'VOD')}</div>
+            <div class="stream-card-streamer">
+                ${_avatarSpan(v.avatar_url, v.username, v.profile_color)}
+                ${esc(v.username || 'Unknown')}
+                <span class="stream-card-date">${timeAgo(v.created_at)}</span>
+            </div>
+            ${_cardAiHTML(v.ai_overview_short, v.ai_overview)}
+        </div>
+    </a>`;
+}
+function _vodDayKey(ts) {
+    try { const d = new Date(String(ts).replace(' ', 'T') + (/[TZ]/.test(String(ts)) ? '' : 'Z')); return isNaN(d) ? String(ts).slice(0, 10) : d.toISOString().slice(0, 10); }
+    catch { return String(ts).slice(0, 10); }
+}
+// Group CONSECUTIVE VODs from the same streamer with the same title on the same day — these are
+// almost always one session split by stream restarts / server restarts, so we condense them.
+function _groupVods(vods) {
+    const groups = [];
+    let cur = null;
+    for (const v of vods) {
+        const key = `${v.user_id}|${String(v.title || '').trim().toLowerCase()}|${_vodDayKey(v.created_at)}`;
+        if (cur && cur.key === key) cur.items.push(v);
+        else { cur = { key, items: [v] }; groups.push(cur); }
+    }
+    return groups;
+}
+function _renderVodGroups(vods, myId) {
+    return _groupVods(vods).map((g, gi) => {
+        if (g.items.length < 2) {
+            const v = g.items[0];
+            return _adminCardWrap('vod', v.id, _vodCardInner(v, myId), !!v.owner_is_owner);
+        }
+        const rep = g.items.reduce((a, b) => ((b.duration_seconds || 0) > (a.duration_seconds || 0) ? b : a), g.items[0]);
+        const totalDur = g.items.reduce((s, v) => s + (v.duration_seconds || v.duration || 0), 0);
+        const gid = 'vg' + gi;
+        const groupCard = `<div class="stream-card vod-group-card" id="group-${gid}" onclick="toggleVodGroup('${gid}')" title="${g.items.length} videos from this session — click to expand">
+            <div class="stream-card-thumb">
+                ${thumbImg(rep.thumbnail_url, 'fa-video', rep.title, `/api/thumbnails/generate/vod/${rep.id}`)}
+                <span class="vod-group-count"><i class="fa-solid fa-layer-group"></i> ${g.items.length} parts</span>
+                <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(totalDur)}</span>
+            </div>
+            <div class="stream-card-info">
+                <div class="stream-card-title">${esc(rep.title || 'VOD')}</div>
+                <div class="stream-card-streamer">
+                    ${_avatarSpan(rep.avatar_url, rep.username, rep.profile_color)}
+                    ${esc(rep.username || 'Unknown')}
+                    <span class="stream-card-date">${timeAgo(rep.created_at)}</span>
+                </div>
+                <div class="vod-group-hint"><i class="fa-solid fa-chevron-down"></i> ${g.items.length} parts from this session — expand</div>
+            </div>
+        </div>`;
+        const parts = g.items.map(v => _adminCardWrap('vod', v.id, _vodCardInner(v, myId), !!v.owner_is_owner)).join('');
+        return groupCard + `<div class="vod-group-parts" id="parts-${gid}" style="display:none">${parts}</div>`;
+    }).join('');
+}
+function toggleVodGroup(gid) {
+    const parts = document.getElementById('parts-' + gid);
+    const card = document.getElementById('group-' + gid);
+    if (!parts) return;
+    const opening = parts.style.display === 'none';
+    parts.style.display = opening ? 'grid' : 'none';
+    if (card) card.classList.toggle('expanded', opening);
+    if (typeof _selSyncAllBtns === 'function') _selSyncAllBtns();
+}
+
 async function loadVodsPage() {
     const grid = document.getElementById('vods-grid-page');
     const pager = document.getElementById('vods-pagination-page');
@@ -5806,25 +5881,7 @@ async function loadVodsPage() {
         }
 
         const myId = currentUser ? currentUser.id : null;
-        grid.innerHTML = vods.map(v => _adminCardWrap('vod', v.id, `
-            <a class="stream-card" href="/vod/${v.id}" onclick="return handleLinkClick(event, '/vod/${v.id}')">
-                <div class="stream-card-thumb">
-                    ${thumbImg(v.thumbnail_url, 'fa-video', v.title, `/api/thumbnails/generate/vod/${v.id}`)}
-                    ${!v.is_public && v.user_id === myId ? '<span class="stream-card-nsfw" style="background:var(--text-muted)">PRIVATE</span>' : ''}
-                    ${v.stream_protocol ? protocolBadge(v.stream_protocol) : ''}
-                    <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(v.duration_seconds || v.duration)}</span>
-                </div>
-                <div class="stream-card-info">
-                    <div class="stream-card-title">${esc(v.title || 'VOD')}</div>
-                    <div class="stream-card-streamer">
-                        ${_avatarSpan(v.avatar_url, v.username, v.profile_color)}
-                        ${esc(v.username || 'Unknown')}
-                        <span class="stream-card-date">${timeAgo(v.created_at)}</span>
-                    </div>
-                    ${_cardAiHTML(v.ai_overview_short, v.ai_overview)}
-                </div>
-            </a>
-        `, !!v.owner_is_owner)).join('');
+        grid.innerHTML = _renderVodGroups(vods, myId);
         _updateAdminBulkBar('vod');
 
         renderVodsPagination('vods-pagination-page', currentVodsPage, total, limit, 'setVodsPage', 'videos', { sort: currentVodsSort, setter: 'setVodsSort' });
