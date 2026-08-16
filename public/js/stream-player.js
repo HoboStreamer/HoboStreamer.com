@@ -21,6 +21,20 @@ async function loadMediasoupClient() {
     return _mediasoupModulePromise;
 }
 
+// Viewer manual play/pause intent. Tracked on the (persistent) <video> element so a
+// stream reconnect — e.g. the streamer's connection cuts out and comes back — does NOT
+// force a stream the viewer deliberately paused back into playback. Reset on every fresh
+// stream load (initPlayer), set by the play/pause button, and enforced by a one-time
+// 'play' listener that re-pauses any autoplay-attribute resume while intent is paused.
+function viewerWantsPaused() {
+    const v = document.getElementById('video-element');
+    return !!(v && v._viewerPaused);
+}
+function setViewerPausedIntent(paused) {
+    const v = document.getElementById('video-element');
+    if (v) v._viewerPaused = !!paused;
+}
+
 // Module-level failure counter — prevents infinite reconnect loops
 let _totalIceFailures = 0;
 const MAX_ICE_FAILURES = 25;
@@ -829,6 +843,7 @@ function startClipRecordingIfNeeded(stream, streamId) {
  */
 function initPlayer(stream) {
     destroyPlayer();
+    setViewerPausedIntent(false); // fresh stream — always start playing
     streamRef = stream; // Store for clip recording across all protocols
     _resetPlayerRevealState();
     const proto = stream.protocol || 'jsmpeg';
@@ -1475,6 +1490,8 @@ async function handleViewerOffer(msg, ws, video) {
     // leading to "Playback failed even muted" and no frames ever rendering.
     const tryPlay = () => {
         if (_playPending || !player || player.pc !== pc) return;
+        // Viewer deliberately paused — don't force playback on a reconnect.
+        if (viewerWantsPaused()) { try { video.pause(); } catch {} return; }
         _playPending = true;
         if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
 
@@ -1883,6 +1900,8 @@ async function handleSfuViewerReady(msg, ws, video, updateStatus, scheduleRewatc
 
         const tryPlay = () => {
             if (_playPending || !player) return;
+            // Viewer deliberately paused — don't force playback on a reconnect.
+            if (viewerWantsPaused()) { try { video.pause(); } catch {} return; }
             _playPending = true;
             if (player._playRetryTimer) { clearTimeout(player._playRetryTimer); player._playRetryTimer = null; }
             video.muted = true;
@@ -2873,6 +2892,10 @@ function setupVideoControls() {
             ? '<i class="fa-solid fa-pause"></i>'
             : '<i class="fa-solid fa-play"></i>';
 
+        // Record intent BEFORE calling play()/pause() so the 'play' guard below
+        // (and reconnect tryPlay()) knows this is a deliberate viewer choice.
+        setViewerPausedIntent(!playing);
+
         if (playerType === 'jsmpeg' && player && dvrState.isLive) {
             playing ? player.play() : player.pause();
         } else {
@@ -2880,6 +2903,19 @@ function setupVideoControls() {
             playing ? vid.play().catch(() => {}) : vid.pause();
         }
     };
+    // Enforce pause intent against the element's autoplay attribute: swapping srcObject
+    // on a reconnect makes an autoplay <video> resume on its own, bypassing tryPlay().
+    // If the viewer paused, immediately re-pause. (Legit resume clears intent first.)
+    // Installed once — setupVideoControls re-runs per stream switch on the same element.
+    if (vid && !vid._pauseIntentGuard) {
+        vid._pauseIntentGuard = true;
+        vid.addEventListener('play', () => {
+            if (!vid._viewerPaused) return;
+            try { vid.pause(); } catch {}
+            const btn = document.getElementById('btn-play-pause');
+            if (btn) btn.innerHTML = '<i class="fa-solid fa-play"></i>';
+        });
+    }
     // Start showing pause icon since autoplay
     btnPlay.innerHTML = '<i class="fa-solid fa-pause"></i>';
 

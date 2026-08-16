@@ -2143,6 +2143,12 @@ async function hydrateActiveChatHistory(streamId, { clear = false } = {}) {
     }
 
     _loadingHistory = true;
+    // Reset the render-dedup set for this fresh timeline. It persists across the session
+    // (and across page navigations), so ids seen in a PREVIOUS room — e.g. the global feed
+    // on the home page — would otherwise dedup-suppress the same messages when they reappear
+    // in this room's history, leaving the panel showing only cross-feed globals. Clearing
+    // here scopes dedup to the timeline we're about to render (it repopulates as we render).
+    _seenChatMsgIds.clear();
     try {
         // Load emotes BEFORE rendering history — otherwise parseEmotes falls back to
         // plain text and historical messages show raw codes (e.g. "PepeD") instead of
