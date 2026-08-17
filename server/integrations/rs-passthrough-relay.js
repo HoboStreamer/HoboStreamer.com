@@ -424,7 +424,7 @@ class RsPassthroughRelay {
 
         // 9) Forward encoded RTP straight through (strip our-router ext ids, match declared PT).
         //    Each UDP datagram from the PlainTransport consumer is one RTP packet.
-        const stats = { v: 0, a: 0, pli: 0 };
+        const stats = { v: 0, a: 0, pli: 0, lostIn: 0 };
         const vPt = +vMedia.pts[0];
 
         // Pull a fresh keyframe from the SOURCE encoder (goosely's browser) via our plain consumer.
@@ -458,7 +458,7 @@ class RsPassthroughRelay {
             let lost = false;
             if (_lastSeq >= 0) {
                 const delta = (p.header.sequenceNumber - _lastSeq) & 0xffff;
-                if (delta > 1 && delta < 3000) lost = true;
+                if (delta > 1 && delta < 3000) { lost = true; stats.lostIn += (delta - 1); }
             }
             _lastSeq = p.header.sequenceNumber;
             if (timeGap || lost) pullKeyframe(now);
@@ -476,11 +476,18 @@ class RsPassthroughRelay {
         const vSender = videoTx.sender;
         vSender.onPictureLossIndication?.subscribe(reqKey);
 
-        // Throughput heartbeat so a live stream shows media actually flowing (not just connected).
-        let lastV = 0, lastA = 0;
+        // Throughput heartbeat + loss diagnostics. Splits loss into the two legs so we can see
+        // where video freezes originate: IN = streamer→relay (our seq-gap detection), RS = relay→RS
+        // (werift's RTCP receiver reports from RobotStreamer). pliRx/firRx = keyframes RS asked for.
+        let lastV = 0, lastA = 0, lastLostIn = 0;
         session.statsTimer = setInterval(() => {
-            log(sid, `flow: video ${Math.round((stats.v - lastV) / 10)}/s audio ${Math.round((stats.a - lastA) / 10)}/s (total v=${stats.v} a=${stats.a}) pli=${stats.pli} werift=${pc.connectionState}`);
-            lastV = stats.v; lastA = stats.a;
+            const s = vSender || {};
+            const rsLostPct = typeof s.remoteFractionLost === 'number' ? ((s.remoteFractionLost / 256) * 100).toFixed(1) : '?';
+            log(sid, `flow: v ${Math.round((stats.v - lastV) / 10)}/s a ${Math.round((stats.a - lastA) / 10)}/s ` +
+                `| lossIN ${stats.lostIn - lastLostIn} (goosely→relay) ` +
+                `| RS lost=${rsLostPct}% pktsLost=${s.remotePacketsLost ?? '?'} pliRx=${s.pliCount ?? '?'} firRx=${s.firCount ?? '?'} nackRx=${s.nackCount ?? '?'} rtt=${Math.round((s.rtt || 0) * 1000)}ms ` +
+                `| keyReq=${stats.pli} werift=${pc.connectionState}`);
+            lastV = stats.v; lastA = stats.a; lastLostIn = stats.lostIn;
         }, 10000);
         session.statsTimer.unref?.();
         vSender.onGenericNack?.subscribe(() => { /* werift retransmits from its own buffer; keyframe as backstop for heavy loss */ });
