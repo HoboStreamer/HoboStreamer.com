@@ -493,13 +493,16 @@ class RsPassthroughRelay {
             const rsLostPct = typeof s.remoteFractionLost === 'number' ? ((s.remoteFractionLost / 256) * 100).toFixed(1) : '?';
             log(sid, `flow: v ${Math.round((stats.v - lastV) / 10)}/s a ${Math.round((stats.a - lastA) / 10)}/s ` +
                 `| lossIN ${stats.lostIn - lastLostIn} (goosely→relay) ` +
-                `| RS lost=${rsLostPct}% pktsLost=${s.remotePacketsLost ?? '?'} pliRx=${s.pliCount ?? '?'} firRx=${s.firCount ?? '?'} nackRx=${s.nackCount ?? '?'} rtt=${Math.round((s.rtt || 0) * 1000)}ms ` +
+                `| RS lost=${rsLostPct}% pktsLost=${s.remotePacketsLost ?? '?'} pliRx=${s.pliCount ?? '?'} firRx=${s.firCount ?? '?'} nackRx=${s.nackCount ?? '?'} retx=${s.retransmittedPacketsSent ?? '?'} rtt=${Math.round((s.rtt || 0) * 1000)}ms ` +
                 `| keyReq=${stats.pli} werift=${pc.connectionState}`);
             lastV = stats.v; lastA = stats.a; lastLostIn = stats.lostIn;
         }, 10000);
         session.statsTimer.unref?.();
         vSender.onGenericNack?.subscribe(() => { /* werift retransmits from its own buffer; keyframe as backstop for heavy loss */ });
-        for (const d of [250, 800, 2000]) setTimeout(reqKey, d); // ensure RS gets an early keyframe
+        // One early keyframe is enough for RS to start decoding. The old flood (plus the plain
+        // consumer's own 4 scheduled keyframes) spiked the bitrate on the fresh, fragile werift→RS
+        // link and caused a loss burst → the freeze seen right after every (re)connect.
+        setTimeout(reqKey, 600);
 
         log(sid, '✅ raw passthrough live (zero re-encode)');
     }
