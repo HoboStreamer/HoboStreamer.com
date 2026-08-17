@@ -357,7 +357,7 @@ class RsPassthroughRelay {
     }
 
     async _run(session) {
-        const { RTCPeerConnection, MediaStreamTrack, RtpPacket } = werift;
+        const { RTCPeerConnection, MediaStreamTrack, RtpPacket, RtpHeader } = werift;
         const sfu = require('../streaming/webrtc-sfu');
         if (!sfu.ready) throw new Error('mediasoup SFU not ready');
         const sid = session.streamId;
@@ -461,7 +461,7 @@ class RsPassthroughRelay {
 
         // 9) Forward encoded RTP straight through (strip our-router ext ids, match declared PT).
         //    Each UDP datagram from the PlainTransport consumer is one RTP packet.
-        const stats = { v: 0, a: 0, pli: 0, lostIn: 0, kf: 0, maxKfGap: 0 };
+        const stats = { v: 0, a: 0, pli: 0, lostIn: 0, kf: 0, maxKfGap: 0, inj: 0 };
         const vPt = +vMedia.pts[0];
 
         // Pull a fresh keyframe from the SOURCE encoder (goosely's browser) via our plain consumer.
@@ -493,6 +493,37 @@ class RsPassthroughRelay {
         let _maxSeq = -1, _vSsrc = -1;
         let _lastKfAt = Date.now();
         let _lastKfTs = -1;    // dedupe: H264 keyframe = SPS+PPS+IDR sharing one RTP timestamp
+
+        // ── H264 SPS/PPS caching + re-injection ──────────────────────────────────────────────
+        // OBS/WHIP sends H264 parameter sets (SPS/PPS) in-band; mediasoup replays them to its own
+        // WebRTC consumers, but the plain-consumer→relay→RS path did not — so if RS lost an SPS/PPS
+        // packet it couldn't decode ANY keyframe (video frozen, audio fine, refresh no help) until
+        // the params happened to arrive intact again. We cache the latest params and re-inject them
+        // ahead of every keyframe so each keyframe RS receives is self-contained. Requires taking
+        // control of the outgoing sequence numbers (contiguous) so injected packets slot in cleanly.
+        let _sps = null, _pps = null, _stapParams = null;
+        let _outSeq = -1;
+        const cacheParamSets = (payload) => {
+            if (!payload || payload.length < 1) return;
+            const nal = payload[0] & 0x1f;
+            if (nal === 7) _sps = Buffer.from(payload);
+            else if (nal === 8) _pps = Buffer.from(payload);
+            else if (nal === 24) { // STAP-A: cache the whole aggregate if it carries SPS/PPS
+                let i = 1, hasParam = false;
+                while (i + 2 <= payload.length) { const sz = (payload[i] << 8) | payload[i + 1]; i += 2; const t = payload[i] & 0x1f; if (t === 7 || t === 8) hasParam = true; i += sz; }
+                if (hasParam) _stapParams = Buffer.from(payload);
+            }
+        };
+        const injectPkt = (payload, ts) => {
+            const h = new RtpHeader();
+            h.payloadType = vPt; h.sequenceNumber = _outSeq; h.timestamp = ts; h.marker = false;
+            _outSeq = (_outSeq + 1) & 0xffff;
+            try { videoTrack.writeRtp(new RtpPacket(h, Buffer.from(payload))); stats.v++; stats.inj++; } catch { /* */ }
+        };
+        const injectParamSets = (ts) => {
+            if (_stapParams) injectPkt(_stapParams, ts);
+            else { if (_sps) injectPkt(_sps, ts); if (_pps) injectPkt(_pps, ts); }
+        };
         const pullKeyframe = (now) => {
             if (now - _lastKeyReqAt < 600) return;   // debounce so sustained loss can't spam keyframes
             _lastKeyReqAt = now;
@@ -520,18 +551,26 @@ class RsPassthroughRelay {
                     // adv >= 30000 → reordered packet arriving late; not a loss.
                 } else _maxSeq = p.header.sequenceNumber;
             }
+            if (_outSeq < 0) _outSeq = p.header.sequenceNumber;
+            if (isH264) cacheParamSets(p.payload);
             // Track keyframes actually reaching RS + how long since the last one (one count per
-            // frame — H264's SPS/PPS/IDR share an RTP timestamp, so dedupe on it).
-            if (p.header.timestamp !== _lastKfTs && isVideoKeyframe(p.payload, isH264)) {
+            // frame — H264's SPS/PPS/IDR share an RTP timestamp, so dedupe on it). On a new keyframe
+            // frame, re-inject the cached parameter sets right before it so RS can always decode it.
+            const isKf = (p.header.timestamp !== _lastKfTs && isVideoKeyframe(p.payload, isH264));
+            if (isKf) {
                 _lastKfTs = p.header.timestamp;
                 const gap = now - _lastKfAt; if (gap > stats.maxKfGap) stats.maxKfGap = gap;
                 _lastKfAt = now; stats.kf++;
+                if (isH264) injectParamSets(p.header.timestamp);
             }
             // Safety-net: a decoder that lost sync can only recover on a keyframe. If none has been
             // forwarded for KF_STALE_MS, pull one so a freeze can never outlast ~2s.
             const kfStale = (now - _lastKfAt) > KF_STALE_MS;
             if (timeGap || burst || kfStale) pullKeyframe(now);
             p.header.payloadType = vPt; p.header.extensions = [];
+            // For H264 rewrite to a contiguous output sequence so the injected param-set packets
+            // slot in cleanly (werift preserves the sequence number). VP8 keeps the source sequence.
+            if (isH264) { p.header.sequenceNumber = _outSeq; _outSeq = (_outSeq + 1) & 0xffff; }
             try { videoTrack.writeRtp(p); stats.v++; } catch { /* */ }
         });
         if (audioIn && aMedia) {
@@ -553,7 +592,7 @@ class RsPassthroughRelay {
             const s = vSender || {};
             const rsLostPct = typeof s.remoteFractionLost === 'number' ? ((s.remoteFractionLost / 256) * 100).toFixed(1) : '?';
             log(sid, `flow: v ${Math.round((stats.v - lastV) / 10)}/s a ${Math.round((stats.a - lastA) / 10)}/s ` +
-                `| kf ${stats.kf - lastKf}/10s maxKfGap ${stats.maxKfGap}ms ` +
+                `| kf ${stats.kf - lastKf}/10s maxKfGap ${stats.maxKfGap}ms injSPS/PPS=${stats.inj} ` +
                 `| lossIN ${stats.lostIn - lastLostIn} (goosely→relay) ` +
                 `| RS lost=${rsLostPct}% pktsLost=${s.remotePacketsLost ?? '?'} pliRx=${s.pliCount ?? '?'} firRx=${s.firCount ?? '?'} nackRx=${s.nackCount ?? '?'} retx=${s.retransmittedPacketsSent ?? '?'} rtt=${Math.round((s.rtt || 0) * 1000)}ms ` +
                 `| keyReq=${stats.pli} werift=${pc.connectionState}`);
