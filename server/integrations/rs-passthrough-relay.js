@@ -492,6 +492,7 @@ class RsPassthroughRelay {
         let _lastKeyReqAt = 0;
         let _maxSeq = -1, _vSsrc = -1;
         let _lastKfAt = Date.now();
+        let _lastKfTs = -1;    // dedupe: H264 keyframe = SPS+PPS+IDR sharing one RTP timestamp
         const pullKeyframe = (now) => {
             if (now - _lastKeyReqAt < 600) return;   // debounce so sustained loss can't spam keyframes
             _lastKeyReqAt = now;
@@ -519,8 +520,10 @@ class RsPassthroughRelay {
                     // adv >= 30000 → reordered packet arriving late; not a loss.
                 } else _maxSeq = p.header.sequenceNumber;
             }
-            // Track keyframes actually reaching RS + how long since the last one.
-            if (isVideoKeyframe(p.payload, isH264)) {
+            // Track keyframes actually reaching RS + how long since the last one (one count per
+            // frame — H264's SPS/PPS/IDR share an RTP timestamp, so dedupe on it).
+            if (p.header.timestamp !== _lastKfTs && isVideoKeyframe(p.payload, isH264)) {
+                _lastKfTs = p.header.timestamp;
                 const gap = now - _lastKfAt; if (gap > stats.maxKfGap) stats.maxKfGap = gap;
                 _lastKfAt = now; stats.kf++;
             }
