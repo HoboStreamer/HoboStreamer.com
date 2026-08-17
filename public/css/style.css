@@ -11819,8 +11819,13 @@ body.theme-light .user-dropdown {
    ═══════════════════════════════════════════════════════════════ */
 .admin-tools-modal {
     display: flex; flex-direction: column;
-    max-height: 80vh; width: min(680px, 95vw);
+    max-height: 80vh; width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0;
 }
+/* The admin modal renders inside the generic .modal (max-width 440px) — widen that wrapper for
+   this case and let the admin modal fill it, so nothing overflows the viewport (esp. when zoomed). */
+.modal:has(.admin-tools-modal) { max-width: min(700px, 96vw); width: 96%; padding: 0; overflow: hidden; }
+.modal:has(.admin-tools-modal) .modal-close { display: none; }
+.admin-tools-body { overflow-y: auto; overflow-x: hidden; }
 .admin-tools-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 16px 20px; border-bottom: 1px solid var(--border);
@@ -11856,10 +11861,10 @@ body.theme-light .user-dropdown {
 .at-tts-status { font-size: 0.82rem; color: var(--text-secondary); margin: 0 0 10px; display: flex; align-items: center; gap: 6px; }
 .at-voice-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .at-voice-preset { font-size: 0.8rem; }
-.at-voice-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; }
-.at-voice-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 0.78rem; color: var(--text-secondary); font-weight: 600; }
-.at-voice-grid select.at-voice-field { padding: 7px 10px; border-radius: 8px; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); }
-.at-voice-grid input[type="range"].at-voice-field { width: 100%; accent-color: var(--accent); }
+.at-voice-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; min-width: 0; }
+.at-voice-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 0.78rem; color: var(--text-secondary); font-weight: 600; min-width: 0; }
+.at-voice-grid select.at-voice-field { padding: 7px 10px; border-radius: 8px; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); max-width: 100%; box-sizing: border-box; }
+.at-voice-grid input[type="range"].at-voice-field { width: 100%; max-width: 100%; box-sizing: border-box; accent-color: var(--accent); }
 .at-voice-num { color: var(--accent); font-weight: 800; font-variant-numeric: tabular-nums; }
 .at-voice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .at-section h4 {
@@ -11979,7 +11984,7 @@ body.theme-light .user-dropdown {
 
 /* ── Admin tools mobile ── */
 @media (max-width: 600px) {
-    .admin-tools-modal { width: 100vw; max-height: 90vh; }
+    .admin-tools-modal { width: 100%; max-height: 90vh; }
     .at-info-grid { font-size: 0.8rem; }
     .at-ip-times { flex-direction: column; gap: 2px; }
     .at-action-grid { flex-direction: column; }
