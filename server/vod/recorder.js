@@ -897,6 +897,9 @@ class StreamRecorder {
             '-analyzeduration', '10000000',
             '-probesize', '5000000',
             '-avoid_negative_ts', 'make_zero',
+            // Don't honor any rotation display-matrix the source may (mis)send mid-stream — that
+            // was one way VODs suddenly flipped 90° partway through.
+            '-noautorotate',
             '-i', sdpPath,
         ];
 
