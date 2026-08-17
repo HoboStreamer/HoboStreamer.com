@@ -338,7 +338,9 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
                 fs.unlinkSync(req.file.path);
                 return res.status(400).json({ error: `Your channel is full (${config.emotes.maxPerChannel} emotes max) — remove some to add more.` });
             }
-            const existing = db.get('SELECT id FROM emotes WHERE user_id = ? AND code = ?', [req.user.id, code]);
+            // Uniqueness is per-channel: only clash with emotes on YOUR OWN channel
+            // (channel_owner_id IS NULL), not ones you uploaded to other people's channels.
+            const existing = db.get('SELECT id FROM emotes WHERE user_id = ? AND code = ? AND channel_owner_id IS NULL', [req.user.id, code]);
             if (existing) {
                 fs.unlinkSync(req.file.path);
                 return res.status(409).json({ error: `You already have an emote named "${code}"` });

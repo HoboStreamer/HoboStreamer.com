@@ -2087,7 +2087,9 @@ function stopHomeRefresh() {
 let currentChannelUsername = null;
 let _activeChannelIsOwnerRank = false; // is the current channel's user owner-rank?
 let _activeChannelUserId = null;       // streamer's user id — the stable chat room key
-const VODS_PAGE_SIZE = 24;
+const VODS_PAGE_SIZE = 24;          // now = grouped SESSIONS (cards) per page
+const VODS_FETCH_WINDOW = 600;      // raw VODs fetched up-front to group + paginate client-side
+let _vodsGroupCache = { key: null, groups: [], totalVideos: 0, streamers: [], truncated: false };
 const CHANNEL_VODS_PAGE_SIZE = 12;
 const CLIPS_PAGE_SIZE = 24;
 const CHANNEL_CLIPS_PAGE_SIZE = 12;
@@ -5815,8 +5817,10 @@ function _groupVods(vods) {
     }
     return groups;
 }
-function _renderVodGroups(vods, myId) {
-    return _groupVods(vods).map((g, gi) => {
+// Renders an array of ALREADY-grouped VOD groups ({ items: [...] }). Pagination happens by
+// group (session), so a 30-part session counts as one card instead of blanking the page.
+function _renderVodGroups(groups, myId) {
+    return groups.map((g, gi) => {
         if (g.items.length < 2) {
             const v = g.items[0];
             return _adminCardWrap('vod', v.id, _vodCardInner(v, myId), !!v.owner_is_owner);
@@ -5824,10 +5828,11 @@ function _renderVodGroups(vods, myId) {
         const rep = g.items.reduce((a, b) => ((b.duration_seconds || 0) > (a.duration_seconds || 0) ? b : a), g.items[0]);
         const totalDur = g.items.reduce((s, v) => s + (v.duration_seconds || v.duration || 0), 0);
         const gid = 'vg' + gi;
-        const groupCard = `<div class="stream-card vod-group-card" id="group-${gid}" onclick="toggleVodGroup('${gid}')" title="${g.items.length} videos from this session — click to expand">
+        const n = g.items.length;
+        const groupCard = `<div class="stream-card vod-group-card" id="group-${gid}" onclick="toggleVodGroup('${gid}')" title="${n} videos from this session — click to expand">
             <div class="stream-card-thumb">
                 ${thumbImg(rep.thumbnail_url, 'fa-video', rep.title, `/api/thumbnails/generate/vod/${rep.id}`)}
-                <span class="vod-group-count"><i class="fa-solid fa-layer-group"></i> ${g.items.length} parts</span>
+                <span class="vod-group-count"><i class="fa-solid fa-layer-group"></i> ${n}</span>
                 <span class="stream-card-viewers"><i class="fa-solid fa-clock"></i> ${formatDuration(totalDur)}</span>
             </div>
             <div class="stream-card-info">
@@ -5837,7 +5842,7 @@ function _renderVodGroups(vods, myId) {
                     ${esc(rep.username || 'Unknown')}
                     <span class="stream-card-date">${timeAgo(rep.created_at)}</span>
                 </div>
-                <div class="vod-group-hint"><i class="fa-solid fa-chevron-down"></i> ${g.items.length} parts from this session — expand</div>
+                <button class="vod-group-hint" type="button"><i class="fa-solid fa-chevron-down vod-group-chev"></i> <span>${n} parts — <b>expand</b></span></button>
             </div>
         </div>`;
         const parts = g.items.map(v => _adminCardWrap('vod', v.id, _vodCardInner(v, myId), !!v.owner_is_owner)).join('');
@@ -5865,38 +5870,49 @@ async function loadVodsPage() {
         filterBar.style.display = 'none';
         filterBar.innerHTML = '';
     }
-    _selSetContext(_isContentAdmin(), loadVodsPage);
+    // Mutations (admin delete/bulk) refresh via this callback — bust the cache so they re-fetch;
+    // plain pagination (setVodsPage) keeps the cache and is instant.
+    _selSetContext(_isContentAdmin(), () => { _vodsGroupCache.key = null; return loadVodsPage(); });
 
     try {
-        const limit = VODS_PAGE_SIZE;
-        const offset = (currentVodsPage - 1) * limit;
-        const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-        if (currentVodsStreamerFilter && currentVodsStreamerFilter !== 'all') {
-            params.set('username', currentVodsStreamerFilter);
+        const perPage = VODS_PAGE_SIZE; // grouped sessions per page
+        const key = `${currentVodsStreamerFilter || 'all'}|${currentVodsSort || 'newest'}`;
+        // Fetch the whole window once per filter/sort, then paginate the GROUPED sessions in-memory
+        // so a multi-part session counts as one card (raw-VOD paging showed near-empty pages).
+        if (_vodsGroupCache.key !== key) {
+            const params = new URLSearchParams({ limit: String(VODS_FETCH_WINDOW), offset: '0' });
+            if (currentVodsStreamerFilter && currentVodsStreamerFilter !== 'all') params.set('username', currentVodsStreamerFilter);
+            if (currentVodsSort === 'oldest') params.set('sort', 'oldest');
+            const data = await api(`/vods?${params.toString()}`);
+            const vods = data.vods || [];
+            const totalVideos = data.total ?? vods.length;
+            _vodsGroupCache = {
+                key, groups: _groupVods(vods), totalVideos,
+                streamers: data.streamers || [],
+                truncated: totalVideos > vods.length,
+            };
         }
-        if (currentVodsSort === 'oldest') params.set('sort', 'oldest');
-        const data = await api(`/vods?${params.toString()}`);
-        const vods = data.vods || [];
-        const total = data.total ?? vods.length;
-        const totalPages = Math.max(1, Math.ceil(total / limit));
+        const { groups, streamers, truncated, totalVideos } = _vodsGroupCache;
 
-        renderVodsStreamerFilters(data.streamers || [], currentVodsStreamerFilter);
+        renderVodsStreamerFilters(streamers, currentVodsStreamerFilter);
 
-        if (currentVodsPage > totalPages) {
-            currentVodsPage = totalPages;
-            return loadVodsPage();
-        }
+        const totalGroups = groups.length;
+        const totalPages = Math.max(1, Math.ceil(totalGroups / perPage));
+        if (currentVodsPage > totalPages) currentVodsPage = totalPages;
 
-        if (!vods.length) {
+        if (!totalGroups) {
             grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-video fa-3x"></i><p>No videos yet</p><p class="muted">Videos are recorded automatically when streamers go live</p></div>';
             return;
         }
 
+        const startG = (currentVodsPage - 1) * perPage;
+        const pageGroups = groups.slice(startG, startG + perPage);
         const myId = currentUser ? currentUser.id : null;
-        grid.innerHTML = _renderVodGroups(vods, myId);
+        grid.innerHTML = _renderVodGroups(pageGroups, myId)
+            + (truncated && currentVodsPage === totalPages ? `<div class="vods-truncated-note muted">Showing the ${totalVideos > VODS_FETCH_WINDOW ? 'most recent ' + VODS_FETCH_WINDOW : totalVideos} videos.</div>` : '');
         _updateAdminBulkBar('vod');
 
-        renderVodsPagination('vods-pagination-page', currentVodsPage, total, limit, 'setVodsPage', 'videos', { sort: currentVodsSort, setter: 'setVodsSort' });
+        renderVodsPagination('vods-pagination-page', currentVodsPage, totalGroups, perPage, 'setVodsPage', 'sessions', { sort: currentVodsSort, setter: 'setVodsSort' });
     } catch (e) {
         console.error('Failed to load videos', e);
         grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-triangle-exclamation fa-3x"></i><p>Failed to load videos</p><p class="muted">' + esc(e.message || String(e)) + '</p></div>';

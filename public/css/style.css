@@ -1773,10 +1773,21 @@ body.egg-rainbow { animation: eggRainbow 2.6s linear; }
 /* ── Condensed VOD session group (many restart-split VODs → one expandable card) ── */
 .vod-group-card { position: relative; cursor: pointer; box-shadow: 3px 3px 0 -1px var(--border), 6px 6px 0 -2px color-mix(in srgb, var(--border) 70%, transparent); }
 .vod-group-card:hover { box-shadow: 3px 3px 0 -1px var(--accent), 6px 6px 0 -2px color-mix(in srgb, var(--accent) 55%, transparent); }
-.vod-group-count { position: absolute; top: 8px; left: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 5px; background: color-mix(in srgb, var(--accent) 82%, #000); color: #fff; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.02em; padding: 3px 8px; border-radius: 6px; }
-.vod-group-hint { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 0.72rem; font-weight: 700; color: var(--accent-light, var(--accent)); }
-.vod-group-hint i { transition: transform .2s ease; }
-.vod-group-card.expanded .vod-group-hint i { transform: rotate(180deg); }
+.vod-group-count { position: absolute; top: 8px; left: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(12,14,20,.72); color: #fff; font-size: 0.7rem; font-weight: 800; letter-spacing: .01em;
+    padding: 3px 9px 3px 7px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); backdrop-filter: blur(5px);
+    box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+.vod-group-count i { color: var(--accent-light, var(--accent)); font-size: .72rem; }
+.vod-group-card:hover .vod-group-count { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.vod-group-hint { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 0.72rem; font-weight: 700;
+    color: var(--accent-light, var(--accent)); background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 8px; padding: 5px 11px; cursor: pointer;
+    transition: background .15s, border-color .15s, transform .12s; font-family: inherit; }
+.vod-group-hint:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); transform: translateY(-1px); }
+.vod-group-hint b { font-weight: 800; }
+.vod-group-chev { transition: transform .22s ease; font-size: .68rem; }
+.vod-group-card.expanded .vod-group-chev { transform: rotate(180deg); }
+.vods-truncated-note { grid-column: 1 / -1; text-align: center; padding: 14px 0 4px; font-size: .82rem; opacity: .6; }
 .vod-group-parts { grid-column: 1 / -1; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; padding: 2px 0 12px; }
 .vod-group-parts::before { content: ''; display: block; grid-column: 1 / -1; height: 1px; background: var(--border); margin: 2px 0 6px; }
 

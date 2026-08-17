@@ -1063,7 +1063,9 @@ router.remuxForLiveSeeking = remuxForLiveSeeking;
 // ── List Public VODs (+ own private VODs when logged in) ────
 router.get('/', optionalAuth, (req, res) => {
     try {
-        const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+        // Cap raised so the VODs page can fetch a full window and paginate by grouped SESSIONS
+        // client-side (a 30-part session is one card, so raw-VOD paging looked near-empty).
+        const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 600);
         const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
         const usernameFilter = String(req.query.username || '').trim();
         const normalizedUsername = usernameFilter || null;
