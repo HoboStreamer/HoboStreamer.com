@@ -208,7 +208,8 @@ function hydrateReplies(messages) {
 router.post('/send', requireAuth, (req, res) => {
     try {
         const text = (req.body.message || '').trim();
-        if (!text || text.length > 500) {
+        // 6000 = the absolute ceiling any channel/admin can configure (see chat-server handleChatMessage).
+        if (!text || text.length > 6000) {
             return res.status(400).json({ error: 'Invalid message' });
         }
 

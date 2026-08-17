@@ -561,7 +561,11 @@ class ChatServer {
      */
     handleChatMessage(ws, client, msg) {
         let text = (msg.message || '').trim();
-        if (!text || text.length > 500) return;
+        // Absolute upper bound (DoS guard) = the highest value any channel/admin can configure
+        // (admins can set a channel up to 6000). The REAL per-channel limit is enforced below at
+        // the `max_message_length` check — this must never be lower than that or it silently
+        // swallows long messages the channel actually allows.
+        if (!text || text.length > 6000) return;
 
         // ── Stream utility commands (!sr, !queue, !nowplaying, !skip) ──
         if (text.startsWith('!')) {
