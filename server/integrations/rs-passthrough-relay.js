@@ -426,7 +426,26 @@ class RsPassthroughRelay {
         //    Each UDP datagram from the PlainTransport consumer is one RTP packet.
         const stats = { v: 0, a: 0, pli: 0 };
         const vPt = +vMedia.pts[0];
+
+        // Pull a fresh keyframe from the SOURCE encoder (goosely's browser) via our plain consumer.
+        const reqKey = () => { stats.pli++; sfu.requestConsumerKeyFrame(session.roomId, videoIn.consumerId).catch?.(() => {}); };
+
+        // Video-gap recovery: when the streamer stutters / briefly drops, incoming video RTP pauses
+        // and the frames that resume are mid-GOP (undecodable), so RS viewers stay black until they
+        // notice the loss and PLI all the way back — slow, and why audio (no keyframes) returns
+        // first. Detect the gap right here at the relay and request a keyframe the instant video
+        // resumes, front-running the viewer's PLI so video comes back almost as fast as audio.
+        const VIDEO_GAP_MS = 200;
+        let _lastVideoAt = Date.now();
+        let _lastGapKeyAt = 0;
         videoIn.socket.on('message', (buf) => {
+            const now = Date.now();
+            if (now - _lastVideoAt > VIDEO_GAP_MS && now - _lastGapKeyAt > 500) {
+                _lastGapKeyAt = now;
+                reqKey();                 // pull a keyframe the moment video resumes
+                setTimeout(reqKey, 350);  // backstop in case the first request/keyframe is lost
+            }
+            _lastVideoAt = now;
             try { const p = RtpPacket.deSerialize(buf); p.header.payloadType = vPt; p.header.extensions = []; videoTrack.writeRtp(p); stats.v++; } catch { /* drop malformed */ }
         });
         if (audioIn && aMedia) {
@@ -438,7 +457,6 @@ class RsPassthroughRelay {
 
         // 10) Relay RS keyframe requests (PLI/FIR) back to the source encoder.
         const vSender = videoTx.sender;
-        const reqKey = () => { stats.pli++; sfu.requestConsumerKeyFrame(session.roomId, videoIn.consumerId).catch?.(() => {}); };
         vSender.onPictureLossIndication?.subscribe(reqKey);
 
         // Throughput heartbeat so a live stream shows media actually flowing (not just connected).
