@@ -878,4 +878,87 @@ router.get('/ip/log', permissions.requireGlobalMod, (req, res) => {
     }
 });
 
+// ── Per-user TTS voice (admin: edit / re-roll the auto-assigned voice) ────────
+const ttsEngine = require('../chat/tts-engine');
+
+// Quick presets an admin can one-click apply (the streamer wanted a tiny squeaky robot).
+const TTS_VOICE_PRESETS = [
+    { id: 'squeaky', label: '🐭 Tiny / Squeaky', params: { voice: 'en+f3', pitch: 99, speed: 200 } },
+    { id: 'chipmunk', label: '🐿️ Chipmunk', params: { voice: 'en+f5', pitch: 95, speed: 260 } },
+    { id: 'deep', label: '🔊 Deep / Booming', params: { voice: 'en+m7', pitch: 5, speed: 130 } },
+    { id: 'robotic', label: '🤖 Robotic', params: { voice: 'en', pitch: 40, speed: 150, gap: 8 } },
+    { id: 'normal', label: '🙂 Neutral', params: { voice: 'en', pitch: 50, speed: 165 } },
+];
+
+function _ttsIdentityKey(kind, id) {
+    const k = kind === 'anon' ? 'anon' : 'user';
+    return `${k}:${String(id || '').trim().toLowerCase()}`;
+}
+
+// GET current voice (override or auto-assigned) + editing metadata.
+router.get('/tts-voice/:kind/:id', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const identityKey = _ttsIdentityKey(req.params.kind, req.params.id);
+        const override = db.getTtsVoiceOverride(identityKey);
+        const auto = ttsEngine.autoUserVoiceParams(identityKey);
+        res.json({
+            identityKey,
+            isOverride: !!override,
+            params: override ? ttsEngine.clampVoiceParams(override) : auto,
+            auto,
+            voices: ttsEngine.PER_USER_BASE_VOICES,
+            bounds: ttsEngine.VOICE_BOUNDS,
+            presets: TTS_VOICE_PRESETS,
+        });
+    } catch (err) {
+        console.error('[Mod] tts-voice get error:', err.message);
+        res.status(500).json({ error: 'Failed to load voice' });
+    }
+});
+
+// PUT: set explicit params, or {reset:true} (back to auto), or {reroll:true} (new random voice).
+router.put('/tts-voice/:kind/:id', permissions.requireGlobalMod, (req, res) => {
+    try {
+        const identityKey = _ttsIdentityKey(req.params.kind, req.params.id);
+        if (req.body?.reset) {
+            db.deleteTtsVoiceOverride(identityKey);
+            return res.json({ isOverride: false, params: ttsEngine.autoUserVoiceParams(identityKey) });
+        }
+        let params;
+        if (req.body?.reroll) {
+            const voices = ttsEngine.PER_USER_BASE_VOICES;
+            const [pLo, pHi] = ttsEngine.VOICE_BOUNDS.pitch;
+            params = {
+                voice: voices[Math.floor(Math.random() * voices.length)],
+                pitch: pLo + Math.floor(Math.random() * (pHi - pLo + 1)),
+                speed: 140 + Math.floor(Math.random() * 60), // 140..200 wpm
+                gap: 0,
+            };
+        } else {
+            params = { voice: req.body?.voice, pitch: req.body?.pitch, speed: req.body?.speed, gap: req.body?.gap };
+        }
+        const clamped = ttsEngine.clampVoiceParams(params);
+        db.setTtsVoiceOverride(identityKey, clamped, req.user.id);
+        res.json({ isOverride: true, params: clamped });
+    } catch (err) {
+        console.error('[Mod] tts-voice set error:', err.message);
+        res.status(500).json({ error: 'Failed to save voice' });
+    }
+});
+
+// POST: synthesize a short preview clip with the given params so the admin can hear it.
+router.post('/tts-voice/preview', permissions.requireGlobalMod, async (req, res) => {
+    try {
+        const text = String(req.body?.text || 'Hey there, this is how I sound on the site!').slice(0, 160);
+        const result = await ttsEngine.synthesizeWithParams(text, {
+            voice: req.body?.voice, pitch: req.body?.pitch, speed: req.body?.speed, gap: req.body?.gap,
+        });
+        if (!result?.audio) return res.status(503).json({ error: 'TTS unavailable (espeak-ng not installed?)' });
+        res.json({ audio: result.audio, mimeType: result.mimeType || 'audio/wav' });
+    } catch (err) {
+        console.error('[Mod] tts-voice preview error:', err.message);
+        res.status(500).json({ error: 'Preview failed' });
+    }
+});
+
 module.exports = router;

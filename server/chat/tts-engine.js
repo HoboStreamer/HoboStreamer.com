@@ -181,7 +181,22 @@ const PER_USER_BASE_VOICES = [
  * @param {string} identityKey
  * @returns {{ voice: string, pitch: number, speed: number, gap: number }}
  */
-function deriveUserVoiceParams(identityKey) {
+// Espeak-safe bounds for admin-tunable voice params.
+const VOICE_BOUNDS = { pitch: [0, 99], speed: [80, 450], gap: [0, 20] };
+function _clampVoiceParams(p) {
+    const voices = new Set(PER_USER_BASE_VOICES);
+    const voice = (typeof p.voice === 'string' && /^[a-z0-9+._-]{1,24}$/i.test(p.voice)) ? p.voice : 'en';
+    const clamp = (v, [lo, hi], d) => { v = Math.round(Number(v)); return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };
+    return {
+        voice: voice, // allow any valid-looking espeak voice string (incl. catalog voices like en+f3)
+        pitch: clamp(p.pitch, VOICE_BOUNDS.pitch, 50),
+        speed: clamp(p.speed, VOICE_BOUNDS.speed, 165),
+        gap: clamp(p.gap, VOICE_BOUNDS.gap, 0),
+        _voiceInList: voices.has(voice),
+    };
+}
+// The pure hash-derived (auto-assigned) voice — no override lookup.
+function autoUserVoiceParams(identityKey) {
     const key = String(identityKey || 'anon').trim().toLowerCase() || 'anon';
     const h = crypto.createHash('sha256').update(key).digest();
     // Distinct byte slices → weakly independent axes.
@@ -190,6 +205,12 @@ function deriveUserVoiceParams(identityKey) {
     const speed = 150 + (h[2] % 41);  // 150..190 wpm (natural range)
     const gap = h[3] % 4;             // 0..3    (subtle cadence variation)
     return { voice, pitch, speed, gap };
+}
+function deriveUserVoiceParams(identityKey) {
+    const key = String(identityKey || 'anon').trim().toLowerCase() || 'anon';
+    // An admin-set override wins over the auto-assigned voice.
+    try { const ov = db.getTtsVoiceOverride(key); if (ov && ov.voice) return _clampVoiceParams(ov); } catch { /* fall through to auto */ }
+    return autoUserVoiceParams(key);
 }
 
 /**
@@ -601,12 +622,24 @@ function getAvailableVoices() {
 }
 
 // ── Exports ───────────────────────────────────────────────────
+// Synthesize an arbitrary espeak param set (admin voice preview).
+async function synthesizeWithParams(text, params) {
+    const p = _clampVoiceParams(params || {});
+    const voiceDef = { engine: 'espeak-ng', params: p, name: `Voice-${p.voice}` };
+    return _synthesizeWithDef(sanitize(text, getTTSSettings().maxLength, null), voiceDef, `preview:${p.voice}`);
+}
+
 module.exports = {
     VOICE_CATALOG,
     RARITY_COLORS,
     synthesize,
     synthesizeUserVoice,
+    synthesizeWithParams,
     deriveUserVoiceParams,
+    autoUserVoiceParams,
+    clampVoiceParams: _clampVoiceParams,
+    PER_USER_BASE_VOICES,
+    VOICE_BOUNDS,
     sanitize,
     getTTSSettings,
     invalidateSettingsCache,

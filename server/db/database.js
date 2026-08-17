@@ -983,6 +983,18 @@ function initDb() {
         )`);
         database.exec(`CREATE INDEX IF NOT EXISTS idx_egg_solves_date ON easter_egg_solves(egg_date)`);
 
+        // Admin-set per-user TTS voice overrides (keyed by the same identity key used at
+        // synthesis: "user:<username>" / "anon:<id>"). Overrides the auto-assigned voice.
+        database.exec(`CREATE TABLE IF NOT EXISTS tts_voice_overrides (
+            identity_key TEXT PRIMARY KEY,
+            voice TEXT,
+            pitch INTEGER,
+            speed INTEGER,
+            gap INTEGER DEFAULT 0,
+            set_by INTEGER,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
         const pcols = database.prepare('PRAGMA table_info(pastes)').all().map(c => c.name);
         if (!pcols.includes('ai_summary')) database.exec('ALTER TABLE pastes ADD COLUMN ai_summary TEXT');
         if (!pcols.includes('ai_tags')) database.exec('ALTER TABLE pastes ADD COLUMN ai_tags TEXT');
@@ -3904,6 +3916,30 @@ function getChatAiSummary(scope, subjectId, window) {
         [scope, subjectId || 0, window]) || null;
 }
 // Append AI timeline "notable moments" to the growing log (deduped by scope+ts+label).
+// ── Per-user TTS voice overrides (admin-set) ─────────────────
+function getTtsVoiceOverride(identityKey) {
+    try {
+        const k = String(identityKey || '').trim().toLowerCase();
+        if (!k) return null;
+        const r = get('SELECT voice, pitch, speed, gap FROM tts_voice_overrides WHERE identity_key = ?', [k]);
+        if (!r) return null;
+        return { voice: r.voice, pitch: r.pitch, speed: r.speed, gap: r.gap || 0 };
+    } catch { return null; }
+}
+function setTtsVoiceOverride(identityKey, params, setBy) {
+    const k = String(identityKey || '').trim().toLowerCase();
+    if (!k) return false;
+    run(`INSERT INTO tts_voice_overrides (identity_key, voice, pitch, speed, gap, set_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(identity_key) DO UPDATE SET voice=excluded.voice, pitch=excluded.pitch,
+             speed=excluded.speed, gap=excluded.gap, set_by=excluded.set_by, updated_at=CURRENT_TIMESTAMP`,
+        [k, params.voice, params.pitch, params.speed, params.gap || 0, setBy || null]);
+    return true;
+}
+function deleteTtsVoiceOverride(identityKey) {
+    try { run('DELETE FROM tts_voice_overrides WHERE identity_key = ?', [String(identityKey || '').trim().toLowerCase()]); return true; } catch { return false; }
+}
+
 // ── Daily easter egg solves ──────────────────────────────────
 function recordEasterEggSolve(eggDate, solverKey, userId) {
     try {
@@ -7152,6 +7188,7 @@ module.exports = {
     getChatAiSummary, getChatAiSummaries, upsertChatAiSummary, getUsersNeedingChatAi,
     addChatTimelineEvents, getChatTimelineEvents,
     recordEasterEggSolve, hasSolvedEasterEgg, countEasterEggSolves,
+    getTtsVoiceOverride, setTtsVoiceOverride, deleteTtsVoiceOverride,
     // Profiles
     getUserProfile, updateUserAvatar, resetAvatarsForPaste, getUserAvatarPastes,
     getKickChannelCache, setKickChannelCache,

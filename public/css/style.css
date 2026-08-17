@@ -11852,6 +11852,16 @@ body.theme-light .user-dropdown {
     border-bottom: 1px solid var(--border);
 }
 .at-section:last-child { border-bottom: none; margin-bottom: 0; }
+/* Admin: per-user TTS voice editor */
+.at-tts-status { font-size: 0.82rem; color: var(--text-secondary); margin: 0 0 10px; display: flex; align-items: center; gap: 6px; }
+.at-voice-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.at-voice-preset { font-size: 0.8rem; }
+.at-voice-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px; }
+.at-voice-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 0.78rem; color: var(--text-secondary); font-weight: 600; }
+.at-voice-grid select.at-voice-field { padding: 7px 10px; border-radius: 8px; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); }
+.at-voice-grid input[type="range"].at-voice-field { width: 100%; accent-color: var(--accent); }
+.at-voice-num { color: var(--accent); font-weight: 800; font-variant-numeric: tabular-nums; }
+.at-voice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .at-section h4 {
     margin: 0 0 10px 0;
     font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em;

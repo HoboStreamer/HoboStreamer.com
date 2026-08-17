@@ -4770,9 +4770,15 @@ function renderAdminToolsUser(container, data, username) {
                 <button class="btn btn-sm at-action-btn" onclick="ctxViewLogs('${esc(username)}', '${data.user.id}');closeModal()"><i class="fa-solid fa-clock-rotate-left"></i> View Chat Logs</button>
             </div>
         </div>
+
+        <div class="at-section" id="at-tts-voice" data-kind="user" data-id="${esc(user.username)}">
+            <h4><i class="fa-solid fa-microphone-lines"></i> TTS Voice</h4>
+            <div class="at-tts-body"><div class="admin-tools-loading"><i class="fa-solid fa-spinner fa-spin"></i> Loading voice…</div></div>
+        </div>
     `;
 
     container.innerHTML = html;
+    loadAdminTtsVoice('user', user.username, container.querySelector('#at-tts-voice .at-tts-body'));
 }
 
 function renderAdminToolsAnon(container, data, username) {
@@ -4830,7 +4836,89 @@ function renderAdminToolsAnon(container, data, username) {
         `;
     }
 
+    html += `
+        <div class="at-section" id="at-tts-voice" data-kind="anon" data-id="${esc(anon_id || username)}">
+            <h4><i class="fa-solid fa-microphone-lines"></i> TTS Voice</h4>
+            <div class="at-tts-body"><div class="admin-tools-loading"><i class="fa-solid fa-spinner fa-spin"></i> Loading voice…</div></div>
+        </div>`;
+
     container.innerHTML = html;
+    loadAdminTtsVoice('anon', anon_id || username, container.querySelector('#at-tts-voice .at-tts-body'));
+}
+
+/* ── Admin: per-user TTS voice editor ─────────────────────────── */
+async function loadAdminTtsVoice(kind, id, bodyEl) {
+    if (!bodyEl) return;
+    try {
+        const d = await api(`/mod/tts-voice/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`);
+        renderAdminTtsVoice(bodyEl, kind, id, d);
+    } catch (err) {
+        bodyEl.innerHTML = `<div class="admin-tools-error"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(err.message || 'Failed to load voice')}</div>`;
+    }
+}
+
+function renderAdminTtsVoice(bodyEl, kind, id, d) {
+    const p = d.params || {};
+    const [pLo, pHi] = (d.bounds?.pitch) || [0, 99];
+    const [sLo, sHi] = (d.bounds?.speed) || [80, 450];
+    const voiceOpts = (d.voices || ['en']).map(v => `<option value="${esc(v)}"${v === p.voice ? ' selected' : ''}>${esc(v)}</option>`).join('');
+    // If the current voice isn't in the base list (e.g. a preset like en+f3), add it so it shows.
+    const extraVoice = (d.voices || []).includes(p.voice) ? '' : `<option value="${esc(p.voice)}" selected>${esc(p.voice)} (preset)</option>`;
+    const presets = (d.presets || []).map(pr =>
+        `<button type="button" class="btn btn-sm at-voice-preset" data-params='${esc(JSON.stringify(pr.params))}'>${esc(pr.label)}</button>`).join('');
+    bodyEl.innerHTML = `
+        <p class="at-tts-status">${d.isOverride ? '<i class="fa-solid fa-user-pen"></i> Custom (admin-set) voice' : '<i class="fa-solid fa-dice"></i> Auto-assigned voice'}</p>
+        <div class="at-voice-presets">${presets}</div>
+        <div class="at-voice-grid">
+            <label>Voice <select class="at-voice-field" id="atv-voice">${extraVoice}${voiceOpts}</select></label>
+            <label>Pitch <span class="at-voice-num" id="atv-pitch-n">${p.pitch}</span>
+                <input type="range" class="at-voice-field" id="atv-pitch" min="${pLo}" max="${pHi}" value="${p.pitch}"></label>
+            <label>Speed <span class="at-voice-num" id="atv-speed-n">${p.speed}</span> wpm
+                <input type="range" class="at-voice-field" id="atv-speed" min="${sLo}" max="${sHi}" value="${p.speed}"></label>
+        </div>
+        <div class="at-voice-actions">
+            <button type="button" class="btn btn-sm" id="atv-preview"><i class="fa-solid fa-play"></i> Preview</button>
+            <button type="button" class="btn btn-sm" id="atv-reroll"><i class="fa-solid fa-dice"></i> Re-roll</button>
+            <button type="button" class="btn btn-sm" id="atv-reset"><i class="fa-solid fa-rotate-left"></i> Reset to auto</button>
+            <button type="button" class="btn btn-sm btn-primary" id="atv-save"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+        </div>`;
+
+    const $ = (s) => bodyEl.querySelector(s);
+    const getParams = () => ({ voice: $('#atv-voice').value, pitch: +$('#atv-pitch').value, speed: +$('#atv-speed').value });
+    $('#atv-pitch').addEventListener('input', () => { $('#atv-pitch-n').textContent = $('#atv-pitch').value; });
+    $('#atv-speed').addEventListener('input', () => { $('#atv-speed-n').textContent = $('#atv-speed').value; });
+    bodyEl.querySelectorAll('.at-voice-preset').forEach(b => b.addEventListener('click', () => {
+        const pr = JSON.parse(b.dataset.params);
+        // Ensure the preset voice exists as an option, then select it.
+        const sel = $('#atv-voice');
+        if (![...sel.options].some(o => o.value === pr.voice)) sel.add(new Option(pr.voice + ' (preset)', pr.voice));
+        sel.value = pr.voice;
+        if (pr.pitch != null) { $('#atv-pitch').value = pr.pitch; $('#atv-pitch-n').textContent = pr.pitch; }
+        if (pr.speed != null) { $('#atv-speed').value = pr.speed; $('#atv-speed-n').textContent = pr.speed; }
+    }));
+    $('#atv-preview').addEventListener('click', async () => {
+        const btn = $('#atv-preview'); btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Playing…';
+        try {
+            const r = await api('/mod/tts-voice/preview', { method: 'POST', body: getParams() });
+            if (r.audio) { const a = new Audio(`data:${r.mimeType};base64,${r.audio}`); await a.play().catch(() => {}); }
+        } catch (e) { toast(e.message || 'Preview failed', 'error'); }
+        btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-play"></i> Preview';
+    });
+    $('#atv-reroll').addEventListener('click', async () => {
+        try { const r = await api(`/mod/tts-voice/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, { method: 'PUT', body: { reroll: true } });
+            renderAdminTtsVoice(bodyEl, kind, id, { ...d, isOverride: true, params: r.params }); toast('Re-rolled voice', 'success'); }
+        catch (e) { toast(e.message || 'Failed', 'error'); }
+    });
+    $('#atv-reset').addEventListener('click', async () => {
+        try { const r = await api(`/mod/tts-voice/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, { method: 'PUT', body: { reset: true } });
+            renderAdminTtsVoice(bodyEl, kind, id, { ...d, isOverride: false, params: r.params }); toast('Reset to auto-assigned voice', 'success'); }
+        catch (e) { toast(e.message || 'Failed', 'error'); }
+    });
+    $('#atv-save').addEventListener('click', async () => {
+        try { const r = await api(`/mod/tts-voice/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, { method: 'PUT', body: getParams() });
+            renderAdminTtsVoice(bodyEl, kind, id, { ...d, isOverride: true, params: r.params }); toast('Voice saved', 'success'); }
+        catch (e) { toast(e.message || 'Failed to save', 'error'); }
+    });
 }
 
 function formatGeoLine(ip) {
