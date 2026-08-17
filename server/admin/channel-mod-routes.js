@@ -186,10 +186,12 @@ router.put('/:channelId/moderation', requireAuth, requireChannelAccess, (req, re
                 ? Math.max(0, parseInt(req.body.account_age_gate_hours) || 0) : undefined,
             caps_percentage_limit: req.body.caps_percentage_limit !== undefined
                 ? Math.min(100, Math.max(0, parseInt(req.body.caps_percentage_limit) || 70)) : undefined,
+            // Streamers can raise their chat cap up to 4000 chars; admins up to 6000. TTS is
+            // capped at 1200 for everyone (a very long TTS line is a griefing/queue-clog vector).
             max_message_length: req.body.max_message_length !== undefined
-                ? Math.min(2000, Math.max(1, parseInt(req.body.max_message_length) || 500)) : undefined,
+                ? Math.min(permissions.isAdmin(req.user) ? 6000 : 4000, Math.max(1, parseInt(req.body.max_message_length) || 500)) : undefined,
             tts_max_length: req.body.tts_max_length !== undefined
-                ? Math.min(1000, Math.max(10, parseInt(req.body.tts_max_length) || 200)) : undefined,
+                ? Math.min(1200, Math.max(10, parseInt(req.body.tts_max_length) || 200)) : undefined,
             slur_filter_enabled: req.body.slur_filter_enabled !== undefined
                 ? parseBoolean(req.body.slur_filter_enabled, false) : undefined,
             slur_filter_use_builtin: req.body.slur_filter_use_builtin !== undefined

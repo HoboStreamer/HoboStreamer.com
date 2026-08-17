@@ -217,10 +217,12 @@ function deriveUserVoiceParams(identityKey) {
  * Synthesize a chat line using a per-user derived espeak voice.
  * @returns Promise resolving to the same shape as synthesize(), or null.
  */
-async function synthesizeUserVoice(text, identityKey, username) {
+async function synthesizeUserVoice(text, identityKey, username, maxLengthOverride) {
     const settings = getTTSSettings();
     if (!settings.enabled) return null;
-    const cleanText = sanitize(text, settings.maxLength, username);
+    // A channel may raise its TTS length above the site default (hard-capped at 1200).
+    const effMax = Math.min(1200, Math.max(1, Number(maxLengthOverride) || settings.maxLength));
+    const cleanText = sanitize(text, effMax, username);
     if (!cleanText) return null;
     const params = deriveUserVoiceParams(identityKey);
     const voiceDef = { engine: 'espeak-ng', params, name: `Voice-${params.voice}` };
@@ -510,11 +512,13 @@ function sanitize(text, maxLen, username) {
  * @returns {Promise<{audio: string, mimeType: string, engine: string, voiceName: string, voiceId: string} | null>}
  *   Returns null if TTS is disabled or voice is browser-only
  */
-async function synthesize(text, voiceId, username) {
+async function synthesize(text, voiceId, username, maxLengthOverride) {
     const settings = getTTSSettings();
     if (!settings.enabled) return null;
 
-    const cleanText = sanitize(text, settings.maxLength, username);
+    // A channel may raise its TTS length above the site default (hard-capped at 1200).
+    const effMax = Math.min(1200, Math.max(1, Number(maxLengthOverride) || settings.maxLength));
+    const cleanText = sanitize(text, effMax, username);
     if (!cleanText) return null;
 
     const vid = voiceId || settings.defaultVoice;

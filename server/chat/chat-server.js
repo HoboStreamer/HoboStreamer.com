@@ -1605,13 +1605,19 @@ class ChatServer {
             // Increment queue counter
             this.ttsQueueSize.set(streamId, globalCount + 1);
 
+            // Honor the channel's configured TTS length (streamers can raise it up to 1200);
+            // falls back to the site default when unset. Without this the server synth always
+            // truncated at the global 200 even when the channel allowed more.
+            let ttsMaxOverride;
+            try { ttsMaxOverride = Number(this._getChannelChatSettings(streamId).tts_max_length) || undefined; } catch { /* use engine default */ }
+
             let result;
             if (!voiceId && settings.perUserVoices) {
                 // No equipped cosmetic voice → give this chatter a stable per-username voice.
                 const idKey = identityKey || username || 'anon';
-                result = await ttsEngine.synthesizeUserVoice(text, idKey, username);
+                result = await ttsEngine.synthesizeUserVoice(text, idKey, username, ttsMaxOverride);
             } else {
-                result = await ttsEngine.synthesize(text, voiceId || settings.defaultVoice, username);
+                result = await ttsEngine.synthesize(text, voiceId || settings.defaultVoice, username, ttsMaxOverride);
             }
 
             // Decrement queue counter

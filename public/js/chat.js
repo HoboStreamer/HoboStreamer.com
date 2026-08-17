@@ -5469,13 +5469,14 @@ function toggleChatLimitsPopover(btn) {
     const existing = document.getElementById('chat-limits-popover');
     if (existing) { existing.remove(); return; }
     const L = window._channelChatLimits || { max_message_length: 500, tts_max_length: 200 };
+    const _msgCap = (currentUser?.role === 'admin') ? 6000 : 4000;
     const pop = document.createElement('div');
     pop.id = 'chat-limits-popover';
     pop.className = 'chat-limits-popover';
     pop.innerHTML = `
         <div class="clp-title"><i class="fa-solid fa-sliders"></i> Chat limits</div>
-        <label class="clp-row"><span>Max message length</span><input type="number" id="clp-maxmsg" min="1" max="2000" value="${Number(L.max_message_length) || 500}"></label>
-        <label class="clp-row"><span>Max TTS length</span><input type="number" id="clp-maxtts" min="10" max="1000" value="${Number(L.tts_max_length) || 200}"></label>
+        <label class="clp-row"><span>Max message length</span><input type="number" id="clp-maxmsg" min="1" max="${_msgCap}" value="${Number(L.max_message_length) || 500}"></label>
+        <label class="clp-row"><span>Max TTS length</span><input type="number" id="clp-maxtts" min="10" max="1200" value="${Number(L.tts_max_length) || 200}"></label>
         <div class="clp-actions"><button class="btn btn-small btn-primary" onclick="saveChatLimits()"><i class="fa-solid fa-check"></i> Save</button></div>
         <div class="clp-hint">Applies to everyone in your chat.</div>`;
     document.body.appendChild(pop);
@@ -5490,8 +5491,9 @@ function toggleChatLimitsPopover(btn) {
 }
 async function saveChatLimits() {
     if (!_chatLimitsChannelId) { toast('No channel selected', 'error'); return; }
-    const maxmsg = Math.min(2000, Math.max(1, parseInt(document.getElementById('clp-maxmsg')?.value, 10) || 500));
-    const maxtts = Math.min(1000, Math.max(10, parseInt(document.getElementById('clp-maxtts')?.value, 10) || 200));
+    const _msgCap = (currentUser?.role === 'admin') ? 6000 : 4000;
+    const maxmsg = Math.min(_msgCap, Math.max(1, parseInt(document.getElementById('clp-maxmsg')?.value, 10) || 500));
+    const maxtts = Math.min(1200, Math.max(10, parseInt(document.getElementById('clp-maxtts')?.value, 10) || 200));
     try {
         await api(`/channels/${_chatLimitsChannelId}/moderation`, { method: 'PUT', body: { max_message_length: maxmsg, tts_max_length: maxtts } });
         applyChatLimits({ max_message_length: maxmsg, tts_max_length: maxtts });
