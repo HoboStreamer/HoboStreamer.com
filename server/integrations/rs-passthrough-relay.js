@@ -465,7 +465,18 @@ class RsPassthroughRelay {
         const vPt = +vMedia.pts[0];
 
         // Pull a fresh keyframe from the SOURCE encoder (goosely's browser) via our plain consumer.
-        const reqKey = () => { stats.pli++; sfu.requestConsumerKeyFrame(session.roomId, videoIn.consumerId).catch?.(() => {}); };
+        // HARD rate-limit: every trigger (RS PLI, our loss detectors, startup) funnels through here,
+        // and goosely emits a big keyframe for EACH request. Unlimited requests flooded the werift→RS
+        // link with keyframes (~4/s measured!) → congestion → loss → more PLIs → more keyframes: a
+        // vicious cycle that was itself the freeze cause. Cap it to one real keyframe pull per 2s.
+        let _lastActualKeyReq = 0;
+        const reqKey = () => {
+            const now = Date.now();
+            if (now - _lastActualKeyReq < 2000) return;
+            _lastActualKeyReq = now;
+            stats.pli++;
+            sfu.requestConsumerKeyFrame(session.roomId, videoIn.consumerId).catch?.(() => {});
+        };
 
         // Video-loss recovery. A hole in the streamer→relay video (a stutter/drop that PAUSES the
         // RTP, OR partial packet loss that leaves holes while packets keep flowing) makes the
