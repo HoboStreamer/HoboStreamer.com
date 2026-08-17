@@ -430,23 +430,40 @@ class RsPassthroughRelay {
         // Pull a fresh keyframe from the SOURCE encoder (goosely's browser) via our plain consumer.
         const reqKey = () => { stats.pli++; sfu.requestConsumerKeyFrame(session.roomId, videoIn.consumerId).catch?.(() => {}); };
 
-        // Video-gap recovery: when the streamer stutters / briefly drops, incoming video RTP pauses
-        // and the frames that resume are mid-GOP (undecodable), so RS viewers stay black until they
-        // notice the loss and PLI all the way back — slow, and why audio (no keyframes) returns
-        // first. Detect the gap right here at the relay and request a keyframe the instant video
-        // resumes, front-running the viewer's PLI so video comes back almost as fast as audio.
+        // Video-loss recovery. A hole in the streamer→relay video (a stutter/drop that PAUSES the
+        // RTP, OR partial packet loss that leaves holes while packets keep flowing) makes the
+        // current + following frames undecodable until the next keyframe. Without help, RS viewers
+        // stay frozen until THEY notice and PLI all the way back — slow, and why audio (which needs
+        // no keyframes) keeps playing while video is stuck. So we watch the incoming stream directly
+        // and pull a fresh keyframe from the source encoder the instant we see a hole, front-running
+        // the viewer's PLI. Two detectors: a time-gap (full pause) and RTP sequence gaps (loss).
         const VIDEO_GAP_MS = 200;
         let _lastVideoAt = Date.now();
-        let _lastGapKeyAt = 0;
+        let _lastKeyReqAt = 0;
+        let _lastSeq = -1;
+        const pullKeyframe = (now) => {
+            if (now - _lastKeyReqAt < 600) return;   // debounce so sustained loss can't spam keyframes
+            _lastKeyReqAt = now;
+            reqKey();                                 // pull a keyframe now …
+            setTimeout(reqKey, 300);                  // … and a backstop in case it's lost too
+        };
         videoIn.socket.on('message', (buf) => {
             const now = Date.now();
-            if (now - _lastVideoAt > VIDEO_GAP_MS && now - _lastGapKeyAt > 500) {
-                _lastGapKeyAt = now;
-                reqKey();                 // pull a keyframe the moment video resumes
-                setTimeout(reqKey, 350);  // backstop in case the first request/keyframe is lost
-            }
+            const timeGap = (now - _lastVideoAt) > VIDEO_GAP_MS;
             _lastVideoAt = now;
-            try { const p = RtpPacket.deSerialize(buf); p.header.payloadType = vPt; p.header.extensions = []; videoTrack.writeRtp(p); stats.v++; } catch { /* drop malformed */ }
+            let p;
+            try { p = RtpPacket.deSerialize(buf); } catch { return; /* drop malformed */ }
+            // Sequence-gap loss detection (16-bit wrap-safe). delta==1 → in order; delta 2..2999 →
+            // packets missing; huge delta → reorder/reset, ignore. Any real hole → keyframe.
+            let lost = false;
+            if (_lastSeq >= 0) {
+                const delta = (p.header.sequenceNumber - _lastSeq) & 0xffff;
+                if (delta > 1 && delta < 3000) lost = true;
+            }
+            _lastSeq = p.header.sequenceNumber;
+            if (timeGap || lost) pullKeyframe(now);
+            p.header.payloadType = vPt; p.header.extensions = [];
+            try { videoTrack.writeRtp(p); stats.v++; } catch { /* */ }
         });
         if (audioIn && aMedia) {
             const aPt = +aMedia.pts[0];
