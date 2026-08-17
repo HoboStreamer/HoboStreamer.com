@@ -929,28 +929,71 @@ class StreamRecorder {
             '-force_key_frames', 'expr:gte(t,n_forced*2)',
             '-g', '240',
         ];
-        // Declared at function scope so it's in scope later (activeRec.masterFilePath).
-        const masterPath = filePath.replace(/\.webm$/, '.master.mkv');
-        if (isMasterRecording) {
-            ffmpegArgs.push(
-                '-map', '0',
-                '-c:v', 'copy',
-                '-c:a', 'copy',
-                '-f', 'matroska',
-                masterPath,
-                '-map', '0',
-                ...libvpxVideo
-            );
+        // ── Codec-passthrough recording (no decode → no re-encode) ──────────────────
+        // The browser already decodes goosely's live bitstream perfectly. The OLD path
+        // DECODED the H.264 and re-encoded it to VP8 — and ffmpeg's decoder desynced on a
+        // lost SPS/keyframe where the browser's did not, baking rotation/corruption into the
+        // VOD (the "suddenly rotated 90° / corrupt encoding" bug). Copying the bitstream
+        // straight through (exactly like the proven RTMP path) removes the decode entirely:
+        //   • zero re-encode CPU (a marathon stream no longer pins a core)
+        //   • no rotation/shear/melt — there is no decode to desync
+        //   • no separate .master.mkv — the copied file IS lossless (halves disk footprint)
+        //   • fragmented/faststart-friendly → more kill-tolerant than the old libvpx WebM
+        // Mapping: H.264 → fragmented .mp4 (video copy, audio → AAC for universal browser
+        // support since Opus-in-MP4 is patchy); VP8/VP9 → .webm (video + Opus copied, both
+        // native to WebM). Anything exotic falls back to the legacy libvpx re-encode.
+        const vMime = (videoConsumer.mimeType || '').toLowerCase();
+        const isH264 = vMime.includes('h264');
+        const isVpx = vMime.includes('vp8') || vMime.includes('vp9');
+        const passthrough = isH264 || isVpx;
+        // Declared at function scope so they're in scope later (activeRec.filePath / masterFilePath).
+        let outPath = filePath;
+        let masterPath = null;
+
+        if (passthrough) {
+            // Swap the served-file extension to match the copied container.
+            outPath = isH264 ? filePath.replace(/\.webm$/, '.mp4') : filePath;
+            ffmpegArgs.push('-map', '0:v:0', '-c:v', 'copy');
             if (audioConsumer) {
-                ffmpegArgs.push('-c:a', 'libopus', '-b:a', '128k', '-application', 'audio');
+                ffmpegArgs.push('-map', '0:a?');
+                if (isH264) {
+                    ffmpegArgs.push('-c:a', 'aac', '-b:a', '160k');   // Opus → AAC (cheap, audio-only)
+                } else {
+                    ffmpegArgs.push('-c:a', 'copy');                  // Opus is native to WebM
+                }
             } else {
                 ffmpegArgs.push('-an');
             }
-            ffmpegArgs.push('-f', 'webm', filePath);
-            diagnostics.masterFilePath = path.basename(masterPath);
-            diagnostics.filePath = path.basename(filePath);
+            if (isH264) {
+                // Fragmented MP4: seekable while it's still growing (live DVR) and it survives
+                // an abrupt kill without a moov rewrite — same rationale as the RTMP path, which
+                // is why neither needs a lossless master alongside it.
+                ffmpegArgs.push('-max_muxing_queue_size', '1024',
+                    '-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', outPath);
+            } else {
+                ffmpegArgs.push('-f', 'webm', outPath);
+            }
+            diagnostics.filePath = path.basename(outPath);
+            // If the extension changed (H.264 → .mp4), repoint the VOD record + finalize
+            // registry so serve/finalize/thumbnail/rotation all use the real file.
+            if (outPath !== filePath) {
+                try { db.run('UPDATE vods SET file_path = ?, master_file_path = NULL WHERE id = ?', [outPath, vodId]); } catch { /* */ }
+                try {
+                    const vodRoutes = require('./routes');
+                    const areg = vodRoutes.activeRecordings.get(streamId);
+                    if (areg) areg.filePath = outPath;
+                } catch { /* */ }
+                filePath = outPath;   // rest of this function + exit/error handlers use the real path
+            }
         } else {
-            ffmpegArgs.push(...libvpxVideo);
+            // ── Legacy fallback: decode + re-encode to VP8/WebM (+ H.264 master if applicable) ──
+            masterPath = isMasterRecording ? filePath.replace(/\.webm$/, '.master.mkv') : null;
+            if (masterPath) {
+                ffmpegArgs.push('-map', '0', '-c:v', 'copy', '-c:a', 'copy', '-f', 'matroska', masterPath, '-map', '0', ...libvpxVideo);
+                diagnostics.masterFilePath = path.basename(masterPath);
+            } else {
+                ffmpegArgs.push(...libvpxVideo);
+            }
             if (audioConsumer) {
                 ffmpegArgs.push('-c:a', 'libopus', '-b:a', '128k', '-application', 'audio');
             } else {
@@ -1053,16 +1096,16 @@ class StreamRecorder {
         if (activeRec) {
             activeRec.process = proc;
             activeRec.webrtcState = webrtcState;
-            if (isMasterRecording) {
-                activeRec.masterFilePath = masterPath;
-            }
+            activeRec.filePath = filePath;            // real served path (may be .mp4 after passthrough)
+            activeRec.masterFilePath = masterPath;    // null for passthrough; set only in the legacy fallback
             activeRec.remuxTimer = setInterval(() => this._periodicRemux(streamId), 60000);
             setTimeout(() => {
                 if (this.activeRecordings.has(streamId)) this._periodicRemux(streamId);
             }, 30000);
         }
 
-        console.log(`[VOD] WebRTC recording started: stream ${streamId} (${protocol}) → ${path.basename(filePath)}`);
+        const recMode = passthrough ? `passthrough ${isH264 ? 'H.264→mp4' : 'VP8/9→webm'} copy` : 'libvpx re-encode';
+        console.log(`[VOD] WebRTC recording started: stream ${streamId} (${protocol}) → ${path.basename(filePath)} [${recMode}]`);
     }
 
     /**

@@ -80,8 +80,14 @@ function decodeVodFile(filePath) {
 
 function remuxForSeeking(filePath) {
     return new Promise((resolve) => {
-        const tmpPath = `${filePath}.remux.tmp.webm`;
-        const proc = spawn('ffmpeg', ['-y', '-i', filePath, '-c', 'copy', '-fflags', '+genpts', tmpPath]);
+        // Match the tmp container to the source so an H.264 .mp4 VOD isn't force-written into a
+        // VP8-only WebM (which just fails). For .mp4, faststart makes it instantly seekable.
+        const isMp4 = filePath.toLowerCase().endsWith('.mp4');
+        const tmpPath = isMp4 ? `${filePath}.remux.tmp.mp4` : `${filePath}.remux.tmp.webm`;
+        const args = isMp4
+            ? ['-y', '-i', filePath, '-c', 'copy', '-fflags', '+genpts', '-movflags', '+faststart', tmpPath]
+            : ['-y', '-i', filePath, '-c', 'copy', '-fflags', '+genpts', tmpPath];
+        const proc = spawn('ffmpeg', args);
         proc.on('close', (code) => {
             if (code === 0 && fs.existsSync(tmpPath)) {
                 try {
