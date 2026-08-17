@@ -391,7 +391,7 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
         console.error('[Emotes] Upload error:', err);
         if (req.file && fs.existsSync(req.file.path)) { try { fs.unlinkSync(req.file.path); } catch {} }
         if (err && /UNIQUE constraint/i.test(err.message || '')) {
-            return res.status(409).json({ error: 'You already uploaded an emote with that code. Pick a different code for this channel.' });
+            return res.status(409).json({ error: `This channel already has an emote named "${code}" — pick a different code for this channel.` });
         }
         res.status(500).json({ error: 'Failed to upload emote' });
     }
