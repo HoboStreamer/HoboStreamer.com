@@ -438,9 +438,10 @@ class RsPassthroughRelay {
         // and pull a fresh keyframe from the source encoder the instant we see a hole, front-running
         // the viewer's PLI. Two detectors: a time-gap (full pause) and RTP sequence gaps (loss).
         const VIDEO_GAP_MS = 200;
+        const SEQ_BURST = 12;        // >~ one frame of packets missing AT ONCE = real loss worth a keyframe
         let _lastVideoAt = Date.now();
         let _lastKeyReqAt = 0;
-        let _lastSeq = -1;
+        let _maxSeq = -1, _vSsrc = -1;
         const pullKeyframe = (now) => {
             if (now - _lastKeyReqAt < 600) return;   // debounce so sustained loss can't spam keyframes
             _lastKeyReqAt = now;
@@ -453,15 +454,22 @@ class RsPassthroughRelay {
             _lastVideoAt = now;
             let p;
             try { p = RtpPacket.deSerialize(buf); } catch { return; /* drop malformed */ }
-            // Sequence-gap loss detection (16-bit wrap-safe). delta==1 → in order; delta 2..2999 →
-            // packets missing; huge delta → reorder/reset, ignore. Any real hole → keyframe.
-            let lost = false;
-            if (_lastSeq >= 0) {
-                const delta = (p.header.sequenceNumber - _lastSeq) & 0xffff;
-                if (delta > 1 && delta < 3000) { lost = true; stats.lostIn += (delta - 1); }
+            // Reorder-tolerant loss detection on the MAIN video stream only (ignore RTX/other SSRCs
+            // and out-of-order arrivals — those were inflating the count and spamming keyframes).
+            let burst = false;
+            if (_vSsrc < 0) _vSsrc = p.header.ssrc;
+            if (p.header.ssrc === _vSsrc) {
+                if (_maxSeq >= 0) {
+                    const adv = (p.header.sequenceNumber - _maxSeq) & 0xffff; // forward distance
+                    if (adv >= 1 && adv < 30000) {          // genuine forward progress (not a reorder/wrap)
+                        if (adv > 1) stats.lostIn += (adv - 1);
+                        if (adv > SEQ_BURST) burst = true;   // a whole frame+ missing at once → real hole
+                        _maxSeq = p.header.sequenceNumber;
+                    }
+                    // adv >= 30000 → reordered packet arriving late; not a loss.
+                } else _maxSeq = p.header.sequenceNumber;
             }
-            _lastSeq = p.header.sequenceNumber;
-            if (timeGap || lost) pullKeyframe(now);
+            if (timeGap || burst) pullKeyframe(now);
             p.header.payloadType = vPt; p.header.extensions = [];
             try { videoTrack.writeRtp(p); stats.v++; } catch { /* */ }
         });
