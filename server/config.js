@@ -245,9 +245,11 @@ function buildConfig(registryValues) {
         emotes: {
             path: process.env.EMOTES_PATH || './data/emotes',
             maxSizeKb: parseInt(process.env.MAX_EMOTE_SIZE_KB || '2048', 10),
-            maxPerUser: parseInt(process.env.MAX_EMOTES_PER_USER || '50', 10),
-            maxPerChannel: parseInt(process.env.MAX_EMOTES_PER_CHANNEL || '300', 10),
-            maxPerUploaderPerChannel: parseInt(process.env.MAX_EMOTES_PER_UPLOADER_PER_CHANNEL || '10', 10),
+            maxPerUser: parseInt(process.env.MAX_EMOTES_PER_USER || '30', 10),
+            // A channel holds up to 30 emotes total (streamer + viewer uploads), first-come until
+            // full — then the streamer removes some. No per-uploader sub-cap.
+            maxPerChannel: parseInt(process.env.MAX_EMOTES_PER_CHANNEL || '30', 10),
+            maxPerUploaderPerChannel: parseInt(process.env.MAX_EMOTES_PER_UPLOADER_PER_CHANNEL || '30', 10),
             ffzCacheTtl: parseInt(process.env.FFZ_CACHE_TTL || '3600', 10),
             bttvCacheTtl: parseInt(process.env.BTTV_CACHE_TTL || '3600', 10),
             sevenTvCacheTtl: parseInt(process.env.SEVENTV_CACHE_TTL || '3600', 10),

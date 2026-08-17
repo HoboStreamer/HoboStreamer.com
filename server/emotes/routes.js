@@ -49,6 +49,21 @@ const emoteUpload = multer({
     },
 });
 
+// Per-user emote-upload rate limit (sliding window) so a single account can't mass-spam uploads
+// across many channels. Keyed by user id, so it holds even across IPs. Filling one channel (30)
+// in a session is fine; hundreds of rapid uploads are not.
+const EMOTE_UPLOAD_WINDOW_MS = 15 * 60 * 1000;
+const EMOTE_UPLOAD_MAX = 40;
+const _emoteUploadTimes = new Map(); // userId → recent upload timestamps
+function emoteUploadRateLimited(userId) {
+    const now = Date.now();
+    const arr = (_emoteUploadTimes.get(userId) || []).filter((t) => now - t < EMOTE_UPLOAD_WINDOW_MS);
+    if (arr.length >= EMOTE_UPLOAD_MAX) { _emoteUploadTimes.set(userId, arr); return true; }
+    arr.push(now);
+    _emoteUploadTimes.set(userId, arr);
+    return false;
+}
+
 // ══════════════════════════════════════════════════════════════
 //  FFZ / BTTV CACHE
 // ══════════════════════════════════════════════════════════════
@@ -251,8 +266,9 @@ router.get('/mine', requireAuth, (req, res) => {
             is_global: !!e.is_global,
             created_at: e.created_at,
         }));
-        const count = emotes.length;
-        const max = config.emotes.maxPerUser;
+        // Cap is per-channel now: your own emotes + any viewer uploads on your channel, up to max.
+        const count = db.countChannelEmotes(req.user.id);
+        const max = config.emotes.maxPerChannel;
         res.json({ emotes, count, max });
     } catch (err) {
         res.status(500).json({ error: 'Failed to load emotes' });
@@ -263,6 +279,12 @@ router.get('/mine', requireAuth, (req, res) => {
 router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No image file uploaded' });
+
+        // Anti-spam: cap how many emotes one account can upload per window (across all channels).
+        if (emoteUploadRateLimited(req.user.id)) {
+            fs.unlinkSync(req.file.path);
+            return res.status(429).json({ error: `Too many emote uploads — please wait a bit before uploading more.` });
+        }
 
         const code = (req.body.code || '').trim();
         if (!code || code.length < 2 || code.length > 32) {
@@ -298,20 +320,11 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
                 fs.unlinkSync(req.file.path);
                 return res.status(403).json({ error: 'Only channel mods can upload emotes here.' });
             }
-            // Per-channel caps
+            // Per-channel cap only — anyone can upload until the channel is full (then the
+            // streamer removes some). No per-uploader sub-limit.
             if (db.countChannelEmotes(channelOwnerId) >= config.emotes.maxPerChannel) {
                 fs.unlinkSync(req.file.path);
-                return res.status(400).json({ error: `This channel has reached its emote limit (${config.emotes.maxPerChannel}).` });
-            }
-            if (!isMod) {
-                const mine = db.get(
-                    'SELECT COUNT(*) AS c FROM emotes WHERE channel_owner_id = ? AND user_id = ?',
-                    [channelOwnerId, req.user.id]
-                );
-                if (mine && mine.c >= config.emotes.maxPerUploaderPerChannel) {
-                    fs.unlinkSync(req.file.path);
-                    return res.status(400).json({ error: `You've reached your upload limit for this channel (${config.emotes.maxPerUploaderPerChannel}).` });
-                }
+                return res.status(400).json({ error: `This channel is full (${config.emotes.maxPerChannel} emotes max) — the streamer needs to remove some first.` });
             }
             // Unique code within the channel (any uploader)
             if (db.getChannelEmoteByCode(channelOwnerId, code)) {
@@ -319,11 +332,11 @@ router.post('/', requireAuth, emoteUpload.single('image'), (req, res) => {
                 return res.status(409).json({ error: `This channel already has an emote named "${code}".` });
             }
         } else {
-            // Uploading to your own channel — original per-user rules.
-            const count = db.countUserEmotes(req.user.id);
-            if (count >= config.emotes.maxPerUser) {
+            // Uploading to your OWN channel — counts toward the same per-channel budget (your own
+            // emotes + any viewer uploads on your channel), capped at maxPerChannel.
+            if (db.countChannelEmotes(req.user.id) >= config.emotes.maxPerChannel) {
                 fs.unlinkSync(req.file.path);
-                return res.status(400).json({ error: `Emote limit reached (${config.emotes.maxPerUser} max)` });
+                return res.status(400).json({ error: `Your channel is full (${config.emotes.maxPerChannel} emotes max) — remove some to add more.` });
             }
             const existing = db.get('SELECT id FROM emotes WHERE user_id = ? AND code = ?', [req.user.id, code]);
             if (existing) {

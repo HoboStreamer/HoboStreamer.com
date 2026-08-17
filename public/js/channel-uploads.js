@@ -64,18 +64,60 @@
         .cu-btn:disabled{opacity:.5;cursor:default;}
         .cu-hint{font-size:12px;opacity:.65;line-height:1.4;}
         .cu-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
-        .cu-emote{position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:74px;padding:6px;border-radius:8px;background:rgba(255,255,255,.04);}
-        .cu-emote img{width:40px;height:40px;object-fit:contain;}
-        .cu-emote code{font-size:10px;opacity:.8;word-break:break-all;text-align:center;}
-        .cu-sound{display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border-radius:8px;background:rgba(255,255,255,.04);}
-        .cu-sound .cu-cmd{font-weight:700;color:var(--accent,#c0965c);}
-        .cu-sound .cu-meta{font-size:11px;opacity:.6;margin-left:auto;}
-        .cu-del{background:none;border:none;color:#e66;cursor:pointer;font-size:12px;opacity:.8;}
-        .cu-del:hover{opacity:1;}
-        .cu-cfg{background:none;border:none;color:#9ab;cursor:pointer;font-size:12px;opacity:.75;}
-        .cu-cfg:hover{opacity:1;}
-        .cu-code-edit{cursor:pointer;}
-        .cu-code-edit:hover{text-decoration:underline;}
+        .cu-emote{position:relative;display:flex;flex-direction:column;gap:6px;width:96px;padding:8px;border-radius:12px;
+            background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08);
+            transition:transform .16s cubic-bezier(.2,.8,.3,1.2),border-color .16s,box-shadow .16s;animation:cuEmoteIn .28s ease both;}
+        .cu-emote:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent,#c0965c) 55%,transparent);box-shadow:0 10px 24px rgba(0,0,0,.35);}
+        @keyframes cuEmoteIn{from{opacity:0;transform:translateY(6px) scale(.96)}to{opacity:1;transform:none}}
+        .cu-emote-thumb{position:relative;aspect-ratio:1;border-radius:9px;overflow:hidden;display:grid;place-items:center;
+            background:repeating-conic-gradient(rgba(255,255,255,.035) 0% 25%,transparent 0% 50%) 0 0/16px 16px,rgba(0,0,0,.28);}
+        .cu-emote-thumb img{width:80%;height:80%;object-fit:contain;transition:transform .2s;}
+        .cu-emote:hover .cu-emote-thumb img{transform:scale(1.09);}
+        .cu-emote-badge{position:absolute;top:4px;left:4px;background:var(--accent,#c0965c);color:#111;font-weight:800;font-size:9px;
+            padding:1px 6px;border-radius:999px;box-shadow:0 1px 3px rgba(0,0,0,.45);letter-spacing:.2px;}
+        .cu-emote-overlay{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;gap:6px;padding:6px;
+            opacity:0;transition:opacity .16s;background:linear-gradient(0deg,rgba(0,0,0,.6),transparent 62%);}
+        .cu-emote:hover .cu-emote-overlay,.cu-emote:focus-within .cu-emote-overlay{opacity:1;}
+        .cu-act{width:26px;height:26px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(20,20,26,.85);color:#dfe6ee;
+            cursor:pointer;display:grid;place-items:center;font-size:11px;backdrop-filter:blur(3px);
+            transition:transform .12s,background .12s,color .12s,border-color .12s;}
+        .cu-act:hover{transform:translateY(-2px);}
+        .cu-sound-rows{display:flex;flex-direction:column;gap:5px;}
+        .cu-sound{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:9px;background:rgba(0,0,0,.22);transition:background .14s;}
+        .cu-sound:hover{background:rgba(0,0,0,.34);}
+        .cu-play{width:30px;height:30px;border-radius:50%;border:none;background:var(--accent,#c0965c);color:#111;cursor:pointer;
+            display:grid;place-items:center;font-size:11px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.3);transition:transform .12s,filter .12s;}
+        .cu-play:hover{transform:scale(1.08);filter:brightness(1.08);}.cu-play:active{transform:scale(.94);}
+        .cu-sound-meta{font-size:12px;opacity:.72;display:inline-flex;align-items:center;gap:5px;}
+        .cu-sound-meta i{opacity:.55;}
+        .cu-sound-del{margin-left:auto;width:26px;height:26px;border-radius:7px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#e88;
+            cursor:pointer;display:grid;place-items:center;font-size:12px;flex-shrink:0;transition:background .12s,color .12s,border-color .12s;}
+        .cu-sound-del:hover{background:rgba(200,60,60,.4);border-color:#ff6b6b;color:#fff;}
+        .cu-sound-more{margin-top:1px;}
+        .cu-sound-more>summary{cursor:pointer;font-size:12px;opacity:.65;padding:5px 10px;list-style:none;border-radius:8px;user-select:none;transition:background .12s,opacity .12s;}
+        .cu-sound-more>summary::-webkit-details-marker{display:none;}
+        .cu-sound-more>summary::before{content:"\\25be";margin-right:6px;display:inline-block;transition:transform .15s;}
+        .cu-sound-more[open]>summary::before{transform:rotate(180deg);}
+        .cu-sound-more>summary:hover{opacity:1;background:rgba(255,255,255,.05);}
+        .cu-sound-more .cu-sound-rows{margin-top:5px;}
+        .cu-icon-btn{width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#cdd6e0;
+            cursor:pointer;display:inline-grid;place-items:center;font-size:13px;flex-shrink:0;transition:transform .12s,background .12s,color .12s,border-color .12s;}
+        .cu-icon-btn:hover{transform:translateY(-1px);background:rgba(255,255,255,.11);color:#fff;border-color:rgba(255,255,255,.25);}
+        .cu-icon-btn.on{background:color-mix(in srgb,var(--accent,#c0965c) 22%,transparent);border-color:color-mix(in srgb,var(--accent,#c0965c) 55%,transparent);color:var(--accent,#c0965c);}
+        .cu-add-btn{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;flex-shrink:0;cursor:pointer;font-weight:700;font-size:12px;
+            border:1px solid color-mix(in srgb,var(--accent,#c0965c) 45%,transparent);background:color-mix(in srgb,var(--accent,#c0965c) 16%,transparent);color:var(--accent,#c0965c);
+            transition:background .14s,transform .12s;}
+        .cu-add-btn:hover{background:color-mix(in srgb,var(--accent,#c0965c) 30%,transparent);transform:translateY(-1px);}
+        .cu-cfg:hover{background:rgba(60,120,200,.4);border-color:#6ea8ff;color:#fff;}
+        .cu-del:hover{background:rgba(200,60,60,.45);border-color:#ff6b6b;color:#fff;}
+        .cu-code-edit{display:flex;align-items:center;gap:5px;justify-content:center;width:100%;padding:4px 8px;border-radius:8px;
+            border:1px solid transparent;background:rgba(255,255,255,.045);color:inherit;cursor:pointer;font-size:11px;font-weight:600;
+            transition:background .14s,border-color .14s;}
+        .cu-code-edit:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.16);}
+        .cu-code-text{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        .cu-code-pen{font-size:9px;opacity:.5;flex-shrink:0;transition:opacity .14s,transform .14s;}
+        .cu-code-edit:hover .cu-code-pen{opacity:.95;transform:rotate(-8deg);}
+        .cu-code-static{font-size:11px;opacity:.72;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
         .cu-empty{opacity:.5;font-size:13px;padding:8px 0;}
         .cu-set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;font-size:13px;}
         .cu-set-row input[type=number]{width:84px;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:inherit;}
@@ -84,8 +126,19 @@
         .cu-size-row{display:flex;align-items:center;gap:8px;font-size:13px;}
         .cu-size-row input[type=range]{flex:1;}
         .cu-count{background:var(--accent,#c0965c);color:#111;border-radius:10px;padding:0 7px;font-size:11px;font-weight:700;margin-left:2px;}
-        .cu-sound-group{width:100%;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:6px;}
-        .cu-sound-cmd-hd{display:flex;align-items:center;gap:6px;margin-bottom:2px;}
+        .cu-sound-group{width:100%;border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:11px 13px;margin-bottom:10px;
+            background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.012));transition:border-color .16s,box-shadow .16s;animation:cuEmoteIn .28s ease both;}
+        .cu-sound-group:hover{border-color:rgba(255,255,255,.15);box-shadow:0 6px 18px rgba(0,0,0,.22);}
+        .cu-sound-cmd-hd{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+        .cu-hd-spacer{flex:1;}
+        .cu-cmd{display:inline-flex;align-items:center;gap:6px;font-weight:800;color:var(--accent,#c0965c);font-size:15px;padding:3px 9px;border-radius:8px;
+            border:1px solid transparent;background:transparent;cursor:pointer;transition:background .14s,border-color .14s;}
+        .cu-cmd:hover{background:color-mix(in srgb,var(--accent,#c0965c) 15%,transparent);border-color:color-mix(in srgb,var(--accent,#c0965c) 35%,transparent);}
+        .cu-cmd-pen{font-size:9px;opacity:.4;transition:opacity .14s,transform .14s;}
+        .cu-cmd:hover .cu-cmd-pen{opacity:.9;transform:rotate(-8deg);}
+        .cu-tag{font-size:11px;opacity:.5;font-weight:600;}
+        .cu-sound-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;opacity:.9;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);}
+        .cu-sound-chip i{color:var(--accent,#c0965c);}
         .cu-emote-preview{padding:6px 0}.cu-emote-preview-row{display:flex;align-items:center;gap:4px;font-size:13px}
         `;
         const el = document.createElement('style');
@@ -339,15 +392,24 @@
             const data = await r.json();
             const list = (data.channel || data.emotes || []).filter((e) => e.source === 'channel');
             if (!list.length) { box.innerHTML = '<span class="cu-empty">No channel emotes yet — be the first!</span>'; return; }
-            box.innerHTML = list.map((e) => `
-                <div class="cu-emote">
-                    <img src="${esc(e.url)}" alt="${esc(e.code)}" loading="lazy">
-                    ${e.emote_id
-                        ? `<code class="cu-code-edit" title="Click to rename" onclick="__cuRenameEmote(${e.emote_id}, '${esc(e.code)}')">${esc(e.code)}${e.size && e.size !== 100 ? ` · ${e.size}%` : ''}</code>
-                           <button class="cu-cfg" title="Display size" onclick="__cuEmoteSize(${e.emote_id}, ${e.size || 100})"><i class="fa-solid fa-gear"></i></button>
-                           <button class="cu-del" title="Delete" onclick="__cuDeleteEmote(${e.emote_id})">✕</button>`
-                        : `<code>${esc(e.code)}${e.size && e.size !== 100 ? ` · ${e.size}%` : ''}</code>`}
-                </div>`).join('');
+            box.innerHTML = list.map((e, i) => {
+                const editable = !!e.emote_id;
+                const sizePct = (e.size && e.size !== 100) ? e.size : null;
+                return `
+                <div class="cu-emote" style="animation-delay:${Math.min(i * 18, 360)}ms">
+                    <div class="cu-emote-thumb">
+                        <img src="${esc(e.url)}" alt="${esc(e.code)}" loading="lazy">
+                        ${sizePct ? `<span class="cu-emote-badge">${sizePct}%</span>` : ''}
+                        ${editable ? `<div class="cu-emote-overlay">
+                            <button class="cu-act cu-cfg" title="Display size" onclick="__cuEmoteSize(${e.emote_id}, ${e.size || 100})"><i class="fa-solid fa-gear"></i></button>
+                            <button class="cu-act cu-del" title="Delete emote" onclick="__cuDeleteEmote(${e.emote_id})"><i class="fa-solid fa-trash-can"></i></button>
+                        </div>` : ''}
+                    </div>
+                    ${editable
+                        ? `<button class="cu-code-edit" title="Click to rename this emote" onclick="__cuRenameEmote(${e.emote_id}, '${esc(e.code)}')"><span class="cu-code-text">${esc(e.code)}</span><i class="fa-solid fa-pen cu-code-pen"></i></button>`
+                        : `<span class="cu-code-static" title="${esc(e.code)}">${esc(e.code)}</span>`}
+                </div>`;
+            }).join('');
         } catch { box.innerHTML = '<span class="cu-empty">Could not load emotes.</span>'; }
     }
 
@@ -363,22 +425,28 @@
             // Group by command — a command can hold several sounds; one is chosen at random on play.
             const groups = {};
             list.forEach((s) => { (groups[s.command] = groups[s.command] || []).push(s); });
+            const soundRow = (s) => `<div class="cu-sound">
+                <button class="cu-play" title="Preview" onclick="__cuPreviewSound('${esc(s.url)}')"><i class="fa-solid fa-play"></i></button>
+                <span class="cu-sound-meta"><i class="fa-regular fa-clock"></i> ${(typeof s.duration_seconds === 'number' ? s.duration_seconds.toFixed(1) : (s.duration_seconds || 0))}s · ${esc(s.uploader || '')}</span>
+                <button class="cu-sound-del" title="Delete this sound" onclick="__cuDeleteSound(${s.id})"><i class="fa-solid fa-xmark"></i></button>
+            </div>`;
             box.innerHTML = Object.keys(groups).sort().map((cmd) => {
                 const arr = groups[cmd];
                 const emoteCode = (arr.find((s) => s.emote_code) || {}).emote_code || '';
+                const shown = arr.slice(0, 3), hidden = arr.slice(3);
                 return `<div class="cu-sound-group">
                     <div class="cu-sound-cmd-hd">
-                        <span class="cu-cmd cu-code-edit" title="Click to rename this command" onclick="__cuRenameSoundCmd('${esc(cmd)}')">!${esc(cmd)}</span>
-                        ${arr.length > 1 ? `<span class="cu-count">×${arr.length}</span> <span class="cu-hint" style="opacity:.55">random</span>` : ''}
-                        ${emoteCode ? `<span class="cu-hint" style="opacity:.7"><i class="fa-solid fa-face-grin-stars"></i> :${esc(emoteCode)}:</span>` : ''}
-                        <button class="cu-cfg" title="${emoteCode ? 'Change or remove the attached emote' : 'Attach an emote to this command'}" onclick="__cuSoundEmote('${esc(cmd)}', '${esc(emoteCode)}')"><i class="fa-solid fa-face-grin-stars"></i></button>
-                        <button class="cu-btn" style="margin-left:auto;padding:2px 8px;font-size:12px" onclick="__cuAddToSound('${esc(cmd)}')" title="Add another sound to this command"><i class="fa-solid fa-plus"></i> Add</button>
+                        <button class="cu-cmd" title="Click to rename this command" onclick="__cuRenameSoundCmd('${esc(cmd)}')">!${esc(cmd)}<i class="fa-solid fa-pen cu-cmd-pen"></i></button>
+                        ${arr.length > 1 ? `<span class="cu-count">×${arr.length}</span><span class="cu-tag">random</span>` : ''}
+                        ${emoteCode ? `<span class="cu-sound-chip"><i class="fa-solid fa-face-grin-stars"></i>:${esc(emoteCode)}:</span>` : ''}
+                        <span class="cu-hd-spacer"></span>
+                        <button class="cu-icon-btn${emoteCode ? ' on' : ''}" title="${emoteCode ? 'Change or remove the attached emote' : 'Attach an emote to this command'}" onclick="__cuSoundEmote('${esc(cmd)}', '${esc(emoteCode)}')"><i class="fa-solid fa-face-grin-stars"></i></button>
+                        <button class="cu-add-btn" onclick="__cuAddToSound('${esc(cmd)}')" title="Add another sound to this command"><i class="fa-solid fa-plus"></i> Add</button>
                     </div>
-                    ${arr.map((s) => `<div class="cu-sound" style="margin-left:10px">
-                        <button class="cu-btn" style="padding:3px 8px;font-size:12px;" onclick="__cuPreviewSound('${esc(s.url)}')">▶</button>
-                        <span class="cu-meta">${(s.duration_seconds || 0).toFixed ? s.duration_seconds.toFixed(1) : s.duration_seconds}s · ${esc(s.uploader || '')}</span>
-                        <button class="cu-del" title="Delete" onclick="__cuDeleteSound(${s.id})">✕</button>
-                    </div>`).join('')}
+                    <div class="cu-sound-rows">
+                        ${shown.map(soundRow).join('')}
+                        ${hidden.length ? `<details class="cu-sound-more"><summary>Show ${hidden.length} more</summary><div class="cu-sound-rows">${hidden.map(soundRow).join('')}</div></details>` : ''}
+                    </div>
                 </div>`;
             }).join('');
         } catch { box.innerHTML = '<span class="cu-empty">Could not load sounds.</span>'; }
