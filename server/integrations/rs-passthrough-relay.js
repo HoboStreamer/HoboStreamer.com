@@ -185,6 +185,43 @@ const CANON_EXT_ID = {
     'urn:ietf:params:rtp-hdrext:ssrc-audio-level': 10,
 };
 
+// Is this RTP payload the START of a video KEYFRAME? (VP8: P bit 0 on the first partition;
+// H264: an IDR / SPS / PPS NAL, incl. FU-A fragments and STAP-A aggregates.)
+function isVideoKeyframe(payload, isH264) {
+    if (!payload || payload.length < 1) return false;
+    if (isH264) {
+        const nal = payload[0] & 0x1f;
+        if (nal === 5 || nal === 7 || nal === 8) return true;         // IDR / SPS / PPS
+        if (nal === 28 || nal === 29) {                                // FU-A / FU-B
+            const fu = payload[1] || 0;
+            return (fu & 0x80) !== 0 && (fu & 0x1f) === 5;             // start of a fragmented IDR
+        }
+        if (nal === 24) {                                              // STAP-A: scan aggregated NALs
+            let i = 1;
+            while (i + 2 <= payload.length) {
+                const size = (payload[i] << 8) | payload[i + 1]; i += 2;
+                const t = payload[i] & 0x1f;
+                if (t === 5 || t === 7 || t === 8) return true;
+                i += size;
+            }
+        }
+        return false;
+    }
+    // VP8 payload descriptor → skip to the VP8 payload header, then test the key-frame (P) bit.
+    let i = 0;
+    const b0 = payload[i++];
+    const X = (b0 & 0x80) !== 0, S = (b0 & 0x10) !== 0, PID = b0 & 0x07;
+    if (X) {
+        const ext = payload[i++] || 0;
+        const I = (ext & 0x80) !== 0, L = (ext & 0x40) !== 0, T = (ext & 0x20) !== 0, K = (ext & 0x10) !== 0;
+        if (I) { const pic = payload[i++] || 0; if (pic & 0x80) i++; } // 15-bit picture id
+        if (L) i++;
+        if (T || K) i++;
+    }
+    if (!S || PID !== 0 || i >= payload.length) return false;         // only the first packet of a frame
+    return (payload[i] & 0x01) === 0;                                  // P==0 → keyframe
+}
+
 // mediasoup produce rtpParameters mirroring exactly what werift will send on this m-line.
 function buildProduceParams(md) {
     const pt = +md.pts[0];
@@ -424,7 +461,7 @@ class RsPassthroughRelay {
 
         // 9) Forward encoded RTP straight through (strip our-router ext ids, match declared PT).
         //    Each UDP datagram from the PlainTransport consumer is one RTP packet.
-        const stats = { v: 0, a: 0, pli: 0, lostIn: 0 };
+        const stats = { v: 0, a: 0, pli: 0, lostIn: 0, kf: 0, maxKfGap: 0 };
         const vPt = +vMedia.pts[0];
 
         // Pull a fresh keyframe from the SOURCE encoder (goosely's browser) via our plain consumer.
@@ -439,9 +476,11 @@ class RsPassthroughRelay {
         // the viewer's PLI. Two detectors: a time-gap (full pause) and RTP sequence gaps (loss).
         const VIDEO_GAP_MS = 200;
         const SEQ_BURST = 12;        // >~ one frame of packets missing AT ONCE = real loss worth a keyframe
+        const KF_STALE_MS = 2000;    // if RS hasn't been sent a keyframe in this long, pull one (recovery ceiling)
         let _lastVideoAt = Date.now();
         let _lastKeyReqAt = 0;
         let _maxSeq = -1, _vSsrc = -1;
+        let _lastKfAt = Date.now();
         const pullKeyframe = (now) => {
             if (now - _lastKeyReqAt < 600) return;   // debounce so sustained loss can't spam keyframes
             _lastKeyReqAt = now;
@@ -469,7 +508,15 @@ class RsPassthroughRelay {
                     // adv >= 30000 → reordered packet arriving late; not a loss.
                 } else _maxSeq = p.header.sequenceNumber;
             }
-            if (timeGap || burst) pullKeyframe(now);
+            // Track keyframes actually reaching RS + how long since the last one.
+            if (isVideoKeyframe(p.payload, isH264)) {
+                const gap = now - _lastKfAt; if (gap > stats.maxKfGap) stats.maxKfGap = gap;
+                _lastKfAt = now; stats.kf++;
+            }
+            // Safety-net: a decoder that lost sync can only recover on a keyframe. If none has been
+            // forwarded for KF_STALE_MS, pull one so a freeze can never outlast ~2s.
+            const kfStale = (now - _lastKfAt) > KF_STALE_MS;
+            if (timeGap || burst || kfStale) pullKeyframe(now);
             p.header.payloadType = vPt; p.header.extensions = [];
             try { videoTrack.writeRtp(p); stats.v++; } catch { /* */ }
         });
@@ -487,15 +534,16 @@ class RsPassthroughRelay {
         // Throughput heartbeat + loss diagnostics. Splits loss into the two legs so we can see
         // where video freezes originate: IN = streamer→relay (our seq-gap detection), RS = relay→RS
         // (werift's RTCP receiver reports from RobotStreamer). pliRx/firRx = keyframes RS asked for.
-        let lastV = 0, lastA = 0, lastLostIn = 0;
+        let lastV = 0, lastA = 0, lastLostIn = 0, lastKf = 0;
         session.statsTimer = setInterval(() => {
             const s = vSender || {};
             const rsLostPct = typeof s.remoteFractionLost === 'number' ? ((s.remoteFractionLost / 256) * 100).toFixed(1) : '?';
             log(sid, `flow: v ${Math.round((stats.v - lastV) / 10)}/s a ${Math.round((stats.a - lastA) / 10)}/s ` +
+                `| kf ${stats.kf - lastKf}/10s maxKfGap ${stats.maxKfGap}ms ` +
                 `| lossIN ${stats.lostIn - lastLostIn} (goosely→relay) ` +
                 `| RS lost=${rsLostPct}% pktsLost=${s.remotePacketsLost ?? '?'} pliRx=${s.pliCount ?? '?'} firRx=${s.firCount ?? '?'} nackRx=${s.nackCount ?? '?'} retx=${s.retransmittedPacketsSent ?? '?'} rtt=${Math.round((s.rtt || 0) * 1000)}ms ` +
                 `| keyReq=${stats.pli} werift=${pc.connectionState}`);
-            lastV = stats.v; lastA = stats.a; lastLostIn = stats.lostIn;
+            lastV = stats.v; lastA = stats.a; lastLostIn = stats.lostIn; lastKf = stats.kf; stats.maxKfGap = 0;
         }, 10000);
         session.statsTimer.unref?.();
         vSender.onGenericNack?.subscribe(() => { /* werift retransmits from its own buffer; keyframe as backstop for heavy loss */ });
